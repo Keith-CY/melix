@@ -1,0 +1,523 @@
+syntax = "proto3";
+
+package melix.controlplane.v1;
+
+message ErrorStatus {
+  string code = 1;
+  string message = 2;
+  bool retriable = 3;
+  map<string, string> details = 4;
+}
+
+message HandshakeRequest {
+  string protocol_version = 1;
+  string app_version = 2;
+  string bundle_id = 3;
+  string client_instance_id = 4;
+  string ui_capabilities = 5;
+}
+
+message HandshakeResponse {
+  string protocol_version = 1;
+  string server_version = 2;
+  string daemon_instance_id = 3;
+  repeated string features = 4;
+  ServerSnapshot snapshot = 5;
+}
+
+message ControlPlaneRequest {
+  string request_id = 1;
+  string actor_id = 2;
+  string command_type = 3;
+  string idempotency_key = 4;
+  int64 deadline_unix_ms = 5;
+  string correlation_id = 6;
+  string causation_id = 7;
+  string target_id = 8;
+
+  oneof command {
+    ServerCommand server = 20;
+    ModelCommand model = 21;
+    CacheCommand cache = 22;
+    SessionCommand session = 23;
+    OpsCommand ops = 24;
+    PresetCommand preset = 25;
+  }
+}
+
+message ControlPlaneResponse {
+  string request_id = 1;
+  string command_type = 2;
+  bool ok = 3;
+  ErrorStatus error = 4;
+  string correlation_id = 5;
+  string causation_id = 6;
+
+  oneof payload {
+    ServerReply server = 20;
+    ModelReply model = 21;
+    CacheReply cache = 22;
+    SessionReply session = 23;
+    OpsReply ops = 24;
+    PresetReply preset = 25;
+  }
+}
+
+message ControlPlaneEvent {
+  string event_type = 1;
+  string source = 2;
+  string correlation_id = 3;
+  string causation_id = 4;
+  string request_id = 5;
+  string actor_id = 6;
+  string subscription_id = 7;
+  uint64 seq = 8;
+  int64 emitted_at_unix_ms = 9;
+
+  oneof payload {
+    ServerStateChanged server_state = 20;
+    WorkerStateChanged worker_state = 21;
+    ModelStateChanged model_state = 22;
+    RequestProgressEvent request_progress = 23;
+    SessionStateChanged session_state = 24;
+    CacheStatsEvent cache_stats = 25;
+    BenchmarkProgressEvent bench_progress = 26;
+    LogEvent log = 27;
+    Heartbeat heartbeat = 28;
+    ResourcePressureEvent resource_pressure = 29;
+  }
+}
+
+message ServerCommand {
+  oneof kind {
+    StartServer start = 1;
+    StopServer stop = 2;
+    RestartServer restart = 3;
+    GetServerSnapshot get_snapshot = 4;
+    SetGlobalPolicy set_policy = 5;
+  }
+}
+
+message ModelCommand {
+  oneof kind {
+    ListModels list = 1;
+    LoadModel load = 2;
+    UnloadModel unload = 3;
+    PinModel pin = 4;
+    UnpinModel unpin = 5;
+    WarmupModel warmup = 6;
+    SetModelPolicy set_policy = 7;
+  }
+}
+
+message CacheCommand {
+  oneof kind {
+    GetCacheSnapshot get_snapshot = 1;
+    PurgeCache purge = 2;
+    PinPrefix pin_prefix = 3;
+    UnpinPrefix unpin_prefix = 4;
+    SaveCheckpoint save_checkpoint = 5;
+    RestoreCheckpoint restore_checkpoint = 6;
+  }
+}
+
+message SessionCommand {
+  oneof kind {
+    CreateSession create_session = 1;
+    CreateBranch create_branch = 2;
+    CloseSession close_session = 3;
+    GetSessionState get_state = 4;
+    RegisterToolResult register_tool_result = 5;
+    ResumeAfterTool resume_after_tool = 6;
+  }
+}
+
+message OpsCommand {
+  oneof kind {
+    TailLogs tail_logs = 1;
+    RunDoctor run_doctor = 2;
+    RunBench run_bench = 3;
+    ExportDiagnostics export_bundle = 4;
+    GetMetricsSnapshot get_metrics = 5;
+    CancelRequest cancel_request = 6;
+  }
+}
+
+message PresetCommand {
+  oneof kind {
+    ListPresets list = 1;
+    ApplyPreset apply = 2;
+    ExportPreset export = 3;
+    ImportPreset import = 4;
+  }
+}
+
+message ServerReply {
+  ServerSnapshot snapshot = 1;
+}
+
+message ModelReply {
+  repeated ModelSummary models = 1;
+  ModelSummary model = 2;
+}
+
+message CacheReply {
+  CacheSummary summary = 1;
+}
+
+message SessionReply {
+  SessionState session = 1;
+}
+
+message OpsReply {
+  string report_path = 1;
+  string report_markdown = 2;
+  MetricsSummary metrics = 3;
+}
+
+message PresetReply {
+  repeated PresetSummary presets = 1;
+}
+
+message StartServer {}
+message StopServer {}
+message RestartServer {}
+message GetServerSnapshot {}
+message SetGlobalPolicy {
+  map<string, string> values = 1;
+}
+
+message ListModels {}
+message LoadModel {
+  string model_id = 1;
+}
+message UnloadModel {
+  string model_id = 1;
+}
+message PinModel {
+  string model_id = 1;
+}
+message UnpinModel {
+  string model_id = 1;
+}
+message WarmupModel {
+  string model_id = 1;
+}
+message SetModelPolicy {
+  string model_id = 1;
+  map<string, string> values = 2;
+}
+
+message GetCacheSnapshot {}
+message PurgeCache {
+  string scope_id = 1;
+  string tier = 2;
+}
+message PinPrefix {
+  string prefix_id = 1;
+}
+message UnpinPrefix {
+  string prefix_id = 1;
+}
+message SaveCheckpoint {
+  string session_id = 1;
+  string branch_id = 2;
+}
+message RestoreCheckpoint {
+  string checkpoint_id = 1;
+}
+
+message CreateSession {}
+message CreateBranch {
+  string session_id = 1;
+  string parent_branch_id = 2;
+}
+message CloseSession {
+  string session_id = 1;
+}
+message GetSessionState {
+  string session_id = 1;
+}
+message RegisterToolResult {
+  string session_id = 1;
+  string branch_id = 2;
+  string tool_call_id = 3;
+}
+message ResumeAfterTool {
+  string session_id = 1;
+  string branch_id = 2;
+  string snapshot_id = 3;
+}
+
+message TailLogs {}
+message RunDoctor {}
+message RunBench {}
+message ExportDiagnostics {}
+message GetMetricsSnapshot {}
+message CancelRequest {
+  string request_id = 1;
+}
+
+message ListPresets {}
+message ApplyPreset {
+  string preset_id = 1;
+}
+message ExportPreset {
+  string preset_id = 1;
+}
+message ImportPreset {
+  bytes payload = 1;
+}
+
+enum ServerState {
+  SERVER_STATE_UNSPECIFIED = 0;
+  SERVER_BOOTING = 1;
+  SERVER_READY = 2;
+  SERVER_DEGRADED = 3;
+  SERVER_DRAINING = 4;
+  SERVER_STOPPED = 5;
+  SERVER_FAILED = 6;
+}
+
+enum WorkerState {
+  WORKER_STATE_UNSPECIFIED = 0;
+  WORKER_STARTING = 1;
+  WORKER_IDLE = 2;
+  WORKER_BUSY = 3;
+  WORKER_SATURATED = 4;
+  WORKER_DRAINING = 5;
+  WORKER_EXITED = 6;
+  WORKER_CRASH_LOOP = 7;
+}
+
+enum ModelState {
+  MODEL_STATE_UNSPECIFIED = 0;
+  MODEL_DISCOVERED = 1;
+  MODEL_LOADING = 2;
+  MODEL_WARM = 3;
+  MODEL_PINNED = 4;
+  MODEL_EVICTING = 5;
+  MODEL_UNLOADED = 6;
+  MODEL_FAILED = 7;
+}
+
+enum RequestPhase {
+  REQUEST_PHASE_UNSPECIFIED = 0;
+  REQUEST_QUEUED = 1;
+  REQUEST_PREFILLING = 2;
+  REQUEST_DECODING = 3;
+  REQUEST_TOOL_WAIT = 4;
+  REQUEST_CHECKPOINTING = 5;
+  REQUEST_COMPLETED = 6;
+  REQUEST_ABORTED = 7;
+  REQUEST_FAILED = 8;
+}
+
+enum EventTopic {
+  EVENT_TOPIC_UNSPECIFIED = 0;
+  EVENT_TOPIC_SERVER = 1;
+  EVENT_TOPIC_WORKER = 2;
+  EVENT_TOPIC_MODEL = 3;
+  EVENT_TOPIC_REQUEST = 4;
+  EVENT_TOPIC_SESSION = 5;
+  EVENT_TOPIC_CACHE = 6;
+  EVENT_TOPIC_RESOURCE = 7;
+  EVENT_TOPIC_BENCHMARK = 8;
+  EVENT_TOPIC_LOG = 9;
+}
+
+message SubscribeRequest {
+  string client_instance_id = 1;
+  string last_subscription_id = 2;
+  uint64 last_seen_seq = 3;
+  repeated EventTopic topics = 4;
+}
+
+message ServerSnapshot {
+  ServerState server_state = 1;
+  repeated WorkerSummary workers = 2;
+  repeated ModelSummary models = 3;
+  QueueSummary queues = 4;
+  CacheSummary cache = 5;
+  ResourceSnapshot resources = 6;
+  MetricsSummary metrics = 7;
+  repeated SessionSummary sessions = 8;
+  repeated RecentError recent_errors = 9;
+}
+
+message WorkerSummary {
+  string worker_id = 1;
+  string worker_kind = 2;
+  WorkerState state = 3;
+  repeated string loaded_model_handles = 4;
+  uint64 inflight_requests = 5;
+  uint64 active_prefills = 6;
+  uint64 active_decodes = 7;
+  ResourceSnapshot resources = 8;
+  repeated RecentError recent_errors = 9;
+}
+
+message ModelSummary {
+  string model_id = 1;
+  string kind = 2;
+  ModelState state = 3;
+  bool pinned = 4;
+  uint64 inflight_requests = 5;
+  uint64 estimated_bytes = 6;
+  string quant_profile_id = 7;
+  uint32 max_context = 8;
+  repeated string features = 9;
+}
+
+message QueueSummary {
+  repeated QueueLaneSummary lanes = 1;
+  uint32 queued_requests = 2;
+  uint32 active_requests = 3;
+  double admission_latency_ms = 4;
+  double backpressure = 5;
+}
+
+message QueueLaneSummary {
+  string lane_id = 1;
+  uint32 queued_requests = 2;
+  uint32 active_requests = 3;
+  double queue_delay_ms_p50 = 4;
+  double queue_delay_ms_p95 = 5;
+  double admission_rate = 6;
+  double backpressure = 7;
+}
+
+message CacheSummary {
+  uint64 l1_bytes = 1;
+  uint64 l2_bytes = 2;
+  double l1_hit_rate = 3;
+  double l2_hit_rate = 4;
+  double dedup_ratio = 5;
+  double pinned_prefix_hit_rate = 6;
+  uint64 checkpoint_count = 7;
+  repeated CacheKey hot_keys = 8;
+}
+
+message CacheScopeKey {
+  string model_id = 1;
+  string revision = 2;
+  string tokenizer_hash = 3;
+  string quant_profile_id = 4;
+  string prompt_template_hash = 5;
+  string parser_mode = 6;
+  string reasoning_mode = 7;
+}
+
+message CacheKey {
+  bytes prefix_hash = 1;
+  CacheScopeKey scope = 2;
+}
+
+message CacheBlockRef {
+  string block_id = 1;
+  uint32 token_length = 2;
+  uint64 bytes = 3;
+}
+
+message SnapshotRef {
+  string snapshot_id = 1;
+  uint32 token_boundary = 2;
+}
+
+message SessionSummary {
+  string session_id = 1;
+  string active_branch_id = 2;
+}
+
+message SessionState {
+  string session_id = 1;
+  repeated BranchState branches = 2;
+  string active_branch_id = 3;
+  string latest_request_id = 4;
+  string latest_checkpoint_id = 5;
+  string latest_snapshot_id = 6;
+}
+
+message BranchState {
+  string branch_id = 1;
+  string parent_branch_id = 2;
+  string head_request_id = 3;
+  string head_checkpoint_id = 4;
+  string resume_snapshot_id = 5;
+  string last_tool_call_id = 6;
+}
+
+message ResourceSnapshot {
+  double cpu_util_pct = 1;
+  double gpu_util_pct = 2;
+  uint64 memory_used_bytes = 3;
+  uint64 memory_total_bytes = 4;
+  uint64 memory_budget_bytes = 5;
+  uint64 metal_active_bytes = 6;
+}
+
+message MetricsSummary {
+  map<string, double> values = 1;
+}
+
+message RecentError {
+  string code = 1;
+  string message = 2;
+}
+
+message PresetSummary {
+  string preset_id = 1;
+  string display_name = 2;
+}
+
+message ServerStateChanged {
+  ServerState state = 1;
+}
+
+message WorkerStateChanged {
+  string worker_id = 1;
+  WorkerState state = 2;
+}
+
+message ModelStateChanged {
+  string model_id = 1;
+  ModelState state = 2;
+}
+
+message RequestProgressEvent {
+  string request_id = 1;
+  RequestPhase phase = 2;
+  string lane = 3;
+  double queue_delay_ms = 4;
+  double priority_score = 5;
+  double backpressure = 6;
+  string worker_id = 7;
+}
+
+message SessionStateChanged {
+  SessionState state = 1;
+}
+
+message CacheStatsEvent {
+  CacheSummary summary = 1;
+}
+
+message BenchmarkProgressEvent {
+  string job_id = 1;
+  string suite = 2;
+  double pct = 3;
+}
+
+message LogEvent {
+  string level = 1;
+  string message = 2;
+}
+
+message Heartbeat {
+  int64 unix_ms = 1;
+}
+
+message ResourcePressureEvent {
+  string scope = 1;
+  ResourceSnapshot resources = 2;
+}

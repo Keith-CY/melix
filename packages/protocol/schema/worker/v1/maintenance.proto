@@ -1,0 +1,116 @@
+syntax = "proto3";
+
+package melix.worker.v1;
+
+import "worker/v1/common.proto";
+
+service MaintenanceService {
+  rpc ConvertModel(ConvertModelRequest) returns (stream ConvertModelEvent);
+  rpc GetModelInfo(GetModelInfoRequest) returns (GetModelInfoResponse);
+  rpc RunDoctor(RunDoctorRequest) returns (RunDoctorResponse);
+  rpc RunBench(RunBenchRequest) returns (stream RunBenchEvent);
+}
+
+message ConvertModelRequest {
+  string source_model = 1;
+  string output_dir = 2;
+  string weight_quant = 3;
+  string kv_quant = 4;
+  bool generate_manifest = 5;
+  bool run_smoke_test = 6;
+  map<string, string> ext = 7;
+}
+
+message ConvertModelEvent {
+  oneof payload {
+    ConvertStarted started = 1;
+    ConvertProgress progress = 2;
+    ConvertManifest manifest = 3;
+    ConvertCompleted completed = 4;
+    ConvertFailed failed = 5;
+  }
+}
+
+message ConvertStarted {
+  string job_id = 1;
+}
+
+message ConvertProgress {
+  string stage = 1;
+  float pct = 2;
+}
+
+message ConvertManifest {
+  string manifest_json = 1;
+}
+
+message ConvertCompleted {
+  string output_path = 1;
+}
+
+message ConvertFailed {
+  ErrorStatus error = 1;
+}
+
+message GetModelInfoRequest {
+  string source_model = 1;
+}
+
+message GetModelInfoResponse {
+  bool ok = 1;
+  ErrorStatus error = 2;
+  string model_kind = 3;
+  uint32 max_context = 4;
+  repeated string supported_parsers = 5;
+  repeated string supported_modalities = 6;
+}
+
+message RunDoctorRequest {
+  string model_handle = 1;
+  bool include_cache_diagnostics = 2;
+  bool include_memory_report = 3;
+}
+
+message RunDoctorResponse {
+  bool ok = 1;
+  ErrorStatus error = 2;
+  string report_markdown = 3;
+}
+
+message RunBenchRequest {
+  string model_handle = 1;
+  repeated string suites = 2;
+}
+
+message RunBenchEvent {
+  oneof payload {
+    BenchStarted started = 1;
+    BenchProgress progress = 2;
+    BenchMetric metric = 3;
+    BenchCompleted completed = 4;
+    BenchFailed failed = 5;
+  }
+}
+
+message BenchStarted {
+  string job_id = 1;
+}
+
+message BenchProgress {
+  string suite = 1;
+  float pct = 2;
+}
+
+message BenchMetric {
+  string name = 1;
+  double value = 2;
+  string unit = 3;
+}
+
+message BenchCompleted {
+  string report_path = 1;
+}
+
+message BenchFailed {
+  ErrorStatus error = 1;
+}

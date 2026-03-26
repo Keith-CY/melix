@@ -1,0 +1,104 @@
+syntax = "proto3";
+
+package melix.worker.v1;
+
+import "worker/v1/common.proto";
+
+service RuntimeService {
+  rpc Handshake(HandshakeRequest) returns (HandshakeResponse);
+  rpc LoadModel(LoadModelRequest) returns (LoadModelResponse);
+  rpc UnloadModel(UnloadModelRequest) returns (UnloadModelResponse);
+  rpc WarmupModel(WarmupModelRequest) returns (WarmupModelResponse);
+  rpc GetRuntimeStats(GetRuntimeStatsRequest) returns (GetRuntimeStatsResponse);
+  rpc ListLoadedModels(ListLoadedModelsRequest) returns (ListLoadedModelsResponse);
+  rpc Drain(DrainRequest) returns (DrainResponse);
+  rpc Shutdown(ShutdownRequest) returns (ShutdownResponse);
+}
+
+message HandshakeRequest {
+  string protocol_version = 1;
+  string worker_id = 2;
+  string controlplane_instance_id = 3;
+}
+
+message HandshakeResponse {
+  string protocol_version = 1;
+  string runtime_version = 2;
+  RuntimeCapabilities capabilities = 3;
+}
+
+message LoadModelRequest {
+  ModelSpec model = 1;
+  uint64 memory_budget_bytes = 2;
+  bool pin_on_load = 3;
+  bool warmup_after_load = 4;
+}
+
+message LoadModelResponse {
+  bool ok = 1;
+  ErrorStatus error = 2;
+  string model_handle = 3;
+  uint64 estimated_resident_bytes = 4;
+  RuntimeCapabilities resolved_capabilities = 5;
+}
+
+message UnloadModelRequest {
+  string model_handle = 1;
+  bool force = 2;
+}
+
+message UnloadModelResponse {
+  bool ok = 1;
+  ErrorStatus error = 2;
+}
+
+message WarmupModelRequest {
+  string model_handle = 1;
+  repeated ChatMessage synthetic_messages = 2;
+}
+
+message WarmupModelResponse {
+  bool ok = 1;
+  ErrorStatus error = 2;
+  uint64 warmup_ms = 3;
+}
+
+message RuntimeStats {
+  string worker_state = 1;
+  uint64 resident_bytes = 2;
+  uint64 active_requests = 3;
+  uint64 active_prefills = 4;
+  uint64 active_decodes = 5;
+  uint64 l1_cache_bytes = 6;
+  uint64 l2_cache_bytes = 7;
+  double l1_hit_rate = 8;
+  double l2_hit_rate = 9;
+}
+
+message GetRuntimeStatsRequest {}
+
+message GetRuntimeStatsResponse {
+  RuntimeStats stats = 1;
+}
+
+message ListLoadedModelsRequest {}
+
+message ListLoadedModelsResponse {
+  repeated string model_handles = 1;
+}
+
+message DrainRequest {
+  bool stop_accepting_new = 1;
+}
+
+message DrainResponse {
+  bool ok = 1;
+}
+
+message ShutdownRequest {
+  bool flush_l2 = 1;
+}
+
+message ShutdownResponse {
+  bool ok = 1;
+}

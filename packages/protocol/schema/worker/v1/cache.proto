@@ -1,0 +1,92 @@
+syntax = "proto3";
+
+package melix.worker.v1;
+
+import "worker/v1/common.proto";
+
+service CacheService {
+  rpc GetCacheStats(GetCacheStatsRequest) returns (GetCacheStatsResponse);
+  rpc PinPrefix(PinPrefixRequest) returns (PinPrefixResponse);
+  rpc UnpinPrefix(UnpinPrefixRequest) returns (UnpinPrefixResponse);
+  rpc SaveBoundarySnapshot(SaveBoundarySnapshotRequest) returns (SaveBoundarySnapshotResponse);
+  rpc RestoreBoundarySnapshot(RestoreBoundarySnapshotRequest) returns (RestoreBoundarySnapshotResponse);
+  rpc PurgeCache(PurgeCacheRequest) returns (PurgeCacheResponse);
+}
+
+message CacheStats {
+  uint64 l1_bytes = 1;
+  uint64 l2_bytes = 2;
+  uint64 block_count = 3;
+  uint64 pinned_prefix_count = 4;
+  uint64 snapshot_count = 5;
+  double l1_hit_rate = 6;
+  double l2_hit_rate = 7;
+  double dedup_ratio = 8;
+}
+
+message GetCacheStatsRequest {}
+
+message GetCacheStatsResponse {
+  CacheStats stats = 1;
+}
+
+message PrefixRef {
+  string prefix_id = 1;
+  CacheScope scope = 2;
+  CacheKey cache_key = 3;
+}
+
+message PinPrefixRequest {
+  PrefixRef prefix = 1;
+}
+
+message PinPrefixResponse {
+  bool ok = 1;
+  ErrorStatus error = 2;
+}
+
+message UnpinPrefixRequest {
+  PrefixRef prefix = 1;
+}
+
+message UnpinPrefixResponse {
+  bool ok = 1;
+  ErrorStatus error = 2;
+}
+
+message SaveBoundarySnapshotRequest {
+  string request_id = 1;
+  string decode_handle = 2;
+  uint32 token_boundary = 3;
+}
+
+message SaveBoundarySnapshotResponse {
+  bool ok = 1;
+  ErrorStatus error = 2;
+  string snapshot_id = 3;
+}
+
+message RestoreBoundarySnapshotRequest {
+  string snapshot_id = 1;
+}
+
+message RestoreBoundarySnapshotResponse {
+  bool ok = 1;
+  ErrorStatus error = 2;
+  string decode_handle = 3;
+  string block_table_id = 4;
+  BlockTable block_table = 5;
+}
+
+message PurgeCacheRequest {
+  CacheScope scope = 1;
+  CacheKey cache_key = 2;
+  string tier = 3;
+  bool include_pinned = 4;
+}
+
+message PurgeCacheResponse {
+  bool ok = 1;
+  ErrorStatus error = 2;
+  uint64 purged_blocks = 3;
+}

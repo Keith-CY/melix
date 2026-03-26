@@ -1,0 +1,238 @@
+syntax = "proto3";
+
+package melix.worker.v1;
+
+import "worker/v1/common.proto";
+
+service InferenceService {
+  rpc Generate(GenerateRequest) returns (stream ExecuteEvent);
+  rpc Prefill(PrefillRequest) returns (PrefillResponse);
+  rpc Decode(DecodeRequest) returns (stream ExecuteEvent);
+  rpc Abort(AbortRequest) returns (AbortResponse);
+
+  rpc Embed(EmbedRequest) returns (EmbedResponse);
+  rpc Rerank(RerankRequest) returns (RerankResponse);
+  rpc Transcribe(TranscribeRequest) returns (TranscribeResponse);
+  rpc ImageGenerate(ImageGenerateRequest) returns (ImageGenerateResponse);
+  rpc ImageEdit(ImageEditRequest) returns (ImageEditResponse);
+}
+
+message ExecutionMetadata {
+  RequestIdentity id = 1;
+  string model_handle = 2;
+  CacheScope scope = 3;
+  CacheKey cache_key = 4;
+  SchedulingHints scheduling = 5;
+  ToolConfig tool_config = 6;
+  ReasoningConfig reasoning = 7;
+  CacheHints cache_hints = 8;
+  map<string, string> ext = 9;
+}
+
+message ExecutionMode {
+  oneof mode {
+    GenerateMode generate = 1;
+    PrefillMode prefill = 2;
+    DecodeMode decode = 3;
+  }
+}
+
+message GenerateMode {}
+
+message PrefillMode {
+  uint32 prefill_step_size = 1;
+}
+
+message DecodeMode {
+  uint32 max_output_tokens = 1;
+}
+
+message GenerateRequest {
+  ExecutionMetadata execution = 1;
+  repeated ChatMessage messages = 2;
+  SamplingConfig sampling = 3;
+  bool stream = 4;
+  bool return_usage = 5;
+}
+
+message PrefillRequest {
+  ExecutionMetadata execution = 1;
+  repeated ChatMessage messages = 2;
+  uint32 prefill_step_size = 3;
+}
+
+message PrefillResponse {
+  bool ok = 1;
+  ErrorStatus error = 2;
+  string decode_handle = 3;
+  string block_table_id = 4;
+  BlockTable block_table = 5;
+  string restored_snapshot_id = 6;
+  uint32 prompt_tokens = 7;
+}
+
+message DecodeRequest {
+  ExecutionMetadata execution = 1;
+  string decode_handle = 2;
+  SamplingConfig sampling = 3;
+  uint32 max_output_tokens = 4;
+  bool return_usage = 5;
+}
+
+message AbortRequest {
+  string request_id = 1;
+}
+
+message AbortResponse {
+  bool ok = 1;
+  bool found = 2;
+}
+
+message ExecuteEvent {
+  string request_id = 1;
+  string execution_kind = 2;
+  uint64 seq = 3;
+
+  oneof payload {
+    PrefillStarted prefill_started = 10;
+    PrefillProgress prefill_progress = 11;
+    TokenDelta token_delta = 12;
+    ReasoningDelta reasoning_delta = 13;
+    ToolCallDelta tool_call_delta = 14;
+    UsageDelta usage_delta = 15;
+    CacheDecision cache_decision = 16;
+    BoundarySnapshotCreated snapshot_created = 17;
+    Completed completed = 18;
+    ErrorEvent error = 19;
+    Heartbeat heartbeat = 20;
+  }
+}
+
+message PrefillStarted {
+  uint32 input_tokens = 1;
+  bool cache_hit_l1 = 2;
+  bool cache_hit_l2 = 3;
+}
+
+message PrefillProgress {
+  uint32 processed_tokens = 1;
+  uint32 total_tokens = 2;
+}
+
+message TokenDelta {
+  string text = 1;
+}
+
+message ReasoningDelta {
+  string text = 1;
+}
+
+message ToolCallDelta {
+  string call_id = 1;
+  string tool_name = 2;
+  string arguments_json_fragment = 3;
+}
+
+message UsageDelta {
+  uint32 prompt_tokens = 1;
+  uint32 completion_tokens = 2;
+}
+
+message CacheDecision {
+  string block_table_id = 1;
+  string restored_snapshot_id = 2;
+  bool persisted_to_l2 = 3;
+}
+
+message BoundarySnapshotCreated {
+  string snapshot_id = 1;
+  uint32 token_boundary = 2;
+}
+
+message Completed {
+  string finish_reason = 1;
+  string assistant_text = 2;
+  string reasoning_text = 3;
+}
+
+message ErrorEvent {
+  ErrorStatus error = 1;
+}
+
+message Heartbeat {
+  int64 unix_ms = 1;
+}
+
+message EmbedRequest {
+  RequestIdentity id = 1;
+  string model_handle = 2;
+  repeated string inputs = 3;
+}
+
+message Embedding {
+  repeated float values = 1;
+}
+
+message EmbedResponse {
+  repeated Embedding embeddings = 1;
+  ErrorStatus error = 2;
+}
+
+message RerankRequest {
+  RequestIdentity id = 1;
+  string model_handle = 2;
+  string query = 3;
+  repeated string documents = 4;
+  uint32 top_k = 5;
+}
+
+message RerankItem {
+  uint32 index = 1;
+  float score = 2;
+}
+
+message RerankResponse {
+  repeated RerankItem items = 1;
+  ErrorStatus error = 2;
+}
+
+message TranscribeRequest {
+  RequestIdentity id = 1;
+  string model_handle = 2;
+  bytes audio_bytes = 3;
+  string format = 4;
+  string task = 5;
+}
+
+message TranscribeResponse {
+  string text = 1;
+  ErrorStatus error = 2;
+}
+
+message ImageGenerateRequest {
+  RequestIdentity id = 1;
+  string model_handle = 2;
+  string prompt = 3;
+  string size = 4;
+  uint32 n = 5;
+  map<string, string> ext = 6;
+}
+
+message ImageGenerateResponse {
+  repeated bytes images = 1;
+  ErrorStatus error = 2;
+}
+
+message ImageEditRequest {
+  RequestIdentity id = 1;
+  string model_handle = 2;
+  string prompt = 3;
+  bytes image = 4;
+  float strength = 5;
+  string size = 6;
+}
+
+message ImageEditResponse {
+  repeated bytes images = 1;
+  ErrorStatus error = 2;
+}

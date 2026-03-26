@@ -1,0 +1,168 @@
+syntax = "proto3";
+
+package melix.worker.v1;
+
+message ErrorStatus {
+  string code = 1;
+  string message = 2;
+  bool retriable = 3;
+  map<string, string> details = 4;
+}
+
+message ModelSpec {
+  string model_id = 1;
+  string model_path = 2;
+  string model_kind = 3;
+  string revision = 4;
+  string tokenizer_hash = 5;
+  string quant_profile_id = 6;
+  string parser_mode = 7;
+  string reasoning_mode = 8;
+  uint32 max_context = 9;
+  map<string, string> ext = 10;
+}
+
+message RuntimeCapabilities {
+  CacheCapabilities cache = 1;
+  ExecutionCapabilities execution = 2;
+  ParserCapabilities parsing = 3;
+  MultimodalCapabilities multimodal = 4;
+  repeated Capability ext = 5;
+}
+
+message CacheCapabilities {
+  bool supports_prefix_cache = 1;
+  bool supports_paged_cache = 2;
+  bool supports_disk_cache = 3;
+  repeated string kv_quant_profiles = 4;
+  bool supports_boundary_snapshots = 5;
+}
+
+message ExecutionCapabilities {
+  bool supports_continuous_batching = 1;
+  bool supports_speculative_decoding = 2;
+}
+
+message ParserCapabilities {
+  bool supports_tool_call_auto_parsing = 1;
+  bool supports_reasoning_separation = 2;
+  repeated string supported_tool_parsers = 3;
+  repeated string supported_reasoning_parsers = 4;
+}
+
+message MultimodalCapabilities {
+  bool supports_vision = 1;
+  bool supports_audio = 2;
+  bool supports_image_generation = 3;
+}
+
+message Capability {
+  string name = 1;
+  map<string, string> metadata = 2;
+}
+
+message CacheScope {
+  string model_id = 1;
+  string revision = 2;
+  string tokenizer_hash = 3;
+  string quant_profile_id = 4;
+  string prompt_template_hash = 5;
+  string parser_mode = 6;
+  string reasoning_mode = 7;
+  string multimodal_adapter_hash = 8;
+}
+
+message CacheKey {
+  bytes prefix_hash = 1;
+  bytes fingerprint_hash = 2;
+  string scope_id = 3;
+}
+
+message SamplingConfig {
+  float temperature = 1;
+  float top_p = 2;
+  uint32 top_k = 3;
+  float frequency_penalty = 4;
+  float presence_penalty = 5;
+  uint32 max_output_tokens = 6;
+  repeated string stop = 7;
+  uint32 seed = 8;
+}
+
+message ReasoningConfig {
+  bool enabled = 1;
+  string parser = 2;
+  bool separate_stream = 3;
+}
+
+message ToolDefinition {
+  string name = 1;
+  string description = 2;
+  string json_schema = 3;
+}
+
+message ToolConfig {
+  repeated ToolDefinition tools = 1;
+  string schema_format = 2;
+  string schema_version = 3;
+  string toolset_version = 4;
+  string parser = 5;
+  string parser_contract_version = 6;
+  string tool_choice = 7;
+}
+
+message MessagePart {
+  oneof part {
+    string text = 1;
+    string image_uri = 2;
+    bytes image_bytes = 3;
+    string audio_uri = 4;
+    bytes audio_bytes = 5;
+  }
+}
+
+message ChatMessage {
+  string role = 1;
+  string name = 2;
+  repeated MessagePart parts = 3;
+}
+
+message CacheHints {
+  bool allow_l1 = 1;
+  bool allow_l2 = 2;
+  bool persist_l2 = 3;
+  bool prefer_hot_prefix = 4;
+  bool save_boundary_snapshot = 5;
+  string restore_snapshot_id = 6;
+  repeated string pin_prefix_ids = 7;
+  string cache_policy = 8;
+  uint32 preferred_block_size = 9;
+}
+
+message RequestIdentity {
+  string request_id = 1;
+  string session_id = 2;
+  string branch_id = 3;
+  string parent_request_id = 4;
+  string workflow_run_id = 5;
+  string workflow_node_id = 6;
+  string latency_class = 7;
+}
+
+message SchedulingHints {
+  int32 priority = 1;
+  string lane = 2;
+  bool latency_sensitive = 3;
+  uint32 queue_delay_ms = 4;
+}
+
+message BlockTable {
+  repeated BlockRef blocks = 1;
+}
+
+message BlockRef {
+  string block_id = 1;
+  int32 token_start = 2;
+  int32 token_end = 3;
+  uint64 bytes = 4;
+}
