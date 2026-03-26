@@ -1,0 +1,10 @@
+version: v2
+plugins:
+  - local: protoc-gen-swift
+    out: packages/protocol/swift
+    opt:
+      - Visibility=Public
+  - local: python
+    out: packages/protocol/python
+  - local: grpc_python
+    out: packages/protocol/python

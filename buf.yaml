@@ -1,0 +1,9 @@
+version: v2
+modules:
+  - path: packages/protocol/schema
+lint:
+  use:
+    - STANDARD
+breaking:
+  use:
+    - FILE

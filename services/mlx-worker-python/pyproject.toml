@@ -1,0 +1,21 @@
+[project]
+name = "melix-mlx-worker"
+version = "0.1.0"
+description = "Python worker for the Melix execution plane."
+requires-python = ">=3.12"
+dependencies = [
+  "coverage>=7.10.0",
+  "grpcio>=1.71.0",
+  "grpcio-tools>=1.71.0",
+  "protobuf>=5.29.0",
+  "pytest>=8.3.0",
+]
+
+[project.optional-dependencies]
+mlx = [
+  "mlx>=0.25.0",
+  "mlx-lm>=0.22.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

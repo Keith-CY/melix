@@ -1,2 +1,9 @@
 pre-docs
 docs/product-brief.md
+.build
+.swift-home
+.uv-cache
+.venv
+__pycache__/
+.pytest_cache/
+.coverage
