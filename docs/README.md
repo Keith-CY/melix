@@ -31,6 +31,7 @@ Current phase-status and planning documents:
 
 - `plans/2026-03-27-phase-0-thin-path.md`
 - `plans/2026-03-27-swift-text-runtime-direction.md`
+- `plans/2026-03-28-post-phase-0-coding-milestones.md`
 - `plans/2026-03-27-phase-1-swift-text-worker.md`
 - `plans/2026-03-27-phase-2-text-runtime-depth.md`
 - `plans/2026-03-27-phase-3-cache-session-recovery.md`
