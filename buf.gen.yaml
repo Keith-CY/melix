@@ -4,6 +4,11 @@ plugins:
     out: packages/protocol/swift
     opt:
       - Visibility=Public
+  - local: protoc-gen-grpc-swift-2
+    out: packages/protocol/swift
+    opt:
+      - Visibility=Public
+      - Availability=macOS 15.0
   - local: python
     out: packages/protocol/python
   - local: grpc_python

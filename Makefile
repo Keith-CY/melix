@@ -14,6 +14,7 @@ proto:
 
 swift-test:
 	mkdir -p "$(SWIFT_HOME)" "$(CLANG_MODULE_CACHE_PATH)"
+	HOME="$(SWIFT_HOME)" CLANG_MODULE_CACHE_PATH="$(CLANG_MODULE_CACHE_PATH)" swift test --package-path packages/protocol/swift
 	HOME="$(SWIFT_HOME)" CLANG_MODULE_CACHE_PATH="$(CLANG_MODULE_CACHE_PATH)" swift test --package-path services/control-plane-swift
 	HOME="$(SWIFT_HOME)" CLANG_MODULE_CACHE_PATH="$(CLANG_MODULE_CACHE_PATH)" swift test --package-path apps/macos-menubar
 

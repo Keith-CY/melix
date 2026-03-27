@@ -46,6 +46,7 @@ Deliver a production-shaped Phase 1 implementation that makes the Swift text wor
   - Swift code generation currently produces protobuf messages only; there are no Swift worker RPC stubs yet.
   - The Phase 0 deterministic path must remain the default integration path until the Swift text worker has stable smoke coverage.
   - The control plane currently assumes a single worker client for the active text path.
+  - The gRPC Swift v2 runtime used for shared Swift worker stubs requires a macOS 15 package baseline for the Swift protocol, control-plane, and desktop workspaces.
   - Later phases will need protocol room for speculative decode, accelerated prefill, cache tiers, model operations, and richer desktop workflows.
 
 ## Assumptions

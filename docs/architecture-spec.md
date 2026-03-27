@@ -4,7 +4,7 @@ Date: 2026-03-27
 
 ## Summary
 
-Melix is a native control plane plus worker-runtime architecture for local AI execution on Apple Silicon. The system is built around four layers:
+Melix is a native control plane plus worker-runtime architecture for local AI execution on Apple Silicon. The Swift runtime baseline for the shared protocol and worker path is macOS 15 or newer. The system is built around four layers:
 
 1. A native SwiftUI desktop app for local operations, chat, image workflows, and model tools.
 2. A Swift control plane daemon that owns system truth.
