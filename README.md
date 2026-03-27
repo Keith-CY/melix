@@ -34,6 +34,31 @@ make integration-test
 make coverage
 ```
 
+## Local Operator Loop
+
+Bring up the deterministic phase-0 stack:
+
+```bash
+bash scripts/dev_up.sh
+curl -sS http://127.0.0.1:11434/v1/models
+```
+
+Shut it down:
+
+```bash
+bash scripts/dev_down.sh
+```
+
+Optional real MLX smoke path:
+
+```bash
+MELIX_DEV_TEXT_MODEL_PATH="<local path or hf repo>" \
+MELIX_BACKEND_MODE=auto \
+bash scripts/dev_up.sh
+```
+
+`auto` is the real MLX runtime path. `deterministic` remains the default integration and repeatability path.
+
 `make proto` currently generates:
 
 - Swift protobuf message types into `packages/protocol/swift`

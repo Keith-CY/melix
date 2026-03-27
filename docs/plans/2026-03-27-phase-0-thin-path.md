@@ -16,9 +16,9 @@ This document is the current phase-0 source of truth, not a speculative implemen
 
 Current status:
 
-- `Task 1` through `Task 4C` are complete in local `main`.
-- The thin path already supports generated protocol artifacts, a Swift control plane, a Python worker, SSE chat streaming, abort bridging, a live worker transport, and real MLX token streaming in worker `auto` mode.
-- The remaining phase-0 work is limited to the menu bar shell and broader integration/developer workflow completion.
+- `Task 1` through `Task 6` are complete in local `main`.
+- The thin path now supports generated protocol artifacts, a Swift control plane, a Python worker, SSE chat streaming, abort bridging, a live worker transport, real MLX token streaming in worker `auto` mode, a menu bar operator shell, and a reproducible local operator workflow.
+- Phase 0 is closed. Follow-on work now belongs to the next implementation phase rather than this plan.
 
 Detailed historical execution notes remain in:
 
@@ -50,7 +50,7 @@ Completed outcome:
 
 Key caveat:
 
-- the menu bar app still does not consume this XPC surface beyond the placeholder target
+- this XPC surface is still phase-0 scoped and intentionally limited to operator workflows, not rich settings or history flows
 
 ### Task 3: Worker runtime slice
 
@@ -102,60 +102,31 @@ Key caveat:
 
 - true MLX smoke verification requires `MELIX_DEV_TEXT_MODEL_PATH`; if the model source is missing or invalid, `auto` mode must fail explicitly
 
-## Remaining Tasks
-
 ### Task 5: Minimal menu bar shell
 
-Goal:
+Completed outcome:
 
-- replace the current placeholder app with a real XPC-backed operator shell
+- the menu bar target is now a real operator shell instead of a placeholder executable
+- launch performs handshake hydration and subscribes to control-plane state changes
+- the shell renders server state and development-model state and exposes load/unload actions
+- menu bar tests now cover launcher wiring, state hydration, model actions, selector routing, and renderer behavior
 
-Required behavior:
+Key caveat:
 
-- connect to the control plane over XPC on launch
-- perform handshake and hydrate runtime state from the initial snapshot
-- render server and model state for the development text model
-- expose load and unload actions for the model
-- update UI state from control-plane event subscriptions
-
-Out of scope:
-
-- settings persistence
-- cache inspector
-- request history
-- branch or session UI
-- worker-direct access
-
-Acceptance for Task 5:
-
-- `swift test --package-path apps/macos-menubar` covers handshake hydration, model rendering, load/unload dispatch, and event-driven state updates
-- the app target is no longer only a placeholder print entrypoint
+- the shell remains intentionally read-mostly and phase-0 focused; settings, cache inspection, and request history stay out of scope
 
 ### Task 6: Integration and developer workflow completion
 
-Goal:
+Completed outcome:
 
-- turn the current single live-path smoke test into a more complete phase-0 operator workflow
+- `make integration-test` now covers streamed chat, abort behavior, and `/v1/models` as separate cases
+- `scripts/dev_up.sh` and `scripts/dev_down.sh` provide a reproducible local operator loop
+- README documents the deterministic default path and the optional real-MLX smoke path gated by `MELIX_DEV_TEXT_MODEL_PATH`
+- operator smoke has been verified with `dev_up`, `curl /v1/models`, and `dev_down`
 
-Required behavior:
+Key caveat:
 
-- keep deterministic mode as the default integration path
-- add explicit integration coverage for request abort
-- add explicit integration coverage for `/v1/models`
-- add stable local scripts for bringing worker and control plane up and down
-- document one optional MLX smoke path gated by `MELIX_DEV_TEXT_MODEL_PATH`
-
-Out of scope:
-
-- CI matrix expansion for multiple model families
-- production benchmarking harnesses
-- scheduler or cache stress tests
-
-Acceptance for Task 6:
-
-- `make integration-test` covers streaming, abort, and models visibility
-- local dev scripts provide a reproducible startup and cleanup flow
-- the optional MLX smoke path is documented and runnable when a real model source is configured
+- the optional real-MLX smoke path still depends on an explicitly configured model source and does not yet produce benchmark-grade latency reporting
 
 ## Acceptance Criteria
 
@@ -169,10 +140,10 @@ Phase-0 status as of this plan:
 - `GET /v1/models` reflects current model state: complete
 - unsupported worker RPC surfaces return explicit `unimplemented` responses: complete
 - real MLX generation support exists in worker `auto` mode: complete
-- the menu bar shell shows runtime state through XPC: remaining
-- the integration/developer workflow is broader than a single smoke path: remaining
+- the menu bar shell shows runtime state through XPC: complete
+- the integration/developer workflow is broader than a single smoke path: complete
 
-Phase 0 is complete only when the remaining menu bar and workflow items are also complete.
+Phase 0 is complete.
 
 ## Verification Baseline
 
@@ -189,8 +160,9 @@ Current measured baseline:
 
 - Swift control plane coverage: `95.50%`
 - Python worker coverage: `97%`
-- macOS menu bar coverage: `100%`
-- deterministic live integration test: passing
+- macOS menu bar coverage: `97.93%`
+- deterministic live integration suite: `3` passing tests
+- local operator smoke via `dev_up` / `curl /v1/models` / `dev_down`: passing
 - MLX runtime latency and throughput metrics: `N/A` until a real `MELIX_DEV_TEXT_MODEL_PATH` is configured for smoke verification
 
 ## Defaults and Assumptions
