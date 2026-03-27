@@ -3,7 +3,7 @@ from packages.protocol.python.worker.v1 import common_pb2, inference_pb2, runtim
 from worker.grpc_server import WorkerInferenceService, WorkerRuntimeService
 from worker.model_registry.catalog import WorkerModelCatalog
 from worker.registry import WorkerRegistry
-from worker.runtime.mlx_text_runtime import MLXTextRuntime
+from worker.runtime.mlx_text_runtime import MLXTextRuntime, RuntimeTokenEvent
 
 
 class StreamingFakeBackend:
@@ -16,8 +16,8 @@ class StreamingFakeBackend:
         return 2048
 
     def generate_tokens(self, loaded_model, prompt, sampling, cancel_event):
-        yield "Hello"
-        yield " world"
+        yield RuntimeTokenEvent(text="Hello", prompt_tokens=5, completion_tokens=1)
+        yield RuntimeTokenEvent(text=" world", prompt_tokens=5, completion_tokens=2, finish_reason="length")
 
 
 def build_services():
@@ -58,8 +58,11 @@ def test_generate_streams_token_and_terminal_completion() -> None:
     completed = next(event.completed for event in events if event.HasField("completed"))
 
     assert token_text == ["Hello", " world"]
-    assert completed.finish_reason == "stop"
+    assert completed.finish_reason == "length"
     assert completed.assistant_text == "Hello world"
+    usage = next(event.usage_delta for event in events if event.HasField("usage_delta"))
+    assert usage.prompt_tokens == 5
+    assert usage.completion_tokens == 2
 
 
 def test_prefill_returns_structured_unimplemented_error() -> None:

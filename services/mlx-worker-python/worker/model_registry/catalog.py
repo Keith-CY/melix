@@ -1,20 +1,24 @@
 from __future__ import annotations
 
+import os
+
 from packages.protocol.python.worker.v1 import common_pb2
 
 
 class WorkerModelCatalog:
-    def __init__(self) -> None:
-        self._models = {"melix-dev-text": self.dev_text_model()}
+    def __init__(self, environment: dict[str, str] | None = None) -> None:
+        self._environment = dict(environment or os.environ)
+        self._models = {"melix-dev-text": self.dev_text_model(environment=self._environment)}
 
     def get(self, model_id: str) -> common_pb2.ModelSpec | None:
         return self._models.get(model_id)
 
     @staticmethod
-    def dev_text_model() -> common_pb2.ModelSpec:
+    def dev_text_model(environment: dict[str, str] | None = None) -> common_pb2.ModelSpec:
+        environment = dict(environment or os.environ)
         return common_pb2.ModelSpec(
             model_id="melix-dev-text",
-            model_path="models/melix-dev-text",
+            model_path=environment.get("MELIX_DEV_TEXT_MODEL_PATH", "models/melix-dev-text"),
             model_kind="text",
             revision="dev",
             tokenizer_hash="tok-dev",

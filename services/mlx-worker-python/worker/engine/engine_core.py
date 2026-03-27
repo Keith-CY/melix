@@ -19,42 +19,56 @@ class EngineCore:
             return
 
         state = self._registry.start_request(request_id)
-        prompt = self._registry.runtime.render_prompt(request.messages)
+        prompt = self._registry.runtime.render_prompt(request.messages, loaded_model=loaded_model.runtime_model)
+        last_runtime_event = None
 
         try:
-            for token in self._registry.runtime.generate_tokens(
+            for runtime_event in self._registry.runtime.generate_tokens(
                 loaded_model.runtime_model,
                 prompt,
                 request.sampling,
                 state.cancel_event,
             ):
+                last_runtime_event = runtime_event
                 if state.cancel_event.is_set():
                     break
-                state.append_token(token)
-                yield inference_pb2.ExecuteEvent(
-                    request_id=request_id,
-                    execution_kind="generate",
-                    seq=state.allocate_seq(),
-                    token_delta=inference_pb2.TokenDelta(text=token),
-                )
+                if runtime_event.text:
+                    state.append_token(runtime_event.text)
+                    yield inference_pb2.ExecuteEvent(
+                        request_id=request_id,
+                        execution_kind="generate",
+                        seq=state.allocate_seq(),
+                        token_delta=inference_pb2.TokenDelta(text=runtime_event.text),
+                    )
 
             if request.return_usage and not state.cancel_event.is_set():
+                prompt_tokens = len(prompt.split())
+                completion_tokens = len(state.emitted_tokens)
+                if last_runtime_event is not None:
+                    prompt_tokens = int(last_runtime_event.prompt_tokens or prompt_tokens)
+                    completion_tokens = int(last_runtime_event.completion_tokens or completion_tokens)
                 yield inference_pb2.ExecuteEvent(
                     request_id=request_id,
                     execution_kind="generate",
                     seq=state.allocate_seq(),
                     usage_delta=inference_pb2.UsageDelta(
-                        prompt_tokens=len(prompt.split()),
-                        completion_tokens=len(state.emitted_tokens),
+                        prompt_tokens=prompt_tokens,
+                        completion_tokens=completion_tokens,
                     ),
                 )
+
+            finish_reason = "stop"
+            if state.cancel_event.is_set():
+                finish_reason = "cancelled"
+            elif last_runtime_event is not None and last_runtime_event.finish_reason:
+                finish_reason = last_runtime_event.finish_reason
 
             yield inference_pb2.ExecuteEvent(
                 request_id=request_id,
                 execution_kind="generate",
                 seq=state.allocate_seq(),
                 completed=inference_pb2.Completed(
-                    finish_reason="cancelled" if state.cancel_event.is_set() else "stop",
+                    finish_reason=finish_reason,
                     assistant_text=state.assistant_text,
                 ),
             )
