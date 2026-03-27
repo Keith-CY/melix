@@ -1,3 +1,4 @@
+import Foundation
 import MelixWorkerProtocol
 
 struct LoadedModelRecord: @unchecked Sendable {
@@ -86,6 +87,16 @@ actor WorkerRuntimeRegistry {
         loadedModels[handle]
     }
 
+    func startRequest() {
+        activeRequests += 1
+    }
+
+    func finishRequest() {
+        if activeRequests > 0 {
+            activeRequests -= 1
+        }
+    }
+
     func listLoadedModels() -> [String] {
         loadedModels.keys.sorted()
     }
@@ -94,9 +105,33 @@ actor WorkerRuntimeRegistry {
         loadedModels.count
     }
 
+    func generateEvents(
+        modelHandle: String,
+        messages: [Melix_Worker_V1_ChatMessage],
+        sampling: Melix_Worker_V1_SamplingConfig,
+        shouldAbort: @escaping @Sendable () -> Bool
+    ) async throws -> AsyncThrowingStream<TextGenerationEvent, Error> {
+        guard let loaded = loadedModels[modelHandle] else {
+            throw WorkerRuntimeRegistryError.unknownModelHandle
+        }
+
+        return try await runtime.generateEvents(
+            model: loaded.runtimeModel,
+            messages: messages,
+            sampling: sampling,
+            shouldAbort: shouldAbort
+        )
+    }
+
     func runtimeStats() -> Melix_Worker_V1_RuntimeStats {
         var stats = Melix_Worker_V1_RuntimeStats()
-        stats.workerState = draining ? "draining" : "idle"
+        if draining {
+            stats.workerState = "draining"
+        } else if activeRequests > 0 {
+            stats.workerState = "busy"
+        } else {
+            stats.workerState = "idle"
+        }
         stats.residentBytes = loadedModels.values.reduce(0) { $0 + $1.estimatedResidentBytes }
         stats.activeRequests = activeRequests
         stats.activePrefills = 0
@@ -110,6 +145,17 @@ actor WorkerRuntimeRegistry {
 
     func setDraining(_ draining: Bool) {
         self.draining = draining
+    }
+}
+
+enum WorkerRuntimeRegistryError: Error, LocalizedError {
+    case unknownModelHandle
+
+    var errorDescription: String? {
+        switch self {
+        case .unknownModelHandle:
+            return "Unknown model handle."
+        }
     }
 }
 

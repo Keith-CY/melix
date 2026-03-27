@@ -1,6 +1,18 @@
 import XCTest
 import GRPCCore
 import MelixWorkerProtocol
+#if canImport(MLX)
+import MLX
+#endif
+#if canImport(MLXLMCommon)
+import MLXLMCommon
+#endif
+#if canImport(MLXLLM)
+import MLXLLM
+#endif
+#if canImport(Tokenizers)
+import Tokenizers
+#endif
 @testable import MelixTextWorkerCore
 
 @available(macOS 15.0, *)
@@ -44,6 +56,17 @@ final class WorkerScaffoldTests: XCTestCase {
         abortRegistry.register("req-2")
         abortRegistry.remove("req-2")
         XCTAssertFalse(abortRegistry.abort("req-2"))
+    }
+
+    func testAbortRegistryExposesHandleStateBeforeAndAfterAbort() {
+        let abortRegistry = AbortRegistry()
+        let handle = abortRegistry.register("req-handle")
+
+        XCTAssertFalse(handle.isAborted)
+        XCTAssertNotNil(abortRegistry.handle(for: "req-handle"))
+        XCTAssertTrue(abortRegistry.abort("req-handle"))
+        XCTAssertTrue(handle.isAborted)
+        XCTAssertNil(abortRegistry.handle(for: "req-handle"))
     }
 
     func testMetricsStoreTracksCountersAndTimings() {
@@ -161,6 +184,276 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual((loaded.storage as? [String: String])?["model_source"], "melix-dev-text")
     }
 
+    func testAutoSwiftMLXBackendUsesDirectoryLoaderForExistingPath() async throws {
+        let tempDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: tempDirectory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDirectory) }
+
+        let backend = AutoSwiftMLXBackend(
+            directoryLoader: { directoryURL in
+                LoadedTextModel(storage: ["directory": directoryURL.path], residentBytesHint: 1)
+            },
+            identifierLoader: { _, _ in
+                XCTFail("identifier loader should not be used for an existing directory path")
+                return LoadedTextModel(storage: [:], residentBytesHint: 0)
+            }
+        )
+        var spec = Melix_Worker_V1_ModelSpec()
+        spec.modelID = "melix-dev-text"
+        spec.modelPath = tempDirectory.path
+
+        let loaded = try await backend.loadModel(spec: spec)
+
+        XCTAssertEqual((loaded.storage as? [String: String])?["directory"], tempDirectory.path)
+    }
+
+    func testAutoSwiftMLXBackendUsesIdentifierLoaderForRemoteModelSources() async throws {
+        let backend = AutoSwiftMLXBackend(
+            directoryLoader: { _ in
+                XCTFail("directory loader should not be used for remote model identifiers")
+                return LoadedTextModel(storage: [:], residentBytesHint: 0)
+            },
+            identifierLoader: { modelSource, revision in
+                LoadedTextModel(
+                    storage: ["model_source": modelSource, "revision": revision],
+                    residentBytesHint: 2
+                )
+            }
+        )
+        var spec = Melix_Worker_V1_ModelSpec()
+        spec.modelID = "melix-dev-text"
+        spec.modelPath = "mlx-community/melix-dev-text-4bit"
+        spec.revision = "dev-branch"
+
+        let loaded = try await backend.loadModel(spec: spec)
+
+        XCTAssertEqual((loaded.storage as? [String: String])?["model_source"], "mlx-community/melix-dev-text-4bit")
+        XCTAssertEqual((loaded.storage as? [String: String])?["revision"], "dev-branch")
+    }
+
+    func testAutoSwiftMLXBackendGenerateEventsUsesPreparedGenerationFactory() async throws {
+        let backend = AutoSwiftMLXBackend(
+            preparedGenerationFactory: { _, _, _ in
+                PreparedTextGeneration(
+                    promptTokens: 4,
+                    runtimeEvents: AsyncThrowingStream { continuation in
+                        continuation.yield(.chunk("Hello"))
+                        continuation.yield(.chunk(" world"))
+                        continuation.yield(.summary(
+                            TextGenerationSummary(
+                                promptTokens: 4,
+                                completionTokens: 2,
+                                tokensPerSecond: 42
+                            )
+                        ))
+                        continuation.finish()
+                    }
+                )
+            }
+        )
+
+        let stream = try await backend.generateEvents(
+            model: LoadedTextModel(storage: ["kind": "fake"]),
+            messages: [makeUserMessage("hello")],
+            sampling: Melix_Worker_V1_SamplingConfig(),
+            shouldAbort: { false }
+        )
+        let events = try await collectTextGenerationEvents(from: stream)
+
+        XCTAssertEqual(events.count, 4)
+        XCTAssertEqual(renderedPromptTokens(from: events), 4)
+        XCTAssertEqual(renderedTokenChunks(from: events), ["Hello", " world"])
+        XCTAssertEqual(renderedSummary(from: events)?.completionTokens, 2)
+    }
+
+    func testAutoSwiftMLXBackendGenerateEventsFallsBackToObservedCompletionCount() async throws {
+        let backend = AutoSwiftMLXBackend(
+            preparedGenerationFactory: { _, _, _ in
+                PreparedTextGeneration(
+                    promptTokens: 2,
+                    runtimeEvents: AsyncThrowingStream { continuation in
+                        continuation.yield(.chunk("A"))
+                        continuation.yield(.chunk("B"))
+                        continuation.finish()
+                    }
+                )
+            }
+        )
+
+        let stream = try await backend.generateEvents(
+            model: LoadedTextModel(storage: ["kind": "fake"]),
+            messages: [makeUserMessage("fallback")],
+            sampling: Melix_Worker_V1_SamplingConfig(),
+            shouldAbort: { false }
+        )
+        let events = try await collectTextGenerationEvents(from: stream)
+
+        XCTAssertEqual(renderedSummary(from: events)?.promptTokens, 2)
+        XCTAssertEqual(renderedSummary(from: events)?.completionTokens, 2)
+    }
+
+    func testAutoSwiftMLXBackendGenerateEventsStopsOnAbortSkipsEmptyChunksAndSurfacesThrownErrors() async throws {
+        let abortingBackend = AutoSwiftMLXBackend(
+            preparedGenerationFactory: { _, _, _ in
+                PreparedTextGeneration(
+                    promptTokens: 3,
+                    runtimeEvents: AsyncThrowingStream { continuation in
+                        continuation.yield(.chunk(""))
+                        continuation.yield(.chunk("ignored"))
+                        continuation.finish()
+                    }
+                )
+            }
+        )
+
+        let abortedStream = try await abortingBackend.generateEvents(
+            model: LoadedTextModel(storage: ["kind": "fake"]),
+            messages: [makeUserMessage("abort")],
+            sampling: Melix_Worker_V1_SamplingConfig(),
+            shouldAbort: { true }
+        )
+        let abortedEvents = try await collectTextGenerationEvents(from: abortedStream)
+        XCTAssertEqual(abortedEvents.count, 2)
+        XCTAssertEqual(renderedPromptTokens(from: abortedEvents), 3)
+        XCTAssertEqual(renderedSummary(from: abortedEvents)?.completionTokens, 0)
+
+        enum ExpectedFailure: Error {
+            case boom
+        }
+
+        let throwingBackend = AutoSwiftMLXBackend(
+            preparedGenerationFactory: { _, _, _ in
+                PreparedTextGeneration(
+                    promptTokens: 1,
+                    runtimeEvents: AsyncThrowingStream { continuation in
+                        continuation.finish(throwing: ExpectedFailure.boom)
+                    }
+                )
+            }
+        )
+
+        let failingStream = try await throwingBackend.generateEvents(
+            model: LoadedTextModel(storage: ["kind": "fake"]),
+            messages: [makeUserMessage("throw")],
+            sampling: Melix_Worker_V1_SamplingConfig(),
+            shouldAbort: { false }
+        )
+
+        do {
+            _ = try await collectTextGenerationEvents(from: failingStream)
+            XCTFail("expected runtime stream failure")
+        } catch {
+            XCTAssertTrue(error is ExpectedFailure)
+        }
+    }
+
+    func testAutoSwiftMLXBackendDefaultPreparedGenerationFactoryRejectsNonMLXContainers() async {
+        let backend = AutoSwiftMLXBackend()
+
+        await XCTAssertThrowsErrorAsync(
+            try await backend.generateEvents(
+                model: LoadedTextModel(storage: ["kind": "not-a-container"]),
+                messages: [makeUserMessage("default factory")],
+                sampling: Melix_Worker_V1_SamplingConfig(),
+                shouldAbort: { false }
+            )
+        )
+    }
+
+    #if canImport(MLX) && canImport(MLXLMCommon) && canImport(MLXLLM) && canImport(Tokenizers)
+    func testAutoSwiftMLXBackendDefaultPreparedGenerationFactoryUsesLiveModelContainerBridge() async throws {
+        let backend = AutoSwiftMLXBackend()
+        let promptTokens = [1, 2, 3, 4]
+        var sampling = Melix_Worker_V1_SamplingConfig()
+        sampling.temperature = 0
+        sampling.topP = 1
+        sampling.maxOutputTokens = 2
+
+        let events = try await withTemporaryDefaultMetallib {
+            try await Device.withDefaultDevice(.cpu) {
+                let stream = try await backend.generateEvents(
+                    model: LoadedTextModel(
+                        storage: makeLiveSwiftMLXModelContainer(promptTokens: promptTokens)
+                    ),
+                    messages: [makeSystemMessage("system"), makeUserMessage("bridge live path")],
+                    sampling: sampling,
+                    shouldAbort: { false }
+                )
+                return try await collectTextGenerationEvents(from: stream)
+            }
+        }
+
+        XCTAssertEqual(renderedPromptTokens(from: events), promptTokens.count)
+        XCTAssertFalse(renderedTokenChunks(from: events).joined().isEmpty)
+
+        let summary = try XCTUnwrap(renderedSummary(from: events))
+        XCTAssertEqual(summary.promptTokens, promptTokens.count)
+        XCTAssertGreaterThan(summary.completionTokens, 0)
+        XCTAssertNotNil(summary.tokensPerSecond)
+    }
+    #endif
+
+    func testChatMessageConversionFlattensTextAndRejectsUnsupportedParts() throws {
+        let converted = try convertChatMessages([
+            makeUserMessage("line one", extraText: "line two"),
+            makeSystemMessage("system prompt"),
+        ])
+
+        XCTAssertEqual(converted.count, 2)
+        XCTAssertEqual(converted[0].content, "line one\nline two")
+        XCTAssertEqual(converted[1].content, "system prompt")
+
+        var invalid = Melix_Worker_V1_ChatMessage()
+        invalid.role = "user"
+        var imagePart = Melix_Worker_V1_MessagePart()
+        imagePart.imageUri = "file:///tmp/test.png"
+        invalid.parts = [imagePart]
+
+        XCTAssertThrowsError(try convertChatMessages([invalid]))
+    }
+
+    func testChatMessageConversionCoversAssistantToolEmptyAndUnsupportedRoles() throws {
+        let assistant = try convertChatMessages([makeRoleMessage("assistant", text: "draft")])
+        XCTAssertEqual(assistant.first?.content, "draft")
+
+        let tool = try convertChatMessages([makeRoleMessage("tool", text: "tool output")])
+        XCTAssertEqual(tool.first?.content, "tool output")
+
+        let emptyRole = try convertChatMessages([makeRoleMessage("", text: "fallback user")])
+        XCTAssertEqual(emptyRole.first?.content, "fallback user")
+
+        XCTAssertThrowsError(try convertChatMessages([]))
+        XCTAssertThrowsError(try convertChatMessages([makeRoleMessage("critic", text: "unsupported")]))
+    }
+
+    func testFlattenTextContentSkipsUnsetParts() throws {
+        var message = Melix_Worker_V1_ChatMessage()
+        message.role = "user"
+        var textPart = Melix_Worker_V1_MessagePart()
+        textPart.text = "hello"
+        let emptyPart = Melix_Worker_V1_MessagePart()
+        message.parts = [textPart, emptyPart]
+
+        XCTAssertEqual(try flattenTextContent(from: message), "hello")
+    }
+
+    func testGenerateParameterMappingUsesPhaseOneDefaults() {
+        var sampling = Melix_Worker_V1_SamplingConfig()
+        sampling.temperature = 0.7
+        sampling.topP = 0.95
+        sampling.maxOutputTokens = 64
+        sampling.frequencyPenalty = 0.5
+        sampling.presencePenalty = 0.2
+
+        let parameters = makeGenerateParameters(from: sampling)
+
+        XCTAssertEqual(parameters.temperature, 0.7)
+        XCTAssertEqual(parameters.topP, 0.95)
+        XCTAssertEqual(parameters.maxTokens, 64)
+        XCTAssertEqual(parameters.repetitionPenalty, 0.5)
+    }
+
     func testRuntimeUnavailableErrorReturnsMessageAsDescription() {
         let error = RuntimeUnavailableError(message: "mlx unavailable")
 
@@ -198,6 +491,29 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(loaded.estimatedResidentBytes, 0)
     }
 
+    func testTextRuntimeForwardsGenerateEventsAndDefaultGenerateThrowsUnavailable() async throws {
+        let runtime = TextRuntime(backend: FakeRuntimeBackend(generatedChunks: ["swift"]))
+        let generated = try await runtime.generateEvents(
+            model: LoadedTextModel(storage: ["kind": "fake"]),
+            messages: [makeUserMessage("go")],
+            sampling: Melix_Worker_V1_SamplingConfig(),
+            shouldAbort: { false }
+        )
+        let events = try await collectTextGenerationEvents(from: generated)
+        XCTAssertEqual(renderedTokenChunks(from: events), ["swift"])
+
+        let unavailableRuntime = TextRuntime(backend: DefaultUnloadBackend())
+        let unavailableModel = try await unavailableRuntime.loadModel(spec: Melix_Worker_V1_ModelSpec())
+        await XCTAssertThrowsErrorAsync(
+            try await unavailableRuntime.generateEvents(
+                model: unavailableModel.model,
+                messages: [makeUserMessage("go")],
+                sampling: Melix_Worker_V1_SamplingConfig(),
+                shouldAbort: { false }
+            )
+        )
+    }
+
     func testDrainTransitionsRuntimeStateToDraining() async throws {
         let services = makeServices()
 
@@ -230,6 +546,65 @@ final class WorkerScaffoldTests: XCTestCase {
         }
 
         XCTAssertEqual(stats.stats.workerState, "draining")
+    }
+
+    func testRuntimeRegistrySupportsLoadedModelLookupAndReadableErrors() async throws {
+        let registry = WorkerRuntimeRegistry(
+            configuration: WorkerConfiguration(),
+            modelCatalog: WorkerModelCatalog(environment: [
+                "MELIX_DEV_TEXT_MODEL_PATH": "mlx-community/melix-dev-text-4bit"
+            ]),
+            runtime: TextRuntime(backend: FakeRuntimeBackend())
+        )
+
+        var request = Melix_Worker_V1_ModelSpec()
+        request.modelID = "melix-dev-text"
+        let loaded = try await registry.loadModel(request)
+        let found = await registry.getLoadedModel(loaded.handle)
+        let missing = await registry.getLoadedModel("missing")
+
+        XCTAssertEqual(found?.handle, loaded.handle)
+        XCTAssertNil(missing)
+        XCTAssertEqual(WorkerRuntimeRegistryError.unknownModelHandle.errorDescription, "Unknown model handle.")
+    }
+
+    func testRuntimeRegistryTracksBusyStateAndGenerateEventsForLoadedModel() async throws {
+        let registry = WorkerRuntimeRegistry(
+            configuration: WorkerConfiguration(),
+            modelCatalog: WorkerModelCatalog(environment: [
+                "MELIX_DEV_TEXT_MODEL_PATH": "mlx-community/melix-dev-text-4bit"
+            ]),
+            runtime: TextRuntime(backend: FakeRuntimeBackend(generatedChunks: ["one", " two"]))
+        )
+
+        var loadRequest = Melix_Worker_V1_ModelSpec()
+        loadRequest.modelID = "melix-dev-text"
+        let loaded = try await registry.loadModel(loadRequest)
+
+        await registry.startRequest()
+        let busyStats = await registry.runtimeStats()
+        await registry.finishRequest()
+        let idleStats = await registry.runtimeStats()
+
+        let stream = try await registry.generateEvents(
+            modelHandle: loaded.handle,
+            messages: [makeUserMessage("registry")],
+            sampling: Melix_Worker_V1_SamplingConfig(),
+            shouldAbort: { false }
+        )
+        let events = try await collectTextGenerationEvents(from: stream)
+
+        XCTAssertEqual(busyStats.workerState, "busy")
+        XCTAssertEqual(idleStats.workerState, "idle")
+        XCTAssertEqual(renderedTokenChunks(from: events), ["one", " two"])
+        await XCTAssertThrowsErrorAsync(
+            try await registry.generateEvents(
+                modelHandle: "missing",
+                messages: [makeUserMessage("registry")],
+                sampling: Melix_Worker_V1_SamplingConfig(),
+                shouldAbort: { false }
+            )
+        )
     }
 
     func testRuntimeLifecycleLoadAndUnloadTrackModelState() async throws {
@@ -361,41 +736,11 @@ final class WorkerScaffoldTests: XCTestCase {
     func testInferenceUnaryFallbackRpcsReturnStructuredUnimplemented() async throws {
         let services = makeServices()
 
-        services.abortRegistry.register("req-present")
-
         let prefillResponse = try await withServerContextRPCCancellationHandle { handle in
             try await services.inference.prefill(
                 request: Melix_Worker_V1_PrefillRequest(),
                 context: ServerContext(
                     descriptor: Melix_Worker_V1_InferenceService.Method.Prefill.descriptor,
-                    remotePeer: "in-process:test",
-                    localPeer: "in-process:test",
-                    cancellation: handle
-                )
-            )
-        }
-
-        let abortResponse = try await withServerContextRPCCancellationHandle { handle in
-            var request = Melix_Worker_V1_AbortRequest()
-            request.requestID = "req-present"
-            return try await services.inference.abort(
-                request: request,
-                context: ServerContext(
-                    descriptor: Melix_Worker_V1_InferenceService.Method.Abort.descriptor,
-                    remotePeer: "in-process:test",
-                    localPeer: "in-process:test",
-                    cancellation: handle
-                )
-            )
-        }
-
-        let missingAbortResponse = try await withServerContextRPCCancellationHandle { handle in
-            var request = Melix_Worker_V1_AbortRequest()
-            request.requestID = "req-missing"
-            return try await services.inference.abort(
-                request: request,
-                context: ServerContext(
-                    descriptor: Melix_Worker_V1_InferenceService.Method.Abort.descriptor,
                     remotePeer: "in-process:test",
                     localPeer: "in-process:test",
                     cancellation: handle
@@ -465,10 +810,6 @@ final class WorkerScaffoldTests: XCTestCase {
 
         XCTAssertFalse(prefillResponse.ok)
         XCTAssertEqual(prefillResponse.error.code, "unimplemented")
-        XCTAssertTrue(abortResponse.ok)
-        XCTAssertTrue(abortResponse.found)
-        XCTAssertFalse(missingAbortResponse.ok)
-        XCTAssertFalse(missingAbortResponse.found)
         XCTAssertEqual(embedResponse.error.code, "unimplemented")
         XCTAssertEqual(rerankResponse.error.code, "unimplemented")
         XCTAssertEqual(transcribeResponse.error.code, "unimplemented")
@@ -476,11 +817,70 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(imageEditResponse.error.code, "unimplemented")
     }
 
-    func testUnsupportedStreamingRpcsEmitStructuredUnimplementedEvent() async throws {
+    func testGenerateStreamsPrefillTokenUsageAndCompletedForLoadedModel() async throws {
+        let services = makeServices(
+            environment: ["MELIX_DEV_TEXT_MODEL_PATH": "mlx-community/melix-dev-text-4bit"],
+            backend: FakeRuntimeBackend(),
+            residentMemorySamples: [100, 2_148]
+        )
+        let loadResponse = try await withServerContextRPCCancellationHandle { handle in
+            var request = Melix_Worker_V1_LoadModelRequest()
+            request.model.modelID = "melix-dev-text"
+            return try await services.runtime.loadModel(
+                request: request,
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_RuntimeService.Method.LoadModel.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
+        let writer = RecordingRPCWriter<Melix_Worker_V1_ExecuteEvent>()
+        var request = Melix_Worker_V1_GenerateRequest()
+        request.execution.id.requestID = "req-generate-success"
+        request.execution.modelHandle = loadResponse.modelHandle
+        request.returnUsage = true
+        var message = Melix_Worker_V1_ChatMessage()
+        message.role = "user"
+        var part = Melix_Worker_V1_MessagePart()
+        part.text = "Say hello from Swift."
+        message.parts = [part]
+        request.messages = [message]
+
+        try await withServerContextRPCCancellationHandle { handle in
+            try await services.inference.generate(
+                request: request,
+                response: RPCWriter(wrapping: writer),
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_InferenceService.Method.Generate.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
+        let recorded = await writer.snapshot()
+        XCTAssertGreaterThanOrEqual(recorded.count, 3)
+        XCTAssertEqual(recorded.first?.requestID, "req-generate-success")
+        XCTAssertEqual(recorded.first?.executionKind, "generate")
+        XCTAssertTrue(matches(recorded.first?.payload, .prefillStarted))
+        XCTAssertTrue(recorded.contains(where: { matches($0.payload, .tokenDelta) }))
+        XCTAssertTrue(recorded.contains(where: { matches($0.payload, .usageDelta) }))
+        XCTAssertTrue(matches(recorded.last?.payload, .completed))
+        XCTAssertEqual(recorded.last?.completed.finishReason, "stop")
+        XCTAssertFalse(recorded.last?.completed.assistantText.isEmpty ?? true)
+        XCTAssertEqual(services.metrics.counters["swift_text.stream_event_count"], recorded.count)
+    }
+
+    func testGenerateReturnsNotFoundErrorEventForUnknownModelHandle() async throws {
         let services = makeServices()
         let writer = RecordingRPCWriter<Melix_Worker_V1_ExecuteEvent>()
         var request = Melix_Worker_V1_GenerateRequest()
-        request.execution.id.requestID = "req-generate"
+        request.execution.id.requestID = "req-generate-missing"
+        request.execution.modelHandle = "missing-model-handle"
 
         try await withServerContextRPCCancellationHandle { handle in
             try await services.inference.generate(
@@ -497,10 +897,83 @@ final class WorkerScaffoldTests: XCTestCase {
 
         let recorded = await writer.snapshot()
         XCTAssertEqual(recorded.count, 1)
-        XCTAssertEqual(recorded[0].requestID, "req-generate")
+        XCTAssertEqual(recorded[0].requestID, "req-generate-missing")
         XCTAssertEqual(recorded[0].executionKind, "generate")
-        XCTAssertEqual(recorded[0].seq, 1)
-        XCTAssertEqual(recorded[0].error.error.code, "unimplemented")
+        XCTAssertTrue(matches(recorded[0].payload, .error))
+        XCTAssertEqual(recorded[0].error.error.code, "not_found")
+    }
+
+    func testAbortCancelsActiveGenerationAndReportsCancelledCompletion() async throws {
+        let services = makeServices(
+            environment: ["MELIX_DEV_TEXT_MODEL_PATH": "mlx-community/melix-dev-text-4bit"],
+            backend: FakeRuntimeBackend(
+                generatedChunks: ["one", " two", " three", " four"],
+                tokenDelayNanos: 40_000_000
+            ),
+            residentMemorySamples: [100, 2_148]
+        )
+        let loadResponse = try await withServerContextRPCCancellationHandle { handle in
+            var request = Melix_Worker_V1_LoadModelRequest()
+            request.model.modelID = "melix-dev-text"
+            return try await services.runtime.loadModel(
+                request: request,
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_RuntimeService.Method.LoadModel.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+        let writer = RecordingRPCWriter<Melix_Worker_V1_ExecuteEvent>()
+        var generateRequest = Melix_Worker_V1_GenerateRequest()
+        generateRequest.execution.id.requestID = "req-generate-abort"
+        generateRequest.execution.modelHandle = loadResponse.modelHandle
+        var message = Melix_Worker_V1_ChatMessage()
+        message.role = "user"
+        var part = Melix_Worker_V1_MessagePart()
+        part.text = "Generate enough tokens to be cancellable."
+        message.parts = [part]
+        generateRequest.messages = [message]
+
+        async let generateTask: Void = withServerContextRPCCancellationHandle { handle in
+            try await services.inference.generate(
+                request: generateRequest,
+                response: RPCWriter(wrapping: writer),
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_InferenceService.Method.Generate.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
+        try await Task.sleep(nanoseconds: 20_000_000)
+
+        let abortResponse = try await withServerContextRPCCancellationHandle { handle in
+            var request = Melix_Worker_V1_AbortRequest()
+            request.requestID = "req-generate-abort"
+            return try await services.inference.abort(
+                request: request,
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_InferenceService.Method.Abort.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
+        _ = try await generateTask
+
+        let recorded = await writer.snapshot()
+        XCTAssertTrue(abortResponse.ok)
+        XCTAssertTrue(abortResponse.found)
+        XCTAssertGreaterThanOrEqual(recorded.count, 2)
+        XCTAssertTrue(matches(recorded.last?.payload, .completed))
+        XCTAssertEqual(recorded.last?.completed.finishReason, "cancelled")
+        XCTAssertNotNil(services.metrics.counters["swift_text.abort_ms"])
     }
 
     func testDecodeStreamingRpcEmitsStructuredUnimplementedEvent() async throws {
@@ -693,6 +1166,38 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(bootstrap.services.runtime.configuration.workerID, configuration.workerID)
         XCTAssertEqual(bootstrap.services.metrics.counters["swift_text.unimplemented_rpc_count"], 0)
     }
+
+    func testWarmupAndShutdownReturnExpectedStructuredResponses() async throws {
+        let services = makeServices()
+
+        let warmupResponse = try await withServerContextRPCCancellationHandle { handle in
+            try await services.runtime.warmupModel(
+                request: Melix_Worker_V1_WarmupModelRequest(),
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_RuntimeService.Method.WarmupModel.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
+        let shutdownResponse = try await withServerContextRPCCancellationHandle { handle in
+            try await services.runtime.shutdown(
+                request: Melix_Worker_V1_ShutdownRequest(),
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_RuntimeService.Method.Shutdown.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
+        XCTAssertFalse(warmupResponse.ok)
+        XCTAssertEqual(warmupResponse.error.code, "unimplemented")
+        XCTAssertTrue(shutdownResponse.ok)
+    }
 }
 
 @available(macOS 15.0, *)
@@ -764,12 +1269,21 @@ private final class FakeRuntimeBackend: TextRuntimeBackend, @unchecked Sendable 
 
     private let loadError: Error?
     private let residentBytesHint: UInt64
+    private let generatedChunks: [String]
+    private let tokenDelayNanos: UInt64
     private let storage = FakeRuntimeBackendStorage()
     private let unloadedStorage = FakeRuntimeBackendUnloadStorage()
 
-    init(loadError: Error? = nil, residentBytesHint: UInt64 = 0) {
+    init(
+        loadError: Error? = nil,
+        residentBytesHint: UInt64 = 0,
+        generatedChunks: [String] = ["Hello", " from Swift"],
+        tokenDelayNanos: UInt64 = 0
+    ) {
         self.loadError = loadError
         self.residentBytesHint = residentBytesHint
+        self.generatedChunks = generatedChunks
+        self.tokenDelayNanos = tokenDelayNanos
     }
 
     func loadModel(spec: Melix_Worker_V1_ModelSpec) async throws -> LoadedTextModel {
@@ -785,6 +1299,43 @@ private final class FakeRuntimeBackend: TextRuntimeBackend, @unchecked Sendable 
 
     func unloadModel(_ model: LoadedTextModel) async {
         await unloadedStorage.increment()
+    }
+
+    func generateEvents(
+        model: LoadedTextModel,
+        messages: [Melix_Worker_V1_ChatMessage],
+        sampling: Melix_Worker_V1_SamplingConfig,
+        shouldAbort: @escaping @Sendable () -> Bool
+    ) async throws -> AsyncThrowingStream<TextGenerationEvent, Error> {
+        AsyncThrowingStream { continuation in
+            continuation.yield(.prefillStarted(promptTokens: max(1, messages.count)))
+
+            Task {
+                var emitted = 0
+                for chunk in generatedChunks {
+                    if shouldAbort() {
+                        break
+                    }
+                    if tokenDelayNanos > 0 {
+                        try? await Task.sleep(nanoseconds: tokenDelayNanos)
+                    }
+                    if shouldAbort() {
+                        break
+                    }
+                    emitted += 1
+                    continuation.yield(.token(chunk))
+                }
+
+                continuation.yield(.summary(
+                    TextGenerationSummary(
+                        promptTokens: max(1, messages.count),
+                        completionTokens: emitted,
+                        tokensPerSecond: emitted > 0 ? Double(emitted) * 10.0 : nil
+                    )
+                ))
+                continuation.finish()
+            }
+        }
     }
 
     func loadedSpecs() async -> [Melix_Worker_V1_ModelSpec] {
@@ -854,3 +1405,341 @@ private final class RecordingRPCWriter<Element: Sendable>: RPCWriterProtocol, @u
         await storage.snapshot()
     }
 }
+
+@available(macOS 15.0, *)
+private func matches(
+    _ payload: Melix_Worker_V1_ExecuteEvent.OneOf_Payload?,
+    _ matcher: ExecuteEventPayloadMatcher
+) -> Bool {
+    guard let payload else {
+        return false
+    }
+
+    switch (payload, matcher) {
+    case (.prefillStarted, .prefillStarted),
+         (.tokenDelta, .tokenDelta),
+         (.usageDelta, .usageDelta),
+         (.completed, .completed),
+         (.error, .error):
+        return true
+    default:
+        return false
+    }
+}
+
+@available(macOS 15.0, *)
+private enum ExecuteEventPayloadMatcher {
+    case prefillStarted
+    case tokenDelta
+    case usageDelta
+    case completed
+    case error
+}
+
+@available(macOS 15.0, *)
+private func makeUserMessage(
+    _ text: String,
+    extraText: String? = nil
+) -> Melix_Worker_V1_ChatMessage {
+    var message = Melix_Worker_V1_ChatMessage()
+    message.role = "user"
+
+    var parts: [Melix_Worker_V1_MessagePart] = []
+    var firstPart = Melix_Worker_V1_MessagePart()
+    firstPart.text = text
+    parts.append(firstPart)
+
+    if let extraText {
+        var extraPart = Melix_Worker_V1_MessagePart()
+        extraPart.text = extraText
+        parts.append(extraPart)
+    }
+
+    message.parts = parts
+    return message
+}
+
+@available(macOS 15.0, *)
+private func makeSystemMessage(_ text: String) -> Melix_Worker_V1_ChatMessage {
+    var message = Melix_Worker_V1_ChatMessage()
+    message.role = "system"
+
+    var part = Melix_Worker_V1_MessagePart()
+    part.text = text
+    message.parts = [part]
+    return message
+}
+
+@available(macOS 15.0, *)
+private func makeRoleMessage(_ role: String, text: String) -> Melix_Worker_V1_ChatMessage {
+    var message = Melix_Worker_V1_ChatMessage()
+    message.role = role
+
+    var part = Melix_Worker_V1_MessagePart()
+    part.text = text
+    message.parts = [part]
+    return message
+}
+
+@available(macOS 15.0, *)
+private func collectTextGenerationEvents(
+    from stream: AsyncThrowingStream<TextGenerationEvent, Error>
+) async throws -> [TextGenerationEvent] {
+    var events: [TextGenerationEvent] = []
+    for try await event in stream {
+        events.append(event)
+    }
+    return events
+}
+
+@available(macOS 15.0, *)
+private func renderedPromptTokens(from events: [TextGenerationEvent]) -> Int? {
+    for event in events {
+        if case .prefillStarted(let promptTokens) = event {
+            return promptTokens
+        }
+    }
+    return nil
+}
+
+@available(macOS 15.0, *)
+private func renderedTokenChunks(from events: [TextGenerationEvent]) -> [String] {
+    events.compactMap { event in
+        guard case .token(let text) = event else {
+            return nil
+        }
+        return text
+    }
+}
+
+@available(macOS 15.0, *)
+private func renderedSummary(from events: [TextGenerationEvent]) -> TextGenerationSummary? {
+    for event in events {
+        if case .summary(let summary) = event {
+            return summary
+        }
+    }
+    return nil
+}
+
+@available(macOS 15.0, *)
+private func XCTAssertThrowsErrorAsync<T>(
+    _ expression: @autoclosure () async throws -> T,
+    _ message: @autoclosure () -> String = "",
+    file: StaticString = #filePath,
+    line: UInt = #line
+) async {
+    do {
+        _ = try await expression()
+        XCTFail(message().isEmpty ? "Expected async expression to throw an error." : message(), file: file, line: line)
+    } catch {
+    }
+}
+
+#if canImport(MLX) && canImport(MLXLMCommon) && canImport(MLXLLM) && canImport(Tokenizers)
+@available(macOS 15.0, *)
+private func makeLiveSwiftMLXModelContainer(promptTokens: [Int]) -> ModelContainer {
+    let vocabularySize = 32
+    let configuration = LlamaConfiguration(
+        hiddenSize: 64,
+        hiddenLayers: 4,
+        intermediateSize: 128,
+        attentionHeads: 8,
+        rmsNormEps: 0.00001,
+        vocabularySize: vocabularySize,
+        kvHeads: 4
+    )
+    let model = LlamaModel(configuration)
+    eval(model)
+
+    let context = ModelContext(
+        configuration: ModelConfiguration(id: "melix-tests/live-swift-mlx"),
+        model: model,
+        processor: DeterministicUserInputProcessor(promptTokens: promptTokens),
+        tokenizer: DeterministicTokenizer(vocabularySize: vocabularySize)
+    )
+    return ModelContainer(context: context)
+}
+
+@available(macOS 15.0, *)
+private struct DeterministicUserInputProcessor: UserInputProcessor {
+    let promptTokens: [Int]
+
+    func prepare(input: UserInput) async throws -> LMInput {
+        LMInput(tokens: MLXArray(promptTokens))
+    }
+}
+
+@available(macOS 15.0, *)
+private struct DeterministicTokenizer: Tokenizer {
+    let vocabularySize: Int
+
+    private var tokenLookup: [Int: String] {
+        Dictionary(uniqueKeysWithValues: (0 ..< vocabularySize).map { ($0, "tok\($0)") })
+    }
+
+    func tokenize(text: String) -> [String] {
+        text.split(separator: " ").map(String.init)
+    }
+
+    func encode(text: String) -> [Int] {
+        encode(text: text, addSpecialTokens: true)
+    }
+
+    func encode(text: String, addSpecialTokens: Bool) -> [Int] {
+        let tokens = tokenize(text: text)
+        if tokens.isEmpty {
+            return [1]
+        }
+        return tokens.enumerated().map { index, token in
+            convertTokenToId(token) ?? max(1, (index % max(1, vocabularySize - 1)) + 1)
+        }
+    }
+
+    func decode(tokens: [Int], skipSpecialTokens: Bool) -> String {
+        tokens.compactMap { convertIdToToken($0) }.joined(separator: " ")
+    }
+
+    func convertTokenToId(_ token: String) -> Int? {
+        if let explicit = Int(token.replacingOccurrences(of: "tok", with: "")) {
+            return explicit % vocabularySize
+        }
+        return nil
+    }
+
+    func convertIdToToken(_ id: Int) -> String? {
+        tokenLookup[id] ?? "tok\(id)"
+    }
+
+    var bosToken: String? { nil }
+    var bosTokenId: Int? { nil }
+    var eosToken: String? { nil }
+    var eosTokenId: Int? { nil }
+    var unknownToken: String? { nil }
+    var unknownTokenId: Int? { nil }
+    var hasChatTemplate: Bool { true }
+
+    func applyChatTemplate(messages: [Tokenizers.Message]) throws -> [Int] {
+        Array(1 ... max(1, messages.count + 1))
+    }
+
+    func applyChatTemplate(messages: [Tokenizers.Message], tools: [Tokenizers.ToolSpec]?) throws
+        -> [Int]
+    {
+        try applyChatTemplate(messages: messages)
+    }
+
+    func applyChatTemplate(
+        messages: [Tokenizers.Message],
+        tools: [Tokenizers.ToolSpec]?,
+        additionalContext: [String: any Sendable]?
+    ) throws -> [Int] {
+        try applyChatTemplate(messages: messages)
+    }
+
+    func applyChatTemplate(
+        messages: [Tokenizers.Message],
+        chatTemplate: Tokenizers.ChatTemplateArgument
+    ) throws -> [Int] {
+        try applyChatTemplate(messages: messages)
+    }
+
+    func applyChatTemplate(messages: [Tokenizers.Message], chatTemplate: String) throws -> [Int] {
+        try applyChatTemplate(messages: messages)
+    }
+
+    func applyChatTemplate(
+        messages: [Tokenizers.Message],
+        chatTemplate: Tokenizers.ChatTemplateArgument?,
+        addGenerationPrompt: Bool,
+        truncation: Bool,
+        maxLength: Int?,
+        tools: [Tokenizers.ToolSpec]?
+    ) throws -> [Int] {
+        try applyChatTemplate(messages: messages)
+    }
+
+    func applyChatTemplate(
+        messages: [Tokenizers.Message],
+        chatTemplate: Tokenizers.ChatTemplateArgument?,
+        addGenerationPrompt: Bool,
+        truncation: Bool,
+        maxLength: Int?,
+        tools: [Tokenizers.ToolSpec]?,
+        additionalContext: [String: any Sendable]?
+    ) throws -> [Int] {
+        try applyChatTemplate(messages: messages)
+    }
+}
+
+@available(macOS 15.0, *)
+private func withTemporaryDefaultMetallib<T>(
+    _ operation: () async throws -> T
+) async throws -> T {
+    let fileManager = FileManager.default
+    guard let metallibURL = findLocalMLXMetallib() else {
+        throw XCTSkip("No local mlx.metallib was found for the Swift MLX live-bridge test.")
+    }
+
+    let temporaryDirectory = fileManager.temporaryDirectory
+        .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    try fileManager.createDirectory(at: temporaryDirectory, withIntermediateDirectories: true)
+
+    let defaultMetallibURL = temporaryDirectory.appendingPathComponent("default.metallib")
+    try fileManager.createSymbolicLink(at: defaultMetallibURL, withDestinationURL: metallibURL)
+
+    let originalDirectory = fileManager.currentDirectoryPath
+    guard fileManager.changeCurrentDirectoryPath(temporaryDirectory.path) else {
+        try? fileManager.removeItem(at: temporaryDirectory)
+        throw RuntimeUnavailableError(message: "Failed to switch into the temporary MLX metallib directory.")
+    }
+
+    defer {
+        _ = fileManager.changeCurrentDirectoryPath(originalDirectory)
+        try? fileManager.removeItem(at: temporaryDirectory)
+    }
+
+    return try await operation()
+}
+
+@available(macOS 15.0, *)
+private func findLocalMLXMetallib() -> URL? {
+    let fileManager = FileManager.default
+    let currentDirectory = URL(fileURLWithPath: fileManager.currentDirectoryPath, isDirectory: true)
+    let candidateRoots = [
+        currentDirectory,
+        currentDirectory.deletingLastPathComponent(),
+        currentDirectory.deletingLastPathComponent().deletingLastPathComponent(),
+    ]
+
+    let candidatePrefixes = [
+        ".venv",
+        ".uv-cache",
+    ]
+
+    for root in candidateRoots {
+        for prefix in candidatePrefixes {
+            let searchRoot = root.appendingPathComponent(prefix, isDirectory: true)
+            guard fileManager.fileExists(atPath: searchRoot.path) else {
+                continue
+            }
+            guard let enumerator = fileManager.enumerator(
+                at: searchRoot,
+                includingPropertiesForKeys: [.isRegularFileKey],
+                options: [.skipsHiddenFiles]
+            ) else {
+                continue
+            }
+
+            for case let fileURL as URL in enumerator {
+                guard fileURL.lastPathComponent == "mlx.metallib" else {
+                    continue
+                }
+                return fileURL
+            }
+        }
+    }
+
+    return nil
+}
+#endif

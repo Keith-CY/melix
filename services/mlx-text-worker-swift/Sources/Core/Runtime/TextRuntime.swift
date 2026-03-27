@@ -17,14 +17,43 @@ struct RuntimeLoadResult: Sendable {
     let estimatedResidentBytes: UInt64
 }
 
+struct TextGenerationSummary: Sendable {
+    let promptTokens: Int
+    let completionTokens: Int
+    let tokensPerSecond: Double?
+}
+
+enum TextGenerationEvent: Sendable {
+    case prefillStarted(promptTokens: Int)
+    case token(String)
+    case summary(TextGenerationSummary)
+}
+
 protocol TextRuntimeBackend: Sendable {
     var runtimeName: String { get }
     func loadModel(spec: Melix_Worker_V1_ModelSpec) async throws -> LoadedTextModel
     func unloadModel(_ model: LoadedTextModel) async
+    func generateEvents(
+        model: LoadedTextModel,
+        messages: [Melix_Worker_V1_ChatMessage],
+        sampling: Melix_Worker_V1_SamplingConfig,
+        shouldAbort: @escaping @Sendable () -> Bool
+    ) async throws -> AsyncThrowingStream<TextGenerationEvent, Error>
 }
 
 extension TextRuntimeBackend {
     func unloadModel(_ model: LoadedTextModel) async {}
+
+    func generateEvents(
+        model: LoadedTextModel,
+        messages: [Melix_Worker_V1_ChatMessage],
+        sampling: Melix_Worker_V1_SamplingConfig,
+        shouldAbort: @escaping @Sendable () -> Bool
+    ) async throws -> AsyncThrowingStream<TextGenerationEvent, Error> {
+        throw RuntimeUnavailableError(
+            message: "Text generation is not available for the current backend."
+        )
+    }
 }
 
 struct TextRuntime: Sendable {
@@ -56,6 +85,20 @@ struct TextRuntime: Sendable {
 
     func unloadModel(_ model: LoadedTextModel) async {
         await backend.unloadModel(model)
+    }
+
+    func generateEvents(
+        model: LoadedTextModel,
+        messages: [Melix_Worker_V1_ChatMessage],
+        sampling: Melix_Worker_V1_SamplingConfig,
+        shouldAbort: @escaping @Sendable () -> Bool
+    ) async throws -> AsyncThrowingStream<TextGenerationEvent, Error> {
+        try await backend.generateEvents(
+            model: model,
+            messages: messages,
+            sampling: sampling,
+            shouldAbort: shouldAbort
+        )
     }
 }
 

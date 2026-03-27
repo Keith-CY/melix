@@ -23,7 +23,12 @@ struct WorkerServices: Sendable {
         self.abortRegistry = abortRegistry
         self.metrics = metrics
         self.runtime = RuntimeRPCService(configuration: configuration, registry: registry, metrics: metrics)
-        self.inference = InferenceRPCService(configuration: configuration, abortRegistry: abortRegistry, metrics: metrics)
+        self.inference = InferenceRPCService(
+            configuration: configuration,
+            registry: registry,
+            abortRegistry: abortRegistry,
+            metrics: metrics
+        )
         self.cache = CacheRPCService(metrics: metrics)
         self.maintenance = MaintenanceRPCService(metrics: metrics)
     }
@@ -166,17 +171,22 @@ final class RuntimeRPCService: Melix_Worker_V1_RuntimeService.SimpleServiceProto
 final class InferenceRPCService: Melix_Worker_V1_InferenceService.SimpleServiceProtocol, @unchecked Sendable {
     let configuration: WorkerConfiguration
 
+    private let registry: WorkerRuntimeRegistry
     private let abortRegistry: AbortRegistry
     private let metrics: MetricsStore
+    private let engine: TextGenerationEngine
 
     init(
         configuration: WorkerConfiguration,
+        registry: WorkerRuntimeRegistry,
         abortRegistry: AbortRegistry,
         metrics: MetricsStore
     ) {
         self.configuration = configuration
+        self.registry = registry
         self.abortRegistry = abortRegistry
         self.metrics = metrics
+        self.engine = TextGenerationEngine(registry: registry, abortRegistry: abortRegistry, metrics: metrics)
     }
 
     func generate(
@@ -184,12 +194,7 @@ final class InferenceRPCService: Melix_Worker_V1_InferenceService.SimpleServiceP
         response: GRPCCore.RPCWriter<Melix_Worker_V1_ExecuteEvent>,
         context: GRPCCore.ServerContext
     ) async throws {
-        metrics.increment("swift_text.unimplemented_rpc_count")
-        try await response.write(makeUnimplementedExecuteEvent(
-            requestID: request.execution.id.requestID,
-            executionKind: "generate",
-            message: "Generate is deferred until P1-M4."
-        ))
+        try await engine.runGenerate(request: request, response: response)
     }
 
     func prefill(
@@ -221,11 +226,13 @@ final class InferenceRPCService: Melix_Worker_V1_InferenceService.SimpleServiceP
         request: Melix_Worker_V1_AbortRequest,
         context: GRPCCore.ServerContext
     ) async throws -> Melix_Worker_V1_AbortResponse {
-        metrics.increment("swift_text.unimplemented_rpc_count")
+        let startedAt = Date()
+        let found = abortRegistry.abort(request.requestID)
+        metrics.recordMilliseconds("swift_text.abort_ms", value: elapsedMilliseconds(since: startedAt))
 
         var response = Melix_Worker_V1_AbortResponse()
-        response.ok = abortRegistry.abort(request.requestID)
-        response.found = response.ok
+        response.ok = found
+        response.found = found
         return response
     }
 
@@ -442,13 +449,29 @@ private func makeUnimplementedExecuteEvent(
     executionKind: String,
     message: String
 ) -> Melix_Worker_V1_ExecuteEvent {
+    makeErrorExecuteEvent(
+        requestID: requestID,
+        executionKind: executionKind,
+        seq: 1,
+        code: "unimplemented",
+        message: message
+    )
+}
+
+private func makeErrorExecuteEvent(
+    requestID: String,
+    executionKind: String,
+    seq: UInt64,
+    code: String,
+    message: String
+) -> Melix_Worker_V1_ExecuteEvent {
     var event = Melix_Worker_V1_ExecuteEvent()
     event.requestID = requestID
     event.executionKind = executionKind
-    event.seq = 1
+    event.seq = seq
 
     var errorEvent = Melix_Worker_V1_ErrorEvent()
-    errorEvent.error = makeUnimplementedStatus(message)
+    errorEvent.error = makeErrorStatus(code: code, message: message)
     event.error = errorEvent
     return event
 }
