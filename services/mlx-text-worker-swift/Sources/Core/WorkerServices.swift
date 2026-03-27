@@ -1,3 +1,4 @@
+import Foundation
 import GRPCCore
 import MelixWorkerProtocol
 
@@ -65,24 +66,47 @@ final class RuntimeRPCService: Melix_Worker_V1_RuntimeService.SimpleServiceProto
         request: Melix_Worker_V1_LoadModelRequest,
         context: GRPCCore.ServerContext
     ) async throws -> Melix_Worker_V1_LoadModelResponse {
-        metrics.increment("swift_text.unimplemented_rpc_count")
+        let startedAt = Date()
 
-        var response = Melix_Worker_V1_LoadModelResponse()
-        response.ok = false
-        response.error = makeUnimplementedStatus("LoadModel is deferred until P1-M3.")
-        response.resolvedCapabilities = await registry.capabilities()
-        return response
+        do {
+            let loaded = try await registry.loadModel(request.model)
+            metrics.recordMilliseconds("swift_text.load_model_ms", value: elapsedMilliseconds(since: startedAt))
+            metrics.set("swift_text.peak_resident_bytes", value: Int(clamping: loaded.estimatedResidentBytes))
+            metrics.set("swift_text.loaded_model_count", value: await registry.loadedModelCount())
+
+            var response = Melix_Worker_V1_LoadModelResponse()
+            response.ok = true
+            response.modelHandle = loaded.handle
+            response.estimatedResidentBytes = loaded.estimatedResidentBytes
+            response.resolvedCapabilities = await registry.capabilities()
+            return response
+        } catch {
+            metrics.increment("swift_text.rpc_error_count")
+            metrics.recordMilliseconds("swift_text.load_model_ms", value: elapsedMilliseconds(since: startedAt))
+            metrics.set("swift_text.loaded_model_count", value: await registry.loadedModelCount())
+
+            var response = Melix_Worker_V1_LoadModelResponse()
+            response.ok = false
+            response.error = makeErrorStatus(code: "load_failed", message: error.localizedDescription)
+            response.resolvedCapabilities = await registry.capabilities()
+            return response
+        }
     }
 
     func unloadModel(
         request: Melix_Worker_V1_UnloadModelRequest,
         context: GRPCCore.ServerContext
     ) async throws -> Melix_Worker_V1_UnloadModelResponse {
-        metrics.increment("swift_text.unimplemented_rpc_count")
+        let startedAt = Date()
+        let found = await registry.unloadModel(request.modelHandle)
+        metrics.recordMilliseconds("swift_text.unload_model_ms", value: elapsedMilliseconds(since: startedAt))
+        metrics.set("swift_text.loaded_model_count", value: await registry.loadedModelCount())
 
         var response = Melix_Worker_V1_UnloadModelResponse()
-        response.ok = false
-        response.error = makeUnimplementedStatus("UnloadModel is deferred until P1-M3.")
+        response.ok = found
+        if !found {
+            response.error = makeErrorStatus(code: "not_found", message: "Unknown model handle.")
+        }
         return response
     }
 
@@ -94,7 +118,7 @@ final class RuntimeRPCService: Melix_Worker_V1_RuntimeService.SimpleServiceProto
 
         var response = Melix_Worker_V1_WarmupModelResponse()
         response.ok = false
-        response.error = makeUnimplementedStatus("WarmupModel is deferred until P1-M3.")
+        response.error = makeUnimplementedStatus("WarmupModel is deferred until P1-M4.")
         return response
     }
 
@@ -399,8 +423,15 @@ final class MaintenanceRPCService: Melix_Worker_V1_MaintenanceService.SimpleServ
 }
 
 private func makeUnimplementedStatus(_ message: String) -> Melix_Worker_V1_ErrorStatus {
+    makeErrorStatus(code: "unimplemented", message: message)
+}
+
+private func makeErrorStatus(
+    code: String,
+    message: String
+) -> Melix_Worker_V1_ErrorStatus {
     var status = Melix_Worker_V1_ErrorStatus()
-    status.code = "unimplemented"
+    status.code = code
     status.message = message
     status.retriable = false
     return status
@@ -420,4 +451,8 @@ private func makeUnimplementedExecuteEvent(
     errorEvent.error = makeUnimplementedStatus(message)
     event.error = errorEvent
     return event
+}
+
+private func elapsedMilliseconds(since startedAt: Date) -> Int {
+    max(0, Int(Date().timeIntervalSince(startedAt) * 1_000.0))
 }

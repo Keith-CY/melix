@@ -10,7 +10,11 @@ package struct WorkerBootstrap: Sendable {
         let metrics = MetricsStore()
         metrics.recordMilliseconds("swift_text.bootstrap_ms", value: 0)
 
-        let registry = WorkerRuntimeRegistry(configuration: configuration)
+        let registry = WorkerRuntimeRegistry(
+            configuration: configuration,
+            modelCatalog: WorkerModelCatalog(),
+            runtime: TextRuntime()
+        )
         let abortRegistry = AbortRegistry()
         let services = WorkerServices(
             configuration: configuration,

@@ -28,6 +28,12 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(configuration.runtimeVersion, "melix-swift-text-worker/test")
     }
 
+    func testConfigurationFallsBackToDefaultsForEmptyEnvironment() {
+        let configuration = WorkerConfiguration.fromEnvironment([:])
+
+        XCTAssertEqual(configuration, WorkerConfiguration())
+    }
+
     func testAbortRegistryTracksRequestLifecycle() {
         let abortRegistry = AbortRegistry()
 
@@ -116,6 +122,82 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(services.registrableServices.count, 4)
     }
 
+    func testDevelopmentModelCatalogResolvesEnvironmentOverride() {
+        let catalog = WorkerModelCatalog(environment: [
+            "MELIX_DEV_TEXT_MODEL_PATH": "mlx-community/melix-dev-text-4bit"
+        ])
+
+        let model = catalog.get("melix-dev-text")
+
+        XCTAssertEqual(model?.modelID, "melix-dev-text")
+        XCTAssertEqual(model?.modelPath, "mlx-community/melix-dev-text-4bit")
+        XCTAssertEqual(model?.quantProfileID, "q4")
+    }
+
+    func testAutoSwiftMLXBackendUsesInjectedLoader() async throws {
+        let backend = AutoSwiftMLXBackend(runtimeName: "fake-mlx-loader") { modelSource in
+            ["model_source": modelSource]
+        }
+        var spec = Melix_Worker_V1_ModelSpec()
+        spec.modelID = "melix-dev-text"
+        spec.modelPath = "mlx-community/melix-dev-text-4bit"
+
+        let loaded = try await backend.loadModel(spec: spec)
+
+        XCTAssertEqual(backend.runtimeName, "fake-mlx-loader")
+        XCTAssertEqual((loaded.storage as? [String: String])?["model_source"], "mlx-community/melix-dev-text-4bit")
+    }
+
+    func testAutoSwiftMLXBackendDefaultsToMLXRuntimeNameAndUsesModelIDFallback() async throws {
+        let backend = AutoSwiftMLXBackend { modelSource in
+            ["model_source": modelSource]
+        }
+        var spec = Melix_Worker_V1_ModelSpec()
+        spec.modelID = "melix-dev-text"
+
+        let loaded = try await backend.loadModel(spec: spec)
+
+        XCTAssertEqual(backend.runtimeName, "mlx-swift-lm")
+        XCTAssertEqual((loaded.storage as? [String: String])?["model_source"], "melix-dev-text")
+    }
+
+    func testRuntimeUnavailableErrorReturnsMessageAsDescription() {
+        let error = RuntimeUnavailableError(message: "mlx unavailable")
+
+        XCTAssertEqual(error.errorDescription, "mlx unavailable")
+    }
+
+    func testTextRuntimeUsesResidentDeltaAndForwardsUnload() async throws {
+        let backend = FakeRuntimeBackend(residentBytesHint: 2_048)
+        let probe = ResidentMemoryProbe(samples: [100, 3_600])
+        let runtime = TextRuntime(
+            backend: backend,
+            residentMemoryReader: { probe.next() }
+        )
+        var spec = Melix_Worker_V1_ModelSpec()
+        spec.modelID = "melix-dev-text"
+
+        let loaded = try await runtime.loadModel(spec: spec)
+        await runtime.unloadModel(loaded.model)
+        let unloadedCount = await backend.unloadedModelCount()
+
+        XCTAssertEqual(runtime.runtimeName, "fake-mlx-swift")
+        XCTAssertEqual(loaded.estimatedResidentBytes, 3_500)
+        XCTAssertEqual(unloadedCount, 1)
+    }
+
+    func testTextRuntimeDefaultResidentReaderAndDefaultUnloadPathAreSafe() async throws {
+        let runtime = TextRuntime(backend: DefaultUnloadBackend())
+        var spec = Melix_Worker_V1_ModelSpec()
+        spec.modelID = "melix-dev-text"
+
+        let loaded = try await runtime.loadModel(spec: spec)
+        await runtime.unloadModel(loaded.model)
+
+        XCTAssertEqual(runtime.runtimeName, "default-unload-backend")
+        XCTAssertGreaterThanOrEqual(loaded.estimatedResidentBytes, 0)
+    }
+
     func testDrainTransitionsRuntimeStateToDraining() async throws {
         let services = makeServices()
 
@@ -150,12 +232,20 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(stats.stats.workerState, "draining")
     }
 
-    func testRuntimeLifecycleRpcsReturnExpectedResponses() async throws {
-        let services = makeServices()
+    func testRuntimeLifecycleLoadAndUnloadTrackModelState() async throws {
+        let backend = FakeRuntimeBackend()
+        let services = makeServices(
+            environment: ["MELIX_DEV_TEXT_MODEL_PATH": "mlx-community/melix-dev-text-4bit"],
+            backend: backend,
+            residentMemorySamples: [1_000, 5_096]
+        )
 
         let loadResponse = try await withServerContextRPCCancellationHandle { handle in
-            try await services.runtime.loadModel(
-                request: Melix_Worker_V1_LoadModelRequest(),
+            var request = Melix_Worker_V1_LoadModelRequest()
+            request.model.modelID = "melix-dev-text"
+            request.memoryBudgetBytes = 4_096
+            return try await services.runtime.loadModel(
+                request: request,
                 context: ServerContext(
                     descriptor: Melix_Worker_V1_RuntimeService.Method.LoadModel.descriptor,
                     remotePeer: "in-process:test",
@@ -165,9 +255,35 @@ final class WorkerScaffoldTests: XCTestCase {
             )
         }
 
+        let listedResponse = try await withServerContextRPCCancellationHandle { handle in
+            try await services.runtime.listLoadedModels(
+                request: Melix_Worker_V1_ListLoadedModelsRequest(),
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_RuntimeService.Method.ListLoadedModels.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
+        let loadedStats = try await withServerContextRPCCancellationHandle { handle in
+            try await services.runtime.getRuntimeStats(
+                request: Melix_Worker_V1_GetRuntimeStatsRequest(),
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_RuntimeService.Method.GetRuntimeStats.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
         let unloadResponse = try await withServerContextRPCCancellationHandle { handle in
-            try await services.runtime.unloadModel(
-                request: Melix_Worker_V1_UnloadModelRequest(),
+            var request = Melix_Worker_V1_UnloadModelRequest()
+            request.modelHandle = loadResponse.modelHandle
+            return try await services.runtime.unloadModel(
+                request: request,
                 context: ServerContext(
                     descriptor: Melix_Worker_V1_RuntimeService.Method.UnloadModel.descriptor,
                     remotePeer: "in-process:test",
@@ -177,11 +293,11 @@ final class WorkerScaffoldTests: XCTestCase {
             )
         }
 
-        let warmupResponse = try await withServerContextRPCCancellationHandle { handle in
-            try await services.runtime.warmupModel(
-                request: Melix_Worker_V1_WarmupModelRequest(),
+        let postUnloadStats = try await withServerContextRPCCancellationHandle { handle in
+            try await services.runtime.getRuntimeStats(
+                request: Melix_Worker_V1_GetRuntimeStatsRequest(),
                 context: ServerContext(
-                    descriptor: Melix_Worker_V1_RuntimeService.Method.WarmupModel.descriptor,
+                    descriptor: Melix_Worker_V1_RuntimeService.Method.GetRuntimeStats.descriptor,
                     remotePeer: "in-process:test",
                     localPeer: "in-process:test",
                     cancellation: handle
@@ -189,11 +305,32 @@ final class WorkerScaffoldTests: XCTestCase {
             )
         }
 
-        let shutdownResponse = try await withServerContextRPCCancellationHandle { handle in
-            try await services.runtime.shutdown(
-                request: Melix_Worker_V1_ShutdownRequest(),
+        XCTAssertTrue(loadResponse.ok)
+        XCTAssertEqual(loadResponse.modelHandle, "melix-dev-text::1")
+        XCTAssertEqual(loadResponse.estimatedResidentBytes, 4_096)
+        XCTAssertEqual(listedResponse.modelHandles, ["melix-dev-text::1"])
+        XCTAssertEqual(loadedStats.stats.residentBytes, 4_096)
+        XCTAssertTrue(unloadResponse.ok)
+        XCTAssertEqual(postUnloadStats.stats.residentBytes, 0)
+        XCTAssertEqual(services.metrics.counters["swift_text.loaded_model_count"], 0)
+
+        let loadedSpecs = await backend.loadedSpecs()
+        XCTAssertEqual(loadedSpecs.map(\.modelPath), ["mlx-community/melix-dev-text-4bit"])
+    }
+
+    func testRuntimeLifecycleReportsLoadFailuresAndMissingHandles() async throws {
+        let services = makeServices(
+            backend: FakeRuntimeBackend(loadError: FakeRuntimeBackendError.loadFailed),
+            residentMemorySamples: [1_000, 1_000]
+        )
+
+        let failedLoad = try await withServerContextRPCCancellationHandle { handle in
+            var request = Melix_Worker_V1_LoadModelRequest()
+            request.model.modelID = "melix-dev-text"
+            return try await services.runtime.loadModel(
+                request: request,
                 context: ServerContext(
-                    descriptor: Melix_Worker_V1_RuntimeService.Method.Shutdown.descriptor,
+                    descriptor: Melix_Worker_V1_RuntimeService.Method.LoadModel.descriptor,
                     remotePeer: "in-process:test",
                     localPeer: "in-process:test",
                     cancellation: handle
@@ -201,14 +338,24 @@ final class WorkerScaffoldTests: XCTestCase {
             )
         }
 
-        XCTAssertFalse(loadResponse.ok)
-        XCTAssertEqual(loadResponse.error.code, "unimplemented")
-        XCTAssertFalse(unloadResponse.ok)
-        XCTAssertEqual(unloadResponse.error.code, "unimplemented")
-        XCTAssertFalse(warmupResponse.ok)
-        XCTAssertEqual(warmupResponse.error.code, "unimplemented")
-        XCTAssertTrue(shutdownResponse.ok)
-        XCTAssertEqual(services.metrics.counters["swift_text.unimplemented_rpc_count"], 3)
+        let missingUnload = try await withServerContextRPCCancellationHandle { handle in
+            var request = Melix_Worker_V1_UnloadModelRequest()
+            request.modelHandle = "missing-handle"
+            return try await services.runtime.unloadModel(
+                request: request,
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_RuntimeService.Method.UnloadModel.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
+        XCTAssertFalse(failedLoad.ok)
+        XCTAssertEqual(failedLoad.error.code, "load_failed")
+        XCTAssertFalse(missingUnload.ok)
+        XCTAssertEqual(missingUnload.error.code, "not_found")
     }
 
     func testInferenceUnaryFallbackRpcsReturnStructuredUnimplemented() async throws {
@@ -549,11 +696,25 @@ final class WorkerScaffoldTests: XCTestCase {
 }
 
 @available(macOS 15.0, *)
-private func makeServices() -> WorkerServices {
+private func makeServices(
+    environment: [String: String] = [:],
+    backend: some TextRuntimeBackend = FakeRuntimeBackend(),
+    residentMemorySamples: [UInt64] = [0, 0]
+) -> WorkerServices {
     let configuration = WorkerConfiguration()
-    let registry = WorkerRuntimeRegistry(configuration: configuration)
     let metrics = MetricsStore()
     let abortRegistry = AbortRegistry()
+    let catalog = WorkerModelCatalog(environment: environment)
+    let probe = ResidentMemoryProbe(samples: residentMemorySamples)
+    let runtime = TextRuntime(
+        backend: backend,
+        residentMemoryReader: { probe.next() }
+    )
+    let registry = WorkerRuntimeRegistry(
+        configuration: configuration,
+        modelCatalog: catalog,
+        runtime: runtime
+    )
     return WorkerServices(
         configuration: configuration,
         registry: registry,
@@ -576,6 +737,103 @@ private actor RecordingRPCWriterStorage<Element: Sendable> {
 
     func snapshot() -> [Element] {
         elements
+    }
+}
+
+@available(macOS 15.0, *)
+private enum FakeRuntimeBackendError: Error {
+    case loadFailed
+}
+
+@available(macOS 15.0, *)
+private actor FakeRuntimeBackendStorage {
+    private var specs: [Melix_Worker_V1_ModelSpec] = []
+
+    func append(_ spec: Melix_Worker_V1_ModelSpec) {
+        specs.append(spec)
+    }
+
+    func snapshot() -> [Melix_Worker_V1_ModelSpec] {
+        specs
+    }
+}
+
+@available(macOS 15.0, *)
+private final class FakeRuntimeBackend: TextRuntimeBackend, @unchecked Sendable {
+    let runtimeName: String = "fake-mlx-swift"
+
+    private let loadError: Error?
+    private let residentBytesHint: UInt64
+    private let storage = FakeRuntimeBackendStorage()
+    private let unloadedStorage = FakeRuntimeBackendUnloadStorage()
+
+    init(loadError: Error? = nil, residentBytesHint: UInt64 = 0) {
+        self.loadError = loadError
+        self.residentBytesHint = residentBytesHint
+    }
+
+    func loadModel(spec: Melix_Worker_V1_ModelSpec) async throws -> LoadedTextModel {
+        await storage.append(spec)
+        if let loadError {
+            throw loadError
+        }
+        return LoadedTextModel(
+            storage: ["model_id": spec.modelID, "model_path": spec.modelPath],
+            residentBytesHint: residentBytesHint
+        )
+    }
+
+    func unloadModel(_ model: LoadedTextModel) async {
+        await unloadedStorage.increment()
+    }
+
+    func loadedSpecs() async -> [Melix_Worker_V1_ModelSpec] {
+        await storage.snapshot()
+    }
+
+    func unloadedModelCount() async -> Int {
+        await unloadedStorage.count()
+    }
+}
+
+@available(macOS 15.0, *)
+private struct DefaultUnloadBackend: TextRuntimeBackend {
+    let runtimeName: String = "default-unload-backend"
+
+    func loadModel(spec: Melix_Worker_V1_ModelSpec) async throws -> LoadedTextModel {
+        LoadedTextModel(storage: ["model_id": spec.modelID], residentBytesHint: 1)
+    }
+}
+
+@available(macOS 15.0, *)
+private actor FakeRuntimeBackendUnloadStorage {
+    private var value: Int = 0
+
+    func increment() {
+        value += 1
+    }
+
+    func count() -> Int {
+        value
+    }
+}
+
+@available(macOS 15.0, *)
+private final class ResidentMemoryProbe: @unchecked Sendable {
+    private let lock = NSLock()
+    private var samples: [UInt64]
+
+    init(samples: [UInt64]) {
+        self.samples = samples
+    }
+
+    func next() -> UInt64 {
+        lock.lock()
+        defer { lock.unlock() }
+        if samples.isEmpty {
+            return 0
+        }
+        return samples.removeFirst()
     }
 }
 
