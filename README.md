@@ -74,3 +74,7 @@ bash scripts/dev_up.sh
 - `make coverage` is the repository entrypoint for source coverage checks before commit.
 
 The live runtime, HTTP gateway, and menu bar behavior are added incrementally in later tasks under `docs/plans/2026-03-27-phase-0-thin-path.md`.
+
+## License
+
+Melix is licensed under the Apache License, Version 2.0. See `LICENSE` for the full text.

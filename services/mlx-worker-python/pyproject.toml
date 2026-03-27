@@ -3,6 +3,7 @@ name = "melix-mlx-worker"
 version = "0.1.0"
 description = "Python worker for the Melix execution plane."
 requires-python = ">=3.12"
+license = { text = "Apache-2.0" }
 dependencies = [
   "coverage>=7.10.0",
   "grpcio>=1.71.0",
