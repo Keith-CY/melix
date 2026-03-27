@@ -23,21 +23,23 @@ public struct CoordinatedChatExecution: Sendable {
 }
 
 public actor RequestCoordinator {
-    private let workerClient: any WorkerClient
+    private let workerRegistry: WorkerRegistry
     private let abortRegistry: AbortRegistry
     private let metricsStore: MetricsStore
     private let now: @Sendable () -> Date
+    private var activeWorkerClients: [String: any WorkerClient]
 
     public init(
-        workerClient: any WorkerClient,
+        workerRegistry: WorkerRegistry,
         abortRegistry: AbortRegistry = AbortRegistry(),
         metricsStore: MetricsStore = MetricsStore(),
         now: @escaping @Sendable () -> Date = Date.init
     ) {
-        self.workerClient = workerClient
+        self.workerRegistry = workerRegistry
         self.abortRegistry = abortRegistry
         self.metricsStore = metricsStore
         self.now = now
+        self.activeWorkerClients = [:]
     }
 
     public func startChatCompletion(
@@ -46,17 +48,32 @@ public actor RequestCoordinator {
         guard await abortRegistry.begin(requestID: request.requestID) else {
             throw RequestCoordinatorError.requestAlreadyActive
         }
+        let routeStartedAt = now()
+        guard let workerClient = await workerRegistry.client(forModelID: request.modelID) else {
+            await abortRegistry.finish(requestID: request.requestID)
+            throw RequestCoordinatorError.workerUnavailable
+        }
+        await metricsStore.set(
+            now().timeIntervalSince(routeStartedAt) * 1000,
+            forKey: "control_plane.worker_route_ms"
+        )
+
+        let connectStartedAt = now()
         guard await workerClient.canDispatchRequests() else {
             await abortRegistry.finish(requestID: request.requestID)
             throw RequestCoordinatorError.workerUnavailable
         }
+        await metricsStore.set(
+            now().timeIntervalSince(connectStartedAt) * 1000,
+            forKey: "control_plane.worker_connect_ms"
+        )
 
         let dispatchStartedAt = now()
         await metricsStore.increment("requests.inflight")
+        activeWorkerClients[request.requestID] = workerClient
 
         do {
             let upstream = try await workerClient.generate(request: request.workerRequest)
-            let abortRegistry = self.abortRegistry
             let metricsStore = self.metricsStore
             let now = self.now
             let requestID = request.requestID
@@ -81,11 +98,11 @@ public actor RequestCoordinator {
                             continuation.yield(event)
                         }
                         await metricsStore.decrement("requests.inflight")
-                        await abortRegistry.finish(requestID: requestID)
+                        await self.finishRequestTracking(requestID: requestID)
                         continuation.finish()
                     } catch {
                         await metricsStore.decrement("requests.inflight")
-                        await abortRegistry.finish(requestID: requestID)
+                        await self.finishRequestTracking(requestID: requestID)
                         continuation.finish(throwing: error)
                     }
                 }
@@ -94,7 +111,7 @@ public actor RequestCoordinator {
                     task.cancel()
                     Task {
                         await metricsStore.decrement("requests.inflight")
-                        await abortRegistry.finish(requestID: requestID)
+                        await self.finishRequestTracking(requestID: requestID)
                     }
                 }
             }
@@ -103,16 +120,21 @@ public actor RequestCoordinator {
         } catch let error as WorkerClientError where error == .unavailable {
             await metricsStore.decrement("requests.inflight")
             await abortRegistry.finish(requestID: request.requestID)
+            activeWorkerClients.removeValue(forKey: request.requestID)
             throw RequestCoordinatorError.workerUnavailable
         } catch {
             await metricsStore.decrement("requests.inflight")
             await abortRegistry.finish(requestID: request.requestID)
+            activeWorkerClients.removeValue(forKey: request.requestID)
             throw error
         }
     }
 
     public func cancel(requestID: String) async throws -> Bool {
         guard await abortRegistry.contains(requestID) else {
+            return false
+        }
+        guard let workerClient = activeWorkerClients[requestID] else {
             return false
         }
 
@@ -123,8 +145,13 @@ public actor RequestCoordinator {
                 now().timeIntervalSince(startedAt) * 1000,
                 forKey: "http.abort_ms"
             )
-            await abortRegistry.finish(requestID: requestID)
+            await finishRequestTracking(requestID: requestID)
         }
         return aborted
+    }
+
+    private func finishRequestTracking(requestID: String) async {
+        await abortRegistry.finish(requestID: requestID)
+        activeWorkerClients.removeValue(forKey: requestID)
     }
 }

@@ -16,7 +16,10 @@ struct OpenAIHandlerTests {
             makeUsageEvent(requestID: "req-fixed", seq: 3, promptTokens: 1, completionTokens: 2),
             makeCompletedEvent(requestID: "req-fixed", seq: 4, finishReason: "stop", assistantText: "Hello"),
         ])
-        let coordinator = RequestCoordinator(workerClient: workerClient, abortRegistry: AbortRegistry())
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(defaultTextClient: workerClient),
+            abortRegistry: AbortRegistry()
+        )
         let translator = ChatRequestTranslator(requestIDGenerator: { "req-fixed" })
         let handler = OpenAIHandler(
             modelCatalog: catalog,
@@ -76,7 +79,10 @@ struct OpenAIHandlerTests {
         let catalog = ModelCatalog(seedModels: [warmModel()])
         let handler = OpenAIHandler(
             modelCatalog: catalog,
-            requestCoordinator: RequestCoordinator(workerClient: ScriptedWorkerClient(events: []), abortRegistry: AbortRegistry())
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: ScriptedWorkerClient(events: [])),
+                abortRegistry: AbortRegistry()
+            )
         )
 
         let response = try await handler.handle(
@@ -97,7 +103,10 @@ struct OpenAIHandlerTests {
     func unknownRoutesReturn404() async throws {
         let handler = OpenAIHandler(
             modelCatalog: ModelCatalog(),
-            requestCoordinator: RequestCoordinator(workerClient: ScriptedWorkerClient(events: []), abortRegistry: AbortRegistry())
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: ScriptedWorkerClient(events: [])),
+                abortRegistry: AbortRegistry()
+            )
         )
 
         let response = try await handler.handle(
@@ -113,7 +122,10 @@ struct OpenAIHandlerTests {
     func nonStreamRequestsReturn400() async throws {
         let handler = OpenAIHandler(
             modelCatalog: ModelCatalog(seedModels: [warmModel()]),
-            requestCoordinator: RequestCoordinator(workerClient: ScriptedWorkerClient(events: []), abortRegistry: AbortRegistry())
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: ScriptedWorkerClient(events: [])),
+                abortRegistry: AbortRegistry()
+            )
         )
         let body = try #require(
             """
@@ -140,7 +152,10 @@ struct OpenAIHandlerTests {
     func modelNotReadyReturns409() async throws {
         let handler = OpenAIHandler(
             modelCatalog: ModelCatalog(),
-            requestCoordinator: RequestCoordinator(workerClient: ScriptedWorkerClient(events: []), abortRegistry: AbortRegistry())
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: ScriptedWorkerClient(events: [])),
+                abortRegistry: AbortRegistry()
+            )
         )
         let body = try #require(
             """
@@ -167,7 +182,10 @@ struct OpenAIHandlerTests {
     func workerUnavailableReturns503() async throws {
         let handler = OpenAIHandler(
             modelCatalog: ModelCatalog(seedModels: [warmModel()]),
-            requestCoordinator: RequestCoordinator(workerClient: UnavailableWorkerClient(), abortRegistry: AbortRegistry())
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: UnavailableWorkerClient()),
+                abortRegistry: AbortRegistry()
+            )
         )
         let body = try #require(
             """
@@ -193,7 +211,10 @@ struct OpenAIHandlerTests {
     @Test("chat requests return 409 when another request is active")
     func activeRequestReturns409() async throws {
         let workerClient = BlockingOpenAIWorkerClient()
-        let coordinator = RequestCoordinator(workerClient: workerClient, abortRegistry: AbortRegistry())
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(defaultTextClient: workerClient),
+            abortRegistry: AbortRegistry()
+        )
         let handler = OpenAIHandler(
             modelCatalog: ModelCatalog(seedModels: [warmModel()]),
             requestCoordinator: coordinator,
@@ -233,7 +254,7 @@ struct OpenAIHandlerTests {
     }
 }
 
-private actor ScriptedWorkerClient: WorkerClient {
+private actor ScriptedWorkerClient: WorkerRoutingClient {
     private let events: [Melix_Worker_V1_ExecuteEvent]
     private(set) var lastGenerateRequest: Melix_Worker_V1_GenerateRequest?
 
@@ -261,9 +282,18 @@ private actor ScriptedWorkerClient: WorkerClient {
     func abort(requestID: String) async throws -> Bool {
         true
     }
+
+    func loadModel(
+        request: Melix_Worker_V1_LoadModelRequest
+    ) async throws -> Melix_Worker_V1_LoadModelResponse {
+        var response = Melix_Worker_V1_LoadModelResponse()
+        response.ok = true
+        response.modelHandle = "melix-dev-text::swift"
+        return response
+    }
 }
 
-private actor UnavailableWorkerClient: WorkerClient {
+private actor UnavailableWorkerClient: WorkerRoutingClient {
     func canDispatchRequests() async -> Bool {
         false
     }
@@ -277,9 +307,15 @@ private actor UnavailableWorkerClient: WorkerClient {
     func abort(requestID: String) async throws -> Bool {
         false
     }
+
+    func loadModel(
+        request: Melix_Worker_V1_LoadModelRequest
+    ) async throws -> Melix_Worker_V1_LoadModelResponse {
+        throw WorkerClientError.unavailable
+    }
 }
 
-private actor BlockingOpenAIWorkerClient: WorkerClient {
+private actor BlockingOpenAIWorkerClient: WorkerRoutingClient {
     func canDispatchRequests() async -> Bool {
         true
     }
@@ -292,6 +328,15 @@ private actor BlockingOpenAIWorkerClient: WorkerClient {
 
     func abort(requestID: String) async throws -> Bool {
         true
+    }
+
+    func loadModel(
+        request: Melix_Worker_V1_LoadModelRequest
+    ) async throws -> Melix_Worker_V1_LoadModelResponse {
+        var response = Melix_Worker_V1_LoadModelResponse()
+        response.ok = true
+        response.modelHandle = "melix-dev-text::swift"
+        return response
     }
 }
 

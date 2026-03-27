@@ -36,6 +36,7 @@ Current phase-status and planning documents:
 - `plans/2026-03-28-p1-m2-swift-text-worker-scaffold.md`
 - `plans/2026-03-28-p1-m3-swift-runtime-lifecycle.md`
 - `plans/2026-03-28-p1-m4-swift-generate-abort.md`
+- `plans/2026-03-28-p1-m5-control-plane-routing.md`
 - `plans/2026-03-27-phase-2-text-runtime-depth.md`
 - `plans/2026-03-27-phase-3-cache-session-recovery.md`
 - `plans/2026-03-27-phase-4-text-api-breadth-agent-semantics.md`

@@ -27,7 +27,7 @@ public protocol WorkerBridgeRunning: Sendable {
     func runStream(command: BridgeCommand) async throws -> AsyncThrowingStream<String, Error>
 }
 
-public struct PythonBridgeWorkerClient: WorkerClient, Sendable {
+public struct PythonBridgeWorkerClient: WorkerRoutingClient, Sendable {
     private let socketPath: String
     private let runner: any WorkerBridgeRunning
 
@@ -149,7 +149,7 @@ public struct PythonBridgeWorkerClient: WorkerClient, Sendable {
 
 public enum BootstrapWorkerPreparation {
     public static func preloadDevTextModel(
-        workerClient: PythonBridgeWorkerClient,
+        workerClient: any WorkerRoutingClient,
         modelCatalog: ModelCatalog,
         memoryBudgetBytes: UInt64 = 0
     ) async throws -> Bool {

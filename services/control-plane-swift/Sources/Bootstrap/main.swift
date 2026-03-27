@@ -8,19 +8,35 @@ enum MelixControlPlaneBootstrap {
         let modelCatalog = ModelCatalog()
         let metricsStore = MetricsStore()
         let bootstrapEnvironment = BootstrapEnvironment(environment: ProcessInfo.processInfo.environment)
-        let workerClient = PythonBridgeWorkerClient(
-            socketPath: bootstrapEnvironment.workerSocketPath,
+        let swiftTextWorkerClient = SwiftTextWorkerClient(
+            socketPath: bootstrapEnvironment.swiftTextWorkerSocketPath
+        )
+        let pythonCompatibilityClient = PythonBridgeWorkerClient(
+            socketPath: bootstrapEnvironment.pythonWorkerSocketPath,
             repoRoot: bootstrapEnvironment.repoRoot,
             processEnvironment: ProcessInfo.processInfo.environment
         )
+        let workerRegistry = WorkerRegistry(
+            defaultTextClient: swiftTextWorkerClient,
+            pythonCompatibilityClient: pythonCompatibilityClient
+        )
 
+        let preloadStartedAt = Date()
         do {
             _ = try await BootstrapWorkerPreparation.preloadDevTextModel(
-                workerClient: workerClient,
+                workerClient: swiftTextWorkerClient,
                 modelCatalog: modelCatalog
+            )
+            await metricsStore.set(
+                Date().timeIntervalSince(preloadStartedAt) * 1000,
+                forKey: "control_plane.worker_preload_ms"
             )
         } catch {
             print("Melix worker preload skipped: \(error)")
+            await metricsStore.set(
+                Date().timeIntervalSince(preloadStartedAt) * 1000,
+                forKey: "control_plane.worker_preload_ms"
+            )
         }
 
         _ = ControlPlaneService(
@@ -31,7 +47,7 @@ enum MelixControlPlaneBootstrap {
         let handler = OpenAIHandler(
             modelCatalog: modelCatalog,
             requestCoordinator: RequestCoordinator(
-                workerClient: workerClient,
+                workerRegistry: workerRegistry,
                 abortRegistry: AbortRegistry(),
                 metricsStore: metricsStore
             )
@@ -60,7 +76,8 @@ enum MelixControlPlaneBootstrap {
 
 private struct BootstrapEnvironment {
     let repoRoot: String
-    let workerSocketPath: String
+    let pythonWorkerSocketPath: String
+    let swiftTextWorkerSocketPath: String
 
     init(environment: [String: String]) {
         if let repoRoot = environment["MELIX_REPO_ROOT"], !repoRoot.isEmpty {
@@ -68,7 +85,9 @@ private struct BootstrapEnvironment {
         } else {
             self.repoRoot = BootstrapEnvironment.inferRepoRoot()
         }
-        self.workerSocketPath = environment["MELIX_WORKER_SOCKET_PATH"] ?? "/tmp/melix-worker.sock"
+        self.pythonWorkerSocketPath = environment["MELIX_WORKER_SOCKET_PATH"] ?? "/tmp/melix-worker.sock"
+        self.swiftTextWorkerSocketPath =
+            environment["MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH"] ?? "/var/run/melix/swift-text-worker.sock"
     }
 
     private static func inferRepoRoot() -> String {

@@ -13,6 +13,8 @@ let package = Package(
     ],
     dependencies: [
         .package(path: "../../packages/protocol/swift"),
+        .package(url: "https://github.com/grpc/grpc-swift-2.git", from: "2.0.0"),
+        .package(url: "https://github.com/grpc/grpc-swift-nio-transport.git", from: "2.6.1"),
     ],
     targets: [
         .target(
@@ -20,6 +22,8 @@ let package = Package(
             dependencies: [
                 .product(name: "MelixControlPlaneProtocol", package: "swift"),
                 .product(name: "MelixWorkerProtocol", package: "swift"),
+                .product(name: "GRPCCore", package: "grpc-swift-2"),
+                .product(name: "GRPCNIOTransportHTTP2Posix", package: "grpc-swift-nio-transport"),
             ],
             path: "Sources",
             exclude: ["Bootstrap"]

@@ -13,6 +13,12 @@ public protocol WorkerClient: Sendable {
     func abort(requestID: String) async throws -> Bool
 }
 
+public protocol WorkerRoutingClient: WorkerClient {
+    func loadModel(
+        request: Melix_Worker_V1_LoadModelRequest
+    ) async throws -> Melix_Worker_V1_LoadModelResponse
+}
+
 public struct NullWorkerClient: WorkerClient {
     public init() {}
 
