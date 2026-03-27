@@ -8,10 +8,12 @@ Melix is a native control plane plus worker-runtime architecture for local AI ex
 
 1. A macOS menu bar app and dashboard for local operations.
 2. A Swift control plane daemon that owns system truth.
-3. A pool of Python inference workers connected over local RPC.
+3. A polyglot worker pool connected over local RPC.
 4. A tiered cache and storage layer that persists reusable execution state.
 
 The design is optimized for agent-oriented workloads: repeated prefixes, tool-call recovery, branch-aware sessions, and fast follow-up requests.
+
+Melix should keep the control plane Swift-first while moving the latency-critical default text path toward a dedicated Swift text worker. Python workers remain the primary execution layer for multimodal, embeddings, rerank, image, audio, and maintenance flows. See `decisions/2026-03-27-swift-text-runtime.md`.
 
 ## Runtime Topology
 
@@ -30,8 +32,8 @@ The design is optimized for agent-oriented workloads: repeated prefixes, tool-ca
                  │ gRPC over Unix Domain Sockets
                  ▼
 ┌────────────────────────────────────────────────────────────┐
-│                  Melix Worker Pool (Python)               │
-│  text, vision, embed, rerank, image, audio, maintenance   │
+│              Melix Worker Pool (Swift + Python)           │
+│  swift text, python multimodal, maintenance, embeddings   │
 └────────────────────────────────────────────────────────────┘
                  │
                  ▼
@@ -92,7 +94,9 @@ This layer should remain Swift-first because it carries the longest-lived produc
 
 ### Worker Pool
 
-Workers are execution engines, not public servers. They own:
+Workers are execution engines, not public servers. The worker plane may be implemented in multiple languages so long as it stays behind the shared worker RPC contract.
+
+Workers own:
 
 - Model runtime load and unload
 - Prefill and decode execution
@@ -102,6 +106,31 @@ Workers are execution engines, not public servers. They own:
 - Maintenance flows such as conversion, diagnostics, and benchmarking
 
 Workers should not expose network-facing APIs beyond local RPC.
+
+#### Swift Text Worker
+
+The default text generation path should move into an independent Swift text worker. In its first implementation phase it should own:
+
+- text `Generate`
+- model lifecycle for text models routed to the Swift path
+- text streaming and abort
+- latency-critical text runtime integration
+
+It should not:
+
+- run inside the control plane process
+- silently fall back to the Python text path on failure
+- take ownership of multimodal or maintenance families in the same phase
+
+#### Python Workers
+
+Python workers remain the broader execution layer. They should continue to own:
+
+- multimodal execution
+- embeddings and rerank
+- image and audio families
+- convert, doctor, info, and bench flows
+- any text-compatible compatibility path retained during migration
 
 ### Storage Ownership
 
@@ -193,6 +222,8 @@ Worker RPC should be defined with gRPC over Unix Domain Sockets and cover four s
 - `MaintenanceService` for convert, info, doctor, and bench
 
 Melix should keep `Generate`, `Prefill`, and `Decode` because the split is required for chunked prefill, tool recovery, checkpointing, and future scheduler upgrades. These RPCs should share one underlying execution schema so tracing, metrics, scheduling hints, and event semantics remain unified.
+
+The same RPC contract should be implementable by both Swift and Python workers. The control plane should route by worker capability and engine class rather than by implementation language assumptions.
 
 ## Request Model and Scheduling
 
@@ -316,6 +347,12 @@ The control plane should manage models through an EnginePool that handles:
 
 Multi-model lifecycle is a product capability, not a worker-only implementation detail.
 
+EnginePool should also treat engine class as a first-class routing dimension. In the next runtime phase:
+
+- text models default to the Swift text worker
+- non-text model families continue to route to Python workers
+- Swift text worker failures should surface explicitly rather than silently re-route to Python
+
 ### Runtime and Maintenance
 
 Workers should also expose operational tools as product features:
@@ -391,8 +428,10 @@ The implementation should proceed in this order:
 
 1. Repository skeleton, schemas, XPC base, worker RPC base, and menu bar shell
 2. Single-model text path with streaming and in-memory cache
-3. EnginePool, queueing, session and branch state, tool and reasoning parsing, embeddings, rerank
-4. SSD-backed cache, snapshots, restart recovery, cache inspection
-5. Vision, OCR, audio, image flows, quantization, conversion, and benchmark completeness
+3. Dedicated Swift text worker for the default text `Generate` hot path
+4. EnginePool depth, phase-aware text runtime behavior, queueing, and session or branch state
+5. SSD-backed cache, snapshots, restart recovery, and cache inspection
+6. Broader API and model families such as embeddings, rerank, vision, OCR, audio, and image flows
+7. Packaging, diagnostics, and benchmark completeness
 
 This order keeps the architecture aligned with product value: first usable, then durable, then broad.

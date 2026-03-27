@@ -15,14 +15,15 @@ The protocol is:
 - multimodal-ready
 - quantization-aware
 
-Workers are local execution engines. They are not public HTTP servers.
+Workers are local execution engines. They are not public HTTP servers. The protocol is shared across worker implementations and is not tied to Python as an implementation language.
 
 ## Core Principles
 
 In V1, the split is:
 
 - the Swift control plane owns scheduling, session and branch state, EnginePool decisions, and cache metadata truth
-- Python workers own runtime execution, prefill and decode, cache materialization, snapshot payloads, parser glue, and maintenance flows
+- the default text hot path is expected to move toward a dedicated Swift text worker
+- Python workers remain the broader execution layer for multimodal, retrieval, cache materialization, snapshot payloads, parser glue, and maintenance flows
 
 Transport should use gRPC over Unix Domain Sockets with proto3 code generation shared across languages.
 

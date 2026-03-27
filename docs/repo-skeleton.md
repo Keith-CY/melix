@@ -13,7 +13,7 @@ The repository should reflect four long-lived assets:
 - Python inference workers
 - cross-language protocol, tools, and operational assets
 
-This skeleton is optimized for a Swift-first control plane, MLX-backed Python workers, agent-aware cache and scheduling, and a native macOS runtime experience.
+This skeleton is optimized for a Swift-first control plane, a dedicated Swift text worker, MLX-backed Python workers for broader execution families, agent-aware cache and scheduling, and a native macOS runtime experience.
 
 ## Top-Level Structure
 
@@ -92,6 +92,19 @@ melix/
 │  │  │  ├─ Logs/
 │  │  │  ├─ Security/
 │  │  │  └─ Admin/
+│  │  └─ Tests/
+│  │
+│  ├─ mlx-text-worker-swift/
+│  │  ├─ Package.swift
+│  │  ├─ Sources/
+│  │  │  ├─ Bootstrap/
+│  │  │  ├─ RPCServer/
+│  │  │  ├─ Runtime/
+│  │  │  ├─ Engine/
+│  │  │  ├─ Models/
+│  │  │  ├─ Streaming/
+│  │  │  ├─ Abort/
+│  │  │  └─ Metrics/
 │  │  └─ Tests/
 │  │
 │  └─ mlx-worker-python/
@@ -251,12 +264,28 @@ It must not:
 - keep large active tensor payloads
 - collapse modality-specific execution details into gateway handlers
 
+### `services/mlx-text-worker-swift/`
+
+This is the latency-critical text execution service. It should own:
+
+- the default text `Generate` hot path
+- text-model lifecycle for models routed to the Swift engine class
+- text streaming and abort
+- text-runtime metrics and diagnostics
+
+It must not:
+
+- run inside the control plane process
+- take ownership of multimodal, embeddings, rerank, image, audio, or maintenance families in its first phase
+- silently delegate failed text execution to the Python path
+
 ### `services/mlx-worker-python/`
 
-This is the V1 execution layer. It should own:
+This is the broader execution layer. It should own:
 
 - MLX runtime bindings
-- text, vision, embedding, rerank, image, and audio execution
+- multimodal, embedding, rerank, image, and audio execution
+- maintenance-compatible text or migration paths retained during runtime transition
 - prefill and decode flow
 - L0 and L1 hot-path cache handling
 - asynchronous writes into L2 storage
@@ -290,6 +319,7 @@ This directory should contain standalone operator-facing tools, not hidden helpe
 | `SessionRegistry` | control plane | session, branch, workflow-run, and checkpoint identities |
 | `CacheIndex` | control plane | cache metadata truth, summaries, logical prefix and snapshot indices |
 | `WorkerClient` | control plane | gRPC client wrappers and streaming bridges |
+| `TextEngine` | swift text worker | default text generation, abort, runtime integration, stream emission |
 | `EngineCore` | worker | runtime execution, scheduling handoff, cache manager orchestration |
 | `InMemoryBlockCache` | worker | L1 block pool, dedup, refcounting, copy-on-write, pinning |
 | `SSDStore` | worker | durable block and snapshot payload storage |
@@ -306,7 +336,7 @@ The repository layout must reinforce the runtime boundaries:
 Menu Bar App
   └─ XPC ──> Control Plane Daemon
                 ├─ HTTP/SSE ──> local API clients
-                └─ gRPC over UDS ──> Python Workers
+                └─ gRPC over UDS ──> Swift and Python Workers
 ```
 
 Rules:
@@ -323,9 +353,10 @@ Rules:
 ### Development Outputs
 
 - `swift build` for the control plane, protocol consumers, and menu bar app
+- `swift build` for the Swift text worker
 - `uv sync` and `pytest` for the Python worker
 - `buf generate` for schema outputs
-- `make dev-up` to boot the control plane, a text worker, and the menu bar app in a local development loop
+- `make dev-up` to boot the control plane, the default text worker, and the menu bar app in a local development loop
 - `make bench` for latency, cache, and model-switching measurements
 
 ### Delivery Outputs
@@ -333,6 +364,7 @@ Rules:
 - `melix.dmg` containing the native app, helper configuration, and packaged runtime metadata
 - `melix` CLI for development and operations
 - launchd configuration for the control plane
+- packaged Swift text worker runtime
 - packaged Python worker runtime
 - optional Homebrew formula
 
@@ -374,6 +406,15 @@ These commands should remain stable over time because they become team muscle me
 - `services/control-plane-swift/Sources/Scheduler/RequestScheduler.swift`
 - `services/control-plane-swift/Sources/CacheIndex/CacheIndexStore.swift`
 - `services/control-plane-swift/Sources/Sessions/SessionRegistry.swift`
+
+### Swift Text Worker
+
+- `services/mlx-text-worker-swift/Sources/Bootstrap/main.swift`
+- `services/mlx-text-worker-swift/Sources/RPCServer/WorkerServer.swift`
+- `services/mlx-text-worker-swift/Sources/Runtime/TextRuntime.swift`
+- `services/mlx-text-worker-swift/Sources/Engine/TextEngine.swift`
+- `services/mlx-text-worker-swift/Sources/Streaming/TokenStreamWriter.swift`
+- `services/mlx-text-worker-swift/Sources/Abort/AbortRegistry.swift`
 
 ### Python Worker
 
@@ -418,19 +459,19 @@ Do not front-load these into the first repository phase:
 
 ### Phase 1: Single-Model Usable Path
 
-- `POST /v1/chat/completions`
-- SSE streaming
-- `LoadModel`, `Generate`, `Abort`
-- in-memory prefix cache
-- menu bar server-state view
+- default text route moved to the Swift text worker
+- `POST /v1/chat/completions` through the Swift text `Generate` path
+- SSE streaming and `Abort`
+- explicit failure on Swift text worker errors rather than silent Python fallback
+- menu bar server-state and model-state view
 
 ### Phase 2: System Usable Path
 
-- multi-model EnginePool
+- real `Prefill` and `Decode`
+- multi-model EnginePool depth
 - four-lane scheduler
 - session and branch registry
 - tool and reasoning parser support
-- embeddings and rerank
 
 ### Phase 3: Durable Cache Assets
 
@@ -440,7 +481,14 @@ Do not front-load these into the first repository phase:
 - cache inspector
 - restart recovery
 
-### Phase 4: Multimodal and Quantization Completion
+### Phase 4: Broader API and Retrieval Families
+
+- `POST /v1/responses`
+- `POST /v1/messages`
+- embeddings
+- rerank
+
+### Phase 5: Multimodal and Quantization Completion
 
 - vision and OCR
 - image generation and editing

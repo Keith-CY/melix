@@ -19,6 +19,7 @@ The current top-level specifications remain canonical and should not be moved wi
 - `control-plane-protocol.md`
 - `worker-rpc-schema.md`
 - `repo-skeleton.md`
+- `phase-roadmap.md`
 
 ## Planning
 
@@ -26,9 +27,20 @@ Plans live under `docs/plans/`.
 
 Use a plan for non-trivial changes that touch multiple modules, change architecture boundaries, or require staged verification.
 
-Current active implementation plan:
+Current phase-status and planning documents:
 
 - `plans/2026-03-27-phase-0-thin-path.md`
+- `plans/2026-03-27-swift-text-runtime-direction.md`
+- `plans/2026-03-27-phase-1-swift-text-worker.md`
+
+Current roadmap and phase-status documents:
+
+- `phase-roadmap.md`
+- `plans/2026-03-27-phase-0-thin-path.md`
+
+Recent decision records:
+
+- `decisions/2026-03-27-swift-text-runtime.md`
 
 ## Engineering Standards
 
