@@ -15,6 +15,7 @@ proto:
 swift-test:
 	mkdir -p "$(SWIFT_HOME)" "$(CLANG_MODULE_CACHE_PATH)"
 	HOME="$(SWIFT_HOME)" CLANG_MODULE_CACHE_PATH="$(CLANG_MODULE_CACHE_PATH)" swift test --package-path packages/protocol/swift
+	HOME="$(SWIFT_HOME)" CLANG_MODULE_CACHE_PATH="$(CLANG_MODULE_CACHE_PATH)" swift test --package-path services/mlx-text-worker-swift
 	HOME="$(SWIFT_HOME)" CLANG_MODULE_CACHE_PATH="$(CLANG_MODULE_CACHE_PATH)" swift test --package-path services/control-plane-swift
 	HOME="$(SWIFT_HOME)" CLANG_MODULE_CACHE_PATH="$(CLANG_MODULE_CACHE_PATH)" swift test --package-path apps/macos-menubar
 
@@ -28,8 +29,10 @@ integration-test:
 
 swift-coverage:
 	mkdir -p "$(SWIFT_HOME)" "$(CLANG_MODULE_CACHE_PATH)"
+	HOME="$(SWIFT_HOME)" CLANG_MODULE_CACHE_PATH="$(CLANG_MODULE_CACHE_PATH)" swift test --package-path services/mlx-text-worker-swift --enable-code-coverage
 	HOME="$(SWIFT_HOME)" CLANG_MODULE_CACHE_PATH="$(CLANG_MODULE_CACHE_PATH)" swift test --package-path services/control-plane-swift --enable-code-coverage
 	HOME="$(SWIFT_HOME)" CLANG_MODULE_CACHE_PATH="$(CLANG_MODULE_CACHE_PATH)" swift test --package-path apps/macos-menubar --enable-code-coverage
+	python3 scripts/swift_coverage_summary.py services/mlx-text-worker-swift/.build/arm64-apple-macosx/debug/codecov/MelixTextWorkerSwift.json /services/mlx-text-worker-swift/Sources/
 	python3 scripts/swift_coverage_summary.py services/control-plane-swift/.build/arm64-apple-macosx/debug/codecov/MelixControlPlane.json /services/control-plane-swift/Sources/
 	python3 scripts/swift_coverage_summary.py apps/macos-menubar/.build/arm64-apple-macosx/debug/codecov/MelixMacOSMenubar.json /apps/macos-menubar/Sources/
 
