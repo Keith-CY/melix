@@ -32,6 +32,13 @@ Current phase-status and planning documents:
 - `plans/2026-03-27-phase-0-thin-path.md`
 - `plans/2026-03-27-swift-text-runtime-direction.md`
 - `plans/2026-03-27-phase-1-swift-text-worker.md`
+- `plans/2026-03-27-phase-2-text-runtime-depth.md`
+- `plans/2026-03-27-phase-3-cache-session-recovery.md`
+- `plans/2026-03-27-phase-4-text-api-breadth-agent-semantics.md`
+- `plans/2026-03-27-phase-5-embeddings-rerank.md`
+- `plans/2026-03-27-phase-6-vision-ocr-audio-transcription.md`
+- `plans/2026-03-27-phase-7-image-generation-editing.md`
+- `plans/2026-03-27-phase-8-desktop-productization-release.md`
 
 Current roadmap and phase-status documents:
 
