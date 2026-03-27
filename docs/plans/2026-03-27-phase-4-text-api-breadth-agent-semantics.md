@@ -1,10 +1,10 @@
-# Phase 4 Text API Breadth and Agent Semantics Implementation Plan
+# Phase 4 Text API Breadth and Desktop Ops Foundation Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Expand Melix from thin chat compatibility into a fuller local text-runtime surface with `responses`, `messages`, richer reasoning and tool-call streams, and workflow-aware request shaping built on the text runtime foundation from Phases 1 through 3.
+**Goal:** Expand Melix from thin chat compatibility into a fuller local text-runtime surface with `completions`, `responses`, `messages`, richer reasoning and tool-call streams, workflow-aware request shaping, and the first real native desktop operations foundation built on the text runtime foundation from Phases 1 through 3.
 
-**Architecture:** Melix keeps one text execution core and broadens the control-plane translation layer so multiple public text endpoint shapes map onto the same session, scheduler, cache, and worker model. Endpoint diversity lives in translation, stream semantics, and compatibility logic rather than in separate runtime backends.
+**Architecture:** Melix keeps one text execution core and broadens the control-plane translation layer so multiple public text endpoint shapes map onto the same session, scheduler, cache, and worker model. Endpoint diversity lives in translation, stream semantics, and compatibility logic rather than in separate runtime backends. In parallel, the native SwiftUI desktop app grows a real dashboard, settings, logs, bench, models, and API reference foundation backed entirely by control-plane truth.
 
 **Tech Stack:** Swift 6, Swift Package Manager, SwiftProtobuf-generated control-plane and worker contracts, local HTTP/SSE gateway, XCTest, Python integration harness for endpoint-level tests.
 
@@ -12,14 +12,14 @@
 
 ## Goal
 
-Deliver a production-shaped Phase 4 implementation that adds `POST /v1/responses` and `POST /v1/messages`, normalizes reasoning and tool-call delta behavior across text APIs, and makes workflow-aware request shaping a deliberate control-plane capability.
+Deliver a production-shaped Phase 4 implementation that adds `POST /v1/completions`, `POST /v1/responses`, and `POST /v1/messages`, normalizes reasoning and tool-call delta behavior across text APIs, makes workflow-aware request shaping a deliberate control-plane capability, and upgrades the native desktop shell from a thin operator view into a real desktop operations foundation.
 
 ## Non-Goals
 
 - Add embedding, rerank, multimodal, or image endpoints.
 - Rebuild the text runtime itself beyond the hooks needed for richer stream semantics.
 - Introduce cross-provider compatibility hacks that violate Melix's internal request model.
-- Ship a rich preset-management UI.
+- Ship chat, image, HuggingFace, quantization, or training workflows in the desktop app before their backend phases.
 - Collapse endpoint-specific translation logic into worker-specific behavior.
 
 ## Context
@@ -39,7 +39,8 @@ Deliver a production-shaped Phase 4 implementation that adds `POST /v1/responses
 - Current constraints:
   - Current public text surface is still centered on `/v1/chat/completions`.
   - Reasoning and tool deltas are not yet normalized across multiple endpoint families.
-  - Preset and workflow shaping remain implicit rather than first-class translation inputs.
+- Preset and workflow shaping remain implicit rather than first-class translation inputs.
+  - The native desktop app still lacks Dashboard, Models, Tools, Settings, Logs, Bench, and API reference workflows backed by real control-plane state.
 
 ## Assumptions
 
@@ -55,21 +56,25 @@ Required probes:
 - `http.translation_ms`
 - `http.responses_translation_ms`
 - `http.messages_translation_ms`
+- `http.completions_translation_ms`
 - `http.stream_first_event_ms`
 - `http.reasoning_delta_count`
 - `http.tool_delta_count`
 - `http.stream_bytes`
 - `http.endpoint_error_rate`
+- `desktop.operator_action_latency_ms`
+- `desktop.snapshot_hydration_ms`
 
 Required comparison report:
 
 - `/v1/chat/completions` vs `/v1/responses` vs `/v1/messages` translation overhead
+- `/v1/chat/completions` vs `/v1/completions` vs `/v1/responses` vs `/v1/messages` translation overhead
 - reasoning and tool delta fidelity across equivalent prompts
 - endpoint-specific stream latency overhead against the existing chat baseline
 
 ## Work Plan
 
-### Task 1: Extend the public API translation layer for responses and messages
+### Task 1: Extend the public API translation layer for completions, responses, and messages
 
 **Objective**
 
@@ -83,7 +88,7 @@ Add the new text endpoint families while preserving one internal text execution 
 
 **Implementation**
 
-- Add `POST /v1/responses` and `POST /v1/messages` handlers.
+- Add `POST /v1/completions`, `POST /v1/responses`, and `POST /v1/messages` handlers.
 - Normalize all text endpoints into the same internal request identity, session, and scheduling shape.
 - Keep endpoint-specific compatibility logic in the translator layer only.
 
@@ -174,11 +179,11 @@ Ensure the Phase 3 continuity model survives the broader API surface.
 
 - Session and branch continuity remain stable across the supported text endpoint families.
 
-### Task 5: Expand endpoint-level integration evidence and metrics reporting
+### Task 5: Add native desktop operations foundation and endpoint-level evidence
 
 **Objective**
 
-Leave Phase 4 with reproducible proof that the broader text API surface behaves consistently.
+Leave Phase 4 with reproducible proof that the broader text API surface behaves consistently and that the native desktop shell now exposes real operator state.
 
 **Files**
 
@@ -188,9 +193,10 @@ Leave Phase 4 with reproducible proof that the broader text API surface behaves 
 
 **Implementation**
 
-- Add endpoint-specific tests for `/v1/chat/completions`, `/v1/responses`, and `/v1/messages`.
+- Add endpoint-specific tests for `/v1/chat/completions`, `/v1/completions`, `/v1/responses`, and `/v1/messages`.
 - Add coverage for reasoning deltas, tool deltas, and endpoint-specific error handling.
-- Record the metrics report format for translation latency and stream fidelity.
+- Add Dashboard, Models, Settings, Logs, Bench, and API reference foundation in the native app only where backend support already exists.
+- Record the metrics report format for translation latency, stream fidelity, and desktop action latency.
 
 **Verification**
 
@@ -220,15 +226,16 @@ Expected evidence:
 - stream semantics are stable under endpoint-specific integration tests
 - session continuity remains correct across endpoint variants
 - touched-scope coverage is at least `95%`
-- the metrics report includes endpoint translation and stream-fidelity comparisons
+- the metrics report includes endpoint translation, stream-fidelity, and desktop action comparisons
 
 ## Acceptance Criteria
 
-- Melix exposes `POST /v1/responses` and `POST /v1/messages` on top of the same text runtime.
+- Melix exposes `POST /v1/completions`, `POST /v1/responses`, and `POST /v1/messages` on top of the same text runtime.
 - Reasoning and tool-call stream behavior is consistent across supported text endpoints.
 - Workflow-aware request shaping is explicit, deterministic, and test-covered.
 - Session, branch, and cache semantics remain endpoint-agnostic.
-- Phase 4 concludes with reproducible endpoint-level metrics evidence.
+- The native desktop shell exposes real Dashboard, Models, Settings, Logs, Bench, and API reference workflows backed by control-plane truth.
+- Phase 4 concludes with reproducible endpoint-level and desktop-foundation metrics evidence.
 
 ## Rollback or Safe Exit
 

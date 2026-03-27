@@ -43,11 +43,18 @@ melix/
 │  │  │  ├─ AppMain/
 │  │  │  ├─ MenuBar/
 │  │  │  ├─ Dashboard/
-│  │  │  ├─ Settings/
 │  │  │  ├─ Models/
+│  │  │  ├─ Tools/
+│  │  │  ├─ Settings/
+│  │  │  ├─ Bench/
 │  │  │  ├─ Sessions/
+│  │  │  ├─ Chat/
+│  │  │  ├─ Image/
+│  │  │  ├─ APIReference/
 │  │  │  ├─ CacheInspector/
 │  │  │  ├─ Logs/
+│  │  │  ├─ HuggingFace/
+│  │  │  ├─ Training/
 │  │  │  └─ XPCClient/
 │  │  ├─ Resources/
 │  │  └─ Tests/
@@ -155,10 +162,18 @@ melix/
 │     │  │  └─ processors.py
 │     │  ├─ quant/
 │     │  │  ├─ convert.py
+│     │  │  ├─ profiles.py
 │     │  │  ├─ manifests.py
 │     │  │  ├─ calibration.py
+│     │  │  ├─ uploader.py
+│     │  │  ├─ downloader.py
 │     │  │  ├─ doctor.py
 │     │  │  └─ bench.py
+│     │  ├─ training/
+│     │  │  ├─ lora.py
+│     │  │  ├─ qlora.py
+│     │  │  ├─ adapters.py
+│     │  │  └─ jobs.py
 │     │  ├─ model_registry/
 │     │  └─ utils/
 │     └─ tests/
@@ -197,9 +212,14 @@ melix/
 │
 ├─ tools/
 │  ├─ convert-cli/
+│  ├─ quantize-cli/
+│  ├─ upload-cli/
+│  ├─ download-cli/
+│  ├─ train-cli/
 │  ├─ doctor-cli/
 │  ├─ bench-cli/
 │  ├─ model-downloader/
+│  ├─ model-uploader/
 │  ├─ cache-inspector/
 │  └─ log-bundle/
 │
@@ -230,9 +250,9 @@ melix/
 This is the user-facing native shell. It should own:
 
 - the menu bar entry point
-- dashboard and settings windows
-- model and cache controls
-- logs and recent runtime status
+- dashboard, models, tools, settings, logs, bench, chat, and image windows or tabs
+- model, cache, HuggingFace, quantization, and training controls only where backend support already exists
+- recent runtime status and operator workflows
 - XPC client bindings to the control plane
 
 It must not:
@@ -290,7 +310,7 @@ This is the broader execution layer. It should own:
 - L0 and L1 hot-path cache handling
 - asynchronous writes into L2 storage
 - tool and reasoning parser glue
-- convert, doctor, info, and benchmark behaviors
+- convert, quantize, upload, download, training, doctor, info, and benchmark behaviors
 
 It must not:
 
@@ -325,7 +345,8 @@ This directory should contain standalone operator-facing tools, not hidden helpe
 | `SSDStore` | worker | durable block and snapshot payload storage |
 | `ToolParser` | worker | tool-call normalization into internal IR |
 | `ReasoningParser` | worker | reasoning separation logic |
-| `QuantPipeline` | worker | convert, manifests, calibration hooks, doctor, bench |
+| `QuantPipeline` | worker | convert, manifests, calibration hooks, uploader, downloader, doctor, bench |
+| `TrainingJobs` | worker | LoRA or QLoRA job execution, adapter packaging, training metrics |
 | `MenuBarClient` | app | XPC calls, subscriptions, and UI state refresh |
 
 ## Process Boundaries
@@ -481,19 +502,39 @@ Do not front-load these into the first repository phase:
 - cache inspector
 - restart recovery
 
-### Phase 4: Broader API and Retrieval Families
+### Phase 4: Text API and Desktop Foundation
 
+- `POST /v1/completions`
 - `POST /v1/responses`
 - `POST /v1/messages`
+- dashboard, settings, logs, bench, and API reference foundation
+- health and operator status surfaces
+
+### Phase 5: Retrieval and Model Operations
+
 - embeddings
 - rerank
+- per-model settings
+- quantization and conversion workflows
+- HuggingFace download and upload
+- cache stats and operator model workflows
 
-### Phase 5: Multimodal and Quantization Completion
+### Phase 6: Multimodal Analysis and Chat Product Surface
 
 - vision and OCR
+- audio transcription and speech
+- native chat panel
+
+### Phase 7: Image Workloads and Image Product Surface
+
 - image generation and editing
-- audio
-- KV q4 and q8
+- native image panel
+- artifact workflows
+
+### Phase 8: Training and Release Completion
+
+- LoRA and QLoRA workflows
+- packaging and startup automation
 - convert, doctor, info, and bench completeness
 
 ## Repository Conventions

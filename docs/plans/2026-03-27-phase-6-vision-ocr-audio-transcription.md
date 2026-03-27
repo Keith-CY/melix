@@ -1,10 +1,10 @@
-# Phase 6 Vision, OCR, and Audio Transcription Implementation Plan
+# Phase 6 Vision, OCR, Audio, and Chat Panel Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Add analysis-style multimodal capabilities to Melix by introducing VLM, OCR, and audio transcription paths without destabilizing the text and retrieval surfaces established in earlier phases.
+**Goal:** Add analysis-style multimodal capabilities to Melix by introducing VLM, OCR, audio transcription, audio speech, and a native Chat panel without destabilizing the text and retrieval surfaces established in earlier phases.
 
-**Architecture:** Melix keeps multimodal analysis in the Python worker plane, adds explicit preprocessing and capability routing for image and audio inputs, and keeps the control plane responsible for endpoint translation, admission, and resource isolation. Text remains the interactive priority class while multimodal analysis runs in background lanes and dedicated worker routes.
+**Architecture:** Melix keeps multimodal analysis and audio generation in the Python worker plane, adds explicit preprocessing and capability routing for image and audio inputs, and keeps the control plane responsible for endpoint translation, admission, and resource isolation. Text remains the interactive priority class while multimodal analysis runs in background lanes and dedicated worker routes. The native SwiftUI desktop app adds a Chat panel only after the backend can expose stable text, tool, reasoning, and multimodal state through the control plane.
 
 **Tech Stack:** Swift 6, Swift Package Manager, Python 3.12, uv, gRPC over Unix Domain Sockets, MLX-backed Python runtimes where applicable, SwiftProtobuf and Python-generated protocol artifacts, XCTest, pytest, integration tests.
 
@@ -12,14 +12,14 @@
 
 ## Goal
 
-Deliver a production-shaped Phase 6 implementation that adds VLM and OCR request handling plus `POST /v1/audio/transcriptions`, with explicit multimodal preprocessing and scheduling isolation from interactive text traffic.
+Deliver a production-shaped Phase 6 implementation that adds VLM and OCR request handling plus `POST /v1/audio/transcriptions` and `POST /v1/audio/speech`, with explicit multimodal preprocessing, scheduling isolation from interactive text traffic, and a real native Chat panel.
 
 ## Non-Goals
 
 - Add image generation or image editing.
 - Move multimodal analysis into the Swift text worker.
 - Collapse OCR, VLM, and transcription into one indistinguishable worker type.
-- Build polished UI flows for multimodal inspection in this phase.
+- Build the Image panel, HuggingFace workflows, or training tools that belong to later phases.
 - Introduce remote media storage or cloud-only preprocessing dependencies.
 
 ## Context
@@ -46,8 +46,9 @@ Deliver a production-shaped Phase 6 implementation that adds VLM and OCR request
 
 - Text and retrieval surfaces from earlier phases remain stable and should not be rewritten.
 - Multimodal analysis belongs in Python worker classes first because it aligns with the broader worker plane and preprocessing needs.
-- Audio transcription is the only new public endpoint added in this phase; image-based analysis remains attached to compatible existing text-style flows or dedicated worker calls beneath the control plane.
+- Audio transcription and audio speech are the new public audio endpoints added in this phase; image-based analysis remains attached to compatible existing text-style flows or dedicated worker calls beneath the control plane.
 - Background-lane isolation is mandatory before multimodal analysis can be considered complete.
+- The native Chat panel must remain a control-plane consumer and not become a second execution orchestrator.
 
 ## Performance Probes and Metrics
 
@@ -61,12 +62,15 @@ Required probes:
 - `vision.preprocess_peak_memory_bytes`
 - `scheduler.multimodal_queue_delay_ms`
 - `scheduler.text_ttft_under_multimodal_ms`
+- `audio.speech_latency_ms`
+- `desktop.chat_action_latency_ms`
 
 Required comparison report:
 
 - text-only baseline vs text-plus-multimodal load
 - OCR vs VLM latency on representative image sizes
 - transcription latency by audio duration bucket
+- speech synthesis latency by output length bucket
 
 ## Work Plan
 
@@ -125,11 +129,11 @@ Give the Python worker real image and audio preprocessing plus analysis runtimes
 
 - The Python worker can execute OCR, VLM, and transcription requests with clear capability boundaries and test coverage.
 
-### Task 3: Add control-plane routing and the audio transcription endpoint
+### Task 3: Add control-plane routing and the audio endpoints
 
 **Objective**
 
-Expose multimodal analysis through the local API surface without weakening existing text endpoints.
+Expose multimodal analysis and audio generation through the local API surface without weakening existing text endpoints.
 
 **Files**
 
@@ -140,7 +144,7 @@ Expose multimodal analysis through the local API surface without weakening exist
 
 **Implementation**
 
-- Add `POST /v1/audio/transcriptions`.
+- Add `POST /v1/audio/transcriptions` and `POST /v1/audio/speech`.
 - Extend request translation so image and audio inputs can map onto the correct worker classes and request shapes.
 - Preserve existing text endpoint behavior while adding multimodal-aware validation and error reporting.
 
@@ -179,11 +183,11 @@ Make multimodal work a deliberate background class so it cannot silently steal r
 
 - Text latency remains within the defined Phase 6 acceptance envelope under multimodal load.
 
-### Task 5: Add integration evidence, runbooks, and metrics reporting
+### Task 5: Add the native Chat panel, integration evidence, runbooks, and metrics reporting
 
 **Objective**
 
-Leave Phase 6 with reproducible proof that multimodal analysis is callable, isolated, and measurable.
+Leave Phase 6 with reproducible proof that multimodal analysis is callable, isolated, measurable, and visible through a real native Chat panel.
 
 **Files**
 
@@ -193,9 +197,10 @@ Leave Phase 6 with reproducible proof that multimodal analysis is callable, isol
 
 **Implementation**
 
-- Add integration cases for transcription, OCR, and at least one VLM analysis path.
+- Add integration cases for transcription, speech, OCR, and at least one VLM analysis path.
+- Add the native Chat panel on top of existing control-plane state, including tool, reasoning, and multimodal interaction where backend support exists.
 - Document local operator workflow for booting multimodal workers and reproducing metrics.
-- Standardize the Phase 6 metrics report for preprocessing latency, analysis latency, and text interference.
+- Standardize the Phase 6 metrics report for preprocessing latency, analysis latency, speech latency, and text interference.
 
 **Verification**
 
@@ -227,7 +232,7 @@ Expected evidence:
 - control-plane tests cover transcription and multimodal request translation
 - integration covers transcription plus image-based analysis behavior
 - touched-scope coverage is at least `95%`
-- the metrics report includes latency, preprocessing, and text-interference numbers
+- the metrics report includes latency, preprocessing, speech, and text-interference numbers
 
 ## Acceptance Criteria
 
@@ -235,7 +240,8 @@ Expected evidence:
 - The control plane routes multimodal work to dedicated worker classes rather than the text engine.
 - Background-lane isolation keeps interactive text responsive.
 - Operators can reproduce multimodal metrics and integration evidence locally.
-- Phase 6 concludes with reproducible latency and interference evidence.
+- The native Chat panel reflects real runtime, tool, reasoning, and multimodal state through the control plane.
+- Phase 6 concludes with reproducible latency, chat-panel, and interference evidence.
 
 ## Rollback or Safe Exit
 

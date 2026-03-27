@@ -6,7 +6,7 @@ Date: 2026-03-27
 
 Melix is a native control plane plus worker-runtime architecture for local AI execution on Apple Silicon. The system is built around four layers:
 
-1. A macOS menu bar app and dashboard for local operations.
+1. A native SwiftUI desktop app for local operations, chat, image workflows, and model tools.
 2. A Swift control plane daemon that owns system truth.
 3. A polyglot worker pool connected over local RPC.
 4. A tiered cache and storage layer that persists reusable execution state.
@@ -19,8 +19,9 @@ Melix should keep the control plane Swift-first while moving the latency-critica
 
 ```text
 ┌────────────────────────────────────────────────────────────┐
-│                Melix Menu Bar App (SwiftUI)               │
-│  status, models, cache, presets, logs, bench, settings    │
+│                Melix Desktop App (SwiftUI)                │
+│ dashboard, models, tools, settings, logs, bench, chat,    │
+│ image, HuggingFace sync, and operator workflows           │
 └────────────────────────────────────────────────────────────┘
                             │ XPC
                             ▼
@@ -69,26 +70,28 @@ Example socket layout:
 
 ### Menu Bar App
 
-The menu bar app is a native operations surface. It should:
+The desktop app is a native operations surface. It should:
 
 - Connect only to the control plane through XPC.
 - Render snapshots and event-driven updates.
-- Offer model pin, warmup, unload, cache purge, logs, and preset actions.
+- Offer dashboard, models, tools, settings, logs, bench, chat, and image workflows only where backend support already exists.
+- Offer model pin, warmup, unload, cache purge, quantization, HuggingFace upload or download, and adapter workflows through control-plane commands.
 - Avoid direct access to worker sockets, cache databases, or on-disk payloads.
 
-The dashboard is a window owned by the app, not a separate process.
+The desktop product may use multiple SwiftUI windows or tabs, but it remains one app process backed by the same control-plane truth.
 
 ### Control Plane Daemon
 
 The control plane is the system coordinator and source of truth. It owns:
 
 - OpenAI-compatible and Anthropic-compatible local HTTP APIs
+- Ollama-compatible local HTTP APIs where planned by the roadmap
 - Request admission and scheduling
 - Session, branch, and workflow metadata
 - Model registry and EnginePool
 - Cache metadata index
 - Worker discovery and health state
-- Operational flows such as doctor, bench, logs, and diagnostics
+- Operational flows such as doctor, bench, logs, diagnostics, quantization jobs, training jobs, and HuggingFace sync
 
 This layer should remain Swift-first because it carries the longest-lived product logic.
 
@@ -129,7 +132,7 @@ Python workers remain the broader execution layer. They should continue to own:
 - multimodal execution
 - embeddings and rerank
 - image and audio families
-- convert, doctor, info, and bench flows
+- convert, quantize, upload, download, train, doctor, info, and bench flows
 - any text-compatible compatibility path retained during migration
 
 ### Storage Ownership
@@ -148,14 +151,26 @@ Melix must not send large tensor or KV payloads over RPC.
 V1 should expose these local endpoints:
 
 - `POST /v1/chat/completions`
+- `POST /v1/completions`
 - `POST /v1/responses`
 - `POST /v1/embeddings`
 - `POST /v1/rerank`
 - `POST /v1/images/generations`
 - `POST /v1/images/edits`
 - `POST /v1/audio/transcriptions`
+- `POST /v1/audio/speech`
 - `POST /v1/messages`
 - `GET /v1/models`
+- `GET /v1/cache/stats`
+- `GET /health`
+
+The gateway should also leave room for Ollama-compatible local endpoints such as:
+
+- `POST /api/chat`
+- `POST /api/generate`
+- `GET /api/tags`
+- `POST /api/show`
+- `POST /api/embeddings`
 
 Streaming should use SSE and support:
 
@@ -286,7 +301,7 @@ The control plane should translate cancellations into best-effort worker aborts 
 Melix uses three cache tiers:
 
 - `L0`: active runtime state for current execution
-- `L1`: in-memory shared block cache with dedup, refcounting, pinning, and copy-on-write
+- `L1`: in-memory shared prefix and paged block cache with dedup, refcounting, pinning, and copy-on-write
 - `L2`: SSD-backed block and snapshot store for restart-safe reuse
 
 This layout exists to balance hot-path latency with persistence.
@@ -307,7 +322,7 @@ Prompt reuse should rely on stable fingerprints and block tables rather than raw
 
 The control plane should expose logical cache identity through cache keys and block or snapshot references, while keeping cache payloads worker-side.
 
-The worker schema should define typed `CacheKey` and `BlockTable` structures so cache reuse and resume are computable protocol concepts rather than opaque identifiers.
+The worker schema should define typed `CacheKey` and `BlockTable` structures so cache reuse and resume are computable protocol concepts rather than opaque identifiers. KV cache quantization should happen at the storage boundary so active execution can stay accuracy-aware while persisted cache assets remain space-efficient.
 
 ### Pinned Prefixes
 
@@ -344,6 +359,10 @@ The control plane should manage models through an EnginePool that handles:
 - warmup
 - TTL and LRU eviction
 - budget-aware admission
+- model aliasing and type overrides
+- per-model sampling and template policy
+- acceleration profile selection
+- HuggingFace import and export workflows
 
 Multi-model lifecycle is a product capability, not a worker-only implementation detail.
 
@@ -358,6 +377,10 @@ EnginePool should also treat engine class as a first-class routing dimension. In
 Workers should also expose operational tools as product features:
 
 - `melix convert`
+- `melix quantize`
+- `melix upload`
+- `melix download`
+- `melix train`
 - `melix info`
 - `melix doctor`
 - `melix bench`
@@ -369,8 +392,17 @@ These flows should be backed by the same runtime metadata model used by the cont
 V1 requires:
 
 - offline model conversion
+- advanced quantization manifests and profiles
 - quantization manifests
 - KV cache q4 and q8 support at storage boundaries
+- a path for lower-bit and mixed-precision cache or model quantization profiles
+
+Worker maintenance flows should also leave room for:
+
+- artifact upload to HuggingFace
+- artifact download from HuggingFace
+- LoRA and QLoRA adapter packaging
+- calibration and validation reports
 
 The architecture should leave room for future mixed-precision and calibration extensions without redesigning core metadata formats.
 
@@ -409,8 +441,14 @@ Required metrics include:
 - model load and warmup time
 - worker memory pressure
 - worker and server resource snapshots
+- speculative decode acceptance and rollback rate
+- cache quantization compression ratio
+- HuggingFace transfer timings
+- quantization and training job duration
 
 The menu bar app is the most convenient local control surface. A local admin HTTP surface may coexist, but both must reflect the same control-plane truth.
+
+Image generation belongs in dedicated worker families that may wrap a specialized runtime distinct from the text or analysis runtimes. By contrast, backend capabilities such as quantized matrix multiplication and SDPA remain runtime assumptions provided by the selected MLX stack rather than first-class control-plane modules.
 
 ## V1 Non-Goals
 
@@ -431,7 +469,8 @@ The implementation should proceed in this order:
 3. Dedicated Swift text worker for the default text `Generate` hot path
 4. EnginePool depth, phase-aware text runtime behavior, queueing, and session or branch state
 5. SSD-backed cache, snapshots, restart recovery, and cache inspection
-6. Broader API and model families such as embeddings, rerank, vision, OCR, audio, and image flows
-7. Packaging, diagnostics, and benchmark completeness
+6. Broader API, desktop operations, and model workflows such as embeddings, rerank, desktop panels, HuggingFace sync, and quantization
+7. Multimodal families such as vision, OCR, audio, and image flows
+8. Packaging, diagnostics, training workflows, and benchmark completeness
 
 This order keeps the architecture aligned with product value: first usable, then durable, then broad.

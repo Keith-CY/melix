@@ -1,10 +1,10 @@
-# Phase 5 Embeddings and Rerank Implementation Plan
+# Phase 5 Embeddings, Rerank, and Model Operations Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Add dedicated embedding and rerank capability families on top of the stabilized text runtime without regressing interactive text responsiveness.
+**Goal:** Add dedicated embedding and rerank capability families plus the first real model-operations workflows on top of the stabilized text runtime without regressing interactive text responsiveness.
 
-**Architecture:** Melix keeps the Swift text worker as the latency-critical text engine and extends the Python worker plane for the first dedicated non-generative model classes. The control plane becomes responsible for capability-class routing, mixed-workload isolation, and operator-visible model metadata while the Python worker owns embedding and rerank runtime behavior.
+**Architecture:** Melix keeps the Swift text worker as the latency-critical text engine and extends the Python worker plane for the first dedicated non-generative model classes and model-operations jobs. The control plane becomes responsible for capability-class routing, mixed-workload isolation, operator-visible model metadata, per-model settings, and HuggingFace or quantization workflow orchestration while Python workers own embedding, rerank, conversion, quantization, upload, and download behavior.
 
 **Tech Stack:** Swift 6, Swift Package Manager, Python 3.12, uv, gRPC over Unix Domain Sockets, SwiftProtobuf-generated and Python-generated protocol artifacts, XCTest, pytest, integration tests under `tests/integration`.
 
@@ -12,13 +12,13 @@
 
 ## Goal
 
-Deliver a production-shaped Phase 5 implementation that exposes `POST /v1/embeddings` and `POST /v1/rerank`, routes them to dedicated Python worker classes, and proves that mixed workloads do not erode the default text experience.
+Deliver a production-shaped Phase 5 implementation that exposes `POST /v1/embeddings` and `POST /v1/rerank`, routes them to dedicated Python worker classes, introduces per-model settings plus conversion and quantization plus HuggingFace workflows, and proves that mixed workloads do not erode the default text experience.
 
 ## Non-Goals
 
 - Move embedding or rerank workloads into the Swift text worker.
 - Introduce multimodal analysis or image generation in this phase.
-- Add rich UI for vector search or ranking workflows.
+- Add image, chat, or training workflows that belong to later phases.
 - Overload the text scheduler with background workload semantics that should belong to dedicated worker classes.
 - Treat rerank as a disguised chat task.
 
@@ -40,8 +40,9 @@ Deliver a production-shaped Phase 5 implementation that exposes `POST /v1/embedd
   - `tests/integration`
 - Current constraints:
   - Current non-text worker support is still narrow and text-centric.
-  - The model catalog is not yet typed strongly enough for embedding and rerank routing.
-  - Mixed-workload interference has not yet been measured or controlled.
+- The model catalog is not yet typed strongly enough for embedding and rerank routing.
+- Mixed-workload interference has not yet been measured or controlled.
+  - Per-model settings, quantization jobs, and HuggingFace artifact workflows are not yet represented as first-class control-plane commands.
 
 ## Assumptions
 
@@ -49,6 +50,7 @@ Deliver a production-shaped Phase 5 implementation that exposes `POST /v1/embedd
 - Embeddings and rerank are implemented in Python workers first because they fit the broader worker plane without requiring the Swift text hot path.
 - The external API shape follows the canonical roadmap endpoints without inventing new families.
 - Background or retrieval-class workloads should not occupy the same scheduling lane as interactive text decode.
+- This phase is the right place to add advanced model-operations workflows before training arrives in Phase 8.
 
 ## Performance Probes and Metrics
 
@@ -62,20 +64,26 @@ Required probes:
 - `scheduler.mixed_workload_queue_delay_ms`
 - `worker.memory_bytes_by_class`
 - `worker.load_model_ms_by_class`
+- `model_ops.quantize_job_ms`
+- `model_ops.upload_job_ms`
+- `model_ops.download_job_ms`
+- `model_ops.transfer_bytes_per_second`
 
 Required comparison report:
 
 - text-only baseline vs text-plus-embeddings load
 - text-only baseline vs text-plus-rerank load
 - embedding throughput and rerank latency for the default development models
+- quantized vs unquantized artifact footprint
+- upload and download throughput for representative HuggingFace artifacts
 
 ## Work Plan
 
-### Task 1: Finalize capability-class protocol and model-catalog support
+### Task 1: Finalize capability-class protocol, model-catalog support, and per-model settings
 
 **Objective**
 
-Make model capability typing and request routing explicit enough to support text, embedding, and rerank classes simultaneously.
+Make model capability typing, per-model settings, and request routing explicit enough to support text, embedding, rerank, and model-operations jobs simultaneously.
 
 **Files**
 
@@ -89,6 +97,7 @@ Make model capability typing and request routing explicit enough to support text
 
 - Add or complete capability-class metadata for embedding and rerank models.
 - Extend runtime stats and model catalog metadata to distinguish worker families clearly.
+- Add model alias, type override, TTL, pinning, memory policy, and acceleration-profile metadata.
 - Keep the control plane as the routing source of truth.
 
 **Verification**
@@ -100,11 +109,11 @@ Make model capability typing and request routing explicit enough to support text
 
 - The control plane can classify models and worker routes without out-of-band naming hacks.
 
-### Task 2: Implement embedding and rerank runtimes in the Python worker
+### Task 2: Implement embedding, rerank, and model-operations runtimes in the Python worker
 
 **Objective**
 
-Add real embedding and rerank execution paths in the Python worker without weakening the existing text-compatible worker behavior it still owns.
+Add real embedding and rerank execution paths plus quantization, upload, and download jobs in the Python worker without weakening the existing text-compatible worker behavior it still owns.
 
 **Files**
 
@@ -116,6 +125,7 @@ Add real embedding and rerank execution paths in the Python worker without weake
 **Implementation**
 
 - Add runtime adapters and request handling for embedding and rerank models.
+- Add advanced quantization workflows, artifact uploader and downloader flows, and manifest handling as model-operations jobs.
 - Keep model lifecycle, capability reporting, and request metrics separate by workload class.
 - Return explicit structured failures for unsupported model or request combinations.
 
@@ -127,11 +137,11 @@ Add real embedding and rerank execution paths in the Python worker without weake
 
 - The Python worker can load, execute, and report embedding and rerank requests coherently.
 
-### Task 3: Add control-plane endpoint translation and route selection
+### Task 3: Add control-plane endpoint translation, route selection, and model-operations commands
 
 **Objective**
 
-Expose embeddings and rerank through the local API surface while preserving route isolation from the interactive text path.
+Expose embeddings and rerank through the local API surface while preserving route isolation from the interactive text path, and add control-plane-visible workflows for model operations and operator endpoints.
 
 **Files**
 
@@ -145,6 +155,8 @@ Expose embeddings and rerank through the local API surface while preserving rout
 - Add `POST /v1/embeddings` and `POST /v1/rerank`.
 - Route requests by capability class and worker type rather than by endpoint name alone.
 - Preserve consistent error handling and model visibility through `/v1/models`.
+- Add control-plane command and desktop-facing workflow support for model settings, quantization, download, and upload.
+- Add `/v1/cache/stats`, `/health`, and Ollama-compatible endpoint support where those surfaces can be backed by the already-stabilized cache and model-routing state.
 
 **Verification**
 
@@ -181,11 +193,11 @@ Make mixed text plus retrieval-class traffic measurable and controlled rather th
 
 - Text latency remains within the defined Phase 5 acceptance envelope under mixed traffic.
 
-### Task 5: Add integration coverage, runbooks, and metrics reporting
+### Task 5: Add integration coverage, native model-ops workflows, and metrics reporting
 
 **Objective**
 
-Leave Phase 5 with reproducible evidence for endpoint behavior, worker routing, and mixed-load isolation.
+Leave Phase 5 with reproducible evidence for endpoint behavior, worker routing, mixed-load isolation, and model-operations workflows.
 
 **Files**
 
@@ -195,9 +207,10 @@ Leave Phase 5 with reproducible evidence for endpoint behavior, worker routing, 
 
 **Implementation**
 
-- Add integration tests for `/v1/embeddings`, `/v1/rerank`, and mixed text plus retrieval traffic.
-- Document local operator workflow for loading models, observing worker classes, and reproducing the metrics report.
-- Record throughput and interference metrics in a standard Phase 5 report shape.
+- Add integration tests for `/v1/embeddings`, `/v1/rerank`, model settings, quantization jobs, and HuggingFace upload or download workflows.
+- Document local operator workflow for loading models, observing worker classes, configuring per-model settings, and reproducing the metrics report.
+- Add native desktop `Models` and `Tools` workflows only where backend support already exists.
+- Record throughput, interference, and model-operations metrics in a standard Phase 5 report shape.
 
 **Verification**
 
@@ -229,7 +242,7 @@ Expected evidence:
 - control-plane tests cover routing and endpoint translation
 - integration covers embeddings, rerank, and mixed-load isolation
 - touched-scope coverage is at least `95%`
-- the metrics report includes throughput, latency, and text-interference numbers
+- the metrics report includes throughput, latency, text-interference, and model-operations numbers
 
 ## Acceptance Criteria
 
@@ -237,7 +250,8 @@ Expected evidence:
 - The control plane routes those requests to dedicated Python worker classes rather than the Swift text engine.
 - Mixed text and retrieval-class traffic remains observable and controlled.
 - Model visibility and health state reflect multiple capability classes cleanly.
-- Phase 5 concludes with reproducible endpoint, routing, and metrics evidence.
+- Per-model settings, advanced quantization, and HuggingFace artifact workflows are reproducible and operator-visible.
+- Phase 5 concludes with reproducible endpoint, routing, model-operations, and metrics evidence.
 
 ## Rollback or Safe Exit
 

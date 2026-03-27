@@ -18,6 +18,7 @@ Deliver a production-shaped Phase 1 implementation that makes the Swift text wor
 
 - Implement `Prefill`, `Decode`, cache mutation, snapshots, or maintenance RPCs in the Swift worker.
 - Move multimodal, embeddings, rerank, image, audio, convert, doctor, or bench workloads out of the Python worker.
+- Add desktop dashboard, chat, image, HuggingFace, quantization, or training workflows beyond the protocol hooks needed for later phases.
 - Embed text runtime execution inside the Swift control plane process.
 - Introduce silent fallback from the Swift text worker to the Python text path.
 - Expand Phase 0 public endpoints beyond the existing `/v1/chat/completions` and `/v1/models` slice.
@@ -45,6 +46,7 @@ Deliver a production-shaped Phase 1 implementation that makes the Swift text wor
   - Swift code generation currently produces protobuf messages only; there are no Swift worker RPC stubs yet.
   - The Phase 0 deterministic path must remain the default integration path until the Swift text worker has stable smoke coverage.
   - The control plane currently assumes a single worker client for the active text path.
+  - Later phases will need protocol room for speculative decode, accelerated prefill, cache tiers, model operations, and richer desktop workflows.
 
 ## Assumptions
 
@@ -54,6 +56,7 @@ Deliver a production-shaped Phase 1 implementation that makes the Swift text wor
 - A Swift-native MLX runtime path is available for model load and token streaming on Apple Silicon.
 - The Python text path may remain in the repository for targeted validation and debugging, but it is not a fallback path in normal control-plane routing.
 - `MELIX_DEV_TEXT_MODEL_PATH` remains the model source override for live MLX smoke verification.
+- Phase 1 protocol and routing work must not block later speculative decode, cache quantization, HuggingFace sync, or model-operations commands from fitting into the same shared contracts.
 
 ## Performance Probes and Metrics
 

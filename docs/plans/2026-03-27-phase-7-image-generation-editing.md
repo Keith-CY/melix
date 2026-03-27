@@ -1,10 +1,10 @@
-# Phase 7 Image Generation and Image Editing Implementation Plan
+# Phase 7 Image Generation, Image Editing, and Image Panel Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Add image generation and image editing as explicit long-running background workloads with isolated worker pools, artifact handling, progress reporting, and cancellation semantics that do not destabilize text or analysis workloads.
+**Goal:** Add image generation and image editing as explicit long-running background workloads with isolated worker pools, artifact handling, progress reporting, cancellation semantics, and a native Image panel that do not destabilize text or analysis workloads.
 
-**Architecture:** Melix keeps image generation and editing in dedicated Python worker classes and treats them as long-running background jobs rather than synchronous text-runtime variants. The control plane becomes responsible for job lifecycle visibility, cancellation, artifact metadata, and resource isolation while workers own actual image runtime execution.
+**Architecture:** Melix keeps image generation and editing in dedicated Python worker classes and treats them as long-running background jobs rather than synchronous text-runtime variants. The control plane becomes responsible for job lifecycle visibility, cancellation, artifact metadata, and resource isolation while workers own actual image runtime execution. The native SwiftUI desktop app adds an Image panel only after those job and artifact surfaces are stable through the control plane.
 
 **Tech Stack:** Swift 6, Swift Package Manager, Python 3.12, uv, gRPC over Unix Domain Sockets, local artifact storage, SwiftProtobuf and Python-generated protocol artifacts, XCTest, pytest, integration tests.
 
@@ -12,7 +12,7 @@
 
 ## Goal
 
-Deliver a production-shaped Phase 7 implementation that exposes `POST /v1/images/generations` and `POST /v1/images/edits`, routes them to isolated image workers, reports progress and terminal state clearly, and keeps text responsiveness intact under long-running image load.
+Deliver a production-shaped Phase 7 implementation that exposes `POST /v1/images/generations` and `POST /v1/images/edits`, routes them to isolated image workers, reports progress and terminal state clearly, keeps text responsiveness intact under long-running image load, and adds a native Image panel with artifact workflows.
 
 ## Non-Goals
 
@@ -21,6 +21,7 @@ Deliver a production-shaped Phase 7 implementation that exposes `POST /v1/images
 - Build a full gallery or creative UI in this phase.
 - Introduce remote artifact storage or sharing services.
 - Blur the distinction between fast multimodal analysis and heavy image generation jobs.
+- Add training, adapter, or unrelated model-operations workflows that belong to other phases.
 
 ## Context
 
@@ -47,6 +48,7 @@ Deliver a production-shaped Phase 7 implementation that exposes `POST /v1/images
 - Image generation and editing are implemented in Python worker classes first.
 - Artifact payloads remain local-first and are surfaced via control-plane metadata plus local file references.
 - Cancellation is mandatory and must be explicit for long-running jobs.
+- The Image panel must remain a control-plane client and not bypass artifact or job metadata boundaries.
 
 ## Performance Probes and Metrics
 
@@ -59,12 +61,15 @@ Required probes:
 - `images.peak_memory_bytes`
 - `images.gpu_pressure_pct`
 - `scheduler.text_ttft_under_image_load_ms`
+- `desktop.image_action_latency_ms`
+- `images.artifact_publish_ms`
 
 Required comparison report:
 
 - text-only baseline vs text-plus-image-job load
 - generation vs editing latency on the same model class
 - cancel success and cancel latency under active job execution
+- job completion vs artifact visibility latency in the desktop app
 
 ## Work Plan
 
@@ -177,11 +182,11 @@ Make heavy image jobs a controlled background class rather than an unbounded loc
 
 - Text responsiveness remains within the defined Phase 7 envelope under image-job load.
 
-### Task 5: Add integration evidence, runbooks, and metrics reporting
+### Task 5: Add the native Image panel, integration evidence, runbooks, and metrics reporting
 
 **Objective**
 
-Leave Phase 7 with reproducible proof that image jobs, cancellation, and artifact handling are stable.
+Leave Phase 7 with reproducible proof that image jobs, cancellation, artifact handling, and the native Image panel are stable.
 
 **Files**
 
@@ -192,8 +197,9 @@ Leave Phase 7 with reproducible proof that image jobs, cancellation, and artifac
 **Implementation**
 
 - Add integration cases for generation, editing, progress observation, cancellation, and output artifact metadata.
+- Add the native Image panel for generation, edit, progress, and artifact preview workflows backed only by control-plane state.
 - Document local operator workflow for loading image workers, observing job progress, and reproducing metrics.
-- Standardize the Phase 7 metrics report for latency, resource pressure, and cancel success.
+- Standardize the Phase 7 metrics report for latency, resource pressure, cancel success, and artifact publish latency.
 
 **Verification**
 
@@ -225,7 +231,7 @@ Expected evidence:
 - control-plane tests cover endpoint translation and artifact reporting
 - integration covers long-running job progress, cancel, and output metadata
 - touched-scope coverage is at least `95%`
-- the metrics report includes latency, cancel, and interference numbers
+- the metrics report includes latency, cancel, artifact publish, and interference numbers
 
 ## Acceptance Criteria
 
@@ -233,7 +239,8 @@ Expected evidence:
 - Image jobs run in isolated background worker classes with explicit progress and cancellation.
 - Output artifacts are surfaced through stable control-plane metadata.
 - Text responsiveness remains protected under heavy image load.
-- Phase 7 concludes with reproducible lifecycle, artifact, and metrics evidence.
+- The native Image panel drives and observes image jobs without reaching into worker-private state.
+- Phase 7 concludes with reproducible lifecycle, artifact, Image-panel, and metrics evidence.
 
 ## Rollback or Safe Exit
 

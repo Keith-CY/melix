@@ -1,10 +1,10 @@
-# Phase 8 Desktop Productization, Packaging, and Release Hardening Implementation Plan
+# Phase 8 Training, Desktop Productization, Packaging, and Release Hardening Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Turn Melix from an engineering runtime into a shippable local product with a robust operator shell, diagnostics, packaging, startup and recovery automation, and release-quality benchmark and smoke gates.
+**Goal:** Turn Melix from an engineering runtime into a shippable local product with LoRA or QLoRA training workflows, a robust operator shell, diagnostics, packaging, startup and recovery automation, and release-quality benchmark and smoke gates.
 
-**Architecture:** Melix keeps the Swift control plane as the product orchestration core, evolves the macOS menu bar app from a minimal operator shell into a richer desktop control surface, and adds packaging, launch, diagnostics, and release infrastructure around the already-stabilized runtime layers. Productization is layered on top of prior backend support rather than used to compensate for missing runtime behavior.
+**Architecture:** Melix keeps the Swift control plane as the product orchestration core, evolves the macOS menu bar app from a minimal operator shell into a richer desktop control surface, and adds training, packaging, launch, diagnostics, HuggingFace artifact workflows, and release infrastructure around the already-stabilized runtime layers. Productization is layered on top of prior backend support rather than used to compensate for missing runtime behavior.
 
 **Tech Stack:** Swift 6, SwiftUI or AppKit surfaces in the existing macOS app workspace, Swift Package Manager, shell scripts, launchd assets, signing and packaging assets, XCTest, integration tests, benchmark and smoke scripts, release runbooks.
 
@@ -12,7 +12,7 @@
 
 ## Goal
 
-Deliver a production-shaped Phase 8 implementation that upgrades the desktop operator surface, adds repeatable boot and recovery workflows, formalizes packaging and release artifacts, and introduces benchmark plus smoke gates for release candidates.
+Deliver a production-shaped Phase 8 implementation that upgrades the desktop operator surface, adds repeatable LoRA or QLoRA training and adapter workflows, formalizes packaging and release artifacts, and introduces benchmark plus smoke gates for release candidates.
 
 ## Non-Goals
 
@@ -21,6 +21,7 @@ Deliver a production-shaped Phase 8 implementation that upgrades the desktop ope
 - Treat packaging and signing as one-off manual release steps.
 - Ship a glossy UI for backend features that still lack stable runtime support.
 - Relax benchmark or smoke gates just to make release packaging easier.
+- Introduce full-parameter fine-tuning in this phase.
 
 ## Context
 
@@ -47,6 +48,7 @@ Deliver a production-shaped Phase 8 implementation that upgrades the desktop ope
 - The native macOS shell remains the primary operator surface.
 - Packaging and release assets belong in versioned repository paths, not in undocumented manual setup.
 - Release hardening requires benchmarks and smoke evidence, not only functional test pass/fail status.
+- Training scope is limited to LoRA and QLoRA plus adapter packaging and registry workflows.
 
 ## Performance Probes and Metrics
 
@@ -59,16 +61,19 @@ Required probes:
 - `release.benchmark_regression_pct`
 - `release.smoke_pass_rate`
 - `install.success_rate`
+- `training.job_duration_ms`
+- `training.adapter_publish_ms`
 
 Required comparison report:
 
 - cold boot and restart performance before vs after productization changes
 - benchmark baselines for the supported model families
 - release candidate smoke and recovery results against the previous stable baseline
+- training duration and adapter publish timings for representative LoRA or QLoRA jobs
 
 ## Work Plan
 
-### Task 1: Upgrade the native operator shell from placeholder workflows to product-grade operations
+### Task 1: Upgrade the native operator shell from phase foundations to product-grade operations
 
 **Objective**
 
@@ -82,7 +87,7 @@ Evolve the macOS app into a coherent operator-facing product surface backed enti
 
 **Implementation**
 
-- Add dashboard, model status, request health, logs, diagnostics, and preset-aware controls only where backend support already exists.
+- Add dashboard, model status, request health, logs, diagnostics, HuggingFace, adapter, and preset-aware controls only where backend support already exists.
 - Keep the app as an operator and product shell, not a second control plane.
 - Ensure the app hydrates from control-plane state rather than worker-private state.
 
@@ -94,11 +99,11 @@ Evolve the macOS app into a coherent operator-facing product surface backed enti
 
 - The native shell surfaces the product state needed for daily local operation and diagnosis.
 
-### Task 2: Add diagnostics, doctor, bench, and recovery workflows
+### Task 2: Add diagnostics, doctor, bench, training, and recovery workflows
 
 **Objective**
 
-Make local diagnosis and recovery reproducible instead of ad hoc.
+Make local diagnosis, training, and recovery reproducible instead of ad hoc.
 
 **Files**
 
@@ -108,7 +113,7 @@ Make local diagnosis and recovery reproducible instead of ad hoc.
 
 **Implementation**
 
-- Add doctor, bench, and recovery entrypoints for supported runtime families.
+- Add doctor, bench, training, adapter-management, and recovery entrypoints for supported runtime families.
 - Document startup, shutdown, restart, crash recovery, and common failure diagnosis.
 - Ensure each operator workflow has explicit evidence outputs rather than hidden side effects.
 
@@ -187,8 +192,8 @@ Leave Phase 8 with a release-grade evidence trail for the desktop product and op
 
 **Implementation**
 
-- Add product-level integration scenarios for install, boot, restart, operator actions, and recovery.
-- Standardize the Phase 8 metrics report for cold boot, operator latency, recovery, install success, and benchmark regressions.
+- Add product-level integration scenarios for install, boot, restart, operator actions, training, adapter packaging, and recovery.
+- Standardize the Phase 8 metrics report for cold boot, operator latency, training duration, adapter publish, recovery, install success, and benchmark regressions.
 - Ensure doc updates make the product workflow discoverable from the repository entrypoints.
 
 **Verification**
@@ -220,7 +225,7 @@ Expected evidence:
 - integration covers product boot, restart, and recovery workflows
 - packaging and install smoke commands are documented and reproducible
 - touched-scope coverage is at least `95%` where measurable
-- the metrics report includes cold boot, operator latency, recovery, and benchmark data
+- the metrics report includes cold boot, operator latency, training, recovery, and benchmark data
 
 ## Acceptance Criteria
 
@@ -228,7 +233,8 @@ Expected evidence:
 - Startup, shutdown, restart, and recovery are reproducible from repository workflows and runbooks.
 - Packaging, signing, installation, and upgrade steps are versioned and documented.
 - Release candidates are gated by benchmark, smoke, and recovery evidence.
-- Phase 8 concludes with reproducible productization and release-hardening metrics.
+- LoRA and QLoRA workflows plus adapter packaging are reproducible and operator-visible.
+- Phase 8 concludes with reproducible productization, training, and release-hardening metrics.
 
 ## Rollback or Safe Exit
 

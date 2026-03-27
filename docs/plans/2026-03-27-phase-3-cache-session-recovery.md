@@ -1,10 +1,10 @@
-# Phase 3 Cache, Session Graph, and Recovery Implementation Plan
+# Phase 3 Unified Cache, Session Graph, and Recovery Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Make cache reuse, session lineage, and live recovery first-class so that Melix can accelerate follow-ups, preserve branch-aware state, and resume work across tool boundaries instead of treating reuse as a best-effort optimization.
+**Goal:** Make unified cache reuse, session lineage, and live recovery first-class so that Melix can accelerate follow-ups, preserve branch-aware state, and resume work across tool boundaries instead of treating reuse as a best-effort optimization.
 
-**Architecture:** Melix keeps cache metadata, session graph truth, and recovery policy in the Swift control plane while allowing the Swift text worker to own runtime-local block materialization and snapshot payload handling. Reuse becomes an explicit control-plane feature built on cache keys, block tables, snapshot references, and branch-aware session state rather than implicit prompt similarity.
+**Architecture:** Melix keeps cache metadata, session graph truth, and recovery policy in the Swift control plane while allowing workers to own runtime-local block materialization and snapshot payload handling. Reuse becomes an explicit control-plane feature built on cache keys, block tables, snapshot references, branch-aware session state, hot in-memory prefix or paged cache, disk-backed block persistence, and storage-boundary cache quantization rather than implicit prompt similarity.
 
 **Tech Stack:** Swift 6, Swift Package Manager, MLX Swift bindings, gRPC over Unix Domain Sockets, SwiftProtobuf-generated protocol artifacts, XCTest, integration tests under `tests/integration`.
 
@@ -21,6 +21,7 @@ Deliver a production-shaped Phase 3 implementation that introduces visible cache
 - Generalize recovery to multimodal, embedding, rerank, or image workloads.
 - Implement rich cache inspector UI beyond what is needed to prove the backend contract.
 - Hide recovery or reuse behind opaque heuristics without observable control-plane state.
+- Add full HuggingFace, quantization, or training workflows beyond the cache and recovery surfaces they later depend on.
 
 ## Context
 
@@ -43,6 +44,7 @@ Deliver a production-shaped Phase 3 implementation that introduces visible cache
   - Phase 2 only provides live request-local phased execution.
   - Session continuity and follow-up speedups are not yet backed by explicit cache or branch state.
   - The control-plane docs already describe cache refs and session graph concepts, but the implementation does not yet realize them.
+  - The current cache plan is not yet explicit enough about hot-tier prefix or paged cache coexistence, disk restore, or cache-quantization boundaries.
 
 ## Assumptions
 
@@ -50,6 +52,7 @@ Deliver a production-shaped Phase 3 implementation that introduces visible cache
 - The Swift text worker can expose stable logical cache references without moving cache ownership into the control plane.
 - Session and branch identity stay local-first and do not require remote synchronization in this phase.
 - Recovery scope is initially limited to the text runtime and tool-boundary follow-up flows.
+- Cache reuse should combine hot in-memory prefix or paged reuse with durable disk-backed restore rather than choosing only one pattern.
 
 ## Performance Probes and Metrics
 
@@ -63,12 +66,15 @@ Required probes:
 - `scheduler.prefix_affinity_hit_rate`
 - `cache.memory_bytes`
 - `cache.disk_bytes`
+- `cache.l2_restore_hit_rate`
+- `cache.compression_ratio`
 
 Required comparison report:
 
 - cold request vs same-session follow-up request
 - same-branch follow-up vs cross-branch follow-up
 - live request continuation vs snapshot restore path
+- unquantized cache footprint vs quantized cache footprint
 
 ## Work Plan
 
@@ -102,11 +108,11 @@ Make cache references, block tables, snapshot refs, session branches, and resume
 - The protocol exposes cache and session graph state without collapsing runtime ownership boundaries.
 - Generated artifacts remain aligned across Swift and Python.
 
-### Task 2: Implement cache metadata and snapshot primitives in the Swift text worker
+### Task 2: Implement tiered cache metadata and snapshot primitives in worker runtimes
 
 **Objective**
 
-Give the Swift text worker real cache-key tracking, block-table reporting, and save or restore primitives for text-only execution.
+Give worker runtimes real cache-key tracking, hot-tier reuse, disk-backed block persistence, and save or restore primitives for text-only execution.
 
 **Files**
 
@@ -118,6 +124,8 @@ Give the Swift text worker real cache-key tracking, block-table reporting, and s
 **Implementation**
 
 - Track reusable prefix and block-table references for eligible requests.
+- Add hot-tier prefix or paged cache behavior plus disk-backed block persistence where recovery policy requires it.
+- Add cache quantization at the storage boundary so warm reuse and durable restore are measurable and space-aware.
 - Add snapshot save and restore for tool-boundary and follow-up flows.
 - Expose runtime stats for cache occupancy, reuse, and snapshot timing.
 - Keep the first implementation local and conservative rather than overgeneralized.
@@ -177,6 +185,7 @@ Turn cache metadata into real routing and scheduling decisions rather than passi
 
 - Add prefix-affinity and reusable-state preference to admission decisions.
 - Distinguish cold, warm, and restored request classes in the scheduler and metrics layer.
+- Distinguish hot-memory, disk-restored, and quantized-cache restore paths in metrics and operator state.
 - Ensure branch-aware follow-ups favor compatible state while keeping behavior deterministic.
 
 **Verification**
@@ -204,9 +213,9 @@ Leave Phase 3 with reproducible proof that cache reuse and recovery are real pro
 
 **Implementation**
 
-- Add integration cases for same-session follow-up reuse, branch-aware divergence, snapshot restore, and explicit cold-path fallback.
+- Add integration cases for same-session follow-up reuse, branch-aware divergence, snapshot restore, disk-backed restore, and explicit cold-path fallback.
 - Add operator workflow documentation for observing cache state and validating restore behavior locally.
-- Standardize the metrics report format for hit rate, reuse ratio, restore latency, and TTFT deltas.
+- Standardize the metrics report format for hit rate, reuse ratio, restore latency, compression ratio, and TTFT deltas.
 
 **Verification**
 
@@ -239,7 +248,7 @@ Expected evidence:
 - the control plane passes session graph and scheduling tests
 - integration proves follow-up acceleration and restore behavior
 - touched-scope coverage is at least `95%`
-- the metrics report includes hit rate, restore latency, and TTFT deltas
+- the metrics report includes hit rate, restore latency, compression ratio, and TTFT deltas
 
 ## Acceptance Criteria
 
@@ -247,7 +256,7 @@ Expected evidence:
 - Same-session and same-branch follow-ups show measurable acceleration over cold runs.
 - Tool-boundary recovery can restore valid text-runtime state.
 - Cache-aware scheduling and prefix affinity are real routing inputs rather than passive metadata.
-- Phase 3 concludes with reproducible reuse and recovery evidence.
+- Phase 3 concludes with reproducible reuse, restore, and cache-tier evidence.
 
 ## Rollback or Safe Exit
 

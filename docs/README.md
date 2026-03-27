@@ -49,6 +49,7 @@ Current roadmap and phase-status documents:
 Recent decision records:
 
 - `decisions/2026-03-27-swift-text-runtime.md`
+- `decisions/2026-03-28-product-scope-and-runtime-priorities.md`
 
 ## Engineering Standards
 

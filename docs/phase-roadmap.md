@@ -68,11 +68,11 @@ Phase probes:
 - model load latency
 - peak memory for the default text model
 
-### Phase 2: Text Runtime Depth
+### Phase 2: Text Runtime Depth and Acceleration
 
 Primary objective:
 
-- deepen the Swift text path from end-to-end `Generate` into phase-aware text execution
+- deepen the Swift text path from end-to-end `Generate` into phase-aware and acceleration-aware text execution
 
 Major additions:
 
@@ -80,12 +80,16 @@ Major additions:
 - lane-aware scheduler behavior for interactive decode and prefill classes
 - richer request progress and admission state in the control plane
 - correct abort handling across queued, prefill, and decode states
+- draft-model speculative decoding
+- prompt-lookup or speculative-prefill acceleration for repetitive structured prompts
+- low-bit KV cache modes for active text acceleration policies
 
 Exit criteria:
 
 - follow-up requests can use explicit prefill/decode flow
 - scheduler decisions reflect lane and priority hints rather than simple FIFO behavior
 - queueing and abort behavior are observable and test-covered
+- speculative and accelerated text paths have reproducible benchmark evidence
 
 Phase probes:
 
@@ -94,8 +98,10 @@ Phase probes:
 - TTFT
 - tokens per second
 - abort latency
+- speculative acceptance rate
+- speculative rollback rate
 
-### Phase 3: Cache, Session Graph, and Recovery
+### Phase 3: Unified Cache, Session Graph, and Recovery
 
 Primary objective:
 
@@ -103,7 +109,9 @@ Primary objective:
 
 Major additions:
 
-- L1 block reuse and observable block-table metadata
+- L1 hot prefix or paged cache and observable block-table metadata
+- L2 disk-backed block or snapshot persistence
+- KV cache quantization at the cache storage boundary
 - checkpoint and snapshot save or restore flows
 - session graph state with branch lineage and resume references
 - cache-aware scheduling and prefix affinity
@@ -113,6 +121,7 @@ Exit criteria:
 - same-session follow-ups show measurable TTFT improvement
 - tool-boundary recovery can resume from saved state
 - cache metadata and recovery state are visible through the control plane
+- restart-safe cache restore is measurable and operator-visible
 
 Phase probes:
 
@@ -121,25 +130,30 @@ Phase probes:
 - snapshot restore latency
 - follow-up TTFT delta vs cold run
 - cache memory and SSD footprint
+- cache compression ratio
 
-### Phase 4: Text API Breadth and Agent Semantics
+### Phase 4: Text API Breadth and Desktop Ops Foundation
 
 Primary objective:
 
-- expand from thin chat compatibility to a fuller text-runtime API surface
+- expand from thin chat compatibility to a fuller text-runtime API surface while establishing the native desktop operations foundation
 
 Major additions:
 
 - `POST /v1/responses`
 - `POST /v1/messages`
+- `POST /v1/completions`
 - richer reasoning and tool-call stream semantics
 - preset-aware and workflow-aware request shaping
+- native desktop dashboard, models, settings, logs, bench, and API reference foundation
+- local health and operator endpoints such as `/health`
 
 Exit criteria:
 
-- chat-completions, responses, and messages flows behave consistently over the same runtime model
+- chat-completions, completions, responses, and messages flows behave consistently over the same runtime model
 - tool and reasoning streams are stable and test-covered
 - session and branch metadata survive across endpoint variants
+- the native desktop shell exposes real operator state instead of placeholder views
 
 Phase probes:
 
@@ -147,12 +161,13 @@ Phase probes:
 - stream event latency
 - reasoning and tool delta fidelity
 - endpoint overhead vs chat-completions baseline
+- desktop operator action latency
 
-### Phase 5: Embeddings and Rerank
+### Phase 5: Embeddings, Rerank, and Model Operations
 
 Primary objective:
 
-- add the first dedicated non-generative worker classes without regressing text responsiveness
+- add the first dedicated non-generative worker classes and the first real model-operations workflows without regressing text responsiveness
 
 Major additions:
 
@@ -160,12 +175,18 @@ Major additions:
 - `POST /v1/rerank`
 - embed-capable and rerank-capable worker routing
 - model catalog typing for capability-class dispatch
+- per-model settings such as alias, type override, TTL, pinning, memory policy, and acceleration profile
+- model conversion and advanced quantization workflows
+- HuggingFace download and upload workflows
+- cache stats and operator endpoints where the cache stack is already stable
+- Ollama-compatible endpoint support where it does not violate the shared control-plane model
 
 Exit criteria:
 
 - embedding and rerank workloads route to dedicated workers
 - text latency remains stable under mixed traffic
 - model visibility and health state reflect multiple worker classes
+- model operations are reproducible through control-plane commands and native desktop workflows
 
 Phase probes:
 
@@ -173,8 +194,10 @@ Phase probes:
 - rerank latency
 - mixed-workload interference on text TTFT
 - memory pressure by model class
+- HuggingFace transfer timings
+- quantization job duration
 
-### Phase 6: Vision, OCR, and Audio Transcription
+### Phase 6: Vision, OCR, Audio, and Chat Panel
 
 Primary objective:
 
@@ -184,14 +207,18 @@ Major additions:
 
 - VLM and OCR execution paths
 - `POST /v1/audio/transcriptions`
+- `POST /v1/audio/speech`
 - multimodal preprocessing for image and audio inputs
 - background-lane routing for multimodal analysis tasks
+- native desktop Chat panel on top of the stabilized text and multimodal runtime
 
 Exit criteria:
 
 - OCR and transcription are exposed through stable local APIs
+- speech output is exposed through a stable local API
 - multimodal analysis workloads do not block interactive text decode
 - worker and model metadata clearly surface multimodal capability
+- the native Chat panel reflects real runtime state and tool or reasoning behavior
 
 Phase probes:
 
@@ -199,8 +226,9 @@ Phase probes:
 - OCR latency
 - VLM first-token latency
 - multimodal preprocessing memory spikes
+- speech synthesis latency
 
-### Phase 7: Image Generation and Image Editing
+### Phase 7: Image Generation, Image Editing, and Image Panel
 
 Primary objective:
 
@@ -212,12 +240,14 @@ Major additions:
 - `POST /v1/images/edits`
 - isolated image worker pools
 - long-running job progress and cancellation semantics
+- native desktop Image panel and artifact workflows
 
 Exit criteria:
 
 - image jobs run without collapsing text responsiveness
 - cancellation and failure states are explicit and operator-visible
 - output artifacts and job metadata are surfaced consistently
+- the native Image panel can drive and observe generation or edit jobs without worker-private state
 
 Phase probes:
 
@@ -225,8 +255,9 @@ Phase probes:
 - queue wait under mixed traffic
 - peak memory and GPU pressure
 - cancellation success rate
+- artifact publish latency
 
-### Phase 8: Desktop Productization, Packaging, and Release Hardening
+### Phase 8: Training, Desktop Productization, Packaging, and Release Hardening
 
 Primary objective:
 
@@ -234,7 +265,9 @@ Primary objective:
 
 Major additions:
 
-- richer dashboard, settings, logs, presets, and diagnostics flows
+- LoRA and QLoRA training workflows
+- adapter packaging, management, and local registry flows
+- richer dashboard, settings, logs, presets, diagnostics, and remaining tools flows
 - cache inspector and operator tooling where prior phases already provide the backend support
 - launchd, packaging, signing, installer/runtime bootstrap, and release runbooks
 - benchmark and smoke gating for release candidates
@@ -244,6 +277,7 @@ Exit criteria:
 - fresh install to ready-state is reproducible
 - daemon and worker restart flows are recoverable
 - release candidates carry benchmark and smoke evidence instead of only functional test evidence
+- training and adapter workflows are reproducible and operator-visible
 
 Phase probes:
 
@@ -252,6 +286,8 @@ Phase probes:
 - operator action latency
 - benchmark regression thresholds
 - packaging and install success rate
+- training job duration
+- adapter export and upload success rate
 
 ## Delivery Rules Across Phases
 
