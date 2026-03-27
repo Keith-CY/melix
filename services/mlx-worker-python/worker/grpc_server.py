@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 from concurrent import futures
 
 import grpc
@@ -15,6 +16,8 @@ from packages.protocol.python.worker.v1 import (
 
 from worker.engine.engine_core import EngineCore
 from worker.registry import WorkerRegistry
+from worker.runtime.deterministic_backend import DeterministicTextBackend
+from worker.runtime.mlx_text_runtime import MLXTextRuntime
 
 
 class WorkerRuntimeService(runtime_pb2_grpc.RuntimeServiceServicer):
@@ -127,8 +130,20 @@ class WorkerInferenceService(inference_pb2_grpc.InferenceServiceServicer):
         )
 
 
-def build_server(socket_path: str, registry: WorkerRegistry | None = None):
-    registry = registry or WorkerRegistry()
+def build_registry_for_backend(backend_mode: str) -> WorkerRegistry:
+    if backend_mode == "deterministic":
+        return WorkerRegistry(runtime=MLXTextRuntime(backend=DeterministicTextBackend()))
+    return WorkerRegistry()
+
+
+def build_server(
+    socket_path: str,
+    registry: WorkerRegistry | None = None,
+    backend_mode: str = "auto",
+):
+    registry = registry or build_registry_for_backend(backend_mode)
+    if os.path.exists(socket_path):
+        os.unlink(socket_path)
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=4))
     runtime_service = WorkerRuntimeService(registry)
     inference_service = WorkerInferenceService(registry)
@@ -141,8 +156,9 @@ def build_server(socket_path: str, registry: WorkerRegistry | None = None):
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--socket-path", default="/var/run/melix/worker-text-001.sock")
+    parser.add_argument("--backend-mode", choices=["auto", "deterministic"], default="auto")
     args = parser.parse_args()
 
-    server, _, _ = build_server(args.socket_path)
+    server, _, _ = build_server(args.socket_path, backend_mode=getattr(args, "backend_mode", "auto"))
     server.start()
     server.wait_for_termination()

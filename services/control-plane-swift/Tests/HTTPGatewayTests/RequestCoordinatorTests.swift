@@ -1,0 +1,122 @@
+import Foundation
+import Testing
+
+@testable import MelixControlPlaneCore
+import MelixControlPlaneProtocol
+import MelixWorkerProtocol
+
+@Suite("Request Coordinator")
+struct RequestCoordinatorTests {
+    @Test("request cancellation triggers worker abort")
+    func cancellationTriggersWorkerAbort() async throws {
+        let workerClient = BlockingWorkerClient()
+        let coordinator = RequestCoordinator(workerClient: workerClient, abortRegistry: AbortRegistry())
+        let translated = makeTranslatedChatRequest(requestID: "req-cancel")
+
+        _ = try await coordinator.startChatCompletion(translated)
+        let cancelled = try await coordinator.cancel(requestID: "req-cancel")
+
+        #expect(cancelled)
+        #expect(await workerClient.abortedRequestIDs == ["req-cancel"])
+    }
+
+    @Test("only one active request is admitted at a time")
+    func onlyOneActiveRequestIsAdmittedAtATime() async throws {
+        let workerClient = BlockingWorkerClient()
+        let coordinator = RequestCoordinator(workerClient: workerClient, abortRegistry: AbortRegistry())
+
+        _ = try await coordinator.startChatCompletion(makeTranslatedChatRequest(requestID: "req-1"))
+
+        do {
+            _ = try await coordinator.startChatCompletion(makeTranslatedChatRequest(requestID: "req-2"))
+            Issue.record("Expected the second request to be rejected.")
+        } catch let error as RequestCoordinatorError {
+            #expect(error == .requestAlreadyActive)
+        }
+
+        _ = try await coordinator.cancel(requestID: "req-1")
+        _ = try await coordinator.startChatCompletion(makeTranslatedChatRequest(requestID: "req-3"))
+
+        #expect(await workerClient.generatedRequestIDs == ["req-1", "req-3"])
+    }
+
+    @Test("worker unavailable requests are rejected before dispatch")
+    func workerUnavailableRequestsAreRejected() async throws {
+        let coordinator = RequestCoordinator(workerClient: UnavailableCoordinatorWorkerClient(), abortRegistry: AbortRegistry())
+
+        do {
+            _ = try await coordinator.startChatCompletion(makeTranslatedChatRequest(requestID: "req-unavailable"))
+            Issue.record("Expected worker unavailable to be thrown.")
+        } catch let error as RequestCoordinatorError {
+            #expect(error == .workerUnavailable)
+        }
+    }
+
+    @Test("cancelling an unknown request returns false")
+    func cancellingUnknownRequestReturnsFalse() async throws {
+        let coordinator = RequestCoordinator(workerClient: BlockingWorkerClient(), abortRegistry: AbortRegistry())
+        let cancelled = try await coordinator.cancel(requestID: "missing-request")
+        #expect(!cancelled)
+    }
+}
+
+private actor BlockingWorkerClient: WorkerClient {
+    private(set) var generatedRequestIDs: [String] = []
+    private(set) var abortedRequestIDs: [String] = []
+    private var continuations: [String: AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error>.Continuation] = [:]
+
+    func canDispatchRequests() async -> Bool {
+        true
+    }
+
+    func generate(
+        request: Melix_Worker_V1_GenerateRequest
+    ) async throws -> AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error> {
+        generatedRequestIDs.append(request.execution.id.requestID)
+        let requestID = request.execution.id.requestID
+        return AsyncThrowingStream { continuation in
+            continuations[requestID] = continuation
+        }
+    }
+
+    func abort(requestID: String) async throws -> Bool {
+        abortedRequestIDs.append(requestID)
+        continuations.removeValue(forKey: requestID)?.finish()
+        return true
+    }
+}
+
+private actor UnavailableCoordinatorWorkerClient: WorkerClient {
+    func canDispatchRequests() async -> Bool {
+        false
+    }
+
+    func generate(
+        request: Melix_Worker_V1_GenerateRequest
+    ) async throws -> AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error> {
+        throw WorkerClientError.unavailable
+    }
+
+    func abort(requestID: String) async throws -> Bool {
+        false
+    }
+}
+
+private func makeTranslatedChatRequest(requestID: String) -> TranslatedChatRequest {
+    var workerRequest = Melix_Worker_V1_GenerateRequest()
+    workerRequest.execution = Melix_Worker_V1_ExecutionMetadata()
+    workerRequest.execution.id = Melix_Worker_V1_RequestIdentity()
+    workerRequest.execution.id.requestID = requestID
+    workerRequest.execution.modelHandle = "melix-dev-text::local"
+    workerRequest.execution.scheduling = Melix_Worker_V1_SchedulingHints()
+    workerRequest.execution.scheduling.lane = "text.interactive"
+    workerRequest.execution.scheduling.priority = 100
+    workerRequest.execution.scheduling.latencySensitive = true
+
+    return TranslatedChatRequest(
+        requestID: requestID,
+        modelID: "melix-dev-text",
+        workerRequest: workerRequest,
+        stream: true
+    )
+}

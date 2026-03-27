@@ -19,6 +19,7 @@ let package = Package(
             name: "MelixControlPlaneCore",
             dependencies: [
                 .product(name: "MelixControlPlaneProtocol", package: "swift"),
+                .product(name: "MelixWorkerProtocol", package: "swift"),
             ],
             path: "Sources",
             exclude: ["Bootstrap"]
@@ -32,6 +33,16 @@ let package = Package(
             name: "ControlPlaneTests",
             dependencies: ["MelixControlPlaneCore"],
             path: "Tests/ControlPlaneTests"
+        ),
+        .testTarget(
+            name: "HTTPGatewayTests",
+            dependencies: ["MelixControlPlaneCore"],
+            path: "Tests/HTTPGatewayTests"
+        ),
+        .testTarget(
+            name: "WorkerClientTests",
+            dependencies: ["MelixControlPlaneCore"],
+            path: "Tests/WorkerClientTests"
         ),
     ]
 )

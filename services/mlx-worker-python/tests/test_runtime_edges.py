@@ -280,8 +280,9 @@ def test_build_server_and_main_bootstrap(monkeypatch) -> None:
         def wait_for_termination(self):
             seen["waited"] = True
 
-    def fake_build_server(socket_path: str):
+    def fake_build_server(socket_path: str, backend_mode: str = "auto"):
         seen["socket_path"] = socket_path
+        seen["backend_mode"] = backend_mode
         return FakeServer(), None, None
 
     monkeypatch.setattr("worker.grpc_server.build_server", fake_build_server)
@@ -289,6 +290,7 @@ def test_build_server_and_main_bootstrap(monkeypatch) -> None:
     main()
 
     assert seen == {
+        "backend_mode": "auto",
         "socket_path": "/tmp/from-main.sock",
         "started": True,
         "waited": True,

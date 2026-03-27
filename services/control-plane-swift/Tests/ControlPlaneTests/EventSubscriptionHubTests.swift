@@ -3,6 +3,7 @@ import Testing
 
 @testable import MelixControlPlaneCore
 import MelixControlPlaneProtocol
+import MelixWorkerProtocol
 
 @Suite("Event Subscription Hub")
 struct EventSubscriptionHubTests {
@@ -84,6 +85,21 @@ struct CoreUtilityTests {
         #expect(canDispatch)
     }
 
+    @Test("null worker client rejects generate and abort")
+    func nullWorkerClientRejectsGenerateAndAbort() async throws {
+        let client = NullWorkerClient()
+
+        do {
+            _ = try await client.generate(request: Melix_Worker_V1_GenerateRequest())
+            Issue.record("Expected null worker client generate to throw.")
+        } catch let error as WorkerClientError {
+            #expect(error == .unavailable)
+        }
+
+        let aborted = try await client.abort(requestID: "missing-request")
+        #expect(!aborted)
+    }
+
     @Test("model catalog can load, unload, and reject missing models")
     func modelCatalogStateTransitions() async {
         let catalog = ModelCatalog()
@@ -98,6 +114,32 @@ struct CoreUtilityTests {
         #expect(loaded?.state == .modelWarm)
         #expect(unloaded?.state == .modelUnloaded)
         #expect(missing == nil)
+    }
+
+    @Test("model catalog resolves dispatch handles only for loaded models")
+    func modelCatalogResolvesDispatchHandles() async {
+        let catalog = ModelCatalog()
+        let missingBeforeLoad = await catalog.dispatchHandle(for: "melix-dev-text")
+        _ = await catalog.loadModel(id: "melix-dev-text")
+        let loadedHandle = await catalog.dispatchHandle(for: "melix-dev-text")
+        _ = await catalog.unloadModel(id: "melix-dev-text")
+        let unloadedHandle = await catalog.dispatchHandle(for: "melix-dev-text")
+
+        #expect(missingBeforeLoad == nil)
+        #expect(loadedHandle == "melix-dev-text::local")
+        #expect(unloadedHandle == nil)
+    }
+
+    @Test("metrics store records and clamps values")
+    func metricsStoreRecordsAndClampsValues() async {
+        let store = MetricsStore()
+        await store.increment("requests.inflight")
+        await store.set(3.5, forKey: "http.translation_ms")
+        await store.decrement("requests.inflight", by: 5)
+
+        let snapshot = await store.snapshot()
+        #expect(snapshot.values["requests.inflight"] == 0)
+        #expect(snapshot.values["http.translation_ms"] == 3.5)
     }
 
     @Test("dev text model has the expected defaults")
@@ -116,5 +158,17 @@ private struct StubWorkerClient: WorkerClient {
 
     func canDispatchRequests() async -> Bool {
         canDispatch
+    }
+
+    func generate(
+        request: Melix_Worker_V1_GenerateRequest
+    ) async throws -> AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error> {
+        AsyncThrowingStream { continuation in
+            continuation.finish()
+        }
+    }
+
+    func abort(requestID: String) async throws -> Bool {
+        false
     }
 }
