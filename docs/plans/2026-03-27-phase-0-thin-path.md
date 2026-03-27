@@ -1,439 +1,203 @@
-# Melix Phase 0 + Thin Path Implementation Plan
+# Melix Phase 0 + Thin Path Status Plan
 
-> **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans when implementing the remaining tasks in this plan.
 
-**Goal:** Build the first executable Melix slice: generated protocol stubs, a Swift control plane daemon, a Python worker with real MLX text generation, a minimal XPC-connected menu bar shell, and one end-to-end local `POST /v1/chat/completions` streaming path with abort support.
+**Goal:** Finish the first executable Melix slice: a local control plane, a Python worker, one streamed chat path, and a minimal operator-facing menu bar shell.
 
-**Architecture:** The first slice keeps the architecture honest without overbuilding. The Swift control plane owns HTTP, SSE, XPC, request translation, model state, and worker dispatch; the Python worker owns model execution and streaming token output. Scheduling, cache persistence, multimodal execution, and branch-aware recovery remain scaffolded but intentionally minimal in this phase.
+**Architecture:** The phase-0 slice is intentionally narrow. The Swift control plane owns HTTP, SSE, XPC, request translation, admission, and model state. The Python worker owns runtime execution, token streaming, and cancellation. Deterministic execution remains the stable integration path, while `auto` mode is now the real MLX path.
 
-**Tech Stack:** Swift Package Manager, Swift Concurrency, Swift Protobuf or grpc-swift-compatible generated types, Python 3.12+, `uv`, `grpcio`, `protobuf`, MLX text runtime, Buf or `protoc`, Unix Domain Sockets, XCTest, `pytest`.
+**Tech Stack:** Swift Package Manager, Swift Concurrency, Swift Protobuf-generated types, Python 3.12+, `uv`, `grpcio`, `protobuf`, `mlx`, `mlx-lm`, Unix Domain Sockets, XCTest, `pytest`.
 
 ---
 
-### Task 1: Create the repository bootstrap and code generation baseline
+## Summary
 
-**Files:**
-- Create: `README.md`
-- Create: `Makefile`
-- Create: `Package.swift`
-- Create: `pyproject.toml`
-- Create: `buf.yaml`
-- Create: `buf.gen.yaml`
-- Create: `services/control-plane-swift/Package.swift`
-- Create: `services/mlx-worker-python/pyproject.toml`
-- Create: `apps/macos-menubar/Package.swift`
+This document is the current phase-0 source of truth, not a speculative implementation outline.
 
-**Step 1: Write the failing bootstrap checks**
+Current status:
 
-Create bootstrap verification tests or smoke scripts that assert:
+- `Task 1` through `Task 4C` are complete in local `main`.
+- The thin path already supports generated protocol artifacts, a Swift control plane, a Python worker, SSE chat streaming, abort bridging, a live worker transport, and real MLX token streaming in worker `auto` mode.
+- The remaining phase-0 work is limited to the menu bar shell and broader integration/developer workflow completion.
 
-- `make proto` resolves schema paths and runs code generation
-- `make swift-test` targets the Swift workspace
-- `make py-test` targets the Python worker workspace
-- missing generated code or missing package manifests produce explicit failures
+Detailed historical execution notes remain in:
 
-**Step 2: Run the bootstrap checks and confirm they fail**
+- `docs/plans/2026-03-27-task-4-http-gateway.md`
+- `docs/plans/2026-03-27-task-4b-live-worker-transport.md`
+- `docs/plans/2026-03-27-task-4c-mlx-streaming.md`
 
-Run:
+## Completed Milestones
 
-```bash
-make proto
-make swift-test
-make py-test
-```
+### Task 1: Repository bootstrap and protocol generation baseline
 
-Expected:
+Completed outcome:
 
-- command failures because the manifests, generation config, and package layout do not exist yet
+- root workspace bootstrap exists
+- `make bootstrap`, `make proto`, `make swift-test`, `make py-test`, and `make integration-test` are defined
+- protocol schemas generate versioned Swift and Python artifacts
 
-**Step 3: Add the minimal repo bootstrap**
+Key caveat:
 
-Implement:
+- protocol schemas remain the editable source of truth; generated outputs must still be regenerated on schema changes
 
-- a root `README.md` with the first-slice local developer flow
-- a `Makefile` with stable targets: `bootstrap`, `proto`, `swift-test`, `py-test`, `integration-test`
-- root package metadata for Swift and Python workspaces
-- `buf.yaml` and `buf.gen.yaml` that generate Swift and Python code from `packages/protocol/schema`
-- package manifests for the Swift daemon and menu bar app, and the Python worker project
+### Task 2: Control plane XPC and in-memory state skeleton
 
-**Step 4: Re-run the bootstrap checks**
+Completed outcome:
 
-Run:
+- the control plane exposes `handshake`, `execute`, `subscribe`, and `unsubscribe`
+- server snapshots, model list/load/unload, metrics placeholders, and typed event fanout exist
+- model state and subscription sequencing are test-covered
 
-```bash
-make proto
-make swift-test
-make py-test
-```
+Key caveat:
 
-Expected:
+- the menu bar app still does not consume this XPC surface beyond the placeholder target
 
-- proto generation succeeds
-- test commands execute the correct workspaces even if most tests are still placeholders
+### Task 3: Worker runtime slice
 
-**Step 5: Commit**
+Completed outcome:
 
-```bash
-git add README.md Makefile Package.swift pyproject.toml buf.yaml buf.gen.yaml apps/macos-menubar/Package.swift services/control-plane-swift/Package.swift services/mlx-worker-python/pyproject.toml
-git commit -m "build: add Melix bootstrap and protocol generation"
-```
+- the Python worker exposes `RuntimeService` and `InferenceService`
+- `Generate` and `Abort` are functional
+- unsupported RPC surfaces return explicit structured `unimplemented` responses
 
-### Task 2: Build the Swift control plane skeleton with XPC and state snapshots
+Key caveat:
 
-**Files:**
-- Create: `services/control-plane-swift/Sources/Bootstrap/main.swift`
-- Create: `services/control-plane-swift/Sources/XPCService/ControlPlaneService.swift`
-- Create: `services/control-plane-swift/Sources/XPCService/EventSubscriptionHub.swift`
-- Create: `services/control-plane-swift/Sources/WorkerClient/WorkerClient.swift`
-- Create: `services/control-plane-swift/Sources/ModelCatalog/ModelCatalog.swift`
-- Create: `services/control-plane-swift/Sources/EnginePool/EnginePool.swift`
-- Create: `services/control-plane-swift/Sources/Metrics/MetricsStore.swift`
-- Create: `services/control-plane-swift/Sources/Snapshots/ServerSnapshotBuilder.swift`
-- Create: `services/control-plane-swift/Tests/ControlPlaneTests/ControlPlaneServiceTests.swift`
-- Create: `services/control-plane-swift/Tests/ControlPlaneTests/EventSubscriptionHubTests.swift`
+- `Prefill`, `Decode`, cache mutation, maintenance workflows, and multimodal execution remain out of scope for phase 0
 
-**Step 1: Write the failing Swift tests**
+### Task 4: HTTP gateway, SSE streaming, and abort bridge
 
-Add tests for:
+Completed outcome:
 
-- `handshake` returns a typed `HandshakeResponse` containing a snapshot
-- `execute` handles `ServerCommand.GetServerSnapshot`
-- `execute` handles `ModelCommand.ListModels`
-- `subscribe` receives typed events with monotonic sequence numbers
+- `POST /v1/chat/completions` and `GET /v1/models` exist
+- chat requests are translated into worker generation requests
+- SSE emits deltas, usage, completion, and done markers
+- cancel requests bridge to worker `Abort`
 
-**Step 2: Run the Swift tests and confirm they fail**
+Key caveat:
 
-Run:
+- phase 0 still exposes only the thin HTTP surface; `responses`, `messages`, embeddings, rerank, image, and audio endpoints remain deferred
 
-```bash
-swift test --package-path services/control-plane-swift
-```
+### Task 4B: Live worker transport
 
-Expected:
+Completed outcome:
 
-- failures because the daemon package, service implementation, and snapshot builder are not implemented yet
+- the control plane no longer depends on the null worker path for live requests
+- a Python bridge helper carries real worker protobuf traffic over UDS
+- the control plane can preload the development text model when the worker is reachable
 
-**Step 3: Implement the minimal control plane core**
+Key caveat:
 
-Implement:
+- the bridge transport is a phase-0 implementation detail and not the final permanent transport decision
 
-- daemon bootstrap and process wiring
-- XPC surface with `handshake`, `execute`, `subscribe`, `unsubscribe`
-- in-memory model catalog and server snapshot builder
-- event subscription hub with per-subscription sequence numbers
-- thin worker client placeholder that can be injected or mocked in tests
+### Task 4C: Real MLX token streaming
 
-Keep this phase limited to:
+Completed outcome:
 
-- server snapshot
-- list/load/unload model state
-- metrics snapshot placeholder
-- event fanout for server and model state changes
+- worker `auto` backend mode uses real `mlx_lm.load(...)` and `mlx_lm.stream_generate(...)`
+- prompt rendering uses tokenizer chat templates when available
+- runtime metadata now drives finish reason and usage reporting
+- deterministic mode remains the stable integration fallback
 
-**Step 4: Re-run Swift tests**
+Key caveat:
 
-Run:
+- true MLX smoke verification requires `MELIX_DEV_TEXT_MODEL_PATH`; if the model source is missing or invalid, `auto` mode must fail explicitly
 
-```bash
-swift test --package-path services/control-plane-swift
-```
+## Remaining Tasks
 
-Expected:
+### Task 5: Minimal menu bar shell
 
-- handshake, execute, and subscription tests pass
+Goal:
 
-**Step 5: Commit**
+- replace the current placeholder app with a real XPC-backed operator shell
 
-```bash
-git add services/control-plane-swift
-git commit -m "feat: add control plane xpc skeleton"
-```
+Required behavior:
 
-### Task 3: Implement the Python worker runtime and MLX text generation path
+- connect to the control plane over XPC on launch
+- perform handshake and hydrate runtime state from the initial snapshot
+- render server and model state for the development text model
+- expose load and unload actions for the model
+- update UI state from control-plane event subscriptions
 
-**Files:**
-- Create: `services/mlx-worker-python/worker/bootstrap.py`
-- Create: `services/mlx-worker-python/worker/grpc_server.py`
-- Create: `services/mlx-worker-python/worker/registry.py`
-- Create: `services/mlx-worker-python/worker/runtime/mlx_text_runtime.py`
-- Create: `services/mlx-worker-python/worker/engine/engine_core.py`
-- Create: `services/mlx-worker-python/worker/engine/request_state.py`
-- Create: `services/mlx-worker-python/worker/model_registry/catalog.py`
-- Create: `services/mlx-worker-python/tests/test_runtime_service.py`
-- Create: `services/mlx-worker-python/tests/test_generate_stream.py`
-- Create: `services/mlx-worker-python/tests/test_abort.py`
+Out of scope:
 
-**Step 1: Write the failing Python tests**
-
-Add tests for:
-
-- runtime handshake reports protocol version and capabilities
-- `LoadModel` returns a model handle for one configured MLX text model
-- `Generate` streams token events and a terminal completion event
-- `Abort` stops an active generation and returns an explicit terminal error or cancelled completion
-- unsupported RPCs return structured unimplemented errors
-
-**Step 2: Run the Python tests and confirm they fail**
-
-Run:
-
-```bash
-pytest services/mlx-worker-python/tests -q
-```
-
-Expected:
-
-- failures because the gRPC server, runtime wrapper, and request tracking do not exist yet
-
-**Step 3: Implement the worker vertical slice**
-
-Implement:
-
-- a gRPC-over-UDS server using generated worker protocol code
-- `RuntimeService.Handshake`, `LoadModel`, `UnloadModel`, `GetRuntimeStats`, `ListLoadedModels`
-- `InferenceService.Generate` and `Abort`
-- a real MLX text runtime wrapper with deterministic configuration for one supported dev model
-- active request bookkeeping so abort can cancel streaming generation safely
-
-For this task:
-
-- keep `Prefill`, `Decode`, `CacheService`, and `MaintenanceService` wired but explicitly unimplemented
-- return zero-value cache stats and minimal capability reporting
-
-**Step 4: Re-run the Python tests**
-
-Run:
-
-```bash
-pytest services/mlx-worker-python/tests -q
-```
-
-Expected:
-
-- runtime, generate, and abort tests pass
-
-**Step 5: Commit**
-
-```bash
-git add services/mlx-worker-python
-git commit -m "feat: add mlx worker text generation path"
-```
-
-### Task 4: Add the HTTP chat gateway, SSE streaming, and abort bridge
-
-**Files:**
-- Create: `services/control-plane-swift/Sources/HTTPGateway/OpenAI/OpenAIHandler.swift`
-- Create: `services/control-plane-swift/Sources/HTTPGateway/SSE/SSEStreamWriter.swift`
-- Create: `services/control-plane-swift/Sources/Requests/ChatRequestTranslator.swift`
-- Create: `services/control-plane-swift/Sources/Requests/RequestCoordinator.swift`
-- Create: `services/control-plane-swift/Sources/Requests/AbortRegistry.swift`
-- Create: `services/control-plane-swift/Tests/HTTPGatewayTests/OpenAIHandlerTests.swift`
-- Create: `services/control-plane-swift/Tests/HTTPGatewayTests/SSEStreamWriterTests.swift`
-- Create: `services/control-plane-swift/Tests/HTTPGatewayTests/RequestCoordinatorTests.swift`
-
-**Step 1: Write the failing Swift gateway tests**
-
-Add tests for:
-
-- `POST /v1/chat/completions` translates into a `Generate` worker request
-- SSE emits content deltas in order and closes with a terminal event
-- `GET /v1/models` returns loaded model state from the model catalog
-- request cancellation triggers worker `Abort`
-
-**Step 2: Run the targeted Swift tests and confirm they fail**
-
-Run:
-
-```bash
-swift test --package-path services/control-plane-swift --filter HTTPGatewayTests
-```
-
-Expected:
-
-- failures because the HTTP handlers and worker request bridge do not exist yet
-
-**Step 3: Implement the minimal HTTP path**
-
-Implement:
-
-- a local HTTP listener with `POST /v1/chat/completions` and `GET /v1/models`
-- chat request translation from HTTP shape into internal request identity plus worker `Generate`
-- SSE streaming for token deltas, usage trailer, heartbeat, and terminal completion
-- abort bridging from control plane request cancellation to worker `Abort`
-
-Keep this phase intentionally narrow:
-
-- no `responses`, `messages`, embeddings, rerank, images, or audio endpoints yet
-- one active text request at a time
-- FIFO request admission only
-
-**Step 4: Re-run the targeted Swift tests**
-
-Run:
-
-```bash
-swift test --package-path services/control-plane-swift --filter HTTPGatewayTests
-```
-
-Expected:
-
-- HTTP translation, SSE, and abort bridge tests pass
-
-**Step 5: Commit**
-
-```bash
-git add services/control-plane-swift
-git commit -m "feat: add chat completions gateway and streaming"
-```
-
-### Task 5: Add the minimal menu bar shell and XPC client
-
-**Files:**
-- Create: `apps/macos-menubar/Sources/AppMain/AppMain.swift`
-- Create: `apps/macos-menubar/Sources/MenuBar/StatusMenu.swift`
-- Create: `apps/macos-menubar/Sources/Models/RuntimeViewModel.swift`
-- Create: `apps/macos-menubar/Sources/XPCClient/ControlPlaneXPCClient.swift`
-- Create: `apps/macos-menubar/Tests/MenuBarTests/RuntimeViewModelTests.swift`
-- Create: `apps/macos-menubar/Tests/MenuBarTests/ControlPlaneXPCClientTests.swift`
-
-**Step 1: Write the failing menu bar tests**
-
-Add tests for:
-
-- handshake and snapshot hydration on app launch
-- model list rendering from XPC snapshot data
-- load/unload actions dispatch the correct control-plane commands
-- event subscription updates runtime state in the view model
-
-**Step 2: Run the app tests and confirm they fail**
-
-Run:
-
-```bash
-swift test --package-path apps/macos-menubar
-```
-
-Expected:
-
-- failures because the app package, XPC client, and view model do not exist yet
-
-**Step 3: Implement the minimal operations shell**
-
-Implement:
-
-- app entry point and menu bar status surface
-- XPC client using the generated control-plane protocol
-- read-only runtime state rendering
-- load/unload actions for the configured text model
-
-Do not add:
-
-- cache inspector
 - settings persistence
-- branch or request history UI
-- direct worker access
+- cache inspector
+- request history
+- branch or session UI
+- worker-direct access
 
-**Step 4: Re-run the app tests**
+Acceptance for Task 5:
 
-Run:
+- `swift test --package-path apps/macos-menubar` covers handshake hydration, model rendering, load/unload dispatch, and event-driven state updates
+- the app target is no longer only a placeholder print entrypoint
 
-```bash
-swift test --package-path apps/macos-menubar
-```
+### Task 6: Integration and developer workflow completion
 
-Expected:
+Goal:
 
-- handshake, state hydration, and load/unload action tests pass
+- turn the current single live-path smoke test into a more complete phase-0 operator workflow
 
-**Step 5: Commit**
+Required behavior:
 
-```bash
-git add apps/macos-menubar
-git commit -m "feat: add minimal menu bar shell"
-```
+- keep deterministic mode as the default integration path
+- add explicit integration coverage for request abort
+- add explicit integration coverage for `/v1/models`
+- add stable local scripts for bringing worker and control plane up and down
+- document one optional MLX smoke path gated by `MELIX_DEV_TEXT_MODEL_PATH`
 
-### Task 6: Add end-to-end integration and developer workflow validation
+Out of scope:
 
-**Files:**
-- Create: `tests/integration/test_chat_completions_stream.py`
-- Create: `tests/integration/test_abort_flow.py`
-- Create: `tests/integration/test_models_endpoint.py`
-- Create: `scripts/dev_up.sh`
-- Create: `scripts/dev_down.sh`
+- CI matrix expansion for multiple model families
+- production benchmarking harnesses
+- scheduler or cache stress tests
 
-**Step 1: Write the failing integration tests**
+Acceptance for Task 6:
 
-Add tests for:
-
-- booting one control plane and one worker locally
-- loading a configured MLX text model
-- `POST /v1/chat/completions` streams text deltas successfully
-- abort cancels an in-flight request
-- `GET /v1/models` reflects current loaded model state
-
-**Step 2: Run the integration tests and confirm they fail**
-
-Run:
-
-```bash
-pytest tests/integration -q
-```
-
-Expected:
-
-- failures because the orchestration scripts and live services are not ready yet
-
-**Step 3: Implement the integration harness**
-
-Implement:
-
-- dev scripts that launch the worker and control plane in the expected order
-- integration fixtures for socket paths, model configuration, and health checks
-- end-to-end assertions for streaming, abort, and model state
-
-Ensure the scripts remain aligned with:
-
-- `/var/run/melix/` socket layout
-- one worker process for the initial slice
-- deterministic local ports and cleanup behavior
-
-**Step 4: Re-run the integration tests**
-
-Run:
-
-```bash
-pytest tests/integration -q
-make integration-test
-```
-
-Expected:
-
-- the end-to-end streaming path passes locally
-
-**Step 5: Commit**
-
-```bash
-git add tests/integration scripts
-git commit -m "test: add first-slice integration coverage"
-```
+- `make integration-test` covers streaming, abort, and models visibility
+- local dev scripts provide a reproducible startup and cleanup flow
+- the optional MLX smoke path is documented and runnable when a real model source is configured
 
 ## Acceptance Criteria
 
-The first implementation slice is complete when all of the following are true:
+Phase-0 status as of this plan:
 
-- `make proto` succeeds from a clean checkout
-- the Swift daemon, Python worker, and menu bar app each build in isolation
-- one configured MLX text model can be loaded through the control plane
-- `POST /v1/chat/completions` streams content deltas through SSE
-- `Abort` stops an active generation and leaves explicit terminal state
-- `GET /v1/models` reflects load and unload state accurately
-- the menu bar shell shows server and model state through XPC
-- unsupported worker RPC surfaces return explicit unimplemented errors rather than silent failures
+- `make proto` succeeds from a clean checkout: complete
+- the Swift daemon and Python worker build and test in isolation: complete
+- one configured model can be loaded through the control plane: complete
+- `POST /v1/chat/completions` streams content through SSE: complete
+- `Abort` stops an active generation and produces terminal state: complete
+- `GET /v1/models` reflects current model state: complete
+- unsupported worker RPC surfaces return explicit `unimplemented` responses: complete
+- real MLX generation support exists in worker `auto` mode: complete
+- the menu bar shell shows runtime state through XPC: remaining
+- the integration/developer workflow is broader than a single smoke path: remaining
+
+Phase 0 is complete only when the remaining menu bar and workflow items are also complete.
+
+## Verification Baseline
+
+Current baseline verification commands:
+
+```bash
+make swift-test
+make py-test
+make integration-test
+make coverage
+```
+
+Current measured baseline:
+
+- Swift control plane coverage: `95.50%`
+- Python worker coverage: `97%`
+- macOS menu bar coverage: `100%`
+- deterministic live integration test: passing
+- MLX runtime latency and throughput metrics: `N/A` until a real `MELIX_DEV_TEXT_MODEL_PATH` is configured for smoke verification
 
 ## Defaults and Assumptions
 
-- This plan targets macOS on Apple Silicon only.
-- The first live model path is a single real MLX text generation model, configured by a local development setting or fixed manifest, not by full user-facing model discovery.
-- `docs/product-brief.md` remains intentionally ignored and untracked.
-- Real `Prefill` and `Decode`, four-lane scheduling, session graph state, L2 cache persistence, snapshots, embeddings, rerank, and multimodal execution are deferred to the next implementation phase.
-- Bun remains the default package manager for any future JavaScript surface, but no admin web work is included in this slice.
+- This phase targets macOS on Apple Silicon only.
+- `deterministic` remains the default integration and repeatability path.
+- `auto` is the real MLX runtime path and must fail explicitly if MLX or the configured model source is unavailable.
+- `MELIX_DEV_TEXT_MODEL_PATH` overrides the development text model source for real MLX runs.
+- No additional public HTTP endpoints are in scope for phase 0.
+- Real `Prefill` and `Decode`, queue upgrades, session graph state, L2 cache persistence, snapshots, embeddings, rerank, and multimodal execution remain deferred beyond phase 0.
