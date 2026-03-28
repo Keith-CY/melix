@@ -186,6 +186,49 @@ struct SchedulerReadModelTests {
         #expect(rejectedProgress?.admissionState == .admissionRejected)
     }
 
+    @Test("multimodal lanes support concurrent activity and publish text protection metrics")
+    func multimodalLanesSupportConcurrentActivityAndPublishTextProtectionMetrics() async {
+        let metricsStore = MetricsStore()
+        let readModel = SchedulerReadModel(metricsStore: metricsStore)
+
+        await readModel.recordQueued(
+            requestID: "req-text",
+            laneHint: "text.decode.interactive",
+            priority: 100,
+            queuePosition: 1
+        )
+        _ = await readModel.recordAdmitted(
+            requestID: "req-text",
+            laneHint: "text.decode.interactive",
+            priority: 100,
+            workerID: "swift-text-worker",
+            admissionLatencyMs: 2
+        )
+        await readModel.recordQueued(
+            requestID: "req-audio",
+            laneHint: "multimodal.audio.transcription.background",
+            priority: 30,
+            queuePosition: 1
+        )
+        _ = await readModel.recordAdmitted(
+            requestID: "req-audio",
+            laneHint: "multimodal.audio.transcription.background",
+            priority: 30,
+            workerID: "python-worker",
+            admissionLatencyMs: 4
+        )
+
+        let snapshot = await readModel.snapshot()
+        let metrics = await metricsStore.snapshot()
+        let audioLane = snapshot.lanes.first(where: { $0.laneID == "multimodal.audio.transcription.background" })
+
+        #expect(snapshot.activeRequests == 2)
+        #expect(audioLane?.activeRequests == 1)
+        #expect(audioLane?.laneClass == "background-audio-transcription")
+        #expect(metrics.values["scheduler.multimodal_active_requests"] == 1)
+        #expect(metrics.values["scheduler.text_protection_active"] == 1)
+    }
+
     @Test("unknown lanes normalize and terminal requests ignore later transitions")
     func unknownLanesNormalizeAndTerminalRequestsIgnoreLaterTransitions() async {
         let readModel = SchedulerReadModel()

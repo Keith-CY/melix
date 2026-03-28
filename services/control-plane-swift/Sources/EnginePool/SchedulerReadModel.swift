@@ -49,7 +49,7 @@ public actor SchedulerReadModel {
     private let now: @Sendable () -> Date
 
     private var laneStats: [String: LaneStats]
-    private var activeRequestID: String?
+    private var activeRequestIDs: Set<String>
     private var requestRecords: [String: RequestRecord]
     private var requestProgressSnapshots: [String: Melix_Controlplane_V1_RequestProgressEvent]
     private var admittedRequests: UInt32
@@ -73,6 +73,7 @@ public actor SchedulerReadModel {
         self.laneStats = Dictionary(
             uniqueKeysWithValues: laneDefinitions.map { ($0.laneID, LaneStats()) }
         )
+        self.activeRequestIDs = []
         self.requestRecords = [:]
         self.requestProgressSnapshots = [:]
         self.admittedRequests = 0
@@ -144,7 +145,7 @@ public actor SchedulerReadModel {
         progress.backpressure = backpressure
         progress.workerID = workerID ?? ""
         progress.admissionState = .admissionRejected
-        progress.queuePosition = activeRequestID == nil ? 0 : 1
+        progress.queuePosition = totalActiveRequests == 0 ? 0 : 1
         requestRecords[requestID] = RequestRecord(
             laneID: lane.laneID,
             phase: .requestRejected,
@@ -179,7 +180,7 @@ public actor SchedulerReadModel {
         let queueDelayMs = queuedAt.map { max(0, now().timeIntervalSince($0) * 1000) } ?? 0
         let backpressureBeforeAdmission = currentBackpressure()
 
-        activeRequestID = requestID
+        activeRequestIDs.insert(requestID)
         admittedRequests += 1
         lastAdmissionLatencyMs = admissionLatencyMs
         lastQueueDelayMs = queueDelayMs
@@ -189,7 +190,7 @@ public actor SchedulerReadModel {
                 laneStats[previous.laneID, default: LaneStats()].queuedRequests - 1
             )
         }
-        laneStats[lane.laneID, default: LaneStats()].activeRequests = 1
+        laneStats[lane.laneID, default: LaneStats()].activeRequests += 1
         laneStats[lane.laneID, default: LaneStats()].admittedRequests += 1
         laneStats[lane.laneID, default: LaneStats()].queueDelaySamplesMs.append(queueDelayMs)
         await updateMetrics(backpressure: backpressureBeforeAdmission)
@@ -244,9 +245,12 @@ public actor SchedulerReadModel {
         }
 
         let lane = laneHint.map(normalizedLane(for:)) ?? laneDefinitions[record.laneID] ?? Self.defaultLanes[0]
-        if activeRequestID == requestID, record.laneID != lane.laneID {
-            laneStats[record.laneID, default: LaneStats()].activeRequests = 0
-            laneStats[lane.laneID, default: LaneStats()].activeRequests = 1
+        if activeRequestIDs.contains(requestID), record.laneID != lane.laneID {
+            laneStats[record.laneID, default: LaneStats()].activeRequests = max(
+                0,
+                laneStats[record.laneID, default: LaneStats()].activeRequests - 1
+            )
+            laneStats[lane.laneID, default: LaneStats()].activeRequests += 1
         }
 
         var progress = requestProgressSnapshots[requestID] ?? Melix_Controlplane_V1_RequestProgressEvent()
@@ -309,9 +313,11 @@ public actor SchedulerReadModel {
             return
         }
 
-        if activeRequestID == requestID {
-            activeRequestID = nil
-            laneStats[record.laneID, default: LaneStats()].activeRequests = 0
+        if activeRequestIDs.remove(requestID) != nil {
+            laneStats[record.laneID, default: LaneStats()].activeRequests = max(
+                0,
+                laneStats[record.laneID, default: LaneStats()].activeRequests - 1
+            )
         }
         if record.phase == .requestQueued {
             laneStats[record.laneID, default: LaneStats()].queuedRequests = max(
@@ -341,7 +347,7 @@ public actor SchedulerReadModel {
     public func snapshot() -> Melix_Controlplane_V1_QueueSummary {
         var summary = Melix_Controlplane_V1_QueueSummary()
         summary.queuedRequests = totalQueuedRequests
-        summary.activeRequests = activeRequestID == nil ? 0 : 1
+        summary.activeRequests = totalActiveRequests
         summary.admissionLatencyMs = lastAdmissionLatencyMs
         summary.backpressure = currentBackpressure()
         summary.admittedRequests = admittedRequests
@@ -359,7 +365,7 @@ public actor SchedulerReadModel {
             result.admissionRate = totalDecisions == 0
                 ? 1
                 : Double(stats.admittedRequests) / Double(totalDecisions)
-            result.backpressure = (activeLaneID == lane.laneID || stats.queuedRequests > 0) ? 1 : 0
+            result.backpressure = (stats.activeRequests > 0 || stats.queuedRequests > 0) ? 1 : 0
             result.priorityScore = lane.defaultPriorityScore
             return result
         }
@@ -372,13 +378,38 @@ public actor SchedulerReadModel {
         requestProgressSnapshots[requestID]
     }
 
-    private var activeLaneID: String? {
-        guard let activeRequestID else { return nil }
-        return requestRecords[activeRequestID]?.laneID
+    public func activeMultimodalRequestCount(excluding requestID: String? = nil) -> UInt32 {
+        UInt32(requestRecords.reduce(into: 0) { partialResult, item in
+            let (trackedRequestID, record) = item
+            guard activeRequestIDs.contains(trackedRequestID) else {
+                return
+            }
+            guard trackedRequestID != requestID else {
+                return
+            }
+            guard isMultimodalLane(record.laneID) else {
+                return
+            }
+            partialResult += 1
+        })
+    }
+
+    public func hasActiveMultimodalRequests(excluding requestID: String? = nil) -> Bool {
+        activeMultimodalRequestCount(excluding: requestID) > 0
     }
 
     private var totalQueuedRequests: UInt32 {
         laneStats.values.reduce(0) { $0 + $1.queuedRequests }
+    }
+
+    private var totalActiveRequests: UInt32 {
+        laneStats.values.reduce(0) { $0 + $1.activeRequests }
+    }
+
+    private var multimodalQueuedRequests: UInt32 {
+        laneStats.reduce(0) { partialResult, item in
+            partialResult + (isMultimodalLane(item.key) ? item.value.queuedRequests : 0)
+        }
     }
 
     private func normalizedLane(for laneHint: String) -> SchedulerLaneDefinition {
@@ -396,7 +427,11 @@ public actor SchedulerReadModel {
     }
 
     private func currentBackpressure() -> Double {
-        (activeRequestID == nil && totalQueuedRequests == 0) ? 0 : 1
+        (totalActiveRequests == 0 && totalQueuedRequests == 0) ? 0 : 1
+    }
+
+    private func isMultimodalLane(_ laneID: String) -> Bool {
+        laneID.hasPrefix("multimodal.")
     }
 
     private func isTerminal(_ phase: Melix_Controlplane_V1_RequestPhase) -> Bool {
@@ -428,12 +463,24 @@ public actor SchedulerReadModel {
         await metricsStore.set(lastQueueDelayMs, forKey: "scheduler.queue_delay_ms")
         await metricsStore.set(Double(rejectedRequests), forKey: "scheduler.rejected_requests")
         await metricsStore.set(Double(totalQueuedRequests), forKey: "scheduler.queued_requests")
-        await metricsStore.set(activeRequestID == nil ? 0 : 1, forKey: "scheduler.active_requests")
+        await metricsStore.set(Double(totalActiveRequests), forKey: "scheduler.active_requests")
         await metricsStore.set(backpressure, forKey: "scheduler.backpressure")
-        let activeDepth = activeLaneID.map { laneID in
-            Double(laneStats[laneID, default: LaneStats()].activeRequests)
-        } ?? 0
+        let activeDepth = Double(laneStats.values.map(\.activeRequests).max() ?? 0)
         await metricsStore.set(activeDepth, forKey: "scheduler.active_lane_depth")
+        await metricsStore.set(Double(activeMultimodalRequestCount()), forKey: "scheduler.multimodal_active_requests")
+        await metricsStore.set(Double(multimodalQueuedRequests), forKey: "scheduler.multimodal_queued_requests")
+        await metricsStore.set(
+            percentile(
+                95,
+                samples: laneOrder
+                    .filter { isMultimodalLane($0.laneID) }
+                    .flatMap { laneStats[$0.laneID, default: LaneStats()].queueDelaySamplesMs }
+            ),
+            forKey: "scheduler.multimodal_queue_delay_ms"
+        )
+        let multimodalBackpressure = (activeMultimodalRequestCount() > 0 || multimodalQueuedRequests > 0) ? 1.0 : 0.0
+        await metricsStore.set(multimodalBackpressure, forKey: "scheduler.multimodal_backpressure")
+        await metricsStore.set(multimodalBackpressure, forKey: "scheduler.text_protection_active")
     }
 
     private func percentile(_ percentile: Double, samples: [Double]) -> Double {
@@ -460,6 +507,21 @@ public actor SchedulerReadModel {
             laneID: "text.prefill.background",
             laneClass: "background-prefill",
             defaultPriorityScore: 20
+        ),
+        SchedulerLaneDefinition(
+            laneID: "multimodal.vision.background",
+            laneClass: "background-vision",
+            defaultPriorityScore: 30
+        ),
+        SchedulerLaneDefinition(
+            laneID: "multimodal.audio.transcription.background",
+            laneClass: "background-audio-transcription",
+            defaultPriorityScore: 25
+        ),
+        SchedulerLaneDefinition(
+            laneID: "multimodal.audio.speech.background",
+            laneClass: "background-audio-speech",
+            defaultPriorityScore: 25
         ),
     ]
 }

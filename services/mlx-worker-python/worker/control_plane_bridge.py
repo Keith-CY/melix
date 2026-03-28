@@ -24,6 +24,7 @@ def main() -> None:
         choices=[
             "handshake",
             "load-model",
+            "get-runtime-stats",
             "generate",
             "abort",
             "embed",
@@ -51,6 +52,10 @@ def main() -> None:
                 stub = runtime_pb2_grpc.RuntimeServiceStub(channel)
                 request = runtime_pb2.LoadModelRequest.FromString(request_bytes)
                 emit_message(stub.LoadModel(request).SerializeToString())
+            elif args.command == "get-runtime-stats":
+                stub = runtime_pb2_grpc.RuntimeServiceStub(channel)
+                request = runtime_pb2.GetRuntimeStatsRequest.FromString(request_bytes)
+                emit_message(stub.GetRuntimeStats(request).SerializeToString())
             elif args.command == "generate":
                 stub = inference_pb2_grpc.InferenceServiceStub(channel)
                 request = inference_pb2.GenerateRequest.FromString(request_bytes)

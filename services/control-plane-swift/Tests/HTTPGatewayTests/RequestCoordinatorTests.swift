@@ -216,6 +216,184 @@ struct RequestCoordinatorTests {
         _ = await consumer.result
     }
 
+    @Test("multimodal vision requests use background lanes instead of interactive text lanes")
+    func multimodalVisionRequestsUseBackgroundLanes() async throws {
+        let visionClient = BlockingWorkerClient()
+        let schedulerReadModel = SchedulerReadModel()
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devOCRModel()])
+        _ = await catalog.loadModel(id: "melix-dev-ocr", dispatchHandle: "melix-dev-ocr::python")
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: BlockingWorkerClient(),
+                pythonCompatibilityClient: visionClient,
+                modelCatalog: catalog
+            ),
+            abortRegistry: AbortRegistry(),
+            schedulerReadModel: schedulerReadModel
+        )
+
+        let execution = try await coordinator.startChatCompletion(
+            makeTranslatedChatRequest(requestID: "req-ocr", modelID: "melix-dev-ocr")
+        )
+
+        let queuedOrAdmitted: Melix_Controlplane_V1_RequestProgressEvent?
+        if let admitted = await waitForProgress(
+            schedulerReadModel: schedulerReadModel,
+            requestID: "req-ocr",
+            phase: .requestAdmitted,
+            lane: "multimodal.vision.background"
+        ) {
+            queuedOrAdmitted = admitted
+        } else {
+            queuedOrAdmitted = await waitForProgress(
+                schedulerReadModel: schedulerReadModel,
+                requestID: "req-ocr",
+                phase: .requestQueued,
+                lane: "multimodal.vision.background"
+            )
+        }
+
+        #expect(queuedOrAdmitted?.lane == "multimodal.vision.background")
+
+        #expect(try await coordinator.cancel(requestID: "req-ocr"))
+        let consumer = Task {
+            do {
+                for try await _ in execution.stream {}
+            } catch {}
+        }
+        _ = await consumer.result
+    }
+
+    @Test("text ttft under multimodal load is recorded separately")
+    func textTTFTUnderMultimodalLoadIsRecordedSeparately() async throws {
+        let workerClient = PhaseAwareWorkerClient()
+        let schedulerReadModel = SchedulerReadModel()
+        let metricsStore = MetricsStore()
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(defaultTextClient: workerClient),
+            abortRegistry: AbortRegistry(),
+            schedulerReadModel: schedulerReadModel,
+            metricsStore: metricsStore
+        )
+
+        await schedulerReadModel.recordQueued(
+            requestID: "req-audio-active",
+            laneHint: "multimodal.audio.transcription.background",
+            priority: 30,
+            queuePosition: 1
+        )
+        _ = await schedulerReadModel.recordAdmitted(
+            requestID: "req-audio-active",
+            laneHint: "multimodal.audio.transcription.background",
+            priority: 30,
+            workerID: "python-worker",
+            admissionLatencyMs: 3
+        )
+
+        let execution = try await coordinator.startChatCompletion(
+            makeTranslatedChatRequest(requestID: "req-text-under-load")
+        )
+        let consumer = Task {
+            for try await _ in execution.stream {}
+        }
+        await workerClient.emitToken(requestID: "req-text-under-load", text: "Hello")
+        await workerClient.finish(requestID: "req-text-under-load")
+        _ = try await consumer.value
+
+        let metrics = await metricsStore.snapshot()
+        #expect(metrics.values["scheduler.text_ttft_under_multimodal_ms", default: -1] >= 0)
+    }
+
+    @Test("ocr requests publish vision preprocessing and OCR latency metrics")
+    func ocrRequestsPublishVisionMetrics() async throws {
+        let workerClient = PhaseAwareWorkerClient()
+        await workerClient.setRuntimeStatsResponse({
+            var response = Melix_Worker_V1_GetRuntimeStatsResponse()
+            response.stats.lastProbeKind = "ocr"
+            response.stats.lastPreprocessLatencyMs = 12
+            response.stats.lastPreprocessPeakMemoryBytes = 8192
+            response.stats.lastFirstTokenLatencyMs = 5
+            return response
+        }())
+        let schedulerReadModel = SchedulerReadModel()
+        let metricsStore = MetricsStore()
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devOCRModel()])
+        _ = await catalog.loadModel(id: "melix-dev-ocr", dispatchHandle: "melix-dev-ocr::python")
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: BlockingWorkerClient(),
+                pythonCompatibilityClient: workerClient,
+                modelCatalog: catalog
+            ),
+            abortRegistry: AbortRegistry(),
+            schedulerReadModel: schedulerReadModel,
+            metricsStore: metricsStore
+        )
+
+        let execution = try await coordinator.startChatCompletion(
+            makeTranslatedChatRequest(requestID: "req-ocr-metrics", modelID: "melix-dev-ocr")
+        )
+        let consumer = Task {
+            for try await _ in execution.stream {}
+        }
+        await workerClient.emitToken(requestID: "req-ocr-metrics", text: "ocr")
+        await workerClient.finish(requestID: "req-ocr-metrics")
+        _ = try await consumer.value
+
+        let metrics = await metricsStore.snapshot()
+        let progress = await schedulerReadModel.progressSnapshot(for: "req-ocr-metrics")
+
+        #expect(progress?.lane == "multimodal.vision.background")
+        #expect(metrics.values["vision.preprocess_latency_ms", default: -1] == 12)
+        #expect(metrics.values["vision.preprocess_peak_memory_bytes", default: -1] == 8192)
+        #expect(metrics.values["vision.ocr_latency_ms", default: -1] == 5)
+    }
+
+    @Test("vlm requests publish vision preprocessing and first-token metrics")
+    func vlmRequestsPublishVisionMetrics() async throws {
+        let workerClient = PhaseAwareWorkerClient()
+        await workerClient.setRuntimeStatsResponse({
+            var response = Melix_Worker_V1_GetRuntimeStatsResponse()
+            response.stats.lastProbeKind = "vlm"
+            response.stats.lastPreprocessLatencyMs = 18
+            response.stats.lastPreprocessPeakMemoryBytes = 16384
+            response.stats.lastFirstTokenLatencyMs = 9
+            return response
+        }())
+        let schedulerReadModel = SchedulerReadModel()
+        let metricsStore = MetricsStore()
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devVLMModel()])
+        _ = await catalog.loadModel(id: "melix-dev-vlm", dispatchHandle: "melix-dev-vlm::python")
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: BlockingWorkerClient(),
+                pythonCompatibilityClient: workerClient,
+                modelCatalog: catalog
+            ),
+            abortRegistry: AbortRegistry(),
+            schedulerReadModel: schedulerReadModel,
+            metricsStore: metricsStore
+        )
+
+        let execution = try await coordinator.startChatCompletion(
+            makeTranslatedChatRequest(requestID: "req-vlm-metrics", modelID: "melix-dev-vlm")
+        )
+        let consumer = Task {
+            for try await _ in execution.stream {}
+        }
+        await workerClient.emitToken(requestID: "req-vlm-metrics", text: "vlm")
+        await workerClient.finish(requestID: "req-vlm-metrics")
+        _ = try await consumer.value
+
+        let metrics = await metricsStore.snapshot()
+        let progress = await schedulerReadModel.progressSnapshot(for: "req-vlm-metrics")
+
+        #expect(progress?.lane == "multimodal.vision.background")
+        #expect(metrics.values["vision.preprocess_latency_ms", default: -1] == 18)
+        #expect(metrics.values["vision.preprocess_peak_memory_bytes", default: -1] == 16384)
+        #expect(metrics.values["vision.vlm_first_token_ms", default: -1] == 9)
+    }
+
     @Test("worker unavailable requests are rejected before dispatch")
     func workerUnavailableRequestsAreRejected() async throws {
         let coordinator = RequestCoordinator(
@@ -1154,7 +1332,8 @@ private actor ThrowingStreamWorkerClient: WorkerRoutingClient {
 private actor PhaseAwareWorkerClient:
     WorkerRoutingClient,
     PhaseAwareWorkerClientProtocol,
-    CacheIntrospectingWorkerClientProtocol
+    CacheIntrospectingWorkerClientProtocol,
+    RuntimeIntrospectingWorkerClientProtocol
 {
     private var continuations: [String: AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error>.Continuation] = [:]
     private var prefillRequests: [Melix_Worker_V1_PrefillRequest] = []

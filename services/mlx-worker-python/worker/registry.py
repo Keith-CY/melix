@@ -53,6 +53,16 @@ class WorkerRegistry:
         self._loaded_models: dict[str, LoadedModel] = {}
         self._requests: dict[str, RequestState] = {}
         self._draining = False
+        self._last_probe_kind = ""
+        self._last_preprocess_latency_ms = 0.0
+        self._last_preprocess_input_bytes = 0
+        self._last_preprocess_peak_memory_bytes = 0
+        self._last_first_token_latency_ms = 0.0
+        self._last_transcription_latency_ms = 0.0
+        self._last_speech_latency_ms = 0.0
+        self._last_audio_duration_seconds = 0.0
+        self._last_audio_chunk_count = 0
+        self._last_audio_output_bytes = 0
 
     def capabilities(self) -> common_pb2.RuntimeCapabilities:
         return common_pb2.RuntimeCapabilities(
@@ -110,8 +120,8 @@ class WorkerRegistry:
         with self._lock:
             return sorted(self._loaded_models)
 
-    def start_request(self, request_id: str) -> RequestState:
-        state = RequestState(request_id=request_id)
+    def start_request(self, request_id: str, runtime_kind: str = "text") -> RequestState:
+        state = RequestState(request_id=request_id, runtime_kind=runtime_kind)
         with self._lock:
             self._requests[request_id] = state
         return state
@@ -135,7 +145,20 @@ class WorkerRegistry:
     def runtime_stats(self) -> runtime_pb2.RuntimeStats:
         with self._lock:
             active_requests = len(self._requests)
+            active_multimodal_requests = sum(
+                1 for state in self._requests.values() if state.runtime_kind in {"ocr", "vlm", "transcription", "speech"}
+            )
             resident_bytes = sum(item.estimated_resident_bytes for item in self._loaded_models.values())
+            last_probe_kind = self._last_probe_kind
+            last_preprocess_latency_ms = self._last_preprocess_latency_ms
+            last_preprocess_input_bytes = self._last_preprocess_input_bytes
+            last_preprocess_peak_memory_bytes = self._last_preprocess_peak_memory_bytes
+            last_first_token_latency_ms = self._last_first_token_latency_ms
+            last_transcription_latency_ms = self._last_transcription_latency_ms
+            last_speech_latency_ms = self._last_speech_latency_ms
+            last_audio_duration_seconds = self._last_audio_duration_seconds
+            last_audio_chunk_count = self._last_audio_chunk_count
+            last_audio_output_bytes = self._last_audio_output_bytes
         return runtime_pb2.RuntimeStats(
             worker_state="draining" if self._draining else "idle",
             resident_bytes=resident_bytes,
@@ -146,6 +169,17 @@ class WorkerRegistry:
             l2_cache_bytes=0,
             l1_hit_rate=0.0,
             l2_hit_rate=0.0,
+            active_multimodal_requests=active_multimodal_requests,
+            last_probe_kind=last_probe_kind,
+            last_preprocess_latency_ms=last_preprocess_latency_ms,
+            last_preprocess_input_bytes=last_preprocess_input_bytes,
+            last_preprocess_peak_memory_bytes=last_preprocess_peak_memory_bytes,
+            last_first_token_latency_ms=last_first_token_latency_ms,
+            last_transcription_latency_ms=last_transcription_latency_ms,
+            last_speech_latency_ms=last_speech_latency_ms,
+            last_audio_duration_seconds=last_audio_duration_seconds,
+            last_audio_chunk_count=last_audio_chunk_count,
+            last_audio_output_bytes=last_audio_output_bytes,
         )
 
     def set_draining(self, draining: bool) -> None:
@@ -155,6 +189,45 @@ class WorkerRegistry:
     def runtime_for_loaded_model(self, loaded_model: LoadedModel) -> Any:
         _, runtime = self._runtime_for_model(loaded_model.spec)
         return runtime
+
+    def record_vision_probe(self, runtime_kind: str, probe: Any) -> None:
+        with self._lock:
+            self._last_probe_kind = runtime_kind
+            self._last_preprocess_latency_ms = float(getattr(probe, "preprocess_latency_ms", 0.0))
+            self._last_preprocess_input_bytes = int(getattr(probe, "preprocess_input_bytes", 0))
+            self._last_preprocess_peak_memory_bytes = int(getattr(probe, "preprocess_peak_memory_bytes", 0))
+            self._last_first_token_latency_ms = float(getattr(probe, "first_token_latency_ms", 0.0))
+            self._last_transcription_latency_ms = 0.0
+            self._last_speech_latency_ms = 0.0
+            self._last_audio_duration_seconds = 0.0
+            self._last_audio_chunk_count = 0
+            self._last_audio_output_bytes = 0
+
+    def record_transcription_probe(self, probe: Any) -> None:
+        with self._lock:
+            self._last_probe_kind = "transcription"
+            self._last_preprocess_latency_ms = float(getattr(probe, "preprocess_latency_ms", 0.0))
+            self._last_preprocess_input_bytes = int(getattr(probe, "preprocess_input_bytes", 0))
+            self._last_preprocess_peak_memory_bytes = int(getattr(probe, "preprocess_peak_memory_bytes", 0))
+            self._last_first_token_latency_ms = 0.0
+            self._last_transcription_latency_ms = float(getattr(probe, "transcription_latency_ms", 0.0))
+            self._last_speech_latency_ms = 0.0
+            self._last_audio_duration_seconds = float(getattr(probe, "estimated_duration_seconds", 0.0))
+            self._last_audio_chunk_count = int(getattr(probe, "chunk_count", 0))
+            self._last_audio_output_bytes = 0
+
+    def record_speech_probe(self, probe: Any) -> None:
+        with self._lock:
+            self._last_probe_kind = "speech"
+            self._last_preprocess_latency_ms = 0.0
+            self._last_preprocess_input_bytes = 0
+            self._last_preprocess_peak_memory_bytes = 0
+            self._last_first_token_latency_ms = 0.0
+            self._last_transcription_latency_ms = 0.0
+            self._last_speech_latency_ms = float(getattr(probe, "speech_latency_ms", 0.0))
+            self._last_audio_duration_seconds = 0.0
+            self._last_audio_chunk_count = 0
+            self._last_audio_output_bytes = int(getattr(probe, "output_bytes", 0))
 
     def _runtime_for_model(self, model_spec: common_pb2.ModelSpec) -> tuple[str, Any]:
         if model_spec.model_kind == "embedding":

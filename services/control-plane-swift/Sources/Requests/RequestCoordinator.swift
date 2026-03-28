@@ -31,6 +31,7 @@ private enum CacheRouteClass: String, Sendable {
 
 private struct SchedulingPlan: Sendable {
     let translatedRequest: TranslatedChatRequest
+    let routeKind: WorkerRouteKind
     let admissionLane: String
     let prefillLane: String
     let decodeLane: String
@@ -91,6 +92,9 @@ public actor RequestCoordinator {
     public func startChatCompletion(
         _ translatedRequest: TranslatedChatRequest
     ) async throws -> CoordinatedChatExecution {
+        guard !translatedRequest.modelID.isEmpty else {
+            throw RequestCoordinatorError.workerUnavailable
+        }
         let plan = await resolvedSchedulingPlan(translatedRequest)
         let request = plan.translatedRequest
         requestPlans[request.requestID] = plan
@@ -114,7 +118,11 @@ public actor RequestCoordinator {
             queuePosition: initialQueuePosition
         )
         let routeStartedAt = now()
-        guard let workerClient = await workerRegistry.client(forModelID: request.modelID) else {
+        let routedWorkerClient = await workerRegistry.client(for: plan.routeKind)
+        let fallbackWorkerClient = routedWorkerClient == nil
+            ? await workerRegistry.client(forModelID: request.modelID)
+            : nil
+        guard let workerClient = routedWorkerClient ?? fallbackWorkerClient else {
             await abortRegistry.finish(requestID: request.requestID)
             requestPlans.removeValue(forKey: request.requestID)
             _ = await schedulerReadModel.recordRejected(
@@ -174,7 +182,8 @@ public actor RequestCoordinator {
 
         do {
             let upstream: AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error>
-            if let phaseAwareClient = workerClient as? any PhaseAwareWorkerClientProtocol,
+            if plan.routeKind.isPhaseAwareTextRoute,
+               let phaseAwareClient = workerClient as? any PhaseAwareWorkerClientProtocol,
                shouldUsePhaseAwareExecution(for: request.workerRequest) {
                 upstream = makePhaseAwareUpstream(
                     client: phaseAwareClient,
@@ -209,6 +218,7 @@ public actor RequestCoordinator {
                                 requestID: requestID,
                                 fallbackLane: plan.decodeLane,
                                 requestIdentity: request.workerRequest.execution.id,
+                                routeKind: plan.routeKind,
                                 event: event
                             )
                             if !firstSemanticEventRecorded,
@@ -243,6 +253,10 @@ public actor RequestCoordinator {
                         }
                         await metricsStore.decrement("requests.inflight")
                         await self.refreshWorkerCacheObservability(using: workerClient)
+                        await self.refreshWorkerRuntimeObservability(
+                            using: workerClient,
+                            routeKind: plan.routeKind
+                        )
                         let terminalPhase = await self.terminalPhase(
                             requestID: requestID,
                             fallback: .requestCompleted
@@ -252,6 +266,10 @@ public actor RequestCoordinator {
                     } catch {
                         await metricsStore.decrement("requests.inflight")
                         await self.refreshWorkerCacheObservability(using: workerClient)
+                        await self.refreshWorkerRuntimeObservability(
+                            using: workerClient,
+                            routeKind: plan.routeKind
+                        )
                         await self.finishRequestTracking(requestID: requestID, phase: .requestFailed)
                         continuation.finish(throwing: error)
                     }
@@ -327,36 +345,45 @@ public actor RequestCoordinator {
         requestID: String,
         fallbackLane: String,
         requestIdentity: Melix_Worker_V1_RequestIdentity,
+        routeKind: WorkerRouteKind,
         event: Melix_Worker_V1_ExecuteEvent
     ) async {
+        let workerSource = routeKind.workerSourceID
+        let observedLane = observabilityLane(
+            routeKind: routeKind,
+            eventLane: event.lane,
+            fallbackLane: fallbackLane
+        )
         switch event.payload {
         case .prefillStarted, .prefillProgress:
             await schedulerReadModel.recordPhaseTransition(
                 requestID: requestID,
                 phase: .requestPrefilling,
-                laneHint: event.lane.isEmpty ? "text.prefill.hot" : event.lane,
-                workerID: "swift-text-worker",
+                laneHint: routeKind.isMultimodalBackgroundRoute
+                    ? observedLane
+                    : (event.lane.isEmpty ? "text.prefill.hot" : event.lane),
+                workerID: workerSource,
                 accelerationMode: controlPlaneAccelerationMode(from: event.accelerationMode),
-                source: "swift-text-worker"
+                source: workerSource
             )
         case .decodeStarted(let decodeStarted):
             await schedulerReadModel.recordPhaseTransition(
                 requestID: requestID,
                 phase: .requestDecoding,
-                laneHint: event.lane.isEmpty ? fallbackLane : event.lane,
-                workerID: "swift-text-worker",
+                laneHint: observedLane,
+                workerID: workerSource,
                 decodeHandle: decodeStarted.decodeHandle,
                 accelerationMode: controlPlaneAccelerationMode(from: event.accelerationMode),
-                source: "swift-text-worker"
+                source: workerSource
             )
         case .tokenDelta, .reasoningDelta, .toolCallDelta, .usageDelta:
             await schedulerReadModel.recordPhaseTransition(
                 requestID: requestID,
                 phase: .requestDecoding,
-                laneHint: event.lane.isEmpty ? fallbackLane : event.lane,
-                workerID: "swift-text-worker",
+                laneHint: observedLane,
+                workerID: workerSource,
                 accelerationMode: controlPlaneAccelerationMode(from: event.accelerationMode),
-                source: "swift-text-worker"
+                source: workerSource
             )
                 if case .toolCallDelta(let toolCallDelta) = event.payload {
                     await hydrateToolResult(
@@ -368,10 +395,10 @@ public actor RequestCoordinator {
             await schedulerReadModel.recordPhaseTransition(
                 requestID: requestID,
                 phase: .requestDecoding,
-                laneHint: event.lane.isEmpty ? fallbackLane : event.lane,
-                workerID: "swift-text-worker",
+                laneHint: observedLane,
+                workerID: workerSource,
                 accelerationMode: controlPlaneAccelerationMode(from: event.accelerationMode),
-                source: "swift-text-worker"
+                source: workerSource
             )
             if !cacheDecision.restoredSnapshotID.isEmpty {
                 await metricsStore.increment("session_graph.restore_snapshot_count")
@@ -388,9 +415,9 @@ public actor RequestCoordinator {
                 await schedulerReadModel.recordPhaseTransition(
                     requestID: requestID,
                     phase: .requestAborted,
-                    laneHint: event.lane.isEmpty ? fallbackLane : event.lane,
-                    workerID: "swift-text-worker",
-                    source: "swift-text-worker"
+                    laneHint: observedLane,
+                    workerID: workerSource,
+                    source: workerSource
                 )
             }
         default:
@@ -511,6 +538,21 @@ public actor RequestCoordinator {
         _ translatedRequest: TranslatedChatRequest
     ) async -> SchedulingPlan {
         let request = await resolvedRecoveryRequest(translatedRequest)
+        let routeKind = await workerRegistry.route(forModelID: request.modelID) ?? .swiftText
+        if routeKind.isMultimodalBackgroundRoute {
+            let lane = routeKind.defaultSchedulingLane
+            return SchedulingPlan(
+                translatedRequest: request,
+                routeKind: routeKind,
+                admissionLane: lane,
+                prefillLane: lane,
+                decodeLane: lane,
+                cacheRouteClass: .cold,
+                cacheRouteEligible: false,
+                prefixAffinityEligible: false,
+                prefixAffinityHit: false
+            )
+        }
         guard
             let sessionGraphStore,
             !request.workerRequest.execution.id.sessionID.isEmpty
@@ -523,6 +565,7 @@ public actor RequestCoordinator {
                 : decodeLane
             return SchedulingPlan(
                 translatedRequest: request,
+                routeKind: routeKind,
                 admissionLane: prefillLane,
                 prefillLane: prefillLane,
                 decodeLane: decodeLane,
@@ -573,6 +616,7 @@ public actor RequestCoordinator {
 
         return SchedulingPlan(
             translatedRequest: request,
+            routeKind: routeKind,
             admissionLane: prefillLane,
             prefillLane: prefillLane,
             decodeLane: decodeLane,
@@ -834,6 +878,10 @@ public actor RequestCoordinator {
         guard let plan = requestPlans[requestID] else {
             return
         }
+        if plan.routeKind.isPhaseAwareTextRoute,
+           await schedulerReadModel.hasActiveMultimodalRequests(excluding: requestID) {
+            await metricsStore.set(ttftMs, forKey: "scheduler.text_ttft_under_multimodal_ms")
+        }
         guard let branchKey = branchMetricKey(for: plan.translatedRequest.workerRequest.execution.id) else {
             return
         }
@@ -948,6 +996,64 @@ public actor RequestCoordinator {
             )
         }
     }
+
+    private func refreshWorkerRuntimeObservability(
+        using workerClient: any WorkerClient,
+        routeKind: WorkerRouteKind
+    ) async {
+        guard
+            routeKind.isMultimodalBackgroundRoute,
+            let introspectingClient = workerClient as? any RuntimeIntrospectingWorkerClientProtocol,
+            let runtimeStats = try? await introspectingClient.runtimeStats()
+        else {
+            return
+        }
+
+        let stats = runtimeStats.stats
+        switch routeKind {
+        case .pythonOCR:
+            await metricsStore.set(stats.lastPreprocessLatencyMs, forKey: "vision.preprocess_latency_ms")
+            await metricsStore.set(
+                Double(stats.lastPreprocessPeakMemoryBytes),
+                forKey: "vision.preprocess_peak_memory_bytes"
+            )
+            await metricsStore.set(stats.lastFirstTokenLatencyMs, forKey: "vision.ocr_latency_ms")
+        case .pythonVLM:
+            await metricsStore.set(stats.lastPreprocessLatencyMs, forKey: "vision.preprocess_latency_ms")
+            await metricsStore.set(
+                Double(stats.lastPreprocessPeakMemoryBytes),
+                forKey: "vision.preprocess_peak_memory_bytes"
+            )
+            await metricsStore.set(stats.lastFirstTokenLatencyMs, forKey: "vision.vlm_first_token_ms")
+        case .pythonTranscription:
+            await metricsStore.set(stats.lastPreprocessLatencyMs, forKey: "audio.preprocess_latency_ms")
+            await metricsStore.set(
+                Double(stats.lastPreprocessPeakMemoryBytes),
+                forKey: "audio.preprocess_peak_memory_bytes"
+            )
+            await metricsStore.set(stats.lastTranscriptionLatencyMs, forKey: "audio.transcription_latency_ms")
+        case .pythonSpeech:
+            await metricsStore.set(stats.lastPreprocessLatencyMs, forKey: "audio.preprocess_latency_ms")
+            await metricsStore.set(
+                Double(stats.lastPreprocessPeakMemoryBytes),
+                forKey: "audio.preprocess_peak_memory_bytes"
+            )
+            await metricsStore.set(stats.lastSpeechLatencyMs, forKey: "audio.speech_latency_ms")
+        default:
+            break
+        }
+    }
+}
+
+private func observabilityLane(
+    routeKind: WorkerRouteKind,
+    eventLane: String,
+    fallbackLane: String
+) -> String {
+    if routeKind.isMultimodalBackgroundRoute {
+        return fallbackLane
+    }
+    return eventLane.isEmpty ? fallbackLane : eventLane
 }
 
 private func controlPlaneCacheSnapshot(

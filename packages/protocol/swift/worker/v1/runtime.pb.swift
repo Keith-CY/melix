@@ -201,32 +201,116 @@ public struct Melix_Worker_V1_WarmupModelResponse: Sendable {
   fileprivate var _error: Melix_Worker_V1_ErrorStatus? = nil
 }
 
-public struct Melix_Worker_V1_RuntimeStats: Sendable {
+public struct Melix_Worker_V1_RuntimeStats: @unchecked Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
-  public var workerState: String = String()
+  public var workerState: String {
+    get {_storage._workerState}
+    set {_uniqueStorage()._workerState = newValue}
+  }
 
-  public var residentBytes: UInt64 = 0
+  public var residentBytes: UInt64 {
+    get {_storage._residentBytes}
+    set {_uniqueStorage()._residentBytes = newValue}
+  }
 
-  public var activeRequests: UInt64 = 0
+  public var activeRequests: UInt64 {
+    get {_storage._activeRequests}
+    set {_uniqueStorage()._activeRequests = newValue}
+  }
 
-  public var activePrefills: UInt64 = 0
+  public var activePrefills: UInt64 {
+    get {_storage._activePrefills}
+    set {_uniqueStorage()._activePrefills = newValue}
+  }
 
-  public var activeDecodes: UInt64 = 0
+  public var activeDecodes: UInt64 {
+    get {_storage._activeDecodes}
+    set {_uniqueStorage()._activeDecodes = newValue}
+  }
 
-  public var l1CacheBytes: UInt64 = 0
+  public var l1CacheBytes: UInt64 {
+    get {_storage._l1CacheBytes}
+    set {_uniqueStorage()._l1CacheBytes = newValue}
+  }
 
-  public var l2CacheBytes: UInt64 = 0
+  public var l2CacheBytes: UInt64 {
+    get {_storage._l2CacheBytes}
+    set {_uniqueStorage()._l2CacheBytes = newValue}
+  }
 
-  public var l1HitRate: Double = 0
+  public var l1HitRate: Double {
+    get {_storage._l1HitRate}
+    set {_uniqueStorage()._l1HitRate = newValue}
+  }
 
-  public var l2HitRate: Double = 0
+  public var l2HitRate: Double {
+    get {_storage._l2HitRate}
+    set {_uniqueStorage()._l2HitRate = newValue}
+  }
+
+  public var activeMultimodalRequests: UInt64 {
+    get {_storage._activeMultimodalRequests}
+    set {_uniqueStorage()._activeMultimodalRequests = newValue}
+  }
+
+  public var lastProbeKind: String {
+    get {_storage._lastProbeKind}
+    set {_uniqueStorage()._lastProbeKind = newValue}
+  }
+
+  public var lastPreprocessLatencyMs: Double {
+    get {_storage._lastPreprocessLatencyMs}
+    set {_uniqueStorage()._lastPreprocessLatencyMs = newValue}
+  }
+
+  public var lastPreprocessInputBytes: UInt64 {
+    get {_storage._lastPreprocessInputBytes}
+    set {_uniqueStorage()._lastPreprocessInputBytes = newValue}
+  }
+
+  public var lastPreprocessPeakMemoryBytes: UInt64 {
+    get {_storage._lastPreprocessPeakMemoryBytes}
+    set {_uniqueStorage()._lastPreprocessPeakMemoryBytes = newValue}
+  }
+
+  public var lastFirstTokenLatencyMs: Double {
+    get {_storage._lastFirstTokenLatencyMs}
+    set {_uniqueStorage()._lastFirstTokenLatencyMs = newValue}
+  }
+
+  public var lastTranscriptionLatencyMs: Double {
+    get {_storage._lastTranscriptionLatencyMs}
+    set {_uniqueStorage()._lastTranscriptionLatencyMs = newValue}
+  }
+
+  public var lastSpeechLatencyMs: Double {
+    get {_storage._lastSpeechLatencyMs}
+    set {_uniqueStorage()._lastSpeechLatencyMs = newValue}
+  }
+
+  public var lastAudioDurationSeconds: Double {
+    get {_storage._lastAudioDurationSeconds}
+    set {_uniqueStorage()._lastAudioDurationSeconds = newValue}
+  }
+
+  public var lastAudioChunkCount: UInt64 {
+    get {_storage._lastAudioChunkCount}
+    set {_uniqueStorage()._lastAudioChunkCount = newValue}
+  }
+
+  public var lastAudioOutputBytes: UInt64 {
+    get {_storage._lastAudioOutputBytes}
+    set {_uniqueStorage()._lastAudioOutputBytes = newValue}
+  }
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
+
+  fileprivate var _storage = _StorageClass.defaultInstance
 }
 
 public struct Melix_Worker_V1_GetRuntimeStatsRequest: Sendable {
@@ -676,69 +760,198 @@ extension Melix_Worker_V1_WarmupModelResponse: SwiftProtobuf.Message, SwiftProto
 
 extension Melix_Worker_V1_RuntimeStats: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".RuntimeStats"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}worker_state\0\u{3}resident_bytes\0\u{3}active_requests\0\u{3}active_prefills\0\u{3}active_decodes\0\u{3}l1_cache_bytes\0\u{3}l2_cache_bytes\0\u{3}l1_hit_rate\0\u{3}l2_hit_rate\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}worker_state\0\u{3}resident_bytes\0\u{3}active_requests\0\u{3}active_prefills\0\u{3}active_decodes\0\u{3}l1_cache_bytes\0\u{3}l2_cache_bytes\0\u{3}l1_hit_rate\0\u{3}l2_hit_rate\0\u{3}active_multimodal_requests\0\u{3}last_probe_kind\0\u{3}last_preprocess_latency_ms\0\u{3}last_preprocess_input_bytes\0\u{3}last_preprocess_peak_memory_bytes\0\u{3}last_first_token_latency_ms\0\u{3}last_transcription_latency_ms\0\u{3}last_speech_latency_ms\0\u{3}last_audio_duration_seconds\0\u{3}last_audio_chunk_count\0\u{3}last_audio_output_bytes\0")
+
+  fileprivate class _StorageClass {
+    var _workerState: String = String()
+    var _residentBytes: UInt64 = 0
+    var _activeRequests: UInt64 = 0
+    var _activePrefills: UInt64 = 0
+    var _activeDecodes: UInt64 = 0
+    var _l1CacheBytes: UInt64 = 0
+    var _l2CacheBytes: UInt64 = 0
+    var _l1HitRate: Double = 0
+    var _l2HitRate: Double = 0
+    var _activeMultimodalRequests: UInt64 = 0
+    var _lastProbeKind: String = String()
+    var _lastPreprocessLatencyMs: Double = 0
+    var _lastPreprocessInputBytes: UInt64 = 0
+    var _lastPreprocessPeakMemoryBytes: UInt64 = 0
+    var _lastFirstTokenLatencyMs: Double = 0
+    var _lastTranscriptionLatencyMs: Double = 0
+    var _lastSpeechLatencyMs: Double = 0
+    var _lastAudioDurationSeconds: Double = 0
+    var _lastAudioChunkCount: UInt64 = 0
+    var _lastAudioOutputBytes: UInt64 = 0
+
+      // This property is used as the initial default value for new instances of the type.
+      // The type itself is protecting the reference to its storage via CoW semantics.
+      // This will force a copy to be made of this reference when the first mutation occurs;
+      // hence, it is safe to mark this as `nonisolated(unsafe)`.
+      static nonisolated(unsafe) let defaultInstance = _StorageClass()
+
+    private init() {}
+
+    init(copying source: _StorageClass) {
+      _workerState = source._workerState
+      _residentBytes = source._residentBytes
+      _activeRequests = source._activeRequests
+      _activePrefills = source._activePrefills
+      _activeDecodes = source._activeDecodes
+      _l1CacheBytes = source._l1CacheBytes
+      _l2CacheBytes = source._l2CacheBytes
+      _l1HitRate = source._l1HitRate
+      _l2HitRate = source._l2HitRate
+      _activeMultimodalRequests = source._activeMultimodalRequests
+      _lastProbeKind = source._lastProbeKind
+      _lastPreprocessLatencyMs = source._lastPreprocessLatencyMs
+      _lastPreprocessInputBytes = source._lastPreprocessInputBytes
+      _lastPreprocessPeakMemoryBytes = source._lastPreprocessPeakMemoryBytes
+      _lastFirstTokenLatencyMs = source._lastFirstTokenLatencyMs
+      _lastTranscriptionLatencyMs = source._lastTranscriptionLatencyMs
+      _lastSpeechLatencyMs = source._lastSpeechLatencyMs
+      _lastAudioDurationSeconds = source._lastAudioDurationSeconds
+      _lastAudioChunkCount = source._lastAudioChunkCount
+      _lastAudioOutputBytes = source._lastAudioOutputBytes
+    }
+  }
+
+  fileprivate mutating func _uniqueStorage() -> _StorageClass {
+    if !isKnownUniquelyReferenced(&_storage) {
+      _storage = _StorageClass(copying: _storage)
+    }
+    return _storage
+  }
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
-    while let fieldNumber = try decoder.nextFieldNumber() {
-      // The use of inline closures is to circumvent an issue where the compiler
-      // allocates stack space for every case branch when no optimizations are
-      // enabled. https://github.com/apple/swift-protobuf/issues/1034
-      switch fieldNumber {
-      case 1: try { try decoder.decodeSingularStringField(value: &self.workerState) }()
-      case 2: try { try decoder.decodeSingularUInt64Field(value: &self.residentBytes) }()
-      case 3: try { try decoder.decodeSingularUInt64Field(value: &self.activeRequests) }()
-      case 4: try { try decoder.decodeSingularUInt64Field(value: &self.activePrefills) }()
-      case 5: try { try decoder.decodeSingularUInt64Field(value: &self.activeDecodes) }()
-      case 6: try { try decoder.decodeSingularUInt64Field(value: &self.l1CacheBytes) }()
-      case 7: try { try decoder.decodeSingularUInt64Field(value: &self.l2CacheBytes) }()
-      case 8: try { try decoder.decodeSingularDoubleField(value: &self.l1HitRate) }()
-      case 9: try { try decoder.decodeSingularDoubleField(value: &self.l2HitRate) }()
-      default: break
+    _ = _uniqueStorage()
+    try withExtendedLifetime(_storage) { (_storage: _StorageClass) in
+      while let fieldNumber = try decoder.nextFieldNumber() {
+        // The use of inline closures is to circumvent an issue where the compiler
+        // allocates stack space for every case branch when no optimizations are
+        // enabled. https://github.com/apple/swift-protobuf/issues/1034
+        switch fieldNumber {
+        case 1: try { try decoder.decodeSingularStringField(value: &_storage._workerState) }()
+        case 2: try { try decoder.decodeSingularUInt64Field(value: &_storage._residentBytes) }()
+        case 3: try { try decoder.decodeSingularUInt64Field(value: &_storage._activeRequests) }()
+        case 4: try { try decoder.decodeSingularUInt64Field(value: &_storage._activePrefills) }()
+        case 5: try { try decoder.decodeSingularUInt64Field(value: &_storage._activeDecodes) }()
+        case 6: try { try decoder.decodeSingularUInt64Field(value: &_storage._l1CacheBytes) }()
+        case 7: try { try decoder.decodeSingularUInt64Field(value: &_storage._l2CacheBytes) }()
+        case 8: try { try decoder.decodeSingularDoubleField(value: &_storage._l1HitRate) }()
+        case 9: try { try decoder.decodeSingularDoubleField(value: &_storage._l2HitRate) }()
+        case 10: try { try decoder.decodeSingularUInt64Field(value: &_storage._activeMultimodalRequests) }()
+        case 11: try { try decoder.decodeSingularStringField(value: &_storage._lastProbeKind) }()
+        case 12: try { try decoder.decodeSingularDoubleField(value: &_storage._lastPreprocessLatencyMs) }()
+        case 13: try { try decoder.decodeSingularUInt64Field(value: &_storage._lastPreprocessInputBytes) }()
+        case 14: try { try decoder.decodeSingularUInt64Field(value: &_storage._lastPreprocessPeakMemoryBytes) }()
+        case 15: try { try decoder.decodeSingularDoubleField(value: &_storage._lastFirstTokenLatencyMs) }()
+        case 16: try { try decoder.decodeSingularDoubleField(value: &_storage._lastTranscriptionLatencyMs) }()
+        case 17: try { try decoder.decodeSingularDoubleField(value: &_storage._lastSpeechLatencyMs) }()
+        case 18: try { try decoder.decodeSingularDoubleField(value: &_storage._lastAudioDurationSeconds) }()
+        case 19: try { try decoder.decodeSingularUInt64Field(value: &_storage._lastAudioChunkCount) }()
+        case 20: try { try decoder.decodeSingularUInt64Field(value: &_storage._lastAudioOutputBytes) }()
+        default: break
+        }
       }
     }
   }
 
   public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
-    if !self.workerState.isEmpty {
-      try visitor.visitSingularStringField(value: self.workerState, fieldNumber: 1)
-    }
-    if self.residentBytes != 0 {
-      try visitor.visitSingularUInt64Field(value: self.residentBytes, fieldNumber: 2)
-    }
-    if self.activeRequests != 0 {
-      try visitor.visitSingularUInt64Field(value: self.activeRequests, fieldNumber: 3)
-    }
-    if self.activePrefills != 0 {
-      try visitor.visitSingularUInt64Field(value: self.activePrefills, fieldNumber: 4)
-    }
-    if self.activeDecodes != 0 {
-      try visitor.visitSingularUInt64Field(value: self.activeDecodes, fieldNumber: 5)
-    }
-    if self.l1CacheBytes != 0 {
-      try visitor.visitSingularUInt64Field(value: self.l1CacheBytes, fieldNumber: 6)
-    }
-    if self.l2CacheBytes != 0 {
-      try visitor.visitSingularUInt64Field(value: self.l2CacheBytes, fieldNumber: 7)
-    }
-    if self.l1HitRate.bitPattern != 0 {
-      try visitor.visitSingularDoubleField(value: self.l1HitRate, fieldNumber: 8)
-    }
-    if self.l2HitRate.bitPattern != 0 {
-      try visitor.visitSingularDoubleField(value: self.l2HitRate, fieldNumber: 9)
+    try withExtendedLifetime(_storage) { (_storage: _StorageClass) in
+      if !_storage._workerState.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._workerState, fieldNumber: 1)
+      }
+      if _storage._residentBytes != 0 {
+        try visitor.visitSingularUInt64Field(value: _storage._residentBytes, fieldNumber: 2)
+      }
+      if _storage._activeRequests != 0 {
+        try visitor.visitSingularUInt64Field(value: _storage._activeRequests, fieldNumber: 3)
+      }
+      if _storage._activePrefills != 0 {
+        try visitor.visitSingularUInt64Field(value: _storage._activePrefills, fieldNumber: 4)
+      }
+      if _storage._activeDecodes != 0 {
+        try visitor.visitSingularUInt64Field(value: _storage._activeDecodes, fieldNumber: 5)
+      }
+      if _storage._l1CacheBytes != 0 {
+        try visitor.visitSingularUInt64Field(value: _storage._l1CacheBytes, fieldNumber: 6)
+      }
+      if _storage._l2CacheBytes != 0 {
+        try visitor.visitSingularUInt64Field(value: _storage._l2CacheBytes, fieldNumber: 7)
+      }
+      if _storage._l1HitRate.bitPattern != 0 {
+        try visitor.visitSingularDoubleField(value: _storage._l1HitRate, fieldNumber: 8)
+      }
+      if _storage._l2HitRate.bitPattern != 0 {
+        try visitor.visitSingularDoubleField(value: _storage._l2HitRate, fieldNumber: 9)
+      }
+      if _storage._activeMultimodalRequests != 0 {
+        try visitor.visitSingularUInt64Field(value: _storage._activeMultimodalRequests, fieldNumber: 10)
+      }
+      if !_storage._lastProbeKind.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._lastProbeKind, fieldNumber: 11)
+      }
+      if _storage._lastPreprocessLatencyMs.bitPattern != 0 {
+        try visitor.visitSingularDoubleField(value: _storage._lastPreprocessLatencyMs, fieldNumber: 12)
+      }
+      if _storage._lastPreprocessInputBytes != 0 {
+        try visitor.visitSingularUInt64Field(value: _storage._lastPreprocessInputBytes, fieldNumber: 13)
+      }
+      if _storage._lastPreprocessPeakMemoryBytes != 0 {
+        try visitor.visitSingularUInt64Field(value: _storage._lastPreprocessPeakMemoryBytes, fieldNumber: 14)
+      }
+      if _storage._lastFirstTokenLatencyMs.bitPattern != 0 {
+        try visitor.visitSingularDoubleField(value: _storage._lastFirstTokenLatencyMs, fieldNumber: 15)
+      }
+      if _storage._lastTranscriptionLatencyMs.bitPattern != 0 {
+        try visitor.visitSingularDoubleField(value: _storage._lastTranscriptionLatencyMs, fieldNumber: 16)
+      }
+      if _storage._lastSpeechLatencyMs.bitPattern != 0 {
+        try visitor.visitSingularDoubleField(value: _storage._lastSpeechLatencyMs, fieldNumber: 17)
+      }
+      if _storage._lastAudioDurationSeconds.bitPattern != 0 {
+        try visitor.visitSingularDoubleField(value: _storage._lastAudioDurationSeconds, fieldNumber: 18)
+      }
+      if _storage._lastAudioChunkCount != 0 {
+        try visitor.visitSingularUInt64Field(value: _storage._lastAudioChunkCount, fieldNumber: 19)
+      }
+      if _storage._lastAudioOutputBytes != 0 {
+        try visitor.visitSingularUInt64Field(value: _storage._lastAudioOutputBytes, fieldNumber: 20)
+      }
     }
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: Melix_Worker_V1_RuntimeStats, rhs: Melix_Worker_V1_RuntimeStats) -> Bool {
-    if lhs.workerState != rhs.workerState {return false}
-    if lhs.residentBytes != rhs.residentBytes {return false}
-    if lhs.activeRequests != rhs.activeRequests {return false}
-    if lhs.activePrefills != rhs.activePrefills {return false}
-    if lhs.activeDecodes != rhs.activeDecodes {return false}
-    if lhs.l1CacheBytes != rhs.l1CacheBytes {return false}
-    if lhs.l2CacheBytes != rhs.l2CacheBytes {return false}
-    if lhs.l1HitRate != rhs.l1HitRate {return false}
-    if lhs.l2HitRate != rhs.l2HitRate {return false}
+    if lhs._storage !== rhs._storage {
+      let storagesAreEqual: Bool = withExtendedLifetime((lhs._storage, rhs._storage)) { (_args: (_StorageClass, _StorageClass)) in
+        let _storage = _args.0
+        let rhs_storage = _args.1
+        if _storage._workerState != rhs_storage._workerState {return false}
+        if _storage._residentBytes != rhs_storage._residentBytes {return false}
+        if _storage._activeRequests != rhs_storage._activeRequests {return false}
+        if _storage._activePrefills != rhs_storage._activePrefills {return false}
+        if _storage._activeDecodes != rhs_storage._activeDecodes {return false}
+        if _storage._l1CacheBytes != rhs_storage._l1CacheBytes {return false}
+        if _storage._l2CacheBytes != rhs_storage._l2CacheBytes {return false}
+        if _storage._l1HitRate != rhs_storage._l1HitRate {return false}
+        if _storage._l2HitRate != rhs_storage._l2HitRate {return false}
+        if _storage._activeMultimodalRequests != rhs_storage._activeMultimodalRequests {return false}
+        if _storage._lastProbeKind != rhs_storage._lastProbeKind {return false}
+        if _storage._lastPreprocessLatencyMs != rhs_storage._lastPreprocessLatencyMs {return false}
+        if _storage._lastPreprocessInputBytes != rhs_storage._lastPreprocessInputBytes {return false}
+        if _storage._lastPreprocessPeakMemoryBytes != rhs_storage._lastPreprocessPeakMemoryBytes {return false}
+        if _storage._lastFirstTokenLatencyMs != rhs_storage._lastFirstTokenLatencyMs {return false}
+        if _storage._lastTranscriptionLatencyMs != rhs_storage._lastTranscriptionLatencyMs {return false}
+        if _storage._lastSpeechLatencyMs != rhs_storage._lastSpeechLatencyMs {return false}
+        if _storage._lastAudioDurationSeconds != rhs_storage._lastAudioDurationSeconds {return false}
+        if _storage._lastAudioChunkCount != rhs_storage._lastAudioChunkCount {return false}
+        if _storage._lastAudioOutputBytes != rhs_storage._lastAudioOutputBytes {return false}
+        return true
+      }
+      if !storagesAreEqual {return false}
+    }
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

@@ -79,6 +79,7 @@ enum MelixControlPlaneBootstrap {
             ),
             workerRegistry: workerRegistry,
             metricsStore: metricsStore,
+            schedulerReadModel: schedulerReadModel,
             cacheMetadataStore: cacheMetadataStore
         )
 

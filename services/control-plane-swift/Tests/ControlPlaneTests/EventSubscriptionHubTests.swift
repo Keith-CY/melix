@@ -315,16 +315,22 @@ struct CoreUtilityTests {
         )
 
         let lanes = snapshot.queues.lanes
-        #expect(lanes.count == 3)
+        #expect(lanes.count == 6)
         #expect(lanes.map(\.laneID) == [
             "text.decode.interactive",
             "text.prefill.hot",
             "text.prefill.background",
+            "multimodal.vision.background",
+            "multimodal.audio.transcription.background",
+            "multimodal.audio.speech.background",
         ])
         #expect(lanes.map(\.laneClass) == [
             "interactive-decode",
             "hot-prefill",
             "background-prefill",
+            "background-vision",
+            "background-audio-transcription",
+            "background-audio-speech",
         ])
     }
 }

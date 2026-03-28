@@ -33,6 +33,18 @@ class FakeRuntimeStub:
             model_handle=f"{request.model.model_id}::bridge",
         )
 
+    def GetRuntimeStats(self, request):
+        return runtime_pb2.GetRuntimeStatsResponse(
+            stats=runtime_pb2.RuntimeStats(
+                worker_state="idle",
+                resident_bytes=2048,
+                active_multimodal_requests=2,
+                last_probe_kind="transcription",
+                last_preprocess_latency_ms=12.5,
+                last_transcription_latency_ms=8.0,
+            )
+        )
+
 
 class FakeInferenceStub:
     def Generate(self, request):
@@ -112,6 +124,28 @@ def test_bridge_helper_handles_health_load_and_generate(monkeypatch, capsys) -> 
     load_payload = runtime_pb2.LoadModelResponse.FromString(base64.b64decode(load_line["message_b64"]))
     assert load_payload.ok is True
     assert load_payload.model_handle == "melix-dev-text::bridge"
+
+    runtime_stats_request = runtime_pb2.GetRuntimeStatsRequest()
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "control_plane_bridge.py",
+            "get-runtime-stats",
+            "--socket-path",
+            "/tmp/unused.sock",
+            "--request-b64",
+            base64.b64encode(runtime_stats_request.SerializeToString()).decode("ascii"),
+        ],
+    )
+    control_plane_bridge.main()
+    runtime_stats_line = json.loads(capsys.readouterr().out.strip())
+    runtime_stats_payload = runtime_pb2.GetRuntimeStatsResponse.FromString(
+        base64.b64decode(runtime_stats_line["message_b64"])
+    )
+    assert runtime_stats_payload.stats.worker_state == "idle"
+    assert runtime_stats_payload.stats.active_multimodal_requests == 2
+    assert runtime_stats_payload.stats.last_probe_kind == "transcription"
 
     generate_request = inference_pb2.GenerateRequest(
         execution=inference_pb2.ExecutionMetadata(

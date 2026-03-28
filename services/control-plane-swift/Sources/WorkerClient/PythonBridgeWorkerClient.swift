@@ -6,6 +6,7 @@ import MelixWorkerProtocol
 public enum BridgeCommandKind: String, Sendable {
     case handshake = "handshake"
     case loadModel = "load-model"
+    case getRuntimeStats = "get-runtime-stats"
     case generate = "generate"
     case abort = "abort"
     case embed = "embed"
@@ -36,6 +37,7 @@ public protocol WorkerBridgeRunning: Sendable {
 public struct PythonBridgeWorkerClient:
     WorkerRoutingClient,
     NonTextInferenceWorkerClientProtocol,
+    RuntimeIntrospectingWorkerClientProtocol,
     ModelOperationsWorkerClientProtocol,
     Sendable
 {
@@ -125,6 +127,14 @@ public struct PythonBridgeWorkerClient:
             as: Melix_Worker_V1_AbortResponse.self
         )
         return response.ok && response.found
+    }
+
+    public func runtimeStats() async throws -> Melix_Worker_V1_GetRuntimeStatsResponse {
+        try await sendUnary(
+            kind: .getRuntimeStats,
+            request: Melix_Worker_V1_GetRuntimeStatsRequest(),
+            as: Melix_Worker_V1_GetRuntimeStatsResponse.self
+        )
     }
 
     public func embed(

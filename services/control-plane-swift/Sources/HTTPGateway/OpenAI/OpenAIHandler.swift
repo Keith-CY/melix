@@ -52,6 +52,7 @@ public struct OpenAIHandler: Sendable {
     private let requestCoordinator: RequestCoordinator
     private let workerRegistry: WorkerRegistry?
     private let metricsStore: MetricsStore
+    private let schedulerReadModel: SchedulerReadModel?
     private let cacheMetadataStore: CacheMetadataStore?
     private let translator: ChatRequestTranslator
     private let sseWriter: SSEStreamWriter
@@ -63,6 +64,7 @@ public struct OpenAIHandler: Sendable {
         requestCoordinator: RequestCoordinator,
         workerRegistry: WorkerRegistry? = nil,
         metricsStore: MetricsStore = MetricsStore(),
+        schedulerReadModel: SchedulerReadModel? = nil,
         cacheMetadataStore: CacheMetadataStore? = nil,
         translator: ChatRequestTranslator = ChatRequestTranslator(),
         sseWriter: SSEStreamWriter = SSEStreamWriter()
@@ -71,6 +73,7 @@ public struct OpenAIHandler: Sendable {
         self.requestCoordinator = requestCoordinator
         self.workerRegistry = workerRegistry
         self.metricsStore = metricsStore
+        self.schedulerReadModel = schedulerReadModel
         self.cacheMetadataStore = cacheMetadataStore
         self.translator = translator
         self.sseWriter = sseWriter
@@ -359,6 +362,11 @@ public struct OpenAIHandler: Sendable {
         else {
             return workerUnavailableResponse()
         }
+        let routeKind = await routedWorkerKind(
+            forModelID: transcriptionRequest.model,
+            workerRegistry: workerRegistry,
+            fallback: .pythonTranscription
+        )
 
         var workerRequest = Melix_Worker_V1_TranscribeRequest()
         workerRequest.id.requestID = UUID().uuidString
@@ -386,9 +394,15 @@ public struct OpenAIHandler: Sendable {
         }
 
         let startedAt = Date()
+        await beginMultimodalRequest(requestID: workerRequest.id.requestID, routeKind: routeKind)
         do {
             let response = try await inferenceClient.transcribe(request: workerRequest)
             if !response.error.code.isEmpty {
+                await finishMultimodalRequest(
+                    requestID: workerRequest.id.requestID,
+                    routeKind: routeKind,
+                    phase: .requestFailed
+                )
                 return workerErrorResponse(response.error)
             }
 
@@ -397,6 +411,12 @@ public struct OpenAIHandler: Sendable {
             await metricsStore.set(
                 response.durationSeconds / max(elapsedMs / 1000, 0.001),
                 forKey: "audio.seconds_processed_per_second"
+            )
+            await refreshMultimodalRuntimeObservability(using: workerClient, routeKind: routeKind)
+            await finishMultimodalRequest(
+                requestID: workerRequest.id.requestID,
+                routeKind: routeKind,
+                phase: .requestCompleted
             )
 
             let payload = OpenAIAudioTranscriptionsResponse(
@@ -412,6 +432,11 @@ public struct OpenAIHandler: Sendable {
                 body: .data(data)
             )
         } catch {
+            await finishMultimodalRequest(
+                requestID: workerRequest.id.requestID,
+                routeKind: routeKind,
+                phase: .requestFailed
+            )
             return workerUnavailableResponse()
         }
     }
@@ -429,6 +454,11 @@ public struct OpenAIHandler: Sendable {
         else {
             return workerUnavailableResponse()
         }
+        let routeKind = await routedWorkerKind(
+            forModelID: speechRequest.model,
+            workerRegistry: workerRegistry,
+            fallback: .pythonSpeech
+        )
 
         var workerRequest = Melix_Worker_V1_SpeakRequest()
         workerRequest.id.requestID = UUID().uuidString
@@ -439,9 +469,15 @@ public struct OpenAIHandler: Sendable {
         workerRequest.instructions = speechRequest.instructions ?? ""
 
         let startedAt = Date()
+        await beginMultimodalRequest(requestID: workerRequest.id.requestID, routeKind: routeKind)
         do {
             let response = try await inferenceClient.speak(request: workerRequest)
             if !response.error.code.isEmpty {
+                await finishMultimodalRequest(
+                    requestID: workerRequest.id.requestID,
+                    routeKind: routeKind,
+                    phase: .requestFailed
+                )
                 return workerErrorResponse(response.error)
             }
 
@@ -449,6 +485,12 @@ public struct OpenAIHandler: Sendable {
             let elapsedMs = max(Date().timeIntervalSince(startedAt) * 1000, 0.001)
             await metricsStore.set(elapsedMs, forKey: "audio.speech_request_latency_ms")
             await metricsStore.set(Double(response.audioBytes.count), forKey: "audio.speech_output_bytes")
+            await refreshMultimodalRuntimeObservability(using: workerClient, routeKind: routeKind)
+            await finishMultimodalRequest(
+                requestID: workerRequest.id.requestID,
+                routeKind: routeKind,
+                phase: .requestCompleted
+            )
 
             return HTTPResponse(
                 statusCode: 200,
@@ -456,6 +498,11 @@ public struct OpenAIHandler: Sendable {
                 body: .data(response.audioBytes)
             )
         } catch {
+            await finishMultimodalRequest(
+                requestID: workerRequest.id.requestID,
+                routeKind: routeKind,
+                phase: .requestFailed
+            )
             return workerUnavailableResponse()
         }
     }
@@ -614,6 +661,100 @@ public struct OpenAIHandler: Sendable {
             return await workerRegistry.client(for: route)
         }
         return await workerRegistry.client(forModelID: modelID)
+    }
+
+    private func routedWorkerKind(
+        forModelID modelID: String,
+        workerRegistry: WorkerRegistry,
+        fallback: WorkerRouteKind
+    ) async -> WorkerRouteKind {
+        if let model = await modelCatalog.model(id: modelID),
+           let route = await workerRegistry.route(for: model) {
+            return route
+        }
+        return fallback
+    }
+
+    private func beginMultimodalRequest(
+        requestID: String,
+        routeKind: WorkerRouteKind
+    ) async {
+        guard let schedulerReadModel else { return }
+        await schedulerReadModel.recordQueued(
+            requestID: requestID,
+            laneHint: routeKind.defaultSchedulingLane,
+            priority: 0,
+            workerID: routeKind.workerSourceID
+        )
+        _ = await schedulerReadModel.recordAdmitted(
+            requestID: requestID,
+            laneHint: routeKind.defaultSchedulingLane,
+            priority: 0,
+            workerID: routeKind.workerSourceID
+        )
+    }
+
+    private func finishMultimodalRequest(
+        requestID: String,
+        routeKind: WorkerRouteKind,
+        phase: Melix_Controlplane_V1_RequestPhase
+    ) async {
+        await schedulerReadModel?.recordTerminalState(
+            requestID: requestID,
+            phase: phase,
+            workerID: routeKind.workerSourceID
+        )
+    }
+
+    private func refreshMultimodalRuntimeObservability(
+        using workerClient: any WorkerRoutingClient,
+        routeKind: WorkerRouteKind
+    ) async {
+        guard
+            let introspectingClient = workerClient as? any RuntimeIntrospectingWorkerClientProtocol,
+            let runtimeStats = try? await introspectingClient.runtimeStats()
+        else {
+            return
+        }
+
+        let stats = runtimeStats.stats
+        switch routeKind {
+        case .pythonOCR:
+            await metricsStore.set(stats.lastPreprocessLatencyMs, forKey: "vision.preprocess_latency_ms")
+            await metricsStore.set(
+                Double(stats.lastPreprocessPeakMemoryBytes),
+                forKey: "vision.preprocess_peak_memory_bytes"
+            )
+            await metricsStore.set(stats.lastFirstTokenLatencyMs, forKey: "vision.ocr_latency_ms")
+        case .pythonVLM:
+            await metricsStore.set(stats.lastPreprocessLatencyMs, forKey: "vision.preprocess_latency_ms")
+            await metricsStore.set(
+                Double(stats.lastPreprocessPeakMemoryBytes),
+                forKey: "vision.preprocess_peak_memory_bytes"
+            )
+            await metricsStore.set(stats.lastFirstTokenLatencyMs, forKey: "vision.vlm_first_token_ms")
+        case .pythonTranscription:
+            await metricsStore.set(stats.lastPreprocessLatencyMs, forKey: "audio.preprocess_latency_ms")
+            await metricsStore.set(
+                Double(stats.lastPreprocessPeakMemoryBytes),
+                forKey: "audio.preprocess_peak_memory_bytes"
+            )
+            await metricsStore.set(stats.lastTranscriptionLatencyMs, forKey: "audio.transcription_latency_ms")
+            await metricsStore.set(stats.lastAudioDurationSeconds, forKey: "audio.audio_duration_seconds")
+            await metricsStore.set(Double(stats.lastAudioChunkCount), forKey: "audio.audio_chunk_count")
+        case .pythonSpeech:
+            await metricsStore.set(stats.lastPreprocessLatencyMs, forKey: "audio.preprocess_latency_ms")
+            await metricsStore.set(
+                Double(stats.lastPreprocessPeakMemoryBytes),
+                forKey: "audio.preprocess_peak_memory_bytes"
+            )
+            await metricsStore.set(stats.lastSpeechLatencyMs, forKey: "audio.speech_latency_ms")
+            if stats.lastAudioOutputBytes > 0 {
+                await metricsStore.set(Double(stats.lastAudioOutputBytes), forKey: "audio.speech_output_bytes")
+            }
+        default:
+            break
+        }
     }
 
     private func estimatedTokenCount(for inputs: [String]) -> Int {

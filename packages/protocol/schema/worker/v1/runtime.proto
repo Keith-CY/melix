@@ -73,6 +73,17 @@ message RuntimeStats {
   uint64 l2_cache_bytes = 7;
   double l1_hit_rate = 8;
   double l2_hit_rate = 9;
+  uint64 active_multimodal_requests = 10;
+  string last_probe_kind = 11;
+  double last_preprocess_latency_ms = 12;
+  uint64 last_preprocess_input_bytes = 13;
+  uint64 last_preprocess_peak_memory_bytes = 14;
+  double last_first_token_latency_ms = 15;
+  double last_transcription_latency_ms = 16;
+  double last_speech_latency_ms = 17;
+  double last_audio_duration_seconds = 18;
+  uint64 last_audio_chunk_count = 19;
+  uint64 last_audio_output_bytes = 20;
 }
 
 message GetRuntimeStatsRequest {}

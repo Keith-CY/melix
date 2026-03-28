@@ -105,7 +105,7 @@ final class WorkerScaffoldTests: XCTestCase {
         var request = Melix_Worker_V1_HandshakeRequest()
         request.protocolVersion = "melix.worker.v1"
 
-        let response = try await withServerContextRPCCancellationHandle { handle in
+        let response = try await withTestServerContextRPCCancellationHandle { handle in
             try await services.runtime.handshake(
                 request: request,
                 context: ServerContext(
@@ -132,7 +132,7 @@ final class WorkerScaffoldTests: XCTestCase {
     func testRuntimeStatsAndModelListReflectEmptyWorkerState() async throws {
         let services = makeServices()
 
-        let stats = try await withServerContextRPCCancellationHandle { handle in
+        let stats = try await withTestServerContextRPCCancellationHandle { handle in
             try await services.runtime.getRuntimeStats(
                 request: Melix_Worker_V1_GetRuntimeStatsRequest(),
                 context: ServerContext(
@@ -144,7 +144,7 @@ final class WorkerScaffoldTests: XCTestCase {
             )
         }
 
-        let models = try await withServerContextRPCCancellationHandle { handle in
+        let models = try await withTestServerContextRPCCancellationHandle { handle in
             try await services.runtime.listLoadedModels(
                 request: Melix_Worker_V1_ListLoadedModelsRequest(),
                 context: ServerContext(
@@ -760,7 +760,7 @@ final class WorkerScaffoldTests: XCTestCase {
     func testDrainTransitionsRuntimeStateToDraining() async throws {
         let services = makeServices()
 
-        _ = try await withServerContextRPCCancellationHandle { handle in
+        _ = try await withTestServerContextRPCCancellationHandle { handle in
             var response = Melix_Worker_V1_DrainResponse()
             var request = Melix_Worker_V1_DrainRequest()
             request.stopAcceptingNew = true
@@ -776,7 +776,7 @@ final class WorkerScaffoldTests: XCTestCase {
             return response
         }
 
-        let stats = try await withServerContextRPCCancellationHandle { handle in
+        let stats = try await withTestServerContextRPCCancellationHandle { handle in
             try await services.runtime.getRuntimeStats(
                 request: Melix_Worker_V1_GetRuntimeStatsRequest(),
                 context: ServerContext(
@@ -1048,7 +1048,7 @@ final class WorkerScaffoldTests: XCTestCase {
             residentMemorySamples: [1_000, 5_096]
         )
 
-        let loadResponse = try await withServerContextRPCCancellationHandle { handle in
+        let loadResponse = try await withTestServerContextRPCCancellationHandle { handle in
             var request = Melix_Worker_V1_LoadModelRequest()
             request.model.modelID = "melix-dev-text"
             request.memoryBudgetBytes = 4_096
@@ -1063,7 +1063,7 @@ final class WorkerScaffoldTests: XCTestCase {
             )
         }
 
-        let listedResponse = try await withServerContextRPCCancellationHandle { handle in
+        let listedResponse = try await withTestServerContextRPCCancellationHandle { handle in
             try await services.runtime.listLoadedModels(
                 request: Melix_Worker_V1_ListLoadedModelsRequest(),
                 context: ServerContext(
@@ -1075,7 +1075,7 @@ final class WorkerScaffoldTests: XCTestCase {
             )
         }
 
-        let loadedStats = try await withServerContextRPCCancellationHandle { handle in
+        let loadedStats = try await withTestServerContextRPCCancellationHandle { handle in
             try await services.runtime.getRuntimeStats(
                 request: Melix_Worker_V1_GetRuntimeStatsRequest(),
                 context: ServerContext(
@@ -1087,7 +1087,7 @@ final class WorkerScaffoldTests: XCTestCase {
             )
         }
 
-        let unloadResponse = try await withServerContextRPCCancellationHandle { handle in
+        let unloadResponse = try await withTestServerContextRPCCancellationHandle { handle in
             var request = Melix_Worker_V1_UnloadModelRequest()
             request.modelHandle = loadResponse.modelHandle
             return try await services.runtime.unloadModel(
@@ -1101,7 +1101,7 @@ final class WorkerScaffoldTests: XCTestCase {
             )
         }
 
-        let postUnloadStats = try await withServerContextRPCCancellationHandle { handle in
+        let postUnloadStats = try await withTestServerContextRPCCancellationHandle { handle in
             try await services.runtime.getRuntimeStats(
                 request: Melix_Worker_V1_GetRuntimeStatsRequest(),
                 context: ServerContext(
@@ -1132,7 +1132,7 @@ final class WorkerScaffoldTests: XCTestCase {
             residentMemorySamples: [1_000, 1_000]
         )
 
-        let failedLoad = try await withServerContextRPCCancellationHandle { handle in
+        let failedLoad = try await withTestServerContextRPCCancellationHandle { handle in
             var request = Melix_Worker_V1_LoadModelRequest()
             request.model.modelID = "melix-dev-text"
             return try await services.runtime.loadModel(
@@ -1146,7 +1146,7 @@ final class WorkerScaffoldTests: XCTestCase {
             )
         }
 
-        let missingUnload = try await withServerContextRPCCancellationHandle { handle in
+        let missingUnload = try await withTestServerContextRPCCancellationHandle { handle in
             var request = Melix_Worker_V1_UnloadModelRequest()
             request.modelHandle = "missing-handle"
             return try await services.runtime.unloadModel(
@@ -1169,7 +1169,7 @@ final class WorkerScaffoldTests: XCTestCase {
     func testInferenceUnaryFallbackRpcsReturnStructuredUnimplemented() async throws {
         let services = makeServices()
 
-        let embedResponse = try await withServerContextRPCCancellationHandle { handle in
+        let embedResponse = try await withTestServerContextRPCCancellationHandle { handle in
             try await services.inference.embed(
                 request: Melix_Worker_V1_EmbedRequest(),
                 context: ServerContext(
@@ -1181,7 +1181,7 @@ final class WorkerScaffoldTests: XCTestCase {
             )
         }
 
-        let rerankResponse = try await withServerContextRPCCancellationHandle { handle in
+        let rerankResponse = try await withTestServerContextRPCCancellationHandle { handle in
             try await services.inference.rerank(
                 request: Melix_Worker_V1_RerankRequest(),
                 context: ServerContext(
@@ -1193,7 +1193,7 @@ final class WorkerScaffoldTests: XCTestCase {
             )
         }
 
-        let transcribeResponse = try await withServerContextRPCCancellationHandle { handle in
+        let transcribeResponse = try await withTestServerContextRPCCancellationHandle { handle in
             try await services.inference.transcribe(
                 request: Melix_Worker_V1_TranscribeRequest(),
                 context: ServerContext(
@@ -1205,7 +1205,7 @@ final class WorkerScaffoldTests: XCTestCase {
             )
         }
 
-        let speakResponse = try await withServerContextRPCCancellationHandle { handle in
+        let speakResponse = try await withTestServerContextRPCCancellationHandle { handle in
             try await services.inference.speak(
                 request: Melix_Worker_V1_SpeakRequest(),
                 context: ServerContext(
@@ -1217,7 +1217,7 @@ final class WorkerScaffoldTests: XCTestCase {
             )
         }
 
-        let imageGenerateResponse = try await withServerContextRPCCancellationHandle { handle in
+        let imageGenerateResponse = try await withTestServerContextRPCCancellationHandle { handle in
             try await services.inference.imageGenerate(
                 request: Melix_Worker_V1_ImageGenerateRequest(),
                 context: ServerContext(
@@ -1229,7 +1229,7 @@ final class WorkerScaffoldTests: XCTestCase {
             )
         }
 
-        let imageEditResponse = try await withServerContextRPCCancellationHandle { handle in
+        let imageEditResponse = try await withTestServerContextRPCCancellationHandle { handle in
             try await services.inference.imageEdit(
                 request: Melix_Worker_V1_ImageEditRequest(),
                 context: ServerContext(
@@ -1256,7 +1256,7 @@ final class WorkerScaffoldTests: XCTestCase {
             residentMemorySamples: [100, 2_148]
         )
 
-        let loadResponse = try await withServerContextRPCCancellationHandle { handle in
+        let loadResponse = try await withTestServerContextRPCCancellationHandle { handle in
             var request = Melix_Worker_V1_LoadModelRequest()
             request.model.modelID = "melix-dev-text"
             return try await services.runtime.loadModel(
@@ -1270,7 +1270,7 @@ final class WorkerScaffoldTests: XCTestCase {
             )
         }
 
-        let response = try await withServerContextRPCCancellationHandle { handle in
+        let response = try await withTestServerContextRPCCancellationHandle { handle in
             var request = Melix_Worker_V1_PrefillRequest()
             request.execution.id.requestID = "req-prefill-success"
             request.execution.modelHandle = loadResponse.modelHandle
@@ -1321,7 +1321,7 @@ final class WorkerScaffoldTests: XCTestCase {
             backend: FakeRuntimeBackend()
         )
 
-        let loadResponse = try await withServerContextRPCCancellationHandle { handle in
+        let loadResponse = try await withTestServerContextRPCCancellationHandle { handle in
             var request = Melix_Worker_V1_LoadModelRequest()
             request.model.modelID = "melix-dev-text"
             return try await services.runtime.loadModel(
@@ -1335,7 +1335,7 @@ final class WorkerScaffoldTests: XCTestCase {
             )
         }
 
-        let response = try await withServerContextRPCCancellationHandle { handle in
+        let response = try await withTestServerContextRPCCancellationHandle { handle in
             var request = Melix_Worker_V1_PrefillRequest()
             request.execution.id.requestID = "req-prefill-accelerated"
             request.execution.modelHandle = loadResponse.modelHandle
@@ -1371,7 +1371,7 @@ final class WorkerScaffoldTests: XCTestCase {
             backend: FakeRuntimeBackend()
         )
 
-        let loadResponse = try await withServerContextRPCCancellationHandle { handle in
+        let loadResponse = try await withTestServerContextRPCCancellationHandle { handle in
             var request = Melix_Worker_V1_LoadModelRequest()
             request.model.modelID = "melix-dev-text"
             return try await services.runtime.loadModel(
@@ -1385,7 +1385,7 @@ final class WorkerScaffoldTests: XCTestCase {
             )
         }
 
-        let response = try await withServerContextRPCCancellationHandle { handle in
+        let response = try await withTestServerContextRPCCancellationHandle { handle in
             var request = Melix_Worker_V1_PrefillRequest()
             request.execution.id.requestID = "req-prefill-active-kv"
             request.execution.modelHandle = loadResponse.modelHandle
@@ -1420,7 +1420,7 @@ final class WorkerScaffoldTests: XCTestCase {
             backend: FakeRuntimeBackend(prefillDelayNanos: 150_000_000)
         )
 
-        let loadResponse = try await withServerContextRPCCancellationHandle { handle in
+        let loadResponse = try await withTestServerContextRPCCancellationHandle { handle in
             var request = Melix_Worker_V1_LoadModelRequest()
             request.model.modelID = "melix-dev-text"
             return try await services.runtime.loadModel(
@@ -1435,7 +1435,7 @@ final class WorkerScaffoldTests: XCTestCase {
         }
 
         let task = Task {
-            try await withServerContextRPCCancellationHandle { handle in
+            try await withTestServerContextRPCCancellationHandle { handle in
                 var request = Melix_Worker_V1_PrefillRequest()
                 request.execution.id.requestID = "req-prefill-busy"
                 request.execution.modelHandle = loadResponse.modelHandle
@@ -1455,7 +1455,7 @@ final class WorkerScaffoldTests: XCTestCase {
 
         try? await Task.sleep(nanoseconds: 30_000_000)
 
-        let statsWhileBusy = try await withServerContextRPCCancellationHandle { handle in
+        let statsWhileBusy = try await withTestServerContextRPCCancellationHandle { handle in
             try await services.runtime.getRuntimeStats(
                 request: Melix_Worker_V1_GetRuntimeStatsRequest(),
                 context: ServerContext(
@@ -1469,7 +1469,7 @@ final class WorkerScaffoldTests: XCTestCase {
 
         _ = try await task.value
 
-        let statsAfter = try await withServerContextRPCCancellationHandle { handle in
+        let statsAfter = try await withTestServerContextRPCCancellationHandle { handle in
             try await services.runtime.getRuntimeStats(
                 request: Melix_Worker_V1_GetRuntimeStatsRequest(),
                 context: ServerContext(
@@ -1491,7 +1491,7 @@ final class WorkerScaffoldTests: XCTestCase {
     func testPrefillReturnsNotFoundForUnknownModelHandle() async throws {
         let services = makeServices()
 
-        let response = try await withServerContextRPCCancellationHandle { handle in
+        let response = try await withTestServerContextRPCCancellationHandle { handle in
             var request = Melix_Worker_V1_PrefillRequest()
             request.execution.id.requestID = "req-prefill-missing"
             request.execution.modelHandle = "missing-handle"
@@ -1518,7 +1518,7 @@ final class WorkerScaffoldTests: XCTestCase {
             backend: FakeRuntimeBackend(prefillError: FakeRuntimeBackendError.prefillFailed)
         )
 
-        let loadResponse = try await withServerContextRPCCancellationHandle { handle in
+        let loadResponse = try await withTestServerContextRPCCancellationHandle { handle in
             var request = Melix_Worker_V1_LoadModelRequest()
             request.model.modelID = "melix-dev-text"
             return try await services.runtime.loadModel(
@@ -1532,7 +1532,7 @@ final class WorkerScaffoldTests: XCTestCase {
             )
         }
 
-        let response = try await withServerContextRPCCancellationHandle { handle in
+        let response = try await withTestServerContextRPCCancellationHandle { handle in
             var request = Melix_Worker_V1_PrefillRequest()
             request.execution.modelHandle = loadResponse.modelHandle
             request.returnDecodeHandle = true
@@ -1560,7 +1560,7 @@ final class WorkerScaffoldTests: XCTestCase {
             backend: FakeRuntimeBackend(),
             residentMemorySamples: [100, 2_148]
         )
-        let loadResponse = try await withServerContextRPCCancellationHandle { handle in
+        let loadResponse = try await withTestServerContextRPCCancellationHandle { handle in
             var request = Melix_Worker_V1_LoadModelRequest()
             request.model.modelID = "melix-dev-text"
             return try await services.runtime.loadModel(
@@ -1586,7 +1586,7 @@ final class WorkerScaffoldTests: XCTestCase {
         message.parts = [part]
         request.messages = [message]
 
-        try await withServerContextRPCCancellationHandle { handle in
+        try await withTestServerContextRPCCancellationHandle { handle in
             try await services.inference.generate(
                 request: request,
                 response: RPCWriter(wrapping: writer),
@@ -1619,7 +1619,7 @@ final class WorkerScaffoldTests: XCTestCase {
         request.execution.id.requestID = "req-generate-missing"
         request.execution.modelHandle = "missing-model-handle"
 
-        try await withServerContextRPCCancellationHandle { handle in
+        try await withTestServerContextRPCCancellationHandle { handle in
             try await services.inference.generate(
                 request: request,
                 response: RPCWriter(wrapping: writer),
@@ -1649,7 +1649,7 @@ final class WorkerScaffoldTests: XCTestCase {
             ),
             residentMemorySamples: [100, 2_148]
         )
-        let loadResponse = try await withServerContextRPCCancellationHandle { handle in
+        let loadResponse = try await withTestServerContextRPCCancellationHandle { handle in
             var request = Melix_Worker_V1_LoadModelRequest()
             request.model.modelID = "melix-dev-text"
             return try await services.runtime.loadModel(
@@ -1674,7 +1674,7 @@ final class WorkerScaffoldTests: XCTestCase {
         generateRequest.messages = [message]
 
         let generateTask = Task {
-            try await withServerContextRPCCancellationHandle { handle in
+            try await withTestServerContextRPCCancellationHandle { handle in
                 try await services.inference.generate(
                     request: generateRequest,
                     response: RPCWriter(wrapping: writer),
@@ -1690,7 +1690,7 @@ final class WorkerScaffoldTests: XCTestCase {
 
         try await Task.sleep(nanoseconds: 20_000_000)
 
-        let abortResponse = try await withServerContextRPCCancellationHandle { handle in
+        let abortResponse = try await withTestServerContextRPCCancellationHandle { handle in
             var request = Melix_Worker_V1_AbortRequest()
             request.requestID = "req-generate-abort"
             return try await services.inference.abort(
@@ -1720,7 +1720,7 @@ final class WorkerScaffoldTests: XCTestCase {
             environment: ["MELIX_DEV_TEXT_MODEL_PATH": "mlx-community/melix-dev-text-4bit"],
             backend: FakeRuntimeBackend(decodedChunks: ["decode", " result"])
         )
-        let loadResponse = try await withServerContextRPCCancellationHandle { handle in
+        let loadResponse = try await withTestServerContextRPCCancellationHandle { handle in
             var request = Melix_Worker_V1_LoadModelRequest()
             request.model.modelID = "melix-dev-text"
             return try await services.runtime.loadModel(
@@ -1739,7 +1739,7 @@ final class WorkerScaffoldTests: XCTestCase {
         prefillRequest.execution.modelHandle = loadResponse.modelHandle
         prefillRequest.returnDecodeHandle = true
         prefillRequest.messages = [makeUserMessage("decode rpc")]
-        let prefillResponse = try await withServerContextRPCCancellationHandle { handle in
+        let prefillResponse = try await withTestServerContextRPCCancellationHandle { handle in
             try await services.inference.prefill(
                 request: prefillRequest,
                 context: ServerContext(
@@ -1758,7 +1758,7 @@ final class WorkerScaffoldTests: XCTestCase {
         request.decodeHandle = prefillResponse.decodeHandle
         request.returnUsage = true
 
-        try await withServerContextRPCCancellationHandle { handle in
+        try await withTestServerContextRPCCancellationHandle { handle in
             try await services.inference.decode(
                 request: request,
                 response: RPCWriter(wrapping: writer),
@@ -1791,7 +1791,7 @@ final class WorkerScaffoldTests: XCTestCase {
         request.execution.id.requestID = "req-missing-decode"
         request.decodeHandle = "missing-decode"
 
-        try await withServerContextRPCCancellationHandle { handle in
+        try await withTestServerContextRPCCancellationHandle { handle in
             try await services.inference.decode(
                 request: request,
                 response: RPCWriter(wrapping: writer),
@@ -1814,7 +1814,7 @@ final class WorkerScaffoldTests: XCTestCase {
             environment: ["MELIX_DEV_TEXT_MODEL_PATH": "mlx-community/melix-dev-text-4bit"],
             backend: FakeRuntimeBackend(decodedChunks: [])
         )
-        let loadResponse = try await withServerContextRPCCancellationHandle { handle in
+        let loadResponse = try await withTestServerContextRPCCancellationHandle { handle in
             var request = Melix_Worker_V1_LoadModelRequest()
             request.model.modelID = "melix-dev-text"
             return try await services.runtime.loadModel(
@@ -1833,7 +1833,7 @@ final class WorkerScaffoldTests: XCTestCase {
         prefillRequest.execution.modelHandle = loadResponse.modelHandle
         prefillRequest.returnDecodeHandle = true
         prefillRequest.messages = [makeUserMessage("summary only decode")]
-        let prefillResponse = try await withServerContextRPCCancellationHandle { handle in
+        let prefillResponse = try await withTestServerContextRPCCancellationHandle { handle in
             try await services.inference.prefill(
                 request: prefillRequest,
                 context: ServerContext(
@@ -1851,7 +1851,7 @@ final class WorkerScaffoldTests: XCTestCase {
         request.decodeHandle = prefillResponse.decodeHandle
         request.returnUsage = true
 
-        try await withServerContextRPCCancellationHandle { handle in
+        try await withTestServerContextRPCCancellationHandle { handle in
             try await services.inference.decode(
                 request: request,
                 response: RPCWriter(wrapping: writer),
@@ -1879,7 +1879,7 @@ final class WorkerScaffoldTests: XCTestCase {
             environment: ["MELIX_DEV_TEXT_MODEL_PATH": "mlx-community/melix-dev-text-4bit"],
             backend: FakeRuntimeBackend(decodeError: FakeRuntimeBackendError.decodeFailed)
         )
-        let loadResponse = try await withServerContextRPCCancellationHandle { handle in
+        let loadResponse = try await withTestServerContextRPCCancellationHandle { handle in
             var request = Melix_Worker_V1_LoadModelRequest()
             request.model.modelID = "melix-dev-text"
             return try await services.runtime.loadModel(
@@ -1898,7 +1898,7 @@ final class WorkerScaffoldTests: XCTestCase {
         prefillRequest.execution.modelHandle = loadResponse.modelHandle
         prefillRequest.returnDecodeHandle = true
         prefillRequest.messages = [makeUserMessage("runtime error decode")]
-        let prefillResponse = try await withServerContextRPCCancellationHandle { handle in
+        let prefillResponse = try await withTestServerContextRPCCancellationHandle { handle in
             try await services.inference.prefill(
                 request: prefillRequest,
                 context: ServerContext(
@@ -1916,7 +1916,7 @@ final class WorkerScaffoldTests: XCTestCase {
         request.execution.modelHandle = loadResponse.modelHandle
         request.decodeHandle = prefillResponse.decodeHandle
 
-        try await withServerContextRPCCancellationHandle { handle in
+        try await withTestServerContextRPCCancellationHandle { handle in
             try await services.inference.decode(
                 request: request,
                 response: RPCWriter(wrapping: writer),
@@ -1942,7 +1942,7 @@ final class WorkerScaffoldTests: XCTestCase {
             ],
             backend: FakeRuntimeBackend(decodedChunks: ["fallback"])
         )
-        let loadResponse = try await withServerContextRPCCancellationHandle { handle in
+        let loadResponse = try await withTestServerContextRPCCancellationHandle { handle in
             var request = Melix_Worker_V1_LoadModelRequest()
             request.model.modelID = "melix-dev-text"
             return try await services.runtime.loadModel(
@@ -1963,7 +1963,7 @@ final class WorkerScaffoldTests: XCTestCase {
         prefillRequest.execution.acceleration.allowBaselineFallback = true
         prefillRequest.returnDecodeHandle = true
         prefillRequest.messages = [makeUserMessage("fallback decode")]
-        let prefillResponse = try await withServerContextRPCCancellationHandle { handle in
+        let prefillResponse = try await withTestServerContextRPCCancellationHandle { handle in
             try await services.inference.prefill(
                 request: prefillRequest,
                 context: ServerContext(
@@ -1983,7 +1983,7 @@ final class WorkerScaffoldTests: XCTestCase {
         request.execution.acceleration.allowBaselineFallback = true
         request.decodeHandle = prefillResponse.decodeHandle
 
-        try await withServerContextRPCCancellationHandle { handle in
+        try await withTestServerContextRPCCancellationHandle { handle in
             try await services.inference.decode(
                 request: request,
                 response: RPCWriter(wrapping: writer),
@@ -2011,7 +2011,7 @@ final class WorkerScaffoldTests: XCTestCase {
             ],
             backend: FakeRuntimeBackend(decodedChunks: ["unused"])
         )
-        let loadResponse = try await withServerContextRPCCancellationHandle { handle in
+        let loadResponse = try await withTestServerContextRPCCancellationHandle { handle in
             var request = Melix_Worker_V1_LoadModelRequest()
             request.model.modelID = "melix-dev-text"
             return try await services.runtime.loadModel(
@@ -2030,7 +2030,7 @@ final class WorkerScaffoldTests: XCTestCase {
         prefillRequest.execution.modelHandle = loadResponse.modelHandle
         prefillRequest.returnDecodeHandle = true
         prefillRequest.messages = [makeUserMessage("no fallback decode")]
-        let prefillResponse = try await withServerContextRPCCancellationHandle { handle in
+        let prefillResponse = try await withTestServerContextRPCCancellationHandle { handle in
             try await services.inference.prefill(
                 request: prefillRequest,
                 context: ServerContext(
@@ -2050,7 +2050,7 @@ final class WorkerScaffoldTests: XCTestCase {
         request.execution.acceleration.allowBaselineFallback = false
         request.decodeHandle = prefillResponse.decodeHandle
 
-        try await withServerContextRPCCancellationHandle { handle in
+        try await withTestServerContextRPCCancellationHandle { handle in
             try await services.inference.decode(
                 request: request,
                 response: RPCWriter(wrapping: writer),
@@ -2076,7 +2076,7 @@ final class WorkerScaffoldTests: XCTestCase {
                 decodeDelayNanos: 40_000_000
             )
         )
-        let loadResponse = try await withServerContextRPCCancellationHandle { handle in
+        let loadResponse = try await withTestServerContextRPCCancellationHandle { handle in
             var request = Melix_Worker_V1_LoadModelRequest()
             request.model.modelID = "melix-dev-text"
             return try await services.runtime.loadModel(
@@ -2095,7 +2095,7 @@ final class WorkerScaffoldTests: XCTestCase {
         prefillRequest.execution.modelHandle = loadResponse.modelHandle
         prefillRequest.returnDecodeHandle = true
         prefillRequest.messages = [makeUserMessage("cancel decode")]
-        let prefillResponse = try await withServerContextRPCCancellationHandle { handle in
+        let prefillResponse = try await withTestServerContextRPCCancellationHandle { handle in
             try await services.inference.prefill(
                 request: prefillRequest,
                 context: ServerContext(
@@ -2115,7 +2115,7 @@ final class WorkerScaffoldTests: XCTestCase {
         request.returnUsage = true
 
         let decodeTask = Task {
-            try await withServerContextRPCCancellationHandle { handle in
+            try await withTestServerContextRPCCancellationHandle { handle in
                 try await services.inference.decode(
                     request: request,
                     response: RPCWriter(wrapping: writer),
@@ -2130,7 +2130,7 @@ final class WorkerScaffoldTests: XCTestCase {
         }
 
         try await Task.sleep(nanoseconds: 60_000_000)
-        _ = try await withServerContextRPCCancellationHandle { handle in
+        _ = try await withTestServerContextRPCCancellationHandle { handle in
             var abortRequest = Melix_Worker_V1_AbortRequest()
             abortRequest.requestID = "req-decode-cancel"
             return try await services.inference.abort(
@@ -2159,7 +2159,7 @@ final class WorkerScaffoldTests: XCTestCase {
             ],
             backend: DeterministicTextBackend(tokenDelayNanos: 1_000_000)
         )
-        let loadResponse = try await withServerContextRPCCancellationHandle { handle in
+        let loadResponse = try await withTestServerContextRPCCancellationHandle { handle in
             var request = Melix_Worker_V1_LoadModelRequest()
             request.model.modelID = "melix-dev-text"
             return try await services.runtime.loadModel(
@@ -2180,7 +2180,7 @@ final class WorkerScaffoldTests: XCTestCase {
         prefillRequest.execution.acceleration.allowBaselineFallback = false
         prefillRequest.returnDecodeHandle = true
         prefillRequest.messages = [makeUserMessage("speculative decode")]
-        let prefillResponse = try await withServerContextRPCCancellationHandle { handle in
+        let prefillResponse = try await withTestServerContextRPCCancellationHandle { handle in
             try await services.inference.prefill(
                 request: prefillRequest,
                 context: ServerContext(
@@ -2200,7 +2200,7 @@ final class WorkerScaffoldTests: XCTestCase {
         request.execution.acceleration.allowBaselineFallback = false
         request.decodeHandle = prefillResponse.decodeHandle
 
-        try await withServerContextRPCCancellationHandle { handle in
+        try await withTestServerContextRPCCancellationHandle { handle in
             try await services.inference.decode(
                 request: request,
                 response: RPCWriter(wrapping: writer),
@@ -2227,7 +2227,7 @@ final class WorkerScaffoldTests: XCTestCase {
             backend: FakeRuntimeBackend(decodedChunks: ["active", " kv"])
         )
 
-        let loadResponse = try await withServerContextRPCCancellationHandle { handle in
+        let loadResponse = try await withTestServerContextRPCCancellationHandle { handle in
             var request = Melix_Worker_V1_LoadModelRequest()
             request.model.modelID = "melix-dev-text"
             return try await services.runtime.loadModel(
@@ -2249,7 +2249,7 @@ final class WorkerScaffoldTests: XCTestCase {
         prefillRequest.returnDecodeHandle = true
         prefillRequest.messages = [makeUserMessage("active kv decode")]
 
-        let prefillResponse = try await withServerContextRPCCancellationHandle { handle in
+        let prefillResponse = try await withTestServerContextRPCCancellationHandle { handle in
             try await services.inference.prefill(
                 request: prefillRequest,
                 context: ServerContext(
@@ -2267,7 +2267,7 @@ final class WorkerScaffoldTests: XCTestCase {
         request.execution.modelHandle = loadResponse.modelHandle
         request.decodeHandle = prefillResponse.decodeHandle
 
-        try await withServerContextRPCCancellationHandle { handle in
+        try await withTestServerContextRPCCancellationHandle { handle in
             try await services.inference.decode(
                 request: request,
                 response: RPCWriter(wrapping: writer),
@@ -2297,7 +2297,7 @@ final class WorkerScaffoldTests: XCTestCase {
                 backend: DeterministicTextBackend(tokenDelayNanos: 0)
             )
 
-            let loadResponse = try await withServerContextRPCCancellationHandle { handle in
+            let loadResponse = try await withTestServerContextRPCCancellationHandle { handle in
                 var request = Melix_Worker_V1_LoadModelRequest()
                 request.model.modelID = "melix-dev-text"
                 return try await services.runtime.loadModel(
@@ -2311,7 +2311,7 @@ final class WorkerScaffoldTests: XCTestCase {
                 )
             }
 
-            let prefillResponse = try await withServerContextRPCCancellationHandle { handle in
+            let prefillResponse = try await withTestServerContextRPCCancellationHandle { handle in
                 var request = Melix_Worker_V1_PrefillRequest()
                 request.execution.id.requestID = "req-cache-prefill"
                 request.execution.modelHandle = loadResponse.modelHandle
@@ -2332,7 +2332,7 @@ final class WorkerScaffoldTests: XCTestCase {
                 )
             }
 
-            let cacheResponse = try await withServerContextRPCCancellationHandle { handle in
+            let cacheResponse = try await withTestServerContextRPCCancellationHandle { handle in
                 try await services.cache.getCacheStats(
                     request: Melix_Worker_V1_GetCacheStatsRequest(),
                     context: ServerContext(
@@ -2346,7 +2346,7 @@ final class WorkerScaffoldTests: XCTestCase {
 
             var pinRequest = Melix_Worker_V1_PinPrefixRequest()
             pinRequest.prefix = try XCTUnwrap(cacheResponse.snapshot.hotPrefixes.first)
-            let pinResponse = try await withServerContextRPCCancellationHandle { handle in
+            let pinResponse = try await withTestServerContextRPCCancellationHandle { handle in
                 try await services.cache.pinPrefix(
                     request: pinRequest,
                     context: ServerContext(
@@ -2360,7 +2360,7 @@ final class WorkerScaffoldTests: XCTestCase {
 
             var unpinRequest = Melix_Worker_V1_UnpinPrefixRequest()
             unpinRequest.prefix = pinRequest.prefix
-            let unpinResponse = try await withServerContextRPCCancellationHandle { handle in
+            let unpinResponse = try await withTestServerContextRPCCancellationHandle { handle in
                 try await services.cache.unpinPrefix(
                     request: unpinRequest,
                     context: ServerContext(
@@ -2372,7 +2372,7 @@ final class WorkerScaffoldTests: XCTestCase {
                 )
             }
 
-            let saveResponse = try await withServerContextRPCCancellationHandle { handle in
+            let saveResponse = try await withTestServerContextRPCCancellationHandle { handle in
                 var request = Melix_Worker_V1_SaveBoundarySnapshotRequest()
                 request.requestID = "req-cache-prefill"
                 request.decodeHandle = prefillResponse.decodeHandle
@@ -2388,7 +2388,7 @@ final class WorkerScaffoldTests: XCTestCase {
                 )
             }
 
-            let postSaveCacheResponse = try await withServerContextRPCCancellationHandle { handle in
+            let postSaveCacheResponse = try await withTestServerContextRPCCancellationHandle { handle in
                 try await services.cache.getCacheStats(
                     request: Melix_Worker_V1_GetCacheStatsRequest(),
                     context: ServerContext(
@@ -2400,7 +2400,7 @@ final class WorkerScaffoldTests: XCTestCase {
                 )
             }
 
-            let restoreResponse = try await withServerContextRPCCancellationHandle { handle in
+            let restoreResponse = try await withTestServerContextRPCCancellationHandle { handle in
                 var request = Melix_Worker_V1_RestoreBoundarySnapshotRequest()
                 request.snapshotID = saveResponse.snapshotID
                 return try await services.cache.restoreBoundarySnapshot(
@@ -2417,7 +2417,7 @@ final class WorkerScaffoldTests: XCTestCase {
             var purgeRequest = Melix_Worker_V1_PurgeCacheRequest()
             purgeRequest.scope = pinRequest.prefix.scope
             purgeRequest.includePinned = true
-            let purgeResponse = try await withServerContextRPCCancellationHandle { handle in
+            let purgeResponse = try await withTestServerContextRPCCancellationHandle { handle in
                 try await services.cache.purgeCache(
                     request: purgeRequest,
                     context: ServerContext(
@@ -2429,7 +2429,7 @@ final class WorkerScaffoldTests: XCTestCase {
                 )
             }
 
-            let postPurgeCacheResponse = try await withServerContextRPCCancellationHandle { handle in
+            let postPurgeCacheResponse = try await withTestServerContextRPCCancellationHandle { handle in
                 try await services.cache.getCacheStats(
                     request: Melix_Worker_V1_GetCacheStatsRequest(),
                     context: ServerContext(
@@ -2472,7 +2472,7 @@ final class WorkerScaffoldTests: XCTestCase {
                 backend: DeterministicTextBackend(tokenDelayNanos: 0)
             )
 
-            let loadResponse = try await withServerContextRPCCancellationHandle { handle in
+            let loadResponse = try await withTestServerContextRPCCancellationHandle { handle in
                 var request = Melix_Worker_V1_LoadModelRequest()
                 request.model.modelID = "melix-dev-text"
                 return try await initialServices.runtime.loadModel(
@@ -2486,7 +2486,7 @@ final class WorkerScaffoldTests: XCTestCase {
                 )
             }
 
-            let prefillResponse = try await withServerContextRPCCancellationHandle { handle in
+            let prefillResponse = try await withTestServerContextRPCCancellationHandle { handle in
                 var request = Melix_Worker_V1_PrefillRequest()
                 request.execution.id.requestID = "req-restart-prefill"
                 request.execution.modelHandle = loadResponse.modelHandle
@@ -2506,7 +2506,7 @@ final class WorkerScaffoldTests: XCTestCase {
                 )
             }
 
-            let saveResponse = try await withServerContextRPCCancellationHandle { handle in
+            let saveResponse = try await withTestServerContextRPCCancellationHandle { handle in
                 var request = Melix_Worker_V1_SaveBoundarySnapshotRequest()
                 request.requestID = "req-restart-prefill"
                 request.decodeHandle = prefillResponse.decodeHandle
@@ -2529,7 +2529,7 @@ final class WorkerScaffoldTests: XCTestCase {
                 backend: DeterministicTextBackend(tokenDelayNanos: 0)
             )
 
-            let restartedLoadResponse = try await withServerContextRPCCancellationHandle { handle in
+            let restartedLoadResponse = try await withTestServerContextRPCCancellationHandle { handle in
                 var request = Melix_Worker_V1_LoadModelRequest()
                 request.model.modelID = "melix-dev-text"
                 return try await restartedServices.runtime.loadModel(
@@ -2544,7 +2544,7 @@ final class WorkerScaffoldTests: XCTestCase {
             }
             XCTAssertTrue(restartedLoadResponse.ok)
 
-            let restoreResponse = try await withServerContextRPCCancellationHandle { handle in
+            let restoreResponse = try await withTestServerContextRPCCancellationHandle { handle in
                 var request = Melix_Worker_V1_RestoreBoundarySnapshotRequest()
                 request.snapshotID = saveResponse.snapshotID
                 return try await restartedServices.cache.restoreBoundarySnapshot(
@@ -2559,7 +2559,7 @@ final class WorkerScaffoldTests: XCTestCase {
             }
 
             let writer = RecordingRPCWriter<Melix_Worker_V1_ExecuteEvent>()
-            try await withServerContextRPCCancellationHandle { handle in
+            try await withTestServerContextRPCCancellationHandle { handle in
                 var request = Melix_Worker_V1_DecodeRequest()
                 request.execution.id.requestID = "req-restart-decode"
                 request.execution.modelHandle = restartedLoadResponse.modelHandle
@@ -2577,7 +2577,7 @@ final class WorkerScaffoldTests: XCTestCase {
                 )
             }
 
-            let restoredCacheResponse = try await withServerContextRPCCancellationHandle { handle in
+            let restoredCacheResponse = try await withTestServerContextRPCCancellationHandle { handle in
                 try await restartedServices.cache.getCacheStats(
                     request: Melix_Worker_V1_GetCacheStatsRequest(),
                     context: ServerContext(
@@ -2607,7 +2607,7 @@ final class WorkerScaffoldTests: XCTestCase {
                 backend: DeterministicTextBackend(tokenDelayNanos: 0)
             )
 
-            let loadResponse = try await withServerContextRPCCancellationHandle { handle in
+            let loadResponse = try await withTestServerContextRPCCancellationHandle { handle in
                 var request = Melix_Worker_V1_LoadModelRequest()
                 request.model.modelID = "melix-dev-text"
                 return try await services.runtime.loadModel(
@@ -2628,7 +2628,7 @@ final class WorkerScaffoldTests: XCTestCase {
             initialPrefill.execution.cacheHints.persistL2 = true
             initialPrefill.returnDecodeHandle = true
             initialPrefill.messages = [makeUserMessage("persist this boundary")]
-            let initialPrefillResponse = try await withServerContextRPCCancellationHandle { handle in
+            let initialPrefillResponse = try await withTestServerContextRPCCancellationHandle { handle in
                 try await services.inference.prefill(
                     request: initialPrefill,
                     context: ServerContext(
@@ -2640,7 +2640,7 @@ final class WorkerScaffoldTests: XCTestCase {
                 )
             }
 
-            let savedSnapshot = try await withServerContextRPCCancellationHandle { handle in
+            let savedSnapshot = try await withTestServerContextRPCCancellationHandle { handle in
                 var request = Melix_Worker_V1_SaveBoundarySnapshotRequest()
                 request.requestID = "req-restore-source"
                 request.decodeHandle = initialPrefillResponse.decodeHandle
@@ -2661,7 +2661,7 @@ final class WorkerScaffoldTests: XCTestCase {
             restorePrefill.execution.modelHandle = loadResponse.modelHandle
             restorePrefill.execution.cacheHints.restoreSnapshotID = savedSnapshot.snapshotID
             restorePrefill.returnDecodeHandle = true
-            let restoreResponse = try await withServerContextRPCCancellationHandle { handle in
+            let restoreResponse = try await withTestServerContextRPCCancellationHandle { handle in
                 try await services.inference.prefill(
                     request: restorePrefill,
                     context: ServerContext(
@@ -2690,7 +2690,7 @@ final class WorkerScaffoldTests: XCTestCase {
                 backend: FakeRuntimeBackend(decodedChunks: ["resume", " ok"])
             )
 
-            let loadResponse = try await withServerContextRPCCancellationHandle { handle in
+            let loadResponse = try await withTestServerContextRPCCancellationHandle { handle in
                 var request = Melix_Worker_V1_LoadModelRequest()
                 request.model.modelID = "melix-dev-text"
                 return try await services.runtime.loadModel(
@@ -2711,7 +2711,7 @@ final class WorkerScaffoldTests: XCTestCase {
             sourcePrefill.execution.cacheHints.persistL2 = true
             sourcePrefill.returnDecodeHandle = true
             sourcePrefill.messages = [makeUserMessage("persist for recovery decode")]
-            let sourcePrefillResponse = try await withServerContextRPCCancellationHandle { handle in
+            let sourcePrefillResponse = try await withTestServerContextRPCCancellationHandle { handle in
                 try await services.inference.prefill(
                     request: sourcePrefill,
                     context: ServerContext(
@@ -2723,7 +2723,7 @@ final class WorkerScaffoldTests: XCTestCase {
                 )
             }
 
-            let savedSnapshot = try await withServerContextRPCCancellationHandle { handle in
+            let savedSnapshot = try await withTestServerContextRPCCancellationHandle { handle in
                 var request = Melix_Worker_V1_SaveBoundarySnapshotRequest()
                 request.requestID = "req-recovery-source"
                 request.decodeHandle = sourcePrefillResponse.decodeHandle
@@ -2744,7 +2744,7 @@ final class WorkerScaffoldTests: XCTestCase {
             restorePrefill.execution.modelHandle = loadResponse.modelHandle
             restorePrefill.execution.cacheHints.restoreSnapshotID = savedSnapshot.snapshotID
             restorePrefill.returnDecodeHandle = true
-            let restorePrefillResponse = try await withServerContextRPCCancellationHandle { handle in
+            let restorePrefillResponse = try await withTestServerContextRPCCancellationHandle { handle in
                 try await services.inference.prefill(
                     request: restorePrefill,
                     context: ServerContext(
@@ -2764,7 +2764,7 @@ final class WorkerScaffoldTests: XCTestCase {
             decodeRequest.decodeHandle = restorePrefillResponse.decodeHandle
             decodeRequest.returnUsage = true
 
-            try await withServerContextRPCCancellationHandle { handle in
+            try await withTestServerContextRPCCancellationHandle { handle in
                 try await services.inference.decode(
                     request: decodeRequest,
                     response: RPCWriter(wrapping: writer),
@@ -2801,7 +2801,7 @@ final class WorkerScaffoldTests: XCTestCase {
             var unknownPrefix = Melix_Worker_V1_PrefixRef()
             unknownPrefix.prefixID = "missing-prefix"
 
-            let pinResponse = try await withServerContextRPCCancellationHandle { handle in
+            let pinResponse = try await withTestServerContextRPCCancellationHandle { handle in
                 var request = Melix_Worker_V1_PinPrefixRequest()
                 request.prefix = unknownPrefix
                 return try await services.cache.pinPrefix(
@@ -2815,7 +2815,7 @@ final class WorkerScaffoldTests: XCTestCase {
                 )
             }
 
-            let unpinResponse = try await withServerContextRPCCancellationHandle { handle in
+            let unpinResponse = try await withTestServerContextRPCCancellationHandle { handle in
                 var request = Melix_Worker_V1_UnpinPrefixRequest()
                 request.prefix = unknownPrefix
                 return try await services.cache.unpinPrefix(
@@ -2829,7 +2829,7 @@ final class WorkerScaffoldTests: XCTestCase {
                 )
             }
 
-            let saveMissingResponse = try await withServerContextRPCCancellationHandle { handle in
+            let saveMissingResponse = try await withTestServerContextRPCCancellationHandle { handle in
                 var request = Melix_Worker_V1_SaveBoundarySnapshotRequest()
                 request.requestID = "missing-request"
                 request.decodeHandle = "missing-decode"
@@ -2845,7 +2845,7 @@ final class WorkerScaffoldTests: XCTestCase {
                 )
             }
 
-            let restoreMissingResponse = try await withServerContextRPCCancellationHandle { handle in
+            let restoreMissingResponse = try await withTestServerContextRPCCancellationHandle { handle in
                 var request = Melix_Worker_V1_RestoreBoundarySnapshotRequest()
                 request.snapshotID = "missing-snapshot"
                 return try await services.cache.restoreBoundarySnapshot(
@@ -2863,7 +2863,7 @@ final class WorkerScaffoldTests: XCTestCase {
                 environment: environment,
                 backend: DeterministicTextBackend(tokenDelayNanos: 0)
             )
-            let loadResponse = try await withServerContextRPCCancellationHandle { handle in
+            let loadResponse = try await withTestServerContextRPCCancellationHandle { handle in
                 var request = Melix_Worker_V1_LoadModelRequest()
                 request.model.modelID = "melix-dev-text"
                 return try await initialServices.runtime.loadModel(
@@ -2877,7 +2877,7 @@ final class WorkerScaffoldTests: XCTestCase {
                 )
             }
 
-            let prefillResponse = try await withServerContextRPCCancellationHandle { handle in
+            let prefillResponse = try await withTestServerContextRPCCancellationHandle { handle in
                 var request = Melix_Worker_V1_PrefillRequest()
                 request.execution.id.requestID = "req-precondition-prefill"
                 request.execution.modelHandle = loadResponse.modelHandle
@@ -2896,7 +2896,7 @@ final class WorkerScaffoldTests: XCTestCase {
                 )
             }
 
-            let savedSnapshot = try await withServerContextRPCCancellationHandle { handle in
+            let savedSnapshot = try await withTestServerContextRPCCancellationHandle { handle in
                 var request = Melix_Worker_V1_SaveBoundarySnapshotRequest()
                 request.requestID = "req-precondition-prefill"
                 request.decodeHandle = prefillResponse.decodeHandle
@@ -2916,7 +2916,7 @@ final class WorkerScaffoldTests: XCTestCase {
                 environment: environment,
                 backend: DeterministicTextBackend(tokenDelayNanos: 0)
             )
-            let failedPreconditionRestore = try await withServerContextRPCCancellationHandle { handle in
+            let failedPreconditionRestore = try await withTestServerContextRPCCancellationHandle { handle in
                 var request = Melix_Worker_V1_RestoreBoundarySnapshotRequest()
                 request.snapshotID = savedSnapshot.snapshotID
                 return try await unloadedServices.cache.restoreBoundarySnapshot(
@@ -3080,7 +3080,7 @@ final class WorkerScaffoldTests: XCTestCase {
         let convertWriter = RecordingRPCWriter<Melix_Worker_V1_ConvertModelEvent>()
         let benchWriter = RecordingRPCWriter<Melix_Worker_V1_RunBenchEvent>()
 
-        try await withServerContextRPCCancellationHandle { handle in
+        try await withTestServerContextRPCCancellationHandle { handle in
             try await services.maintenance.convertModel(
                 request: Melix_Worker_V1_ConvertModelRequest(),
                 response: RPCWriter(wrapping: convertWriter),
@@ -3093,7 +3093,7 @@ final class WorkerScaffoldTests: XCTestCase {
             )
         }
 
-        let infoResponse = try await withServerContextRPCCancellationHandle { handle in
+        let infoResponse = try await withTestServerContextRPCCancellationHandle { handle in
             try await services.maintenance.getModelInfo(
                 request: Melix_Worker_V1_GetModelInfoRequest(),
                 context: ServerContext(
@@ -3105,7 +3105,7 @@ final class WorkerScaffoldTests: XCTestCase {
             )
         }
 
-        let doctorResponse = try await withServerContextRPCCancellationHandle { handle in
+        let doctorResponse = try await withTestServerContextRPCCancellationHandle { handle in
             try await services.maintenance.runDoctor(
                 request: Melix_Worker_V1_RunDoctorRequest(),
                 context: ServerContext(
@@ -3117,7 +3117,7 @@ final class WorkerScaffoldTests: XCTestCase {
             )
         }
 
-        try await withServerContextRPCCancellationHandle { handle in
+        try await withTestServerContextRPCCancellationHandle { handle in
             try await services.maintenance.runBench(
                 request: Melix_Worker_V1_RunBenchRequest(),
                 response: RPCWriter(wrapping: benchWriter),
@@ -3314,7 +3314,7 @@ final class WorkerScaffoldTests: XCTestCase {
     func testWarmupAndShutdownReturnExpectedStructuredResponses() async throws {
         let services = makeServices()
 
-        let warmupResponse = try await withServerContextRPCCancellationHandle { handle in
+        let warmupResponse = try await withTestServerContextRPCCancellationHandle { handle in
             try await services.runtime.warmupModel(
                 request: Melix_Worker_V1_WarmupModelRequest(),
                 context: ServerContext(
@@ -3326,7 +3326,7 @@ final class WorkerScaffoldTests: XCTestCase {
             )
         }
 
-        let shutdownResponse = try await withServerContextRPCCancellationHandle { handle in
+        let shutdownResponse = try await withTestServerContextRPCCancellationHandle { handle in
             try await services.runtime.shutdown(
                 request: Melix_Worker_V1_ShutdownRequest(),
                 context: ServerContext(
@@ -3342,6 +3342,15 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(warmupResponse.error.code, "unimplemented")
         XCTAssertTrue(shutdownResponse.ok)
     }
+}
+
+@available(macOS 15.0, *)
+private func withTestServerContextRPCCancellationHandle<Success>(
+    _ operation: (ServerContext.RPCCancellationHandle) async throws -> Success
+) async rethrows -> Success {
+    // grpc-swift's generic task-local helper currently crashes under this XCTest package on the
+    // active Xcode toolchain. The worker tests only need a concrete cancellation handle.
+    try await operation(ServerContext.RPCCancellationHandle())
 }
 
 @available(macOS 15.0, *)

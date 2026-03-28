@@ -35,4 +35,46 @@ public enum WorkerRouteKind: String, Sendable, Equatable {
             return nil
         }
     }
+
+    public var defaultSchedulingLane: String {
+        switch self {
+        case .pythonOCR, .pythonVLM:
+            return "multimodal.vision.background"
+        case .pythonTranscription:
+            return "multimodal.audio.transcription.background"
+        case .pythonSpeech:
+            return "multimodal.audio.speech.background"
+        default:
+            return "text.decode.interactive"
+        }
+    }
+
+    public var workerSourceID: String {
+        switch self {
+        case .swiftText:
+            return "swift-text-worker"
+        case .pythonOCR, .pythonVLM, .pythonTranscription, .pythonSpeech:
+            return "python-multimodal-worker"
+        default:
+            return "python-worker"
+        }
+    }
+
+    public var isMultimodalBackgroundRoute: Bool {
+        switch self {
+        case .pythonOCR, .pythonVLM, .pythonTranscription, .pythonSpeech:
+            return true
+        default:
+            return false
+        }
+    }
+
+    public var isPhaseAwareTextRoute: Bool {
+        switch self {
+        case .swiftText, .pythonCompatibility:
+            return true
+        default:
+            return false
+        }
+    }
 }

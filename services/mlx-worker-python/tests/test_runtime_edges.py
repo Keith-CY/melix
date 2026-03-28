@@ -4,6 +4,7 @@ import runpy
 from argparse import Namespace
 from pathlib import Path
 from threading import Event
+from types import SimpleNamespace
 
 import pytest
 
@@ -133,6 +134,62 @@ def test_registry_capabilities_and_request_lifecycle() -> None:
 
     registry.finish_request("req-1")
     assert registry.get_request("req-1") is None
+
+    vision_state = registry.start_request("req-vision", runtime_kind="ocr")
+    transcription_state = registry.start_request("req-transcription", runtime_kind="transcription")
+    speech_state = registry.start_request("req-speech", runtime_kind="speech")
+    assert vision_state.runtime_kind == "ocr"
+    assert transcription_state.runtime_kind == "transcription"
+    assert speech_state.runtime_kind == "speech"
+
+    registry.record_vision_probe(
+        "ocr",
+        SimpleNamespace(
+            preprocess_latency_ms=12.0,
+            preprocess_input_bytes=64,
+            preprocess_peak_memory_bytes=2048,
+            first_token_latency_ms=5.0,
+        ),
+    )
+    vision_stats = registry.runtime_stats()
+    assert vision_stats.active_multimodal_requests == 3
+    assert vision_stats.last_probe_kind == "ocr"
+    assert vision_stats.last_preprocess_latency_ms == 12.0
+    assert vision_stats.last_preprocess_input_bytes == 64
+    assert vision_stats.last_preprocess_peak_memory_bytes == 2048
+    assert vision_stats.last_first_token_latency_ms == 5.0
+
+    registry.record_transcription_probe(
+        SimpleNamespace(
+            preprocess_latency_ms=18.0,
+            preprocess_input_bytes=96,
+            preprocess_peak_memory_bytes=4096,
+            transcription_latency_ms=9.0,
+            estimated_duration_seconds=0.75,
+            chunk_count=4,
+        )
+    )
+    transcription_stats = registry.runtime_stats()
+    assert transcription_stats.last_probe_kind == "transcription"
+    assert transcription_stats.last_transcription_latency_ms == 9.0
+    assert transcription_stats.last_audio_duration_seconds == 0.75
+    assert transcription_stats.last_audio_chunk_count == 4
+
+    registry.record_speech_probe(
+        SimpleNamespace(
+            speech_latency_ms=7.5,
+            output_bytes=128,
+        )
+    )
+    speech_stats = registry.runtime_stats()
+    assert speech_stats.last_probe_kind == "speech"
+    assert speech_stats.last_speech_latency_ms == 7.5
+    assert speech_stats.last_audio_output_bytes == 128
+
+    registry.finish_request("req-vision")
+    registry.finish_request("req-transcription")
+    registry.finish_request("req-speech")
+    assert registry.runtime_stats().active_multimodal_requests == 0
 
 
 def test_runtime_wrapper_and_unavailable_backend_paths() -> None:

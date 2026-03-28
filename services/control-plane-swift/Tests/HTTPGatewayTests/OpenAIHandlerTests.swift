@@ -764,6 +764,79 @@ struct OpenAIHandlerTests {
         #expect(metrics.values["audio.seconds_processed_per_second", default: 0] > 0)
     }
 
+    @Test("POST /v1/audio/transcriptions records background-lane and runtime probe metrics")
+    func postAudioTranscriptionsRecordsIsolationAndProbeMetrics() async throws {
+        let textClient = ScriptedWorkerClient(events: [])
+        let audioClient = ScriptedPhaseFiveWorkerClient()
+        await audioClient.setTranscribeResponse({
+            var response = Melix_Worker_V1_TranscribeResponse()
+            response.text = "hello audio"
+            response.language = "en"
+            response.durationSeconds = 0.5
+            return response
+        }())
+        await audioClient.setRuntimeStatsResponse({
+            var response = Melix_Worker_V1_GetRuntimeStatsResponse()
+            response.stats.activeMultimodalRequests = 1
+            response.stats.lastProbeKind = "transcription"
+            response.stats.lastPreprocessLatencyMs = 14
+            response.stats.lastPreprocessPeakMemoryBytes = 4096
+            response.stats.lastTranscriptionLatencyMs = 22
+            response.stats.lastAudioDurationSeconds = 0.5
+            response.stats.lastAudioChunkCount = 3
+            return response
+        }())
+
+        let metricsStore = MetricsStore()
+        let schedulerReadModel = SchedulerReadModel(metricsStore: metricsStore)
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel(), ModelCatalog.devTranscriptionModel()])
+        _ = await catalog.loadModel(id: "melix-dev-transcribe", dispatchHandle: "melix-dev-transcribe::python")
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: textClient),
+                abortRegistry: AbortRegistry()
+            ),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: textClient,
+                pythonCompatibilityClient: audioClient,
+                modelCatalog: catalog
+            ),
+            metricsStore: metricsStore,
+            schedulerReadModel: schedulerReadModel
+        )
+
+        let body = try #require(
+            """
+            {
+              "model": "melix-dev-transcribe",
+              "audio_base64": "aGVsbG8gYXVkaW8="
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(method: .post, path: "/v1/audio/transcriptions", headers: [:], body: body)
+        )
+        let metrics = await metricsStore.snapshot()
+        let queueSummary = await schedulerReadModel.snapshot()
+        let lane = try #require(
+            queueSummary.lanes.first(where: { $0.laneID == "multimodal.audio.transcription.background" })
+        )
+
+        #expect(response.statusCode == 200)
+        #expect(lane.activeRequests == 0)
+        #expect(lane.admissionRate == 1)
+        #expect(metrics.values["scheduler.multimodal_queue_delay_ms", default: -1] >= 0)
+        #expect(metrics.values["scheduler.multimodal_active_requests", default: -1] == 0)
+        #expect(metrics.values["scheduler.text_protection_active", default: -1] == 0)
+        #expect(metrics.values["audio.preprocess_latency_ms", default: -1] == 14)
+        #expect(metrics.values["audio.preprocess_peak_memory_bytes", default: -1] == 4096)
+        #expect(metrics.values["audio.transcription_latency_ms", default: -1] == 22)
+        #expect(metrics.values["audio.audio_duration_seconds", default: -1] == 0.5)
+        #expect(metrics.values["audio.audio_chunk_count", default: -1] == 3)
+    }
+
     @Test("POST /v1/audio/transcriptions supports input_audio URIs and defaults the task")
     func postAudioTranscriptionsSupportsInputAudioURIsAndDefaultsTheTask() async throws {
         let textClient = ScriptedWorkerClient(events: [])
@@ -998,6 +1071,71 @@ struct OpenAIHandlerTests {
         #expect(payload == Data("VOICE=alloy\nFORMAT=wav\nTEXT=hello speech".utf8))
         #expect(metrics.values["audio.speech_request_latency_ms", default: -1] >= 0)
         #expect(metrics.values["audio.speech_output_bytes", default: 0] == 40)
+    }
+
+    @Test("POST /v1/audio/speech records background-lane and runtime probe metrics")
+    func postAudioSpeechRecordsIsolationAndProbeMetrics() async throws {
+        let textClient = ScriptedWorkerClient(events: [])
+        let audioClient = ScriptedPhaseFiveWorkerClient()
+        await audioClient.setSpeakResponse({
+            var response = Melix_Worker_V1_SpeakResponse()
+            response.audioBytes = Data("runtime-bytes".utf8)
+            response.format = "wav"
+            return response
+        }())
+        await audioClient.setRuntimeStatsResponse({
+            var response = Melix_Worker_V1_GetRuntimeStatsResponse()
+            response.stats.activeMultimodalRequests = 1
+            response.stats.lastProbeKind = "speech"
+            response.stats.lastSpeechLatencyMs = 31
+            response.stats.lastAudioOutputBytes = 13
+            return response
+        }())
+
+        let metricsStore = MetricsStore()
+        let schedulerReadModel = SchedulerReadModel(metricsStore: metricsStore)
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel(), ModelCatalog.devSpeechModel()])
+        _ = await catalog.loadModel(id: "melix-dev-speech", dispatchHandle: "melix-dev-speech::python")
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: textClient),
+                abortRegistry: AbortRegistry()
+            ),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: textClient,
+                pythonCompatibilityClient: audioClient,
+                modelCatalog: catalog
+            ),
+            metricsStore: metricsStore,
+            schedulerReadModel: schedulerReadModel
+        )
+
+        let body = try #require(
+            """
+            {
+              "model": "melix-dev-speech",
+              "input": "hello speech"
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(method: .post, path: "/v1/audio/speech", headers: [:], body: body)
+        )
+        let metrics = await metricsStore.snapshot()
+        let queueSummary = await schedulerReadModel.snapshot()
+        let lane = try #require(
+            queueSummary.lanes.first(where: { $0.laneID == "multimodal.audio.speech.background" })
+        )
+
+        #expect(response.statusCode == 200)
+        #expect(lane.activeRequests == 0)
+        #expect(lane.admissionRate == 1)
+        #expect(metrics.values["audio.speech_latency_ms", default: -1] == 31)
+        #expect(metrics.values["audio.speech_output_bytes", default: -1] == 13)
+        #expect(metrics.values["scheduler.multimodal_queue_delay_ms", default: -1] >= 0)
+        #expect(metrics.values["scheduler.text_protection_active", default: -1] == 0)
     }
 
     @Test("POST /v1/audio/speech defaults optional fields and resolves mp3 content types")
@@ -1952,7 +2090,11 @@ private actor ScriptedWorkerClient: WorkerRoutingClient {
     }
 }
 
-private actor ScriptedPhaseFiveWorkerClient: WorkerRoutingClient, NonTextInferenceWorkerClientProtocol {
+private actor ScriptedPhaseFiveWorkerClient:
+    WorkerRoutingClient,
+    NonTextInferenceWorkerClientProtocol,
+    RuntimeIntrospectingWorkerClientProtocol
+{
     private(set) var lastEmbedRequest: Melix_Worker_V1_EmbedRequest?
     private(set) var lastRerankRequest: Melix_Worker_V1_RerankRequest?
     private(set) var lastTranscribeRequest: Melix_Worker_V1_TranscribeRequest?
@@ -1961,6 +2103,7 @@ private actor ScriptedPhaseFiveWorkerClient: WorkerRoutingClient, NonTextInferen
     private var rerankResponse = Melix_Worker_V1_RerankResponse()
     private var transcribeResponse = Melix_Worker_V1_TranscribeResponse()
     private var speakResponse = Melix_Worker_V1_SpeakResponse()
+    private var runtimeStatsResponse = Melix_Worker_V1_GetRuntimeStatsResponse()
     private var thrownFailure: Error?
 
     func setEmbedResponse(_ response: Melix_Worker_V1_EmbedResponse) {
@@ -1977,6 +2120,10 @@ private actor ScriptedPhaseFiveWorkerClient: WorkerRoutingClient, NonTextInferen
 
     func setSpeakResponse(_ response: Melix_Worker_V1_SpeakResponse) {
         speakResponse = response
+    }
+
+    func setRuntimeStatsResponse(_ response: Melix_Worker_V1_GetRuntimeStatsResponse) {
+        runtimeStatsResponse = response
     }
 
     func setThrownFailure(_ failure: Error?) {
@@ -2046,6 +2193,13 @@ private actor ScriptedPhaseFiveWorkerClient: WorkerRoutingClient, NonTextInferen
         }
         lastSpeakRequest = request
         return speakResponse
+    }
+
+    func runtimeStats() async throws -> Melix_Worker_V1_GetRuntimeStatsResponse {
+        if let thrownFailure {
+            throw thrownFailure
+        }
+        return runtimeStatsResponse
     }
 }
 

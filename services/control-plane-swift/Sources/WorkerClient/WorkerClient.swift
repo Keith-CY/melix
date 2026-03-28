@@ -46,6 +46,10 @@ public protocol CacheIntrospectingWorkerClientProtocol: WorkerClient {
     func cacheStats() async throws -> Melix_Worker_V1_GetCacheStatsResponse
 }
 
+public protocol RuntimeIntrospectingWorkerClientProtocol: WorkerClient {
+    func runtimeStats() async throws -> Melix_Worker_V1_GetRuntimeStatsResponse
+}
+
 public protocol WorkerRoutingClient: WorkerClient {
     func loadModel(
         request: Melix_Worker_V1_LoadModelRequest

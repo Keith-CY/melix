@@ -27,6 +27,9 @@ public struct ServerSnapshotBuilder {
             lane(id: "text.decode.interactive", laneClass: "interactive-decode"),
             lane(id: "text.prefill.hot", laneClass: "hot-prefill"),
             lane(id: "text.prefill.background", laneClass: "background-prefill"),
+            lane(id: "multimodal.vision.background", laneClass: "background-vision"),
+            lane(id: "multimodal.audio.transcription.background", laneClass: "background-audio-transcription"),
+            lane(id: "multimodal.audio.speech.background", laneClass: "background-audio-speech"),
         ]
         return queue
     }

@@ -7,6 +7,7 @@ from threading import Event
 @dataclass
 class RequestState:
     request_id: str
+    runtime_kind: str = "text"
     cancel_event: Event = field(default_factory=Event)
     next_seq: int = 1
     emitted_tokens: list[str] = field(default_factory=list)

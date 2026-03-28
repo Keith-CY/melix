@@ -19,8 +19,10 @@ class EngineCore:
             return
 
         runtime = self._registry.runtime_for_loaded_model(loaded_model)
-        state = self._registry.start_request(request_id)
+        state = self._registry.start_request(request_id, runtime_kind=loaded_model.runtime_kind)
         prompt = runtime.render_prompt(request.messages, loaded_model=loaded_model.runtime_model)
+        if loaded_model.runtime_kind in {"ocr", "vlm"} and hasattr(runtime, "last_probe_snapshot"):
+            self._registry.record_vision_probe(loaded_model.runtime_kind, runtime.last_probe_snapshot())
         prompt_tokens_default = (
             runtime.prompt_token_count(prompt)
             if hasattr(runtime, "prompt_token_count")
@@ -81,6 +83,8 @@ class EngineCore:
         except Exception as exc:  # pragma: no cover - defensive branch
             yield self._error_event(request_id, state.allocate_seq(), "runtime_error", str(exc))
         finally:
+            if loaded_model.runtime_kind in {"ocr", "vlm"} and hasattr(runtime, "last_probe_snapshot"):
+                self._registry.record_vision_probe(loaded_model.runtime_kind, runtime.last_probe_snapshot())
             self._registry.finish_request(request_id)
 
     def abort(self, request_id: str) -> bool:
