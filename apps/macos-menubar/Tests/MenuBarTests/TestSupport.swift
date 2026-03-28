@@ -1,6 +1,7 @@
 import Foundation
 
 @testable import AppMain
+import MelixControlPlaneCore
 import MelixControlPlaneProtocol
 
 actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
@@ -17,11 +18,13 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
     private var modelSettingsError: Error?
     private var modelInfoError: Error?
     private var modelOperationError: Error?
+    private var chatError: Error?
     private var snapshotOverride: Melix_Controlplane_V1_ServerSnapshot?
     private var responseFeatures: [String] = ["chat"]
     private var modelSettings = FakeControlPlaneXPCClient.defaultModelSettings()
     private var modelInfoResponse = FakeControlPlaneXPCClient.defaultModelInfo()
     private var modelOperationResponse = FakeControlPlaneXPCClient.defaultModelOperation()
+    private var chatEvents = FakeControlPlaneXPCClient.defaultChatEvents()
 
     init() {
         var capturedContinuation: AsyncStream<Melix_Controlplane_V1_ControlPlaneEvent>.Continuation?
@@ -38,7 +41,8 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
         snapshot: Error? = nil,
         modelSettings: Error? = nil,
         modelInfo: Error? = nil,
-        modelOperation: Error? = nil
+        modelOperation: Error? = nil,
+        chat: Error? = nil
     ) {
         handshakeError = handshake
         loadError = load
@@ -47,6 +51,7 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
         modelSettingsError = modelSettings
         modelInfoError = modelInfo
         modelOperationError = modelOperation
+        chatError = chat
     }
 
     func configureModelResponseFeatures(_ features: [String]) {
@@ -59,6 +64,10 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
 
     func configureModelOperation(_ operation: Melix_Controlplane_V1_ModelOperationResult) {
         modelOperationResponse = operation
+    }
+
+    func configureChatEvents(_ events: [ControlPlaneChatStreamEvent]) {
+        chatEvents = events
     }
 
     func handshake() async throws -> Melix_Controlplane_V1_HandshakeResponse {
@@ -79,6 +88,24 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
     func subscribe(lastSeenSeq: UInt64) async -> AsyncStream<Melix_Controlplane_V1_ControlPlaneEvent> {
         _ = lastSeenSeq
         return stream
+    }
+
+    func startChat(_ request: ControlPlaneChatRequest) async throws -> ControlPlaneChatExecution {
+        recordedActions.append("chat:\(request.modelID)")
+        if let chatError {
+            throw chatError
+        }
+        let events = chatEvents
+        return ControlPlaneChatExecution(
+            requestID: "chat-request-1",
+            modelID: request.modelID,
+            stream: AsyncThrowingStream { continuation in
+                for event in events {
+                    continuation.yield(event)
+                }
+                continuation.finish()
+            }
+        )
     }
 
     func serverSnapshot() async throws -> Melix_Controlplane_V1_ServerSnapshot {
@@ -318,6 +345,18 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
 
         queue.lanes = [decode, prefill]
         return queue
+    }
+
+    private static func defaultChatEvents() -> [ControlPlaneChatStreamEvent] {
+        [
+            .queued(lane: "text.decode.interactive", queuePosition: 0, backpressure: 0),
+            .admitted(lane: "text.decode.interactive", workerID: "swift-text-worker", queueDelayMs: 0.5),
+            .tokenDelta("Assistant response"),
+            .reasoningDelta("Reasoning trace"),
+            .toolCallDelta(callID: "tool-1", toolName: "search", argumentsFragment: #"{"q":"melix"}"#),
+            .usage(promptTokens: 12, completionTokens: 24),
+            .completed(finishReason: "stop", assistantText: "Assistant response", reasoningText: "Reasoning trace"),
+        ]
     }
 
     private func makeCacheSummary() -> Melix_Controlplane_V1_CacheSummary {

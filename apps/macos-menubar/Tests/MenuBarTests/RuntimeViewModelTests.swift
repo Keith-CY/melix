@@ -2,6 +2,7 @@ import Foundation
 import Testing
 
 @testable import AppMain
+import MelixControlPlaneCore
 import MelixControlPlaneProtocol
 
 @Suite("Runtime View Model")
@@ -278,7 +279,12 @@ struct RuntimeViewModelTests {
         await client.sendRequestProgress(requestID: "request-42", phase: .requestDecoding)
         await client.sendHeartbeat()
         await client.sendLog(level: "error", message: "thermal pressure")
-        try await Task.sleep(for: .milliseconds(30))
+        try await waitForRuntimeViewModelCondition("streamed events should update dashboard state") {
+            let foundation = viewModel.desktopFoundationState
+            return viewModel.lastError == "thermal pressure"
+                && foundation.logs.contains(where: { $0.message == "Heartbeat" })
+                && foundation.logs.contains(where: { $0.message == "thermal pressure" })
+        }
 
         let foundation = viewModel.desktopFoundationState
         #expect(viewModel.statusTitle == "Melix Draining")
@@ -443,6 +449,173 @@ struct RuntimeViewModelTests {
         #expect(viewModel.primaryModel?.accelerationModeText == "Active KV Quantized")
         #expect(viewModel.primaryModel?.accelerationProfileID == "kv-q8")
     }
+
+    @Test("chat prompt streams assistant reasoning and tool deltas into the transcript")
+    @MainActor
+    func chatPromptStreamsAssistantReasoningAndToolDeltas() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let metrics = MenuBarMetricsStore()
+        let viewModel = RuntimeViewModel(client: client, metrics: metrics)
+
+        await viewModel.start()
+        viewModel.chatComposerText = "Explain Melix"
+
+        await viewModel.submitChatPrompt()
+
+        #expect(await client.recordedActions.contains("chat:melix-dev-text"))
+        #expect(viewModel.chatTranscript.contains(where: { $0.kind == .user && $0.body == "Explain Melix" }))
+        #expect(viewModel.chatTranscript.contains(where: { $0.kind == .assistant && $0.body.contains("Assistant response") }))
+        #expect(viewModel.chatTranscript.contains(where: { $0.kind == .reasoning && $0.body.contains("Reasoning trace") }))
+        #expect(viewModel.chatTranscript.contains(where: { $0.kind == .tool && $0.body.contains(#""q":"melix""#) }))
+        #expect(viewModel.chatStatusText.contains("Completed"))
+        #expect(viewModel.lastChatUsageText == "12 prompt • 24 completion")
+        #expect(await metrics.snapshot()["menu.chat_submit_ms"] != nil)
+        #expect(await metrics.snapshot()["menu.chat_first_delta_ms"] != nil)
+        #expect(await metrics.snapshot()["menu.chat_stream_ms"] != nil)
+    }
+
+    @Test("chat prompt merges repeated deltas into shared transcript entries")
+    @MainActor
+    func chatPromptMergesRepeatedDeltasIntoSharedEntries() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureChatEvents([
+            .queued(lane: "text.decode.interactive", queuePosition: 0, backpressure: 0),
+            .admitted(lane: "text.decode.interactive", workerID: "swift-text-worker", queueDelayMs: 0.5),
+            .tokenDelta("Assistant "),
+            .tokenDelta("response"),
+            .reasoningDelta("Reasoning "),
+            .reasoningDelta("trace"),
+            .toolCallDelta(callID: "tool-1", toolName: "search", argumentsFragment: ""),
+            .toolCallDelta(callID: "tool-1", toolName: "search", argumentsFragment: #"{"q":"melix"}"#),
+            .completed(finishReason: "stop", assistantText: "Assistant response", reasoningText: "Reasoning trace"),
+        ])
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+        viewModel.chatComposerText = "Merge deltas"
+
+        await viewModel.submitChatPrompt()
+
+        let assistantEntries = viewModel.chatTranscript.filter { $0.kind == .assistant }
+        let reasoningEntries = viewModel.chatTranscript.filter { $0.kind == .reasoning }
+        let toolEntries = viewModel.chatTranscript.filter { $0.kind == .tool }
+
+        #expect(assistantEntries.count == 1)
+        #expect(assistantEntries.first?.body == "Assistant response")
+        #expect(reasoningEntries.count == 1)
+        #expect(reasoningEntries.first?.body == "Reasoning trace")
+        #expect(toolEntries.count == 1)
+        #expect(toolEntries.first?.body == #"{"q":"melix"}"#)
+    }
+
+    @Test("chat completion can synthesize transcript entries without prior deltas")
+    @MainActor
+    func chatCompletionSynthesizesTranscriptEntriesWithoutPriorDeltas() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureChatEvents([
+            .queued(lane: "text.decode.interactive", queuePosition: 0, backpressure: 0),
+            .admitted(lane: "text.decode.interactive", workerID: "swift-text-worker", queueDelayMs: 0.5),
+            .completed(finishReason: "stop", assistantText: "Assistant final", reasoningText: "Reasoning final"),
+        ])
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+        viewModel.chatComposerText = "Completion only"
+
+        await viewModel.submitChatPrompt()
+
+        #expect(viewModel.chatTranscript.contains(where: { $0.kind == .assistant && $0.body == "Assistant final" }))
+        #expect(viewModel.chatTranscript.contains(where: { $0.kind == .reasoning && $0.body == "Reasoning final" }))
+        #expect(viewModel.chatStatusText == "Completed • stop")
+    }
+
+    @Test("chat prompt records phase transitions and terminal worker failures")
+    @MainActor
+    func chatPromptRecordsPhaseTransitionsAndWorkerFailures() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureChatEvents([
+            .queued(lane: "text.prefill.hot", queuePosition: 1, backpressure: 0.15),
+            .admitted(lane: "text.prefill.hot", workerID: "swift-text-worker", queueDelayMs: 1.2),
+            .prefillStarted(inputTokens: 64),
+            .decodeStarted(decodeHandle: "decode-hot-1", maxOutputTokens: 96),
+            .heartbeat,
+            .failed(code: "runtime_error", message: "worker failed"),
+        ])
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+        viewModel.chatComposerText = "Diagnose runtime phases"
+
+        await viewModel.submitChatPrompt()
+
+        #expect(viewModel.lastChatRequestID == "chat-request-1")
+        #expect(viewModel.chatStatusText == "Failed • runtime_error")
+        #expect(viewModel.lastError == "worker failed")
+        #expect(viewModel.isChatStreaming == false)
+        #expect(viewModel.chatTranscript.contains(where: { $0.kind == .error && $0.body == "worker failed" }))
+    }
+
+    @Test("chat transport failures surface local error rows and reset streaming state")
+    @MainActor
+    func chatTransportFailuresSurfaceLocalErrors() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureErrors(chat: MenuBarTestError(description: "chat transport failed"))
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+        viewModel.chatComposerText = "Diagnose transport"
+
+        await viewModel.submitChatPrompt()
+
+        #expect(viewModel.chatStatusText == "Failed")
+        #expect(viewModel.lastError?.contains("chat transport failed") == true)
+        #expect(viewModel.isChatStreaming == false)
+        #expect(viewModel.chatTranscript.contains(where: { $0.kind == .error && $0.body.contains("chat transport failed") }))
+    }
+
+    @Test("chat route readiness reflects multimodal model availability from the snapshot")
+    @MainActor
+    func chatRouteReadinessReflectsMultimodalAvailability() async throws {
+        var snapshot = makeSnapshot(
+            serverState: .serverReady,
+            models: [
+                makeModelSummary(modelID: "melix-dev-text", state: .modelWarm),
+                makeCapabilityModelSummary(modelID: "melix-dev-ocr", kind: "ocr", state: .modelWarm, features: ["ocr"]),
+                makeCapabilityModelSummary(modelID: "melix-dev-vlm", kind: "vlm", state: .modelDiscovered, features: ["vlm", "vision"]),
+                makeCapabilityModelSummary(modelID: "melix-dev-transcription", kind: "transcription", state: .modelWarm, features: ["audio", "transcription"]),
+                makeCapabilityModelSummary(modelID: "melix-dev-speech", kind: "speech", state: .modelDiscovered, features: ["audio", "speech"]),
+            ]
+        )
+        snapshot.metrics.values["http.translation_ms"] = 4.2
+        let client = SnapshotControlPlaneXPCClient(snapshot: snapshot)
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+
+        #expect(viewModel.chatCapabilities.contains(where: { $0.id == "text" && $0.isReady }))
+        #expect(viewModel.chatCapabilities.contains(where: { $0.id == "ocr" && $0.isReady }))
+        #expect(viewModel.chatCapabilities.contains(where: { $0.id == "vlm" && $0.isReady == false }))
+        #expect(viewModel.chatCapabilities.contains(where: { $0.id == "transcription" && $0.isReady }))
+        #expect(viewModel.chatCapabilities.contains(where: { $0.id == "speech" && $0.isReady == false }))
+    }
+}
+
+@MainActor
+private func waitForRuntimeViewModelCondition(
+    _ description: String,
+    timeout: Duration = .milliseconds(500),
+    pollInterval: Duration = .milliseconds(10),
+    condition: @escaping @MainActor () -> Bool
+) async throws {
+    let deadline = ContinuousClock.now + timeout
+    while ContinuousClock.now < deadline {
+        if condition() {
+            return
+        }
+        try await Task.sleep(for: pollInterval)
+    }
+
+    throw MenuBarTestError(description: description)
 }
 
 private actor EmptySnapshotControlPlaneXPCClient: ControlPlaneXPCClient {
@@ -463,6 +636,11 @@ private actor EmptySnapshotControlPlaneXPCClient: ControlPlaneXPCClient {
         return AsyncStream { continuation in
             continuation.finish()
         }
+    }
+
+    func startChat(_ request: ControlPlaneChatRequest) async throws -> ControlPlaneChatExecution {
+        _ = request
+        throw ControlPlaneChatExecutionError.unavailable
     }
 
     func serverSnapshot() async throws -> Melix_Controlplane_V1_ServerSnapshot {
@@ -534,6 +712,11 @@ private actor SnapshotControlPlaneXPCClient: ControlPlaneXPCClient {
         return AsyncStream { continuation in
             continuation.finish()
         }
+    }
+
+    func startChat(_ request: ControlPlaneChatRequest) async throws -> ControlPlaneChatExecution {
+        _ = request
+        throw ControlPlaneChatExecutionError.unavailable
     }
 
     func serverSnapshot() async throws -> Melix_Controlplane_V1_ServerSnapshot {
@@ -609,6 +792,11 @@ private actor EventingSnapshotControlPlaneXPCClient: ControlPlaneXPCClient {
     func subscribe(lastSeenSeq: UInt64) async -> AsyncStream<Melix_Controlplane_V1_ControlPlaneEvent> {
         _ = lastSeenSeq
         return stream
+    }
+
+    func startChat(_ request: ControlPlaneChatRequest) async throws -> ControlPlaneChatExecution {
+        _ = request
+        throw ControlPlaneChatExecutionError.unavailable
     }
 
     func serverSnapshot() async throws -> Melix_Controlplane_V1_ServerSnapshot {
@@ -692,6 +880,21 @@ private func makeModelSummary(
     model.kind = "text"
     model.state = state
     model.features = ["chat"]
+    model.maxContext = 8192
+    return model
+}
+
+private func makeCapabilityModelSummary(
+    modelID: String,
+    kind: String,
+    state: Melix_Controlplane_V1_ModelState,
+    features: [String]
+) -> Melix_Controlplane_V1_ModelSummary {
+    var model = Melix_Controlplane_V1_ModelSummary()
+    model.modelID = modelID
+    model.kind = kind
+    model.state = state
+    model.features = features
     model.maxContext = 8192
     return model
 }

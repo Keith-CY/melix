@@ -602,21 +602,21 @@ struct PythonBridgeWorkerClientTests {
             environment: ProcessInfo.processInfo.environment
         )
 
-        let stream = try await runner.runStream(
-            command: BridgeCommand(
-                kind: .generate,
-                socketPath: "/tmp/unused.sock",
-                requestData: Data("hang".utf8)
+        do {
+            let stream = try await runner.runStream(
+                command: BridgeCommand(
+                    kind: .generate,
+                    socketPath: "/tmp/unused.sock",
+                    requestData: Data("hang".utf8)
+                )
             )
-        )
-
-        let task = Task {
-            var iterator = stream.makeAsyncIterator()
-            return try await iterator.next()
+            let task = Task {
+                var iterator = stream.makeAsyncIterator()
+                return try await iterator.next()
+            }
+            let firstLine = try await task.value
+            #expect(firstLine != nil)
         }
-        let firstLine = try await task.value
-
-        #expect(firstLine != nil)
         try await Task.sleep(for: .milliseconds(50))
     }
 

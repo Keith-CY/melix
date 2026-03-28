@@ -42,6 +42,11 @@ public struct DesktopFoundationRootView: View {
                     Label("Bench", systemImage: "speedometer")
                 }
 
+            DesktopChatTabView(viewModel: viewModel)
+                .tabItem {
+                    Label("Chat", systemImage: "message")
+                }
+
             DesktopAPIReferenceTabView(foundation: foundation)
                 .tabItem {
                     Label("API", systemImage: "chevron.left.forwardslash.chevron.right")

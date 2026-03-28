@@ -105,13 +105,78 @@ struct DesktopFoundationViewTests {
         let settings = hostView(DesktopSettingsTabView(foundation: foundation))
         let logs = hostView(DesktopLogsTabView(foundation: foundation))
         let bench = hostView(DesktopBenchTabView(foundation: foundation))
+        let chat = hostView(DesktopChatTabView(viewModel: viewModel))
         let api = hostView(DesktopAPIReferenceTabView(foundation: foundation))
 
         #expect(dashboard.subviews.isEmpty == false)
         #expect(settings.subviews.isEmpty == false)
         #expect(logs.subviews.isEmpty == false)
         #expect(bench.subviews.isEmpty == false)
+        #expect(chat.subviews.isEmpty == false)
         #expect(api.subviews.isEmpty == false)
+    }
+
+    @Test("chat tab submit and clear actions dispatch through the view model")
+    @MainActor
+    func chatTabDispatchesViewModelActions() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+
+        let tab = DesktopChatTabView(viewModel: viewModel)
+        viewModel.chatComposerText = "Hello from SwiftUI"
+        await viewModel.submitChatPrompt()
+        viewModel.clearChatTranscript()
+
+        let view = hostView(tab)
+
+        #expect(await client.recordedActions.contains("chat:melix-dev-text"))
+        #expect(viewModel.chatTranscript.isEmpty)
+        #expect(view.subviews.isEmpty == false)
+    }
+
+    @Test("chat tab renders populated transcript rows and runtime metadata")
+    @MainActor
+    func chatTabRendersPopulatedTranscriptRowsAndRuntimeMetadata() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        viewModel.chatComposerText = "Render the transcript"
+
+        await viewModel.submitChatPrompt()
+
+        let view = hostView(DesktopChatTabView(viewModel: viewModel))
+
+        #expect(view.subviews.isEmpty == false)
+        #expect(viewModel.chatTranscript.contains(where: { $0.kind == .user }))
+        #expect(viewModel.chatTranscript.contains(where: { $0.kind == .assistant }))
+        #expect(viewModel.chatTranscript.contains(where: { $0.kind == .reasoning }))
+        #expect(viewModel.chatTranscript.contains(where: { $0.kind == .tool }))
+        #expect(viewModel.lastChatRequestID == "chat-request-1")
+        #expect(viewModel.lastChatUsageText == "12 prompt • 24 completion")
+    }
+
+    @Test("chat tab renders terminal error entries")
+    @MainActor
+    func chatTabRendersTerminalErrorEntries() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureChatEvents([
+            .failed(code: "runtime_error", message: "worker failed"),
+        ])
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        viewModel.chatComposerText = "Render the error path"
+
+        await viewModel.submitChatPrompt()
+
+        let view = hostView(DesktopChatTabView(viewModel: viewModel))
+        let renderedErrorEntry = viewModel.chatTranscript.contains { entry in
+            entry.kind == .error && entry.body == "worker failed"
+        }
+
+        #expect(view.subviews.isEmpty == false)
+        #expect(renderedErrorEntry)
+        #expect(viewModel.chatStatusText == "Failed • runtime_error")
     }
 }
 

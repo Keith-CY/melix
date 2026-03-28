@@ -1,4 +1,5 @@
 import Foundation
+import MelixControlPlaneCore
 import MelixControlPlaneProtocol
 import Observation
 
@@ -56,6 +57,38 @@ public struct RuntimeModelOperationState: Equatable, Sendable {
     public let manifestJson: String
 }
 
+public struct DesktopChatTranscriptEntry: Identifiable, Equatable, Sendable {
+    public enum Kind: String, Sendable {
+        case user
+        case assistant
+        case reasoning
+        case tool
+        case error
+    }
+
+    public let id: String
+    public let kind: Kind
+    public let title: String
+    public let body: String
+    public let detail: String
+
+    public init(id: String, kind: Kind, title: String, body: String, detail: String) {
+        self.id = id
+        self.kind = kind
+        self.title = title
+        self.body = body
+        self.detail = detail
+    }
+}
+
+public struct DesktopChatCapabilityRow: Identifiable, Equatable, Sendable {
+    public let id: String
+    public let title: String
+    public let modelID: String
+    public let detail: String
+    public let isReady: Bool
+}
+
 @MainActor
 @Observable
 public final class RuntimeViewModel {
@@ -69,6 +102,14 @@ public final class RuntimeViewModel {
     public private(set) var features: [String] = []
     public private(set) var selectedModelInfo: RuntimeModelInfoState?
     public private(set) var lastModelOperation: RuntimeModelOperationState?
+    public private(set) var chatTranscript: [DesktopChatTranscriptEntry] = []
+    public private(set) var chatCapabilities: [DesktopChatCapabilityRow] = []
+    public private(set) var chatStatusText = "Idle"
+    public private(set) var lastChatUsageText = ""
+    public private(set) var isChatStreaming = false
+    public private(set) var lastChatRequestID = ""
+    public var chatComposerText = ""
+    public var selectedChatModelID = "melix-dev-text"
 
     public var onStateChanged: (@MainActor @Sendable () -> Void)?
 
@@ -78,6 +119,10 @@ public final class RuntimeViewModel {
     private var lastSeenSeq: UInt64 = 0
     private var latestSnapshot = Melix_Controlplane_V1_ServerSnapshot()
     private var recentEvents: [DesktopLogEntry] = []
+    private var chatConversationMessages: [ControlPlaneChatRequest.Message] = []
+    private var activeAssistantEntryID: String?
+    private var activeReasoningEntryID: String?
+    private var activeToolEntryIDs: [String: String] = [:]
 
     public init(
         client: any ControlPlaneXPCClient,
@@ -168,6 +213,152 @@ public final class RuntimeViewModel {
         } catch {
             recordLocalError(String(describing: error))
         }
+        notifyStateChanged()
+    }
+
+    public func submitChatPrompt() async {
+        let prompt = chatComposerText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !prompt.isEmpty else {
+            return
+        }
+        guard !isChatStreaming else {
+            return
+        }
+
+        let modelID = resolvedChatModelID()
+        chatComposerText = ""
+        let startedAt = Date()
+        let userMessage = ControlPlaneChatRequest.Message(role: "user", content: prompt)
+        chatConversationMessages.append(userMessage)
+        appendChatEntry(
+            id: "user-\(UUID().uuidString)",
+            kind: .user,
+            title: "User",
+            body: prompt,
+            detail: modelID
+        )
+        chatStatusText = "Preparing"
+        lastChatUsageText = ""
+        isChatStreaming = true
+        notifyStateChanged()
+
+        if models.contains(where: { $0.modelID == modelID && $0.isLoaded }) == false {
+            await loadModel(modelID: modelID)
+        }
+
+        do {
+            let execution = try await client.startChat(
+                ControlPlaneChatRequest(
+                    modelID: modelID,
+                    messages: chatConversationMessages
+                )
+            )
+            lastChatRequestID = execution.requestID
+            await metrics.record(
+                name: "menu.chat_submit_ms",
+                valueMs: Date().timeIntervalSince(startedAt) * 1_000
+            )
+
+            var recordedFirstDelta = false
+            var reasoningDeltaCount = 0
+            var toolDeltaCount = 0
+
+            for try await event in execution.stream {
+                if recordedFirstDelta == false {
+                    switch event {
+                    case .tokenDelta, .reasoningDelta, .toolCallDelta:
+                        recordedFirstDelta = true
+                        await metrics.record(
+                            name: "menu.chat_first_delta_ms",
+                            valueMs: Date().timeIntervalSince(startedAt) * 1_000
+                        )
+                    default:
+                        break
+                    }
+                }
+
+                switch event {
+                case .queued(let lane, let queuePosition, _):
+                    chatStatusText = "Queued • \(lane) • #\(queuePosition)"
+                case .admitted(let lane, let workerID, _):
+                    chatStatusText = "Admitted • \(lane) • \(workerID)"
+                case .prefillStarted(let inputTokens):
+                    chatStatusText = "Prefill • \(inputTokens) tokens"
+                case .decodeStarted(let decodeHandle, _):
+                    chatStatusText = decodeHandle.isEmpty ? "Decode" : "Decode • \(decodeHandle)"
+                case .tokenDelta(let text):
+                    appendAssistantDelta(text, requestID: execution.requestID)
+                case .reasoningDelta(let text):
+                    reasoningDeltaCount += 1
+                    appendReasoningDelta(text, requestID: execution.requestID)
+                case .toolCallDelta(let callID, let toolName, let argumentsFragment):
+                    toolDeltaCount += 1
+                    appendToolDelta(callID: callID, toolName: toolName, argumentsFragment: argumentsFragment)
+                case .usage(let promptTokens, let completionTokens):
+                    lastChatUsageText = "\(promptTokens) prompt • \(completionTokens) completion"
+                case .completed(let finishReason, let assistantText, let reasoningText):
+                    chatStatusText = finishReason.isEmpty ? "Completed" : "Completed • \(finishReason)"
+                    finalizeAssistantText(assistantText, requestID: execution.requestID)
+                    finalizeReasoningText(reasoningText, requestID: execution.requestID)
+                case .failed(let code, let message):
+                    chatStatusText = code.isEmpty ? "Failed" : "Failed • \(code)"
+                    let failureMessage = message.isEmpty ? "Chat request failed." : message
+                    lastError = failureMessage
+                    appendChatEntry(
+                        id: "error-\(UUID().uuidString)",
+                        kind: .error,
+                        title: "Error",
+                        body: failureMessage,
+                        detail: code
+                    )
+                case .heartbeat:
+                    chatStatusText = "Streaming"
+                }
+
+                notifyStateChanged()
+            }
+
+            await metrics.record(
+                name: "menu.chat_stream_ms",
+                valueMs: Date().timeIntervalSince(startedAt) * 1_000
+            )
+            await metrics.record(
+                name: "menu.chat_reasoning_delta_count",
+                valueMs: Double(reasoningDeltaCount)
+            )
+            await metrics.record(
+                name: "menu.chat_tool_delta_count",
+                valueMs: Double(toolDeltaCount)
+            )
+            commitAssistantMessageIfNeeded()
+        } catch {
+            lastError = String(describing: error)
+            chatStatusText = "Failed"
+            appendChatEntry(
+                id: "error-\(UUID().uuidString)",
+                kind: .error,
+                title: "Error",
+                body: String(describing: error),
+                detail: modelID
+            )
+        }
+
+        isChatStreaming = false
+        activeAssistantEntryID = nil
+        activeReasoningEntryID = nil
+        activeToolEntryIDs.removeAll()
+        notifyStateChanged()
+    }
+
+    public func clearChatTranscript() {
+        chatTranscript = []
+        chatConversationMessages = []
+        chatStatusText = "Idle"
+        lastChatUsageText = ""
+        lastChatRequestID = ""
+        activeAssistantEntryID = nil
+        activeReasoningEntryID = nil
+        activeToolEntryIDs.removeAll()
         notifyStateChanged()
     }
 
@@ -378,6 +569,8 @@ public final class RuntimeViewModel {
             break
         }
 
+        refreshChatCapabilities()
+
         notifyStateChanged()
     }
 
@@ -388,6 +581,7 @@ public final class RuntimeViewModel {
         models = snapshot.models
             .sorted { $0.modelID < $1.modelID }
             .map(makeRuntimeModelRow)
+        refreshChatCapabilities()
         notifyStateChanged()
     }
 
@@ -409,6 +603,7 @@ public final class RuntimeViewModel {
             models.append(row)
             models.sort { $0.modelID < $1.modelID }
         }
+        refreshChatCapabilities()
     }
 
     private func upsert(session: Melix_Controlplane_V1_SessionState) {
@@ -469,6 +664,164 @@ public final class RuntimeViewModel {
         )
         recentEvents.insert(entry, at: 0)
         trimRecentEvents()
+    }
+
+    private func resolvedChatModelID() -> String {
+        if models.contains(where: { $0.modelID == selectedChatModelID && $0.kind == "text" }) {
+            return selectedChatModelID
+        }
+        if let textModel = models.first(where: { $0.kind == "text" }) {
+            selectedChatModelID = textModel.modelID
+            return textModel.modelID
+        }
+        return selectedChatModelID
+    }
+
+    private func refreshChatCapabilities() {
+        if models.contains(where: { $0.modelID == selectedChatModelID }) == false {
+            if let textModel = models.first(where: { $0.kind == "text" }) {
+                selectedChatModelID = textModel.modelID
+            }
+        }
+
+        let capabilitySpecs: [(String, String, [String])] = [
+            ("text", "Interactive Text", ["chat"]),
+            ("ocr", "OCR", ["ocr"]),
+            ("vlm", "Vision Analysis", ["vlm", "vision"]),
+            ("transcription", "Transcription", ["transcription"]),
+            ("speech", "Speech", ["speech"]),
+        ]
+
+        chatCapabilities = capabilitySpecs.compactMap { capabilityID, title, featureHints in
+            guard let model = latestSnapshot.models.first(where: { summary in
+                summary.kind == capabilityID || summary.features.contains(where: { featureHints.contains($0.lowercased()) })
+            }) else {
+                return nil
+            }
+            let stateText = Self.modelStateText(model.state)
+            return DesktopChatCapabilityRow(
+                id: capabilityID,
+                title: title,
+                modelID: model.modelID,
+                detail: "\(model.modelID) • \(stateText)",
+                isReady: model.state == .modelWarm || model.state == .modelPinned
+            )
+        }
+    }
+
+    private func appendAssistantDelta(_ text: String, requestID: String) {
+        guard !text.isEmpty else { return }
+        let entryID = activeAssistantEntryID ?? "assistant-\(requestID)"
+        activeAssistantEntryID = entryID
+        appendBody(text, toEntryID: entryID, kind: .assistant, title: "Assistant", detail: requestID)
+    }
+
+    private func appendReasoningDelta(_ text: String, requestID: String) {
+        guard !text.isEmpty else { return }
+        let entryID = activeReasoningEntryID ?? "reasoning-\(requestID)"
+        activeReasoningEntryID = entryID
+        appendBody(text, toEntryID: entryID, kind: .reasoning, title: "Reasoning", detail: requestID)
+    }
+
+    private func appendToolDelta(callID: String, toolName: String, argumentsFragment: String) {
+        let normalizedCallID = callID.isEmpty ? UUID().uuidString : callID
+        let entryID = activeToolEntryIDs[normalizedCallID] ?? "tool-\(normalizedCallID)"
+        activeToolEntryIDs[normalizedCallID] = entryID
+        let title = toolName.isEmpty ? "Tool Call" : "Tool • \(toolName)"
+        appendBody(argumentsFragment, toEntryID: entryID, kind: .tool, title: title, detail: normalizedCallID)
+    }
+
+    private func finalizeAssistantText(_ assistantText: String, requestID: String) {
+        guard !assistantText.isEmpty else { return }
+        let entryID = activeAssistantEntryID ?? "assistant-\(requestID)"
+        activeAssistantEntryID = entryID
+        replaceBodyIfEmpty(assistantText, entryID: entryID, kind: .assistant, title: "Assistant", detail: requestID)
+    }
+
+    private func finalizeReasoningText(_ reasoningText: String, requestID: String) {
+        guard !reasoningText.isEmpty else { return }
+        let entryID = activeReasoningEntryID ?? "reasoning-\(requestID)"
+        activeReasoningEntryID = entryID
+        replaceBodyIfEmpty(reasoningText, entryID: entryID, kind: .reasoning, title: "Reasoning", detail: requestID)
+    }
+
+    private func commitAssistantMessageIfNeeded() {
+        guard
+            let entryID = activeAssistantEntryID,
+            let entry = chatTranscript.first(where: { $0.id == entryID }),
+            !entry.body.isEmpty
+        else {
+            return
+        }
+
+        if chatConversationMessages.last != ControlPlaneChatRequest.Message(role: "assistant", content: entry.body) {
+            chatConversationMessages.append(.init(role: "assistant", content: entry.body))
+        }
+    }
+
+    private func appendChatEntry(
+        id: String,
+        kind: DesktopChatTranscriptEntry.Kind,
+        title: String,
+        body: String,
+        detail: String
+    ) {
+        chatTranscript.append(
+            DesktopChatTranscriptEntry(
+                id: id,
+                kind: kind,
+                title: title,
+                body: body,
+                detail: detail
+            )
+        )
+    }
+
+    private func appendBody(
+        _ text: String,
+        toEntryID entryID: String,
+        kind: DesktopChatTranscriptEntry.Kind,
+        title: String,
+        detail: String
+    ) {
+        if let index = chatTranscript.firstIndex(where: { $0.id == entryID }) {
+            let existing = chatTranscript[index]
+            chatTranscript[index] = DesktopChatTranscriptEntry(
+                id: existing.id,
+                kind: existing.kind,
+                title: existing.title,
+                body: existing.body + text,
+                detail: existing.detail
+            )
+            return
+        }
+
+        appendChatEntry(id: entryID, kind: kind, title: title, body: text, detail: detail)
+    }
+
+    private func replaceBodyIfEmpty(
+        _ text: String,
+        entryID: String,
+        kind: DesktopChatTranscriptEntry.Kind,
+        title: String,
+        detail: String
+    ) {
+        if let index = chatTranscript.firstIndex(where: { $0.id == entryID }) {
+            let existing = chatTranscript[index]
+            guard existing.body.isEmpty else {
+                return
+            }
+            chatTranscript[index] = DesktopChatTranscriptEntry(
+                id: existing.id,
+                kind: existing.kind,
+                title: existing.title,
+                body: text,
+                detail: existing.detail
+            )
+            return
+        }
+
+        appendChatEntry(id: entryID, kind: kind, title: title, body: text, detail: detail)
     }
 
     private func trimRecentEvents() {

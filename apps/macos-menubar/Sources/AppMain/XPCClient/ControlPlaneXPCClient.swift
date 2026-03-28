@@ -9,6 +9,7 @@ public enum ControlPlaneXPCClientError: Error, Equatable {
 public protocol ControlPlaneXPCClient: Sendable {
     func handshake() async throws -> Melix_Controlplane_V1_HandshakeResponse
     func subscribe(lastSeenSeq: UInt64) async -> AsyncStream<Melix_Controlplane_V1_ControlPlaneEvent>
+    func startChat(_ request: ControlPlaneChatRequest) async throws -> ControlPlaneChatExecution
     func serverSnapshot() async throws -> Melix_Controlplane_V1_ServerSnapshot
     func loadModel(modelID: String) async throws -> Melix_Controlplane_V1_ModelSummary
     func unloadModel(modelID: String) async throws -> Melix_Controlplane_V1_ModelSummary
@@ -31,6 +32,7 @@ public protocol ControlPlaneExecuting: Sendable {
     func handshake(_ request: Melix_Controlplane_V1_HandshakeRequest) async throws -> Melix_Controlplane_V1_HandshakeResponse
     func subscribe(_ request: Melix_Controlplane_V1_SubscribeRequest) async -> ControlPlaneSubscription
     func unsubscribe(_ subscriptionID: String) async
+    func startChat(_ request: ControlPlaneChatRequest) async throws -> ControlPlaneChatExecution
     func execute(_ request: Melix_Controlplane_V1_ControlPlaneRequest) async throws -> Melix_Controlplane_V1_ControlPlaneResponse
 }
 
@@ -72,6 +74,10 @@ public actor LocalControlPlaneXPCClient: ControlPlaneXPCClient {
                 }
             }
         }
+    }
+
+    public func startChat(_ request: ControlPlaneChatRequest) async throws -> ControlPlaneChatExecution {
+        try await service.startChat(request)
     }
 
     public func loadModel(modelID: String) async throws -> Melix_Controlplane_V1_ModelSummary {

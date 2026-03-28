@@ -218,6 +218,51 @@ struct ControlPlaneServiceTests {
         #expect(response.model.operation.manifestJson == #"{"operation":"quantize"}"#)
     }
 
+    @Test("startChat reuses the request coordinator and streams typed chat events")
+    func startChatReusesTheRequestCoordinatorAndStreamsTypedChatEvents() async throws {
+        let modelCatalog = ModelCatalog()
+        _ = await modelCatalog.loadModel(id: "melix-dev-text")
+        let textClient = ScriptedChatWorkerClient(events: [
+            makeQueuedExecuteEvent(requestID: "chat-service"),
+            makeTokenExecuteEvent(requestID: "chat-service", text: "assistant"),
+            makeReasoningExecuteEvent(requestID: "chat-service", text: "trace"),
+            makeToolExecuteEvent(requestID: "chat-service", callID: "tool-1", toolName: "search", arguments: #"{"q":"melix"}"#),
+            makeUsageExecuteEvent(requestID: "chat-service", promptTokens: 3, completionTokens: 5),
+            makeCompletedExecuteEvent(requestID: "chat-service", finishReason: "stop", assistant: "assistant", reasoning: "trace"),
+        ])
+        let service = ControlPlaneService(
+            modelCatalog: modelCatalog,
+            workerRegistry: WorkerRegistry(defaultTextClient: textClient)
+        )
+
+        let execution = try await service.startChat(
+            ControlPlaneChatRequest(
+                modelID: "melix-dev-text",
+                messages: [.init(role: "user", content: "hello")]
+            )
+        )
+        var events: [ControlPlaneChatStreamEvent] = []
+        for try await event in execution.stream {
+            events.append(event)
+        }
+
+        #expect(execution.modelID == "melix-dev-text")
+        #expect(events.contains(where: {
+            if case .queued(let lane, _, _) = $0 { return lane == "text.decode.interactive" }
+            return false
+        }))
+        #expect(events.contains(where: {
+            if case .reasoningDelta("trace") = $0 { return true }
+            return false
+        }))
+        #expect(events.contains(where: {
+            if case .toolCallDelta(let callID, let toolName, _) = $0 {
+                return callID == "tool-1" && toolName == "search"
+            }
+            return false
+        }))
+    }
+
     @Test("execute maps fallback model policy values")
     func executeMapsFallbackModelPolicyValues() async throws {
         let service = ControlPlaneService(modelCatalog: ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels()))
@@ -1049,6 +1094,111 @@ private actor ScriptedModelOperationsWorkerClient: WorkerRoutingClient, ModelOpe
             continuation.finish()
         }
     }
+}
+
+private actor ScriptedChatWorkerClient: WorkerRoutingClient {
+    private let events: [Melix_Worker_V1_ExecuteEvent]
+
+    init(events: [Melix_Worker_V1_ExecuteEvent]) {
+        self.events = events
+    }
+
+    func canDispatchRequests() async -> Bool {
+        true
+    }
+
+    func generate(
+        request: Melix_Worker_V1_GenerateRequest
+    ) async throws -> AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error> {
+        _ = request
+        let events = self.events
+        return AsyncThrowingStream { continuation in
+            for event in events {
+                continuation.yield(event)
+            }
+            continuation.finish()
+        }
+    }
+
+    func abort(requestID: String) async throws -> Bool {
+        _ = requestID
+        return false
+    }
+
+    func loadModel(
+        request: Melix_Worker_V1_LoadModelRequest
+    ) async throws -> Melix_Worker_V1_LoadModelResponse {
+        var response = Melix_Worker_V1_LoadModelResponse()
+        response.modelHandle = request.model.modelID
+        return response
+    }
+}
+
+private func makeQueuedExecuteEvent(requestID: String) -> Melix_Worker_V1_ExecuteEvent {
+    var event = Melix_Worker_V1_ExecuteEvent()
+    event.requestID = requestID
+    event.queued = Melix_Worker_V1_Queued()
+    event.queued.lane = "text.decode.interactive"
+    return event
+}
+
+private func makeTokenExecuteEvent(requestID: String, text: String) -> Melix_Worker_V1_ExecuteEvent {
+    var event = Melix_Worker_V1_ExecuteEvent()
+    event.requestID = requestID
+    event.tokenDelta = Melix_Worker_V1_TokenDelta()
+    event.tokenDelta.text = text
+    return event
+}
+
+private func makeReasoningExecuteEvent(requestID: String, text: String) -> Melix_Worker_V1_ExecuteEvent {
+    var event = Melix_Worker_V1_ExecuteEvent()
+    event.requestID = requestID
+    event.reasoningDelta = Melix_Worker_V1_ReasoningDelta()
+    event.reasoningDelta.text = text
+    return event
+}
+
+private func makeToolExecuteEvent(
+    requestID: String,
+    callID: String,
+    toolName: String,
+    arguments: String
+) -> Melix_Worker_V1_ExecuteEvent {
+    var event = Melix_Worker_V1_ExecuteEvent()
+    event.requestID = requestID
+    event.toolCallDelta = Melix_Worker_V1_ToolCallDelta()
+    event.toolCallDelta.callID = callID
+    event.toolCallDelta.toolName = toolName
+    event.toolCallDelta.argumentsJsonFragment = arguments
+    return event
+}
+
+private func makeUsageExecuteEvent(
+    requestID: String,
+    promptTokens: UInt32,
+    completionTokens: UInt32
+) -> Melix_Worker_V1_ExecuteEvent {
+    var event = Melix_Worker_V1_ExecuteEvent()
+    event.requestID = requestID
+    event.usageDelta = Melix_Worker_V1_UsageDelta()
+    event.usageDelta.promptTokens = promptTokens
+    event.usageDelta.completionTokens = completionTokens
+    return event
+}
+
+private func makeCompletedExecuteEvent(
+    requestID: String,
+    finishReason: String,
+    assistant: String,
+    reasoning: String
+) -> Melix_Worker_V1_ExecuteEvent {
+    var event = Melix_Worker_V1_ExecuteEvent()
+    event.requestID = requestID
+    event.completed = Melix_Worker_V1_Completed()
+    event.completed.finishReason = finishReason
+    event.completed.assistantText = assistant
+    event.completed.reasoningText = reasoning
+    return event
 }
 
 private struct TestWorkerError: Error, CustomStringConvertible {

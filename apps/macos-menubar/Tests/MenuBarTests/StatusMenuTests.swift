@@ -57,9 +57,13 @@ struct StatusMenuTests {
 
         await viewModel.start()
         menu.perform(.loadPrimaryModel)
-        try await Task.sleep(for: .milliseconds(20))
+        try await eventually("load action should reach the client") {
+            viewModel.primaryModel?.stateText == "Warm"
+        }
         menu.perform(.unloadPrimaryModel)
-        try await Task.sleep(for: .milliseconds(20))
+        try await eventually("unload action should reach the client") {
+            viewModel.primaryModel?.stateText == "Unloaded"
+        }
 
         #expect(await client.recordedActions == ["load:melix-dev-text", "unload:melix-dev-text"])
     }

@@ -14,6 +14,8 @@ public actor ControlPlaneService {
     private let cacheMetadataStore: CacheMetadataStore
     private let sessionGraphStore: SessionGraphStore
     private let workerRegistry: WorkerRegistry?
+    private let requestCoordinator: RequestCoordinator?
+    private let chatTranslator: ChatRequestTranslator
 
     public init(
         serverVersion: String = "0.1.0",
@@ -26,8 +28,16 @@ public actor ControlPlaneService {
         schedulerReadModel: SchedulerReadModel? = nil,
         cacheMetadataStore: CacheMetadataStore = CacheMetadataStore(),
         sessionGraphStore: SessionGraphStore = SessionGraphStore(),
-        workerRegistry: WorkerRegistry? = nil
+        workerRegistry: WorkerRegistry? = nil,
+        requestCoordinator: RequestCoordinator? = nil,
+        chatTranslator: ChatRequestTranslator = ChatRequestTranslator()
     ) {
+        let resolvedSchedulerReadModel = schedulerReadModel ?? SchedulerReadModel(
+            metricsStore: metricsStore,
+            eventPublisher: { event in
+                await eventHub.publish(event)
+            }
+        )
         self.serverVersion = serverVersion
         self.daemonInstanceID = daemonInstanceID
         self.modelCatalog = modelCatalog
@@ -38,12 +48,18 @@ public actor ControlPlaneService {
         self.cacheMetadataStore = cacheMetadataStore
         self.sessionGraphStore = sessionGraphStore
         self.workerRegistry = workerRegistry
-        self.schedulerReadModel = schedulerReadModel ?? SchedulerReadModel(
-            metricsStore: metricsStore,
-            eventPublisher: { event in
-                await eventHub.publish(event)
-            }
-        )
+        self.schedulerReadModel = resolvedSchedulerReadModel
+        self.requestCoordinator = requestCoordinator ?? workerRegistry.map { registry in
+            RequestCoordinator(
+                workerRegistry: registry,
+                abortRegistry: AbortRegistry(),
+                schedulerReadModel: resolvedSchedulerReadModel,
+                metricsStore: metricsStore,
+                sessionGraphStore: sessionGraphStore,
+                cacheMetadataStore: cacheMetadataStore
+            )
+        }
+        self.chatTranslator = chatTranslator
     }
 
     public func handshake(
@@ -85,6 +101,58 @@ public actor ControlPlaneService {
         _ request: Melix_Controlplane_V1_SubscribeRequest = Melix_Controlplane_V1_SubscribeRequest()
     ) async -> ControlPlaneSubscription {
         await eventHub.subscribe(lastSeenSeq: request.lastSeenSeq)
+    }
+
+    public func startChat(
+        _ request: ControlPlaneChatRequest
+    ) async throws -> ControlPlaneChatExecution {
+        guard let requestCoordinator else {
+            throw ControlPlaneChatExecutionError.unavailable
+        }
+
+        let normalized = chatTranslator.normalize(
+            OpenAIChatCompletionsRequest(
+                model: request.modelID,
+                messages: request.messages.map {
+                    OpenAIChatCompletionsRequest.Message(role: $0.role, content: $0.content)
+                },
+                stream: true,
+                temperature: request.temperature,
+                topP: request.topP,
+                maxTokens: request.maxTokens
+            )
+        )
+        guard let modelHandle = await modelCatalog.dispatchHandle(for: normalized.model) else {
+            throw ControlPlaneChatExecutionError.unavailable
+        }
+        let translated = try chatTranslator.translate(normalized, modelHandle: modelHandle)
+        let execution = try await requestCoordinator.startChatCompletion(translated)
+
+        let stream = AsyncThrowingStream<ControlPlaneChatStreamEvent, Error> { continuation in
+            let forwardTask = Task {
+                do {
+                    for try await event in execution.stream {
+                        guard let mapped = ControlPlaneChatStreamEvent(executeEvent: event) else {
+                            continue
+                        }
+                        continuation.yield(mapped)
+                    }
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+
+            continuation.onTermination = { _ in
+                forwardTask.cancel()
+            }
+        }
+
+        return ControlPlaneChatExecution(
+            requestID: execution.requestID,
+            modelID: execution.modelID,
+            stream: stream
+        )
     }
 
     public func unsubscribe(_ subscriptionID: String) async {
