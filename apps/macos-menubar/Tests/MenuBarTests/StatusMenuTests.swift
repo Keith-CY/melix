@@ -75,9 +75,9 @@ struct StatusMenuTests {
         let menuItem = NSMenuItem(title: "Load", action: nil, keyEquivalent: "")
         menuItem.representedObject = StatusMenuAction.loadPrimaryModel.rawValue
         menu.handleMenuAction(menuItem)
-        try await Task.sleep(for: .milliseconds(20))
-
-        #expect(await client.recordedActions == ["load:melix-dev-text"])
+        try await eventually("selector bridge should dispatch the load action") {
+            viewModel.primaryModel?.stateText == "Warm"
+        }
     }
 
     @Test("perform quit calls the injected termination handler")
@@ -215,6 +215,24 @@ struct StatusMenuTests {
         #expect(statusItem.button?.title == "Melix Ready")
         #expect(statusItem.menu?.items.count == 2)
     }
+}
+
+@MainActor
+private func eventually(
+    _ description: String,
+    timeout: Duration = .milliseconds(500),
+    pollInterval: Duration = .milliseconds(10),
+    condition: @escaping @MainActor () -> Bool
+) async throws {
+    let deadline = ContinuousClock.now + timeout
+    while ContinuousClock.now < deadline {
+        if condition() {
+            return
+        }
+        try await Task.sleep(for: pollInterval)
+    }
+
+    throw MenuBarTestError(description: description)
 }
 
 @MainActor

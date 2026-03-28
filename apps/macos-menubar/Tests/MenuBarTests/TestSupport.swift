@@ -14,8 +14,14 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
     private var loadError: Error?
     private var unloadError: Error?
     private var snapshotError: Error?
+    private var modelSettingsError: Error?
+    private var modelInfoError: Error?
+    private var modelOperationError: Error?
     private var snapshotOverride: Melix_Controlplane_V1_ServerSnapshot?
     private var responseFeatures: [String] = ["chat"]
+    private var modelSettings = FakeControlPlaneXPCClient.defaultModelSettings()
+    private var modelInfoResponse = FakeControlPlaneXPCClient.defaultModelInfo()
+    private var modelOperationResponse = FakeControlPlaneXPCClient.defaultModelOperation()
 
     init() {
         var capturedContinuation: AsyncStream<Melix_Controlplane_V1_ControlPlaneEvent>.Continuation?
@@ -29,16 +35,30 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
         handshake: Error? = nil,
         load: Error? = nil,
         unload: Error? = nil,
-        snapshot: Error? = nil
+        snapshot: Error? = nil,
+        modelSettings: Error? = nil,
+        modelInfo: Error? = nil,
+        modelOperation: Error? = nil
     ) {
         handshakeError = handshake
         loadError = load
         unloadError = unload
         snapshotError = snapshot
+        modelSettingsError = modelSettings
+        modelInfoError = modelInfo
+        modelOperationError = modelOperation
     }
 
     func configureModelResponseFeatures(_ features: [String]) {
         responseFeatures = features
+    }
+
+    func configureModelInfo(_ info: Melix_Controlplane_V1_ModelInfo) {
+        modelInfoResponse = info
+    }
+
+    func configureModelOperation(_ operation: Melix_Controlplane_V1_ModelOperationResult) {
+        modelOperationResponse = operation
     }
 
     func handshake() async throws -> Melix_Controlplane_V1_HandshakeResponse {
@@ -87,6 +107,78 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
 
         modelState = .modelUnloaded
         return makeModelSummary(state: modelState)
+    }
+
+    func updateModelSettings(
+        modelID: String,
+        values: [String: String]
+    ) async throws -> Melix_Controlplane_V1_ModelSummary {
+        recordedActions.append("settings:\(modelID)")
+        if let modelSettingsError {
+            throw modelSettingsError
+        }
+        if let alias = values["alias"] {
+            modelSettings.alias = alias
+        }
+        if let typeOverride = values["type_override"] {
+            modelSettings.typeOverride = typeOverride
+        }
+        if let ttl = values["ttl_seconds"], let ttlSeconds = UInt32(ttl) {
+            modelSettings.ttlSeconds = ttlSeconds
+        }
+        if let pinOnLoad = values["pin_on_load"] {
+            modelSettings.pinOnLoad = ["1", "true", "yes", "on"].contains(pinOnLoad.lowercased())
+        }
+        if let memoryPolicy = values["memory_policy"] {
+            modelSettings.memoryPolicy = switch memoryPolicy.lowercased() {
+            case "pinned": .memoryResidencyPinned
+            case "ttl": .memoryResidencyTtl
+            default: .memoryResidencyEvictable
+            }
+        }
+        if let accelerationMode = values["default_acceleration_mode"] {
+            modelSettings.defaultAccelerationMode = switch accelerationMode.lowercased() {
+            case "speculative_decode": .speculativeDecode
+            case "accelerated_prefill": .acceleratedPrefill
+            case "active_kv_quantized": .activeKvQuantized
+            default: .baseline
+            }
+        }
+        if let profileID = values["acceleration_profile_id"] {
+            modelSettings.accelerationProfileID = profileID
+        }
+        return makeModelSummary(state: modelState)
+    }
+
+    func modelInfo(modelID: String) async throws -> Melix_Controlplane_V1_ModelInfo {
+        recordedActions.append("info:\(modelID)")
+        if let modelInfoError {
+            throw modelInfoError
+        }
+        return modelInfoResponse
+    }
+
+    func runModelOperation(
+        modelID: String,
+        operation: String,
+        outputDir: String,
+        weightQuant: String,
+        kvQuant: String,
+        ext: [String: String]
+    ) async throws -> Melix_Controlplane_V1_ModelOperationResult {
+        recordedActions.append("operation:\(operation):\(modelID)")
+        if let modelOperationError {
+            throw modelOperationError
+        }
+        var response = modelOperationResponse
+        response.operation = operation
+        if !outputDir.isEmpty {
+            response.outputPath = outputDir + "/" + operation + ".artifact"
+        }
+        if !weightQuant.isEmpty || !kvQuant.isEmpty || !ext.isEmpty {
+            response.stage = response.stage.isEmpty ? "write_artifact" : response.stage
+        }
+        return response
     }
 
     func sendModelStateChanged(state: Melix_Controlplane_V1_ModelState) {
@@ -202,6 +294,7 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
         model.state = state
         model.features = responseFeatures
         model.maxContext = 8192
+        model.settings = modelSettings
         return model
     }
 
@@ -244,6 +337,35 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
             "requests.inflight": 1,
         ]
         return metrics
+    }
+
+    private static func defaultModelSettings() -> Melix_Controlplane_V1_ModelSettings {
+        var settings = Melix_Controlplane_V1_ModelSettings()
+        settings.alias = "Melix Dev Text"
+        settings.memoryPolicy = .memoryResidencyEvictable
+        settings.defaultAccelerationMode = .baseline
+        return settings
+    }
+
+    private static func defaultModelInfo() -> Melix_Controlplane_V1_ModelInfo {
+        var info = Melix_Controlplane_V1_ModelInfo()
+        info.ok = true
+        info.modelKind = "text"
+        info.maxContext = 8192
+        info.supportedParsers = ["text", "json"]
+        info.supportedModalities = ["text"]
+        return info
+    }
+
+    private static func defaultModelOperation() -> Melix_Controlplane_V1_ModelOperationResult {
+        var result = Melix_Controlplane_V1_ModelOperationResult()
+        result.ok = true
+        result.jobID = "job-fake"
+        result.stage = "write_artifact"
+        result.pct = 0.75
+        result.manifestJson = #"{"operation":"quantize"}"#
+        result.outputPath = "/tmp/melix-fake/quantize.artifact"
+        return result
     }
 }
 

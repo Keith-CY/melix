@@ -22,6 +22,11 @@ public struct DesktopFoundationRootView: View {
                     Label("Models", systemImage: "cube.transparent")
                 }
 
+            DesktopToolsTabView(viewModel: viewModel)
+                .tabItem {
+                    Label("Tools", systemImage: "wrench.and.screwdriver")
+                }
+
             DesktopSettingsTabView(foundation: foundation)
                 .tabItem {
                     Label("Settings", systemImage: "slider.horizontal.3")
@@ -53,7 +58,7 @@ public struct DesktopFoundationRootView: View {
     }
 }
 
-private struct DesktopDashboardTabView: View {
+struct DesktopDashboardTabView: View {
     let foundation: DesktopFoundationState
 
     var body: some View {
@@ -110,7 +115,7 @@ private struct DesktopDashboardTabView: View {
     }
 }
 
-private struct DesktopModelsTabView: View {
+struct DesktopModelsTabView: View {
     let foundation: DesktopFoundationState
     let viewModel: RuntimeViewModel
 
@@ -120,28 +125,136 @@ private struct DesktopModelsTabView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(model.modelID)
                         .font(.headline)
-                    Text("\(model.kind) • \(model.stateText) • \(model.maxContext) ctx")
+                    Text(model.alias.isEmpty ? "\(model.kind) • \(model.stateText) • \(model.maxContext) ctx" : "\(model.alias) • \(model.stateText) • \(model.maxContext) ctx")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                    Text("\(model.memoryPolicyText) • \(model.accelerationModeText) • \(model.accelerationProfileID.isEmpty ? "no-profile" : model.accelerationProfileID)")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
                 }
                 Spacer()
+                Button("Latency Profile") {
+                    Task { await applyLatencyProfile(to: model) }
+                }
+                .buttonStyle(.bordered)
                 Button(model.actionTitle) {
-                    Task {
-                        if model.isLoaded {
-                            await viewModel.unloadModel(modelID: model.modelID)
-                        } else {
-                            await viewModel.loadModel(modelID: model.modelID)
-                        }
-                    }
+                    Task { await toggleModelLoad(for: model) }
                 }
                 .buttonStyle(.borderedProminent)
             }
             .padding(.vertical, 4)
         }
     }
+
+    func applyLatencyProfile(to model: RuntimeModelRow) async {
+        await viewModel.updateModelSettings(
+            modelID: model.modelID,
+            alias: model.alias.isEmpty ? "Melix Text Turbo" : model.alias,
+            pinOnLoad: true,
+            memoryPolicy: "pinned",
+            accelerationMode: "speculative_decode",
+            accelerationProfileID: "draft-q4"
+        )
+    }
+
+    func toggleModelLoad(for model: RuntimeModelRow) async {
+        if model.isLoaded {
+            await viewModel.unloadModel(modelID: model.modelID)
+        } else {
+            await viewModel.loadModel(modelID: model.modelID)
+        }
+    }
 }
 
-private struct DesktopSettingsTabView: View {
+struct DesktopToolsTabView: View {
+    let viewModel: RuntimeViewModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            if let primaryModel = viewModel.primaryModel {
+                GroupBox("Primary Model") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(primaryModel.modelID)
+                            .font(.headline)
+                        Text(primaryModel.alias.isEmpty ? primaryModel.kind : primaryModel.alias)
+                            .foregroundStyle(.secondary)
+                        HStack {
+                            Button("Inspect") {
+                                Task { await inspectPrimaryModel() }
+                            }
+                            Button("Quantize") {
+                                Task { await quantizePrimaryModel() }
+                            }
+                            Button("Download") {
+                                Task { await downloadPrimaryModel() }
+                            }
+                            Button("Upload") {
+                                Task { await uploadPrimaryModel() }
+                            }
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+
+            if let info = viewModel.selectedModelInfo {
+                GroupBox("Model Info") {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("\(info.modelID) • \(info.modelKind)")
+                            .font(.headline)
+                        Text("max context \(info.maxContext)")
+                        Text("parsers: \(info.supportedParsers.joined(separator: ", "))")
+                            .foregroundStyle(.secondary)
+                        Text("modalities: \(info.supportedModalities.joined(separator: ", "))")
+                            .foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+
+            if let operation = viewModel.lastModelOperation {
+                GroupBox("Last Operation") {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("\(operation.operation) • \(operation.modelID)")
+                            .font(.headline)
+                        Text("job \(operation.jobID)")
+                        Text("stage \(operation.stage) • \(String(format: "%.0f%%", operation.pct * 100))")
+                        Text(operation.outputPath)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        if !operation.manifestJson.isEmpty {
+                            Text(operation.manifestJson)
+                                .font(.caption.monospaced())
+                                .textSelection(.enabled)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+
+            Spacer()
+        }
+        .padding(20)
+    }
+
+    func inspectPrimaryModel() async {
+        await viewModel.inspectPrimaryModel()
+    }
+
+    func quantizePrimaryModel() async {
+        await viewModel.quantizePrimaryModel()
+    }
+
+    func downloadPrimaryModel() async {
+        await viewModel.downloadPrimaryModel()
+    }
+
+    func uploadPrimaryModel() async {
+        await viewModel.uploadPrimaryModel()
+    }
+}
+
+struct DesktopSettingsTabView: View {
     let foundation: DesktopFoundationState
 
     var body: some View {
@@ -157,7 +270,7 @@ private struct DesktopSettingsTabView: View {
     }
 }
 
-private struct DesktopLogsTabView: View {
+struct DesktopLogsTabView: View {
     let foundation: DesktopFoundationState
 
     var body: some View {
@@ -185,7 +298,7 @@ private struct DesktopLogsTabView: View {
     }
 }
 
-private struct DesktopBenchTabView: View {
+struct DesktopBenchTabView: View {
     let foundation: DesktopFoundationState
 
     var body: some View {
@@ -202,7 +315,7 @@ private struct DesktopBenchTabView: View {
     }
 }
 
-private struct DesktopAPIReferenceTabView: View {
+struct DesktopAPIReferenceTabView: View {
     let foundation: DesktopFoundationState
 
     var body: some View {

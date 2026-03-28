@@ -1,5 +1,6 @@
 import Foundation
 import MelixControlPlaneProtocol
+import MelixWorkerProtocol
 
 public actor ControlPlaneService {
     public let serverVersion: String
@@ -12,6 +13,7 @@ public actor ControlPlaneService {
     private let schedulerReadModel: SchedulerReadModel
     private let cacheMetadataStore: CacheMetadataStore
     private let sessionGraphStore: SessionGraphStore
+    private let workerRegistry: WorkerRegistry?
 
     public init(
         serverVersion: String = "0.1.0",
@@ -23,7 +25,8 @@ public actor ControlPlaneService {
         enginePool: EnginePool = EnginePool(),
         schedulerReadModel: SchedulerReadModel? = nil,
         cacheMetadataStore: CacheMetadataStore = CacheMetadataStore(),
-        sessionGraphStore: SessionGraphStore = SessionGraphStore()
+        sessionGraphStore: SessionGraphStore = SessionGraphStore(),
+        workerRegistry: WorkerRegistry? = nil
     ) {
         self.serverVersion = serverVersion
         self.daemonInstanceID = daemonInstanceID
@@ -34,6 +37,7 @@ public actor ControlPlaneService {
         self.enginePool = enginePool
         self.cacheMetadataStore = cacheMetadataStore
         self.sessionGraphStore = sessionGraphStore
+        self.workerRegistry = workerRegistry
         self.schedulerReadModel = schedulerReadModel ?? SchedulerReadModel(
             metricsStore: metricsStore,
             eventPublisher: { event in
@@ -132,6 +136,12 @@ public actor ControlPlaneService {
             reply.model = model
             reply.models = await modelCatalog.listModels()
             return okResponse(for: request, model: reply)
+        case .setPolicy(let setPolicy):
+            return await handleSetModelPolicy(request: request, command: setPolicy)
+        case .getInfo(let getInfo):
+            return await handleGetModelInfo(request: request, command: getInfo)
+        case .runOperation(let runOperation):
+            return await handleRunModelOperation(request: request, command: runOperation)
         default:
             return errorResponse(
                 for: request,
@@ -267,6 +277,223 @@ public actor ControlPlaneService {
             cache: cache,
             sessions: sessions
         )
+    }
+
+    private func handleSetModelPolicy(
+        request: Melix_Controlplane_V1_ControlPlaneRequest,
+        command: Melix_Controlplane_V1_SetModelPolicy
+    ) async -> Melix_Controlplane_V1_ControlPlaneResponse {
+        let startedAt = Date()
+        guard let existingModel = await modelCatalog.model(id: command.modelID) else {
+            return errorResponse(for: request, code: "not_found", message: "Unknown model ID.")
+        }
+
+        var settings = existingModel.settings
+        applyModelPolicy(command.values, to: &settings)
+
+        guard let model = await modelCatalog.updateSettings(id: command.modelID, settings: settings) else {
+            return errorResponse(for: request, code: "not_found", message: "Unknown model ID.")
+        }
+
+        await metricsStore.set(
+            Date().timeIntervalSince(startedAt) * 1000,
+            forKey: "control_plane.model_settings_ms"
+        )
+
+        var reply = Melix_Controlplane_V1_ModelReply()
+        reply.model = model
+        reply.models = await modelCatalog.listModels()
+        return okResponse(for: request, model: reply)
+    }
+
+    private func handleGetModelInfo(
+        request: Melix_Controlplane_V1_ControlPlaneRequest,
+        command: Melix_Controlplane_V1_GetModelInfo
+    ) async -> Melix_Controlplane_V1_ControlPlaneResponse {
+        let startedAt = Date()
+        guard await modelCatalog.model(id: command.modelID) != nil else {
+            return errorResponse(for: request, code: "not_found", message: "Unknown model ID.")
+        }
+        guard
+            let workerRegistry,
+            let workerClient = await workerRegistry.client(for: .pythonModelOperations) as? any ModelOperationsWorkerClientProtocol
+        else {
+            return errorResponse(for: request, code: "unavailable", message: "Model operations worker is unavailable.")
+        }
+
+        var workerRequest = Melix_Worker_V1_GetModelInfoRequest()
+        workerRequest.sourceModel = command.modelID
+
+        do {
+            let workerResponse = try await workerClient.getModelInfo(request: workerRequest)
+            if !workerResponse.ok {
+                return errorResponse(
+                    for: request,
+                    code: workerResponse.error.code.isEmpty ? "unknown" : workerResponse.error.code,
+                    message: workerResponse.error.message.isEmpty ? "Model info request failed." : workerResponse.error.message
+                )
+            }
+
+            await metricsStore.set(
+                Date().timeIntervalSince(startedAt) * 1000,
+                forKey: "control_plane.model_info_ms"
+            )
+
+            var reply = Melix_Controlplane_V1_ModelReply()
+            reply.info.ok = workerResponse.ok
+            reply.info.modelKind = workerResponse.modelKind
+            reply.info.maxContext = workerResponse.maxContext
+            reply.info.supportedParsers = workerResponse.supportedParsers
+            reply.info.supportedModalities = workerResponse.supportedModalities
+            return okResponse(for: request, model: reply)
+        } catch {
+            return errorResponse(for: request, code: "unavailable", message: "Model info worker request failed: \(error)")
+        }
+    }
+
+    private func handleRunModelOperation(
+        request: Melix_Controlplane_V1_ControlPlaneRequest,
+        command: Melix_Controlplane_V1_RunModelOperation
+    ) async -> Melix_Controlplane_V1_ControlPlaneResponse {
+        let startedAt = Date()
+        guard await modelCatalog.model(id: command.modelID) != nil else {
+            return errorResponse(for: request, code: "not_found", message: "Unknown model ID.")
+        }
+        guard
+            let workerRegistry,
+            let workerClient = await workerRegistry.client(for: .pythonModelOperations) as? any ModelOperationsWorkerClientProtocol
+        else {
+            return errorResponse(for: request, code: "unavailable", message: "Model operations worker is unavailable.")
+        }
+
+        var workerRequest = Melix_Worker_V1_ConvertModelRequest()
+        workerRequest.sourceModel = command.modelID
+        workerRequest.outputDir = command.outputDir
+        workerRequest.weightQuant = command.weightQuant
+        workerRequest.kvQuant = command.kvQuant
+        workerRequest.generateManifest = command.generateManifest
+        workerRequest.runSmokeTest = command.runSmokeTest
+        workerRequest.ext = command.ext
+        if workerRequest.ext["operation"] == nil {
+            workerRequest.ext["operation"] = command.operation
+        }
+
+        do {
+            let stream = try await workerClient.convertModel(request: workerRequest)
+            var operation = Melix_Controlplane_V1_ModelOperationResult()
+            operation.ok = true
+            operation.operation = command.operation
+
+            for try await event in stream {
+                switch event.payload {
+                case .started(let started):
+                    operation.jobID = started.jobID
+                case .progress(let progress):
+                    operation.stage = progress.stage
+                    operation.pct = progress.pct
+                case .manifest(let manifest):
+                    operation.manifestJson = manifest.manifestJson
+                case .completed(let completed):
+                    operation.outputPath = completed.outputPath
+                case .failed(let failed):
+                    operation.ok = false
+                    operation.error = makeErrorStatus(from: failed.error)
+                case nil:
+                    break
+                }
+            }
+
+            await metricsStore.set(
+                Date().timeIntervalSince(startedAt) * 1000,
+                forKey: "control_plane.model_operation_ms"
+            )
+
+            guard operation.ok else {
+                return errorResponse(
+                    for: request,
+                    code: operation.error.code.isEmpty ? "unknown" : operation.error.code,
+                    message: operation.error.message.isEmpty ? "Model operation failed." : operation.error.message
+                )
+            }
+
+            var reply = Melix_Controlplane_V1_ModelReply()
+            reply.operation = operation
+            return okResponse(for: request, model: reply)
+        } catch {
+            return errorResponse(for: request, code: "unavailable", message: "Model operation worker request failed: \(error)")
+        }
+    }
+
+    private func applyModelPolicy(
+        _ values: [String: String],
+        to settings: inout Melix_Controlplane_V1_ModelSettings
+    ) {
+        for (key, value) in values {
+            switch key {
+            case "alias":
+                settings.alias = value
+            case "type_override":
+                settings.typeOverride = value
+            case "ttl_seconds":
+                if let ttl = UInt32(value) {
+                    settings.ttlSeconds = ttl
+                }
+            case "pin_on_load":
+                settings.pinOnLoad = parseBool(value)
+            case "memory_policy":
+                settings.memoryPolicy = memoryPolicy(for: value)
+            case "default_acceleration_mode":
+                settings.defaultAccelerationMode = accelerationMode(for: value)
+            case "acceleration_profile_id":
+                settings.accelerationProfileID = value
+            default:
+                settings.ext[key] = value
+            }
+        }
+    }
+
+    private func parseBool(_ value: String) -> Bool {
+        switch value.lowercased() {
+        case "1", "true", "yes", "on":
+            return true
+        default:
+            return false
+        }
+    }
+
+    private func memoryPolicy(for rawValue: String) -> Melix_Controlplane_V1_MemoryResidencyPolicy {
+        switch rawValue.lowercased() {
+        case "pinned":
+            return .memoryResidencyPinned
+        case "ttl":
+            return .memoryResidencyTtl
+        default:
+            return .memoryResidencyEvictable
+        }
+    }
+
+    private func accelerationMode(for rawValue: String) -> Melix_Controlplane_V1_AccelerationMode {
+        switch rawValue.lowercased() {
+        case "speculative_decode":
+            return .speculativeDecode
+        case "accelerated_prefill":
+            return .acceleratedPrefill
+        case "active_kv_quantized":
+            return .activeKvQuantized
+        default:
+            return .baseline
+        }
+    }
+
+    private func makeErrorStatus(
+        from workerError: Melix_Worker_V1_ErrorStatus
+    ) -> Melix_Controlplane_V1_ErrorStatus {
+        var error = Melix_Controlplane_V1_ErrorStatus()
+        error.code = workerError.code
+        error.message = workerError.message
+        error.retriable = workerError.retriable
+        error.details = workerError.details
+        return error
     }
 
     private func okResponse(

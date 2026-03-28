@@ -3,6 +3,7 @@ import Testing
 
 @testable import MelixControlPlaneCore
 import MelixControlPlaneProtocol
+import MelixWorkerProtocol
 
 @Suite("Control Plane Service")
 struct ControlPlaneServiceTests {
@@ -94,6 +95,280 @@ struct ControlPlaneServiceTests {
         #expect(response.model.models.first?.state == .modelUnloaded)
         #expect(event.modelState.modelID == "melix-dev-text")
         #expect(event.modelState.state == .modelUnloaded)
+    }
+
+    @Test("execute handles model.set_policy and updates typed model settings")
+    func executeHandlesModelSetPolicyAndUpdatesTypedModelSettings() async throws {
+        let service = ControlPlaneService(modelCatalog: ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels()))
+
+        let response = try await service.execute(
+            makeSetModelPolicyRequest(
+                modelID: "melix-dev-text",
+                values: [
+                    "alias": "Melix Text Turbo",
+                    "pin_on_load": "true",
+                    "memory_policy": "pinned",
+                    "default_acceleration_mode": "speculative_decode",
+                    "acceleration_profile_id": "draft-q4",
+                ]
+            )
+        )
+
+        #expect(response.ok)
+        #expect(response.model.model.modelID == "melix-dev-text")
+        #expect(response.model.model.settings.alias == "Melix Text Turbo")
+        #expect(response.model.model.settings.pinOnLoad)
+        #expect(response.model.model.settings.memoryPolicy == .memoryResidencyPinned)
+        #expect(response.model.model.settings.defaultAccelerationMode == .speculativeDecode)
+        #expect(response.model.model.settings.accelerationProfileID == "draft-q4")
+    }
+
+    @Test("execute handles model.get_info through the model-operations worker")
+    func executeHandlesModelGetInfoThroughTheModelOperationsWorker() async throws {
+        let modelOpsClient = ScriptedModelOperationsWorkerClient()
+        await modelOpsClient.setInfoResponse({
+            var response = Melix_Worker_V1_GetModelInfoResponse()
+            response.ok = true
+            response.modelKind = "text"
+            response.maxContext = 8192
+            response.supportedParsers = ["text", "json"]
+            response.supportedModalities = ["text"]
+            return response
+        }())
+        let service = ControlPlaneService(
+            modelCatalog: ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels()),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                modelOperationsClient: modelOpsClient
+            )
+        )
+
+        let response = try await service.execute(makeGetModelInfoRequest(modelID: "melix-dev-text"))
+        let lastRequest = try #require(await modelOpsClient.lastInfoRequest)
+
+        #expect(response.ok)
+        #expect(lastRequest.sourceModel == "melix-dev-text")
+        #expect(response.model.info.ok)
+        #expect(response.model.info.modelKind == "text")
+        #expect(response.model.info.maxContext == 8192)
+        #expect(response.model.info.supportedParsers == ["text", "json"])
+    }
+
+    @Test("execute handles model.run_operation through the model-operations worker")
+    func executeHandlesModelRunOperationThroughTheModelOperationsWorker() async throws {
+        let modelOpsClient = ScriptedModelOperationsWorkerClient()
+        await modelOpsClient.setConvertEvents([
+            {
+                var event = Melix_Worker_V1_ConvertModelEvent()
+                event.started = Melix_Worker_V1_ConvertStarted()
+                event.started.jobID = "job-123"
+                return event
+            }(),
+            {
+                var event = Melix_Worker_V1_ConvertModelEvent()
+                event.progress = Melix_Worker_V1_ConvertProgress()
+                event.progress.stage = "write_artifact"
+                event.progress.pct = 0.75
+                return event
+            }(),
+            {
+                var event = Melix_Worker_V1_ConvertModelEvent()
+                event.manifest = Melix_Worker_V1_ConvertManifest()
+                event.manifest.manifestJson = #"{"operation":"quantize"}"#
+                return event
+            }(),
+            {
+                var event = Melix_Worker_V1_ConvertModelEvent()
+                event.completed = Melix_Worker_V1_ConvertCompleted()
+                event.completed.outputPath = "/tmp/melix-ops/quantize.artifact"
+                return event
+            }(),
+        ])
+        let service = ControlPlaneService(
+            modelCatalog: ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels()),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                modelOperationsClient: modelOpsClient
+            )
+        )
+
+        let response = try await service.execute(
+            makeRunModelOperationRequest(
+                modelID: "melix-dev-text",
+                operation: "quantize",
+                outputDir: "/tmp/melix-ops",
+                weightQuant: "q4",
+                kvQuant: "q8",
+                ext: ["target_repo": "melix/upload-target"]
+            )
+        )
+        let lastRequest = try #require(await modelOpsClient.lastConvertRequest)
+
+        #expect(response.ok)
+        #expect(lastRequest.sourceModel == "melix-dev-text")
+        #expect(lastRequest.ext["operation"] == "quantize")
+        #expect(lastRequest.weightQuant == "q4")
+        #expect(lastRequest.kvQuant == "q8")
+        #expect(lastRequest.ext["target_repo"] == "melix/upload-target")
+        #expect(response.model.operation.ok)
+        #expect(response.model.operation.operation == "quantize")
+        #expect(response.model.operation.jobID == "job-123")
+        #expect(response.model.operation.stage == "write_artifact")
+        #expect(response.model.operation.outputPath == "/tmp/melix-ops/quantize.artifact")
+        #expect(response.model.operation.manifestJson == #"{"operation":"quantize"}"#)
+    }
+
+    @Test("execute maps fallback model policy values")
+    func executeMapsFallbackModelPolicyValues() async throws {
+        let service = ControlPlaneService(modelCatalog: ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels()))
+
+        let response = try await service.execute(
+            makeSetModelPolicyRequest(
+                modelID: "melix-dev-text",
+                values: [
+                    "type_override": "mlx-text",
+                    "ttl_seconds": "600",
+                    "pin_on_load": "no",
+                    "memory_policy": "ttl",
+                    "default_acceleration_mode": "active_kv_quantized",
+                    "custom_hint": "prefetch",
+                ]
+            )
+        )
+
+        #expect(response.ok)
+        #expect(response.model.model.settings.typeOverride == "mlx-text")
+        #expect(response.model.model.settings.ttlSeconds == 600)
+        #expect(response.model.model.settings.pinOnLoad == false)
+        #expect(response.model.model.settings.memoryPolicy == .memoryResidencyTtl)
+        #expect(response.model.model.settings.defaultAccelerationMode == .activeKvQuantized)
+        #expect(response.model.model.settings.ext["custom_hint"] == "prefetch")
+    }
+
+    @Test("execute surfaces structured errors for missing or unavailable model tools")
+    func executeSurfacesStructuredErrorsForMissingOrUnavailableModelTools() async throws {
+        let unavailableService = ControlPlaneService(
+            modelCatalog: ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels()),
+            workerRegistry: WorkerRegistry(defaultTextClient: NullWorkerClient())
+        )
+
+        let missingPolicy = try await unavailableService.execute(
+            makeSetModelPolicyRequest(modelID: "missing-model", values: [:])
+        )
+        let missingInfo = try await unavailableService.execute(
+            makeGetModelInfoRequest(modelID: "missing-model")
+        )
+        let unavailableInfo = try await unavailableService.execute(
+            makeGetModelInfoRequest(modelID: "melix-dev-text")
+        )
+        let unavailableOperation = try await unavailableService.execute(
+            makeRunModelOperationRequest(
+                modelID: "melix-dev-text",
+                operation: "quantize",
+                outputDir: "/tmp/melix-ops",
+                weightQuant: "q4",
+                kvQuant: "q8"
+            )
+        )
+
+        #expect(!missingPolicy.ok)
+        #expect(missingPolicy.error.code == "not_found")
+        #expect(!missingInfo.ok)
+        #expect(missingInfo.error.code == "not_found")
+        #expect(!unavailableInfo.ok)
+        #expect(unavailableInfo.error.code == "unavailable")
+        #expect(!unavailableOperation.ok)
+        #expect(unavailableOperation.error.code == "unavailable")
+    }
+
+    @Test("execute surfaces worker-side failures for model info and model operations")
+    func executeSurfacesWorkerSideFailuresForModelInfoAndOperations() async throws {
+        let modelOpsClient = ScriptedModelOperationsWorkerClient()
+        await modelOpsClient.setInfoResponse({
+            var response = Melix_Worker_V1_GetModelInfoResponse()
+            response.ok = false
+            response.error = Melix_Worker_V1_ErrorStatus()
+            response.error.code = "invalid_model"
+            response.error.message = "Model metadata unavailable."
+            return response
+        }())
+        await modelOpsClient.setConvertEvents([
+            {
+                var event = Melix_Worker_V1_ConvertModelEvent()
+                event.started = Melix_Worker_V1_ConvertStarted()
+                event.started.jobID = "job-failed"
+                return event
+            }(),
+            {
+                var event = Melix_Worker_V1_ConvertModelEvent()
+                event.failed = Melix_Worker_V1_ConvertFailed()
+                event.failed.error = Melix_Worker_V1_ErrorStatus()
+                event.failed.error.code = "convert_failed"
+                event.failed.error.message = "Quantization failed."
+                event.failed.error.retriable = false
+                return event
+            }(),
+            Melix_Worker_V1_ConvertModelEvent(),
+        ])
+
+        let service = ControlPlaneService(
+            modelCatalog: ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels()),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                modelOperationsClient: modelOpsClient
+            )
+        )
+
+        let infoResponse = try await service.execute(makeGetModelInfoRequest(modelID: "melix-dev-text"))
+        let operationResponse = try await service.execute(
+            makeRunModelOperationRequest(
+                modelID: "melix-dev-text",
+                operation: "quantize",
+                outputDir: "/tmp/melix-ops",
+                weightQuant: "q4",
+                kvQuant: "q8"
+            )
+        )
+
+        #expect(!infoResponse.ok)
+        #expect(infoResponse.error.code == "invalid_model")
+        #expect(infoResponse.error.message == "Model metadata unavailable.")
+        #expect(!operationResponse.ok)
+        #expect(operationResponse.error.code == "convert_failed")
+        #expect(operationResponse.error.message == "Quantization failed.")
+    }
+
+    @Test("execute surfaces thrown model info and operation worker errors")
+    func executeSurfacesThrownModelInfoAndOperationWorkerErrors() async throws {
+        let modelOpsClient = ScriptedModelOperationsWorkerClient()
+        await modelOpsClient.setInfoError(TestWorkerError(description: "info transport down"))
+        await modelOpsClient.setConvertError(TestWorkerError(description: "operation transport down"))
+
+        let service = ControlPlaneService(
+            modelCatalog: ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels()),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                modelOperationsClient: modelOpsClient
+            )
+        )
+
+        let infoResponse = try await service.execute(makeGetModelInfoRequest(modelID: "melix-dev-text"))
+        let operationResponse = try await service.execute(
+            makeRunModelOperationRequest(
+                modelID: "melix-dev-text",
+                operation: "upload",
+                outputDir: "/tmp/melix-upload",
+                weightQuant: "",
+                kvQuant: ""
+            )
+        )
+
+        #expect(!infoResponse.ok)
+        #expect(infoResponse.error.code == "unavailable")
+        #expect(infoResponse.error.message.contains("info transport down"))
+        #expect(!operationResponse.ok)
+        #expect(operationResponse.error.code == "unavailable")
+        #expect(operationResponse.error.message.contains("operation transport down"))
     }
 
     @Test("execute returns not found for unknown model operations")
@@ -539,6 +814,54 @@ struct ControlPlaneServiceTests {
         return request
     }
 
+    private func makeSetModelPolicyRequest(
+        modelID: String,
+        values: [String: String]
+    ) -> Melix_Controlplane_V1_ControlPlaneRequest {
+        var request = Melix_Controlplane_V1_ControlPlaneRequest()
+        request.requestID = "req-model-set-policy-\(modelID)"
+        request.commandType = "model.set_policy"
+        request.model = Melix_Controlplane_V1_ModelCommand()
+        request.model.setPolicy = Melix_Controlplane_V1_SetModelPolicy()
+        request.model.setPolicy.modelID = modelID
+        request.model.setPolicy.values = values
+        return request
+    }
+
+    private func makeGetModelInfoRequest(modelID: String) -> Melix_Controlplane_V1_ControlPlaneRequest {
+        var request = Melix_Controlplane_V1_ControlPlaneRequest()
+        request.requestID = "req-model-get-info-\(modelID)"
+        request.commandType = "model.get_info"
+        request.model = Melix_Controlplane_V1_ModelCommand()
+        request.model.getInfo = Melix_Controlplane_V1_GetModelInfo()
+        request.model.getInfo.modelID = modelID
+        return request
+    }
+
+    private func makeRunModelOperationRequest(
+        modelID: String,
+        operation: String,
+        outputDir: String,
+        weightQuant: String,
+        kvQuant: String,
+        ext: [String: String] = [:]
+    ) -> Melix_Controlplane_V1_ControlPlaneRequest {
+        var request = Melix_Controlplane_V1_ControlPlaneRequest()
+        request.requestID = "req-model-run-operation-\(modelID)-\(operation)"
+        request.commandType = "model.run_operation"
+        request.model = Melix_Controlplane_V1_ModelCommand()
+        request.model.runOperation = Melix_Controlplane_V1_RunModelOperation()
+        request.model.runOperation.modelID = modelID
+        request.model.runOperation.operation = operation
+        request.model.runOperation.outputDir = outputDir
+        request.model.runOperation.weightQuant = weightQuant
+        request.model.runOperation.kvQuant = kvQuant
+        request.model.runOperation.generateManifest = true
+        request.model.runOperation.runSmokeTest = true
+        request.model.runOperation.ext = ext
+        return request
+    }
+
     private func makeCacheSnapshot() -> Melix_Controlplane_V1_CacheSnapshot {
         var summary = Melix_Controlplane_V1_CacheSummary()
         summary.l1Bytes = 2048
@@ -652,4 +975,82 @@ struct ControlPlaneServiceTests {
         session.availableSnapshots = [snapshot]
         return session
     }
+}
+
+private actor ScriptedModelOperationsWorkerClient: WorkerRoutingClient, ModelOperationsWorkerClientProtocol {
+    private(set) var lastInfoRequest: Melix_Worker_V1_GetModelInfoRequest?
+    private(set) var lastConvertRequest: Melix_Worker_V1_ConvertModelRequest?
+    private var infoResponse = Melix_Worker_V1_GetModelInfoResponse()
+    private var convertEvents: [Melix_Worker_V1_ConvertModelEvent] = []
+    private var infoError: Error?
+    private var convertError: Error?
+
+    func setInfoResponse(_ response: Melix_Worker_V1_GetModelInfoResponse) {
+        infoResponse = response
+    }
+
+    func setConvertEvents(_ events: [Melix_Worker_V1_ConvertModelEvent]) {
+        convertEvents = events
+    }
+
+    func setInfoError(_ error: Error?) {
+        infoError = error
+    }
+
+    func setConvertError(_ error: Error?) {
+        convertError = error
+    }
+
+    func canDispatchRequests() async -> Bool {
+        true
+    }
+
+    func generate(
+        request: Melix_Worker_V1_GenerateRequest
+    ) async throws -> AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error> {
+        _ = request
+        throw WorkerClientError.unavailable
+    }
+
+    func abort(requestID: String) async throws -> Bool {
+        _ = requestID
+        return false
+    }
+
+    func loadModel(
+        request: Melix_Worker_V1_LoadModelRequest
+    ) async throws -> Melix_Worker_V1_LoadModelResponse {
+        _ = request
+        throw WorkerClientError.unavailable
+    }
+
+    func getModelInfo(
+        request: Melix_Worker_V1_GetModelInfoRequest
+    ) async throws -> Melix_Worker_V1_GetModelInfoResponse {
+        lastInfoRequest = request
+        if let infoError {
+            throw infoError
+        }
+        return infoResponse
+    }
+
+    func convertModel(
+        request: Melix_Worker_V1_ConvertModelRequest
+    ) async throws -> AsyncThrowingStream<Melix_Worker_V1_ConvertModelEvent, Error> {
+        lastConvertRequest = request
+        if let convertError {
+            throw convertError
+        }
+        let events = convertEvents
+        return AsyncThrowingStream { continuation in
+            for event in events {
+                continuation.yield(event)
+            }
+            continuation.finish()
+        }
+    }
+}
+
+private struct TestWorkerError: Error, CustomStringConvertible {
+    let description: String
 }

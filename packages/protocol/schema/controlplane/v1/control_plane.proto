@@ -107,6 +107,8 @@ message ModelCommand {
     UnpinModel unpin = 5;
     WarmupModel warmup = 6;
     SetModelPolicy set_policy = 7;
+    GetModelInfo get_info = 8;
+    RunModelOperation run_operation = 9;
   }
 }
 
@@ -159,6 +161,8 @@ message ServerReply {
 message ModelReply {
   repeated ModelSummary models = 1;
   ModelSummary model = 2;
+  ModelInfo info = 3;
+  ModelOperationResult operation = 4;
 }
 
 message CacheReply {
@@ -207,6 +211,19 @@ message WarmupModel {
 message SetModelPolicy {
   string model_id = 1;
   map<string, string> values = 2;
+}
+message GetModelInfo {
+  string model_id = 1;
+}
+message RunModelOperation {
+  string model_id = 1;
+  string operation = 2;
+  string output_dir = 3;
+  string weight_quant = 4;
+  string kv_quant = 5;
+  bool generate_manifest = 6;
+  bool run_smoke_test = 7;
+  map<string, string> ext = 8;
 }
 
 message GetCacheSnapshot {}
@@ -425,6 +442,25 @@ message ModelSummary {
   ModelCapabilityClass capability_class = 10;
   WorkerRouteClass route_class = 11;
   ModelSettings settings = 12;
+}
+
+message ModelInfo {
+  bool ok = 1;
+  string model_kind = 2;
+  uint32 max_context = 3;
+  repeated string supported_parsers = 4;
+  repeated string supported_modalities = 5;
+}
+
+message ModelOperationResult {
+  bool ok = 1;
+  string operation = 2;
+  string job_id = 3;
+  string stage = 4;
+  float pct = 5;
+  string output_path = 6;
+  string manifest_json = 7;
+  ErrorStatus error = 8;
 }
 
 message QueueSummary {

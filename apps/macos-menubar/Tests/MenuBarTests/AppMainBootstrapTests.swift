@@ -123,6 +123,50 @@ struct AppMainBootstrapTests {
         #expect(menu.installCount == 1)
         #expect(presenter.showCount == 1)
     }
+
+    @Test("bootstrap environment honors explicit overrides")
+    @MainActor
+    func bootstrapEnvironmentHonorsExplicitOverrides() {
+        let environment = MenuBarBootstrapEnvironment(
+            environment: [
+                "MELIX_REPO_ROOT": "/tmp/melix-root",
+                "MELIX_WORKER_SOCKET_PATH": "/tmp/python.sock",
+                "MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH": "/tmp/swift.sock",
+            ]
+        )
+
+        #expect(environment.repoRoot == "/tmp/melix-root")
+        #expect(environment.pythonWorkerSocketPath == "/tmp/python.sock")
+        #expect(environment.swiftTextWorkerSocketPath == "/tmp/swift.sock")
+    }
+
+    @Test("bootstrap environment falls back to inferred repo root and default sockets")
+    @MainActor
+    func bootstrapEnvironmentFallsBackToDefaults() {
+        let environment = MenuBarBootstrapEnvironment(environment: [:])
+
+        #expect(environment.repoRoot.hasSuffix("/melix"))
+        #expect(environment.pythonWorkerSocketPath == "/tmp/melix-worker.sock")
+        #expect(environment.swiftTextWorkerSocketPath == "/var/run/melix/swift-text-worker.sock")
+    }
+
+    @Test("launchLive can use the default live bootstrap factory")
+    @MainActor
+    func launchLiveCanUseDefaultBootstrapFactory() async throws {
+        let application = RecordingApplicationLifecycle()
+
+        try await withEnvironmentValue("MELIX_REPO_ROOT", FileManager.default.currentDirectoryPath) {
+            try await withEnvironmentValue("MELIX_WORKER_SOCKET_PATH", "/tmp/melix-worker.sock") {
+                try await withEnvironmentValue("MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH", "/tmp/melix-swift.sock") {
+                    MelixMenuBarApp.launchLive(application: application)
+                    try await Task.sleep(for: .milliseconds(20))
+                }
+            }
+        }
+
+        #expect(application.didSetAccessoryActivationPolicy)
+        #expect(application.didRun)
+    }
 }
 
 @MainActor
@@ -180,4 +224,26 @@ private final class RecordingNSApplication: NSApplicationControlling {
     func run() {
         runCount += 1
     }
+}
+
+@MainActor
+private func withEnvironmentValue<T>(
+    _ key: String,
+    _ value: String?,
+    operation: () async throws -> T
+) async rethrows -> T {
+    let previousValue = ProcessInfo.processInfo.environment[key]
+    if let value {
+        setenv(key, value, 1)
+    } else {
+        unsetenv(key)
+    }
+    defer {
+        if let previousValue {
+            setenv(key, previousValue, 1)
+        } else {
+            unsetenv(key)
+        }
+    }
+    return try await operation()
 }

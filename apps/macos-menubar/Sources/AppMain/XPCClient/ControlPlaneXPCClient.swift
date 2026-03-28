@@ -12,6 +12,19 @@ public protocol ControlPlaneXPCClient: Sendable {
     func serverSnapshot() async throws -> Melix_Controlplane_V1_ServerSnapshot
     func loadModel(modelID: String) async throws -> Melix_Controlplane_V1_ModelSummary
     func unloadModel(modelID: String) async throws -> Melix_Controlplane_V1_ModelSummary
+    func updateModelSettings(
+        modelID: String,
+        values: [String: String]
+    ) async throws -> Melix_Controlplane_V1_ModelSummary
+    func modelInfo(modelID: String) async throws -> Melix_Controlplane_V1_ModelInfo
+    func runModelOperation(
+        modelID: String,
+        operation: String,
+        outputDir: String,
+        weightQuant: String,
+        kvQuant: String,
+        ext: [String: String]
+    ) async throws -> Melix_Controlplane_V1_ModelOperationResult
 }
 
 public protocol ControlPlaneExecuting: Sendable {
@@ -79,6 +92,43 @@ public actor LocalControlPlaneXPCClient: ControlPlaneXPCClient {
         }
     }
 
+    public func updateModelSettings(
+        modelID: String,
+        values: [String: String]
+    ) async throws -> Melix_Controlplane_V1_ModelSummary {
+        try await execute(makeSetModelPolicyRequest(modelID: modelID, values: values)) { response in
+            response.model.model
+        }
+    }
+
+    public func modelInfo(modelID: String) async throws -> Melix_Controlplane_V1_ModelInfo {
+        try await execute(makeGetModelInfoRequest(modelID: modelID)) { response in
+            response.model.info
+        }
+    }
+
+    public func runModelOperation(
+        modelID: String,
+        operation: String,
+        outputDir: String,
+        weightQuant: String,
+        kvQuant: String,
+        ext: [String: String] = [:]
+    ) async throws -> Melix_Controlplane_V1_ModelOperationResult {
+        try await execute(
+            makeRunModelOperationRequest(
+                modelID: modelID,
+                operation: operation,
+                outputDir: outputDir,
+                weightQuant: weightQuant,
+                kvQuant: kvQuant,
+                ext: ext
+            )
+        ) { response in
+            response.model.operation
+        }
+    }
+
     private func execute<T>(
         _ request: Melix_Controlplane_V1_ControlPlaneRequest,
         transform: (Melix_Controlplane_V1_ControlPlaneResponse) -> T
@@ -119,6 +169,54 @@ public actor LocalControlPlaneXPCClient: ControlPlaneXPCClient {
         request.model = Melix_Controlplane_V1_ModelCommand()
         request.model.unload = Melix_Controlplane_V1_UnloadModel()
         request.model.unload.modelID = modelID
+        return request
+    }
+
+    private func makeSetModelPolicyRequest(
+        modelID: String,
+        values: [String: String]
+    ) -> Melix_Controlplane_V1_ControlPlaneRequest {
+        var request = Melix_Controlplane_V1_ControlPlaneRequest()
+        request.requestID = "menubar-set-policy-\(modelID)"
+        request.commandType = "model.set_policy"
+        request.model = Melix_Controlplane_V1_ModelCommand()
+        request.model.setPolicy = Melix_Controlplane_V1_SetModelPolicy()
+        request.model.setPolicy.modelID = modelID
+        request.model.setPolicy.values = values
+        return request
+    }
+
+    private func makeGetModelInfoRequest(modelID: String) -> Melix_Controlplane_V1_ControlPlaneRequest {
+        var request = Melix_Controlplane_V1_ControlPlaneRequest()
+        request.requestID = "menubar-model-info-\(modelID)"
+        request.commandType = "model.get_info"
+        request.model = Melix_Controlplane_V1_ModelCommand()
+        request.model.getInfo = Melix_Controlplane_V1_GetModelInfo()
+        request.model.getInfo.modelID = modelID
+        return request
+    }
+
+    private func makeRunModelOperationRequest(
+        modelID: String,
+        operation: String,
+        outputDir: String,
+        weightQuant: String,
+        kvQuant: String,
+        ext: [String: String]
+    ) -> Melix_Controlplane_V1_ControlPlaneRequest {
+        var request = Melix_Controlplane_V1_ControlPlaneRequest()
+        request.requestID = "menubar-model-op-\(modelID)-\(operation)"
+        request.commandType = "model.run_operation"
+        request.model = Melix_Controlplane_V1_ModelCommand()
+        request.model.runOperation = Melix_Controlplane_V1_RunModelOperation()
+        request.model.runOperation.modelID = modelID
+        request.model.runOperation.operation = operation
+        request.model.runOperation.outputDir = outputDir
+        request.model.runOperation.weightQuant = weightQuant
+        request.model.runOperation.kvQuant = kvQuant
+        request.model.runOperation.generateManifest = true
+        request.model.runOperation.runSmokeTest = true
+        request.model.runOperation.ext = ext
         return request
     }
 }

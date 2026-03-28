@@ -80,7 +80,57 @@ public final class MelixMenuBarBootstrap {
     }
 
     public static func live() -> MelixMenuBarBootstrap {
-        MelixMenuBarBootstrap(client: LocalControlPlaneXPCClient(service: ControlPlaneService()))
+        let environment = MenuBarBootstrapEnvironment(environment: ProcessInfo.processInfo.environment)
+        let modelCatalog = ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels())
+        let swiftTextWorkerClient = SwiftTextWorkerClient(
+            socketPath: environment.swiftTextWorkerSocketPath
+        )
+        let pythonCompatibilityClient = PythonBridgeWorkerClient(
+            socketPath: environment.pythonWorkerSocketPath,
+            repoRoot: environment.repoRoot,
+            processEnvironment: ProcessInfo.processInfo.environment
+        )
+        let workerRegistry = WorkerRegistry(
+            defaultTextClient: swiftTextWorkerClient,
+            pythonCompatibilityClient: pythonCompatibilityClient,
+            embeddingClient: pythonCompatibilityClient,
+            rerankClient: pythonCompatibilityClient,
+            modelOperationsClient: pythonCompatibilityClient,
+            modelCatalog: modelCatalog
+        )
+        let service = ControlPlaneService(
+            modelCatalog: modelCatalog,
+            workerRegistry: workerRegistry
+        )
+        return MelixMenuBarBootstrap(client: LocalControlPlaneXPCClient(service: service))
+    }
+}
+
+struct MenuBarBootstrapEnvironment {
+    let repoRoot: String
+    let pythonWorkerSocketPath: String
+    let swiftTextWorkerSocketPath: String
+
+    init(environment: [String: String]) {
+        if let repoRoot = environment["MELIX_REPO_ROOT"], !repoRoot.isEmpty {
+            self.repoRoot = repoRoot
+        } else {
+            self.repoRoot = MenuBarBootstrapEnvironment.inferRepoRoot()
+        }
+        self.pythonWorkerSocketPath = environment["MELIX_WORKER_SOCKET_PATH"] ?? "/tmp/melix-worker.sock"
+        self.swiftTextWorkerSocketPath =
+            environment["MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH"] ?? "/var/run/melix/swift-text-worker.sock"
+    }
+
+    private static func inferRepoRoot() -> String {
+        let sourceFile = URL(fileURLWithPath: #filePath)
+        return sourceFile
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .path
     }
 }
 

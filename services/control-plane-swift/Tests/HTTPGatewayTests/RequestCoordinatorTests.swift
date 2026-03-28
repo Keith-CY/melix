@@ -764,10 +764,11 @@ struct RequestCoordinatorTests {
         let prefillProgress = await waitForProgress(
             schedulerReadModel: schedulerReadModel,
             requestID: "req-phase-events",
-            phase: .requestPrefilling
+            phase: .requestPrefilling,
+            lane: "text.prefill.hot"
         )
         #expect(prefillProgress?.phase == .requestPrefilling)
-        #expect(prefillProgress?.lane == "text.prefill.background")
+        #expect(prefillProgress?.lane == "text.prefill.hot")
 
         _ = try #require(await waitForDecodeRequest(workerClient: workerClient))
         await workerClient.emitToken(requestID: "req-phase-events", text: "hello")
@@ -1553,16 +1554,21 @@ private func waitForProgress(
     schedulerReadModel: SchedulerReadModel,
     requestID: String,
     phase: Melix_Controlplane_V1_RequestPhase,
-    attempts: Int = 100
+    lane: String? = nil,
+    attempts: Int = 300
 ) async -> Melix_Controlplane_V1_RequestProgressEvent? {
     for _ in 0..<attempts {
         let progress = await schedulerReadModel.progressSnapshot(for: requestID)
-        if progress?.phase == phase {
+        if progress?.phase == phase, lane.map({ progress?.lane == $0 }) ?? true {
             return progress
         }
         try? await Task.sleep(nanoseconds: 10_000_000)
     }
-    return await schedulerReadModel.progressSnapshot(for: requestID)
+    let progress = await schedulerReadModel.progressSnapshot(for: requestID)
+    if progress?.phase == phase, lane.map({ progress?.lane == $0 }) ?? true {
+        return progress
+    }
+    return nil
 }
 
 private func waitForPrefillRequest(

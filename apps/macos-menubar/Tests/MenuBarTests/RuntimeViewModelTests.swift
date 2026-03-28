@@ -327,6 +327,122 @@ struct RuntimeViewModelTests {
         #expect(viewModel.primaryModel?.stateText == "Warm")
         #expect(viewModel.desktopFoundationState.models.contains(where: { $0.modelID == "melix-dev-text" }))
     }
+
+    @Test("model settings dispatch through the client and hydrate typed row settings")
+    @MainActor
+    func modelSettingsDispatchThroughClientAndHydrateRows() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let metrics = MenuBarMetricsStore()
+        let viewModel = RuntimeViewModel(client: client, metrics: metrics)
+
+        await viewModel.start()
+        await viewModel.updatePrimaryModelForLatency()
+
+        #expect(await client.recordedActions.contains("settings:melix-dev-text"))
+        #expect(viewModel.primaryModel?.memoryPolicyText == "Pinned")
+        #expect(viewModel.primaryModel?.accelerationModeText == "Speculative Decode")
+        #expect(viewModel.primaryModel?.accelerationProfileID == "draft-q4")
+        #expect(await metrics.snapshot()["menu.model_settings_ms"] != nil)
+    }
+
+    @Test("model info and operations dispatch through the client and populate tool state")
+    @MainActor
+    func modelInfoAndOperationsPopulateToolState() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let metrics = MenuBarMetricsStore()
+        let viewModel = RuntimeViewModel(client: client, metrics: metrics)
+
+        await viewModel.start()
+        await viewModel.inspectPrimaryModel()
+        await viewModel.quantizePrimaryModel()
+        await viewModel.uploadPrimaryModel()
+
+        #expect(await client.recordedActions.contains("info:melix-dev-text"))
+        #expect(await client.recordedActions.contains("operation:quantize:melix-dev-text"))
+        #expect(await client.recordedActions.contains("operation:upload:melix-dev-text"))
+        #expect(viewModel.selectedModelInfo?.modelKind == "text")
+        #expect(viewModel.selectedModelInfo?.supportedParsers == ["text", "json"])
+        #expect(viewModel.lastModelOperation?.operation == "upload")
+        #expect(viewModel.lastModelOperation?.outputPath.contains("/tmp/melix-upload") == true)
+        #expect(await metrics.snapshot()["menu.model_info_ms"] != nil)
+        #expect(await metrics.snapshot()["menu.model_operation_ms"] != nil)
+    }
+
+    @Test("model tool actions no-op when there is no primary model")
+    @MainActor
+    func modelToolActionsNoopWithoutPrimaryModel() async throws {
+        let client = EmptySnapshotControlPlaneXPCClient()
+        let metrics = MenuBarMetricsStore()
+        let viewModel = RuntimeViewModel(client: client, metrics: metrics)
+
+        await viewModel.start()
+        await viewModel.updatePrimaryModelForLatency()
+        await viewModel.inspectPrimaryModel()
+        await viewModel.quantizePrimaryModel()
+        await viewModel.downloadPrimaryModel()
+        await viewModel.uploadPrimaryModel()
+
+        #expect(viewModel.primaryModel == nil)
+        #expect(await client.recordedActions.isEmpty)
+        let snapshot = await metrics.snapshot()
+        #expect(snapshot["menu.model_settings_ms"] == nil)
+        #expect(snapshot["menu.model_info_ms"] == nil)
+        #expect(snapshot["menu.model_operation_ms"] == nil)
+    }
+
+    @Test("model tool failures surface local errors")
+    @MainActor
+    func modelToolFailuresSurfaceLocalErrors() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+        await client.configureErrors(
+            modelSettings: MenuBarTestError(description: "settings failed"),
+            modelInfo: MenuBarTestError(description: "inspect failed"),
+            modelOperation: MenuBarTestError(description: "operation failed")
+        )
+
+        await viewModel.updatePrimaryModelForLatency()
+        #expect(viewModel.lastError?.contains("settings failed") == true)
+
+        await viewModel.inspectPrimaryModel()
+        #expect(viewModel.lastError?.contains("inspect failed") == true)
+
+        await viewModel.quantizePrimaryModel()
+        #expect(viewModel.lastError?.contains("operation failed") == true)
+    }
+
+    @Test("model settings support ttl and advanced acceleration labels")
+    @MainActor
+    func modelSettingsSupportAdvancedLabels() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+        await viewModel.updateModelSettings(
+            modelID: "melix-dev-text",
+            alias: "Melix Warm Cache",
+            pinOnLoad: false,
+            memoryPolicy: "ttl",
+            accelerationMode: "accelerated_prefill",
+            accelerationProfileID: "prefill-hot"
+        )
+        #expect(viewModel.primaryModel?.memoryPolicyText == "TTL")
+        #expect(viewModel.primaryModel?.accelerationModeText == "Accelerated Prefill")
+
+        await viewModel.updateModelSettings(
+            modelID: "melix-dev-text",
+            alias: "Melix Quantized",
+            pinOnLoad: false,
+            memoryPolicy: "evictable",
+            accelerationMode: "active_kv_quantized",
+            accelerationProfileID: "kv-q8"
+        )
+        #expect(viewModel.primaryModel?.memoryPolicyText == "Evictable")
+        #expect(viewModel.primaryModel?.accelerationModeText == "Active KV Quantized")
+        #expect(viewModel.primaryModel?.accelerationProfileID == "kv-q8")
+    }
 }
 
 private actor EmptySnapshotControlPlaneXPCClient: ControlPlaneXPCClient {
@@ -363,6 +479,37 @@ private actor EmptySnapshotControlPlaneXPCClient: ControlPlaneXPCClient {
     func unloadModel(modelID: String) async throws -> Melix_Controlplane_V1_ModelSummary {
         recordedActions.append("unload:\(modelID)")
         return Melix_Controlplane_V1_ModelSummary()
+    }
+
+    func updateModelSettings(
+        modelID: String,
+        values: [String: String]
+    ) async throws -> Melix_Controlplane_V1_ModelSummary {
+        recordedActions.append("settings:\(modelID)")
+        _ = values
+        return Melix_Controlplane_V1_ModelSummary()
+    }
+
+    func modelInfo(modelID: String) async throws -> Melix_Controlplane_V1_ModelInfo {
+        _ = modelID
+        return Melix_Controlplane_V1_ModelInfo()
+    }
+
+    func runModelOperation(
+        modelID: String,
+        operation: String,
+        outputDir: String,
+        weightQuant: String,
+        kvQuant: String,
+        ext: [String: String]
+    ) async throws -> Melix_Controlplane_V1_ModelOperationResult {
+        _ = modelID
+        _ = operation
+        _ = outputDir
+        _ = weightQuant
+        _ = kvQuant
+        _ = ext
+        return Melix_Controlplane_V1_ModelOperationResult()
     }
 }
 
@@ -401,6 +548,37 @@ private actor SnapshotControlPlaneXPCClient: ControlPlaneXPCClient {
     func unloadModel(modelID: String) async throws -> Melix_Controlplane_V1_ModelSummary {
         _ = modelID
         return Melix_Controlplane_V1_ModelSummary()
+    }
+
+    func updateModelSettings(
+        modelID: String,
+        values: [String: String]
+    ) async throws -> Melix_Controlplane_V1_ModelSummary {
+        _ = modelID
+        _ = values
+        return Melix_Controlplane_V1_ModelSummary()
+    }
+
+    func modelInfo(modelID: String) async throws -> Melix_Controlplane_V1_ModelInfo {
+        _ = modelID
+        return Melix_Controlplane_V1_ModelInfo()
+    }
+
+    func runModelOperation(
+        modelID: String,
+        operation: String,
+        outputDir: String,
+        weightQuant: String,
+        kvQuant: String,
+        ext: [String: String]
+    ) async throws -> Melix_Controlplane_V1_ModelOperationResult {
+        _ = modelID
+        _ = operation
+        _ = outputDir
+        _ = weightQuant
+        _ = kvQuant
+        _ = ext
+        return Melix_Controlplane_V1_ModelOperationResult()
     }
 }
 
@@ -445,6 +623,37 @@ private actor EventingSnapshotControlPlaneXPCClient: ControlPlaneXPCClient {
     func unloadModel(modelID: String) async throws -> Melix_Controlplane_V1_ModelSummary {
         _ = modelID
         return Melix_Controlplane_V1_ModelSummary()
+    }
+
+    func updateModelSettings(
+        modelID: String,
+        values: [String: String]
+    ) async throws -> Melix_Controlplane_V1_ModelSummary {
+        _ = modelID
+        _ = values
+        return Melix_Controlplane_V1_ModelSummary()
+    }
+
+    func modelInfo(modelID: String) async throws -> Melix_Controlplane_V1_ModelInfo {
+        _ = modelID
+        return Melix_Controlplane_V1_ModelInfo()
+    }
+
+    func runModelOperation(
+        modelID: String,
+        operation: String,
+        outputDir: String,
+        weightQuant: String,
+        kvQuant: String,
+        ext: [String: String]
+    ) async throws -> Melix_Controlplane_V1_ModelOperationResult {
+        _ = modelID
+        _ = operation
+        _ = outputDir
+        _ = weightQuant
+        _ = kvQuant
+        _ = ext
+        return Melix_Controlplane_V1_ModelOperationResult()
     }
 
     func sendQueueSummary() {
@@ -494,6 +703,10 @@ private func makeRuntimeModelRow(state: Melix_Controlplane_V1_ModelState) -> Run
         state: state,
         stateText: "state",
         actionTitle: "action",
-        maxContext: 8192
+        maxContext: 8192,
+        alias: "Melix Dev Text",
+        memoryPolicyText: "Evictable",
+        accelerationModeText: "Baseline",
+        accelerationProfileID: ""
     )
 }

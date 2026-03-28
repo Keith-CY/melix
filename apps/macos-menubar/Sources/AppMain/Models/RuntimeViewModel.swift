@@ -23,6 +23,10 @@ public struct RuntimeModelRow: Equatable, Sendable {
     public let stateText: String
     public let actionTitle: String
     public let maxContext: UInt32
+    public let alias: String
+    public let memoryPolicyText: String
+    public let accelerationModeText: String
+    public let accelerationProfileID: String
 
     public var isLoaded: Bool {
         switch state {
@@ -32,6 +36,24 @@ public struct RuntimeModelRow: Equatable, Sendable {
             return false
         }
     }
+}
+
+public struct RuntimeModelInfoState: Equatable, Sendable {
+    public let modelID: String
+    public let modelKind: String
+    public let maxContext: UInt32
+    public let supportedParsers: [String]
+    public let supportedModalities: [String]
+}
+
+public struct RuntimeModelOperationState: Equatable, Sendable {
+    public let modelID: String
+    public let operation: String
+    public let jobID: String
+    public let stage: String
+    public let pct: Float
+    public let outputPath: String
+    public let manifestJson: String
 }
 
 @MainActor
@@ -45,6 +67,8 @@ public final class RuntimeViewModel {
     public private(set) var serverVersion = "0.1.0"
     public private(set) var daemonInstanceID = ""
     public private(set) var features: [String] = []
+    public private(set) var selectedModelInfo: RuntimeModelInfoState?
+    public private(set) var lastModelOperation: RuntimeModelOperationState?
 
     public var onStateChanged: (@MainActor @Sendable () -> Void)?
 
@@ -174,6 +198,152 @@ public final class RuntimeViewModel {
             return
         }
         await unloadModel(modelID: modelID)
+    }
+
+    public func updateModelSettings(
+        modelID: String,
+        alias: String,
+        pinOnLoad: Bool,
+        memoryPolicy: String,
+        accelerationMode: String,
+        accelerationProfileID: String
+    ) async {
+        let startedAt = Date()
+        do {
+            let model = try await client.updateModelSettings(
+                modelID: modelID,
+                values: [
+                    "alias": alias,
+                    "pin_on_load": pinOnLoad ? "true" : "false",
+                    "memory_policy": memoryPolicy,
+                    "default_acceleration_mode": accelerationMode,
+                    "acceleration_profile_id": accelerationProfileID,
+                ]
+            )
+            await metrics.record(
+                name: "menu.model_settings_ms",
+                valueMs: Date().timeIntervalSince(startedAt) * 1_000
+            )
+            upsert(model: model)
+        } catch {
+            recordLocalError(String(describing: error))
+        }
+        notifyStateChanged()
+    }
+
+    public func updatePrimaryModelForLatency() async {
+        guard let model = primaryModel else {
+            return
+        }
+        await updateModelSettings(
+            modelID: model.modelID,
+            alias: model.alias.isEmpty ? "Melix Text Turbo" : model.alias,
+            pinOnLoad: true,
+            memoryPolicy: "pinned",
+            accelerationMode: "speculative_decode",
+            accelerationProfileID: "draft-q4"
+        )
+    }
+
+    public func fetchModelInfo(modelID: String) async {
+        let startedAt = Date()
+        do {
+            let info = try await client.modelInfo(modelID: modelID)
+            await metrics.record(
+                name: "menu.model_info_ms",
+                valueMs: Date().timeIntervalSince(startedAt) * 1_000
+            )
+            selectedModelInfo = RuntimeModelInfoState(
+                modelID: modelID,
+                modelKind: info.modelKind,
+                maxContext: info.maxContext,
+                supportedParsers: info.supportedParsers,
+                supportedModalities: info.supportedModalities
+            )
+        } catch {
+            recordLocalError(String(describing: error))
+        }
+        notifyStateChanged()
+    }
+
+    public func inspectPrimaryModel() async {
+        guard let modelID = primaryModel?.modelID else {
+            return
+        }
+        await fetchModelInfo(modelID: modelID)
+    }
+
+    public func runModelOperation(
+        modelID: String,
+        operation: String,
+        outputDir: String,
+        weightQuant: String = "",
+        kvQuant: String = "",
+        ext: [String: String] = [:]
+    ) async {
+        let startedAt = Date()
+        do {
+            let result = try await client.runModelOperation(
+                modelID: modelID,
+                operation: operation,
+                outputDir: outputDir,
+                weightQuant: weightQuant,
+                kvQuant: kvQuant,
+                ext: ext
+            )
+            await metrics.record(
+                name: "menu.model_operation_ms",
+                valueMs: Date().timeIntervalSince(startedAt) * 1_000
+            )
+            lastModelOperation = RuntimeModelOperationState(
+                modelID: modelID,
+                operation: result.operation,
+                jobID: result.jobID,
+                stage: result.stage,
+                pct: result.pct,
+                outputPath: result.outputPath,
+                manifestJson: result.manifestJson
+            )
+        } catch {
+            recordLocalError(String(describing: error))
+        }
+        notifyStateChanged()
+    }
+
+    public func quantizePrimaryModel() async {
+        guard let modelID = primaryModel?.modelID else {
+            return
+        }
+        await runModelOperation(
+            modelID: modelID,
+            operation: "quantize",
+            outputDir: "/tmp/melix-quantize",
+            weightQuant: "q4",
+            kvQuant: "q8"
+        )
+    }
+
+    public func downloadPrimaryModel() async {
+        guard let modelID = primaryModel?.modelID else {
+            return
+        }
+        await runModelOperation(
+            modelID: modelID,
+            operation: "download",
+            outputDir: "/tmp/melix-download"
+        )
+    }
+
+    public func uploadPrimaryModel() async {
+        guard let modelID = primaryModel?.modelID else {
+            return
+        }
+        await runModelOperation(
+            modelID: modelID,
+            operation: "upload",
+            outputDir: "/tmp/melix-upload",
+            ext: ["target_repo": "melix/upload-target"]
+        )
     }
 
     private func consume(event: Melix_Controlplane_V1_ControlPlaneEvent) async {
@@ -400,7 +570,11 @@ func makeRuntimeModelRow(_ model: Melix_Controlplane_V1_ModelSummary) -> Runtime
         state: model.state,
         stateText: runtimeModelStateText(model.state),
         actionTitle: runtimeActionTitle(for: model.state),
-        maxContext: model.maxContext
+        maxContext: model.maxContext,
+        alias: model.settings.alias,
+        memoryPolicyText: runtimeMemoryPolicyText(model.settings.memoryPolicy),
+        accelerationModeText: runtimeAccelerationModeText(model.settings.defaultAccelerationMode),
+        accelerationProfileID: model.settings.accelerationProfileID
     )
 }
 
@@ -429,5 +603,33 @@ private func runtimeActionTitle(for state: Melix_Controlplane_V1_ModelState) -> 
         return "Unload"
     default:
         return "Load"
+    }
+}
+
+private func runtimeMemoryPolicyText(_ policy: Melix_Controlplane_V1_MemoryResidencyPolicy) -> String {
+    switch policy {
+    case .memoryResidencyPinned:
+        return "Pinned"
+    case .memoryResidencyTtl:
+        return "TTL"
+    case .memoryResidencyEvictable:
+        return "Evictable"
+    default:
+        return "Unspecified"
+    }
+}
+
+private func runtimeAccelerationModeText(_ mode: Melix_Controlplane_V1_AccelerationMode) -> String {
+    switch mode {
+    case .speculativeDecode:
+        return "Speculative Decode"
+    case .acceleratedPrefill:
+        return "Accelerated Prefill"
+    case .activeKvQuantized:
+        return "Active KV Quantized"
+    case .baseline:
+        return "Baseline"
+    default:
+        return "Unspecified"
     }
 }
