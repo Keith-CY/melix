@@ -1,24 +1,61 @@
+import MelixControlPlaneProtocol
+
 public actor WorkerRegistry {
     private let defaultTextClient: any WorkerRoutingClient
     private let pythonCompatibilityClient: (any WorkerRoutingClient)?
+    private let embeddingClient: (any WorkerRoutingClient)?
+    private let rerankClient: (any WorkerRoutingClient)?
+    private let modelOperationsClient: (any WorkerRoutingClient)?
+    private let modelCatalog: ModelCatalog?
 
     public init(
         defaultTextClient: any WorkerRoutingClient,
-        pythonCompatibilityClient: (any WorkerRoutingClient)? = nil
+        pythonCompatibilityClient: (any WorkerRoutingClient)? = nil,
+        embeddingClient: (any WorkerRoutingClient)? = nil,
+        rerankClient: (any WorkerRoutingClient)? = nil,
+        modelOperationsClient: (any WorkerRoutingClient)? = nil,
+        modelCatalog: ModelCatalog? = nil
     ) {
         self.defaultTextClient = defaultTextClient
         self.pythonCompatibilityClient = pythonCompatibilityClient
+        self.embeddingClient = embeddingClient
+        self.rerankClient = rerankClient
+        self.modelOperationsClient = modelOperationsClient
+        self.modelCatalog = modelCatalog
     }
 
-    public func route(forModelID modelID: String) -> WorkerRouteKind? {
+    public func route(forModelID modelID: String) async -> WorkerRouteKind? {
         guard !modelID.isEmpty else {
             return nil
+        }
+        if let modelCatalog,
+           let model = await modelCatalog.model(id: modelID) {
+            return route(for: model)
         }
         return .swiftText
     }
 
-    public func client(forModelID modelID: String) -> (any WorkerRoutingClient)? {
-        guard let route = route(forModelID: modelID) else {
+    public func route(for model: Melix_Controlplane_V1_ModelSummary) -> WorkerRouteKind? {
+        if let route = WorkerRouteKind(routeClass: model.routeClass) {
+            return route
+        }
+
+        switch model.capabilityClass {
+        case .modelCapabilityText:
+            return .swiftText
+        case .modelCapabilityEmbedding:
+            return .pythonEmbedding
+        case .modelCapabilityRerank:
+            return .pythonRerank
+        case .modelCapabilityModelOperations:
+            return .pythonModelOperations
+        default:
+            return model.kind == "text" ? .swiftText : .pythonCompatibility
+        }
+    }
+
+    public func client(forModelID modelID: String) async -> (any WorkerRoutingClient)? {
+        guard let route = await route(forModelID: modelID) else {
             return nil
         }
         return client(for: route)
@@ -30,6 +67,12 @@ public actor WorkerRegistry {
             return defaultTextClient
         case .pythonCompatibility:
             return pythonCompatibilityClient
+        case .pythonEmbedding:
+            return embeddingClient ?? pythonCompatibilityClient
+        case .pythonRerank:
+            return rerankClient ?? pythonCompatibilityClient
+        case .pythonModelOperations:
+            return modelOperationsClient ?? pythonCompatibilityClient
         }
     }
 }

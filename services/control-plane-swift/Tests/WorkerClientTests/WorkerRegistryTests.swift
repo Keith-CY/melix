@@ -16,6 +16,42 @@ struct WorkerRegistryTests {
         #expect(await registry.route(forModelID: "melix-dev-text") == .swiftText)
     }
 
+    @Test("typed model metadata resolves phase five worker routes")
+    func typedModelMetadataResolvesPhaseFiveRoutes() async throws {
+        let catalog = ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels())
+        let registry = WorkerRegistry(
+            defaultTextClient: RouteTestingWorkerClient(),
+            pythonCompatibilityClient: RouteTestingWorkerClient(),
+            modelCatalog: catalog
+        )
+
+        #expect(await registry.route(forModelID: "melix-dev-text") == .swiftText)
+        #expect(await registry.route(forModelID: "melix-dev-embed") == .pythonEmbedding)
+        #expect(await registry.route(forModelID: "melix-dev-rerank") == .pythonRerank)
+        #expect(await registry.route(forModelID: "melix-dev-model-ops") == .pythonModelOperations)
+    }
+
+    @Test("python fallback client backs non-text routes when dedicated clients are absent")
+    func pythonFallbackClientBacksNonTextRoutes() async throws {
+        let catalog = ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels())
+        let defaultTextClient = RouteTestingWorkerClient()
+        let pythonClient = RouteTestingWorkerClient()
+        let registry = WorkerRegistry(
+            defaultTextClient: defaultTextClient,
+            pythonCompatibilityClient: pythonClient,
+            modelCatalog: catalog
+        )
+
+        let embeddingClient = try #require(await registry.client(forModelID: "melix-dev-embed") as? RouteTestingWorkerClient)
+        let rerankClient = try #require(await registry.client(forModelID: "melix-dev-rerank") as? RouteTestingWorkerClient)
+        let modelOpsClient = try #require(await registry.client(forModelID: "melix-dev-model-ops") as? RouteTestingWorkerClient)
+
+        #expect(embeddingClient === pythonClient)
+        #expect(rerankClient === pythonClient)
+        #expect(modelOpsClient === pythonClient)
+        #expect((await registry.client(forModelID: "melix-dev-text") as? RouteTestingWorkerClient) === defaultTextClient)
+    }
+
     @Test("bootstrap preload accepts the shared routing client abstraction")
     func bootstrapPreloadAcceptsTheSharedRoutingClientAbstraction() async throws {
         let catalog = ModelCatalog()

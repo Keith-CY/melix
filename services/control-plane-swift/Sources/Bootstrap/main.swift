@@ -27,7 +27,8 @@ enum MelixControlPlaneBootstrap {
         )
         let workerRegistry = WorkerRegistry(
             defaultTextClient: swiftTextWorkerClient,
-            pythonCompatibilityClient: pythonCompatibilityClient
+            pythonCompatibilityClient: pythonCompatibilityClient,
+            modelCatalog: modelCatalog
         )
 
         let preloadStartedAt = Date()

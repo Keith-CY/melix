@@ -20,6 +20,35 @@ message ModelSpec {
   string reasoning_mode = 8;
   uint32 max_context = 9;
   map<string, string> ext = 10;
+  ModelCapabilityClass capability_class = 11;
+  WorkerRouteClass route_class = 12;
+  ModelSettings settings = 13;
+  repeated string features = 14;
+}
+
+enum ModelCapabilityClass {
+  MODEL_CAPABILITY_CLASS_UNSPECIFIED = 0;
+  MODEL_CAPABILITY_TEXT = 1;
+  MODEL_CAPABILITY_EMBEDDING = 2;
+  MODEL_CAPABILITY_RERANK = 3;
+  MODEL_CAPABILITY_MODEL_OPERATIONS = 4;
+  MODEL_CAPABILITY_MULTIMODAL = 5;
+}
+
+enum WorkerRouteClass {
+  WORKER_ROUTE_CLASS_UNSPECIFIED = 0;
+  WORKER_ROUTE_SWIFT_TEXT = 1;
+  WORKER_ROUTE_PYTHON_TEXT_COMPATIBILITY = 2;
+  WORKER_ROUTE_PYTHON_EMBEDDING = 3;
+  WORKER_ROUTE_PYTHON_RERANK = 4;
+  WORKER_ROUTE_PYTHON_MODEL_OPERATIONS = 5;
+}
+
+enum MemoryResidencyPolicy {
+  MEMORY_RESIDENCY_POLICY_UNSPECIFIED = 0;
+  MEMORY_RESIDENCY_EVICTABLE = 1;
+  MEMORY_RESIDENCY_PINNED = 2;
+  MEMORY_RESIDENCY_TTL = 3;
 }
 
 message RuntimeCapabilities {
@@ -211,6 +240,16 @@ message AccelerationPolicy {
   string prefill_hint = 4;
   string active_kv_quant_profile = 5;
   bool allow_baseline_fallback = 6;
+  map<string, string> ext = 7;
+}
+
+message ModelSettings {
+  string alias = 1;
+  string type_override = 2;
+  uint32 ttl_seconds = 3;
+  bool pin_on_load = 4;
+  MemoryResidencyPolicy memory_policy = 5;
+  AccelerationPolicy default_acceleration = 6;
   map<string, string> ext = 7;
 }
 
