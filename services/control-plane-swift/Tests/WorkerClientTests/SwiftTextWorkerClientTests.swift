@@ -35,6 +35,33 @@ struct SwiftTextWorkerClientTests {
         #expect(loaded.modelHandle == "melix-dev-text::swift")
     }
 
+    @Test("runtime and cache stats forward unary responses from the runner")
+    func runtimeAndCacheStatsForwardUnaryResponsesFromTheRunner() async throws {
+        let runner = ScriptedSwiftTextWorkerRunner()
+        await runner.setHandshakeResponse(makeHandshakeResponse())
+
+        var runtimeResponse = Melix_Worker_V1_GetRuntimeStatsResponse()
+        runtimeResponse.stats.residentBytes = 8_192
+        runtimeResponse.stats.l1CacheBytes = 2_048
+        await runner.setRuntimeStatsResponse(runtimeResponse)
+
+        var cacheResponse = Melix_Worker_V1_GetCacheStatsResponse()
+        cacheResponse.stats.l1Bytes = 2_048
+        cacheResponse.stats.l2Bytes = 4_096
+        cacheResponse.stats.l1HitRate = 0.5
+        await runner.setCacheStatsResponse(cacheResponse)
+
+        let client = SwiftTextWorkerClient(socketPath: "/tmp/melix-swift-test.sock", runner: runner)
+        let runtimeStats = try await client.runtimeStats()
+        let cacheStats = try await client.cacheStats()
+
+        #expect(runtimeStats.stats.residentBytes == 8_192)
+        #expect(runtimeStats.stats.l1CacheBytes == 2_048)
+        #expect(cacheStats.stats.l1Bytes == 2_048)
+        #expect(cacheStats.stats.l2Bytes == 4_096)
+        #expect(cacheStats.stats.l1HitRate == 0.5)
+    }
+
     @Test("generate forwards streamed execute events from the runner")
     func generateForwardsStreamedExecuteEventsFromTheRunner() async throws {
         let runner = ScriptedSwiftTextWorkerRunner()
@@ -143,6 +170,17 @@ struct SwiftTextWorkerClientTests {
                 response.appliedAcceleration.mode = .baseline
                 return response
             }(),
+            runtimeStatsResponse: {
+                var response = Melix_Worker_V1_GetRuntimeStatsResponse()
+                response.stats.residentBytes = 8_192
+                return response
+            }(),
+            cacheStatsResponse: {
+                var response = Melix_Worker_V1_GetCacheStatsResponse()
+                response.stats.l1Bytes = 2_048
+                response.stats.l2Bytes = 4_096
+                return response
+            }(),
             generateEvents: [
                 makeTokenEvent(requestID: "req-live", seq: 1, text: "Hel"),
                 makeCompletedEvent(requestID: "req-live", seq: 2, finishReason: "stop", assistantText: "Hel"),
@@ -161,6 +199,13 @@ struct SwiftTextWorkerClientTests {
 
         let loadResponse = try await client.loadModel(request: makeLoadModelRequest())
         #expect(loadResponse.modelHandle == "melix-dev-text::swift-live")
+
+        let runtimeStats = try await client.runtimeStats()
+        #expect(runtimeStats.stats.residentBytes == 8_192)
+
+        let cacheStats = try await client.cacheStats()
+        #expect(cacheStats.stats.l1Bytes == 2_048)
+        #expect(cacheStats.stats.l2Bytes == 4_096)
 
         let stream = try await client.generate(request: makeGenerateRequest(requestID: "req-live"))
         let events = try await collect(stream)
@@ -186,6 +231,8 @@ struct SwiftTextWorkerClientTests {
 private actor ScriptedSwiftTextWorkerRunner: SwiftTextWorkerRPCRunning {
     private var handshakeResponse: Melix_Worker_V1_HandshakeResponse?
     private var loadModelResponse: Melix_Worker_V1_LoadModelResponse?
+    private var runtimeStatsResponse: Melix_Worker_V1_GetRuntimeStatsResponse?
+    private var cacheStatsResponse: Melix_Worker_V1_GetCacheStatsResponse?
     private var generateEvents: [Melix_Worker_V1_ExecuteEvent] = []
     private var prefillResponse: Melix_Worker_V1_PrefillResponse?
     private var decodeEvents: [Melix_Worker_V1_ExecuteEvent] = []
@@ -199,6 +246,14 @@ private actor ScriptedSwiftTextWorkerRunner: SwiftTextWorkerRPCRunning {
 
     func setLoadModelResponse(_ response: Melix_Worker_V1_LoadModelResponse) {
         loadModelResponse = response
+    }
+
+    func setRuntimeStatsResponse(_ response: Melix_Worker_V1_GetRuntimeStatsResponse) {
+        runtimeStatsResponse = response
+    }
+
+    func setCacheStatsResponse(_ response: Melix_Worker_V1_GetCacheStatsResponse) {
+        cacheStatsResponse = response
     }
 
     func setGenerateEvents(_ events: [Melix_Worker_V1_ExecuteEvent]) {
@@ -245,6 +300,20 @@ private actor ScriptedSwiftTextWorkerRunner: SwiftTextWorkerRPCRunning {
             response.modelHandle = "melix-dev-text::swift"
             return response
         }()
+    }
+
+    func runtimeStats(
+        socketPath: String,
+        request: Melix_Worker_V1_GetRuntimeStatsRequest
+    ) async throws -> Melix_Worker_V1_GetRuntimeStatsResponse {
+        runtimeStatsResponse ?? Melix_Worker_V1_GetRuntimeStatsResponse()
+    }
+
+    func cacheStats(
+        socketPath: String,
+        request: Melix_Worker_V1_GetCacheStatsRequest
+    ) async throws -> Melix_Worker_V1_GetCacheStatsResponse {
+        cacheStatsResponse ?? Melix_Worker_V1_GetCacheStatsResponse()
     }
 
     func generate(
@@ -321,6 +390,8 @@ private actor LiveSwiftWorkerFixture {
         handshakeResponse: Melix_Worker_V1_HandshakeResponse,
         loadModelResponse: Melix_Worker_V1_LoadModelResponse,
         prefillResponse: Melix_Worker_V1_PrefillResponse,
+        runtimeStatsResponse: Melix_Worker_V1_GetRuntimeStatsResponse,
+        cacheStatsResponse: Melix_Worker_V1_GetCacheStatsResponse,
         generateEvents: [Melix_Worker_V1_ExecuteEvent],
         decodeEvents: [Melix_Worker_V1_ExecuteEvent],
         abortFound: Bool
@@ -330,7 +401,8 @@ private actor LiveSwiftWorkerFixture {
 
         let runtime = TestRuntimeService(
             handshakeResponse: handshakeResponse,
-            loadModelResponse: loadModelResponse
+            loadModelResponse: loadModelResponse,
+            runtimeStatsResponse: runtimeStatsResponse
         )
         let inference = TestInferenceService(
             prefillResponse: prefillResponse,
@@ -338,13 +410,14 @@ private actor LiveSwiftWorkerFixture {
             decodeEvents: decodeEvents,
             abortFound: abortFound
         )
+        let cache = TestCacheService(cacheStatsResponse: cacheStatsResponse)
 
         let server = GRPCServer(
             transport: .http2NIOPosix(
                 address: .unixDomainSocket(path: socketPath),
                 transportSecurity: .plaintext
             ),
-            services: [runtime, inference]
+            services: [runtime, inference, cache]
         )
         let serveTask = Task {
             try await server.serve()
@@ -368,13 +441,16 @@ private actor LiveSwiftWorkerFixture {
 private final class TestRuntimeService: Melix_Worker_V1_RuntimeService.SimpleServiceProtocol, @unchecked Sendable {
     private let handshakeResponse: Melix_Worker_V1_HandshakeResponse
     private let loadModelResponse: Melix_Worker_V1_LoadModelResponse
+    private let runtimeStatsResponse: Melix_Worker_V1_GetRuntimeStatsResponse
 
     init(
         handshakeResponse: Melix_Worker_V1_HandshakeResponse,
-        loadModelResponse: Melix_Worker_V1_LoadModelResponse
+        loadModelResponse: Melix_Worker_V1_LoadModelResponse,
+        runtimeStatsResponse: Melix_Worker_V1_GetRuntimeStatsResponse
     ) {
         self.handshakeResponse = handshakeResponse
         self.loadModelResponse = loadModelResponse
+        self.runtimeStatsResponse = runtimeStatsResponse
     }
 
     func handshake(
@@ -409,7 +485,7 @@ private final class TestRuntimeService: Melix_Worker_V1_RuntimeService.SimpleSer
         request: Melix_Worker_V1_GetRuntimeStatsRequest,
         context: ServerContext
     ) async throws -> Melix_Worker_V1_GetRuntimeStatsResponse {
-        Melix_Worker_V1_GetRuntimeStatsResponse()
+        runtimeStatsResponse
     }
 
     func listLoadedModels(
@@ -435,6 +511,56 @@ private final class TestRuntimeService: Melix_Worker_V1_RuntimeService.SimpleSer
         var response = Melix_Worker_V1_ShutdownResponse()
         response.ok = true
         return response
+    }
+}
+
+private final class TestCacheService: Melix_Worker_V1_CacheService.SimpleServiceProtocol, @unchecked Sendable {
+    private let cacheStatsResponse: Melix_Worker_V1_GetCacheStatsResponse
+
+    init(cacheStatsResponse: Melix_Worker_V1_GetCacheStatsResponse) {
+        self.cacheStatsResponse = cacheStatsResponse
+    }
+
+    func getCacheStats(
+        request: Melix_Worker_V1_GetCacheStatsRequest,
+        context: ServerContext
+    ) async throws -> Melix_Worker_V1_GetCacheStatsResponse {
+        cacheStatsResponse
+    }
+
+    func pinPrefix(
+        request: Melix_Worker_V1_PinPrefixRequest,
+        context: ServerContext
+    ) async throws -> Melix_Worker_V1_PinPrefixResponse {
+        Melix_Worker_V1_PinPrefixResponse()
+    }
+
+    func unpinPrefix(
+        request: Melix_Worker_V1_UnpinPrefixRequest,
+        context: ServerContext
+    ) async throws -> Melix_Worker_V1_UnpinPrefixResponse {
+        Melix_Worker_V1_UnpinPrefixResponse()
+    }
+
+    func saveBoundarySnapshot(
+        request: Melix_Worker_V1_SaveBoundarySnapshotRequest,
+        context: ServerContext
+    ) async throws -> Melix_Worker_V1_SaveBoundarySnapshotResponse {
+        Melix_Worker_V1_SaveBoundarySnapshotResponse()
+    }
+
+    func restoreBoundarySnapshot(
+        request: Melix_Worker_V1_RestoreBoundarySnapshotRequest,
+        context: ServerContext
+    ) async throws -> Melix_Worker_V1_RestoreBoundarySnapshotResponse {
+        Melix_Worker_V1_RestoreBoundarySnapshotResponse()
+    }
+
+    func purgeCache(
+        request: Melix_Worker_V1_PurgeCacheRequest,
+        context: ServerContext
+    ) async throws -> Melix_Worker_V1_PurgeCacheResponse {
+        Melix_Worker_V1_PurgeCacheResponse()
     }
 }
 

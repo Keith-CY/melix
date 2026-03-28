@@ -10,6 +10,7 @@ enum MelixControlPlaneBootstrap {
         let metricsStore = MetricsStore(exportPath: bootstrapEnvironment.controlPlaneMetricsPath)
         let eventHub = EventSubscriptionHub()
         let sessionGraphStore = SessionGraphStore(metricsStore: metricsStore)
+        let cacheMetadataStore = CacheMetadataStore()
         let schedulerReadModel = SchedulerReadModel(
             metricsStore: metricsStore,
             eventPublisher: { event in
@@ -52,6 +53,7 @@ enum MelixControlPlaneBootstrap {
             metricsStore: metricsStore,
             eventHub: eventHub,
             schedulerReadModel: schedulerReadModel,
+            cacheMetadataStore: cacheMetadataStore,
             sessionGraphStore: sessionGraphStore
         )
 
@@ -62,7 +64,8 @@ enum MelixControlPlaneBootstrap {
                 abortRegistry: AbortRegistry(),
                 schedulerReadModel: schedulerReadModel,
                 metricsStore: metricsStore,
-                sessionGraphStore: sessionGraphStore
+                sessionGraphStore: sessionGraphStore,
+                cacheMetadataStore: cacheMetadataStore
             )
         )
 

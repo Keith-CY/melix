@@ -23,6 +23,11 @@ public protocol PhaseAwareWorkerClientProtocol: WorkerClient {
     ) async throws -> AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error>
 }
 
+public protocol CacheIntrospectingWorkerClientProtocol: WorkerClient {
+    func runtimeStats() async throws -> Melix_Worker_V1_GetRuntimeStatsResponse
+    func cacheStats() async throws -> Melix_Worker_V1_GetCacheStatsResponse
+}
+
 public protocol WorkerRoutingClient: WorkerClient {
     func loadModel(
         request: Melix_Worker_V1_LoadModelRequest

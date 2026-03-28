@@ -65,6 +65,11 @@ class LiveMelixStack:
 
     def start(self) -> None:
         if self.should_start_swift_text_worker:
+            swift_text_worker_binary = resolve_swift_product_binary(
+                self.repo_root,
+                package_path=Path("services/mlx-text-worker-swift"),
+                product_name="melix-text-worker-swift",
+            )
             swift_env = os.environ.copy()
             swift_env["MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH"] = os.fspath(self.swift_socket_path)
             swift_env["MELIX_SWIFT_TEXT_WORKER_BACKEND_MODE"] = self.swift_backend_mode
@@ -73,13 +78,7 @@ class LiveMelixStack:
             self.swift_text_worker_stdout = self.swift_text_worker_stdout_path.open("w", encoding="utf-8")
             self.swift_text_worker_stderr = self.swift_text_worker_stderr_path.open("w", encoding="utf-8")
             self.swift_text_worker = subprocess.Popen(
-                [
-                    "swift",
-                    "run",
-                    "--package-path",
-                    "services/mlx-text-worker-swift",
-                    "melix-text-worker-swift",
-                ],
+                [os.fspath(swift_text_worker_binary)],
                 cwd=self.repo_root,
                 stdout=self.swift_text_worker_stdout,
                 stderr=self.swift_text_worker_stderr,
@@ -130,6 +129,11 @@ class LiveMelixStack:
                 timeout_seconds=60,
             )
 
+        control_plane_binary = resolve_swift_product_binary(
+            self.repo_root,
+            package_path=Path("services/control-plane-swift"),
+            product_name="melix-control-plane",
+        )
         control_plane_env = os.environ.copy()
         control_plane_env["MELIX_HTTP_PORT"] = str(self.http_port)
         control_plane_env["MELIX_WORKER_SOCKET_PATH"] = os.fspath(self.python_socket_path)
@@ -140,13 +144,7 @@ class LiveMelixStack:
         self.control_plane_stderr = self.control_plane_stderr_path.open("w", encoding="utf-8")
 
         self.control_plane = subprocess.Popen(
-            [
-                "swift",
-                "run",
-                "--package-path",
-                "services/control-plane-swift",
-                "melix-control-plane",
-            ],
+            [os.fspath(control_plane_binary)],
             cwd=self.repo_root,
             stdout=self.control_plane_stdout,
             stderr=self.control_plane_stderr,
@@ -239,6 +237,22 @@ def reserve_port() -> int:
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
         return sock.getsockname()[1]
+
+
+def resolve_swift_product_binary(repo_root: Path, *, package_path: Path, product_name: str) -> Path:
+    build_root = repo_root / package_path / ".build"
+    candidates = [build_root / "debug" / product_name]
+    candidates.extend(sorted(build_root.glob(f"*/debug/{product_name}")))
+
+    for candidate in candidates:
+        if candidate.is_file() and os.access(candidate, os.X_OK):
+            return candidate
+
+    raise AssertionError(
+        "Required Swift product binary is missing. "
+        f"Expected a built executable for {product_name!r} under {build_root}. "
+        "Run `make swift-test` or `swift build --package-path <package>` before integration tests."
+    )
 
 
 def wait_for_worker_handshake(

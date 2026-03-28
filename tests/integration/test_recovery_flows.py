@@ -123,6 +123,51 @@ def test_boundary_snapshots_restore_after_swift_worker_restart_with_persisted_ca
             second_stack.stop()
 
 
+def test_warm_followup_prefers_hot_route_and_reduces_ttft_against_cold_baseline() -> None:
+    stack = LiveMelixStack(Path(__file__).resolve().parents[2])
+    stack.start()
+
+    try:
+        session_id = f"session-{uuid.uuid4().hex[:8]}"
+        cold = stream_chat_completion(
+            stack,
+            {
+                "model": "melix-dev-text",
+                "stream": True,
+                "session_id": session_id,
+                "messages": [{"role": "user", "content": "capture a cold baseline before the warm follow-up"}],
+            },
+        )
+        assert cold["status"] == 200
+        assert isinstance(cold["ttft_ms"], float)
+
+        warm = stream_chat_completion(
+            stack,
+            {
+                "model": "melix-dev-text",
+                "stream": True,
+                "session_id": session_id,
+                "parent_request_id": cold["request_id"],
+                "messages": [{"role": "user", "content": "route this follow-up through the warm path"}],
+            },
+        )
+        assert warm["status"] == 200
+        assert isinstance(warm["ttft_ms"], float)
+        assert warm["ttft_ms"] < cold["ttft_ms"]
+
+        control_values = wait_for_metric(
+            stack.control_plane_metrics_path,
+            "session.followup_ttft_delta_ms",
+            minimum=1,
+        )
+        assert control_values["scheduler.prefix_affinity_hit_rate"] >= 100
+        assert control_values["scheduler.warm_route_preference_rate"] >= 50
+        assert control_values["scheduler.restored_route_rate"] >= 50
+        assert control_values["session.followup_ttft_delta_ms"] >= 1
+    finally:
+        stack.stop()
+
+
 def stream_chat_completion(stack: LiveMelixStack, payload: dict[str, object]) -> dict[str, object]:
     request = urllib.request.Request(
         stack.chat_url(),
@@ -131,9 +176,12 @@ def stream_chat_completion(stack: LiveMelixStack, payload: dict[str, object]) ->
         method="POST",
     )
 
+    started_at = time.perf_counter()
+
     with urllib.request.urlopen(request, timeout=30) as response:
         chunks: list[str] = []
         request_id = ""
+        ttft_ms: float | None = None
 
         while True:
             line = response.readline()
@@ -142,7 +190,7 @@ def stream_chat_completion(stack: LiveMelixStack, payload: dict[str, object]) ->
             decoded = line.decode("utf-8")
             chunks.append(decoded)
 
-            if request_id or not decoded.startswith("data: "):
+            if not decoded.startswith("data: "):
                 continue
 
             body = decoded.removeprefix("data: ").strip()
@@ -153,12 +201,22 @@ def stream_chat_completion(stack: LiveMelixStack, payload: dict[str, object]) ->
             maybe_request_id = event.get("id") or event.get("request_id")
             if isinstance(maybe_request_id, str):
                 request_id = maybe_request_id
+            choices = event.get("choices")
+            if not isinstance(choices, list) or not choices:
+                continue
+            delta = choices[0].get("delta", {})
+            content = delta.get("content", "")
+            if isinstance(content, str) and content and ttft_ms is None:
+                ttft_ms = (time.perf_counter() - started_at) * 1000
 
+        total_ms = (time.perf_counter() - started_at) * 1000
         return {
             "status": response.status,
             "headers": dict(response.headers),
             "request_id": request_id,
             "body": "".join(chunks),
+            "ttft_ms": ttft_ms,
+            "total_ms": total_ms,
         }
 
 

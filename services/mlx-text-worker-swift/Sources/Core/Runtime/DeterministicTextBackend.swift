@@ -37,7 +37,8 @@ struct DeterministicTextBackend: TextRuntimeBackend {
         let prefillDelay = deterministicPrefillDelay(
             baselineDelay: tokenDelayNanos,
             prompt: prompt,
-            policy: appliedAcceleration
+            policy: appliedAcceleration,
+            resumeHint: resumeHint
         )
         let prefillGainPct = gainPercent(
             baseline: tokenDelayNanos,
@@ -164,7 +165,8 @@ struct DeterministicTextBackend: TextRuntimeBackend {
         )
         let tokenDelay = deterministicDecodeDelay(
             baselineDelay: tokenDelayNanos,
-            mode: acceleration.mode
+            mode: acceleration.mode,
+            context: context
         )
 
         return AsyncThrowingStream { continuation in
@@ -259,8 +261,19 @@ private func deterministicChunks(
 
 private func deterministicDecodeDelay(
     baselineDelay: UInt64,
-    mode: Melix_Worker_V1_AccelerationMode
+    mode: Melix_Worker_V1_AccelerationMode,
+    context: TextPrefillContext
 ) -> UInt64 {
+    let storage = context.storage as? [String: String]
+    let resumeHint = storage?["resume_hint"]?.lowercased() ?? ""
+    if resumeHint.contains("snapshot-restore:") {
+        return max(baselineDelay / 8, 1_000_000)
+    }
+    let prefillMode = storage?["prefill_acceleration_mode"]?.lowercased() ?? ""
+    if prefillMode.contains("acceleratedprefill") {
+        return max(baselineDelay / 3, 1_000_000)
+    }
+
     switch mode {
     case .speculativeDecode:
         return max(baselineDelay / 2, 1_000_000)
@@ -272,9 +285,13 @@ private func deterministicDecodeDelay(
 private func deterministicPrefillDelay(
     baselineDelay: UInt64,
     prompt: String,
-    policy: Melix_Worker_V1_AccelerationPolicy
+    policy: Melix_Worker_V1_AccelerationPolicy,
+    resumeHint: String
 ) -> UInt64 {
     let normalized = normalizedAccelerationPolicy(policy)
+    if resumeHint.lowercased().contains("snapshot-restore:") {
+        return max(baselineDelay / 8, 1_000_000)
+    }
     guard normalized.mode == .acceleratedPrefill else {
         return baselineDelay
     }

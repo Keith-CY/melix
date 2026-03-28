@@ -15,6 +15,16 @@ public protocol SwiftTextWorkerRPCRunning: Sendable {
         request: Melix_Worker_V1_LoadModelRequest
     ) async throws -> Melix_Worker_V1_LoadModelResponse
 
+    func runtimeStats(
+        socketPath: String,
+        request: Melix_Worker_V1_GetRuntimeStatsRequest
+    ) async throws -> Melix_Worker_V1_GetRuntimeStatsResponse
+
+    func cacheStats(
+        socketPath: String,
+        request: Melix_Worker_V1_GetCacheStatsRequest
+    ) async throws -> Melix_Worker_V1_GetCacheStatsResponse
+
     func generate(
         socketPath: String,
         request: Melix_Worker_V1_GenerateRequest
@@ -36,7 +46,12 @@ public protocol SwiftTextWorkerRPCRunning: Sendable {
     ) async throws -> Melix_Worker_V1_AbortResponse
 }
 
-public struct SwiftTextWorkerClient: WorkerRoutingClient, PhaseAwareWorkerClientProtocol, Sendable {
+public struct SwiftTextWorkerClient:
+    WorkerRoutingClient,
+    PhaseAwareWorkerClientProtocol,
+    CacheIntrospectingWorkerClientProtocol,
+    Sendable
+{
     private let socketPath: String
     private let runner: any SwiftTextWorkerRPCRunning
 
@@ -67,6 +82,20 @@ public struct SwiftTextWorkerClient: WorkerRoutingClient, PhaseAwareWorkerClient
         request: Melix_Worker_V1_LoadModelRequest
     ) async throws -> Melix_Worker_V1_LoadModelResponse {
         try await runner.loadModel(socketPath: socketPath, request: request)
+    }
+
+    public func runtimeStats() async throws -> Melix_Worker_V1_GetRuntimeStatsResponse {
+        try await runner.runtimeStats(
+            socketPath: socketPath,
+            request: Melix_Worker_V1_GetRuntimeStatsRequest()
+        )
+    }
+
+    public func cacheStats() async throws -> Melix_Worker_V1_GetCacheStatsResponse {
+        try await runner.cacheStats(
+            socketPath: socketPath,
+            request: Melix_Worker_V1_GetCacheStatsRequest()
+        )
     }
 
     public func generate(
@@ -103,7 +132,7 @@ public struct GRPCSwiftTextWorkerRunner: SwiftTextWorkerRPCRunning, Sendable {
         socketPath: String,
         request: Melix_Worker_V1_HandshakeRequest
     ) async throws -> Melix_Worker_V1_HandshakeResponse {
-        try await withRPCClients(socketPath: socketPath) { runtimeClient, _ in
+        try await withRPCClients(socketPath: socketPath) { runtimeClient, _, _ in
             try await runtimeClient.handshake(request)
         }
     }
@@ -112,8 +141,26 @@ public struct GRPCSwiftTextWorkerRunner: SwiftTextWorkerRPCRunning, Sendable {
         socketPath: String,
         request: Melix_Worker_V1_LoadModelRequest
     ) async throws -> Melix_Worker_V1_LoadModelResponse {
-        try await withRPCClients(socketPath: socketPath) { runtimeClient, _ in
+        try await withRPCClients(socketPath: socketPath) { runtimeClient, _, _ in
             try await runtimeClient.loadModel(request)
+        }
+    }
+
+    public func runtimeStats(
+        socketPath: String,
+        request: Melix_Worker_V1_GetRuntimeStatsRequest
+    ) async throws -> Melix_Worker_V1_GetRuntimeStatsResponse {
+        try await withRPCClients(socketPath: socketPath) { runtimeClient, _, _ in
+            try await runtimeClient.getRuntimeStats(request)
+        }
+    }
+
+    public func cacheStats(
+        socketPath: String,
+        request: Melix_Worker_V1_GetCacheStatsRequest
+    ) async throws -> Melix_Worker_V1_GetCacheStatsResponse {
+        try await withRPCClients(socketPath: socketPath) { _, _, cacheClient in
+            try await cacheClient.getCacheStats(request)
         }
     }
 
@@ -124,7 +171,7 @@ public struct GRPCSwiftTextWorkerRunner: SwiftTextWorkerRPCRunning, Sendable {
         AsyncThrowingStream { continuation in
             let task = Task {
                 do {
-                    try await withRPCClients(socketPath: socketPath) { _, inferenceClient in
+                    try await withRPCClients(socketPath: socketPath) { _, inferenceClient, _ in
                         try await inferenceClient.generate(request) { response in
                             for try await event in response.messages {
                                 continuation.yield(event)
@@ -147,7 +194,7 @@ public struct GRPCSwiftTextWorkerRunner: SwiftTextWorkerRPCRunning, Sendable {
         socketPath: String,
         request: Melix_Worker_V1_PrefillRequest
     ) async throws -> Melix_Worker_V1_PrefillResponse {
-        try await withRPCClients(socketPath: socketPath) { _, inferenceClient in
+        try await withRPCClients(socketPath: socketPath) { _, inferenceClient, _ in
             try await inferenceClient.prefill(request)
         }
     }
@@ -159,7 +206,7 @@ public struct GRPCSwiftTextWorkerRunner: SwiftTextWorkerRPCRunning, Sendable {
         AsyncThrowingStream { continuation in
             let task = Task {
                 do {
-                    try await withRPCClients(socketPath: socketPath) { _, inferenceClient in
+                    try await withRPCClients(socketPath: socketPath) { _, inferenceClient, _ in
                         try await inferenceClient.decode(request) { response in
                             for try await event in response.messages {
                                 continuation.yield(event)
@@ -182,7 +229,7 @@ public struct GRPCSwiftTextWorkerRunner: SwiftTextWorkerRPCRunning, Sendable {
         socketPath: String,
         request: Melix_Worker_V1_AbortRequest
     ) async throws -> Melix_Worker_V1_AbortResponse {
-        try await withRPCClients(socketPath: socketPath) { _, inferenceClient in
+        try await withRPCClients(socketPath: socketPath) { _, inferenceClient, _ in
             try await inferenceClient.abort(request)
         }
     }
@@ -191,7 +238,8 @@ public struct GRPCSwiftTextWorkerRunner: SwiftTextWorkerRPCRunning, Sendable {
         socketPath: String,
         operation: @Sendable @escaping (
             Melix_Worker_V1_RuntimeService.Client<HTTP2ClientTransport.Posix>,
-            Melix_Worker_V1_InferenceService.Client<HTTP2ClientTransport.Posix>
+            Melix_Worker_V1_InferenceService.Client<HTTP2ClientTransport.Posix>,
+            Melix_Worker_V1_CacheService.Client<HTTP2ClientTransport.Posix>
         ) async throws -> Result
     ) async throws -> Result {
         do {
@@ -203,7 +251,8 @@ public struct GRPCSwiftTextWorkerRunner: SwiftTextWorkerRPCRunning, Sendable {
             ) { client in
                 let runtimeClient = Melix_Worker_V1_RuntimeService.Client(wrapping: client)
                 let inferenceClient = Melix_Worker_V1_InferenceService.Client(wrapping: client)
-                return try await operation(runtimeClient, inferenceClient)
+                let cacheClient = Melix_Worker_V1_CacheService.Client(wrapping: client)
+                return try await operation(runtimeClient, inferenceClient, cacheClient)
             }
         } catch {
             throw WorkerClientError.unavailable

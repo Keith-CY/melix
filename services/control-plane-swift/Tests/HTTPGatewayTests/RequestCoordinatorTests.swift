@@ -187,7 +187,9 @@ struct RequestCoordinatorTests {
             abortRegistry: AbortRegistry()
         )
 
-        _ = try await coordinator.startChatCompletion(makeTranslatedChatRequest(requestID: "req-duplicate"))
+        let execution = try await coordinator.startChatCompletion(
+            makeTranslatedChatRequest(requestID: "req-duplicate")
+        )
 
         do {
             _ = try await coordinator.startChatCompletion(makeTranslatedChatRequest(requestID: "req-duplicate"))
@@ -195,6 +197,8 @@ struct RequestCoordinatorTests {
         } catch let error as RequestCoordinatorError {
             #expect(error == .requestAlreadyActive)
         }
+
+        _ = execution
     }
 
     @Test("worker unavailable requests are rejected before dispatch")
@@ -353,6 +357,136 @@ struct RequestCoordinatorTests {
 
         let metrics = await metricsStore.snapshot()
         #expect(metrics.values["session_graph.restore_snapshot_count", default: 0] >= 1)
+    }
+
+    @Test("warm follow-up requests prefer hot prefill lanes and refresh cache observability")
+    func warmFollowUpRequestsPreferHotPrefillLanesAndRefreshCacheObservability() async throws {
+        let workerClient = PhaseAwareWorkerClient()
+        var runtimeStats = Melix_Worker_V1_GetRuntimeStatsResponse()
+        runtimeStats.stats.residentBytes = 8_192
+        await workerClient.setRuntimeStatsResponse(runtimeStats)
+
+        var cacheStats = Melix_Worker_V1_GetCacheStatsResponse()
+        cacheStats.stats.l1Bytes = 2_048
+        cacheStats.stats.l2Bytes = 4_096
+        cacheStats.stats.l1HitRate = 0.5
+        cacheStats.stats.l2RestoreHitRate = 1.0
+        cacheStats.stats.compressionRatio = 0.25
+        await workerClient.setCacheStatsResponse(cacheStats)
+
+        let sessionGraphStore = SessionGraphStore(nowUnixMs: { 11_000 })
+        let metricsStore = MetricsStore()
+        let schedulerReadModel = SchedulerReadModel()
+        let cacheMetadataStore = CacheMetadataStore()
+
+        var cacheKey = Melix_Controlplane_V1_CacheKey()
+        cacheKey.scope.modelID = "melix-dev-text"
+        var snapshot = Melix_Controlplane_V1_SnapshotRef()
+        snapshot.snapshotID = "snap-hot"
+        snapshot.requestID = "req-parent"
+        _ = await sessionGraphStore.recordSnapshotHydration(
+            sessionID: "session-hot",
+            branchID: "branch-main",
+            snapshot: snapshot,
+            headCacheKey: cacheKey
+        )
+
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(defaultTextClient: workerClient),
+            abortRegistry: AbortRegistry(),
+            schedulerReadModel: schedulerReadModel,
+            metricsStore: metricsStore,
+            sessionGraphStore: sessionGraphStore,
+            cacheMetadataStore: cacheMetadataStore
+        )
+
+        let execution = try await coordinator.startChatCompletion(
+            makeTranslatedChatRequest(
+                requestID: "req-hot",
+                sessionID: "session-hot",
+                branchID: "branch-main",
+                parentRequestID: "req-parent",
+                saveBoundarySnapshot: true
+            )
+        )
+        let consumer = Task {
+            do {
+                for try await _ in execution.stream {
+                }
+            } catch {
+            }
+        }
+
+        let admittedProgress = await waitForProgress(
+            schedulerReadModel: schedulerReadModel,
+            requestID: "req-hot",
+            phase: .requestAdmitted
+        )
+        #expect(admittedProgress?.lane == "text.prefill.hot")
+
+        await workerClient.emitDecodeStarted(requestID: "req-hot", decodeHandle: "decode-hot")
+        await workerClient.emitToken(requestID: "req-hot", text: "hot")
+        await workerClient.finishDecode(requestID: "req-hot")
+        _ = await consumer.result
+
+        let metrics = await metricsStore.snapshot()
+        let cacheSummary = await cacheMetadataStore.cacheSummary()
+
+        #expect(metrics.values["scheduler.prefix_affinity_hit_rate"] == 100)
+        #expect(metrics.values["scheduler.warm_route_preference_rate"] == 100)
+        #expect(metrics.values["scheduler.restored_route_rate"] == 100)
+        #expect(metrics.values["cache.memory_bytes"] == 2_048)
+        #expect(metrics.values["cache.disk_bytes"] == 4_096)
+        #expect(metrics.values["cache.hit_rate"] == 50)
+        #expect(metrics.values["cache.l2_restore_hit_rate"] == 100)
+        #expect(metrics.values["scheduler.cache_pressure"] == 0.25)
+        #expect(cacheSummary.l1Bytes == 2_048)
+        #expect(cacheSummary.l2Bytes == 4_096)
+    }
+
+    @Test("cold session requests prefer background prefill lanes before reuse exists")
+    func coldSessionRequestsPreferBackgroundPrefillLanesBeforeReuseExists() async throws {
+        let workerClient = PhaseAwareWorkerClient()
+        let schedulerReadModel = SchedulerReadModel()
+        let metricsStore = MetricsStore()
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(defaultTextClient: workerClient),
+            abortRegistry: AbortRegistry(),
+            schedulerReadModel: schedulerReadModel,
+            metricsStore: metricsStore,
+            sessionGraphStore: SessionGraphStore(nowUnixMs: { 12_000 })
+        )
+
+        let execution = try await coordinator.startChatCompletion(
+            makeTranslatedChatRequest(
+                requestID: "req-cold-prefill",
+                sessionID: "session-cold-prefill",
+                branchID: "branch-main",
+                saveBoundarySnapshot: true
+            )
+        )
+        let consumer = Task {
+            do {
+                for try await _ in execution.stream {
+                }
+            } catch {
+            }
+        }
+
+        let admittedProgress = await waitForProgress(
+            schedulerReadModel: schedulerReadModel,
+            requestID: "req-cold-prefill",
+            phase: .requestAdmitted
+        )
+        #expect(admittedProgress?.lane == "text.prefill.background")
+
+        await workerClient.emitDecodeStarted(requestID: "req-cold-prefill", decodeHandle: "decode-cold")
+        await workerClient.finishDecode(requestID: "req-cold-prefill")
+        _ = await consumer.result
+
+        let metrics = await metricsStore.snapshot()
+        #expect(metrics.values["scheduler.warm_route_preference_rate"] == 0)
+        #expect(metrics.values["scheduler.prefix_affinity_hit_rate"] == 0)
     }
 
     @Test("snapshot created events hydrate branch resume metadata during phase-aware decode")
@@ -940,12 +1074,26 @@ private actor ThrowingStreamWorkerClient: WorkerRoutingClient {
     }
 }
 
-private actor PhaseAwareWorkerClient: WorkerRoutingClient, PhaseAwareWorkerClientProtocol {
+private actor PhaseAwareWorkerClient:
+    WorkerRoutingClient,
+    PhaseAwareWorkerClientProtocol,
+    CacheIntrospectingWorkerClientProtocol
+{
     private var continuations: [String: AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error>.Continuation] = [:]
     private var prefillRequests: [Melix_Worker_V1_PrefillRequest] = []
     private var decodeRequests: [Melix_Worker_V1_DecodeRequest] = []
     private(set) var abortedRequestIDs: [String] = []
     private(set) var generatedRequestIDs: [String] = []
+    private var runtimeStatsResponse = Melix_Worker_V1_GetRuntimeStatsResponse()
+    private var cacheStatsResponse = Melix_Worker_V1_GetCacheStatsResponse()
+
+    func setRuntimeStatsResponse(_ response: Melix_Worker_V1_GetRuntimeStatsResponse) {
+        runtimeStatsResponse = response
+    }
+
+    func setCacheStatsResponse(_ response: Melix_Worker_V1_GetCacheStatsResponse) {
+        cacheStatsResponse = response
+    }
 
     func canDispatchRequests() async -> Bool {
         true
@@ -994,6 +1142,14 @@ private actor PhaseAwareWorkerClient: WorkerRoutingClient, PhaseAwareWorkerClien
         abortedRequestIDs.append(requestID)
         continuations[requestID]?.finish()
         return true
+    }
+
+    func runtimeStats() async throws -> Melix_Worker_V1_GetRuntimeStatsResponse {
+        runtimeStatsResponse
+    }
+
+    func cacheStats() async throws -> Melix_Worker_V1_GetCacheStatsResponse {
+        cacheStatsResponse
     }
 
     func emitPrefillStarted(

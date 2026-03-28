@@ -23,6 +23,23 @@ public struct CoordinatedChatExecution: Sendable {
     }
 }
 
+private enum CacheRouteClass: String, Sendable {
+    case cold
+    case warm
+    case restored
+}
+
+private struct SchedulingPlan: Sendable {
+    let translatedRequest: TranslatedChatRequest
+    let admissionLane: String
+    let prefillLane: String
+    let decodeLane: String
+    let cacheRouteClass: CacheRouteClass
+    let cacheRouteEligible: Bool
+    let prefixAffinityEligible: Bool
+    let prefixAffinityHit: Bool
+}
+
 public actor RequestCoordinator {
     private let workerRegistry: WorkerRegistry
     private let abortRegistry: AbortRegistry
@@ -30,8 +47,17 @@ public actor RequestCoordinator {
     private let schedulerReadModel: SchedulerReadModel
     private let metricsStore: MetricsStore
     private let sessionGraphStore: SessionGraphStore?
+    private let cacheMetadataStore: CacheMetadataStore?
     private let now: @Sendable () -> Date
     private var activeWorkerClients: [String: any WorkerClient]
+    private var requestPlans: [String: SchedulingPlan]
+    private var coldTTFTBaselinesByBranch: [String: Double]
+    private var schedulingDecisionCount: Double
+    private var cacheRouteEligibleCount: Double
+    private var warmRoutePreferenceCount: Double
+    private var restoredRouteCount: Double
+    private var prefixAffinityCheckCount: Double
+    private var prefixAffinityHitCount: Double
 
     public init(
         workerRegistry: WorkerRegistry,
@@ -40,6 +66,7 @@ public actor RequestCoordinator {
         schedulerReadModel: SchedulerReadModel = SchedulerReadModel(),
         metricsStore: MetricsStore = MetricsStore(),
         sessionGraphStore: SessionGraphStore? = nil,
+        cacheMetadataStore: CacheMetadataStore? = nil,
         now: @escaping @Sendable () -> Date = Date.init
     ) {
         self.workerRegistry = workerRegistry
@@ -48,16 +75,28 @@ public actor RequestCoordinator {
         self.schedulerReadModel = schedulerReadModel
         self.metricsStore = metricsStore
         self.sessionGraphStore = sessionGraphStore
+        self.cacheMetadataStore = cacheMetadataStore
         self.now = now
         self.activeWorkerClients = [:]
+        self.requestPlans = [:]
+        self.coldTTFTBaselinesByBranch = [:]
+        self.schedulingDecisionCount = 0
+        self.cacheRouteEligibleCount = 0
+        self.warmRoutePreferenceCount = 0
+        self.restoredRouteCount = 0
+        self.prefixAffinityCheckCount = 0
+        self.prefixAffinityHitCount = 0
     }
 
     public func startChatCompletion(
         _ translatedRequest: TranslatedChatRequest
     ) async throws -> CoordinatedChatExecution {
-        let request = await resolvedRecoveryRequest(translatedRequest)
+        let plan = await resolvedSchedulingPlan(translatedRequest)
+        let request = plan.translatedRequest
+        requestPlans[request.requestID] = plan
+        await recordSchedulingMetrics(for: plan)
         await hydrateSessionGraph(for: request.workerRequest.execution.id)
-        let lane = request.workerRequest.execution.scheduling.lane
+        let lane = plan.admissionLane
         let priority = request.workerRequest.execution.scheduling.priority
         guard await abortRegistry.begin(requestID: request.requestID) else {
             _ = await schedulerReadModel.recordRejected(
@@ -77,6 +116,7 @@ public actor RequestCoordinator {
         let routeStartedAt = now()
         guard let workerClient = await workerRegistry.client(forModelID: request.modelID) else {
             await abortRegistry.finish(requestID: request.requestID)
+            requestPlans.removeValue(forKey: request.requestID)
             _ = await schedulerReadModel.recordRejected(
                 requestID: request.requestID,
                 laneHint: lane,
@@ -84,6 +124,7 @@ public actor RequestCoordinator {
             )
             throw RequestCoordinatorError.workerUnavailable
         }
+        await refreshWorkerCacheObservability(using: workerClient)
         await metricsStore.set(
             now().timeIntervalSince(routeStartedAt) * 1000,
             forKey: "control_plane.worker_route_ms"
@@ -95,6 +136,7 @@ public actor RequestCoordinator {
         let connectStartedAt = now()
         guard await workerClient.canDispatchRequests() else {
             await abortRegistry.finish(requestID: request.requestID)
+            requestPlans.removeValue(forKey: request.requestID)
             _ = await schedulerReadModel.recordRejected(
                 requestID: request.requestID,
                 laneHint: lane,
@@ -136,7 +178,9 @@ public actor RequestCoordinator {
                shouldUsePhaseAwareExecution(for: request.workerRequest) {
                 upstream = makePhaseAwareUpstream(
                     client: phaseAwareClient,
-                    request: request.workerRequest
+                    request: request.workerRequest,
+                    modelID: request.modelID,
+                    prefillLane: plan.prefillLane
                 )
             } else {
                 upstream = try await workerClient.generate(request: request.workerRequest)
@@ -162,22 +206,25 @@ public actor RequestCoordinator {
                         for try await event in upstream {
                             await self.recordPhaseObservability(
                                 requestID: requestID,
-                                fallbackLane: lane,
+                                fallbackLane: plan.decodeLane,
                                 requestIdentity: request.workerRequest.execution.id,
                                 event: event
                             )
                             if !firstDeltaRecorded, case .tokenDelta = event.payload {
                                 firstDeltaRecorded = true
+                                let ttftMs = now().timeIntervalSince(dispatchStartedAt) * 1000
                                 await metricsStore.set(
-                                    now().timeIntervalSince(dispatchStartedAt) * 1000,
+                                    ttftMs,
                                     forKey: "http.ttfd_ms"
                                 )
+                                await self.recordTTFTMetrics(requestID: requestID, ttftMs: ttftMs)
                             }
                             eventCount += 1
                             await metricsStore.set(eventCount, forKey: "http.stream_event_count")
                             continuation.yield(event)
                         }
                         await metricsStore.decrement("requests.inflight")
+                        await self.refreshWorkerCacheObservability(using: workerClient)
                         let terminalPhase = await self.terminalPhase(
                             requestID: requestID,
                             fallback: .requestCompleted
@@ -186,6 +233,7 @@ public actor RequestCoordinator {
                         continuation.finish()
                     } catch {
                         await metricsStore.decrement("requests.inflight")
+                        await self.refreshWorkerCacheObservability(using: workerClient)
                         await self.finishRequestTracking(requestID: requestID, phase: .requestFailed)
                         continuation.finish(throwing: error)
                     }
@@ -242,6 +290,7 @@ public actor RequestCoordinator {
         await admissionGate.release(requestID: requestID)
         await abortRegistry.finish(requestID: requestID)
         activeWorkerClients.removeValue(forKey: requestID)
+        requestPlans.removeValue(forKey: requestID)
         if let phase {
             await schedulerReadModel.recordTerminalState(requestID: requestID, phase: phase)
         }
@@ -431,9 +480,87 @@ public actor RequestCoordinator {
         )
     }
 
+    private func resolvedSchedulingPlan(
+        _ translatedRequest: TranslatedChatRequest
+    ) async -> SchedulingPlan {
+        let request = await resolvedRecoveryRequest(translatedRequest)
+        guard
+            let sessionGraphStore,
+            !request.workerRequest.execution.id.sessionID.isEmpty
+        else {
+            let decodeLane = request.workerRequest.execution.scheduling.lane.isEmpty
+                ? "text.decode.interactive"
+                : request.workerRequest.execution.scheduling.lane
+            let prefillLane = shouldUsePhaseAwareExecution(for: request.workerRequest)
+                ? "text.prefill.background"
+                : decodeLane
+            return SchedulingPlan(
+                translatedRequest: request,
+                admissionLane: prefillLane,
+                prefillLane: prefillLane,
+                decodeLane: decodeLane,
+                cacheRouteClass: .cold,
+                cacheRouteEligible: shouldUsePhaseAwareExecution(for: request.workerRequest),
+                prefixAffinityEligible: false,
+                prefixAffinityHit: false
+            )
+        }
+
+        let branchID = request.workerRequest.execution.id.branchID.isEmpty
+            ? "branch-main"
+            : request.workerRequest.execution.id.branchID
+        let session = await sessionGraphStore.state(for: request.workerRequest.execution.id.sessionID)
+        let activeBranchID = session?.activeBranchID ?? branchID
+        let branch = session?.branches.first(where: { $0.branchID == branchID })
+            ?? session?.branches.first(where: { $0.branchID == activeBranchID })
+        let prefixAffinityEligible = isPrefixAffinityEligible(
+            request: request,
+            branch: branch
+        )
+        let prefixAffinityHit = shouldRecordPrefixAffinity(
+            request: request,
+            headCacheKey: branch?.headCacheKey,
+            branch: branch
+        )
+
+        let cacheRouteClass: CacheRouteClass
+        if !request.workerRequest.execution.cacheHints.restoreSnapshotID.isEmpty {
+            cacheRouteClass = .restored
+        } else if prefixAffinityHit {
+            cacheRouteClass = .warm
+        } else {
+            cacheRouteClass = .cold
+        }
+
+        let decodeLane = request.workerRequest.execution.scheduling.lane.isEmpty
+            ? "text.decode.interactive"
+            : request.workerRequest.execution.scheduling.lane
+        let cacheRouteEligible = shouldUsePhaseAwareExecution(for: request.workerRequest)
+            || prefixAffinityEligible
+        let prefillLane: String
+        if shouldUsePhaseAwareExecution(for: request.workerRequest) {
+            prefillLane = cacheRouteClass == .cold ? "text.prefill.background" : "text.prefill.hot"
+        } else {
+            prefillLane = decodeLane
+        }
+
+        return SchedulingPlan(
+            translatedRequest: request,
+            admissionLane: prefillLane,
+            prefillLane: prefillLane,
+            decodeLane: decodeLane,
+            cacheRouteClass: cacheRouteClass,
+            cacheRouteEligible: cacheRouteEligible,
+            prefixAffinityEligible: prefixAffinityEligible,
+            prefixAffinityHit: prefixAffinityHit
+        )
+    }
+
     private func makePhaseAwareUpstream(
         client: any PhaseAwareWorkerClientProtocol,
-        request: Melix_Worker_V1_GenerateRequest
+        request: Melix_Worker_V1_GenerateRequest,
+        modelID: String,
+        prefillLane: String
     ) -> AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error> {
         AsyncThrowingStream { continuation in
             let task = Task {
@@ -452,14 +579,24 @@ public actor RequestCoordinator {
                         return
                     }
 
-                    var prefillEvent = makePrefillStartedEvent(request: request, response: prefillResponse)
+                    await self.hydrateHeadCacheKey(
+                        requestIdentity: request.execution.id,
+                        modelID: modelID,
+                        blockTable: prefillResponse.blockTable
+                    )
+
+                    var prefillEvent = makePrefillStartedEvent(
+                        request: request,
+                        response: prefillResponse,
+                        lane: prefillLane
+                    )
                     prefillEvent.seq = nextSeq
                     nextSeq += 1
                     continuation.yield(prefillEvent)
                     if !prefillResponse.restoredSnapshotID.isEmpty {
                         var cacheDecisionEvent = makeCacheDecisionEvent(
                             requestID: request.execution.id.requestID,
-                            lane: request.execution.scheduling.lane,
+                            lane: prefillLane,
                             blockTableID: prefillResponse.blockTableID,
                             restoredSnapshotID: prefillResponse.restoredSnapshotID,
                             accelerationMode: prefillResponse.appliedAcceleration.mode
@@ -500,7 +637,9 @@ public actor RequestCoordinator {
         prefill.messages = request.messages
         prefill.returnDecodeHandle = true
         prefill.prefillStepSize = 0
-        prefill.resumeHint = request.execution.id.parentRequestID
+        prefill.resumeHint = request.execution.cacheHints.restoreSnapshotID.isEmpty
+            ? request.execution.id.parentRequestID
+            : "snapshot-restore:\(request.execution.cacheHints.restoreSnapshotID)"
         return prefill
     }
 
@@ -519,7 +658,8 @@ public actor RequestCoordinator {
 
     private func makePrefillStartedEvent(
         request: Melix_Worker_V1_GenerateRequest,
-        response: Melix_Worker_V1_PrefillResponse
+        response: Melix_Worker_V1_PrefillResponse,
+        lane: String
     ) -> Melix_Worker_V1_ExecuteEvent {
         var event = Melix_Worker_V1_ExecuteEvent()
         event.requestID = request.execution.id.requestID
@@ -527,7 +667,7 @@ public actor RequestCoordinator {
         event.seq = 1
         event.phase = response.lifecyclePhase
         event.admissionState = response.admissionState
-        event.lane = "text.prefill.hot"
+        event.lane = lane
         event.accelerationMode = response.appliedAcceleration.mode
 
         var payload = Melix_Worker_V1_PrefillStarted()
@@ -626,6 +766,259 @@ public actor RequestCoordinator {
             break
         }
     }
+
+    private func recordSchedulingMetrics(for plan: SchedulingPlan) async {
+        schedulingDecisionCount += 1
+        if plan.cacheRouteEligible {
+            cacheRouteEligibleCount += 1
+        }
+        if plan.cacheRouteEligible, plan.cacheRouteClass != .cold {
+            warmRoutePreferenceCount += 1
+        }
+        if plan.cacheRouteEligible, plan.cacheRouteClass == .restored {
+            restoredRouteCount += 1
+        }
+        if plan.prefixAffinityEligible {
+            prefixAffinityCheckCount += 1
+            if plan.prefixAffinityHit {
+                prefixAffinityHitCount += 1
+            }
+        }
+
+        await metricsStore.set(
+            warmRoutePreferenceCount / max(cacheRouteEligibleCount, 1) * 100,
+            forKey: "scheduler.warm_route_preference_rate"
+        )
+        await metricsStore.set(
+            restoredRouteCount / max(cacheRouteEligibleCount, 1) * 100,
+            forKey: "scheduler.restored_route_rate"
+        )
+        await metricsStore.set(
+            prefixAffinityHitCount / max(prefixAffinityCheckCount, 1) * 100,
+            forKey: "scheduler.prefix_affinity_hit_rate"
+        )
+        await metricsStore.set(
+            plan.cacheRouteClass == .cold ? 0 : 1,
+            forKey: "scheduler.warm_route_preferred"
+        )
+    }
+
+    private func recordTTFTMetrics(requestID: String, ttftMs: Double) async {
+        guard let plan = requestPlans[requestID] else {
+            return
+        }
+        guard let branchKey = branchMetricKey(for: plan.translatedRequest.workerRequest.execution.id) else {
+            return
+        }
+
+        switch plan.cacheRouteClass {
+        case .cold:
+            coldTTFTBaselinesByBranch[branchKey] = ttftMs
+            await metricsStore.set(ttftMs, forKey: "session.last_cold_ttft_ms")
+        case .warm, .restored:
+            await metricsStore.set(ttftMs, forKey: "session.last_followup_ttft_ms")
+            if let baseline = coldTTFTBaselinesByBranch[branchKey] {
+                await metricsStore.set(baseline - ttftMs, forKey: "session.followup_ttft_delta_ms")
+            }
+        }
+    }
+
+    private func branchMetricKey(
+        for identity: Melix_Worker_V1_RequestIdentity
+    ) -> String? {
+        guard !identity.sessionID.isEmpty else {
+            return nil
+        }
+        let branchID = identity.branchID.isEmpty ? "branch-main" : identity.branchID
+        return "\(identity.sessionID)::\(branchID)"
+    }
+
+    private func shouldRecordPrefixAffinity(
+        request: TranslatedChatRequest,
+        headCacheKey: Melix_Controlplane_V1_CacheKey?,
+        branch: Melix_Controlplane_V1_BranchState?
+    ) -> Bool {
+        guard request.workerRequest.execution.cacheHints.preferHotPrefix else {
+            return false
+        }
+        if let branch, !branch.resumeSnapshotID.isEmpty {
+            return true
+        }
+        guard let headCacheKey else {
+            return false
+        }
+        return !headCacheKey.scope.modelID.isEmpty && headCacheKey.scope.modelID == request.modelID
+    }
+
+    private func isPrefixAffinityEligible(
+        request: TranslatedChatRequest,
+        branch: Melix_Controlplane_V1_BranchState?
+    ) -> Bool {
+        guard request.workerRequest.execution.cacheHints.preferHotPrefix else {
+            return false
+        }
+        guard let branch else {
+            return false
+        }
+        if !branch.resumeSnapshotID.isEmpty {
+            return true
+        }
+        return !branch.headCacheKey.scope.modelID.isEmpty
+    }
+
+    private func hydrateHeadCacheKey(
+        requestIdentity: Melix_Worker_V1_RequestIdentity,
+        modelID: String,
+        blockTable: Melix_Worker_V1_BlockTable
+    ) async {
+        guard
+            let sessionGraphStore,
+            !requestIdentity.sessionID.isEmpty
+        else {
+            return
+        }
+
+        var key = Melix_Controlplane_V1_CacheKey()
+        key.prefixHash = blockTable.cacheKey.prefixHash
+        key.scope.modelID = modelID
+
+        _ = await sessionGraphStore.recordSnapshotHydration(
+            sessionID: requestIdentity.sessionID,
+            branchID: requestIdentity.branchID,
+            snapshot: Melix_Controlplane_V1_SnapshotRef(),
+            headCacheKey: key
+        )
+    }
+
+    private func refreshWorkerCacheObservability(
+        using workerClient: any WorkerClient
+    ) async {
+        guard let introspectingClient = workerClient as? any CacheIntrospectingWorkerClientProtocol else {
+            return
+        }
+        guard
+            let runtimeStats = try? await introspectingClient.runtimeStats(),
+            let cacheStats = try? await introspectingClient.cacheStats()
+        else {
+            return
+        }
+
+        await metricsStore.set(Double(cacheStats.stats.l1Bytes), forKey: "cache.memory_bytes")
+        await metricsStore.set(Double(cacheStats.stats.l2Bytes), forKey: "cache.disk_bytes")
+        await metricsStore.set(cacheStats.stats.l1HitRate * 100, forKey: "cache.hit_rate")
+        await metricsStore.set(cacheStats.stats.l2RestoreHitRate * 100, forKey: "cache.l2_restore_hit_rate")
+        await metricsStore.set(cacheStats.stats.compressionRatio * 100, forKey: "cache.compression_ratio")
+        let residentBytes = max(Double(runtimeStats.stats.residentBytes), 1)
+        let cachePressure = min(1, Double(cacheStats.stats.l1Bytes) / residentBytes)
+        await metricsStore.set(cachePressure, forKey: "scheduler.cache_pressure")
+
+        if let cacheMetadataStore {
+            await cacheMetadataStore.replace(snapshot: controlPlaneCacheSnapshot(from: cacheStats.snapshot))
+        }
+    }
+}
+
+private func controlPlaneCacheSnapshot(
+    from workerSnapshot: Melix_Worker_V1_CacheSnapshot
+) -> Melix_Controlplane_V1_CacheSnapshot {
+    var snapshot = Melix_Controlplane_V1_CacheSnapshot()
+    snapshot.summary = controlPlaneCacheSummary(from: workerSnapshot.stats)
+    snapshot.pinnedPrefixes = workerSnapshot.pinnedPrefixes.map(controlPlanePrefixRef(from:))
+    snapshot.hotPrefixes = workerSnapshot.hotPrefixes.map(controlPlanePrefixRef(from:))
+    snapshot.snapshots = workerSnapshot.snapshots.map(controlPlaneSnapshotRef(from:))
+    snapshot.scopes = workerSnapshot.scopes.map(controlPlaneCacheScopeSummary(from:))
+    return snapshot
+}
+
+private func controlPlaneCacheSummary(
+    from workerStats: Melix_Worker_V1_CacheStats
+) -> Melix_Controlplane_V1_CacheSummary {
+    var summary = Melix_Controlplane_V1_CacheSummary()
+    summary.l1Bytes = workerStats.l1Bytes
+    summary.l2Bytes = workerStats.l2Bytes
+    summary.l1HitRate = workerStats.l1HitRate
+    summary.l2HitRate = workerStats.l2HitRate
+    summary.dedupRatio = workerStats.dedupRatio
+    summary.checkpointCount = workerStats.snapshotCount
+    summary.blockCount = workerStats.blockCount
+    summary.quantizedBytes = workerStats.quantizedBytes
+    summary.compressionRatio = workerStats.compressionRatio
+    summary.l2RestoreHitRate = workerStats.l2RestoreHitRate
+    return summary
+}
+
+private func controlPlaneCacheScopeSummary(
+    from workerScope: Melix_Worker_V1_CacheScopeSummary
+) -> Melix_Controlplane_V1_CacheScopeSummary {
+    var scope = Melix_Controlplane_V1_CacheScopeSummary()
+    scope.scopeID = workerScope.scopeID
+    scope.scope = controlPlaneCacheScopeKey(from: workerScope.scope)
+    scope.l1Bytes = workerScope.l1Bytes
+    scope.l2Bytes = workerScope.l2Bytes
+    scope.blockCount = workerScope.blockCount
+    scope.prefixCount = workerScope.prefixCount
+    scope.snapshotCount = workerScope.snapshotCount
+    scope.hotBlocks = workerScope.hotBlocks.map(controlPlaneCacheBlockRef(from:))
+    return scope
+}
+
+private func controlPlaneCacheBlockRef(
+    from workerBlock: Melix_Worker_V1_BlockRef
+) -> Melix_Controlplane_V1_CacheBlockRef {
+    var block = Melix_Controlplane_V1_CacheBlockRef()
+    block.blockID = workerBlock.blockID
+    block.tokenLength = UInt32(max(workerBlock.tokenEnd - workerBlock.tokenStart, 0))
+    block.bytes = workerBlock.bytes
+    return block
+}
+
+private func controlPlanePrefixRef(
+    from workerPrefix: Melix_Worker_V1_PrefixRef
+) -> Melix_Controlplane_V1_PrefixRef {
+    var prefix = Melix_Controlplane_V1_PrefixRef()
+    prefix.prefixID = workerPrefix.prefixID
+    prefix.cacheKey = controlPlaneCacheKey(from: workerPrefix.cacheKey, scope: workerPrefix.scope)
+    prefix.tokenLength = workerPrefix.tokenLength
+    prefix.tier = workerPrefix.tier
+    prefix.pinned = workerPrefix.pinned
+    return prefix
+}
+
+private func controlPlaneSnapshotRef(
+    from workerSnapshot: Melix_Worker_V1_SnapshotRef
+) -> Melix_Controlplane_V1_SnapshotRef {
+    var snapshot = Melix_Controlplane_V1_SnapshotRef()
+    snapshot.snapshotID = workerSnapshot.snapshotID
+    snapshot.tokenBoundary = workerSnapshot.tokenBoundary
+    snapshot.requestID = workerSnapshot.requestID
+    snapshot.sessionID = workerSnapshot.sessionID
+    snapshot.branchID = workerSnapshot.branchID
+    snapshot.checkpointID = workerSnapshot.checkpointID
+    return snapshot
+}
+
+private func controlPlaneCacheKey(
+    from workerKey: Melix_Worker_V1_CacheKey,
+    scope: Melix_Worker_V1_CacheScope
+) -> Melix_Controlplane_V1_CacheKey {
+    var key = Melix_Controlplane_V1_CacheKey()
+    key.prefixHash = workerKey.prefixHash
+    key.scope = controlPlaneCacheScopeKey(from: scope)
+    return key
+}
+
+private func controlPlaneCacheScopeKey(
+    from workerScope: Melix_Worker_V1_CacheScope
+) -> Melix_Controlplane_V1_CacheScopeKey {
+    var scope = Melix_Controlplane_V1_CacheScopeKey()
+    scope.modelID = workerScope.modelID
+    scope.revision = workerScope.revision
+    scope.tokenizerHash = workerScope.tokenizerHash
+    scope.quantProfileID = workerScope.quantProfileID
+    scope.promptTemplateHash = workerScope.promptTemplateHash
+    scope.parserMode = workerScope.parserMode
+    scope.reasoningMode = workerScope.reasoningMode
+    return scope
 }
 
 private func controlPlaneAccelerationMode(

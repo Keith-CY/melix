@@ -212,11 +212,14 @@ actor WorkerRuntimeRegistry {
         if !execution.cacheHints.restoreSnapshotID.isEmpty {
             let restored = try await restoreBoundarySnapshotRecord(snapshotID: execution.cacheHints.restoreSnapshotID)
             let requestMessages = messages.isEmpty ? restored.messages : messages
+            let restoreResumeHint = restored.snapshot.snapshotID.isEmpty
+                ? restored.resumeHint
+                : "snapshot-restore:\(restored.snapshot.snapshotID)"
             let runtimePrefill = try await runtime.prefill(
                 model: loaded.runtimeModel,
                 messages: requestMessages,
                 prefillStepSize: 0,
-                resumeHint: restored.resumeHint,
+                resumeHint: restoreResumeHint,
                 acceleration: restored.acceleration,
                 shouldAbort: shouldAbort
             )
