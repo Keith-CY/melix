@@ -180,6 +180,110 @@ struct OpenAIHandlerTests {
         #expect(payload.contains("data: [DONE]"))
     }
 
+    @Test("POST /v1/completions translates prompt input into the shared text request model")
+    func postCompletionsTranslatesAndStreams() async throws {
+        let catalog = ModelCatalog(seedModels: [warmModel()])
+        let workerClient = ScriptedWorkerClient(events: [
+            makeTokenEvent(requestID: "cmp-fixed", seq: 1, text: "Hello"),
+            makeUsageEvent(requestID: "cmp-fixed", seq: 2, promptTokens: 2, completionTokens: 1),
+            makeCompletedEvent(requestID: "cmp-fixed", seq: 3, finishReason: "stop", assistantText: "Hello"),
+        ])
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: workerClient),
+                abortRegistry: AbortRegistry()
+            ),
+            translator: ChatRequestTranslator(requestIDGenerator: { "cmp-fixed" }),
+            sseWriter: SSEStreamWriter(now: { Date(timeIntervalSince1970: 456) })
+        )
+
+        let body = try #require(
+            """
+            {
+              "model": "melix-dev-text",
+              "stream": true,
+              "prompt": "hello completions"
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/completions",
+                headers: ["content-type": "application/json"],
+                body: body
+            )
+        )
+        let payload = try await collectBody(response.body)
+        let request = try #require(await workerClient.lastGenerateRequest)
+
+        #expect(response.statusCode == 200)
+        #expect(response.headers["content-type"] == "text/event-stream; charset=utf-8")
+        #expect(request.messages.count == 1)
+        #expect(request.messages[0].role == "user")
+        #expect(request.messages[0].parts.first?.text == "hello completions")
+        #expect(payload.contains("\"object\":\"text_completion\""))
+        #expect(payload.contains("\"text\":\"Hello\""))
+        #expect(payload.contains("data: [DONE]"))
+    }
+
+    @Test("POST /v1/messages translates into the shared text request model")
+    func postMessagesTranslatesAndStreams() async throws {
+        let catalog = ModelCatalog(seedModels: [warmModel()])
+        let workerClient = ScriptedWorkerClient(events: [
+            makeTokenEvent(requestID: "msg-fixed", seq: 1, text: "Hello"),
+            makeCompletedEvent(requestID: "msg-fixed", seq: 2, finishReason: "stop", assistantText: "Hello"),
+        ])
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: workerClient),
+                abortRegistry: AbortRegistry()
+            ),
+            translator: ChatRequestTranslator(requestIDGenerator: { "msg-fixed" }),
+            sseWriter: SSEStreamWriter(now: { Date(timeIntervalSince1970: 456) })
+        )
+
+        let body = try #require(
+            """
+            {
+              "model": "melix-dev-text",
+              "stream": true,
+              "system": "Be terse.",
+              "messages": [
+                { "role": "user", "content": "hello messages" }
+              ]
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/messages",
+                headers: ["content-type": "application/json"],
+                body: body
+            )
+        )
+        let payload = try await collectBody(response.body)
+        let request = try #require(await workerClient.lastGenerateRequest)
+
+        #expect(response.statusCode == 200)
+        #expect(response.headers["content-type"] == "text/event-stream; charset=utf-8")
+        #expect(request.messages.count == 2)
+        #expect(request.messages[0].role == "system")
+        #expect(request.messages[0].parts.first?.text == "Be terse.")
+        #expect(request.messages[1].role == "user")
+        #expect(request.messages[1].parts.first?.text == "hello messages")
+        #expect(payload.contains("event: message.delta"))
+        #expect(payload.contains("\"type\":\"message.delta\""))
+        #expect(payload.contains("\"message_id\":\"msg-fixed\""))
+        #expect(payload.contains("event: message.completed"))
+        #expect(payload.contains("data: [DONE]"))
+    }
+
     @Test("responses requests default stream to true when omitted")
     func responsesRequestsDefaultStreamToTrue() async throws {
         let catalog = ModelCatalog(seedModels: [warmModel()])
@@ -236,6 +340,64 @@ struct OpenAIHandlerTests {
 
         let response = try await handler.handle(
             HTTPRequest(method: .post, path: "/v1/responses", headers: [:], body: body)
+        )
+        let payload = try await collectBody(response.body)
+
+        #expect(response.statusCode == 400)
+        #expect(payload.contains("\"code\":\"stream_required\""))
+    }
+
+    @Test("non-stream completions requests return 400")
+    func nonStreamCompletionsRequestsReturn400() async throws {
+        let handler = OpenAIHandler(
+            modelCatalog: ModelCatalog(seedModels: [warmModel()]),
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: ScriptedWorkerClient(events: [])),
+                abortRegistry: AbortRegistry()
+            )
+        )
+        let body = try #require(
+            """
+            {
+              "model": "melix-dev-text",
+              "stream": false,
+              "prompt": "Hello"
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(method: .post, path: "/v1/completions", headers: [:], body: body)
+        )
+        let payload = try await collectBody(response.body)
+
+        #expect(response.statusCode == 400)
+        #expect(payload.contains("\"code\":\"stream_required\""))
+    }
+
+    @Test("non-stream messages requests return 400")
+    func nonStreamMessagesRequestsReturn400() async throws {
+        let handler = OpenAIHandler(
+            modelCatalog: ModelCatalog(seedModels: [warmModel()]),
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: ScriptedWorkerClient(events: [])),
+                abortRegistry: AbortRegistry()
+            )
+        )
+        let body = try #require(
+            """
+            {
+              "model": "melix-dev-text",
+              "stream": false,
+              "messages": [
+                { "role": "user", "content": "Hello" }
+              ]
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(method: .post, path: "/v1/messages", headers: [:], body: body)
         )
         let payload = try await collectBody(response.body)
 

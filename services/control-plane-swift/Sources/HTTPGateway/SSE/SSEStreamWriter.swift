@@ -4,7 +4,9 @@ import MelixWorkerProtocol
 public struct SSEStreamWriter: Sendable {
     public enum StreamShape: Sendable {
         case chatCompletions
+        case completions
         case responses
+        case messages
     }
 
     private let now: @Sendable () -> Date
@@ -55,8 +57,88 @@ public struct SSEStreamWriter: Sendable {
         switch shape {
         case .chatCompletions:
             return encodeChatCompletions(event: event, requestID: requestID, modelID: modelID)
+        case .completions:
+            return encodeCompletions(event: event, requestID: requestID, modelID: modelID)
         case .responses:
             return encodeResponses(event: event, requestID: requestID, modelID: modelID)
+        case .messages:
+            return encodeMessages(event: event, requestID: requestID, modelID: modelID)
+        }
+    }
+
+    private func encodeCompletions(
+        event: Melix_Worker_V1_ExecuteEvent,
+        requestID: String,
+        modelID: String
+    ) -> Data {
+        switch event.payload {
+        case .tokenDelta(let delta):
+            return frame(
+                event: "message",
+                json: [
+                    "id": requestID,
+                    "object": "text_completion",
+                    "created": Int(now().timeIntervalSince1970),
+                    "model": modelID,
+                    "choices": [
+                        [
+                            "index": 0,
+                            "text": delta.text,
+                            "finish_reason": NSNull(),
+                        ],
+                    ],
+                ]
+            )
+        case .usageDelta(let usage):
+            return frame(
+                event: "usage",
+                json: [
+                    "request_id": requestID,
+                    "usage": [
+                        "prompt_tokens": Int(usage.promptTokens),
+                        "completion_tokens": Int(usage.completionTokens),
+                    ],
+                ]
+            )
+        case .heartbeat(let heartbeat):
+            return frame(
+                event: "heartbeat",
+                json: [
+                    "request_id": requestID,
+                    "unix_ms": Int(heartbeat.unixMs),
+                ]
+            )
+        case .completed(let completed):
+            return frame(
+                event: "message",
+                json: [
+                    "id": requestID,
+                    "object": "text_completion",
+                    "created": Int(now().timeIntervalSince1970),
+                    "model": modelID,
+                    "choices": [
+                        [
+                            "index": 0,
+                            "text": completed.assistantText,
+                            "finish_reason": completed.finishReason,
+                        ],
+                    ],
+                ]
+            )
+        case .error(let error):
+            return errorFrame(
+                requestID: requestID,
+                code: error.error.code,
+                message: error.error.message
+            )
+        default:
+            return frame(
+                event: "message",
+                json: [
+                    "request_id": requestID,
+                    "event_seq": Int(event.seq),
+                ]
+            )
         }
     }
 
@@ -208,6 +290,77 @@ public struct SSEStreamWriter: Sendable {
                 json: [
                     "type": "response.event",
                     "response_id": requestID,
+                    "event_seq": Int(event.seq),
+                ]
+            )
+        }
+    }
+
+    private func encodeMessages(
+        event: Melix_Worker_V1_ExecuteEvent,
+        requestID: String,
+        modelID: String
+    ) -> Data {
+        switch event.payload {
+        case .tokenDelta(let delta):
+            return frame(
+                event: "message.delta",
+                json: [
+                    "type": "message.delta",
+                    "message_id": requestID,
+                    "model": modelID,
+                    "delta": delta.text,
+                ]
+            )
+        case .usageDelta(let usage):
+            return frame(
+                event: "message.usage",
+                json: [
+                    "type": "message.usage",
+                    "message_id": requestID,
+                    "usage": [
+                        "input_tokens": Int(usage.promptTokens),
+                        "output_tokens": Int(usage.completionTokens),
+                    ],
+                ]
+            )
+        case .heartbeat(let heartbeat):
+            return frame(
+                event: "message.heartbeat",
+                json: [
+                    "type": "message.heartbeat",
+                    "message_id": requestID,
+                    "unix_ms": Int(heartbeat.unixMs),
+                ]
+            )
+        case .completed(let completed):
+            return frame(
+                event: "message.completed",
+                json: [
+                    "type": "message.completed",
+                    "message_id": requestID,
+                    "model": modelID,
+                    "finish_reason": completed.finishReason,
+                    "content": [
+                        [
+                            "type": "output_text",
+                            "text": completed.assistantText,
+                        ],
+                    ],
+                ]
+            )
+        case .error(let error):
+            return errorFrame(
+                requestID: requestID,
+                code: error.error.code,
+                message: error.error.message
+            )
+        default:
+            return frame(
+                event: "message.event",
+                json: [
+                    "type": "message.event",
+                    "message_id": requestID,
                     "event_seq": Int(event.seq),
                 ]
             )

@@ -75,8 +75,12 @@ public struct OpenAIHandler: Sendable {
             return try await handleModels()
         case (.post, "/v1/chat/completions"):
             return try await handleChatCompletions(request)
+        case (.post, "/v1/completions"):
+            return try await handleCompletions(request)
         case (.post, "/v1/responses"):
             return try await handleResponses(request)
+        case (.post, "/v1/messages"):
+            return try await handleMessages(request)
         default:
             return jsonResponse(
                 statusCode: 404,
@@ -122,6 +126,25 @@ public struct OpenAIHandler: Sendable {
         }
     }
 
+    private func handleCompletions(_ request: HTTPRequest) async throws -> HTTPResponse {
+        let completionsRequest = try decoder.decode(OpenAICompletionsRequest.self, from: request.body)
+        let normalized = translator.normalize(completionsRequest)
+        do {
+            let translated = try await translatedRequest(
+                modelID: normalized.model,
+                stream: normalized.stream
+            ) {
+                try translator.translate(normalized, modelHandle: $0)
+            }
+            return try await streamResponse(
+                translated: translated,
+                shape: .completions
+            )
+        } catch let error as HTTPRequestHandlingError {
+            return httpErrorResponse(for: error)
+        }
+    }
+
     private func handleResponses(_ request: HTTPRequest) async throws -> HTTPResponse {
         let responsesRequest = try decoder.decode(OpenAIResponsesRequest.self, from: request.body)
         let normalized = translator.normalize(responsesRequest)
@@ -135,6 +158,25 @@ public struct OpenAIHandler: Sendable {
             return try await streamResponse(
                 translated: translated,
                 shape: .responses
+            )
+        } catch let error as HTTPRequestHandlingError {
+            return httpErrorResponse(for: error)
+        }
+    }
+
+    private func handleMessages(_ request: HTTPRequest) async throws -> HTTPResponse {
+        let messagesRequest = try decoder.decode(MelixMessagesRequest.self, from: request.body)
+        let normalized = translator.normalize(messagesRequest)
+        do {
+            let translated = try await translatedRequest(
+                modelID: normalized.model,
+                stream: normalized.stream
+            ) {
+                try translator.translate(normalized, modelHandle: $0)
+            }
+            return try await streamResponse(
+                translated: translated,
+                shape: .messages
             )
         } catch let error as HTTPRequestHandlingError {
             return httpErrorResponse(for: error)

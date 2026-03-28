@@ -202,6 +202,12 @@ class LiveMelixStack:
     def responses_url(self) -> str:
         return f"http://127.0.0.1:{self.http_port}/v1/responses"
 
+    def completions_url(self) -> str:
+        return f"http://127.0.0.1:{self.http_port}/v1/completions"
+
+    def messages_url(self) -> str:
+        return f"http://127.0.0.1:{self.http_port}/v1/messages"
+
     def _stop_process(self, name: str, process: subprocess.Popen[str] | None) -> None:
         if process is None:
             return

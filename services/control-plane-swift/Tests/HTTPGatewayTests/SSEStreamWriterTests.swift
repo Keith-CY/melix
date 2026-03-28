@@ -177,6 +177,158 @@ struct SSEStreamWriterTests {
         #expect(payload.contains("\"event_seq\":3"))
         #expect(payload.contains("data: [DONE]"))
     }
+
+    @Test("completions streams emit chunk usage completion and done frames")
+    func emitsCompletionsFrames() async throws {
+        let writer = SSEStreamWriter(now: { Date(timeIntervalSince1970: 456) })
+
+        let stream = AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error> { continuation in
+            continuation.yield(makeTokenEvent(requestID: "cmp-1", seq: 1, text: "A"))
+            continuation.yield(makeUsageEvent(requestID: "cmp-1", seq: 2, promptTokens: 4, completionTokens: 1))
+            continuation.yield(makeCompletedEvent(requestID: "cmp-1", seq: 3, finishReason: "stop", assistantText: "A"))
+            continuation.finish()
+        }
+
+        let payload = try await collectChunks(
+            writer.encode(
+                stream: stream,
+                requestID: "cmp-1",
+                modelID: "melix-dev-text",
+                shape: .completions
+            )
+        )
+
+        #expect(payload.contains("\"object\":\"text_completion\""))
+        #expect(payload.contains("\"text\":\"A\""))
+        #expect(payload.contains("event: usage"))
+        #expect(payload.contains("\"prompt_tokens\":4"))
+        #expect(payload.contains("\"finish_reason\":\"stop\""))
+        #expect(payload.contains("data: [DONE]"))
+    }
+
+    @Test("messages streams emit delta heartbeat completion fallback and done frames")
+    func emitsMessagesFrames() async throws {
+        let writer = SSEStreamWriter(now: { Date(timeIntervalSince1970: 456) })
+
+        let stream = AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error> { continuation in
+            continuation.yield(makeTokenEvent(requestID: "msg-1", seq: 1, text: "A"))
+            continuation.yield(makeHeartbeatEvent(requestID: "msg-1", seq: 2, unixMs: 456))
+            var fallback = Melix_Worker_V1_ExecuteEvent()
+            fallback.requestID = "msg-1"
+            fallback.executionKind = "generate"
+            fallback.seq = 3
+            continuation.yield(fallback)
+            continuation.yield(makeCompletedEvent(requestID: "msg-1", seq: 4, finishReason: "stop", assistantText: "A"))
+            continuation.finish()
+        }
+
+        let payload = try await collectChunks(
+            writer.encode(
+                stream: stream,
+                requestID: "msg-1",
+                modelID: "melix-dev-text",
+                shape: .messages
+            )
+        )
+
+        #expect(payload.contains("event: message.delta"))
+        #expect(payload.contains("\"type\":\"message.delta\""))
+        #expect(payload.contains("\"message_id\":\"msg-1\""))
+        #expect(payload.contains("\"delta\":\"A\""))
+        #expect(payload.contains("event: message.heartbeat"))
+        #expect(payload.contains("\"type\":\"message.heartbeat\""))
+        #expect(payload.contains("event: message.event"))
+        #expect(payload.contains("\"type\":\"message.event\""))
+        #expect(payload.contains("\"event_seq\":3"))
+        #expect(payload.contains("event: message.completed"))
+        #expect(payload.contains("\"type\":\"message.completed\""))
+        #expect(payload.contains("data: [DONE]"))
+    }
+
+    @Test("completions streams emit heartbeat error fallback and done frames")
+    func emitsCompletionsHeartbeatErrorAndFallbackFrames() async throws {
+        let writer = SSEStreamWriter(now: { Date(timeIntervalSince1970: 456) })
+
+        let stream = AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error> { continuation in
+            continuation.yield(makeHeartbeatEvent(requestID: "cmp-misc", seq: 1, unixMs: 654))
+            continuation.yield(makeErrorEvent(requestID: "cmp-misc", seq: 2, code: "runtime_error", message: "boom"))
+            var fallback = Melix_Worker_V1_ExecuteEvent()
+            fallback.requestID = "cmp-misc"
+            fallback.executionKind = "generate"
+            fallback.seq = 3
+            continuation.yield(fallback)
+            continuation.finish()
+        }
+
+        let payload = try await collectChunks(
+            writer.encode(
+                stream: stream,
+                requestID: "cmp-misc",
+                modelID: "melix-dev-text",
+                shape: .completions
+            )
+        )
+
+        #expect(payload.contains("event: heartbeat"))
+        #expect(payload.contains("\"request_id\":\"cmp-misc\""))
+        #expect(payload.contains("\"unix_ms\":654"))
+        #expect(payload.contains("event: error"))
+        #expect(payload.contains("\"code\":\"runtime_error\""))
+        #expect(payload.contains("event: message"))
+        #expect(payload.contains("\"event_seq\":3"))
+        #expect(payload.contains("data: [DONE]"))
+    }
+
+    @Test("messages streams emit usage error and done frames")
+    func emitsMessagesUsageAndErrorFrames() async throws {
+        let writer = SSEStreamWriter(now: { Date(timeIntervalSince1970: 456) })
+
+        let stream = AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error> { continuation in
+            continuation.yield(makeUsageEvent(requestID: "msg-usage", seq: 1, promptTokens: 8, completionTokens: 2))
+            continuation.yield(makeErrorEvent(requestID: "msg-usage", seq: 2, code: "runtime_error", message: "boom"))
+            continuation.finish()
+        }
+
+        let payload = try await collectChunks(
+            writer.encode(
+                stream: stream,
+                requestID: "msg-usage",
+                modelID: "melix-dev-text",
+                shape: .messages
+            )
+        )
+
+        #expect(payload.contains("event: message.usage"))
+        #expect(payload.contains("\"type\":\"message.usage\""))
+        #expect(payload.contains("\"input_tokens\":8"))
+        #expect(payload.contains("\"output_tokens\":2"))
+        #expect(payload.contains("event: error"))
+        #expect(payload.contains("\"code\":\"runtime_error\""))
+        #expect(payload.contains("data: [DONE]"))
+    }
+
+    @Test("default writer initializer emits valid completion frames")
+    func defaultInitializerEmitsFrames() async throws {
+        let writer = SSEStreamWriter()
+
+        let stream = AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error> { continuation in
+            continuation.yield(makeTokenEvent(requestID: "default-init", seq: 1, text: "A"))
+            continuation.finish()
+        }
+
+        let payload = try await collectChunks(
+            writer.encode(
+                stream: stream,
+                requestID: "default-init",
+                modelID: "melix-dev-text",
+                shape: .completions
+            )
+        )
+
+        #expect(payload.contains("\"object\":\"text_completion\""))
+        #expect(payload.contains("\"text\":\"A\""))
+        #expect(payload.contains("data: [DONE]"))
+    }
 }
 
 private func collectChunks(
