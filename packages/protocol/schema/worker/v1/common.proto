@@ -70,12 +70,31 @@ message CacheScope {
   string parser_mode = 6;
   string reasoning_mode = 7;
   string multimodal_adapter_hash = 8;
+  string scope_id = 9;
 }
 
 message CacheKey {
   bytes prefix_hash = 1;
   bytes fingerprint_hash = 2;
   string scope_id = 3;
+}
+
+message PrefixRef {
+  string prefix_id = 1;
+  CacheKey cache_key = 2;
+  CacheScope scope = 3;
+  uint32 token_length = 4;
+  bool pinned = 5;
+  string tier = 6;
+}
+
+message SnapshotRef {
+  string snapshot_id = 1;
+  string request_id = 2;
+  string session_id = 3;
+  string branch_id = 4;
+  uint32 token_boundary = 5;
+  string checkpoint_id = 6;
 }
 
 message SamplingConfig {
@@ -197,6 +216,8 @@ message AccelerationPolicy {
 
 message BlockTable {
   repeated BlockRef blocks = 1;
+  CacheKey cache_key = 2;
+  string scope_id = 3;
 }
 
 message BlockRef {

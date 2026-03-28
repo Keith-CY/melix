@@ -41,22 +41,53 @@ public struct Melix_Worker_V1_CacheStats: Sendable {
 
   public var dedupRatio: Double = 0
 
+  public var quantizedBytes: UInt64 = 0
+
+  public var compressionRatio: Double = 0
+
+  public var l2RestoreHitRate: Double = 0
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
 }
 
-public struct Melix_Worker_V1_GetCacheStatsRequest: Sendable {
+public struct Melix_Worker_V1_CacheScopeSummary: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
+  public var scopeID: String = String()
+
+  public var scope: Melix_Worker_V1_CacheScope {
+    get {_scope ?? Melix_Worker_V1_CacheScope()}
+    set {_scope = newValue}
+  }
+  /// Returns true if `scope` has been explicitly set.
+  public var hasScope: Bool {self._scope != nil}
+  /// Clears the value of `scope`. Subsequent reads from it will return its default value.
+  public mutating func clearScope() {self._scope = nil}
+
+  public var l1Bytes: UInt64 = 0
+
+  public var l2Bytes: UInt64 = 0
+
+  public var blockCount: UInt64 = 0
+
+  public var prefixCount: UInt64 = 0
+
+  public var snapshotCount: UInt64 = 0
+
+  public var hotBlocks: [Melix_Worker_V1_BlockRef] = []
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
+
+  fileprivate var _scope: Melix_Worker_V1_CacheScope? = nil
 }
 
-public struct Melix_Worker_V1_GetCacheStatsResponse: Sendable {
+public struct Melix_Worker_V1_CacheSnapshot: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -70,6 +101,14 @@ public struct Melix_Worker_V1_GetCacheStatsResponse: Sendable {
   /// Clears the value of `stats`. Subsequent reads from it will return its default value.
   public mutating func clearStats() {self._stats = nil}
 
+  public var pinnedPrefixes: [Melix_Worker_V1_PrefixRef] = []
+
+  public var hotPrefixes: [Melix_Worker_V1_PrefixRef] = []
+
+  public var snapshots: [Melix_Worker_V1_SnapshotRef] = []
+
+  public var scopes: [Melix_Worker_V1_CacheScopeSummary] = []
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -77,37 +116,44 @@ public struct Melix_Worker_V1_GetCacheStatsResponse: Sendable {
   fileprivate var _stats: Melix_Worker_V1_CacheStats? = nil
 }
 
-public struct Melix_Worker_V1_PrefixRef: Sendable {
+public struct Melix_Worker_V1_GetCacheStatsRequest: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
-  public var prefixID: String = String()
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
 
-  public var scope: Melix_Worker_V1_CacheScope {
-    get {_scope ?? Melix_Worker_V1_CacheScope()}
-    set {_scope = newValue}
-  }
-  /// Returns true if `scope` has been explicitly set.
-  public var hasScope: Bool {self._scope != nil}
-  /// Clears the value of `scope`. Subsequent reads from it will return its default value.
-  public mutating func clearScope() {self._scope = nil}
+  public init() {}
+}
 
-  public var cacheKey: Melix_Worker_V1_CacheKey {
-    get {_cacheKey ?? Melix_Worker_V1_CacheKey()}
-    set {_cacheKey = newValue}
+public struct Melix_Worker_V1_GetCacheStatsResponse: @unchecked Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var stats: Melix_Worker_V1_CacheStats {
+    get {_storage._stats ?? Melix_Worker_V1_CacheStats()}
+    set {_uniqueStorage()._stats = newValue}
   }
-  /// Returns true if `cacheKey` has been explicitly set.
-  public var hasCacheKey: Bool {self._cacheKey != nil}
-  /// Clears the value of `cacheKey`. Subsequent reads from it will return its default value.
-  public mutating func clearCacheKey() {self._cacheKey = nil}
+  /// Returns true if `stats` has been explicitly set.
+  public var hasStats: Bool {_storage._stats != nil}
+  /// Clears the value of `stats`. Subsequent reads from it will return its default value.
+  public mutating func clearStats() {_uniqueStorage()._stats = nil}
+
+  public var snapshot: Melix_Worker_V1_CacheSnapshot {
+    get {_storage._snapshot ?? Melix_Worker_V1_CacheSnapshot()}
+    set {_uniqueStorage()._snapshot = newValue}
+  }
+  /// Returns true if `snapshot` has been explicitly set.
+  public var hasSnapshot: Bool {_storage._snapshot != nil}
+  /// Clears the value of `snapshot`. Subsequent reads from it will return its default value.
+  public mutating func clearSnapshot() {_uniqueStorage()._snapshot = nil}
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
 
-  fileprivate var _scope: Melix_Worker_V1_CacheScope? = nil
-  fileprivate var _cacheKey: Melix_Worker_V1_CacheKey? = nil
+  fileprivate var _storage = _StorageClass.defaultInstance
 }
 
 public struct Melix_Worker_V1_PinPrefixRequest: Sendable {
@@ -232,11 +278,21 @@ public struct Melix_Worker_V1_SaveBoundarySnapshotResponse: Sendable {
 
   public var snapshotID: String = String()
 
+  public var snapshot: Melix_Worker_V1_SnapshotRef {
+    get {_snapshot ?? Melix_Worker_V1_SnapshotRef()}
+    set {_snapshot = newValue}
+  }
+  /// Returns true if `snapshot` has been explicitly set.
+  public var hasSnapshot: Bool {self._snapshot != nil}
+  /// Clears the value of `snapshot`. Subsequent reads from it will return its default value.
+  public mutating func clearSnapshot() {self._snapshot = nil}
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
 
   fileprivate var _error: Melix_Worker_V1_ErrorStatus? = nil
+  fileprivate var _snapshot: Melix_Worker_V1_SnapshotRef? = nil
 }
 
 public struct Melix_Worker_V1_RestoreBoundarySnapshotRequest: Sendable {
@@ -251,41 +307,58 @@ public struct Melix_Worker_V1_RestoreBoundarySnapshotRequest: Sendable {
   public init() {}
 }
 
-public struct Melix_Worker_V1_RestoreBoundarySnapshotResponse: Sendable {
+public struct Melix_Worker_V1_RestoreBoundarySnapshotResponse: @unchecked Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
-  public var ok: Bool = false
+  public var ok: Bool {
+    get {_storage._ok}
+    set {_uniqueStorage()._ok = newValue}
+  }
 
   public var error: Melix_Worker_V1_ErrorStatus {
-    get {_error ?? Melix_Worker_V1_ErrorStatus()}
-    set {_error = newValue}
+    get {_storage._error ?? Melix_Worker_V1_ErrorStatus()}
+    set {_uniqueStorage()._error = newValue}
   }
   /// Returns true if `error` has been explicitly set.
-  public var hasError: Bool {self._error != nil}
+  public var hasError: Bool {_storage._error != nil}
   /// Clears the value of `error`. Subsequent reads from it will return its default value.
-  public mutating func clearError() {self._error = nil}
+  public mutating func clearError() {_uniqueStorage()._error = nil}
 
-  public var decodeHandle: String = String()
+  public var decodeHandle: String {
+    get {_storage._decodeHandle}
+    set {_uniqueStorage()._decodeHandle = newValue}
+  }
 
-  public var blockTableID: String = String()
+  public var blockTableID: String {
+    get {_storage._blockTableID}
+    set {_uniqueStorage()._blockTableID = newValue}
+  }
 
   public var blockTable: Melix_Worker_V1_BlockTable {
-    get {_blockTable ?? Melix_Worker_V1_BlockTable()}
-    set {_blockTable = newValue}
+    get {_storage._blockTable ?? Melix_Worker_V1_BlockTable()}
+    set {_uniqueStorage()._blockTable = newValue}
   }
   /// Returns true if `blockTable` has been explicitly set.
-  public var hasBlockTable: Bool {self._blockTable != nil}
+  public var hasBlockTable: Bool {_storage._blockTable != nil}
   /// Clears the value of `blockTable`. Subsequent reads from it will return its default value.
-  public mutating func clearBlockTable() {self._blockTable = nil}
+  public mutating func clearBlockTable() {_uniqueStorage()._blockTable = nil}
+
+  public var snapshot: Melix_Worker_V1_SnapshotRef {
+    get {_storage._snapshot ?? Melix_Worker_V1_SnapshotRef()}
+    set {_uniqueStorage()._snapshot = newValue}
+  }
+  /// Returns true if `snapshot` has been explicitly set.
+  public var hasSnapshot: Bool {_storage._snapshot != nil}
+  /// Clears the value of `snapshot`. Subsequent reads from it will return its default value.
+  public mutating func clearSnapshot() {_uniqueStorage()._snapshot = nil}
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
 
-  fileprivate var _error: Melix_Worker_V1_ErrorStatus? = nil
-  fileprivate var _blockTable: Melix_Worker_V1_BlockTable? = nil
+  fileprivate var _storage = _StorageClass.defaultInstance
 }
 
 public struct Melix_Worker_V1_PurgeCacheRequest: Sendable {
@@ -354,7 +427,7 @@ fileprivate let _protobuf_package = "melix.worker.v1"
 
 extension Melix_Worker_V1_CacheStats: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".CacheStats"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}l1_bytes\0\u{3}l2_bytes\0\u{3}block_count\0\u{3}pinned_prefix_count\0\u{3}snapshot_count\0\u{3}l1_hit_rate\0\u{3}l2_hit_rate\0\u{3}dedup_ratio\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}l1_bytes\0\u{3}l2_bytes\0\u{3}block_count\0\u{3}pinned_prefix_count\0\u{3}snapshot_count\0\u{3}l1_hit_rate\0\u{3}l2_hit_rate\0\u{3}dedup_ratio\0\u{3}quantized_bytes\0\u{3}compression_ratio\0\u{3}l2_restore_hit_rate\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -370,6 +443,9 @@ extension Melix_Worker_V1_CacheStats: SwiftProtobuf.Message, SwiftProtobuf._Mess
       case 6: try { try decoder.decodeSingularDoubleField(value: &self.l1HitRate) }()
       case 7: try { try decoder.decodeSingularDoubleField(value: &self.l2HitRate) }()
       case 8: try { try decoder.decodeSingularDoubleField(value: &self.dedupRatio) }()
+      case 9: try { try decoder.decodeSingularUInt64Field(value: &self.quantizedBytes) }()
+      case 10: try { try decoder.decodeSingularDoubleField(value: &self.compressionRatio) }()
+      case 11: try { try decoder.decodeSingularDoubleField(value: &self.l2RestoreHitRate) }()
       default: break
       }
     }
@@ -400,6 +476,15 @@ extension Melix_Worker_V1_CacheStats: SwiftProtobuf.Message, SwiftProtobuf._Mess
     if self.dedupRatio.bitPattern != 0 {
       try visitor.visitSingularDoubleField(value: self.dedupRatio, fieldNumber: 8)
     }
+    if self.quantizedBytes != 0 {
+      try visitor.visitSingularUInt64Field(value: self.quantizedBytes, fieldNumber: 9)
+    }
+    if self.compressionRatio.bitPattern != 0 {
+      try visitor.visitSingularDoubleField(value: self.compressionRatio, fieldNumber: 10)
+    }
+    if self.l2RestoreHitRate.bitPattern != 0 {
+      try visitor.visitSingularDoubleField(value: self.l2RestoreHitRate, fieldNumber: 11)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -412,6 +497,132 @@ extension Melix_Worker_V1_CacheStats: SwiftProtobuf.Message, SwiftProtobuf._Mess
     if lhs.l1HitRate != rhs.l1HitRate {return false}
     if lhs.l2HitRate != rhs.l2HitRate {return false}
     if lhs.dedupRatio != rhs.dedupRatio {return false}
+    if lhs.quantizedBytes != rhs.quantizedBytes {return false}
+    if lhs.compressionRatio != rhs.compressionRatio {return false}
+    if lhs.l2RestoreHitRate != rhs.l2RestoreHitRate {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+extension Melix_Worker_V1_CacheScopeSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".CacheScopeSummary"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}scope_id\0\u{1}scope\0\u{3}l1_bytes\0\u{3}l2_bytes\0\u{3}block_count\0\u{3}prefix_count\0\u{3}snapshot_count\0\u{3}hot_blocks\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.scopeID) }()
+      case 2: try { try decoder.decodeSingularMessageField(value: &self._scope) }()
+      case 3: try { try decoder.decodeSingularUInt64Field(value: &self.l1Bytes) }()
+      case 4: try { try decoder.decodeSingularUInt64Field(value: &self.l2Bytes) }()
+      case 5: try { try decoder.decodeSingularUInt64Field(value: &self.blockCount) }()
+      case 6: try { try decoder.decodeSingularUInt64Field(value: &self.prefixCount) }()
+      case 7: try { try decoder.decodeSingularUInt64Field(value: &self.snapshotCount) }()
+      case 8: try { try decoder.decodeRepeatedMessageField(value: &self.hotBlocks) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    // The use of inline closures is to circumvent an issue where the compiler
+    // allocates stack space for every if/case branch local when no optimizations
+    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+    // https://github.com/apple/swift-protobuf/issues/1182
+    if !self.scopeID.isEmpty {
+      try visitor.visitSingularStringField(value: self.scopeID, fieldNumber: 1)
+    }
+    try { if let v = self._scope {
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 2)
+    } }()
+    if self.l1Bytes != 0 {
+      try visitor.visitSingularUInt64Field(value: self.l1Bytes, fieldNumber: 3)
+    }
+    if self.l2Bytes != 0 {
+      try visitor.visitSingularUInt64Field(value: self.l2Bytes, fieldNumber: 4)
+    }
+    if self.blockCount != 0 {
+      try visitor.visitSingularUInt64Field(value: self.blockCount, fieldNumber: 5)
+    }
+    if self.prefixCount != 0 {
+      try visitor.visitSingularUInt64Field(value: self.prefixCount, fieldNumber: 6)
+    }
+    if self.snapshotCount != 0 {
+      try visitor.visitSingularUInt64Field(value: self.snapshotCount, fieldNumber: 7)
+    }
+    if !self.hotBlocks.isEmpty {
+      try visitor.visitRepeatedMessageField(value: self.hotBlocks, fieldNumber: 8)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Melix_Worker_V1_CacheScopeSummary, rhs: Melix_Worker_V1_CacheScopeSummary) -> Bool {
+    if lhs.scopeID != rhs.scopeID {return false}
+    if lhs._scope != rhs._scope {return false}
+    if lhs.l1Bytes != rhs.l1Bytes {return false}
+    if lhs.l2Bytes != rhs.l2Bytes {return false}
+    if lhs.blockCount != rhs.blockCount {return false}
+    if lhs.prefixCount != rhs.prefixCount {return false}
+    if lhs.snapshotCount != rhs.snapshotCount {return false}
+    if lhs.hotBlocks != rhs.hotBlocks {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+extension Melix_Worker_V1_CacheSnapshot: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".CacheSnapshot"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}stats\0\u{3}pinned_prefixes\0\u{3}hot_prefixes\0\u{1}snapshots\0\u{1}scopes\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularMessageField(value: &self._stats) }()
+      case 2: try { try decoder.decodeRepeatedMessageField(value: &self.pinnedPrefixes) }()
+      case 3: try { try decoder.decodeRepeatedMessageField(value: &self.hotPrefixes) }()
+      case 4: try { try decoder.decodeRepeatedMessageField(value: &self.snapshots) }()
+      case 5: try { try decoder.decodeRepeatedMessageField(value: &self.scopes) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    // The use of inline closures is to circumvent an issue where the compiler
+    // allocates stack space for every if/case branch local when no optimizations
+    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+    // https://github.com/apple/swift-protobuf/issues/1182
+    try { if let v = self._stats {
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 1)
+    } }()
+    if !self.pinnedPrefixes.isEmpty {
+      try visitor.visitRepeatedMessageField(value: self.pinnedPrefixes, fieldNumber: 2)
+    }
+    if !self.hotPrefixes.isEmpty {
+      try visitor.visitRepeatedMessageField(value: self.hotPrefixes, fieldNumber: 3)
+    }
+    if !self.snapshots.isEmpty {
+      try visitor.visitRepeatedMessageField(value: self.snapshots, fieldNumber: 4)
+    }
+    if !self.scopes.isEmpty {
+      try visitor.visitRepeatedMessageField(value: self.scopes, fieldNumber: 5)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Melix_Worker_V1_CacheSnapshot, rhs: Melix_Worker_V1_CacheSnapshot) -> Bool {
+    if lhs._stats != rhs._stats {return false}
+    if lhs.pinnedPrefixes != rhs.pinnedPrefixes {return false}
+    if lhs.hotPrefixes != rhs.hotPrefixes {return false}
+    if lhs.snapshots != rhs.snapshots {return false}
+    if lhs.scopes != rhs.scopes {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -438,77 +649,76 @@ extension Melix_Worker_V1_GetCacheStatsRequest: SwiftProtobuf.Message, SwiftProt
 
 extension Melix_Worker_V1_GetCacheStatsResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".GetCacheStatsResponse"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}stats\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}stats\0\u{1}snapshot\0")
+
+  fileprivate class _StorageClass {
+    var _stats: Melix_Worker_V1_CacheStats? = nil
+    var _snapshot: Melix_Worker_V1_CacheSnapshot? = nil
+
+      // This property is used as the initial default value for new instances of the type.
+      // The type itself is protecting the reference to its storage via CoW semantics.
+      // This will force a copy to be made of this reference when the first mutation occurs;
+      // hence, it is safe to mark this as `nonisolated(unsafe)`.
+      static nonisolated(unsafe) let defaultInstance = _StorageClass()
+
+    private init() {}
+
+    init(copying source: _StorageClass) {
+      _stats = source._stats
+      _snapshot = source._snapshot
+    }
+  }
+
+  fileprivate mutating func _uniqueStorage() -> _StorageClass {
+    if !isKnownUniquelyReferenced(&_storage) {
+      _storage = _StorageClass(copying: _storage)
+    }
+    return _storage
+  }
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
-    while let fieldNumber = try decoder.nextFieldNumber() {
-      // The use of inline closures is to circumvent an issue where the compiler
-      // allocates stack space for every case branch when no optimizations are
-      // enabled. https://github.com/apple/swift-protobuf/issues/1034
-      switch fieldNumber {
-      case 1: try { try decoder.decodeSingularMessageField(value: &self._stats) }()
-      default: break
+    _ = _uniqueStorage()
+    try withExtendedLifetime(_storage) { (_storage: _StorageClass) in
+      while let fieldNumber = try decoder.nextFieldNumber() {
+        // The use of inline closures is to circumvent an issue where the compiler
+        // allocates stack space for every case branch when no optimizations are
+        // enabled. https://github.com/apple/swift-protobuf/issues/1034
+        switch fieldNumber {
+        case 1: try { try decoder.decodeSingularMessageField(value: &_storage._stats) }()
+        case 2: try { try decoder.decodeSingularMessageField(value: &_storage._snapshot) }()
+        default: break
+        }
       }
     }
   }
 
   public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
-    // The use of inline closures is to circumvent an issue where the compiler
-    // allocates stack space for every if/case branch local when no optimizations
-    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
-    // https://github.com/apple/swift-protobuf/issues/1182
-    try { if let v = self._stats {
-      try visitor.visitSingularMessageField(value: v, fieldNumber: 1)
-    } }()
+    try withExtendedLifetime(_storage) { (_storage: _StorageClass) in
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every if/case branch local when no optimizations
+      // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+      // https://github.com/apple/swift-protobuf/issues/1182
+      try { if let v = _storage._stats {
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 1)
+      } }()
+      try { if let v = _storage._snapshot {
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 2)
+      } }()
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: Melix_Worker_V1_GetCacheStatsResponse, rhs: Melix_Worker_V1_GetCacheStatsResponse) -> Bool {
-    if lhs._stats != rhs._stats {return false}
-    if lhs.unknownFields != rhs.unknownFields {return false}
-    return true
-  }
-}
-
-extension Melix_Worker_V1_PrefixRef: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
-  public static let protoMessageName: String = _protobuf_package + ".PrefixRef"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}prefix_id\0\u{1}scope\0\u{3}cache_key\0")
-
-  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
-    while let fieldNumber = try decoder.nextFieldNumber() {
-      // The use of inline closures is to circumvent an issue where the compiler
-      // allocates stack space for every case branch when no optimizations are
-      // enabled. https://github.com/apple/swift-protobuf/issues/1034
-      switch fieldNumber {
-      case 1: try { try decoder.decodeSingularStringField(value: &self.prefixID) }()
-      case 2: try { try decoder.decodeSingularMessageField(value: &self._scope) }()
-      case 3: try { try decoder.decodeSingularMessageField(value: &self._cacheKey) }()
-      default: break
+    if lhs._storage !== rhs._storage {
+      let storagesAreEqual: Bool = withExtendedLifetime((lhs._storage, rhs._storage)) { (_args: (_StorageClass, _StorageClass)) in
+        let _storage = _args.0
+        let rhs_storage = _args.1
+        if _storage._stats != rhs_storage._stats {return false}
+        if _storage._snapshot != rhs_storage._snapshot {return false}
+        return true
       }
+      if !storagesAreEqual {return false}
     }
-  }
-
-  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
-    // The use of inline closures is to circumvent an issue where the compiler
-    // allocates stack space for every if/case branch local when no optimizations
-    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
-    // https://github.com/apple/swift-protobuf/issues/1182
-    if !self.prefixID.isEmpty {
-      try visitor.visitSingularStringField(value: self.prefixID, fieldNumber: 1)
-    }
-    try { if let v = self._scope {
-      try visitor.visitSingularMessageField(value: v, fieldNumber: 2)
-    } }()
-    try { if let v = self._cacheKey {
-      try visitor.visitSingularMessageField(value: v, fieldNumber: 3)
-    } }()
-    try unknownFields.traverse(visitor: &visitor)
-  }
-
-  public static func ==(lhs: Melix_Worker_V1_PrefixRef, rhs: Melix_Worker_V1_PrefixRef) -> Bool {
-    if lhs.prefixID != rhs.prefixID {return false}
-    if lhs._scope != rhs._scope {return false}
-    if lhs._cacheKey != rhs._cacheKey {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -702,7 +912,7 @@ extension Melix_Worker_V1_SaveBoundarySnapshotRequest: SwiftProtobuf.Message, Sw
 
 extension Melix_Worker_V1_SaveBoundarySnapshotResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".SaveBoundarySnapshotResponse"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}ok\0\u{1}error\0\u{3}snapshot_id\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}ok\0\u{1}error\0\u{3}snapshot_id\0\u{1}snapshot\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -713,6 +923,7 @@ extension Melix_Worker_V1_SaveBoundarySnapshotResponse: SwiftProtobuf.Message, S
       case 1: try { try decoder.decodeSingularBoolField(value: &self.ok) }()
       case 2: try { try decoder.decodeSingularMessageField(value: &self._error) }()
       case 3: try { try decoder.decodeSingularStringField(value: &self.snapshotID) }()
+      case 4: try { try decoder.decodeSingularMessageField(value: &self._snapshot) }()
       default: break
       }
     }
@@ -732,6 +943,9 @@ extension Melix_Worker_V1_SaveBoundarySnapshotResponse: SwiftProtobuf.Message, S
     if !self.snapshotID.isEmpty {
       try visitor.visitSingularStringField(value: self.snapshotID, fieldNumber: 3)
     }
+    try { if let v = self._snapshot {
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 4)
+    } }()
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -739,6 +953,7 @@ extension Melix_Worker_V1_SaveBoundarySnapshotResponse: SwiftProtobuf.Message, S
     if lhs.ok != rhs.ok {return false}
     if lhs._error != rhs._error {return false}
     if lhs.snapshotID != rhs.snapshotID {return false}
+    if lhs._snapshot != rhs._snapshot {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -776,53 +991,104 @@ extension Melix_Worker_V1_RestoreBoundarySnapshotRequest: SwiftProtobuf.Message,
 
 extension Melix_Worker_V1_RestoreBoundarySnapshotResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".RestoreBoundarySnapshotResponse"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}ok\0\u{1}error\0\u{3}decode_handle\0\u{3}block_table_id\0\u{3}block_table\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}ok\0\u{1}error\0\u{3}decode_handle\0\u{3}block_table_id\0\u{3}block_table\0\u{1}snapshot\0")
+
+  fileprivate class _StorageClass {
+    var _ok: Bool = false
+    var _error: Melix_Worker_V1_ErrorStatus? = nil
+    var _decodeHandle: String = String()
+    var _blockTableID: String = String()
+    var _blockTable: Melix_Worker_V1_BlockTable? = nil
+    var _snapshot: Melix_Worker_V1_SnapshotRef? = nil
+
+      // This property is used as the initial default value for new instances of the type.
+      // The type itself is protecting the reference to its storage via CoW semantics.
+      // This will force a copy to be made of this reference when the first mutation occurs;
+      // hence, it is safe to mark this as `nonisolated(unsafe)`.
+      static nonisolated(unsafe) let defaultInstance = _StorageClass()
+
+    private init() {}
+
+    init(copying source: _StorageClass) {
+      _ok = source._ok
+      _error = source._error
+      _decodeHandle = source._decodeHandle
+      _blockTableID = source._blockTableID
+      _blockTable = source._blockTable
+      _snapshot = source._snapshot
+    }
+  }
+
+  fileprivate mutating func _uniqueStorage() -> _StorageClass {
+    if !isKnownUniquelyReferenced(&_storage) {
+      _storage = _StorageClass(copying: _storage)
+    }
+    return _storage
+  }
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
-    while let fieldNumber = try decoder.nextFieldNumber() {
-      // The use of inline closures is to circumvent an issue where the compiler
-      // allocates stack space for every case branch when no optimizations are
-      // enabled. https://github.com/apple/swift-protobuf/issues/1034
-      switch fieldNumber {
-      case 1: try { try decoder.decodeSingularBoolField(value: &self.ok) }()
-      case 2: try { try decoder.decodeSingularMessageField(value: &self._error) }()
-      case 3: try { try decoder.decodeSingularStringField(value: &self.decodeHandle) }()
-      case 4: try { try decoder.decodeSingularStringField(value: &self.blockTableID) }()
-      case 5: try { try decoder.decodeSingularMessageField(value: &self._blockTable) }()
-      default: break
+    _ = _uniqueStorage()
+    try withExtendedLifetime(_storage) { (_storage: _StorageClass) in
+      while let fieldNumber = try decoder.nextFieldNumber() {
+        // The use of inline closures is to circumvent an issue where the compiler
+        // allocates stack space for every case branch when no optimizations are
+        // enabled. https://github.com/apple/swift-protobuf/issues/1034
+        switch fieldNumber {
+        case 1: try { try decoder.decodeSingularBoolField(value: &_storage._ok) }()
+        case 2: try { try decoder.decodeSingularMessageField(value: &_storage._error) }()
+        case 3: try { try decoder.decodeSingularStringField(value: &_storage._decodeHandle) }()
+        case 4: try { try decoder.decodeSingularStringField(value: &_storage._blockTableID) }()
+        case 5: try { try decoder.decodeSingularMessageField(value: &_storage._blockTable) }()
+        case 6: try { try decoder.decodeSingularMessageField(value: &_storage._snapshot) }()
+        default: break
+        }
       }
     }
   }
 
   public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
-    // The use of inline closures is to circumvent an issue where the compiler
-    // allocates stack space for every if/case branch local when no optimizations
-    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
-    // https://github.com/apple/swift-protobuf/issues/1182
-    if self.ok != false {
-      try visitor.visitSingularBoolField(value: self.ok, fieldNumber: 1)
+    try withExtendedLifetime(_storage) { (_storage: _StorageClass) in
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every if/case branch local when no optimizations
+      // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+      // https://github.com/apple/swift-protobuf/issues/1182
+      if _storage._ok != false {
+        try visitor.visitSingularBoolField(value: _storage._ok, fieldNumber: 1)
+      }
+      try { if let v = _storage._error {
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 2)
+      } }()
+      if !_storage._decodeHandle.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._decodeHandle, fieldNumber: 3)
+      }
+      if !_storage._blockTableID.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._blockTableID, fieldNumber: 4)
+      }
+      try { if let v = _storage._blockTable {
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 5)
+      } }()
+      try { if let v = _storage._snapshot {
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 6)
+      } }()
     }
-    try { if let v = self._error {
-      try visitor.visitSingularMessageField(value: v, fieldNumber: 2)
-    } }()
-    if !self.decodeHandle.isEmpty {
-      try visitor.visitSingularStringField(value: self.decodeHandle, fieldNumber: 3)
-    }
-    if !self.blockTableID.isEmpty {
-      try visitor.visitSingularStringField(value: self.blockTableID, fieldNumber: 4)
-    }
-    try { if let v = self._blockTable {
-      try visitor.visitSingularMessageField(value: v, fieldNumber: 5)
-    } }()
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: Melix_Worker_V1_RestoreBoundarySnapshotResponse, rhs: Melix_Worker_V1_RestoreBoundarySnapshotResponse) -> Bool {
-    if lhs.ok != rhs.ok {return false}
-    if lhs._error != rhs._error {return false}
-    if lhs.decodeHandle != rhs.decodeHandle {return false}
-    if lhs.blockTableID != rhs.blockTableID {return false}
-    if lhs._blockTable != rhs._blockTable {return false}
+    if lhs._storage !== rhs._storage {
+      let storagesAreEqual: Bool = withExtendedLifetime((lhs._storage, rhs._storage)) { (_args: (_StorageClass, _StorageClass)) in
+        let _storage = _args.0
+        let rhs_storage = _args.1
+        if _storage._ok != rhs_storage._ok {return false}
+        if _storage._error != rhs_storage._error {return false}
+        if _storage._decodeHandle != rhs_storage._decodeHandle {return false}
+        if _storage._blockTableID != rhs_storage._blockTableID {return false}
+        if _storage._blockTable != rhs_storage._blockTable {return false}
+        if _storage._snapshot != rhs_storage._snapshot {return false}
+        return true
+      }
+      if !storagesAreEqual {return false}
+    }
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

@@ -379,6 +379,8 @@ public struct Melix_Worker_V1_CacheScope: Sendable {
 
   public var multimodalAdapterHash: String = String()
 
+  public var scopeID: String = String()
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -394,6 +396,67 @@ public struct Melix_Worker_V1_CacheKey: Sendable {
   public var fingerprintHash: Data = Data()
 
   public var scopeID: String = String()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public struct Melix_Worker_V1_PrefixRef: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var prefixID: String = String()
+
+  public var cacheKey: Melix_Worker_V1_CacheKey {
+    get {_cacheKey ?? Melix_Worker_V1_CacheKey()}
+    set {_cacheKey = newValue}
+  }
+  /// Returns true if `cacheKey` has been explicitly set.
+  public var hasCacheKey: Bool {self._cacheKey != nil}
+  /// Clears the value of `cacheKey`. Subsequent reads from it will return its default value.
+  public mutating func clearCacheKey() {self._cacheKey = nil}
+
+  public var scope: Melix_Worker_V1_CacheScope {
+    get {_scope ?? Melix_Worker_V1_CacheScope()}
+    set {_scope = newValue}
+  }
+  /// Returns true if `scope` has been explicitly set.
+  public var hasScope: Bool {self._scope != nil}
+  /// Clears the value of `scope`. Subsequent reads from it will return its default value.
+  public mutating func clearScope() {self._scope = nil}
+
+  public var tokenLength: UInt32 = 0
+
+  public var pinned: Bool = false
+
+  public var tier: String = String()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+
+  fileprivate var _cacheKey: Melix_Worker_V1_CacheKey? = nil
+  fileprivate var _scope: Melix_Worker_V1_CacheScope? = nil
+}
+
+public struct Melix_Worker_V1_SnapshotRef: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var snapshotID: String = String()
+
+  public var requestID: String = String()
+
+  public var sessionID: String = String()
+
+  public var branchID: String = String()
+
+  public var tokenBoundary: UInt32 = 0
+
+  public var checkpointID: String = String()
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -664,9 +727,22 @@ public struct Melix_Worker_V1_BlockTable: Sendable {
 
   public var blocks: [Melix_Worker_V1_BlockRef] = []
 
+  public var cacheKey: Melix_Worker_V1_CacheKey {
+    get {_cacheKey ?? Melix_Worker_V1_CacheKey()}
+    set {_cacheKey = newValue}
+  }
+  /// Returns true if `cacheKey` has been explicitly set.
+  public var hasCacheKey: Bool {self._cacheKey != nil}
+  /// Clears the value of `cacheKey`. Subsequent reads from it will return its default value.
+  public mutating func clearCacheKey() {self._cacheKey = nil}
+
+  public var scopeID: String = String()
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
+
+  fileprivate var _cacheKey: Melix_Worker_V1_CacheKey? = nil
 }
 
 public struct Melix_Worker_V1_BlockRef: Sendable {
@@ -1084,7 +1160,7 @@ extension Melix_Worker_V1_Capability: SwiftProtobuf.Message, SwiftProtobuf._Mess
 
 extension Melix_Worker_V1_CacheScope: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".CacheScope"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}model_id\0\u{1}revision\0\u{3}tokenizer_hash\0\u{3}quant_profile_id\0\u{3}prompt_template_hash\0\u{3}parser_mode\0\u{3}reasoning_mode\0\u{3}multimodal_adapter_hash\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}model_id\0\u{1}revision\0\u{3}tokenizer_hash\0\u{3}quant_profile_id\0\u{3}prompt_template_hash\0\u{3}parser_mode\0\u{3}reasoning_mode\0\u{3}multimodal_adapter_hash\0\u{3}scope_id\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -1100,6 +1176,7 @@ extension Melix_Worker_V1_CacheScope: SwiftProtobuf.Message, SwiftProtobuf._Mess
       case 6: try { try decoder.decodeSingularStringField(value: &self.parserMode) }()
       case 7: try { try decoder.decodeSingularStringField(value: &self.reasoningMode) }()
       case 8: try { try decoder.decodeSingularStringField(value: &self.multimodalAdapterHash) }()
+      case 9: try { try decoder.decodeSingularStringField(value: &self.scopeID) }()
       default: break
       }
     }
@@ -1130,6 +1207,9 @@ extension Melix_Worker_V1_CacheScope: SwiftProtobuf.Message, SwiftProtobuf._Mess
     if !self.multimodalAdapterHash.isEmpty {
       try visitor.visitSingularStringField(value: self.multimodalAdapterHash, fieldNumber: 8)
     }
+    if !self.scopeID.isEmpty {
+      try visitor.visitSingularStringField(value: self.scopeID, fieldNumber: 9)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -1142,6 +1222,7 @@ extension Melix_Worker_V1_CacheScope: SwiftProtobuf.Message, SwiftProtobuf._Mess
     if lhs.parserMode != rhs.parserMode {return false}
     if lhs.reasoningMode != rhs.reasoningMode {return false}
     if lhs.multimodalAdapterHash != rhs.multimodalAdapterHash {return false}
+    if lhs.scopeID != rhs.scopeID {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -1182,6 +1263,120 @@ extension Melix_Worker_V1_CacheKey: SwiftProtobuf.Message, SwiftProtobuf._Messag
     if lhs.prefixHash != rhs.prefixHash {return false}
     if lhs.fingerprintHash != rhs.fingerprintHash {return false}
     if lhs.scopeID != rhs.scopeID {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+extension Melix_Worker_V1_PrefixRef: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".PrefixRef"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}prefix_id\0\u{3}cache_key\0\u{1}scope\0\u{3}token_length\0\u{1}pinned\0\u{1}tier\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.prefixID) }()
+      case 2: try { try decoder.decodeSingularMessageField(value: &self._cacheKey) }()
+      case 3: try { try decoder.decodeSingularMessageField(value: &self._scope) }()
+      case 4: try { try decoder.decodeSingularUInt32Field(value: &self.tokenLength) }()
+      case 5: try { try decoder.decodeSingularBoolField(value: &self.pinned) }()
+      case 6: try { try decoder.decodeSingularStringField(value: &self.tier) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    // The use of inline closures is to circumvent an issue where the compiler
+    // allocates stack space for every if/case branch local when no optimizations
+    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+    // https://github.com/apple/swift-protobuf/issues/1182
+    if !self.prefixID.isEmpty {
+      try visitor.visitSingularStringField(value: self.prefixID, fieldNumber: 1)
+    }
+    try { if let v = self._cacheKey {
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 2)
+    } }()
+    try { if let v = self._scope {
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 3)
+    } }()
+    if self.tokenLength != 0 {
+      try visitor.visitSingularUInt32Field(value: self.tokenLength, fieldNumber: 4)
+    }
+    if self.pinned != false {
+      try visitor.visitSingularBoolField(value: self.pinned, fieldNumber: 5)
+    }
+    if !self.tier.isEmpty {
+      try visitor.visitSingularStringField(value: self.tier, fieldNumber: 6)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Melix_Worker_V1_PrefixRef, rhs: Melix_Worker_V1_PrefixRef) -> Bool {
+    if lhs.prefixID != rhs.prefixID {return false}
+    if lhs._cacheKey != rhs._cacheKey {return false}
+    if lhs._scope != rhs._scope {return false}
+    if lhs.tokenLength != rhs.tokenLength {return false}
+    if lhs.pinned != rhs.pinned {return false}
+    if lhs.tier != rhs.tier {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+extension Melix_Worker_V1_SnapshotRef: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".SnapshotRef"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}snapshot_id\0\u{3}request_id\0\u{3}session_id\0\u{3}branch_id\0\u{3}token_boundary\0\u{3}checkpoint_id\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.snapshotID) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.requestID) }()
+      case 3: try { try decoder.decodeSingularStringField(value: &self.sessionID) }()
+      case 4: try { try decoder.decodeSingularStringField(value: &self.branchID) }()
+      case 5: try { try decoder.decodeSingularUInt32Field(value: &self.tokenBoundary) }()
+      case 6: try { try decoder.decodeSingularStringField(value: &self.checkpointID) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.snapshotID.isEmpty {
+      try visitor.visitSingularStringField(value: self.snapshotID, fieldNumber: 1)
+    }
+    if !self.requestID.isEmpty {
+      try visitor.visitSingularStringField(value: self.requestID, fieldNumber: 2)
+    }
+    if !self.sessionID.isEmpty {
+      try visitor.visitSingularStringField(value: self.sessionID, fieldNumber: 3)
+    }
+    if !self.branchID.isEmpty {
+      try visitor.visitSingularStringField(value: self.branchID, fieldNumber: 4)
+    }
+    if self.tokenBoundary != 0 {
+      try visitor.visitSingularUInt32Field(value: self.tokenBoundary, fieldNumber: 5)
+    }
+    if !self.checkpointID.isEmpty {
+      try visitor.visitSingularStringField(value: self.checkpointID, fieldNumber: 6)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Melix_Worker_V1_SnapshotRef, rhs: Melix_Worker_V1_SnapshotRef) -> Bool {
+    if lhs.snapshotID != rhs.snapshotID {return false}
+    if lhs.requestID != rhs.requestID {return false}
+    if lhs.sessionID != rhs.sessionID {return false}
+    if lhs.branchID != rhs.branchID {return false}
+    if lhs.tokenBoundary != rhs.tokenBoundary {return false}
+    if lhs.checkpointID != rhs.checkpointID {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -1772,7 +1967,7 @@ extension Melix_Worker_V1_AccelerationPolicy: SwiftProtobuf.Message, SwiftProtob
 
 extension Melix_Worker_V1_BlockTable: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".BlockTable"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}blocks\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}blocks\0\u{3}cache_key\0\u{3}scope_id\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -1781,20 +1976,34 @@ extension Melix_Worker_V1_BlockTable: SwiftProtobuf.Message, SwiftProtobuf._Mess
       // enabled. https://github.com/apple/swift-protobuf/issues/1034
       switch fieldNumber {
       case 1: try { try decoder.decodeRepeatedMessageField(value: &self.blocks) }()
+      case 2: try { try decoder.decodeSingularMessageField(value: &self._cacheKey) }()
+      case 3: try { try decoder.decodeSingularStringField(value: &self.scopeID) }()
       default: break
       }
     }
   }
 
   public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    // The use of inline closures is to circumvent an issue where the compiler
+    // allocates stack space for every if/case branch local when no optimizations
+    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+    // https://github.com/apple/swift-protobuf/issues/1182
     if !self.blocks.isEmpty {
       try visitor.visitRepeatedMessageField(value: self.blocks, fieldNumber: 1)
+    }
+    try { if let v = self._cacheKey {
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 2)
+    } }()
+    if !self.scopeID.isEmpty {
+      try visitor.visitSingularStringField(value: self.scopeID, fieldNumber: 3)
     }
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: Melix_Worker_V1_BlockTable, rhs: Melix_Worker_V1_BlockTable) -> Bool {
     if lhs.blocks != rhs.blocks {return false}
+    if lhs._cacheKey != rhs._cacheKey {return false}
+    if lhs.scopeID != rhs.scopeID {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

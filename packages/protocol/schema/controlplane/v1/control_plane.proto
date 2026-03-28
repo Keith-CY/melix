@@ -163,6 +163,7 @@ message ModelReply {
 
 message CacheReply {
   CacheSummary summary = 1;
+  CacheSnapshot snapshot = 2;
 }
 
 message SessionReply {
@@ -418,6 +419,12 @@ message CacheSummary {
   double pinned_prefix_hit_rate = 6;
   uint64 checkpoint_count = 7;
   repeated CacheKey hot_keys = 8;
+  uint64 block_count = 9;
+  uint64 quantized_bytes = 10;
+  double compression_ratio = 11;
+  double l2_restore_hit_rate = 12;
+  repeated PrefixRef hot_prefixes = 13;
+  repeated SnapshotRef recent_snapshots = 14;
 }
 
 message CacheScopeKey {
@@ -441,14 +448,49 @@ message CacheBlockRef {
   uint64 bytes = 3;
 }
 
+message PrefixRef {
+  string prefix_id = 1;
+  CacheKey cache_key = 2;
+  uint32 token_length = 3;
+  string tier = 4;
+  bool pinned = 5;
+}
+
 message SnapshotRef {
   string snapshot_id = 1;
   uint32 token_boundary = 2;
+  string request_id = 3;
+  string session_id = 4;
+  string branch_id = 5;
+  string checkpoint_id = 6;
+}
+
+message CacheScopeSummary {
+  string scope_id = 1;
+  CacheScopeKey scope = 2;
+  uint64 l1_bytes = 3;
+  uint64 l2_bytes = 4;
+  uint64 block_count = 5;
+  uint64 prefix_count = 6;
+  uint64 snapshot_count = 7;
+  repeated CacheBlockRef hot_blocks = 8;
+  repeated SnapshotRef recent_snapshots = 9;
+}
+
+message CacheSnapshot {
+  CacheSummary summary = 1;
+  repeated CacheScopeSummary scopes = 2;
+  repeated PrefixRef pinned_prefixes = 3;
+  repeated PrefixRef hot_prefixes = 4;
+  repeated SnapshotRef snapshots = 5;
 }
 
 message SessionSummary {
   string session_id = 1;
   string active_branch_id = 2;
+  uint32 branch_count = 3;
+  string latest_request_id = 4;
+  string latest_snapshot_id = 5;
 }
 
 message SessionState {
@@ -458,6 +500,10 @@ message SessionState {
   string latest_request_id = 4;
   string latest_checkpoint_id = 5;
   string latest_snapshot_id = 6;
+  int64 created_at_unix_ms = 7;
+  int64 updated_at_unix_ms = 8;
+  string latest_tool_call_id = 9;
+  repeated SnapshotRef available_snapshots = 10;
 }
 
 message BranchState {
@@ -467,6 +513,10 @@ message BranchState {
   string head_checkpoint_id = 4;
   string resume_snapshot_id = 5;
   string last_tool_call_id = 6;
+  string label = 7;
+  int64 created_at_unix_ms = 8;
+  int64 updated_at_unix_ms = 9;
+  CacheKey head_cache_key = 10;
 }
 
 message ResourceSnapshot {
@@ -528,6 +578,7 @@ message SessionStateChanged {
 
 message CacheStatsEvent {
   CacheSummary summary = 1;
+  CacheSnapshot snapshot = 2;
 }
 
 message BenchmarkProgressEvent {

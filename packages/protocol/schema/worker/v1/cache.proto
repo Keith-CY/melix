@@ -22,18 +22,35 @@ message CacheStats {
   double l1_hit_rate = 6;
   double l2_hit_rate = 7;
   double dedup_ratio = 8;
+  uint64 quantized_bytes = 9;
+  double compression_ratio = 10;
+  double l2_restore_hit_rate = 11;
+}
+
+message CacheScopeSummary {
+  string scope_id = 1;
+  CacheScope scope = 2;
+  uint64 l1_bytes = 3;
+  uint64 l2_bytes = 4;
+  uint64 block_count = 5;
+  uint64 prefix_count = 6;
+  uint64 snapshot_count = 7;
+  repeated BlockRef hot_blocks = 8;
+}
+
+message CacheSnapshot {
+  CacheStats stats = 1;
+  repeated PrefixRef pinned_prefixes = 2;
+  repeated PrefixRef hot_prefixes = 3;
+  repeated SnapshotRef snapshots = 4;
+  repeated CacheScopeSummary scopes = 5;
 }
 
 message GetCacheStatsRequest {}
 
 message GetCacheStatsResponse {
   CacheStats stats = 1;
-}
-
-message PrefixRef {
-  string prefix_id = 1;
-  CacheScope scope = 2;
-  CacheKey cache_key = 3;
+  CacheSnapshot snapshot = 2;
 }
 
 message PinPrefixRequest {
@@ -64,6 +81,7 @@ message SaveBoundarySnapshotResponse {
   bool ok = 1;
   ErrorStatus error = 2;
   string snapshot_id = 3;
+  SnapshotRef snapshot = 4;
 }
 
 message RestoreBoundarySnapshotRequest {
@@ -76,6 +94,7 @@ message RestoreBoundarySnapshotResponse {
   string decode_handle = 3;
   string block_table_id = 4;
   BlockTable block_table = 5;
+  SnapshotRef snapshot = 6;
 }
 
 message PurgeCacheRequest {

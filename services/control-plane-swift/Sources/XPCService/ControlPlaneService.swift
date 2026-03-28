@@ -10,6 +10,8 @@ public actor ControlPlaneService {
     private let snapshotBuilder: ServerSnapshotBuilder
     private let enginePool: EnginePool
     private let schedulerReadModel: SchedulerReadModel
+    private let cacheMetadataStore: CacheMetadataStore
+    private let sessionGraphStore: SessionGraphStore
 
     public init(
         serverVersion: String = "0.1.0",
@@ -19,7 +21,9 @@ public actor ControlPlaneService {
         eventHub: EventSubscriptionHub = EventSubscriptionHub(),
         snapshotBuilder: ServerSnapshotBuilder = ServerSnapshotBuilder(),
         enginePool: EnginePool = EnginePool(),
-        schedulerReadModel: SchedulerReadModel? = nil
+        schedulerReadModel: SchedulerReadModel? = nil,
+        cacheMetadataStore: CacheMetadataStore = CacheMetadataStore(),
+        sessionGraphStore: SessionGraphStore = SessionGraphStore()
     ) {
         self.serverVersion = serverVersion
         self.daemonInstanceID = daemonInstanceID
@@ -28,6 +32,8 @@ public actor ControlPlaneService {
         self.eventHub = eventHub
         self.snapshotBuilder = snapshotBuilder
         self.enginePool = enginePool
+        self.cacheMetadataStore = cacheMetadataStore
+        self.sessionGraphStore = sessionGraphStore
         self.schedulerReadModel = schedulerReadModel ?? SchedulerReadModel(
             metricsStore: metricsStore,
             eventPublisher: { event in
@@ -43,7 +49,7 @@ public actor ControlPlaneService {
         response.protocolVersion = request.protocolVersion
         response.serverVersion = serverVersion
         response.daemonInstanceID = daemonInstanceID
-        response.features = ["xpc", "models", "metrics"]
+        response.features = ["xpc", "models", "metrics", "cache-metadata", "session-graph"]
         response.snapshot = await buildSnapshot()
         return response
     }
@@ -56,6 +62,10 @@ public actor ControlPlaneService {
             return await handleServer(request: request, command: command)
         case .model(let command):
             return await handleModel(request: request, command: command)
+        case .cache(let command):
+            return await handleCache(request: request, command: command)
+        case .session(let command):
+            return await handleSession(request: request, command: command)
         case .ops(let command):
             return await handleOps(request: request, command: command)
         default:
@@ -131,6 +141,46 @@ public actor ControlPlaneService {
         }
     }
 
+    private func handleCache(
+        request: Melix_Controlplane_V1_ControlPlaneRequest,
+        command: Melix_Controlplane_V1_CacheCommand
+    ) async -> Melix_Controlplane_V1_ControlPlaneResponse {
+        switch command.kind {
+        case .getSnapshot:
+            var reply = Melix_Controlplane_V1_CacheReply()
+            reply.snapshot = await cacheMetadataStore.cacheSnapshot()
+            reply.summary = reply.snapshot.summary
+            return okResponse(for: request, cache: reply)
+        default:
+            return errorResponse(
+                for: request,
+                code: "unimplemented",
+                message: "Cache command is not implemented in the current control plane."
+            )
+        }
+    }
+
+    private func handleSession(
+        request: Melix_Controlplane_V1_ControlPlaneRequest,
+        command: Melix_Controlplane_V1_SessionCommand
+    ) async -> Melix_Controlplane_V1_ControlPlaneResponse {
+        switch command.kind {
+        case .getState(let getState):
+            guard let session = await sessionGraphStore.state(for: getState.sessionID) else {
+                return errorResponse(for: request, code: "not_found", message: "Unknown session ID.")
+            }
+            var reply = Melix_Controlplane_V1_SessionReply()
+            reply.session = session
+            return okResponse(for: request, session: reply)
+        default:
+            return errorResponse(
+                for: request,
+                code: "unimplemented",
+                message: "Session command is not implemented in the current control plane."
+            )
+        }
+    }
+
     private func handleOps(
         request: Melix_Controlplane_V1_ControlPlaneRequest,
         command: Melix_Controlplane_V1_OpsCommand
@@ -153,13 +203,23 @@ public actor ControlPlaneService {
         let models = await modelCatalog.listModels()
         let metrics = await metricsStore.snapshot()
         let queues = await schedulerReadModel.snapshot()
-        return snapshotBuilder.build(models: models, metrics: metrics, queues: queues)
+        let cache = await cacheMetadataStore.cacheSummary()
+        let sessions = await sessionGraphStore.sessionSummaries()
+        return snapshotBuilder.build(
+            models: models,
+            metrics: metrics,
+            queues: queues,
+            cache: cache,
+            sessions: sessions
+        )
     }
 
     private func okResponse(
         for request: Melix_Controlplane_V1_ControlPlaneRequest,
         server: Melix_Controlplane_V1_ServerReply? = nil,
         model: Melix_Controlplane_V1_ModelReply? = nil,
+        cache: Melix_Controlplane_V1_CacheReply? = nil,
+        session: Melix_Controlplane_V1_SessionReply? = nil,
         ops: Melix_Controlplane_V1_OpsReply? = nil
     ) -> Melix_Controlplane_V1_ControlPlaneResponse {
         var response = baseResponse(for: request)
@@ -169,6 +229,10 @@ public actor ControlPlaneService {
             response.server = server
         } else if let model {
             response.model = model
+        } else if let cache {
+            response.cache = cache
+        } else if let session {
+            response.session = session
         } else if let ops {
             response.ops = ops
         }

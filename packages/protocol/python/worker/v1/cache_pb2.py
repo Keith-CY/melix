@@ -25,7 +25,7 @@ _sym_db = _symbol_database.Default()
 from packages.protocol.python.worker.v1 import common_pb2 as worker_dot_v1_dot_common__pb2
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x15worker/v1/cache.proto\x12\x0fmelix.worker.v1\x1a\x16worker/v1/common.proto\"\xb9\x01\n\nCacheStats\x12\x10\n\x08l1_bytes\x18\x01 \x01(\x04\x12\x10\n\x08l2_bytes\x18\x02 \x01(\x04\x12\x13\n\x0b\x62lock_count\x18\x03 \x01(\x04\x12\x1b\n\x13pinned_prefix_count\x18\x04 \x01(\x04\x12\x16\n\x0esnapshot_count\x18\x05 \x01(\x04\x12\x13\n\x0bl1_hit_rate\x18\x06 \x01(\x01\x12\x13\n\x0bl2_hit_rate\x18\x07 \x01(\x01\x12\x13\n\x0b\x64\x65\x64up_ratio\x18\x08 \x01(\x01\"\x16\n\x14GetCacheStatsRequest\"C\n\x15GetCacheStatsResponse\x12*\n\x05stats\x18\x01 \x01(\x0b\x32\x1b.melix.worker.v1.CacheStats\"x\n\tPrefixRef\x12\x11\n\tprefix_id\x18\x01 \x01(\t\x12*\n\x05scope\x18\x02 \x01(\x0b\x32\x1b.melix.worker.v1.CacheScope\x12,\n\tcache_key\x18\x03 \x01(\x0b\x32\x19.melix.worker.v1.CacheKey\">\n\x10PinPrefixRequest\x12*\n\x06prefix\x18\x01 \x01(\x0b\x32\x1a.melix.worker.v1.PrefixRef\"L\n\x11PinPrefixResponse\x12\n\n\x02ok\x18\x01 \x01(\x08\x12+\n\x05\x65rror\x18\x02 \x01(\x0b\x32\x1c.melix.worker.v1.ErrorStatus\"@\n\x12UnpinPrefixRequest\x12*\n\x06prefix\x18\x01 \x01(\x0b\x32\x1a.melix.worker.v1.PrefixRef\"N\n\x13UnpinPrefixResponse\x12\n\n\x02ok\x18\x01 \x01(\x08\x12+\n\x05\x65rror\x18\x02 \x01(\x0b\x32\x1c.melix.worker.v1.ErrorStatus\"`\n\x1bSaveBoundarySnapshotRequest\x12\x12\n\nrequest_id\x18\x01 \x01(\t\x12\x15\n\rdecode_handle\x18\x02 \x01(\t\x12\x16\n\x0etoken_boundary\x18\x03 \x01(\r\"l\n\x1cSaveBoundarySnapshotResponse\x12\n\n\x02ok\x18\x01 \x01(\x08\x12+\n\x05\x65rror\x18\x02 \x01(\x0b\x32\x1c.melix.worker.v1.ErrorStatus\x12\x13\n\x0bsnapshot_id\x18\x03 \x01(\t\"5\n\x1eRestoreBoundarySnapshotRequest\x12\x13\n\x0bsnapshot_id\x18\x01 \x01(\t\"\xbb\x01\n\x1fRestoreBoundarySnapshotResponse\x12\n\n\x02ok\x18\x01 \x01(\x08\x12+\n\x05\x65rror\x18\x02 \x01(\x0b\x32\x1c.melix.worker.v1.ErrorStatus\x12\x15\n\rdecode_handle\x18\x03 \x01(\t\x12\x16\n\x0e\x62lock_table_id\x18\x04 \x01(\t\x12\x30\n\x0b\x62lock_table\x18\x05 \x01(\x0b\x32\x1b.melix.worker.v1.BlockTable\"\x93\x01\n\x11PurgeCacheRequest\x12*\n\x05scope\x18\x01 \x01(\x0b\x32\x1b.melix.worker.v1.CacheScope\x12,\n\tcache_key\x18\x02 \x01(\x0b\x32\x19.melix.worker.v1.CacheKey\x12\x0c\n\x04tier\x18\x03 \x01(\t\x12\x16\n\x0einclude_pinned\x18\x04 \x01(\x08\"d\n\x12PurgeCacheResponse\x12\n\n\x02ok\x18\x01 \x01(\x08\x12+\n\x05\x65rror\x18\x02 \x01(\x0b\x32\x1c.melix.worker.v1.ErrorStatus\x12\x15\n\rpurged_blocks\x18\x03 \x01(\x04\x32\xe6\x04\n\x0c\x43\x61\x63heService\x12^\n\rGetCacheStats\x12%.melix.worker.v1.GetCacheStatsRequest\x1a&.melix.worker.v1.GetCacheStatsResponse\x12R\n\tPinPrefix\x12!.melix.worker.v1.PinPrefixRequest\x1a\".melix.worker.v1.PinPrefixResponse\x12X\n\x0bUnpinPrefix\x12#.melix.worker.v1.UnpinPrefixRequest\x1a$.melix.worker.v1.UnpinPrefixResponse\x12s\n\x14SaveBoundarySnapshot\x12,.melix.worker.v1.SaveBoundarySnapshotRequest\x1a-.melix.worker.v1.SaveBoundarySnapshotResponse\x12|\n\x17RestoreBoundarySnapshot\x12/.melix.worker.v1.RestoreBoundarySnapshotRequest\x1a\x30.melix.worker.v1.RestoreBoundarySnapshotResponse\x12U\n\nPurgeCache\x12\".melix.worker.v1.PurgeCacheRequest\x1a#.melix.worker.v1.PurgeCacheResponseb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x15worker/v1/cache.proto\x12\x0fmelix.worker.v1\x1a\x16worker/v1/common.proto\"\x8a\x02\n\nCacheStats\x12\x10\n\x08l1_bytes\x18\x01 \x01(\x04\x12\x10\n\x08l2_bytes\x18\x02 \x01(\x04\x12\x13\n\x0b\x62lock_count\x18\x03 \x01(\x04\x12\x1b\n\x13pinned_prefix_count\x18\x04 \x01(\x04\x12\x16\n\x0esnapshot_count\x18\x05 \x01(\x04\x12\x13\n\x0bl1_hit_rate\x18\x06 \x01(\x01\x12\x13\n\x0bl2_hit_rate\x18\x07 \x01(\x01\x12\x13\n\x0b\x64\x65\x64up_ratio\x18\x08 \x01(\x01\x12\x17\n\x0fquantized_bytes\x18\t \x01(\x04\x12\x19\n\x11\x63ompression_ratio\x18\n \x01(\x01\x12\x1b\n\x13l2_restore_hit_rate\x18\x0b \x01(\x01\"\xe7\x01\n\x11\x43\x61\x63heScopeSummary\x12\x10\n\x08scope_id\x18\x01 \x01(\t\x12*\n\x05scope\x18\x02 \x01(\x0b\x32\x1b.melix.worker.v1.CacheScope\x12\x10\n\x08l1_bytes\x18\x03 \x01(\x04\x12\x10\n\x08l2_bytes\x18\x04 \x01(\x04\x12\x13\n\x0b\x62lock_count\x18\x05 \x01(\x04\x12\x14\n\x0cprefix_count\x18\x06 \x01(\x04\x12\x16\n\x0esnapshot_count\x18\x07 \x01(\x04\x12-\n\nhot_blocks\x18\x08 \x03(\x0b\x32\x19.melix.worker.v1.BlockRef\"\x87\x02\n\rCacheSnapshot\x12*\n\x05stats\x18\x01 \x01(\x0b\x32\x1b.melix.worker.v1.CacheStats\x12\x33\n\x0fpinned_prefixes\x18\x02 \x03(\x0b\x32\x1a.melix.worker.v1.PrefixRef\x12\x30\n\x0chot_prefixes\x18\x03 \x03(\x0b\x32\x1a.melix.worker.v1.PrefixRef\x12/\n\tsnapshots\x18\x04 \x03(\x0b\x32\x1c.melix.worker.v1.SnapshotRef\x12\x32\n\x06scopes\x18\x05 \x03(\x0b\x32\".melix.worker.v1.CacheScopeSummary\"\x16\n\x14GetCacheStatsRequest\"u\n\x15GetCacheStatsResponse\x12*\n\x05stats\x18\x01 \x01(\x0b\x32\x1b.melix.worker.v1.CacheStats\x12\x30\n\x08snapshot\x18\x02 \x01(\x0b\x32\x1e.melix.worker.v1.CacheSnapshot\">\n\x10PinPrefixRequest\x12*\n\x06prefix\x18\x01 \x01(\x0b\x32\x1a.melix.worker.v1.PrefixRef\"L\n\x11PinPrefixResponse\x12\n\n\x02ok\x18\x01 \x01(\x08\x12+\n\x05\x65rror\x18\x02 \x01(\x0b\x32\x1c.melix.worker.v1.ErrorStatus\"@\n\x12UnpinPrefixRequest\x12*\n\x06prefix\x18\x01 \x01(\x0b\x32\x1a.melix.worker.v1.PrefixRef\"N\n\x13UnpinPrefixResponse\x12\n\n\x02ok\x18\x01 \x01(\x08\x12+\n\x05\x65rror\x18\x02 \x01(\x0b\x32\x1c.melix.worker.v1.ErrorStatus\"`\n\x1bSaveBoundarySnapshotRequest\x12\x12\n\nrequest_id\x18\x01 \x01(\t\x12\x15\n\rdecode_handle\x18\x02 \x01(\t\x12\x16\n\x0etoken_boundary\x18\x03 \x01(\r\"\x9c\x01\n\x1cSaveBoundarySnapshotResponse\x12\n\n\x02ok\x18\x01 \x01(\x08\x12+\n\x05\x65rror\x18\x02 \x01(\x0b\x32\x1c.melix.worker.v1.ErrorStatus\x12\x13\n\x0bsnapshot_id\x18\x03 \x01(\t\x12.\n\x08snapshot\x18\x04 \x01(\x0b\x32\x1c.melix.worker.v1.SnapshotRef\"5\n\x1eRestoreBoundarySnapshotRequest\x12\x13\n\x0bsnapshot_id\x18\x01 \x01(\t\"\xeb\x01\n\x1fRestoreBoundarySnapshotResponse\x12\n\n\x02ok\x18\x01 \x01(\x08\x12+\n\x05\x65rror\x18\x02 \x01(\x0b\x32\x1c.melix.worker.v1.ErrorStatus\x12\x15\n\rdecode_handle\x18\x03 \x01(\t\x12\x16\n\x0e\x62lock_table_id\x18\x04 \x01(\t\x12\x30\n\x0b\x62lock_table\x18\x05 \x01(\x0b\x32\x1b.melix.worker.v1.BlockTable\x12.\n\x08snapshot\x18\x06 \x01(\x0b\x32\x1c.melix.worker.v1.SnapshotRef\"\x93\x01\n\x11PurgeCacheRequest\x12*\n\x05scope\x18\x01 \x01(\x0b\x32\x1b.melix.worker.v1.CacheScope\x12,\n\tcache_key\x18\x02 \x01(\x0b\x32\x19.melix.worker.v1.CacheKey\x12\x0c\n\x04tier\x18\x03 \x01(\t\x12\x16\n\x0einclude_pinned\x18\x04 \x01(\x08\"d\n\x12PurgeCacheResponse\x12\n\n\x02ok\x18\x01 \x01(\x08\x12+\n\x05\x65rror\x18\x02 \x01(\x0b\x32\x1c.melix.worker.v1.ErrorStatus\x12\x15\n\rpurged_blocks\x18\x03 \x01(\x04\x32\xe6\x04\n\x0c\x43\x61\x63heService\x12^\n\rGetCacheStats\x12%.melix.worker.v1.GetCacheStatsRequest\x1a&.melix.worker.v1.GetCacheStatsResponse\x12R\n\tPinPrefix\x12!.melix.worker.v1.PinPrefixRequest\x1a\".melix.worker.v1.PinPrefixResponse\x12X\n\x0bUnpinPrefix\x12#.melix.worker.v1.UnpinPrefixRequest\x1a$.melix.worker.v1.UnpinPrefixResponse\x12s\n\x14SaveBoundarySnapshot\x12,.melix.worker.v1.SaveBoundarySnapshotRequest\x1a-.melix.worker.v1.SaveBoundarySnapshotResponse\x12|\n\x17RestoreBoundarySnapshot\x12/.melix.worker.v1.RestoreBoundarySnapshotRequest\x1a\x30.melix.worker.v1.RestoreBoundarySnapshotResponse\x12U\n\nPurgeCache\x12\".melix.worker.v1.PurgeCacheRequest\x1a#.melix.worker.v1.PurgeCacheResponseb\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -33,33 +33,35 @@ _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'worker.v1.cache_pb2', _glob
 if not _descriptor._USE_C_DESCRIPTORS:
   DESCRIPTOR._loaded_options = None
   _globals['_CACHESTATS']._serialized_start=67
-  _globals['_CACHESTATS']._serialized_end=252
-  _globals['_GETCACHESTATSREQUEST']._serialized_start=254
-  _globals['_GETCACHESTATSREQUEST']._serialized_end=276
-  _globals['_GETCACHESTATSRESPONSE']._serialized_start=278
-  _globals['_GETCACHESTATSRESPONSE']._serialized_end=345
-  _globals['_PREFIXREF']._serialized_start=347
-  _globals['_PREFIXREF']._serialized_end=467
-  _globals['_PINPREFIXREQUEST']._serialized_start=469
-  _globals['_PINPREFIXREQUEST']._serialized_end=531
-  _globals['_PINPREFIXRESPONSE']._serialized_start=533
-  _globals['_PINPREFIXRESPONSE']._serialized_end=609
-  _globals['_UNPINPREFIXREQUEST']._serialized_start=611
-  _globals['_UNPINPREFIXREQUEST']._serialized_end=675
-  _globals['_UNPINPREFIXRESPONSE']._serialized_start=677
-  _globals['_UNPINPREFIXRESPONSE']._serialized_end=755
-  _globals['_SAVEBOUNDARYSNAPSHOTREQUEST']._serialized_start=757
-  _globals['_SAVEBOUNDARYSNAPSHOTREQUEST']._serialized_end=853
-  _globals['_SAVEBOUNDARYSNAPSHOTRESPONSE']._serialized_start=855
-  _globals['_SAVEBOUNDARYSNAPSHOTRESPONSE']._serialized_end=963
-  _globals['_RESTOREBOUNDARYSNAPSHOTREQUEST']._serialized_start=965
-  _globals['_RESTOREBOUNDARYSNAPSHOTREQUEST']._serialized_end=1018
-  _globals['_RESTOREBOUNDARYSNAPSHOTRESPONSE']._serialized_start=1021
-  _globals['_RESTOREBOUNDARYSNAPSHOTRESPONSE']._serialized_end=1208
-  _globals['_PURGECACHEREQUEST']._serialized_start=1211
-  _globals['_PURGECACHEREQUEST']._serialized_end=1358
-  _globals['_PURGECACHERESPONSE']._serialized_start=1360
-  _globals['_PURGECACHERESPONSE']._serialized_end=1460
-  _globals['_CACHESERVICE']._serialized_start=1463
-  _globals['_CACHESERVICE']._serialized_end=2077
+  _globals['_CACHESTATS']._serialized_end=333
+  _globals['_CACHESCOPESUMMARY']._serialized_start=336
+  _globals['_CACHESCOPESUMMARY']._serialized_end=567
+  _globals['_CACHESNAPSHOT']._serialized_start=570
+  _globals['_CACHESNAPSHOT']._serialized_end=833
+  _globals['_GETCACHESTATSREQUEST']._serialized_start=835
+  _globals['_GETCACHESTATSREQUEST']._serialized_end=857
+  _globals['_GETCACHESTATSRESPONSE']._serialized_start=859
+  _globals['_GETCACHESTATSRESPONSE']._serialized_end=976
+  _globals['_PINPREFIXREQUEST']._serialized_start=978
+  _globals['_PINPREFIXREQUEST']._serialized_end=1040
+  _globals['_PINPREFIXRESPONSE']._serialized_start=1042
+  _globals['_PINPREFIXRESPONSE']._serialized_end=1118
+  _globals['_UNPINPREFIXREQUEST']._serialized_start=1120
+  _globals['_UNPINPREFIXREQUEST']._serialized_end=1184
+  _globals['_UNPINPREFIXRESPONSE']._serialized_start=1186
+  _globals['_UNPINPREFIXRESPONSE']._serialized_end=1264
+  _globals['_SAVEBOUNDARYSNAPSHOTREQUEST']._serialized_start=1266
+  _globals['_SAVEBOUNDARYSNAPSHOTREQUEST']._serialized_end=1362
+  _globals['_SAVEBOUNDARYSNAPSHOTRESPONSE']._serialized_start=1365
+  _globals['_SAVEBOUNDARYSNAPSHOTRESPONSE']._serialized_end=1521
+  _globals['_RESTOREBOUNDARYSNAPSHOTREQUEST']._serialized_start=1523
+  _globals['_RESTOREBOUNDARYSNAPSHOTREQUEST']._serialized_end=1576
+  _globals['_RESTOREBOUNDARYSNAPSHOTRESPONSE']._serialized_start=1579
+  _globals['_RESTOREBOUNDARYSNAPSHOTRESPONSE']._serialized_end=1814
+  _globals['_PURGECACHEREQUEST']._serialized_start=1817
+  _globals['_PURGECACHEREQUEST']._serialized_end=1964
+  _globals['_PURGECACHERESPONSE']._serialized_start=1966
+  _globals['_PURGECACHERESPONSE']._serialized_end=2066
+  _globals['_CACHESERVICE']._serialized_start=2069
+  _globals['_CACHESERVICE']._serialized_end=2683
 # @@protoc_insertion_point(module_scope)
