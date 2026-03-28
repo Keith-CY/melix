@@ -29,7 +29,7 @@ struct WorkerServices: Sendable {
             abortRegistry: abortRegistry,
             metrics: metrics
         )
-        self.cache = CacheRPCService(metrics: metrics)
+        self.cache = CacheRPCService(registry: registry, metrics: metrics)
         self.maintenance = MaintenanceRPCService(metrics: metrics)
     }
 
@@ -287,9 +287,11 @@ final class InferenceRPCService: Melix_Worker_V1_InferenceService.SimpleServiceP
 }
 
 final class CacheRPCService: Melix_Worker_V1_CacheService.SimpleServiceProtocol, @unchecked Sendable {
+    private let registry: WorkerRuntimeRegistry
     private let metrics: MetricsStore
 
-    init(metrics: MetricsStore) {
+    init(registry: WorkerRuntimeRegistry, metrics: MetricsStore) {
+        self.registry = registry
         self.metrics = metrics
     }
 
@@ -297,8 +299,22 @@ final class CacheRPCService: Melix_Worker_V1_CacheService.SimpleServiceProtocol,
         request: Melix_Worker_V1_GetCacheStatsRequest,
         context: GRPCCore.ServerContext
     ) async throws -> Melix_Worker_V1_GetCacheStatsResponse {
-        var response = Melix_Worker_V1_GetCacheStatsResponse()
-        response.stats = Melix_Worker_V1_CacheStats()
+        let response = await registry.cacheStatsResponse()
+        metrics.set("swift_text.cache_l1_bytes", value: Int(clamping: response.stats.l1Bytes))
+        metrics.set("swift_text.cache_block_count", value: Int(clamping: response.stats.blockCount))
+        metrics.set("swift_text.cache_prefix_count", value: response.snapshot.hotPrefixes.count)
+        metrics.set(
+            "swift_text.cache_pinned_prefix_count",
+            value: Int(clamping: response.stats.pinnedPrefixCount)
+        )
+        metrics.set(
+            "swift_text.cache_l1_hit_rate",
+            value: Int((response.stats.l1HitRate * 100.0).rounded())
+        )
+        metrics.set(
+            "swift_text.cache_block_reuse_ratio",
+            value: Int((response.stats.dedupRatio * 100.0).rounded())
+        )
         return response
     }
 
@@ -306,11 +322,11 @@ final class CacheRPCService: Melix_Worker_V1_CacheService.SimpleServiceProtocol,
         request: Melix_Worker_V1_PinPrefixRequest,
         context: GRPCCore.ServerContext
     ) async throws -> Melix_Worker_V1_PinPrefixResponse {
-        metrics.increment("swift_text.unimplemented_rpc_count")
-
         var response = Melix_Worker_V1_PinPrefixResponse()
-        response.ok = false
-        response.error = makeUnimplementedStatus("PinPrefix is deferred until Phase 3.")
+        response.ok = await registry.pinPrefix(request.prefix)
+        if !response.ok {
+            response.error = makeErrorStatus(code: "not_found", message: "Unknown prefix reference.")
+        }
         return response
     }
 
@@ -318,11 +334,11 @@ final class CacheRPCService: Melix_Worker_V1_CacheService.SimpleServiceProtocol,
         request: Melix_Worker_V1_UnpinPrefixRequest,
         context: GRPCCore.ServerContext
     ) async throws -> Melix_Worker_V1_UnpinPrefixResponse {
-        metrics.increment("swift_text.unimplemented_rpc_count")
-
         var response = Melix_Worker_V1_UnpinPrefixResponse()
-        response.ok = false
-        response.error = makeUnimplementedStatus("UnpinPrefix is deferred until Phase 3.")
+        response.ok = await registry.unpinPrefix(request.prefix)
+        if !response.ok {
+            response.error = makeErrorStatus(code: "not_found", message: "Unknown prefix reference.")
+        }
         return response
     }
 
@@ -354,11 +370,13 @@ final class CacheRPCService: Melix_Worker_V1_CacheService.SimpleServiceProtocol,
         request: Melix_Worker_V1_PurgeCacheRequest,
         context: GRPCCore.ServerContext
     ) async throws -> Melix_Worker_V1_PurgeCacheResponse {
-        metrics.increment("swift_text.unimplemented_rpc_count")
-
         var response = Melix_Worker_V1_PurgeCacheResponse()
-        response.ok = false
-        response.error = makeUnimplementedStatus("PurgeCache is deferred until Phase 3.")
+        response.ok = true
+        response.purgedBlocks = await registry.purgeCache(
+            scope: request.scope,
+            cacheKey: request.cacheKey,
+            includePinned: request.includePinned
+        )
         return response
     }
 }

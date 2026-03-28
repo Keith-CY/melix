@@ -15,15 +15,21 @@ struct StoredPrefillContext: @unchecked Sendable {
     let promptTokens: Int
     let resumeHint: String
     let acceleration: Melix_Worker_V1_AccelerationPolicy
+    let blockTableID: String
+    let blockTable: Melix_Worker_V1_BlockTable
     let context: TextPrefillContext
 }
 
 struct WorkerPrefillResult: Sendable {
     let decodeHandle: String
+    let blockTableID: String
+    let blockTable: Melix_Worker_V1_BlockTable
     let promptTokens: Int
     let appliedAcceleration: Melix_Worker_V1_AccelerationPolicy
     let acceleratedPrefillGainPct: Int
     let activeKVQuantizationRatio: Int
+    let cacheStats: Melix_Worker_V1_CacheStats
+    let hotPrefixCount: Int
 }
 
 struct WorkerDecodeSession: @unchecked Sendable {
@@ -35,6 +41,7 @@ actor WorkerRuntimeRegistry {
     private let configuration: WorkerConfiguration
     private let modelCatalog: WorkerModelCatalog
     private let runtime: TextRuntime
+    private let cacheStore: HotCacheStore
 
     private var loadedModels: [String: LoadedModelRecord]
     private var activeRequests: UInt64
@@ -48,11 +55,13 @@ actor WorkerRuntimeRegistry {
     init(
         configuration: WorkerConfiguration,
         modelCatalog: WorkerModelCatalog = WorkerModelCatalog(),
-        runtime: TextRuntime = TextRuntime()
+        runtime: TextRuntime = TextRuntime(),
+        cacheStore: HotCacheStore = HotCacheStore()
     ) {
         self.configuration = configuration
         self.modelCatalog = modelCatalog
         self.runtime = runtime
+        self.cacheStore = cacheStore
         self.loadedModels = [:]
         self.activeRequests = 0
         self.activePrefills = 0
@@ -68,7 +77,7 @@ actor WorkerRuntimeRegistry {
 
         var cache = Melix_Worker_V1_CacheCapabilities()
         cache.supportsPrefixCache = true
-        cache.supportsPagedCache = false
+        cache.supportsPagedCache = true
         cache.supportsDiskCache = false
         cache.kvQuantProfiles = ["q4", "q8"]
         cache.supportsBoundarySnapshots = false
@@ -122,6 +131,7 @@ actor WorkerRuntimeRegistry {
             return false
         }
         prefillContexts = prefillContexts.filter { $0.value.modelHandle != handle }
+        await cacheStore.purgeModel(modelID: removed.spec.modelID)
         await runtime.unloadModel(removed.runtimeModel)
         return true
     }
@@ -167,8 +177,7 @@ actor WorkerRuntimeRegistry {
     }
 
     func prefill(
-        requestID: String,
-        modelHandle: String,
+        execution: Melix_Worker_V1_ExecutionMetadata,
         messages: [Melix_Worker_V1_ChatMessage],
         prefillStepSize: UInt32,
         returnDecodeHandle: Bool,
@@ -176,6 +185,8 @@ actor WorkerRuntimeRegistry {
         acceleration: Melix_Worker_V1_AccelerationPolicy,
         shouldAbort: @escaping @Sendable () -> Bool
     ) async throws -> WorkerPrefillResult {
+        let requestID = execution.id.requestID
+        let modelHandle = execution.modelHandle
         guard let loaded = loadedModels[modelHandle] else {
             throw WorkerRuntimeRegistryError.unknownModelHandle
         }
@@ -201,9 +212,21 @@ actor WorkerRuntimeRegistry {
         )
 
         var decodeHandle = ""
+        var blockTableID = ""
+        var blockTable = Melix_Worker_V1_BlockTable()
         if returnDecodeHandle {
             decodeHandle = "\(modelHandle)::decode::\(nextDecodeHandle)"
             nextDecodeHandle += 1
+            let registration = try await cacheStore.registerPrefill(
+                execution: execution,
+                model: loaded.spec,
+                messages: messages,
+                promptTokens: result.promptTokens,
+                decodeHandle: decodeHandle,
+                activeKVQuantizationRatio: result.activeKVQuantizationRatio
+            )
+            blockTableID = registration.blockTableID
+            blockTable = registration.blockTable
             prefillContexts[decodeHandle] = StoredPrefillContext(
                 decodeHandle: decodeHandle,
                 modelHandle: modelHandle,
@@ -211,16 +234,49 @@ actor WorkerRuntimeRegistry {
                 promptTokens: result.promptTokens,
                 resumeHint: resumeHint,
                 acceleration: result.appliedAcceleration,
+                blockTableID: blockTableID,
+                blockTable: blockTable,
                 context: result.context
             )
         }
 
+        let cacheSnapshot = await cacheStore.snapshot()
+
         return WorkerPrefillResult(
             decodeHandle: decodeHandle,
+            blockTableID: blockTableID,
+            blockTable: blockTable,
             promptTokens: result.promptTokens,
             appliedAcceleration: result.appliedAcceleration,
             acceleratedPrefillGainPct: result.acceleratedPrefillGainPct,
-            activeKVQuantizationRatio: result.activeKVQuantizationRatio
+            activeKVQuantizationRatio: result.activeKVQuantizationRatio,
+            cacheStats: cacheSnapshot.stats,
+            hotPrefixCount: cacheSnapshot.hotPrefixes.count
+        )
+    }
+
+    func prefill(
+        requestID: String,
+        modelHandle: String,
+        messages: [Melix_Worker_V1_ChatMessage],
+        prefillStepSize: UInt32,
+        returnDecodeHandle: Bool,
+        resumeHint: String,
+        acceleration: Melix_Worker_V1_AccelerationPolicy,
+        shouldAbort: @escaping @Sendable () -> Bool
+    ) async throws -> WorkerPrefillResult {
+        var execution = Melix_Worker_V1_ExecutionMetadata()
+        execution.id.requestID = requestID
+        execution.modelHandle = modelHandle
+        execution.acceleration = acceleration
+        return try await prefill(
+            execution: execution,
+            messages: messages,
+            prefillStepSize: prefillStepSize,
+            returnDecodeHandle: returnDecodeHandle,
+            resumeHint: resumeHint,
+            acceleration: acceleration,
+            shouldAbort: shouldAbort
         )
     }
 
@@ -292,7 +348,8 @@ actor WorkerRuntimeRegistry {
         true
     }
 
-    func runtimeStats() -> Melix_Worker_V1_RuntimeStats {
+    func runtimeStats() async -> Melix_Worker_V1_RuntimeStats {
+        let cacheStats = await cacheStore.stats()
         var stats = Melix_Worker_V1_RuntimeStats()
         if draining {
             stats.workerState = "draining"
@@ -305,15 +362,38 @@ actor WorkerRuntimeRegistry {
         stats.activeRequests = activeRequests
         stats.activePrefills = activePrefills
         stats.activeDecodes = activeDecodes
-        stats.l1CacheBytes = 0
-        stats.l2CacheBytes = 0
-        stats.l1HitRate = 0
-        stats.l2HitRate = 0
+        stats.l1CacheBytes = cacheStats.l1Bytes
+        stats.l2CacheBytes = cacheStats.l2Bytes
+        stats.l1HitRate = cacheStats.l1HitRate
+        stats.l2HitRate = cacheStats.l2HitRate
         return stats
     }
 
     func setDraining(_ draining: Bool) {
         self.draining = draining
+    }
+
+    func cacheStatsResponse() async -> Melix_Worker_V1_GetCacheStatsResponse {
+        var response = Melix_Worker_V1_GetCacheStatsResponse()
+        response.stats = await cacheStore.stats()
+        response.snapshot = await cacheStore.snapshot()
+        return response
+    }
+
+    func pinPrefix(_ prefix: Melix_Worker_V1_PrefixRef) async -> Bool {
+        await cacheStore.pinPrefix(prefix)
+    }
+
+    func unpinPrefix(_ prefix: Melix_Worker_V1_PrefixRef) async -> Bool {
+        await cacheStore.unpinPrefix(prefix)
+    }
+
+    func purgeCache(
+        scope: Melix_Worker_V1_CacheScope,
+        cacheKey: Melix_Worker_V1_CacheKey,
+        includePinned: Bool
+    ) async -> UInt64 {
+        await cacheStore.purgeCache(scope: scope, cacheKey: cacheKey, includePinned: includePinned)
     }
 }
 

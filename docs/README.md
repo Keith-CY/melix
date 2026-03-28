@@ -41,6 +41,7 @@ Current phase-status and planning documents:
 - `plans/2026-03-28-p2-m6-abort-and-phase-observability.md`
 - `plans/2026-03-28-p2-m7-operator-benchmark-evidence.md`
 - `plans/2026-03-28-p3-m1-cache-session-contracts.md`
+- `plans/2026-03-28-p3-m2-hot-tier-cache-primitives.md`
 - `plans/2026-03-28-p1-m2-swift-text-worker-scaffold.md`
 - `plans/2026-03-28-p1-m3-swift-runtime-lifecycle.md`
 - `plans/2026-03-28-p1-m4-swift-generate-abort.md`

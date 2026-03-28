@@ -28,8 +28,7 @@ struct TextPrefillEngine: Sendable {
         do {
             let acceleration = resolvedAccelerationPolicy(from: request.execution.acceleration)
             let result = try await registry.prefill(
-                requestID: requestID,
-                modelHandle: request.execution.modelHandle,
+                execution: request.execution,
                 messages: request.messages,
                 prefillStepSize: request.prefillStepSize,
                 returnDecodeHandle: request.returnDecodeHandle,
@@ -43,10 +42,30 @@ struct TextPrefillEngine: Sendable {
             metrics.set("swift_text.prefill_context_count", value: await registry.prefillContextCount())
             metrics.set("swift_text.accelerated_prefill_gain_pct", value: result.acceleratedPrefillGainPct)
             metrics.set("swift_text.active_kv_quantization_ratio", value: result.activeKVQuantizationRatio)
+            metrics.set("swift_text.cache_l1_bytes", value: Int(clamping: result.cacheStats.l1Bytes))
+            metrics.set("swift_text.cache_block_count", value: Int(clamping: result.cacheStats.blockCount))
+            metrics.set(
+                "swift_text.cache_prefix_count",
+                value: result.hotPrefixCount
+            )
+            metrics.set(
+                "swift_text.cache_pinned_prefix_count",
+                value: Int(clamping: result.cacheStats.pinnedPrefixCount)
+            )
+            metrics.set(
+                "swift_text.cache_l1_hit_rate",
+                value: Int((result.cacheStats.l1HitRate * 100.0).rounded())
+            )
+            metrics.set(
+                "swift_text.cache_block_reuse_ratio",
+                value: Int((result.cacheStats.dedupRatio * 100.0).rounded())
+            )
 
             var response = Melix_Worker_V1_PrefillResponse()
             response.ok = true
             response.decodeHandle = result.decodeHandle
+            response.blockTableID = result.blockTableID
+            response.blockTable = result.blockTable
             response.promptTokens = UInt32(max(0, result.promptTokens))
             response.lifecyclePhase = .executionPrefilling
             response.admissionState = .admissionAdmitted

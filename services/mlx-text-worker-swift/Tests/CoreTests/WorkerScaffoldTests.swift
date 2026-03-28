@@ -876,13 +876,66 @@ final class WorkerScaffoldTests: XCTestCase {
 
         let stored = await registry.prefillContext(for: result.decodeHandle)
         let contextCount = await registry.prefillContextCount()
+        let cacheResponse = await registry.cacheStatsResponse()
 
         XCTAssertFalse(result.decodeHandle.isEmpty)
+        XCTAssertFalse(result.blockTableID.isEmpty)
+        XCTAssertEqual(result.blockTable.scopeID, cacheResponse.snapshot.scopes.first?.scopeID)
+        XCTAssertEqual(result.blockTable.blocks.count, 1)
         XCTAssertEqual(result.promptTokens, 1)
         XCTAssertEqual(contextCount, 1)
         XCTAssertEqual(stored?.modelHandle, loaded.handle)
         XCTAssertEqual(stored?.promptTokens, 1)
         XCTAssertEqual(stored?.requestID, "req-prefill-registry")
+        XCTAssertEqual(stored?.blockTableID, result.blockTableID)
+        XCTAssertEqual(cacheResponse.stats.blockCount, 1)
+        XCTAssertEqual(cacheResponse.snapshot.hotPrefixes.count, 1)
+        XCTAssertEqual(cacheResponse.snapshot.hotPrefixes.first?.tokenLength, 1)
+    }
+
+    func testRuntimeRegistryPrefillReusesMatchingHotPrefixMetadata() async throws {
+        let registry = WorkerRuntimeRegistry(
+            configuration: WorkerConfiguration(),
+            modelCatalog: WorkerModelCatalog(environment: [
+                "MELIX_DEV_TEXT_MODEL_PATH": "mlx-community/melix-dev-text-4bit"
+            ]),
+            runtime: TextRuntime(backend: FakeRuntimeBackend())
+        )
+
+        var loadRequest = Melix_Worker_V1_ModelSpec()
+        loadRequest.modelID = "melix-dev-text"
+        let loaded = try await registry.loadModel(loadRequest)
+
+        var acceleration = Melix_Worker_V1_AccelerationPolicy()
+        acceleration.mode = .baseline
+
+        let first = try await registry.prefill(
+            requestID: "req-prefill-reuse-1",
+            modelHandle: loaded.handle,
+            messages: [makeUserMessage("registry cache reuse")],
+            prefillStepSize: 8,
+            returnDecodeHandle: true,
+            resumeHint: "reuse-1",
+            acceleration: acceleration,
+            shouldAbort: { false }
+        )
+        let second = try await registry.prefill(
+            requestID: "req-prefill-reuse-2",
+            modelHandle: loaded.handle,
+            messages: [makeUserMessage("registry cache reuse")],
+            prefillStepSize: 8,
+            returnDecodeHandle: true,
+            resumeHint: "reuse-2",
+            acceleration: acceleration,
+            shouldAbort: { false }
+        )
+
+        let cacheResponse = await registry.cacheStatsResponse()
+
+        XCTAssertEqual(first.blockTableID, second.blockTableID)
+        XCTAssertEqual(cacheResponse.snapshot.hotPrefixes.count, 1)
+        XCTAssertGreaterThan(cacheResponse.stats.l1HitRate, 0)
+        XCTAssertGreaterThan(cacheResponse.stats.dedupRatio, 1)
     }
 
     func testRuntimeRegistryPrefillWithoutDecodeHandleDoesNotStoreContextAndUnloadClearsStoredContexts() async throws {
@@ -1228,6 +1281,8 @@ final class WorkerScaffoldTests: XCTestCase {
 
         XCTAssertTrue(response.ok)
         XCTAssertFalse(response.decodeHandle.isEmpty)
+        XCTAssertFalse(response.blockTableID.isEmpty)
+        XCTAssertEqual(response.blockTable.blocks.count, 1)
         XCTAssertEqual(response.promptTokens, 1)
         XCTAssertEqual(response.lifecyclePhase, .executionPrefilling)
         XCTAssertEqual(response.admissionState, .admissionAdmitted)
@@ -1239,6 +1294,8 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(metrics["swift_text.prefill_prompt_tokens"], 1)
         XCTAssertEqual(metrics["swift_text.accelerated_prefill_gain_pct"], 0)
         XCTAssertEqual(metrics["swift_text.active_kv_quantization_ratio"], 0)
+        XCTAssertEqual(metrics["swift_text.cache_block_count"], 1)
+        XCTAssertEqual(metrics["swift_text.cache_prefix_count"], 1)
         XCTAssertNotNil(metrics["swift_text.prefill_ms"])
     }
 
@@ -2212,8 +2269,44 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(services.metrics.counters["swift_text.active_kv_quantization_ratio"], 50)
     }
 
-    func testCacheManagementRpcsReturnStructuredUnimplemented() async throws {
-        let services = makeServices()
+    func testCacheManagementRpcsExposeHotTierMetadataAndKeepSnapshotRestoreDeferred() async throws {
+        let services = makeServices(
+            environment: ["MELIX_DEV_TEXT_MODEL_PATH": "mlx-community/melix-dev-text-4bit"],
+            backend: FakeRuntimeBackend()
+        )
+
+        let loadResponse = try await withServerContextRPCCancellationHandle { handle in
+            var request = Melix_Worker_V1_LoadModelRequest()
+            request.model.modelID = "melix-dev-text"
+            return try await services.runtime.loadModel(
+                request: request,
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_RuntimeService.Method.LoadModel.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
+        let prefillResponse = try await withServerContextRPCCancellationHandle { handle in
+            var request = Melix_Worker_V1_PrefillRequest()
+            request.execution.id.requestID = "req-cache-prefill"
+            request.execution.modelHandle = loadResponse.modelHandle
+            request.returnDecodeHandle = true
+            request.prefillStepSize = 8
+            request.messages = [makeUserMessage("cache me")]
+
+            return try await services.inference.prefill(
+                request: request,
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_InferenceService.Method.Prefill.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
 
         let cacheResponse = try await withServerContextRPCCancellationHandle { handle in
             try await services.cache.getCacheStats(
@@ -2227,9 +2320,11 @@ final class WorkerScaffoldTests: XCTestCase {
             )
         }
 
+        var pinRequest = Melix_Worker_V1_PinPrefixRequest()
+        pinRequest.prefix = try XCTUnwrap(cacheResponse.snapshot.hotPrefixes.first)
         let pinResponse = try await withServerContextRPCCancellationHandle { handle in
             try await services.cache.pinPrefix(
-                request: Melix_Worker_V1_PinPrefixRequest(),
+                request: pinRequest,
                 context: ServerContext(
                     descriptor: Melix_Worker_V1_CacheService.Method.PinPrefix.descriptor,
                     remotePeer: "in-process:test",
@@ -2239,9 +2334,11 @@ final class WorkerScaffoldTests: XCTestCase {
             )
         }
 
+        var unpinRequest = Melix_Worker_V1_UnpinPrefixRequest()
+        unpinRequest.prefix = pinRequest.prefix
         let unpinResponse = try await withServerContextRPCCancellationHandle { handle in
             try await services.cache.unpinPrefix(
-                request: Melix_Worker_V1_UnpinPrefixRequest(),
+                request: unpinRequest,
                 context: ServerContext(
                     descriptor: Melix_Worker_V1_CacheService.Method.UnpinPrefix.descriptor,
                     remotePeer: "in-process:test",
@@ -2275,9 +2372,11 @@ final class WorkerScaffoldTests: XCTestCase {
             )
         }
 
+        var purgeRequest = Melix_Worker_V1_PurgeCacheRequest()
+        purgeRequest.scope = pinRequest.prefix.scope
         let purgeResponse = try await withServerContextRPCCancellationHandle { handle in
             try await services.cache.purgeCache(
-                request: Melix_Worker_V1_PurgeCacheRequest(),
+                request: purgeRequest,
                 context: ServerContext(
                     descriptor: Melix_Worker_V1_CacheService.Method.PurgeCache.descriptor,
                     remotePeer: "in-process:test",
@@ -2287,17 +2386,31 @@ final class WorkerScaffoldTests: XCTestCase {
             )
         }
 
-        XCTAssertEqual(cacheResponse.stats.blockCount, 0)
-        XCTAssertFalse(pinResponse.ok)
-        XCTAssertEqual(pinResponse.error.code, "unimplemented")
-        XCTAssertFalse(unpinResponse.ok)
-        XCTAssertEqual(unpinResponse.error.code, "unimplemented")
+        let postPurgeCacheResponse = try await withServerContextRPCCancellationHandle { handle in
+            try await services.cache.getCacheStats(
+                request: Melix_Worker_V1_GetCacheStatsRequest(),
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_CacheService.Method.GetCacheStats.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
+        XCTAssertTrue(prefillResponse.ok)
+        XCTAssertEqual(cacheResponse.stats.blockCount, 1)
+        XCTAssertEqual(cacheResponse.snapshot.hotPrefixes.count, 1)
+        XCTAssertTrue(pinResponse.ok)
+        XCTAssertTrue(unpinResponse.ok)
         XCTAssertFalse(saveResponse.ok)
         XCTAssertEqual(saveResponse.error.code, "unimplemented")
         XCTAssertFalse(restoreResponse.ok)
         XCTAssertEqual(restoreResponse.error.code, "unimplemented")
-        XCTAssertFalse(purgeResponse.ok)
-        XCTAssertEqual(purgeResponse.error.code, "unimplemented")
+        XCTAssertTrue(purgeResponse.ok)
+        XCTAssertEqual(purgeResponse.purgedBlocks, 1)
+        XCTAssertEqual(postPurgeCacheResponse.stats.blockCount, 0)
+        XCTAssertEqual(postPurgeCacheResponse.snapshot.hotPrefixes.count, 0)
     }
 
     func testMaintenanceRpcsReturnStructuredUnimplemented() async throws {
