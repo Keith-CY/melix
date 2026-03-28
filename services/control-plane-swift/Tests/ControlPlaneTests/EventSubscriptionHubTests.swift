@@ -163,6 +163,26 @@ struct EventSubscriptionHubTests {
 
 @Suite("Core Utilities")
 struct CoreUtilityTests {
+    @Test("abort registry preserves active state until the matching request finishes")
+    func abortRegistryPreservesActiveStateUntilTheMatchingRequestFinishes() async {
+        let registry = AbortRegistry()
+
+        #expect(await registry.begin(requestID: "req-1"))
+        #expect(await registry.contains("req-1"))
+        #expect(!(await registry.isAborted("req-1")))
+        #expect(!(await registry.abort("other-req")))
+
+        await registry.finish(requestID: "other-req")
+        #expect(await registry.contains("req-1"))
+
+        #expect(await registry.abort("req-1"))
+        #expect(await registry.isAborted("req-1"))
+
+        await registry.finish(requestID: "req-1")
+        #expect(!(await registry.contains("req-1")))
+        #expect(!(await registry.isAborted("req-1")))
+    }
+
     @Test("null worker client reports no dispatch capacity")
     func nullWorkerClientReportsNoDispatchCapacity() async {
         let client = NullWorkerClient()
