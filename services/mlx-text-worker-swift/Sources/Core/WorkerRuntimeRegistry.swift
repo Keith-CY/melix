@@ -13,10 +13,13 @@ struct StoredPrefillContext: @unchecked Sendable {
     let modelHandle: String
     let requestID: String
     let promptTokens: Int
+    let messages: [Melix_Worker_V1_ChatMessage]
     let resumeHint: String
     let acceleration: Melix_Worker_V1_AccelerationPolicy
+    let activeKVQuantizationRatio: Int
     let blockTableID: String
     let blockTable: Melix_Worker_V1_BlockTable
+    let prefix: Melix_Worker_V1_PrefixRef?
     let context: TextPrefillContext
 }
 
@@ -56,12 +59,14 @@ actor WorkerRuntimeRegistry {
         configuration: WorkerConfiguration,
         modelCatalog: WorkerModelCatalog = WorkerModelCatalog(),
         runtime: TextRuntime = TextRuntime(),
-        cacheStore: HotCacheStore = HotCacheStore()
+        cacheStore: HotCacheStore? = nil
     ) {
         self.configuration = configuration
         self.modelCatalog = modelCatalog
         self.runtime = runtime
-        self.cacheStore = cacheStore
+        self.cacheStore = cacheStore ?? HotCacheStore(
+            diskStore: DiskCacheStore(rootPath: configuration.cacheRootPath)
+        )
         self.loadedModels = [:]
         self.activeRequests = 0
         self.activePrefills = 0
@@ -232,10 +237,13 @@ actor WorkerRuntimeRegistry {
                 modelHandle: modelHandle,
                 requestID: requestID,
                 promptTokens: result.promptTokens,
+                messages: messages,
                 resumeHint: resumeHint,
                 acceleration: result.appliedAcceleration,
+                activeKVQuantizationRatio: result.activeKVQuantizationRatio,
                 blockTableID: blockTableID,
                 blockTable: blockTable,
+                prefix: registration.prefix,
                 context: result.context
             )
         }
@@ -395,11 +403,89 @@ actor WorkerRuntimeRegistry {
     ) async -> UInt64 {
         await cacheStore.purgeCache(scope: scope, cacheKey: cacheKey, includePinned: includePinned)
     }
+
+    func saveBoundarySnapshot(
+        requestID: String,
+        decodeHandle: String,
+        tokenBoundary: UInt32
+    ) async throws -> Melix_Worker_V1_SaveBoundarySnapshotResponse {
+        guard let stored = prefillContexts[decodeHandle] else {
+            throw WorkerRuntimeRegistryError.unknownDecodeHandle
+        }
+        guard let loaded = loadedModels[stored.modelHandle] else {
+            throw WorkerRuntimeRegistryError.unknownModelHandle
+        }
+
+        let effectiveRequestID = requestID.isEmpty ? stored.requestID : requestID
+        let boundary = tokenBoundary > 0 ? tokenBoundary : UInt32(max(0, stored.promptTokens))
+        let snapshot = await cacheStore.saveBoundarySnapshot(
+            requestID: effectiveRequestID,
+            tokenBoundary: boundary,
+            model: loaded.spec,
+            prefill: stored
+        )
+
+        var response = Melix_Worker_V1_SaveBoundarySnapshotResponse()
+        response.ok = true
+        response.snapshotID = snapshot.snapshotID
+        response.snapshot = snapshot
+        return response
+    }
+
+    func restoreBoundarySnapshot(
+        snapshotID: String
+    ) async throws -> Melix_Worker_V1_RestoreBoundarySnapshotResponse {
+        guard let restored = await cacheStore.restoreBoundarySnapshot(snapshotID: snapshotID) else {
+            throw WorkerRuntimeRegistryError.unknownSnapshotID
+        }
+
+        guard let loaded = loadedModels.values.first(where: {
+            $0.spec.modelID == restored.model.modelID
+        }) else {
+            throw WorkerRuntimeRegistryError.snapshotModelNotLoaded
+        }
+
+        let runtimePrefill = try await runtime.prefill(
+            model: loaded.runtimeModel,
+            messages: restored.messages,
+            prefillStepSize: 0,
+            resumeHint: restored.resumeHint,
+            acceleration: restored.acceleration,
+            shouldAbort: { false }
+        )
+
+        let decodeHandle = "\(loaded.handle)::decode::\(nextDecodeHandle)"
+        nextDecodeHandle += 1
+        prefillContexts[decodeHandle] = StoredPrefillContext(
+            decodeHandle: decodeHandle,
+            modelHandle: loaded.handle,
+            requestID: restored.snapshot.requestID,
+            promptTokens: restored.promptTokens,
+            messages: restored.messages,
+            resumeHint: restored.resumeHint,
+            acceleration: restored.acceleration,
+            activeKVQuantizationRatio: activeKVQuantizationRatio(from: restored.acceleration),
+            blockTableID: restored.blockTableID,
+            blockTable: restored.blockTable,
+            prefix: await cacheStore.lookupPrefix(for: restored.blockTable.cacheKey),
+            context: runtimePrefill.context
+        )
+
+        var response = Melix_Worker_V1_RestoreBoundarySnapshotResponse()
+        response.ok = true
+        response.decodeHandle = decodeHandle
+        response.blockTableID = restored.blockTableID
+        response.blockTable = restored.blockTable
+        response.snapshot = restored.snapshot
+        return response
+    }
 }
 
 enum WorkerRuntimeRegistryError: Error, LocalizedError {
     case unknownModelHandle
     case unknownDecodeHandle
+    case unknownSnapshotID
+    case snapshotModelNotLoaded
 
     var errorDescription: String? {
         switch self {
@@ -407,6 +493,10 @@ enum WorkerRuntimeRegistryError: Error, LocalizedError {
             return "Unknown model handle."
         case .unknownDecodeHandle:
             return "Unknown decode handle."
+        case .unknownSnapshotID:
+            return "Unknown snapshot ID."
+        case .snapshotModelNotLoaded:
+            return "The model required for this snapshot is not currently loaded."
         }
     }
 }

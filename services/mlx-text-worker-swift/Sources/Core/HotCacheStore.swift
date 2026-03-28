@@ -18,11 +18,16 @@ private struct StoredHotPrefix: Sendable {
 }
 
 actor HotCacheStore {
+    private let diskStore: DiskCacheStore
     private var prefixesByID: [String: StoredHotPrefix] = [:]
     private var prefixIDByKey: [String: String] = [:]
     private var totalLookups: UInt64 = 0
     private var totalHits: UInt64 = 0
     private var totalReusedBlocks: UInt64 = 0
+
+    init(diskStore: DiskCacheStore = DiskCacheStore(rootPath: ".runtime/swift-text-worker-cache")) {
+        self.diskStore = diskStore
+    }
 
     func registerPrefill(
         execution: Melix_Worker_V1_ExecutionMetadata,
@@ -31,7 +36,7 @@ actor HotCacheStore {
         promptTokens: Int,
         decodeHandle: String,
         activeKVQuantizationRatio: Int
-    ) throws -> HotCacheRegistration {
+    ) async throws -> HotCacheRegistration {
         let resolvedScope = resolveScope(execution.scope, fallback: model)
         let renderedPrompt = try renderPrompt(from: messages)
         let resolvedKey = resolveCacheKey(
@@ -89,6 +94,18 @@ actor HotCacheStore {
 
         prefixesByID[prefixID] = stored
         prefixIDByKey[keyID] = prefixID
+        if execution.cacheHints.allowL2 || execution.cacheHints.persistL2 {
+            let l2QuantizedBytes = storageBoundaryQuantizedBytes(
+                for: blockTable,
+                activeKVQuantizationRatio: activeKVQuantizationRatio
+            )
+            await diskStore.persistPrefix(
+                prefix: prefix,
+                blockTableID: blockTableID,
+                blockTable: blockTable,
+                quantizedBytes: l2QuantizedBytes
+            )
+        }
         return HotCacheRegistration(
             prefix: prefix,
             blockTableID: blockTableID,
@@ -97,19 +114,66 @@ actor HotCacheStore {
         )
     }
 
-    func stats() -> Melix_Worker_V1_CacheStats {
-        buildStats()
+    func stats() async -> Melix_Worker_V1_CacheStats {
+        await buildStats()
     }
 
-    func snapshot() -> Melix_Worker_V1_CacheSnapshot {
+    func snapshot() async -> Melix_Worker_V1_CacheSnapshot {
+        await buildSnapshot()
+    }
+
+    func lookupPrefix(for cacheKey: Melix_Worker_V1_CacheKey) -> Melix_Worker_V1_PrefixRef? {
+        if let prefixID = prefixIDByKey[cacheKeyIdentifier(cacheKey)] {
+            return prefixesByID[prefixID]?.prefix
+        }
+        return nil
+    }
+
+    func saveBoundarySnapshot(
+        requestID: String,
+        tokenBoundary: UInt32,
+        model: Melix_Worker_V1_ModelSpec,
+        prefill: StoredPrefillContext
+    ) async -> Melix_Worker_V1_SnapshotRef {
+        var snapshot = Melix_Worker_V1_SnapshotRef()
+        snapshot.snapshotID = "snap-\(UUID().uuidString.lowercased())"
+        snapshot.requestID = requestID
+        snapshot.tokenBoundary = tokenBoundary
+        snapshot.checkpointID = "\(prefill.decodeHandle)::tok::\(tokenBoundary)"
+
+        if let prefix = prefill.prefix {
+            snapshot.sessionID = prefix.scope.scopeID
+        }
+        snapshot.branchID = prefill.modelHandle
+
+        await diskStore.saveSnapshot(
+            snapshot: snapshot,
+            model: model,
+            messages: prefill.messages,
+            resumeHint: prefill.resumeHint,
+            acceleration: prefill.acceleration,
+            promptTokens: prefill.promptTokens,
+            blockTableID: prefill.blockTableID,
+            blockTable: prefill.blockTable,
+            prefix: prefill.prefix
+        )
+        return snapshot
+    }
+
+    func restoreBoundarySnapshot(snapshotID: String) async -> RestoredBoundarySnapshot? {
+        await diskStore.restoreSnapshot(snapshotID: snapshotID)
+    }
+
+    private func buildSnapshot() async -> Melix_Worker_V1_CacheSnapshot {
         var snapshot = Melix_Worker_V1_CacheSnapshot()
-        snapshot.stats = buildStats()
+        let diskSummary = await diskStore.summary()
+        snapshot.stats = buildStats(diskSummary: diskSummary)
 
         let entries = prefixesByID.values.sorted { $0.prefix.prefixID < $1.prefix.prefixID }
         snapshot.hotPrefixes = entries.map(\.prefix)
         snapshot.pinnedPrefixes = entries.filter(\.prefix.pinned).map(\.prefix)
-        snapshot.snapshots = []
-        snapshot.scopes = buildScopeSummaries(from: entries)
+        snapshot.snapshots = diskSummary.snapshots
+        snapshot.scopes = buildScopeSummaries(from: entries, diskSummary: diskSummary)
         return snapshot
     }
 
@@ -125,7 +189,7 @@ actor HotCacheStore {
         scope: Melix_Worker_V1_CacheScope,
         cacheKey: Melix_Worker_V1_CacheKey,
         includePinned: Bool
-    ) -> UInt64 {
+    ) async -> UInt64 {
         let allEntries = prefixesByID.values.map(\.prefix)
         let matchingIDs = allEntries.compactMap { prefix -> String? in
             guard matches(scope: scope, prefix: prefix), matches(cacheKey: cacheKey, prefix: prefix) else {
@@ -145,14 +209,20 @@ actor HotCacheStore {
             prefixIDByKey.removeValue(forKey: cacheKeyIdentifier(removed.prefix.cacheKey))
             purgedBlocks += UInt64(removed.blockTable.blocks.count)
         }
-        return purgedBlocks
+        let l2PurgedBlocks = await diskStore.purge(
+            scope: scope,
+            cacheKey: cacheKey,
+            includePinned: includePinned
+        )
+        return purgedBlocks + l2PurgedBlocks
     }
 
-    func purgeModel(modelID: String) {
+    func purgeModel(modelID: String) async {
         for prefix in prefixesByID.values.map(\.prefix) where prefix.scope.modelID == modelID {
             prefixesByID.removeValue(forKey: prefix.prefixID)
             prefixIDByKey.removeValue(forKey: cacheKeyIdentifier(prefix.cacheKey))
         }
+        await diskStore.purgeModel(modelID: modelID)
     }
 
     private func updatePinState(
@@ -174,37 +244,62 @@ actor HotCacheStore {
         return true
     }
 
-    private func buildStats() -> Melix_Worker_V1_CacheStats {
+    private func buildStats(
+        diskSummary: DiskCacheSummary
+    ) -> Melix_Worker_V1_CacheStats {
         let entries = prefixesByID.values
         let l1Bytes = entries.reduce(UInt64(0)) { partial, entry in
             partial + entry.blockTable.blocks.reduce(UInt64(0)) { $0 + $1.bytes }
         }
-        let quantizedBytes = entries.reduce(UInt64(0)) { $0 + $1.quantizedBytes }
+        let l1QuantizedBytes = entries.reduce(UInt64(0)) { $0 + $1.quantizedBytes }
+        let quantizedBytes = l1QuantizedBytes + diskSummary.quantizedBytes
+        let totalUnquantizedBytes = l1Bytes + diskSummary.unquantizedBytes
 
         var stats = Melix_Worker_V1_CacheStats()
         stats.l1Bytes = l1Bytes
-        stats.l2Bytes = 0
+        stats.l2Bytes = diskSummary.l2Bytes
         stats.blockCount = UInt64(entries.reduce(0) { $0 + $1.blockTable.blocks.count })
         stats.pinnedPrefixCount = UInt64(entries.filter(\.prefix.pinned).count)
-        stats.snapshotCount = 0
+        stats.snapshotCount = diskSummary.snapshotCount
         stats.l1HitRate = totalLookups > 0 ? Double(totalHits) / Double(totalLookups) : 0
-        stats.l2HitRate = 0
+        stats.l2HitRate = diskSummary.l2HitRate
         stats.dedupRatio = entries.isEmpty ? 0 : Double(totalLookups) / Double(entries.count)
         stats.quantizedBytes = quantizedBytes
-        stats.compressionRatio = quantizedBytes > 0 ? Double(l1Bytes) / Double(quantizedBytes) : 0
-        stats.l2RestoreHitRate = 0
+        stats.compressionRatio = quantizedBytes > 0 ? Double(totalUnquantizedBytes) / Double(quantizedBytes) : 0
+        stats.l2RestoreHitRate = diskSummary.l2RestoreHitRate
         return stats
     }
 
+    private func buildStats() async -> Melix_Worker_V1_CacheStats {
+        let diskSummary = await diskStore.summary()
+        return buildStats(diskSummary: diskSummary)
+    }
+
     private func buildScopeSummaries(
-        from entries: [StoredHotPrefix]
+        from entries: [StoredHotPrefix],
+        diskSummary: DiskCacheSummary
     ) -> [Melix_Worker_V1_CacheScopeSummary] {
         let groups = Dictionary(grouping: entries) { entry in
             entry.prefix.scope.scopeID
         }
 
-        return groups.keys.sorted().compactMap { scopeID in
-            guard let group = groups[scopeID], let first = group.first else {
+        let diskScopes = Dictionary(uniqueKeysWithValues: diskSummary.scopes.map { ($0.scope.scopeID, $0) })
+        let scopeIDs = Set(groups.keys).union(diskScopes.keys).sorted()
+
+        return scopeIDs.compactMap { scopeID in
+            let group = groups[scopeID] ?? []
+            let diskScope = diskScopes[scopeID]
+            guard let first = group.first ?? diskScope.map({ scope in
+                var synthetic = StoredHotPrefix(
+                    prefix: Melix_Worker_V1_PrefixRef(),
+                    blockTableID: "",
+                    blockTable: Melix_Worker_V1_BlockTable(),
+                    quantizedBytes: 0,
+                    accessCount: 0
+                )
+                synthetic.prefix.scope = scope.scope
+                return synthetic
+            }) else {
                 return nil
             }
 
@@ -214,10 +309,10 @@ actor HotCacheStore {
             summary.l1Bytes = group.reduce(UInt64(0)) { partial, entry in
                 partial + entry.blockTable.blocks.reduce(UInt64(0)) { $0 + $1.bytes }
             }
-            summary.l2Bytes = 0
+            summary.l2Bytes = diskScope?.l2Bytes ?? 0
             summary.blockCount = UInt64(group.reduce(0) { $0 + $1.blockTable.blocks.count })
             summary.prefixCount = UInt64(group.count)
-            summary.snapshotCount = 0
+            summary.snapshotCount = diskScope?.snapshotCount ?? 0
             summary.hotBlocks = group.flatMap(\.blockTable.blocks)
             return summary
         }

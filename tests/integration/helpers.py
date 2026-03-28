@@ -38,6 +38,12 @@ class LiveMelixStack:
         self.control_plane_metrics_path = Path("/tmp") / f"melix-control-plane-{token}.json"
         self.swift_text_worker_metrics_path = Path("/tmp") / f"melix-swift-metrics-{token}.json"
         self.http_port = reserve_port()
+        self.swift_text_worker_stdout_path = Path("/tmp") / f"melix-swift-worker-{token}.stdout.log"
+        self.swift_text_worker_stderr_path = Path("/tmp") / f"melix-swift-worker-{token}.stderr.log"
+        self.python_worker_stdout_path = Path("/tmp") / f"melix-python-worker-{token}.stdout.log"
+        self.python_worker_stderr_path = Path("/tmp") / f"melix-python-worker-{token}.stderr.log"
+        self.control_plane_stdout_path = Path("/tmp") / f"melix-control-plane-{token}.stdout.log"
+        self.control_plane_stderr_path = Path("/tmp") / f"melix-control-plane-{token}.stderr.log"
         self.swift_backend_mode = swift_backend_mode
         self.python_backend_mode = python_backend_mode
         self.should_start_swift_text_worker = start_swift_text_worker
@@ -45,6 +51,12 @@ class LiveMelixStack:
         self.swift_text_worker: subprocess.Popen[str] | None = None
         self.python_worker: subprocess.Popen[str] | None = None
         self.control_plane: subprocess.Popen[str] | None = None
+        self.swift_text_worker_stdout = None
+        self.swift_text_worker_stderr = None
+        self.python_worker_stdout = None
+        self.python_worker_stderr = None
+        self.control_plane_stdout = None
+        self.control_plane_stderr = None
 
     def start(self) -> None:
         if self.should_start_swift_text_worker:
@@ -52,6 +64,8 @@ class LiveMelixStack:
             swift_env["MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH"] = os.fspath(self.swift_socket_path)
             swift_env["MELIX_SWIFT_TEXT_WORKER_BACKEND_MODE"] = self.swift_backend_mode
             swift_env["MELIX_SWIFT_TEXT_WORKER_METRICS_PATH"] = os.fspath(self.swift_text_worker_metrics_path)
+            self.swift_text_worker_stdout = self.swift_text_worker_stdout_path.open("w", encoding="utf-8")
+            self.swift_text_worker_stderr = self.swift_text_worker_stderr_path.open("w", encoding="utf-8")
             self.swift_text_worker = subprocess.Popen(
                 [
                     "swift",
@@ -61,8 +75,8 @@ class LiveMelixStack:
                     "melix-text-worker-swift",
                 ],
                 cwd=self.repo_root,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
+                stdout=self.swift_text_worker_stdout,
+                stderr=self.swift_text_worker_stderr,
                 text=True,
                 env=swift_env,
                 start_new_session=True,
@@ -70,12 +84,16 @@ class LiveMelixStack:
             wait_for_worker_handshake(
                 self.swift_socket_path,
                 worker=self.swift_text_worker,
+                stdout_path=self.swift_text_worker_stdout_path,
+                stderr_path=self.swift_text_worker_stderr_path,
                 timeout_seconds=120,
             )
 
         if self.should_start_python_worker:
             worker_env = os.environ.copy()
             worker_env["PYTHONPATH"] = f"{self.repo_root}:{self.repo_root / 'services/mlx-worker-python'}"
+            self.python_worker_stdout = self.python_worker_stdout_path.open("w", encoding="utf-8")
+            self.python_worker_stderr = self.python_worker_stderr_path.open("w", encoding="utf-8")
 
             self.python_worker = subprocess.Popen(
                 [
@@ -92,8 +110,8 @@ class LiveMelixStack:
                     self.python_backend_mode,
                 ],
                 cwd=self.repo_root,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
+                stdout=self.python_worker_stdout,
+                stderr=self.python_worker_stderr,
                 text=True,
                 env=worker_env,
                 start_new_session=True,
@@ -101,6 +119,8 @@ class LiveMelixStack:
             wait_for_worker_handshake(
                 self.python_socket_path,
                 worker=self.python_worker,
+                stdout_path=self.python_worker_stdout_path,
+                stderr_path=self.python_worker_stderr_path,
                 timeout_seconds=60,
             )
 
@@ -110,6 +130,8 @@ class LiveMelixStack:
         control_plane_env["MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH"] = os.fspath(self.swift_socket_path)
         control_plane_env["MELIX_CONTROL_PLANE_METRICS_PATH"] = os.fspath(self.control_plane_metrics_path)
         control_plane_env["MELIX_REPO_ROOT"] = os.fspath(self.repo_root)
+        self.control_plane_stdout = self.control_plane_stdout_path.open("w", encoding="utf-8")
+        self.control_plane_stderr = self.control_plane_stderr_path.open("w", encoding="utf-8")
 
         self.control_plane = subprocess.Popen(
             [
@@ -120,8 +142,8 @@ class LiveMelixStack:
                 "melix-control-plane",
             ],
             cwd=self.repo_root,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            stdout=self.control_plane_stdout,
+            stderr=self.control_plane_stderr,
             text=True,
             env=control_plane_env,
             start_new_session=True,
@@ -130,8 +152,14 @@ class LiveMelixStack:
         wait_for_http_models(
             self.http_port,
             swift_text_worker=self.swift_text_worker,
+            swift_text_worker_stdout_path=self.swift_text_worker_stdout_path,
+            swift_text_worker_stderr_path=self.swift_text_worker_stderr_path,
             python_worker=self.python_worker,
+            python_worker_stdout_path=self.python_worker_stdout_path,
+            python_worker_stderr_path=self.python_worker_stderr_path,
             control_plane=self.control_plane,
+            control_plane_stdout_path=self.control_plane_stdout_path,
+            control_plane_stderr_path=self.control_plane_stderr_path,
             timeout_seconds=120,
         )
 
@@ -143,17 +171,20 @@ class LiveMelixStack:
     def stop_python_worker(self) -> None:
         self._stop_process("python worker", self.python_worker)
         self.python_worker = None
+        self._close_logs("python_worker")
         self.python_socket_path.unlink(missing_ok=True)
 
     def stop_swift_text_worker(self) -> None:
         self._stop_process("swift text worker", self.swift_text_worker)
         self.swift_text_worker = None
+        self._close_logs("swift_text_worker")
         self.swift_socket_path.unlink(missing_ok=True)
         self.swift_text_worker_metrics_path.unlink(missing_ok=True)
 
     def stop_control_plane(self) -> None:
         self._stop_process("control plane", self.control_plane)
         self.control_plane = None
+        self._close_logs("control_plane")
         self.control_plane_metrics_path.unlink(missing_ok=True)
 
     def models_url(self) -> str:
@@ -175,6 +206,16 @@ class LiveMelixStack:
         else:
             process.wait(timeout=10)
 
+    def _close_logs(self, prefix: str) -> None:
+        for suffix in ("stdout", "stderr"):
+            handle = getattr(self, f"{prefix}_{suffix}", None)
+            if handle is not None:
+                handle.close()
+                setattr(self, f"{prefix}_{suffix}", None)
+            path = getattr(self, f"{prefix}_{suffix}_path", None)
+            if isinstance(path, Path):
+                path.unlink(missing_ok=True)
+
 
 def reserve_port() -> int:
     with socket.socket() as sock:
@@ -186,6 +227,8 @@ def wait_for_worker_handshake(
     socket_path: Path,
     *,
     worker: subprocess.Popen[str] | None = None,
+    stdout_path: Path | None = None,
+    stderr_path: Path | None = None,
     timeout_seconds: float = 120,
 ) -> None:
     deadline = time.time() + timeout_seconds
@@ -197,10 +240,7 @@ def wait_for_worker_handshake(
     try:
         while time.time() < deadline:
             if worker is not None and worker.poll() is not None:
-                stdout, stderr = worker.communicate(timeout=1)
-                raise AssertionError(
-                    f"Worker exited before handshake completed: stdout={stdout!r} stderr={stderr!r}"
-                )
+                raise AssertionError(_format_process_failure("Worker exited before handshake completed", stdout_path, stderr_path))
             try:
                 request = runtime_pb2.HandshakeRequest(
                     protocol_version="melix.worker.v1",
@@ -222,8 +262,14 @@ def wait_for_worker_handshake(
 def wait_for_http_models(
     port: int,
     swift_text_worker: subprocess.Popen[str] | None = None,
+    swift_text_worker_stdout_path: Path | None = None,
+    swift_text_worker_stderr_path: Path | None = None,
     python_worker: subprocess.Popen[str] | None = None,
+    python_worker_stdout_path: Path | None = None,
+    python_worker_stderr_path: Path | None = None,
     control_plane: subprocess.Popen[str] | None = None,
+    control_plane_stdout_path: Path | None = None,
+    control_plane_stderr_path: Path | None = None,
     timeout_seconds: float = 120,
 ) -> None:
     deadline = time.time() + timeout_seconds
@@ -231,19 +277,28 @@ def wait_for_http_models(
 
     while time.time() < deadline:
         if swift_text_worker is not None and swift_text_worker.poll() is not None:
-            stdout, stderr = swift_text_worker.communicate(timeout=1)
             raise AssertionError(
-                f"Swift text worker exited before warm model was visible: stdout={stdout!r} stderr={stderr!r}"
+                _format_process_failure(
+                    "Swift text worker exited before warm model was visible",
+                    swift_text_worker_stdout_path,
+                    swift_text_worker_stderr_path,
+                )
             )
         if python_worker is not None and python_worker.poll() is not None:
-            stdout, stderr = python_worker.communicate(timeout=1)
             raise AssertionError(
-                f"Python worker exited before warm model was visible: stdout={stdout!r} stderr={stderr!r}"
+                _format_process_failure(
+                    "Python worker exited before warm model was visible",
+                    python_worker_stdout_path,
+                    python_worker_stderr_path,
+                )
             )
         if control_plane is not None and control_plane.poll() is not None:
-            stdout, stderr = control_plane.communicate(timeout=1)
             raise AssertionError(
-                f"Control plane exited before warm model was visible: stdout={stdout!r} stderr={stderr!r}"
+                _format_process_failure(
+                    "Control plane exited before warm model was visible",
+                    control_plane_stdout_path,
+                    control_plane_stderr_path,
+                )
             )
         try:
             with urllib.request.urlopen(f"http://127.0.0.1:{port}/v1/models", timeout=2) as response:
@@ -268,3 +323,9 @@ def abort_worker_request(socket_path: Path, request_id: str) -> bool:
         return bool(response.ok and response.found)
     finally:
         channel.close()
+
+
+def _format_process_failure(message: str, stdout_path: Path | None, stderr_path: Path | None) -> str:
+    stdout = stdout_path.read_text(encoding="utf-8") if isinstance(stdout_path, Path) and stdout_path.exists() else ""
+    stderr = stderr_path.read_text(encoding="utf-8") if isinstance(stderr_path, Path) and stderr_path.exists() else ""
+    return f"{message}: stdout={stdout!r} stderr={stderr!r}"

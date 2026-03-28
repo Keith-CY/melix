@@ -301,8 +301,10 @@ final class CacheRPCService: Melix_Worker_V1_CacheService.SimpleServiceProtocol,
     ) async throws -> Melix_Worker_V1_GetCacheStatsResponse {
         let response = await registry.cacheStatsResponse()
         metrics.set("swift_text.cache_l1_bytes", value: Int(clamping: response.stats.l1Bytes))
+        metrics.set("swift_text.cache_l2_bytes", value: Int(clamping: response.stats.l2Bytes))
         metrics.set("swift_text.cache_block_count", value: Int(clamping: response.stats.blockCount))
         metrics.set("swift_text.cache_prefix_count", value: response.snapshot.hotPrefixes.count)
+        metrics.set("swift_text.cache_snapshot_count", value: Int(clamping: response.stats.snapshotCount))
         metrics.set(
             "swift_text.cache_pinned_prefix_count",
             value: Int(clamping: response.stats.pinnedPrefixCount)
@@ -314,6 +316,18 @@ final class CacheRPCService: Melix_Worker_V1_CacheService.SimpleServiceProtocol,
         metrics.set(
             "swift_text.cache_block_reuse_ratio",
             value: Int((response.stats.dedupRatio * 100.0).rounded())
+        )
+        metrics.set(
+            "swift_text.cache_quantized_bytes",
+            value: Int(clamping: response.stats.quantizedBytes)
+        )
+        metrics.set(
+            "swift_text.cache_compression_ratio",
+            value: Int((response.stats.compressionRatio * 100.0).rounded())
+        )
+        metrics.set(
+            "swift_text.cache_l2_restore_hit_rate",
+            value: Int((response.stats.l2RestoreHitRate * 100.0).rounded())
         )
         return response
     }
@@ -346,24 +360,56 @@ final class CacheRPCService: Melix_Worker_V1_CacheService.SimpleServiceProtocol,
         request: Melix_Worker_V1_SaveBoundarySnapshotRequest,
         context: GRPCCore.ServerContext
     ) async throws -> Melix_Worker_V1_SaveBoundarySnapshotResponse {
-        metrics.increment("swift_text.unimplemented_rpc_count")
+        let startedAt = Date()
+        do {
+            let response = try await registry.saveBoundarySnapshot(
+                requestID: request.requestID,
+                decodeHandle: request.decodeHandle,
+                tokenBoundary: request.tokenBoundary
+            )
+            metrics.recordMilliseconds(
+                "swift_text.cache_snapshot_save_ms",
+                value: elapsedMilliseconds(since: startedAt)
+            )
+            return response
+        } catch let error as WorkerRuntimeRegistryError {
+            metrics.increment("swift_text.rpc_error_count")
+            metrics.recordMilliseconds(
+                "swift_text.cache_snapshot_save_ms",
+                value: elapsedMilliseconds(since: startedAt)
+            )
 
-        var response = Melix_Worker_V1_SaveBoundarySnapshotResponse()
-        response.ok = false
-        response.error = makeUnimplementedStatus("SaveBoundarySnapshot is deferred until Phase 3.")
-        return response
+            var response = Melix_Worker_V1_SaveBoundarySnapshotResponse()
+            response.ok = false
+            response.error = makeErrorStatus(code: saveRestoreErrorCode(for: error), message: error.localizedDescription)
+            return response
+        }
     }
 
     func restoreBoundarySnapshot(
         request: Melix_Worker_V1_RestoreBoundarySnapshotRequest,
         context: GRPCCore.ServerContext
     ) async throws -> Melix_Worker_V1_RestoreBoundarySnapshotResponse {
-        metrics.increment("swift_text.unimplemented_rpc_count")
+        let startedAt = Date()
+        do {
+            let response = try await registry.restoreBoundarySnapshot(snapshotID: request.snapshotID)
+            metrics.recordMilliseconds(
+                "swift_text.cache_snapshot_restore_ms",
+                value: elapsedMilliseconds(since: startedAt)
+            )
+            return response
+        } catch let error as WorkerRuntimeRegistryError {
+            metrics.increment("swift_text.rpc_error_count")
+            metrics.recordMilliseconds(
+                "swift_text.cache_snapshot_restore_ms",
+                value: elapsedMilliseconds(since: startedAt)
+            )
 
-        var response = Melix_Worker_V1_RestoreBoundarySnapshotResponse()
-        response.ok = false
-        response.error = makeUnimplementedStatus("RestoreBoundarySnapshot is deferred until Phase 3.")
-        return response
+            var response = Melix_Worker_V1_RestoreBoundarySnapshotResponse()
+            response.ok = false
+            response.error = makeErrorStatus(code: saveRestoreErrorCode(for: error), message: error.localizedDescription)
+            return response
+        }
     }
 
     func purgeCache(
@@ -438,6 +484,15 @@ final class MaintenanceRPCService: Melix_Worker_V1_MaintenanceService.SimpleServ
         failed.error = makeUnimplementedStatus("RunBench is handled by the Python worker family.")
         event.failed = failed
         try await response.write(event)
+    }
+}
+
+private func saveRestoreErrorCode(for error: WorkerRuntimeRegistryError) -> String {
+    switch error {
+    case .unknownDecodeHandle, .unknownSnapshotID, .unknownModelHandle:
+        return "not_found"
+    case .snapshotModelNotLoaded:
+        return "failed_precondition"
     }
 }
 

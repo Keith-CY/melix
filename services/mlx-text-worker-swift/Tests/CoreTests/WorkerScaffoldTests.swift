@@ -24,6 +24,7 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(configuration.socketPath, "/var/run/melix/swift-text-worker.sock")
         XCTAssertEqual(configuration.backendMode, "swift")
         XCTAssertEqual(configuration.runtimeVersion, "melix-swift-text-worker/dev")
+        XCTAssertEqual(configuration.cacheRootPath, ".runtime/swift-text-worker-cache")
     }
 
     func testConfigurationReadsEnvironmentOverrides() {
@@ -33,6 +34,7 @@ final class WorkerScaffoldTests: XCTestCase {
             "MELIX_SWIFT_TEXT_WORKER_BACKEND_MODE": "swift-experimental",
             "MELIX_SWIFT_TEXT_WORKER_RUNTIME_VERSION": "melix-swift-text-worker/test",
             "MELIX_SWIFT_TEXT_WORKER_METRICS_PATH": "/tmp/melix-swift-text-worker-metrics.json",
+            "MELIX_SWIFT_TEXT_WORKER_CACHE_ROOT": "/tmp/melix-swift-text-worker-cache",
         ])
 
         XCTAssertEqual(configuration.workerID, "swift-text-worker-dev")
@@ -40,6 +42,7 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(configuration.backendMode, "swift-experimental")
         XCTAssertEqual(configuration.runtimeVersion, "melix-swift-text-worker/test")
         XCTAssertEqual(configuration.metricsExportPath, "/tmp/melix-swift-text-worker-metrics.json")
+        XCTAssertEqual(configuration.cacheRootPath, "/tmp/melix-swift-text-worker-cache")
     }
 
     func testConfigurationFallsBackToDefaultsForEmptyEnvironment() {
@@ -2269,148 +2272,601 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(services.metrics.counters["swift_text.active_kv_quantization_ratio"], 50)
     }
 
-    func testCacheManagementRpcsExposeHotTierMetadataAndKeepSnapshotRestoreDeferred() async throws {
-        let services = makeServices(
-            environment: ["MELIX_DEV_TEXT_MODEL_PATH": "mlx-community/melix-dev-text-4bit"],
-            backend: FakeRuntimeBackend()
+    func testCacheManagementRpcsExposeHotAndDiskTierMetadata() async throws {
+        try await withTemporaryCacheRoot { cacheRoot in
+            let services = makeServices(
+                environment: [
+                    "MELIX_DEV_TEXT_MODEL_PATH": "mlx-community/melix-dev-text-4bit",
+                    "MELIX_SWIFT_TEXT_WORKER_CACHE_ROOT": cacheRoot.path,
+                ],
+                backend: DeterministicTextBackend(tokenDelayNanos: 0)
+            )
+
+            let loadResponse = try await withServerContextRPCCancellationHandle { handle in
+                var request = Melix_Worker_V1_LoadModelRequest()
+                request.model.modelID = "melix-dev-text"
+                return try await services.runtime.loadModel(
+                    request: request,
+                    context: ServerContext(
+                        descriptor: Melix_Worker_V1_RuntimeService.Method.LoadModel.descriptor,
+                        remotePeer: "in-process:test",
+                        localPeer: "in-process:test",
+                        cancellation: handle
+                    )
+                )
+            }
+
+            let prefillResponse = try await withServerContextRPCCancellationHandle { handle in
+                var request = Melix_Worker_V1_PrefillRequest()
+                request.execution.id.requestID = "req-cache-prefill"
+                request.execution.modelHandle = loadResponse.modelHandle
+                request.execution.cacheHints.allowL2 = true
+                request.execution.cacheHints.persistL2 = true
+                request.returnDecodeHandle = true
+                request.prefillStepSize = 8
+                request.messages = [makeUserMessage("cache me")]
+
+                return try await services.inference.prefill(
+                    request: request,
+                    context: ServerContext(
+                        descriptor: Melix_Worker_V1_InferenceService.Method.Prefill.descriptor,
+                        remotePeer: "in-process:test",
+                        localPeer: "in-process:test",
+                        cancellation: handle
+                    )
+                )
+            }
+
+            let cacheResponse = try await withServerContextRPCCancellationHandle { handle in
+                try await services.cache.getCacheStats(
+                    request: Melix_Worker_V1_GetCacheStatsRequest(),
+                    context: ServerContext(
+                        descriptor: Melix_Worker_V1_CacheService.Method.GetCacheStats.descriptor,
+                        remotePeer: "in-process:test",
+                        localPeer: "in-process:test",
+                        cancellation: handle
+                    )
+                )
+            }
+
+            var pinRequest = Melix_Worker_V1_PinPrefixRequest()
+            pinRequest.prefix = try XCTUnwrap(cacheResponse.snapshot.hotPrefixes.first)
+            let pinResponse = try await withServerContextRPCCancellationHandle { handle in
+                try await services.cache.pinPrefix(
+                    request: pinRequest,
+                    context: ServerContext(
+                        descriptor: Melix_Worker_V1_CacheService.Method.PinPrefix.descriptor,
+                        remotePeer: "in-process:test",
+                        localPeer: "in-process:test",
+                        cancellation: handle
+                    )
+                )
+            }
+
+            var unpinRequest = Melix_Worker_V1_UnpinPrefixRequest()
+            unpinRequest.prefix = pinRequest.prefix
+            let unpinResponse = try await withServerContextRPCCancellationHandle { handle in
+                try await services.cache.unpinPrefix(
+                    request: unpinRequest,
+                    context: ServerContext(
+                        descriptor: Melix_Worker_V1_CacheService.Method.UnpinPrefix.descriptor,
+                        remotePeer: "in-process:test",
+                        localPeer: "in-process:test",
+                        cancellation: handle
+                    )
+                )
+            }
+
+            let saveResponse = try await withServerContextRPCCancellationHandle { handle in
+                var request = Melix_Worker_V1_SaveBoundarySnapshotRequest()
+                request.requestID = "req-cache-prefill"
+                request.decodeHandle = prefillResponse.decodeHandle
+                request.tokenBoundary = prefillResponse.promptTokens
+                return try await services.cache.saveBoundarySnapshot(
+                    request: request,
+                    context: ServerContext(
+                        descriptor: Melix_Worker_V1_CacheService.Method.SaveBoundarySnapshot.descriptor,
+                        remotePeer: "in-process:test",
+                        localPeer: "in-process:test",
+                        cancellation: handle
+                    )
+                )
+            }
+
+            let postSaveCacheResponse = try await withServerContextRPCCancellationHandle { handle in
+                try await services.cache.getCacheStats(
+                    request: Melix_Worker_V1_GetCacheStatsRequest(),
+                    context: ServerContext(
+                        descriptor: Melix_Worker_V1_CacheService.Method.GetCacheStats.descriptor,
+                        remotePeer: "in-process:test",
+                        localPeer: "in-process:test",
+                        cancellation: handle
+                    )
+                )
+            }
+
+            let restoreResponse = try await withServerContextRPCCancellationHandle { handle in
+                var request = Melix_Worker_V1_RestoreBoundarySnapshotRequest()
+                request.snapshotID = saveResponse.snapshotID
+                return try await services.cache.restoreBoundarySnapshot(
+                    request: request,
+                    context: ServerContext(
+                        descriptor: Melix_Worker_V1_CacheService.Method.RestoreBoundarySnapshot.descriptor,
+                        remotePeer: "in-process:test",
+                        localPeer: "in-process:test",
+                        cancellation: handle
+                    )
+                )
+            }
+
+            var purgeRequest = Melix_Worker_V1_PurgeCacheRequest()
+            purgeRequest.scope = pinRequest.prefix.scope
+            purgeRequest.includePinned = true
+            let purgeResponse = try await withServerContextRPCCancellationHandle { handle in
+                try await services.cache.purgeCache(
+                    request: purgeRequest,
+                    context: ServerContext(
+                        descriptor: Melix_Worker_V1_CacheService.Method.PurgeCache.descriptor,
+                        remotePeer: "in-process:test",
+                        localPeer: "in-process:test",
+                        cancellation: handle
+                    )
+                )
+            }
+
+            let postPurgeCacheResponse = try await withServerContextRPCCancellationHandle { handle in
+                try await services.cache.getCacheStats(
+                    request: Melix_Worker_V1_GetCacheStatsRequest(),
+                    context: ServerContext(
+                        descriptor: Melix_Worker_V1_CacheService.Method.GetCacheStats.descriptor,
+                        remotePeer: "in-process:test",
+                        localPeer: "in-process:test",
+                        cancellation: handle
+                    )
+                )
+            }
+
+            XCTAssertTrue(prefillResponse.ok)
+            XCTAssertEqual(cacheResponse.stats.blockCount, 1)
+            XCTAssertEqual(cacheResponse.snapshot.hotPrefixes.count, 1)
+            XCTAssertGreaterThan(cacheResponse.stats.l2Bytes, 0)
+            XCTAssertTrue(pinResponse.ok)
+            XCTAssertTrue(unpinResponse.ok)
+            XCTAssertTrue(saveResponse.ok)
+            XCTAssertFalse(saveResponse.snapshotID.isEmpty)
+            XCTAssertEqual(postSaveCacheResponse.stats.snapshotCount, 1)
+            XCTAssertGreaterThan(postSaveCacheResponse.stats.quantizedBytes, 0)
+            XCTAssertGreaterThan(postSaveCacheResponse.stats.compressionRatio, 1.0)
+            XCTAssertTrue(restoreResponse.ok)
+            XCTAssertEqual(restoreResponse.snapshot.snapshotID, saveResponse.snapshotID)
+            XCTAssertEqual(restoreResponse.blockTableID, prefillResponse.blockTableID)
+            XCTAssertTrue(purgeResponse.ok)
+            XCTAssertEqual(purgeResponse.purgedBlocks, 2)
+            XCTAssertEqual(postPurgeCacheResponse.stats.blockCount, 0)
+            XCTAssertEqual(postPurgeCacheResponse.snapshot.hotPrefixes.count, 0)
+            XCTAssertEqual(postPurgeCacheResponse.stats.snapshotCount, 0)
+        }
+    }
+
+    func testBoundarySnapshotRestoreSurvivesRegistryRestartOnDeterministicBackend() async throws {
+        try await withTemporaryCacheRoot { cacheRoot in
+            let environment = ["MELIX_SWIFT_TEXT_WORKER_CACHE_ROOT": cacheRoot.path]
+
+            let initialServices = makeServices(
+                environment: environment,
+                backend: DeterministicTextBackend(tokenDelayNanos: 0)
+            )
+
+            let loadResponse = try await withServerContextRPCCancellationHandle { handle in
+                var request = Melix_Worker_V1_LoadModelRequest()
+                request.model.modelID = "melix-dev-text"
+                return try await initialServices.runtime.loadModel(
+                    request: request,
+                    context: ServerContext(
+                        descriptor: Melix_Worker_V1_RuntimeService.Method.LoadModel.descriptor,
+                        remotePeer: "in-process:test",
+                        localPeer: "in-process:test",
+                        cancellation: handle
+                    )
+                )
+            }
+
+            let prefillResponse = try await withServerContextRPCCancellationHandle { handle in
+                var request = Melix_Worker_V1_PrefillRequest()
+                request.execution.id.requestID = "req-restart-prefill"
+                request.execution.modelHandle = loadResponse.modelHandle
+                request.execution.cacheHints.allowL2 = true
+                request.execution.cacheHints.persistL2 = true
+                request.returnDecodeHandle = true
+                request.prefillStepSize = 8
+                request.messages = [makeUserMessage("persist this prompt")]
+                return try await initialServices.inference.prefill(
+                    request: request,
+                    context: ServerContext(
+                        descriptor: Melix_Worker_V1_InferenceService.Method.Prefill.descriptor,
+                        remotePeer: "in-process:test",
+                        localPeer: "in-process:test",
+                        cancellation: handle
+                    )
+                )
+            }
+
+            let saveResponse = try await withServerContextRPCCancellationHandle { handle in
+                var request = Melix_Worker_V1_SaveBoundarySnapshotRequest()
+                request.requestID = "req-restart-prefill"
+                request.decodeHandle = prefillResponse.decodeHandle
+                request.tokenBoundary = prefillResponse.promptTokens
+                return try await initialServices.cache.saveBoundarySnapshot(
+                    request: request,
+                    context: ServerContext(
+                        descriptor: Melix_Worker_V1_CacheService.Method.SaveBoundarySnapshot.descriptor,
+                        remotePeer: "in-process:test",
+                        localPeer: "in-process:test",
+                        cancellation: handle
+                    )
+                )
+            }
+
+            XCTAssertTrue(saveResponse.ok)
+
+            let restartedServices = makeServices(
+                environment: environment,
+                backend: DeterministicTextBackend(tokenDelayNanos: 0)
+            )
+
+            let restartedLoadResponse = try await withServerContextRPCCancellationHandle { handle in
+                var request = Melix_Worker_V1_LoadModelRequest()
+                request.model.modelID = "melix-dev-text"
+                return try await restartedServices.runtime.loadModel(
+                    request: request,
+                    context: ServerContext(
+                        descriptor: Melix_Worker_V1_RuntimeService.Method.LoadModel.descriptor,
+                        remotePeer: "in-process:test",
+                        localPeer: "in-process:test",
+                        cancellation: handle
+                    )
+                )
+            }
+            XCTAssertTrue(restartedLoadResponse.ok)
+
+            let restoreResponse = try await withServerContextRPCCancellationHandle { handle in
+                var request = Melix_Worker_V1_RestoreBoundarySnapshotRequest()
+                request.snapshotID = saveResponse.snapshotID
+                return try await restartedServices.cache.restoreBoundarySnapshot(
+                    request: request,
+                    context: ServerContext(
+                        descriptor: Melix_Worker_V1_CacheService.Method.RestoreBoundarySnapshot.descriptor,
+                        remotePeer: "in-process:test",
+                        localPeer: "in-process:test",
+                        cancellation: handle
+                    )
+                )
+            }
+
+            let writer = RecordingRPCWriter<Melix_Worker_V1_ExecuteEvent>()
+            try await withServerContextRPCCancellationHandle { handle in
+                var request = Melix_Worker_V1_DecodeRequest()
+                request.execution.id.requestID = "req-restart-decode"
+                request.execution.modelHandle = restartedLoadResponse.modelHandle
+                request.decodeHandle = restoreResponse.decodeHandle
+                request.returnUsage = true
+                try await restartedServices.inference.decode(
+                    request: request,
+                    response: RPCWriter(wrapping: writer),
+                    context: ServerContext(
+                        descriptor: Melix_Worker_V1_InferenceService.Method.Decode.descriptor,
+                        remotePeer: "in-process:test",
+                        localPeer: "in-process:test",
+                        cancellation: handle
+                    )
+                )
+            }
+
+            let restoredCacheResponse = try await withServerContextRPCCancellationHandle { handle in
+                try await restartedServices.cache.getCacheStats(
+                    request: Melix_Worker_V1_GetCacheStatsRequest(),
+                    context: ServerContext(
+                        descriptor: Melix_Worker_V1_CacheService.Method.GetCacheStats.descriptor,
+                        remotePeer: "in-process:test",
+                        localPeer: "in-process:test",
+                        cancellation: handle
+                    )
+                )
+            }
+
+            let recorded = await writer.snapshot()
+            XCTAssertTrue(restoreResponse.ok)
+            XCTAssertFalse(restoreResponse.decodeHandle.isEmpty)
+            XCTAssertTrue(recorded.contains(where: { matches($0.payload, .tokenDelta) }))
+            XCTAssertEqual(restoredCacheResponse.stats.snapshotCount, 1)
+            XCTAssertGreaterThan(restoredCacheResponse.stats.l2Bytes, 0)
+            XCTAssertEqual(restoredCacheResponse.stats.l2RestoreHitRate, 1.0, accuracy: 0.0001)
+        }
+    }
+
+    func testCacheManagementRpcsReturnStructuredErrorsForUnknownRefsAndUnloadedSnapshotModels() async throws {
+        try await withTemporaryCacheRoot { cacheRoot in
+            let environment = ["MELIX_SWIFT_TEXT_WORKER_CACHE_ROOT": cacheRoot.path]
+            let services = makeServices(
+                environment: environment,
+                backend: DeterministicTextBackend(tokenDelayNanos: 0)
+            )
+
+            var unknownPrefix = Melix_Worker_V1_PrefixRef()
+            unknownPrefix.prefixID = "missing-prefix"
+
+            let pinResponse = try await withServerContextRPCCancellationHandle { handle in
+                var request = Melix_Worker_V1_PinPrefixRequest()
+                request.prefix = unknownPrefix
+                return try await services.cache.pinPrefix(
+                    request: request,
+                    context: ServerContext(
+                        descriptor: Melix_Worker_V1_CacheService.Method.PinPrefix.descriptor,
+                        remotePeer: "in-process:test",
+                        localPeer: "in-process:test",
+                        cancellation: handle
+                    )
+                )
+            }
+
+            let unpinResponse = try await withServerContextRPCCancellationHandle { handle in
+                var request = Melix_Worker_V1_UnpinPrefixRequest()
+                request.prefix = unknownPrefix
+                return try await services.cache.unpinPrefix(
+                    request: request,
+                    context: ServerContext(
+                        descriptor: Melix_Worker_V1_CacheService.Method.UnpinPrefix.descriptor,
+                        remotePeer: "in-process:test",
+                        localPeer: "in-process:test",
+                        cancellation: handle
+                    )
+                )
+            }
+
+            let saveMissingResponse = try await withServerContextRPCCancellationHandle { handle in
+                var request = Melix_Worker_V1_SaveBoundarySnapshotRequest()
+                request.requestID = "missing-request"
+                request.decodeHandle = "missing-decode"
+                request.tokenBoundary = 2
+                return try await services.cache.saveBoundarySnapshot(
+                    request: request,
+                    context: ServerContext(
+                        descriptor: Melix_Worker_V1_CacheService.Method.SaveBoundarySnapshot.descriptor,
+                        remotePeer: "in-process:test",
+                        localPeer: "in-process:test",
+                        cancellation: handle
+                    )
+                )
+            }
+
+            let restoreMissingResponse = try await withServerContextRPCCancellationHandle { handle in
+                var request = Melix_Worker_V1_RestoreBoundarySnapshotRequest()
+                request.snapshotID = "missing-snapshot"
+                return try await services.cache.restoreBoundarySnapshot(
+                    request: request,
+                    context: ServerContext(
+                        descriptor: Melix_Worker_V1_CacheService.Method.RestoreBoundarySnapshot.descriptor,
+                        remotePeer: "in-process:test",
+                        localPeer: "in-process:test",
+                        cancellation: handle
+                    )
+                )
+            }
+
+            let initialServices = makeServices(
+                environment: environment,
+                backend: DeterministicTextBackend(tokenDelayNanos: 0)
+            )
+            let loadResponse = try await withServerContextRPCCancellationHandle { handle in
+                var request = Melix_Worker_V1_LoadModelRequest()
+                request.model.modelID = "melix-dev-text"
+                return try await initialServices.runtime.loadModel(
+                    request: request,
+                    context: ServerContext(
+                        descriptor: Melix_Worker_V1_RuntimeService.Method.LoadModel.descriptor,
+                        remotePeer: "in-process:test",
+                        localPeer: "in-process:test",
+                        cancellation: handle
+                    )
+                )
+            }
+
+            let prefillResponse = try await withServerContextRPCCancellationHandle { handle in
+                var request = Melix_Worker_V1_PrefillRequest()
+                request.execution.id.requestID = "req-precondition-prefill"
+                request.execution.modelHandle = loadResponse.modelHandle
+                request.execution.cacheHints.allowL2 = true
+                request.execution.cacheHints.persistL2 = true
+                request.returnDecodeHandle = true
+                request.messages = [makeUserMessage("persist before failed precondition")]
+                return try await initialServices.inference.prefill(
+                    request: request,
+                    context: ServerContext(
+                        descriptor: Melix_Worker_V1_InferenceService.Method.Prefill.descriptor,
+                        remotePeer: "in-process:test",
+                        localPeer: "in-process:test",
+                        cancellation: handle
+                    )
+                )
+            }
+
+            let savedSnapshot = try await withServerContextRPCCancellationHandle { handle in
+                var request = Melix_Worker_V1_SaveBoundarySnapshotRequest()
+                request.requestID = "req-precondition-prefill"
+                request.decodeHandle = prefillResponse.decodeHandle
+                request.tokenBoundary = prefillResponse.promptTokens
+                return try await initialServices.cache.saveBoundarySnapshot(
+                    request: request,
+                    context: ServerContext(
+                        descriptor: Melix_Worker_V1_CacheService.Method.SaveBoundarySnapshot.descriptor,
+                        remotePeer: "in-process:test",
+                        localPeer: "in-process:test",
+                        cancellation: handle
+                    )
+                )
+            }
+
+            let unloadedServices = makeServices(
+                environment: environment,
+                backend: DeterministicTextBackend(tokenDelayNanos: 0)
+            )
+            let failedPreconditionRestore = try await withServerContextRPCCancellationHandle { handle in
+                var request = Melix_Worker_V1_RestoreBoundarySnapshotRequest()
+                request.snapshotID = savedSnapshot.snapshotID
+                return try await unloadedServices.cache.restoreBoundarySnapshot(
+                    request: request,
+                    context: ServerContext(
+                        descriptor: Melix_Worker_V1_CacheService.Method.RestoreBoundarySnapshot.descriptor,
+                        remotePeer: "in-process:test",
+                        localPeer: "in-process:test",
+                        cancellation: handle
+                    )
+                )
+            }
+
+            XCTAssertFalse(pinResponse.ok)
+            XCTAssertEqual(pinResponse.error.code, "not_found")
+            XCTAssertFalse(unpinResponse.ok)
+            XCTAssertEqual(unpinResponse.error.code, "not_found")
+            XCTAssertFalse(saveMissingResponse.ok)
+            XCTAssertEqual(saveMissingResponse.error.code, "not_found")
+            XCTAssertFalse(restoreMissingResponse.ok)
+            XCTAssertEqual(restoreMissingResponse.error.code, "not_found")
+            XCTAssertFalse(failedPreconditionRestore.ok)
+            XCTAssertEqual(failedPreconditionRestore.error.code, "failed_precondition")
+            XCTAssertGreaterThanOrEqual(services.metrics.counters["swift_text.rpc_error_count"] ?? 0, 2)
+        }
+    }
+
+    func testDiskCacheStoreSupportsPurgesRestoreMissesAndModelEviction() async throws {
+        try await withTemporaryCacheRoot { cacheRoot in
+            let fileManager = FileManager.default
+            try fileManager.createDirectory(
+                at: cacheRoot.appendingPathComponent("prefixes", isDirectory: true),
+                withIntermediateDirectories: true
+            )
+            try fileManager.createDirectory(
+                at: cacheRoot.appendingPathComponent("snapshots", isDirectory: true),
+                withIntermediateDirectories: true
+            )
+            try Data("not-json".utf8).write(
+                to: cacheRoot.appendingPathComponent("prefixes/bad.json"),
+                options: [.atomic]
+            )
+            try Data("still-not-json".utf8).write(
+                to: cacheRoot.appendingPathComponent("snapshots/bad.json"),
+                options: [.atomic]
+            )
+
+            let store = DiskCacheStore(rootPath: cacheRoot.path)
+            let missingRestore = await store.restoreSnapshot(snapshotID: "missing-snapshot")
+            let initialSummary = await store.summary()
+            XCTAssertNil(missingRestore)
+            XCTAssertEqual(initialSummary.l2RestoreHitRate, 0, accuracy: 0.0001)
+
+            let scope = makeCacheScope(scopeID: "scope-alpha", modelID: "model-alpha")
+            let cacheKey = makeCacheKey(scopeID: scope.scopeID, prefixSeed: "alpha-prefix", fingerprintSeed: "alpha-fingerprint")
+            let pinnedPrefix = makePrefixRef(
+                prefixID: "prefix-alpha",
+                scope: scope,
+                cacheKey: cacheKey,
+                pinned: true
+            )
+            let blockTable = makeBlockTable(scopeID: scope.scopeID, cacheKey: cacheKey, blockIDs: ["a0", "a1"], bytes: [120, 80])
+            await store.persistPrefix(
+                prefix: pinnedPrefix,
+                blockTableID: "table-alpha",
+                blockTable: blockTable,
+                quantizedBytes: 100
+            )
+
+            let model = makeModelSpec(modelID: "model-alpha")
+            let snapshotRef = makeSnapshotRef(snapshotID: "snapshot-alpha")
+            let messages = [makeUserMessage("alpha snapshot")]
+            await store.saveSnapshot(
+                snapshot: snapshotRef,
+                model: model,
+                messages: messages,
+                resumeHint: "resume-alpha",
+                acceleration: makeAccelerationPolicy(mode: .baseline),
+                promptTokens: 4,
+                blockTableID: "table-alpha",
+                blockTable: blockTable,
+                prefix: nil
+            )
+
+            let summaryAfterSave = await store.summary()
+            XCTAssertEqual(summaryAfterSave.snapshotCount, 1)
+            XCTAssertEqual(summaryAfterSave.scopes.first?.snapshotCount, 1)
+            XCTAssertEqual(summaryAfterSave.quantizedBytes, 100)
+            XCTAssertEqual(summaryAfterSave.unquantizedBytes, 200)
+
+            let skippedPinned = await store.purge(scope: scope, cacheKey: cacheKey, includePinned: false)
+            let afterSkippedPinned = await store.summary()
+            XCTAssertEqual(skippedPinned, 0)
+            XCTAssertEqual(afterSkippedPinned.l2Bytes, 100)
+
+            let purgedPinned = await store.purge(scope: scope, cacheKey: cacheKey, includePinned: true)
+            let afterPurgedPinned = await store.summary()
+            XCTAssertEqual(purgedPinned, 2)
+            XCTAssertEqual(afterPurgedPinned.snapshotCount, 0)
+            XCTAssertEqual(afterPurgedPinned.l2Bytes, 0)
+
+            let otherScope = makeCacheScope(scopeID: "scope-beta", modelID: "model-beta")
+            let otherKey = makeCacheKey(scopeID: otherScope.scopeID, prefixSeed: "beta-prefix", fingerprintSeed: "beta-fingerprint")
+            let otherPrefix = makePrefixRef(prefixID: "prefix-beta", scope: otherScope, cacheKey: otherKey)
+            let otherTable = makeBlockTable(scopeID: otherScope.scopeID, cacheKey: otherKey, blockIDs: ["b0"], bytes: [64])
+            let otherSnapshot = makeSnapshotRef(snapshotID: "snapshot-beta")
+            await store.saveSnapshot(
+                snapshot: otherSnapshot,
+                model: makeModelSpec(modelID: "model-beta"),
+                messages: [makeUserMessage("beta snapshot")],
+                resumeHint: "resume-beta",
+                acceleration: makeAccelerationPolicy(mode: .activeKvQuantized, activeKvQuantProfile: "q4"),
+                promptTokens: 3,
+                blockTableID: "table-beta",
+                blockTable: otherTable,
+                prefix: otherPrefix
+            )
+
+            let restoredSnapshot = await store.restoreSnapshot(snapshotID: otherSnapshot.snapshotID)
+            let restored = try XCTUnwrap(restoredSnapshot)
+            XCTAssertEqual(restored.snapshot.snapshotID, otherSnapshot.snapshotID)
+            XCTAssertEqual(restored.blockTableID, "table-beta")
+
+            await store.purgeModel(modelID: "model-beta")
+            let finalSummary = await store.summary()
+            XCTAssertEqual(finalSummary.snapshotCount, 0)
+            XCTAssertEqual(finalSummary.l2Bytes, 0)
+            XCTAssertEqual(finalSummary.l2RestoreHitRate, 0.5, accuracy: 0.0001)
+        }
+    }
+
+    func testDiskCacheQuantizationHelpersClampAndNormalizeProfiles() {
+        let table = makeBlockTable(
+            scopeID: "scope-quant",
+            cacheKey: makeCacheKey(scopeID: "scope-quant", prefixSeed: "quant-prefix", fingerprintSeed: "quant-fingerprint"),
+            blockIDs: ["q0", "q1"],
+            bytes: [120, 80]
         )
 
-        let loadResponse = try await withServerContextRPCCancellationHandle { handle in
-            var request = Melix_Worker_V1_LoadModelRequest()
-            request.model.modelID = "melix-dev-text"
-            return try await services.runtime.loadModel(
-                request: request,
-                context: ServerContext(
-                    descriptor: Melix_Worker_V1_RuntimeService.Method.LoadModel.descriptor,
-                    remotePeer: "in-process:test",
-                    localPeer: "in-process:test",
-                    cancellation: handle
-                )
-            )
-        }
+        XCTAssertEqual(storageBoundaryQuantizedBytes(for: table, activeKVQuantizationRatio: 0), 100)
+        XCTAssertEqual(storageBoundaryQuantizedBytes(for: table, activeKVQuantizationRatio: 150), 200)
+        XCTAssertEqual(storageBoundaryQuantizedBytes(for: table, activeKVQuantizationRatio: 1), 2)
 
-        let prefillResponse = try await withServerContextRPCCancellationHandle { handle in
-            var request = Melix_Worker_V1_PrefillRequest()
-            request.execution.id.requestID = "req-cache-prefill"
-            request.execution.modelHandle = loadResponse.modelHandle
-            request.returnDecodeHandle = true
-            request.prefillStepSize = 8
-            request.messages = [makeUserMessage("cache me")]
-
-            return try await services.inference.prefill(
-                request: request,
-                context: ServerContext(
-                    descriptor: Melix_Worker_V1_InferenceService.Method.Prefill.descriptor,
-                    remotePeer: "in-process:test",
-                    localPeer: "in-process:test",
-                    cancellation: handle
-                )
-            )
-        }
-
-        let cacheResponse = try await withServerContextRPCCancellationHandle { handle in
-            try await services.cache.getCacheStats(
-                request: Melix_Worker_V1_GetCacheStatsRequest(),
-                context: ServerContext(
-                    descriptor: Melix_Worker_V1_CacheService.Method.GetCacheStats.descriptor,
-                    remotePeer: "in-process:test",
-                    localPeer: "in-process:test",
-                    cancellation: handle
-                )
-            )
-        }
-
-        var pinRequest = Melix_Worker_V1_PinPrefixRequest()
-        pinRequest.prefix = try XCTUnwrap(cacheResponse.snapshot.hotPrefixes.first)
-        let pinResponse = try await withServerContextRPCCancellationHandle { handle in
-            try await services.cache.pinPrefix(
-                request: pinRequest,
-                context: ServerContext(
-                    descriptor: Melix_Worker_V1_CacheService.Method.PinPrefix.descriptor,
-                    remotePeer: "in-process:test",
-                    localPeer: "in-process:test",
-                    cancellation: handle
-                )
-            )
-        }
-
-        var unpinRequest = Melix_Worker_V1_UnpinPrefixRequest()
-        unpinRequest.prefix = pinRequest.prefix
-        let unpinResponse = try await withServerContextRPCCancellationHandle { handle in
-            try await services.cache.unpinPrefix(
-                request: unpinRequest,
-                context: ServerContext(
-                    descriptor: Melix_Worker_V1_CacheService.Method.UnpinPrefix.descriptor,
-                    remotePeer: "in-process:test",
-                    localPeer: "in-process:test",
-                    cancellation: handle
-                )
-            )
-        }
-
-        let saveResponse = try await withServerContextRPCCancellationHandle { handle in
-            try await services.cache.saveBoundarySnapshot(
-                request: Melix_Worker_V1_SaveBoundarySnapshotRequest(),
-                context: ServerContext(
-                    descriptor: Melix_Worker_V1_CacheService.Method.SaveBoundarySnapshot.descriptor,
-                    remotePeer: "in-process:test",
-                    localPeer: "in-process:test",
-                    cancellation: handle
-                )
-            )
-        }
-
-        let restoreResponse = try await withServerContextRPCCancellationHandle { handle in
-            try await services.cache.restoreBoundarySnapshot(
-                request: Melix_Worker_V1_RestoreBoundarySnapshotRequest(),
-                context: ServerContext(
-                    descriptor: Melix_Worker_V1_CacheService.Method.RestoreBoundarySnapshot.descriptor,
-                    remotePeer: "in-process:test",
-                    localPeer: "in-process:test",
-                    cancellation: handle
-                )
-            )
-        }
-
-        var purgeRequest = Melix_Worker_V1_PurgeCacheRequest()
-        purgeRequest.scope = pinRequest.prefix.scope
-        let purgeResponse = try await withServerContextRPCCancellationHandle { handle in
-            try await services.cache.purgeCache(
-                request: purgeRequest,
-                context: ServerContext(
-                    descriptor: Melix_Worker_V1_CacheService.Method.PurgeCache.descriptor,
-                    remotePeer: "in-process:test",
-                    localPeer: "in-process:test",
-                    cancellation: handle
-                )
-            )
-        }
-
-        let postPurgeCacheResponse = try await withServerContextRPCCancellationHandle { handle in
-            try await services.cache.getCacheStats(
-                request: Melix_Worker_V1_GetCacheStatsRequest(),
-                context: ServerContext(
-                    descriptor: Melix_Worker_V1_CacheService.Method.GetCacheStats.descriptor,
-                    remotePeer: "in-process:test",
-                    localPeer: "in-process:test",
-                    cancellation: handle
-                )
-            )
-        }
-
-        XCTAssertTrue(prefillResponse.ok)
-        XCTAssertEqual(cacheResponse.stats.blockCount, 1)
-        XCTAssertEqual(cacheResponse.snapshot.hotPrefixes.count, 1)
-        XCTAssertTrue(pinResponse.ok)
-        XCTAssertTrue(unpinResponse.ok)
-        XCTAssertFalse(saveResponse.ok)
-        XCTAssertEqual(saveResponse.error.code, "unimplemented")
-        XCTAssertFalse(restoreResponse.ok)
-        XCTAssertEqual(restoreResponse.error.code, "unimplemented")
-        XCTAssertTrue(purgeResponse.ok)
-        XCTAssertEqual(purgeResponse.purgedBlocks, 1)
-        XCTAssertEqual(postPurgeCacheResponse.stats.blockCount, 0)
-        XCTAssertEqual(postPurgeCacheResponse.snapshot.hotPrefixes.count, 0)
+        XCTAssertEqual(activeKVQuantizationRatio(from: makeAccelerationPolicy(mode: .baseline)), 0)
+        XCTAssertEqual(
+            activeKVQuantizationRatio(from: makeAccelerationPolicy(mode: .activeKvQuantized, activeKvQuantProfile: "q4")),
+            25
+        )
+        XCTAssertEqual(
+            activeKVQuantizationRatio(from: makeAccelerationPolicy(mode: .activeKvQuantized, activeKvQuantProfile: "q8")),
+            50
+        )
+        XCTAssertEqual(
+            activeKVQuantizationRatio(from: makeAccelerationPolicy(mode: .activeKvQuantized, activeKvQuantProfile: "custom")),
+            50
+        )
     }
 
     func testMaintenanceRpcsReturnStructuredUnimplemented() async throws {
@@ -3068,6 +3524,94 @@ private func makeRoleMessage(_ role: String, text: String) -> Melix_Worker_V1_Ch
 }
 
 @available(macOS 15.0, *)
+private func makeCacheScope(scopeID: String, modelID: String) -> Melix_Worker_V1_CacheScope {
+    var scope = Melix_Worker_V1_CacheScope()
+    scope.scopeID = scopeID
+    scope.modelID = modelID
+    return scope
+}
+
+@available(macOS 15.0, *)
+private func makeCacheKey(
+    scopeID: String,
+    prefixSeed: String,
+    fingerprintSeed: String
+) -> Melix_Worker_V1_CacheKey {
+    var key = Melix_Worker_V1_CacheKey()
+    key.scopeID = scopeID
+    key.prefixHash = Data(prefixSeed.utf8)
+    key.fingerprintHash = Data(fingerprintSeed.utf8)
+    return key
+}
+
+@available(macOS 15.0, *)
+private func makePrefixRef(
+    prefixID: String,
+    scope: Melix_Worker_V1_CacheScope,
+    cacheKey: Melix_Worker_V1_CacheKey,
+    pinned: Bool = false
+) -> Melix_Worker_V1_PrefixRef {
+    var prefix = Melix_Worker_V1_PrefixRef()
+    prefix.prefixID = prefixID
+    prefix.scope = scope
+    prefix.cacheKey = cacheKey
+    prefix.pinned = pinned
+    prefix.tokenLength = 4
+    return prefix
+}
+
+@available(macOS 15.0, *)
+private func makeBlockTable(
+    scopeID: String,
+    cacheKey: Melix_Worker_V1_CacheKey,
+    blockIDs: [String],
+    bytes: [UInt64]
+) -> Melix_Worker_V1_BlockTable {
+    var table = Melix_Worker_V1_BlockTable()
+    table.scopeID = scopeID
+    table.cacheKey = cacheKey
+    table.blocks = zip(blockIDs, bytes).enumerated().map { index, pair in
+        var block = Melix_Worker_V1_BlockRef()
+        block.blockID = pair.0
+        block.tokenStart = Int32(index * 16)
+        block.tokenEnd = Int32((index + 1) * 16)
+        block.bytes = pair.1
+        return block
+    }
+    return table
+}
+
+@available(macOS 15.0, *)
+private func makeSnapshotRef(snapshotID: String) -> Melix_Worker_V1_SnapshotRef {
+    var snapshot = Melix_Worker_V1_SnapshotRef()
+    snapshot.snapshotID = snapshotID
+    snapshot.requestID = "request-\(snapshotID)"
+    snapshot.sessionID = "session-\(snapshotID)"
+    snapshot.branchID = "branch-\(snapshotID)"
+    snapshot.tokenBoundary = 4
+    return snapshot
+}
+
+@available(macOS 15.0, *)
+private func makeModelSpec(modelID: String) -> Melix_Worker_V1_ModelSpec {
+    var model = Melix_Worker_V1_ModelSpec()
+    model.modelID = modelID
+    model.modelPath = modelID
+    return model
+}
+
+@available(macOS 15.0, *)
+private func makeAccelerationPolicy(
+    mode: Melix_Worker_V1_AccelerationMode,
+    activeKvQuantProfile: String = ""
+) -> Melix_Worker_V1_AccelerationPolicy {
+    var policy = Melix_Worker_V1_AccelerationPolicy()
+    policy.mode = mode
+    policy.activeKvQuantProfile = activeKvQuantProfile
+    return policy
+}
+
+@available(macOS 15.0, *)
 private func collectTextGenerationEvents(
     from stream: AsyncThrowingStream<TextGenerationEvent, Error>
 ) async throws -> [TextGenerationEvent] {
@@ -3310,6 +3854,18 @@ private func withTemporaryDefaultMetallib<T>(
     }
 
     return try await operation()
+}
+
+@available(macOS 15.0, *)
+private func withTemporaryCacheRoot<T>(
+    _ operation: (URL) async throws -> T
+) async throws -> T {
+    let fileManager = FileManager.default
+    let cacheRoot = fileManager.temporaryDirectory
+        .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    try fileManager.createDirectory(at: cacheRoot, withIntermediateDirectories: true)
+    defer { try? fileManager.removeItem(at: cacheRoot) }
+    return try await operation(cacheRoot)
 }
 
 @available(macOS 15.0, *)
