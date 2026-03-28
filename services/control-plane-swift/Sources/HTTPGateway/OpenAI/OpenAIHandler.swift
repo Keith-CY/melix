@@ -99,6 +99,10 @@ public struct OpenAIHandler: Sendable {
             return try await handleEmbeddings(request)
         case (.post, "/v1/rerank"):
             return try await handleRerank(request)
+        case (.post, "/v1/audio/transcriptions"):
+            return try await handleAudioTranscriptions(request)
+        case (.post, "/v1/audio/speech"):
+            return try await handleAudioSpeech(request)
         default:
             return jsonResponse(
                 statusCode: 404,
@@ -341,6 +345,121 @@ public struct OpenAIHandler: Sendable {
         }
     }
 
+    private func handleAudioTranscriptions(_ request: HTTPRequest) async throws -> HTTPResponse {
+        let transcriptionRequest = try decoder.decode(OpenAIAudioTranscriptionsRequest.self, from: request.body)
+        let audioReference = transcriptionRequest.normalizedAudio
+
+        guard let modelHandle = await modelCatalog.dispatchHandle(for: transcriptionRequest.model) else {
+            return httpErrorResponse(for: .modelNotReady)
+        }
+        guard
+            let workerRegistry,
+            let workerClient = await routedWorkerClient(forModelID: transcriptionRequest.model, workerRegistry: workerRegistry),
+            let inferenceClient = workerClient as? any NonTextInferenceWorkerClientProtocol
+        else {
+            return workerUnavailableResponse()
+        }
+
+        var workerRequest = Melix_Worker_V1_TranscribeRequest()
+        workerRequest.id.requestID = UUID().uuidString
+        workerRequest.modelHandle = modelHandle
+        workerRequest.format = audioReference.format ?? ""
+        workerRequest.task = transcriptionRequest.task ?? "transcribe"
+        workerRequest.language = transcriptionRequest.language ?? ""
+        workerRequest.audio.mediaType = .audio
+        workerRequest.audio.format = audioReference.format ?? ""
+        workerRequest.audio.mimeType = audioReference.mimeType ?? ""
+        workerRequest.audio.filename = audioReference.filename ?? ""
+
+        if let audioBase64 = audioReference.data {
+            guard let audioBytes = Data(base64Encoded: audioBase64) else {
+                return invalidArgumentResponse(message: "audio_base64 must be valid base64.")
+            }
+            workerRequest.audioBytes = audioBytes
+            workerRequest.audio.sourceKind = .mediaSourceInlineBytes
+            workerRequest.audio.byteLength = UInt64(audioBytes.count)
+        } else if let audioURL = audioReference.url, !audioURL.isEmpty {
+            workerRequest.audioUri = audioURL
+            workerRequest.audio.sourceKind = .mediaSourceUri
+        } else {
+            return invalidArgumentResponse(message: "input_audio or audio_base64/audio_url is required.")
+        }
+
+        let startedAt = Date()
+        do {
+            let response = try await inferenceClient.transcribe(request: workerRequest)
+            if !response.error.code.isEmpty {
+                return workerErrorResponse(response.error)
+            }
+
+            let elapsedMs = max(Date().timeIntervalSince(startedAt) * 1000, 0.001)
+            await metricsStore.set(elapsedMs, forKey: "audio.transcription_request_latency_ms")
+            await metricsStore.set(
+                response.durationSeconds / max(elapsedMs / 1000, 0.001),
+                forKey: "audio.seconds_processed_per_second"
+            )
+
+            let payload = OpenAIAudioTranscriptionsResponse(
+                model: transcriptionRequest.model,
+                text: response.text,
+                language: response.language,
+                durationSeconds: response.durationSeconds
+            )
+            let data = try encoder.encode(payload)
+            return HTTPResponse(
+                statusCode: 200,
+                headers: ["content-type": "application/json"],
+                body: .data(data)
+            )
+        } catch {
+            return workerUnavailableResponse()
+        }
+    }
+
+    private func handleAudioSpeech(_ request: HTTPRequest) async throws -> HTTPResponse {
+        let speechRequest = try decoder.decode(OpenAIAudioSpeechRequest.self, from: request.body)
+
+        guard let modelHandle = await modelCatalog.dispatchHandle(for: speechRequest.model) else {
+            return httpErrorResponse(for: .modelNotReady)
+        }
+        guard
+            let workerRegistry,
+            let workerClient = await routedWorkerClient(forModelID: speechRequest.model, workerRegistry: workerRegistry),
+            let inferenceClient = workerClient as? any NonTextInferenceWorkerClientProtocol
+        else {
+            return workerUnavailableResponse()
+        }
+
+        var workerRequest = Melix_Worker_V1_SpeakRequest()
+        workerRequest.id.requestID = UUID().uuidString
+        workerRequest.modelHandle = modelHandle
+        workerRequest.input = speechRequest.input
+        workerRequest.voice = speechRequest.voice ?? ""
+        workerRequest.format = speechRequest.format ?? "wav"
+        workerRequest.instructions = speechRequest.instructions ?? ""
+
+        let startedAt = Date()
+        do {
+            let response = try await inferenceClient.speak(request: workerRequest)
+            if !response.error.code.isEmpty {
+                return workerErrorResponse(response.error)
+            }
+
+            let resolvedFormat = response.format.isEmpty ? (speechRequest.format ?? "wav") : response.format
+            let elapsedMs = max(Date().timeIntervalSince(startedAt) * 1000, 0.001)
+            await metricsStore.set(elapsedMs, forKey: "audio.speech_request_latency_ms")
+            await metricsStore.set(Double(response.audioBytes.count), forKey: "audio.speech_output_bytes")
+
+            return HTTPResponse(
+                statusCode: 200,
+                headers: ["content-type": audioContentType(for: resolvedFormat)],
+                body: .data(response.audioBytes)
+            )
+        } catch {
+            return workerUnavailableResponse()
+        }
+    }
+
     private func translatedRequest(
         _ normalized: NormalizedTextRequest
     ) async throws -> TranslatedChatRequest {
@@ -438,6 +557,13 @@ public struct OpenAIHandler: Sendable {
         )
     }
 
+    private func invalidArgumentResponse(message: String) -> HTTPResponse {
+        jsonResponse(
+            statusCode: 400,
+            payload: ["error": ["code": "invalid_argument", "message": message]]
+        )
+    }
+
     private func workerErrorResponse(_ error: Melix_Worker_V1_ErrorStatus) -> HTTPResponse {
         let statusCode: Int
         switch error.code {
@@ -456,7 +582,14 @@ public struct OpenAIHandler: Sendable {
     }
 
     private func healthRoutes() async -> [String: Bool] {
-        let routes: [WorkerRouteKind] = [.swiftText, .pythonEmbedding, .pythonRerank, .pythonModelOperations]
+        let routes: [WorkerRouteKind] = [
+            .swiftText,
+            .pythonEmbedding,
+            .pythonRerank,
+            .pythonModelOperations,
+            .pythonTranscription,
+            .pythonSpeech,
+        ]
         guard let workerRegistry else {
             return Dictionary(uniqueKeysWithValues: routes.map { ($0.rawValue, false) })
         }
@@ -489,6 +622,17 @@ public struct OpenAIHandler: Sendable {
             return partial + max(count, value.isEmpty ? 0 : 1)
         }
         return max(total, inputs.isEmpty ? 0 : 1)
+    }
+
+    private func audioContentType(for format: String) -> String {
+        switch format.lowercased() {
+        case "mp3":
+            return "audio/mpeg"
+        case "wav":
+            return "audio/wav"
+        default:
+            return "audio/\(format.lowercased())"
+        }
     }
 }
 
@@ -627,6 +771,61 @@ private struct OpenAIRerankResponse: Codable {
 private struct OpenAIRerankDatum: Codable {
     let index: Int
     let score: Float
+}
+
+private struct OpenAIAudioTranscriptionsRequest: Codable {
+    let model: String
+    let inputAudio: OpenAIMultimodalAudioReference?
+    let audioBase64: String?
+    let audioURL: String?
+    let format: String?
+    let language: String?
+    let task: String?
+
+    enum CodingKeys: String, CodingKey {
+        case model
+        case inputAudio = "input_audio"
+        case audioBase64 = "audio_base64"
+        case audioURL = "audio_url"
+        case format
+        case language
+        case task
+    }
+
+    var normalizedAudio: OpenAIMultimodalAudioReference {
+        if let inputAudio {
+            return OpenAIMultimodalAudioReference(
+                data: inputAudio.data ?? audioBase64,
+                url: inputAudio.url ?? audioURL,
+                format: inputAudio.format ?? format,
+                mimeType: inputAudio.mimeType,
+                filename: inputAudio.filename
+            )
+        }
+        return OpenAIMultimodalAudioReference(data: audioBase64, url: audioURL, format: format)
+    }
+}
+
+private struct OpenAIAudioTranscriptionsResponse: Codable {
+    let model: String
+    let text: String
+    let language: String
+    let durationSeconds: Double
+
+    enum CodingKeys: String, CodingKey {
+        case model
+        case text
+        case language
+        case durationSeconds = "duration_seconds"
+    }
+}
+
+private struct OpenAIAudioSpeechRequest: Codable {
+    let model: String
+    let input: String
+    let voice: String?
+    let format: String?
+    let instructions: String?
 }
 
 private struct OpenAIModelsResponse: Codable {

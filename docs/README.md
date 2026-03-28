@@ -61,6 +61,7 @@ Current phase-status and planning documents:
 - `plans/2026-03-29-p6-m1-multimodal-contracts.md`
 - `plans/2026-03-29-p6-m2-ocr-vlm-runtime.md`
 - `plans/2026-03-29-p6-m3-audio-runtime.md`
+- `plans/2026-03-29-p6-m4-audio-routing-and-endpoints.md`
 - `plans/2026-03-28-p1-m2-swift-text-worker-scaffold.md`
 - `plans/2026-03-28-p1-m3-swift-runtime-lifecycle.md`
 - `plans/2026-03-28-p1-m4-swift-generate-abort.md`

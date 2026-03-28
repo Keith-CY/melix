@@ -10,6 +10,8 @@ public enum BridgeCommandKind: String, Sendable {
     case abort = "abort"
     case embed = "embed"
     case rerank = "rerank"
+    case transcribe = "transcribe"
+    case speak = "speak"
     case getModelInfo = "get-model-info"
     case convertModel = "convert-model"
 }
@@ -137,6 +139,18 @@ public struct PythonBridgeWorkerClient:
         try await sendUnary(kind: .rerank, request: request, as: Melix_Worker_V1_RerankResponse.self)
     }
 
+    public func transcribe(
+        request: Melix_Worker_V1_TranscribeRequest
+    ) async throws -> Melix_Worker_V1_TranscribeResponse {
+        try await sendUnary(kind: .transcribe, request: request, as: Melix_Worker_V1_TranscribeResponse.self)
+    }
+
+    public func speak(
+        request: Melix_Worker_V1_SpeakRequest
+    ) async throws -> Melix_Worker_V1_SpeakResponse {
+        try await sendUnary(kind: .speak, request: request, as: Melix_Worker_V1_SpeakResponse.self)
+    }
+
     public func getModelInfo(
         request: Melix_Worker_V1_GetModelInfoRequest
     ) async throws -> Melix_Worker_V1_GetModelInfoResponse {
@@ -241,6 +255,42 @@ public enum BootstrapWorkerPreparation {
         )
     }
 
+    public static func preloadPhaseSixPythonModels(
+        workerClient: any WorkerRoutingClient,
+        modelCatalog: ModelCatalog,
+        memoryBudgetBytes: UInt64 = 0
+    ) async throws {
+        try await preloadPhaseFivePythonModels(
+            workerClient: workerClient,
+            modelCatalog: modelCatalog,
+            memoryBudgetBytes: memoryBudgetBytes
+        )
+        _ = try await preloadModel(
+            workerClient: workerClient,
+            modelCatalog: modelCatalog,
+            model: devOCRModel(),
+            memoryBudgetBytes: memoryBudgetBytes
+        )
+        _ = try await preloadModel(
+            workerClient: workerClient,
+            modelCatalog: modelCatalog,
+            model: devVLMModel(),
+            memoryBudgetBytes: memoryBudgetBytes
+        )
+        _ = try await preloadModel(
+            workerClient: workerClient,
+            modelCatalog: modelCatalog,
+            model: devTranscriptionModel(),
+            memoryBudgetBytes: memoryBudgetBytes
+        )
+        _ = try await preloadModel(
+            workerClient: workerClient,
+            modelCatalog: modelCatalog,
+            model: devSpeechModel(),
+            memoryBudgetBytes: memoryBudgetBytes
+        )
+    }
+
     @discardableResult
     private static func preloadModel(
         workerClient: any WorkerRoutingClient,
@@ -302,6 +352,62 @@ public enum BootstrapWorkerPreparation {
         model.parserMode = "text"
         model.reasoningMode = "off"
         model.maxContext = 8192
+        return model
+    }
+
+    private static func devOCRModel() -> Melix_Worker_V1_ModelSpec {
+        var model = Melix_Worker_V1_ModelSpec()
+        model.modelID = "melix-dev-ocr"
+        model.modelPath = "models/melix-dev-ocr"
+        model.modelKind = "ocr"
+        model.revision = "dev"
+        model.tokenizerHash = "tok-ocr-dev"
+        model.quantProfileID = "q8"
+        model.parserMode = "text"
+        model.reasoningMode = "off"
+        model.maxContext = 4096
+        return model
+    }
+
+    private static func devVLMModel() -> Melix_Worker_V1_ModelSpec {
+        var model = Melix_Worker_V1_ModelSpec()
+        model.modelID = "melix-dev-vlm"
+        model.modelPath = "models/melix-dev-vlm"
+        model.modelKind = "vlm"
+        model.revision = "dev"
+        model.tokenizerHash = "tok-vlm-dev"
+        model.quantProfileID = "q8"
+        model.parserMode = "text"
+        model.reasoningMode = "off"
+        model.maxContext = 4096
+        return model
+    }
+
+    private static func devTranscriptionModel() -> Melix_Worker_V1_ModelSpec {
+        var model = Melix_Worker_V1_ModelSpec()
+        model.modelID = "melix-dev-transcribe"
+        model.modelPath = "models/melix-dev-transcribe"
+        model.modelKind = "transcription"
+        model.revision = "dev"
+        model.tokenizerHash = "tok-transcribe-dev"
+        model.quantProfileID = "q8"
+        model.parserMode = "text"
+        model.reasoningMode = "off"
+        model.maxContext = 4096
+        return model
+    }
+
+    private static func devSpeechModel() -> Melix_Worker_V1_ModelSpec {
+        var model = Melix_Worker_V1_ModelSpec()
+        model.modelID = "melix-dev-speech"
+        model.modelPath = "models/melix-dev-speech"
+        model.modelKind = "speech"
+        model.revision = "dev"
+        model.tokenizerHash = "tok-speech-dev"
+        model.quantProfileID = "q8"
+        model.parserMode = "text"
+        model.reasoningMode = "off"
+        model.maxContext = 4096
         return model
     }
 }

@@ -28,6 +28,8 @@ def main() -> None:
             "abort",
             "embed",
             "rerank",
+            "transcribe",
+            "speak",
             "get-model-info",
             "convert-model",
         ],
@@ -62,6 +64,14 @@ def main() -> None:
                 stub = inference_pb2_grpc.InferenceServiceStub(channel)
                 request = inference_pb2.RerankRequest.FromString(request_bytes)
                 emit_message(stub.Rerank(request).SerializeToString())
+            elif args.command == "transcribe":
+                stub = inference_pb2_grpc.InferenceServiceStub(channel)
+                request = inference_pb2.TranscribeRequest.FromString(request_bytes)
+                emit_message(stub.Transcribe(request).SerializeToString())
+            elif args.command == "speak":
+                stub = inference_pb2_grpc.InferenceServiceStub(channel)
+                request = inference_pb2.SpeakRequest.FromString(request_bytes)
+                emit_message(stub.Speak(request).SerializeToString())
             elif args.command == "get-model-info":
                 stub = maintenance_pb2_grpc.MaintenanceServiceStub(channel)
                 request = maintenance_pb2.GetModelInfoRequest.FromString(request_bytes)

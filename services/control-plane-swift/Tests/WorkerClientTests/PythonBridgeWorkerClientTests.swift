@@ -148,6 +148,52 @@ struct PythonBridgeWorkerClientTests {
         #expect(reranked.items[0].score == 0.95)
     }
 
+    @Test("transcribe and speak decode unary payloads from the bridge")
+    func transcribeAndSpeakDecodeUnaryPayloadsFromTheBridge() async throws {
+        var transcribeRequest = Melix_Worker_V1_TranscribeRequest()
+        transcribeRequest.id.requestID = "transcribe-bridge"
+        transcribeRequest.modelHandle = "melix-dev-transcribe::bridge"
+        transcribeRequest.audioBytes = Data("hello audio".utf8)
+        transcribeRequest.format = "wav"
+        transcribeRequest.language = "en"
+
+        var transcribeResponse = Melix_Worker_V1_TranscribeResponse()
+        transcribeResponse.text = "hello audio"
+        transcribeResponse.language = "en"
+        transcribeResponse.durationSeconds = 0.25
+
+        var speakRequest = Melix_Worker_V1_SpeakRequest()
+        speakRequest.id.requestID = "speak-bridge"
+        speakRequest.modelHandle = "melix-dev-speech::bridge"
+        speakRequest.input = "hello speech"
+        speakRequest.voice = "alloy"
+        speakRequest.format = "wav"
+
+        var speakResponse = Melix_Worker_V1_SpeakResponse()
+        speakResponse.audioBytes = Data("speech-bytes".utf8)
+        speakResponse.format = "wav"
+
+        let runner = ScriptedBridgeRunner()
+        await runner.setUnaryResponse(
+            .transcribe,
+            line: bridgeMessageLine(message: try transcribeResponse.serializedData())
+        )
+        await runner.setUnaryResponse(
+            .speak,
+            line: bridgeMessageLine(message: try speakResponse.serializedData())
+        )
+
+        let client = PythonBridgeWorkerClient(socketPath: "/tmp/melix-test.sock", runner: runner)
+        let transcribed = try await client.transcribe(request: transcribeRequest)
+        let spoken = try await client.speak(request: speakRequest)
+
+        #expect(transcribed.text == "hello audio")
+        #expect(transcribed.language == "en")
+        #expect(transcribed.durationSeconds == 0.25)
+        #expect(spoken.audioBytes == Data("speech-bytes".utf8))
+        #expect(spoken.format == "wav")
+    }
+
     @Test("model-ops bridge methods decode info and streamed convert events")
     func modelOpsBridgeMethodsDecodeInfoAndStreamedConvertEvents() async throws {
         var infoRequest = Melix_Worker_V1_GetModelInfoRequest()
@@ -229,6 +275,43 @@ struct PythonBridgeWorkerClientTests {
         #expect(await catalog.dispatchHandle(for: "melix-dev-rerank") == "melix-dev-rerank::bridge")
     }
 
+    @Test("phase-six preload writes multimodal handles into the model catalog")
+    func phaseSixPreloadWritesMultimodalHandlesIntoTheModelCatalog() async throws {
+        let runner = ScriptedBridgeRunner()
+        for handle in [
+            "melix-dev-embed::bridge",
+            "melix-dev-rerank::bridge",
+            "melix-dev-ocr::bridge",
+            "melix-dev-vlm::bridge",
+            "melix-dev-transcribe::bridge",
+            "melix-dev-speech::bridge",
+        ] {
+            var response = Melix_Worker_V1_LoadModelResponse()
+            response.ok = true
+            response.modelHandle = handle
+            await runner.enqueueUnaryResponse(
+                .loadModel,
+                line: bridgeMessageLine(message: try response.serializedData())
+            )
+        }
+
+        let client = PythonBridgeWorkerClient(socketPath: "/tmp/melix-test.sock", runner: runner)
+        let catalog = ModelCatalog(seedModels: ModelCatalog.phaseSixContractSeedModels())
+
+        try await BootstrapWorkerPreparation.preloadPhaseSixPythonModels(
+            workerClient: client,
+            modelCatalog: catalog,
+            memoryBudgetBytes: 4096
+        )
+
+        #expect(await catalog.dispatchHandle(for: "melix-dev-embed") == "melix-dev-embed::bridge")
+        #expect(await catalog.dispatchHandle(for: "melix-dev-rerank") == "melix-dev-rerank::bridge")
+        #expect(await catalog.dispatchHandle(for: "melix-dev-ocr") == "melix-dev-ocr::bridge")
+        #expect(await catalog.dispatchHandle(for: "melix-dev-vlm") == "melix-dev-vlm::bridge")
+        #expect(await catalog.dispatchHandle(for: "melix-dev-transcribe") == "melix-dev-transcribe::bridge")
+        #expect(await catalog.dispatchHandle(for: "melix-dev-speech") == "melix-dev-speech::bridge")
+    }
+
     @Test("phase-five unary methods surface helper errors as unavailable")
     func phaseFiveUnaryMethodsSurfaceHelperErrorsAsUnavailable() async throws {
         let runner = ScriptedBridgeRunner()
@@ -269,6 +352,59 @@ struct PythonBridgeWorkerClientTests {
         do {
             _ = try await client.getModelInfo(request: infoRequest)
             Issue.record("Expected get-model-info bridge call to fail.")
+        } catch let error as WorkerClientError {
+            #expect(error == .unavailable)
+        }
+    }
+
+    @Test("audio unary methods surface helper errors as unavailable")
+    func audioUnaryMethodsSurfaceHelperErrorsAsUnavailable() async throws {
+        let runner = ScriptedBridgeRunner()
+        await runner.setUnaryResponse(.transcribe, line: bridgeErrorLine(code: "UNAVAILABLE", message: "transcribe down"))
+        await runner.setUnaryResponse(.speak, line: bridgeErrorLine(code: "UNAVAILABLE", message: "speech down"))
+
+        let client = PythonBridgeWorkerClient(socketPath: "/tmp/melix-test.sock", runner: runner)
+
+        var transcribeRequest = Melix_Worker_V1_TranscribeRequest()
+        transcribeRequest.id.requestID = "transcribe-error"
+        transcribeRequest.modelHandle = "melix-dev-transcribe::bridge"
+        transcribeRequest.audioBytes = Data("audio".utf8)
+
+        var speakRequest = Melix_Worker_V1_SpeakRequest()
+        speakRequest.id.requestID = "speak-error"
+        speakRequest.modelHandle = "melix-dev-speech::bridge"
+        speakRequest.input = "hello"
+
+        do {
+            _ = try await client.transcribe(request: transcribeRequest)
+            Issue.record("Expected transcribe bridge call to fail.")
+        } catch let error as WorkerClientError {
+            #expect(error == .unavailable)
+        }
+
+        do {
+            _ = try await client.speak(request: speakRequest)
+            Issue.record("Expected speak bridge call to fail.")
+        } catch let error as WorkerClientError {
+            #expect(error == .unavailable)
+        }
+    }
+
+    @Test("unknown bridge payload kinds surface unavailable")
+    func unknownBridgePayloadKindsSurfaceUnavailable() async throws {
+        let runner = ScriptedBridgeRunner()
+        await runner.setUnaryResponse(.transcribe, line: #"{"kind":"mystery"}"#)
+
+        let client = PythonBridgeWorkerClient(socketPath: "/tmp/melix-test.sock", runner: runner)
+
+        var request = Melix_Worker_V1_TranscribeRequest()
+        request.id.requestID = "transcribe-mystery"
+        request.modelHandle = "melix-dev-transcribe::bridge"
+        request.audioBytes = Data("audio".utf8)
+
+        do {
+            _ = try await client.transcribe(request: request)
+            Issue.record("Expected the unknown payload kind to fail.")
         } catch let error as WorkerClientError {
             #expect(error == .unavailable)
         }
@@ -368,6 +504,22 @@ struct PythonBridgeWorkerClientTests {
         #expect(await catalog.dispatchHandle(for: "melix-dev-text") == nil)
     }
 
+    @Test("repo-root initializer can dispatch with an existing python path")
+    func repoRootInitializerCanDispatchWithAnExistingPythonPath() async throws {
+        let fixtureRoot = try makeProcessBridgeFixtureRepo()
+        let environment = ProcessInfo.processInfo.environment.merging([
+            "PYTHONPATH": "/tmp/existing-python-path",
+            "UV_CACHE_DIR": "\(fixtureRoot.path)/.custom-cache",
+        ]) { _, new in new }
+        let client = PythonBridgeWorkerClient(
+            socketPath: "/tmp/fixture.sock",
+            repoRoot: fixtureRoot.path,
+            processEnvironment: environment
+        )
+
+        #expect(await client.canDispatchRequests())
+    }
+
     @Test("process bridge runner executes unary, stream, and failure paths")
     func processBridgeRunnerExecutesUnaryStreamAndFailurePaths() async throws {
         let fixtureRoot = try makeProcessBridgeFixtureRepo()
@@ -392,6 +544,16 @@ struct PythonBridgeWorkerClientTests {
         )
         #expect(embedLine.contains("\"kind\""))
 
+        let transcribeLine = try await runner.runUnary(
+            command: BridgeCommand(kind: .transcribe, socketPath: "/tmp/unused.sock", requestData: Data("transcribe".utf8))
+        )
+        #expect(transcribeLine.contains("\"kind\""))
+
+        let speakLine = try await runner.runUnary(
+            command: BridgeCommand(kind: .speak, socketPath: "/tmp/unused.sock", requestData: Data("speak".utf8))
+        )
+        #expect(speakLine.contains("\"kind\""))
+
         let convertLines = try await collect(
             try await runner.runStream(
                 command: BridgeCommand(kind: .convertModel, socketPath: "/tmp/unused.sock", requestData: Data("convert".utf8))
@@ -407,6 +569,55 @@ struct PythonBridgeWorkerClientTests {
         } catch let error as WorkerClientError {
             #expect(error == .unavailable)
         }
+    }
+
+    @Test("process bridge runner surfaces non-zero stream exits as unavailable")
+    func processBridgeRunnerSurfacesNonZeroStreamExitsAsUnavailable() async throws {
+        let fixtureRoot = try makeProcessBridgeFixtureRepo()
+        let runner = ProcessWorkerBridgeRunner(
+            repoRoot: fixtureRoot.path,
+            environment: ProcessInfo.processInfo.environment
+        )
+
+        do {
+            let stream = try await runner.runStream(
+                command: BridgeCommand(
+                    kind: .generate,
+                    socketPath: "/tmp/unused.sock",
+                    requestData: Data("stream-error".utf8)
+                )
+            )
+            _ = try await collect(stream)
+            Issue.record("Expected the stream-error fixture to fail.")
+        } catch let error as WorkerClientError {
+            #expect(error == .unavailable)
+        }
+    }
+
+    @Test("process bridge runner cancels hanging streams without leaking the child process")
+    func processBridgeRunnerCancelsHangingStreamsWithoutLeakingTheChildProcess() async throws {
+        let fixtureRoot = try makeProcessBridgeFixtureRepo()
+        let runner = ProcessWorkerBridgeRunner(
+            repoRoot: fixtureRoot.path,
+            environment: ProcessInfo.processInfo.environment
+        )
+
+        let stream = try await runner.runStream(
+            command: BridgeCommand(
+                kind: .generate,
+                socketPath: "/tmp/unused.sock",
+                requestData: Data("hang".utf8)
+            )
+        )
+
+        let task = Task {
+            var iterator = stream.makeAsyncIterator()
+            return try await iterator.next()
+        }
+        let firstLine = try await task.value
+
+        #expect(firstLine != nil)
+        try await Task.sleep(for: .milliseconds(50))
     }
 
     private func devModel() -> Melix_Worker_V1_ModelSpec {
@@ -504,14 +715,24 @@ private func makeProcessBridgeFixtureRepo() throws -> URL {
     parser.add_argument("--socket-path", required=True)
     parser.add_argument("--request-b64", required=True)
     args = parser.parse_args()
+    payload = base64.b64decode(args.request_b64)
 
     if args.command == "abort":
         sys.exit(1)
 
     if args.command in {"generate", "convert-model"}:
+        if payload == b"stream-error":
+            print("stream failure", file=sys.stderr, flush=True)
+            sys.exit(1)
+        if payload == b"hang":
+            print(json.dumps({"kind": "message", "message_b64": base64.b64encode(b"first").decode("ascii")}), flush=True)
+            time.sleep(2)
+            sys.exit(0)
         print(json.dumps({"kind": "message", "message_b64": base64.b64encode(b"first").decode("ascii")}), flush=True)
         time.sleep(0.01)
         print(json.dumps({"kind": "message", "message_b64": base64.b64encode(b"second").decode("ascii")}), flush=True)
+    elif args.command == "handshake":
+        print(json.dumps({"kind": "message", "message_b64": ""}), flush=True)
     else:
         print(json.dumps({"kind": "message", "message_b64": base64.b64encode(b"ok").decode("ascii")}), flush=True)
     """.write(

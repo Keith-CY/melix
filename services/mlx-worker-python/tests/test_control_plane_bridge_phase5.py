@@ -34,6 +34,21 @@ class FakeInferenceStub:
             ]
         )
 
+    def Transcribe(self, request):
+        return inference_pb2.TranscribeResponse(
+            text=request.audio_bytes.decode("utf-8"),
+            language=request.language or "und",
+            duration_seconds=0.25,
+        )
+
+    def Speak(self, request):
+        return inference_pb2.SpeakResponse(
+            audio_bytes=f"VOICE={request.voice or 'default'}\nFORMAT={request.format or 'wav'}\nTEXT={request.input}".encode(
+                "utf-8"
+            ),
+            format=request.format or "wav",
+        )
+
 
 class FakeMaintenanceStub:
     def GetModelInfo(self, request):
@@ -146,3 +161,59 @@ def test_bridge_helper_forwards_phase5_unary_and_streaming_commands(monkeypatch,
     last_payload = maintenance_pb2.ConvertModelEvent.FromString(base64.b64decode(convert_lines[-1]["message_b64"]))
     assert first_payload.started.job_id == "job-1"
     assert last_payload.completed.output_path == "/tmp/model-ops/quantize.artifact"
+
+
+def test_bridge_helper_forwards_phase6_audio_unary_commands(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(control_plane_bridge.grpc, "insecure_channel", lambda target: FakeChannel())
+    monkeypatch.setattr(control_plane_bridge.inference_pb2_grpc, "InferenceServiceStub", lambda channel: FakeInferenceStub())
+
+    transcribe_request = inference_pb2.TranscribeRequest(
+        id=common_pb2.RequestIdentity(request_id="transcribe-bridge"),
+        model_handle="melix-dev-transcribe::bridge",
+        audio_bytes=b"hello audio",
+        format="wav",
+        language="en",
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "control_plane_bridge.py",
+            "transcribe",
+            "--socket-path",
+            "/tmp/unused.sock",
+            "--request-b64",
+            base64.b64encode(transcribe_request.SerializeToString()).decode("ascii"),
+        ],
+    )
+    control_plane_bridge.main()
+    transcribe_line = json.loads(capsys.readouterr().out.strip())
+    transcribe_payload = inference_pb2.TranscribeResponse.FromString(base64.b64decode(transcribe_line["message_b64"]))
+    assert transcribe_payload.text == "hello audio"
+    assert transcribe_payload.language == "en"
+    assert transcribe_payload.duration_seconds == 0.25
+
+    speak_request = inference_pb2.SpeakRequest(
+        id=common_pb2.RequestIdentity(request_id="speak-bridge"),
+        model_handle="melix-dev-speech::bridge",
+        input="hello speech",
+        voice="alloy",
+        format="wav",
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "control_plane_bridge.py",
+            "speak",
+            "--socket-path",
+            "/tmp/unused.sock",
+            "--request-b64",
+            base64.b64encode(speak_request.SerializeToString()).decode("ascii"),
+        ],
+    )
+    control_plane_bridge.main()
+    speak_line = json.loads(capsys.readouterr().out.strip())
+    speak_payload = inference_pb2.SpeakResponse.FromString(base64.b64decode(speak_line["message_b64"]))
+    assert speak_payload.audio_bytes == b"VOICE=alloy\nFORMAT=wav\nTEXT=hello speech"
+    assert speak_payload.format == "wav"

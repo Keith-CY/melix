@@ -5,7 +5,7 @@ import MelixControlPlaneCore
 @main
 enum MelixControlPlaneBootstrap {
     static func main() async throws {
-        let modelCatalog = ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels())
+        let modelCatalog = ModelCatalog(seedModels: ModelCatalog.phaseSixContractSeedModels())
         let bootstrapEnvironment = BootstrapEnvironment(environment: ProcessInfo.processInfo.environment)
         let metricsStore = MetricsStore(exportPath: bootstrapEnvironment.controlPlaneMetricsPath)
         let eventHub = EventSubscriptionHub()
@@ -50,12 +50,12 @@ enum MelixControlPlaneBootstrap {
         }
 
         do {
-            try await BootstrapWorkerPreparation.preloadPhaseFivePythonModels(
+            try await BootstrapWorkerPreparation.preloadPhaseSixPythonModels(
                 workerClient: pythonCompatibilityClient,
                 modelCatalog: modelCatalog
             )
         } catch {
-            print("Melix phase-5 python model preload skipped: \(error)")
+            print("Melix phase-6 python model preload skipped: \(error)")
         }
 
         _ = ControlPlaneService(

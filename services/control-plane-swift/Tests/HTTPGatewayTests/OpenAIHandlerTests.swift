@@ -704,6 +704,457 @@ struct OpenAIHandlerTests {
         #expect(metrics.values["rerank.documents_per_second", default: 0] > 0)
     }
 
+    @Test("POST /v1/audio/transcriptions routes to the transcription worker and returns JSON")
+    func postAudioTranscriptionsRoutesAndReturnsJSON() async throws {
+        let textClient = ScriptedWorkerClient(events: [])
+        let audioClient = ScriptedPhaseFiveWorkerClient()
+        await audioClient.setTranscribeResponse({
+            var response = Melix_Worker_V1_TranscribeResponse()
+            response.text = "hello audio"
+            response.language = "en"
+            response.durationSeconds = 0.25
+            return response
+        }())
+
+        let metricsStore = MetricsStore()
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel(), ModelCatalog.devTranscriptionModel()])
+        _ = await catalog.loadModel(id: "melix-dev-transcribe", dispatchHandle: "melix-dev-transcribe::python")
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: textClient),
+                abortRegistry: AbortRegistry()
+            ),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: textClient,
+                pythonCompatibilityClient: audioClient
+            ),
+            metricsStore: metricsStore
+        )
+
+        let body = try #require(
+            """
+            {
+              "model": "melix-dev-transcribe",
+              "audio_base64": "aGVsbG8gYXVkaW8=",
+              "format": "wav",
+              "language": "en"
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(method: .post, path: "/v1/audio/transcriptions", headers: [:], body: body)
+        )
+        let payload = try await collectBody(response.body)
+        let request = try #require(await audioClient.lastTranscribeRequest)
+        let metrics = await metricsStore.snapshot()
+
+        #expect(response.statusCode == 200)
+        #expect(response.headers["content-type"] == "application/json")
+        #expect(request.modelHandle == "melix-dev-transcribe::python")
+        #expect(request.audioBytes == Data("hello audio".utf8))
+        #expect(request.format == "wav")
+        #expect(request.language == "en")
+        #expect(payload.contains("\"model\":\"melix-dev-transcribe\""))
+        #expect(payload.contains("\"text\":\"hello audio\""))
+        #expect(payload.contains("\"language\":\"en\""))
+        #expect(payload.contains("\"duration_seconds\":0.25"))
+        #expect(metrics.values["audio.transcription_request_latency_ms", default: -1] >= 0)
+        #expect(metrics.values["audio.seconds_processed_per_second", default: 0] > 0)
+    }
+
+    @Test("POST /v1/audio/transcriptions supports input_audio URIs and defaults the task")
+    func postAudioTranscriptionsSupportsInputAudioURIsAndDefaultsTheTask() async throws {
+        let textClient = ScriptedWorkerClient(events: [])
+        let audioClient = ScriptedPhaseFiveWorkerClient()
+        await audioClient.setTranscribeResponse({
+            var response = Melix_Worker_V1_TranscribeResponse()
+            response.error.code = "invalid_argument"
+            response.error.message = "bad audio uri"
+            return response
+        }())
+
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel(), ModelCatalog.devTranscriptionModel()])
+        _ = await catalog.loadModel(id: "melix-dev-transcribe", dispatchHandle: "melix-dev-transcribe::python")
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: textClient),
+                abortRegistry: AbortRegistry()
+            ),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: textClient,
+                pythonCompatibilityClient: audioClient
+            )
+        )
+
+        let body = try #require(
+            """
+            {
+              "model": "melix-dev-transcribe",
+              "input_audio": {
+                "url": "file:///tmp/audio.mp3",
+                "format": "mp3",
+                "mime_type": "audio/mpeg",
+                "filename": "audio.mp3"
+              }
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(method: .post, path: "/v1/audio/transcriptions", headers: [:], body: body)
+        )
+        let payload = try await collectBody(response.body)
+        let request = try #require(await audioClient.lastTranscribeRequest)
+
+        #expect(response.statusCode == 400)
+        #expect(payload.contains("\"code\":\"invalid_argument\""))
+        #expect(request.audioUri == "file:///tmp/audio.mp3")
+        #expect(request.audio.sourceKind == .mediaSourceUri)
+        #expect(request.audio.format == "mp3")
+        #expect(request.audio.mimeType == "audio/mpeg")
+        #expect(request.audio.filename == "audio.mp3")
+        #expect(request.task == "transcribe")
+        #expect(request.language.isEmpty)
+    }
+
+    @Test("POST /v1/audio/transcriptions validates input payloads and thrown failures")
+    func postAudioTranscriptionsValidatesInputPayloadsAndThrownFailures() async throws {
+        let textClient = ScriptedWorkerClient(events: [])
+        let audioClient = ScriptedPhaseFiveWorkerClient()
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel(), ModelCatalog.devTranscriptionModel()])
+        _ = await catalog.loadModel(id: "melix-dev-transcribe", dispatchHandle: "melix-dev-transcribe::python")
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: textClient),
+                abortRegistry: AbortRegistry()
+            ),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: textClient,
+                pythonCompatibilityClient: audioClient
+            )
+        )
+
+        let invalidBase64 = try #require(
+            """
+            {
+              "model": "melix-dev-transcribe",
+              "audio_base64": "%%%INVALID%%%"
+            }
+            """.data(using: .utf8)
+        )
+        let invalidBase64Response = try await handler.handle(
+            HTTPRequest(method: .post, path: "/v1/audio/transcriptions", headers: [:], body: invalidBase64)
+        )
+        let invalidBase64Payload = try await collectBody(invalidBase64Response.body)
+
+        #expect(invalidBase64Response.statusCode == 400)
+        #expect(invalidBase64Payload.contains("\"code\":\"invalid_argument\""))
+        #expect(invalidBase64Payload.contains("audio_base64 must be valid base64"))
+
+        let missingAudio = try #require(
+            """
+            {
+              "model": "melix-dev-transcribe"
+            }
+            """.data(using: .utf8)
+        )
+        let missingAudioResponse = try await handler.handle(
+            HTTPRequest(method: .post, path: "/v1/audio/transcriptions", headers: [:], body: missingAudio)
+        )
+        let missingAudioPayload = try await collectBody(missingAudioResponse.body)
+
+        #expect(missingAudioResponse.statusCode == 400)
+        #expect(missingAudioPayload.contains("\"code\":\"invalid_argument\""))
+        #expect(missingAudioPayload.contains("input_audio or audio_base64\\/audio_url is required"))
+
+        await audioClient.setThrownFailure(WorkerClientError.unavailable)
+        let thrownFailure = try #require(
+            """
+            {
+              "model": "melix-dev-transcribe",
+              "audio_url": "file:///tmp/audio.wav"
+            }
+            """.data(using: .utf8)
+        )
+        let thrownFailureResponse = try await handler.handle(
+            HTTPRequest(method: .post, path: "/v1/audio/transcriptions", headers: [:], body: thrownFailure)
+        )
+        let thrownFailurePayload = try await collectBody(thrownFailureResponse.body)
+
+        #expect(thrownFailureResponse.statusCode == 503)
+        #expect(thrownFailurePayload.contains("\"code\":\"worker_unavailable\""))
+    }
+
+    @Test("POST /v1/audio/transcriptions returns 409 and 503 for unavailable routes")
+    func postAudioTranscriptionsReturns409And503ForUnavailableRoutes() async throws {
+        let unloadedHandler = OpenAIHandler(
+            modelCatalog: ModelCatalog(seedModels: [ModelCatalog.devTranscriptionModel()]),
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: ScriptedWorkerClient(events: [])),
+                abortRegistry: AbortRegistry()
+            ),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: ScriptedWorkerClient(events: []),
+                pythonCompatibilityClient: ScriptedWorkerClient(events: [])
+            )
+        )
+        let body = try #require(
+            """
+            {
+              "model": "melix-dev-transcribe",
+              "audio_url": "file:///tmp/audio.wav"
+            }
+            """.data(using: .utf8)
+        )
+
+        let unloadedResponse = try await unloadedHandler.handle(
+            HTTPRequest(method: .post, path: "/v1/audio/transcriptions", headers: [:], body: body)
+        )
+        let unloadedPayload = try await collectBody(unloadedResponse.body)
+
+        #expect(unloadedResponse.statusCode == 409)
+        #expect(unloadedPayload.contains("\"code\":\"model_not_ready\""))
+
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devTranscriptionModel()])
+        _ = await catalog.loadModel(id: "melix-dev-transcribe", dispatchHandle: "melix-dev-transcribe::python")
+        let unavailableHandler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: ScriptedWorkerClient(events: [])),
+                abortRegistry: AbortRegistry()
+            ),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: ScriptedWorkerClient(events: []),
+                pythonCompatibilityClient: ScriptedWorkerClient(events: [])
+            )
+        )
+
+        let unavailableResponse = try await unavailableHandler.handle(
+            HTTPRequest(method: .post, path: "/v1/audio/transcriptions", headers: [:], body: body)
+        )
+        let unavailablePayload = try await collectBody(unavailableResponse.body)
+
+        #expect(unavailableResponse.statusCode == 503)
+        #expect(unavailablePayload.contains("\"code\":\"worker_unavailable\""))
+    }
+
+    @Test("POST /v1/audio/speech routes to the speech worker and returns audio bytes")
+    func postAudioSpeechRoutesAndReturnsAudioBytes() async throws {
+        let textClient = ScriptedWorkerClient(events: [])
+        let audioClient = ScriptedPhaseFiveWorkerClient()
+        await audioClient.setSpeakResponse({
+            var response = Melix_Worker_V1_SpeakResponse()
+            response.audioBytes = Data("VOICE=alloy\nFORMAT=wav\nTEXT=hello speech".utf8)
+            response.format = "wav"
+            return response
+        }())
+
+        let metricsStore = MetricsStore()
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel(), ModelCatalog.devSpeechModel()])
+        _ = await catalog.loadModel(id: "melix-dev-speech", dispatchHandle: "melix-dev-speech::python")
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: textClient),
+                abortRegistry: AbortRegistry()
+            ),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: textClient,
+                pythonCompatibilityClient: audioClient
+            ),
+            metricsStore: metricsStore
+        )
+
+        let body = try #require(
+            """
+            {
+              "model": "melix-dev-speech",
+              "input": "hello speech",
+              "voice": "alloy",
+              "format": "wav",
+              "instructions": "Use a calm voice."
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(method: .post, path: "/v1/audio/speech", headers: [:], body: body)
+        )
+        let payload = try await collectBodyData(response.body)
+        let request = try #require(await audioClient.lastSpeakRequest)
+        let metrics = await metricsStore.snapshot()
+
+        #expect(response.statusCode == 200)
+        #expect(response.headers["content-type"] == "audio/wav")
+        #expect(request.modelHandle == "melix-dev-speech::python")
+        #expect(request.input == "hello speech")
+        #expect(request.voice == "alloy")
+        #expect(request.format == "wav")
+        #expect(request.instructions == "Use a calm voice.")
+        #expect(payload == Data("VOICE=alloy\nFORMAT=wav\nTEXT=hello speech".utf8))
+        #expect(metrics.values["audio.speech_request_latency_ms", default: -1] >= 0)
+        #expect(metrics.values["audio.speech_output_bytes", default: 0] == 40)
+    }
+
+    @Test("POST /v1/audio/speech defaults optional fields and resolves mp3 content types")
+    func postAudioSpeechDefaultsOptionalFieldsAndResolvesMp3ContentTypes() async throws {
+        let textClient = ScriptedWorkerClient(events: [])
+        let audioClient = ScriptedPhaseFiveWorkerClient()
+        await audioClient.setSpeakResponse({
+            var response = Melix_Worker_V1_SpeakResponse()
+            response.audioBytes = Data("mp3-bytes".utf8)
+            response.format = ""
+            return response
+        }())
+
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel(), ModelCatalog.devSpeechModel()])
+        _ = await catalog.loadModel(id: "melix-dev-speech", dispatchHandle: "melix-dev-speech::python")
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: textClient),
+                abortRegistry: AbortRegistry()
+            ),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: textClient,
+                pythonCompatibilityClient: audioClient
+            )
+        )
+
+        let body = try #require(
+            """
+            {
+              "model": "melix-dev-speech",
+              "input": "hello speech",
+              "format": "mp3"
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(method: .post, path: "/v1/audio/speech", headers: [:], body: body)
+        )
+        let payload = try await collectBodyData(response.body)
+        let request = try #require(await audioClient.lastSpeakRequest)
+
+        #expect(response.statusCode == 200)
+        #expect(response.headers["content-type"] == "audio/mpeg")
+        #expect(request.voice.isEmpty)
+        #expect(request.format == "mp3")
+        #expect(request.instructions.isEmpty)
+        #expect(payload == Data("mp3-bytes".utf8))
+    }
+
+    @Test("POST /v1/audio/speech maps worker errors and thrown failures to HTTP responses")
+    func postAudioSpeechMapsWorkerErrorsAndThrownFailuresToHTTPResponses() async throws {
+        let textClient = ScriptedWorkerClient(events: [])
+        let audioClient = ScriptedPhaseFiveWorkerClient()
+        await audioClient.setSpeakResponse({
+            var response = Melix_Worker_V1_SpeakResponse()
+            response.error.code = "internal"
+            response.error.message = "speech synthesis failed"
+            return response
+        }())
+
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel(), ModelCatalog.devSpeechModel()])
+        _ = await catalog.loadModel(id: "melix-dev-speech", dispatchHandle: "melix-dev-speech::python")
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: textClient),
+                abortRegistry: AbortRegistry()
+            ),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: textClient,
+                pythonCompatibilityClient: audioClient
+            )
+        )
+
+        let body = try #require(
+            """
+            {
+              "model": "melix-dev-speech",
+              "input": "hello speech"
+            }
+            """.data(using: .utf8)
+        )
+
+        let errorResponse = try await handler.handle(
+            HTTPRequest(method: .post, path: "/v1/audio/speech", headers: [:], body: body)
+        )
+        let errorPayload = try await collectBody(errorResponse.body)
+
+        #expect(errorResponse.statusCode == 500)
+        #expect(errorPayload.contains("\"code\":\"internal\""))
+        #expect(errorPayload.contains("\"message\":\"speech synthesis failed\""))
+
+        await audioClient.setThrownFailure(WorkerClientError.unavailable)
+        let unavailableResponse = try await handler.handle(
+            HTTPRequest(method: .post, path: "/v1/audio/speech", headers: [:], body: body)
+        )
+        let unavailablePayload = try await collectBody(unavailableResponse.body)
+
+        #expect(unavailableResponse.statusCode == 503)
+        #expect(unavailablePayload.contains("\"code\":\"worker_unavailable\""))
+    }
+
+    @Test("POST /v1/audio/speech returns 409 and 503 for unavailable routes")
+    func postAudioSpeechReturns409And503ForUnavailableRoutes() async throws {
+        let unloadedHandler = OpenAIHandler(
+            modelCatalog: ModelCatalog(seedModels: [ModelCatalog.devSpeechModel()]),
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: ScriptedWorkerClient(events: [])),
+                abortRegistry: AbortRegistry()
+            ),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: ScriptedWorkerClient(events: []),
+                pythonCompatibilityClient: ScriptedWorkerClient(events: [])
+            )
+        )
+        let body = try #require(
+            """
+            {
+              "model": "melix-dev-speech",
+              "input": "hello speech"
+            }
+            """.data(using: .utf8)
+        )
+
+        let unloadedResponse = try await unloadedHandler.handle(
+            HTTPRequest(method: .post, path: "/v1/audio/speech", headers: [:], body: body)
+        )
+        let unloadedPayload = try await collectBody(unloadedResponse.body)
+
+        #expect(unloadedResponse.statusCode == 409)
+        #expect(unloadedPayload.contains("\"code\":\"model_not_ready\""))
+
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devSpeechModel()])
+        _ = await catalog.loadModel(id: "melix-dev-speech", dispatchHandle: "melix-dev-speech::python")
+        let unavailableHandler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: ScriptedWorkerClient(events: [])),
+                abortRegistry: AbortRegistry()
+            ),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: ScriptedWorkerClient(events: []),
+                pythonCompatibilityClient: ScriptedWorkerClient(events: [])
+            )
+        )
+
+        let unavailableResponse = try await unavailableHandler.handle(
+            HTTPRequest(method: .post, path: "/v1/audio/speech", headers: [:], body: body)
+        )
+        let unavailablePayload = try await collectBody(unavailableResponse.body)
+
+        #expect(unavailableResponse.statusCode == 503)
+        #expect(unavailablePayload.contains("\"code\":\"worker_unavailable\""))
+    }
+
     @Test("GET /health reports route readiness and model counts")
     func getHealthReportsRouteReadinessAndModelCounts() async throws {
         let healthyClient = ScriptedWorkerClient(events: [])
@@ -717,6 +1168,7 @@ struct OpenAIHandlerTests {
             ),
             workerRegistry: WorkerRegistry(
                 defaultTextClient: healthyClient,
+                pythonCompatibilityClient: healthyClient,
                 embeddingClient: healthyClient,
                 rerankClient: unhealthyClient,
                 modelOperationsClient: healthyClient
@@ -735,9 +1187,73 @@ struct OpenAIHandlerTests {
         #expect(payload.contains("\"swift_text\":true"))
         #expect(payload.contains("\"python_embedding\":true"))
         #expect(payload.contains("\"python_rerank\":false"))
+        #expect(payload.contains("\"python_transcription\":true"))
+        #expect(payload.contains("\"python_speech\":true"))
         #expect(payload.contains("\"models_ready\":3"))
         #expect(payload.contains("\"models_total\":3"))
         #expect(metrics.values["operator.health_latency_ms", default: -1] >= 0)
+    }
+
+    @Test("GET /health reports ok when all routes are ready and pinned models count as ready")
+    func getHealthReportsOkWhenAllRoutesAreReadyAndPinnedModelsCountAsReady() async throws {
+        let healthyTextClient = ScriptedWorkerClient(events: [])
+        let healthyPythonClient = ScriptedPhaseFiveWorkerClient()
+
+        var pinned = warmModel()
+        pinned.modelID = "melix-pinned-text"
+        pinned.state = .modelPinned
+
+        var discovered = warmEmbeddingModel()
+        discovered.modelID = "melix-discovered-embed"
+        discovered.state = .modelDiscovered
+
+        let handler = OpenAIHandler(
+            modelCatalog: ModelCatalog(seedModels: [warmModel(), pinned, discovered]),
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: healthyTextClient),
+                abortRegistry: AbortRegistry()
+            ),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: healthyTextClient,
+                pythonCompatibilityClient: healthyPythonClient,
+                embeddingClient: healthyPythonClient,
+                rerankClient: healthyPythonClient,
+                modelOperationsClient: healthyPythonClient
+            )
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(method: .get, path: "/health", headers: [:], body: Data())
+        )
+        let payload = try await collectBody(response.body)
+
+        #expect(response.statusCode == 200)
+        #expect(payload.contains("\"status\":\"ok\""))
+        #expect(payload.contains("\"models_ready\":2"))
+        #expect(payload.contains("\"models_total\":3"))
+    }
+
+    @Test("GET /health reports missing route clients as false when a registry is present")
+    func getHealthReportsMissingRouteClientsAsFalseWhenARegistryIsPresent() async throws {
+        let healthyTextClient = ScriptedWorkerClient(events: [])
+        let handler = OpenAIHandler(
+            modelCatalog: ModelCatalog(seedModels: [warmModel()]),
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: healthyTextClient),
+                abortRegistry: AbortRegistry()
+            ),
+            workerRegistry: WorkerRegistry(defaultTextClient: healthyTextClient)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(method: .get, path: "/health", headers: [:], body: Data())
+        )
+        let payload = try await collectBody(response.body)
+
+        #expect(response.statusCode == 200)
+        #expect(payload.contains("\"swift_text\":true"))
+        #expect(payload.contains("\"python_embedding\":false"))
+        #expect(payload.contains("\"python_model_operations\":false"))
     }
 
     @Test("GET /health degrades cleanly when no worker registry is wired")
@@ -761,6 +1277,100 @@ struct OpenAIHandlerTests {
         #expect(payload.contains("\"python_embedding\":false"))
         #expect(payload.contains("\"python_rerank\":false"))
         #expect(payload.contains("\"python_model_operations\":false"))
+        #expect(payload.contains("\"python_transcription\":false"))
+        #expect(payload.contains("\"python_speech\":false"))
+    }
+
+    @Test("POST /v1/embeddings returns 503 when the embedding worker throws")
+    func postEmbeddingsReturns503WhenTheEmbeddingWorkerThrows() async throws {
+        let embeddingClient = ScriptedPhaseFiveWorkerClient()
+        await embeddingClient.setThrownFailure(WorkerClientError.unavailable)
+
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devEmbeddingModel()])
+        _ = await catalog.loadModel(id: "melix-dev-embed", dispatchHandle: "melix-dev-embed::python")
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: ScriptedWorkerClient(events: [])),
+                abortRegistry: AbortRegistry()
+            ),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: ScriptedWorkerClient(events: []),
+                embeddingClient: embeddingClient
+            )
+        )
+
+        let body = try #require(
+            """
+            {
+              "model": "melix-dev-embed",
+              "input": ["alpha"]
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(method: .post, path: "/v1/embeddings", headers: [:], body: body)
+        )
+        let payload = try await collectBody(response.body)
+
+        #expect(response.statusCode == 503)
+        #expect(payload.contains("\"code\":\"worker_unavailable\""))
+    }
+
+    @Test("POST /v1/rerank returns 409 and 503 when routing prerequisites are missing")
+    func postRerankReturns409And503WhenRoutingPrerequisitesAreMissing() async throws {
+        let unloadedHandler = OpenAIHandler(
+            modelCatalog: ModelCatalog(seedModels: [ModelCatalog.devRerankModel()]),
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: ScriptedWorkerClient(events: [])),
+                abortRegistry: AbortRegistry()
+            ),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: ScriptedWorkerClient(events: []),
+                rerankClient: ScriptedPhaseFiveWorkerClient()
+            )
+        )
+        let body = try #require(
+            """
+            {
+              "model": "melix-dev-rerank",
+              "query": "swift worker",
+              "documents": ["swift worker"],
+              "top_k": 1
+            }
+            """.data(using: .utf8)
+        )
+
+        let unloadedResponse = try await unloadedHandler.handle(
+            HTTPRequest(method: .post, path: "/v1/rerank", headers: [:], body: body)
+        )
+        let unloadedPayload = try await collectBody(unloadedResponse.body)
+
+        #expect(unloadedResponse.statusCode == 409)
+        #expect(unloadedPayload.contains("\"code\":\"model_not_ready\""))
+
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devRerankModel()])
+        _ = await catalog.loadModel(id: "melix-dev-rerank", dispatchHandle: "melix-dev-rerank::python")
+        let unavailableHandler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: ScriptedWorkerClient(events: [])),
+                abortRegistry: AbortRegistry()
+            ),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: ScriptedWorkerClient(events: []),
+                rerankClient: ScriptedWorkerClient(events: [])
+            )
+        )
+
+        let unavailableResponse = try await unavailableHandler.handle(
+            HTTPRequest(method: .post, path: "/v1/rerank", headers: [:], body: body)
+        )
+        let unavailablePayload = try await collectBody(unavailableResponse.body)
+
+        #expect(unavailableResponse.statusCode == 503)
+        #expect(unavailablePayload.contains("\"code\":\"worker_unavailable\""))
     }
 
     @Test("GET /v1/cache/stats renders the control-plane cache summary")
@@ -1345,8 +1955,12 @@ private actor ScriptedWorkerClient: WorkerRoutingClient {
 private actor ScriptedPhaseFiveWorkerClient: WorkerRoutingClient, NonTextInferenceWorkerClientProtocol {
     private(set) var lastEmbedRequest: Melix_Worker_V1_EmbedRequest?
     private(set) var lastRerankRequest: Melix_Worker_V1_RerankRequest?
+    private(set) var lastTranscribeRequest: Melix_Worker_V1_TranscribeRequest?
+    private(set) var lastSpeakRequest: Melix_Worker_V1_SpeakRequest?
     private var embedResponse = Melix_Worker_V1_EmbedResponse()
     private var rerankResponse = Melix_Worker_V1_RerankResponse()
+    private var transcribeResponse = Melix_Worker_V1_TranscribeResponse()
+    private var speakResponse = Melix_Worker_V1_SpeakResponse()
     private var thrownFailure: Error?
 
     func setEmbedResponse(_ response: Melix_Worker_V1_EmbedResponse) {
@@ -1355,6 +1969,14 @@ private actor ScriptedPhaseFiveWorkerClient: WorkerRoutingClient, NonTextInferen
 
     func setRerankResponse(_ response: Melix_Worker_V1_RerankResponse) {
         rerankResponse = response
+    }
+
+    func setTranscribeResponse(_ response: Melix_Worker_V1_TranscribeResponse) {
+        transcribeResponse = response
+    }
+
+    func setSpeakResponse(_ response: Melix_Worker_V1_SpeakResponse) {
+        speakResponse = response
     }
 
     func setThrownFailure(_ failure: Error?) {
@@ -1404,6 +2026,26 @@ private actor ScriptedPhaseFiveWorkerClient: WorkerRoutingClient, NonTextInferen
         }
         lastRerankRequest = request
         return rerankResponse
+    }
+
+    func transcribe(
+        request: Melix_Worker_V1_TranscribeRequest
+    ) async throws -> Melix_Worker_V1_TranscribeResponse {
+        if let thrownFailure {
+            throw thrownFailure
+        }
+        lastTranscribeRequest = request
+        return transcribeResponse
+    }
+
+    func speak(
+        request: Melix_Worker_V1_SpeakRequest
+    ) async throws -> Melix_Worker_V1_SpeakResponse {
+        if let thrownFailure {
+            throw thrownFailure
+        }
+        lastSpeakRequest = request
+        return speakResponse
     }
 }
 
@@ -1482,5 +2124,18 @@ private func collectBody(_ body: HTTPBody) async throws -> String {
             data.append(chunk)
         }
         return try #require(String(data: data, encoding: .utf8))
+    }
+}
+
+private func collectBodyData(_ body: HTTPBody) async throws -> Data {
+    switch body {
+    case .data(let data):
+        return data
+    case .stream(let stream):
+        var data = Data()
+        for try await chunk in stream {
+            data.append(chunk)
+        }
+        return data
     }
 }

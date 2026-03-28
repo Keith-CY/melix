@@ -21,6 +21,14 @@ public protocol NonTextInferenceWorkerClientProtocol: WorkerClient {
     func rerank(
         request: Melix_Worker_V1_RerankRequest
     ) async throws -> Melix_Worker_V1_RerankResponse
+
+    func transcribe(
+        request: Melix_Worker_V1_TranscribeRequest
+    ) async throws -> Melix_Worker_V1_TranscribeResponse
+
+    func speak(
+        request: Melix_Worker_V1_SpeakRequest
+    ) async throws -> Melix_Worker_V1_SpeakResponse
 }
 
 public protocol PhaseAwareWorkerClientProtocol: WorkerClient {
