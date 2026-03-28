@@ -46,4 +46,15 @@ struct ModelCatalogTests {
         #expect(updated.pinned)
         #expect(reloaded == updated)
     }
+
+    @Test("phase six contract seed models expose multimodal routes and task visibility")
+    func phaseSixContractSeedModelsExposeMultimodalRoutesAndTasks() async throws {
+        let catalog = ModelCatalog(seedModels: ModelCatalog.phaseSixContractSeedModels())
+        let models = await catalog.listModels()
+
+        #expect(models.first(where: { $0.modelID == "melix-dev-ocr" })?.routeClass == .workerRoutePythonOcr)
+        #expect(models.first(where: { $0.modelID == "melix-dev-vlm" })?.capabilityClass == .modelCapabilityVlm)
+        #expect(models.first(where: { $0.modelID == "melix-dev-transcribe" })?.supportedTasks == ["transcribe"])
+        #expect(models.first(where: { $0.modelID == "melix-dev-speech" })?.supportedModalities == ["text", "audio"])
+    }
 }

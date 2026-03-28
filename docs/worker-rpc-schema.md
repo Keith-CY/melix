@@ -213,6 +213,14 @@ Should support:
 
 Message parts should support text plus inline or referenced media as needed.
 
+Multimodal message parts should carry typed media metadata so routing and preprocessing do not rely on URI-vs-bytes inference alone. The schema should include:
+
+- media type such as text, image, or audio
+- source kind such as URI-backed or inline bytes
+- MIME type and format hints
+- size or duration metadata when known
+- preprocessing hints such as image detail mode
+
 ### CacheHints
 
 Should include:
@@ -355,6 +363,7 @@ service InferenceService {
   rpc Embed(EmbedRequest) returns (EmbedResponse);
   rpc Rerank(RerankRequest) returns (RerankResponse);
   rpc Transcribe(TranscribeRequest) returns (TranscribeResponse);
+  rpc Speak(SpeakRequest) returns (SpeakResponse);
   rpc ImageGenerate(ImageGenerateRequest) returns (ImageGenerateResponse);
   rpc ImageEdit(ImageEditRequest) returns (ImageEditResponse);
 }
@@ -541,6 +550,8 @@ service MaintenanceService {
   rpc RunBench(RunBenchRequest) returns (stream RunBenchEvent);
 }
 ```
+
+`GetModelInfoResponse` should expose supported modalities and supported task families so the control plane can surface OCR, VLM, transcription, and speech capability without guessing from the model id.
 
 ### ConvertModel
 

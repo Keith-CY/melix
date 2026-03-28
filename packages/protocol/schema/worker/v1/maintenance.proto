@@ -63,6 +63,7 @@ message GetModelInfoResponse {
   uint32 max_context = 4;
   repeated string supported_parsers = 5;
   repeated string supported_modalities = 6;
+  repeated string supported_tasks = 7;
 }
 
 message RunDoctorRequest {

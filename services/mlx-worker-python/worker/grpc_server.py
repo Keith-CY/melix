@@ -125,6 +125,11 @@ class WorkerInferenceService(inference_pb2_grpc.InferenceServiceServicer):
             error=common_pb2.ErrorStatus(code="unimplemented", message="Transcribe is deferred in phase 0.")
         )
 
+    def Speak(self, request, context):
+        return inference_pb2.SpeakResponse(
+            error=common_pb2.ErrorStatus(code="unimplemented", message="Speak is deferred in phase 6.")
+        )
+
     def ImageGenerate(self, request, context):
         return inference_pb2.ImageGenerateResponse(
             error=common_pb2.ErrorStatus(code="unimplemented", message="Image generation is deferred in phase 0.")

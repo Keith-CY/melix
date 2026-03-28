@@ -49,6 +49,14 @@ public actor WorkerRegistry {
             return .pythonRerank
         case .modelCapabilityModelOperations:
             return .pythonModelOperations
+        case .modelCapabilityOcr:
+            return .pythonOCR
+        case .modelCapabilityVlm:
+            return .pythonVLM
+        case .modelCapabilityTranscription:
+            return .pythonTranscription
+        case .modelCapabilitySpeech:
+            return .pythonSpeech
         default:
             return model.kind == "text" ? .swiftText : .pythonCompatibility
         }
@@ -73,6 +81,8 @@ public actor WorkerRegistry {
             return rerankClient ?? pythonCompatibilityClient
         case .pythonModelOperations:
             return modelOperationsClient ?? pythonCompatibilityClient
+        case .pythonOCR, .pythonVLM, .pythonTranscription, .pythonSpeech:
+            return pythonCompatibilityClient
         }
     }
 }

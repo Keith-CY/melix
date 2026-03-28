@@ -261,6 +261,7 @@ def test_inference_service_covers_error_and_unimplemented_paths() -> None:
         context=None,
     )
     transcribe = inference_service.Transcribe(inference_pb2.TranscribeRequest(), context=None)
+    speak = inference_service.Speak(inference_pb2.SpeakRequest(), context=None)
     image_generate = inference_service.ImageGenerate(inference_pb2.ImageGenerateRequest(), context=None)
     image_edit = inference_service.ImageEdit(inference_pb2.ImageEditRequest(), context=None)
 
@@ -269,6 +270,7 @@ def test_inference_service_covers_error_and_unimplemented_paths() -> None:
     assert rerank.error.code == ""
     assert len(rerank.items) == 2
     assert transcribe.error.code == "unimplemented"
+    assert speak.error.code == "unimplemented"
     assert image_generate.error.code == "unimplemented"
     assert image_edit.error.code == "unimplemented"
 
@@ -302,7 +304,7 @@ def test_build_server_and_main_bootstrap(monkeypatch) -> None:
         "handlers": 3,
         "registered_services": [
             ("melix.worker.v1.RuntimeService", 8),
-            ("melix.worker.v1.InferenceService", 9),
+            ("melix.worker.v1.InferenceService", 10),
             ("melix.worker.v1.MaintenanceService", 4),
         ],
         "address": f"unix://{Path('/tmp/melix-test.sock').resolve()}",

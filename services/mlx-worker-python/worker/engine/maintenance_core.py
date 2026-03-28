@@ -100,6 +100,7 @@ class MaintenanceCore:
             max_context=model.max_context,
             supported_parsers=[model.parser_mode] if model.parser_mode else [],
             supported_modalities=["text"],
+            supported_tasks=["generate"],
         )
 
     @staticmethod

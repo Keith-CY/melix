@@ -760,15 +760,14 @@ struct RequestCoordinatorTests {
         }
         defer { consumer.cancel() }
 
-        await workerClient.emitPrefillStarted(requestID: "req-phase-events")
         let prefillProgress = await waitForProgress(
             schedulerReadModel: schedulerReadModel,
             requestID: "req-phase-events",
             phase: .requestPrefilling,
-            lane: "text.prefill.hot"
+            lane: "text.prefill.background"
         )
         #expect(prefillProgress?.phase == .requestPrefilling)
-        #expect(prefillProgress?.lane == "text.prefill.hot")
+        #expect(prefillProgress?.lane == "text.prefill.background")
 
         _ = try #require(await waitForDecodeRequest(workerClient: workerClient))
         await workerClient.emitToken(requestID: "req-phase-events", text: "hello")

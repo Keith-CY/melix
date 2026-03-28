@@ -326,6 +326,10 @@ enum ModelCapabilityClass {
   MODEL_CAPABILITY_RERANK = 3;
   MODEL_CAPABILITY_MODEL_OPERATIONS = 4;
   MODEL_CAPABILITY_MULTIMODAL = 5;
+  MODEL_CAPABILITY_OCR = 6;
+  MODEL_CAPABILITY_VLM = 7;
+  MODEL_CAPABILITY_TRANSCRIPTION = 8;
+  MODEL_CAPABILITY_SPEECH = 9;
 }
 
 enum WorkerRouteClass {
@@ -335,6 +339,10 @@ enum WorkerRouteClass {
   WORKER_ROUTE_PYTHON_EMBEDDING = 3;
   WORKER_ROUTE_PYTHON_RERANK = 4;
   WORKER_ROUTE_PYTHON_MODEL_OPERATIONS = 5;
+  WORKER_ROUTE_PYTHON_OCR = 6;
+  WORKER_ROUTE_PYTHON_VLM = 7;
+  WORKER_ROUTE_PYTHON_TRANSCRIPTION = 8;
+  WORKER_ROUTE_PYTHON_SPEECH = 9;
 }
 
 enum MemoryResidencyPolicy {
@@ -442,6 +450,8 @@ message ModelSummary {
   ModelCapabilityClass capability_class = 10;
   WorkerRouteClass route_class = 11;
   ModelSettings settings = 12;
+  repeated string supported_modalities = 13;
+  repeated string supported_tasks = 14;
 }
 
 message ModelInfo {
@@ -450,6 +460,7 @@ message ModelInfo {
   uint32 max_context = 3;
   repeated string supported_parsers = 4;
   repeated string supported_modalities = 5;
+  repeated string supported_tasks = 6;
 }
 
 message ModelOperationResult {

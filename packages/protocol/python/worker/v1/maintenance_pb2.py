@@ -25,7 +25,7 @@ _sym_db = _symbol_database.Default()
 from packages.protocol.python.worker.v1 import common_pb2 as worker_dot_v1_dot_common__pb2
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x1bworker/v1/maintenance.proto\x12\x0fmelix.worker.v1\x1a\x16worker/v1/common.proto\"\x82\x02\n\x13\x43onvertModelRequest\x12\x14\n\x0csource_model\x18\x01 \x01(\t\x12\x12\n\noutput_dir\x18\x02 \x01(\t\x12\x14\n\x0cweight_quant\x18\x03 \x01(\t\x12\x10\n\x08kv_quant\x18\x04 \x01(\t\x12\x19\n\x11generate_manifest\x18\x05 \x01(\x08\x12\x16\n\x0erun_smoke_test\x18\x06 \x01(\x08\x12:\n\x03\x65xt\x18\x07 \x03(\x0b\x32-.melix.worker.v1.ConvertModelRequest.ExtEntry\x1a*\n\x08\x45xtEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12\r\n\x05value\x18\x02 \x01(\t:\x02\x38\x01\"\xa8\x02\n\x11\x43onvertModelEvent\x12\x32\n\x07started\x18\x01 \x01(\x0b\x32\x1f.melix.worker.v1.ConvertStartedH\x00\x12\x34\n\x08progress\x18\x02 \x01(\x0b\x32 .melix.worker.v1.ConvertProgressH\x00\x12\x34\n\x08manifest\x18\x03 \x01(\x0b\x32 .melix.worker.v1.ConvertManifestH\x00\x12\x36\n\tcompleted\x18\x04 \x01(\x0b\x32!.melix.worker.v1.ConvertCompletedH\x00\x12\x30\n\x06\x66\x61iled\x18\x05 \x01(\x0b\x32\x1e.melix.worker.v1.ConvertFailedH\x00\x42\t\n\x07payload\" \n\x0e\x43onvertStarted\x12\x0e\n\x06job_id\x18\x01 \x01(\t\"-\n\x0f\x43onvertProgress\x12\r\n\x05stage\x18\x01 \x01(\t\x12\x0b\n\x03pct\x18\x02 \x01(\x02\"(\n\x0f\x43onvertManifest\x12\x15\n\rmanifest_json\x18\x01 \x01(\t\"\'\n\x10\x43onvertCompleted\x12\x13\n\x0boutput_path\x18\x01 \x01(\t\"<\n\rConvertFailed\x12+\n\x05\x65rror\x18\x01 \x01(\x0b\x32\x1c.melix.worker.v1.ErrorStatus\"+\n\x13GetModelInfoRequest\x12\x14\n\x0csource_model\x18\x01 \x01(\t\"\xb1\x01\n\x14GetModelInfoResponse\x12\n\n\x02ok\x18\x01 \x01(\x08\x12+\n\x05\x65rror\x18\x02 \x01(\x0b\x32\x1c.melix.worker.v1.ErrorStatus\x12\x12\n\nmodel_kind\x18\x03 \x01(\t\x12\x13\n\x0bmax_context\x18\x04 \x01(\r\x12\x19\n\x11supported_parsers\x18\x05 \x03(\t\x12\x1c\n\x14supported_modalities\x18\x06 \x03(\t\"j\n\x10RunDoctorRequest\x12\x14\n\x0cmodel_handle\x18\x01 \x01(\t\x12!\n\x19include_cache_diagnostics\x18\x02 \x01(\x08\x12\x1d\n\x15include_memory_report\x18\x03 \x01(\x08\"e\n\x11RunDoctorResponse\x12\n\n\x02ok\x18\x01 \x01(\x08\x12+\n\x05\x65rror\x18\x02 \x01(\x0b\x32\x1c.melix.worker.v1.ErrorStatus\x12\x17\n\x0freport_markdown\x18\x03 \x01(\t\"7\n\x0fRunBenchRequest\x12\x14\n\x0cmodel_handle\x18\x01 \x01(\t\x12\x0e\n\x06suites\x18\x02 \x03(\t\"\x96\x02\n\rRunBenchEvent\x12\x30\n\x07started\x18\x01 \x01(\x0b\x32\x1d.melix.worker.v1.BenchStartedH\x00\x12\x32\n\x08progress\x18\x02 \x01(\x0b\x32\x1e.melix.worker.v1.BenchProgressH\x00\x12.\n\x06metric\x18\x03 \x01(\x0b\x32\x1c.melix.worker.v1.BenchMetricH\x00\x12\x34\n\tcompleted\x18\x04 \x01(\x0b\x32\x1f.melix.worker.v1.BenchCompletedH\x00\x12.\n\x06\x66\x61iled\x18\x05 \x01(\x0b\x32\x1c.melix.worker.v1.BenchFailedH\x00\x42\t\n\x07payload\"\x1e\n\x0c\x42\x65nchStarted\x12\x0e\n\x06job_id\x18\x01 \x01(\t\"+\n\rBenchProgress\x12\r\n\x05suite\x18\x01 \x01(\t\x12\x0b\n\x03pct\x18\x02 \x01(\x02\"8\n\x0b\x42\x65nchMetric\x12\x0c\n\x04name\x18\x01 \x01(\t\x12\r\n\x05value\x18\x02 \x01(\x01\x12\x0c\n\x04unit\x18\x03 \x01(\t\"%\n\x0e\x42\x65nchCompleted\x12\x13\n\x0breport_path\x18\x01 \x01(\t\":\n\x0b\x42\x65nchFailed\x12+\n\x05\x65rror\x18\x01 \x01(\x0b\x32\x1c.melix.worker.v1.ErrorStatus2\xf1\x02\n\x12MaintenanceService\x12Z\n\x0c\x43onvertModel\x12$.melix.worker.v1.ConvertModelRequest\x1a\".melix.worker.v1.ConvertModelEvent0\x01\x12[\n\x0cGetModelInfo\x12$.melix.worker.v1.GetModelInfoRequest\x1a%.melix.worker.v1.GetModelInfoResponse\x12R\n\tRunDoctor\x12!.melix.worker.v1.RunDoctorRequest\x1a\".melix.worker.v1.RunDoctorResponse\x12N\n\x08RunBench\x12 .melix.worker.v1.RunBenchRequest\x1a\x1e.melix.worker.v1.RunBenchEvent0\x01\x62\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x1bworker/v1/maintenance.proto\x12\x0fmelix.worker.v1\x1a\x16worker/v1/common.proto\"\x82\x02\n\x13\x43onvertModelRequest\x12\x14\n\x0csource_model\x18\x01 \x01(\t\x12\x12\n\noutput_dir\x18\x02 \x01(\t\x12\x14\n\x0cweight_quant\x18\x03 \x01(\t\x12\x10\n\x08kv_quant\x18\x04 \x01(\t\x12\x19\n\x11generate_manifest\x18\x05 \x01(\x08\x12\x16\n\x0erun_smoke_test\x18\x06 \x01(\x08\x12:\n\x03\x65xt\x18\x07 \x03(\x0b\x32-.melix.worker.v1.ConvertModelRequest.ExtEntry\x1a*\n\x08\x45xtEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12\r\n\x05value\x18\x02 \x01(\t:\x02\x38\x01\"\xa8\x02\n\x11\x43onvertModelEvent\x12\x32\n\x07started\x18\x01 \x01(\x0b\x32\x1f.melix.worker.v1.ConvertStartedH\x00\x12\x34\n\x08progress\x18\x02 \x01(\x0b\x32 .melix.worker.v1.ConvertProgressH\x00\x12\x34\n\x08manifest\x18\x03 \x01(\x0b\x32 .melix.worker.v1.ConvertManifestH\x00\x12\x36\n\tcompleted\x18\x04 \x01(\x0b\x32!.melix.worker.v1.ConvertCompletedH\x00\x12\x30\n\x06\x66\x61iled\x18\x05 \x01(\x0b\x32\x1e.melix.worker.v1.ConvertFailedH\x00\x42\t\n\x07payload\" \n\x0e\x43onvertStarted\x12\x0e\n\x06job_id\x18\x01 \x01(\t\"-\n\x0f\x43onvertProgress\x12\r\n\x05stage\x18\x01 \x01(\t\x12\x0b\n\x03pct\x18\x02 \x01(\x02\"(\n\x0f\x43onvertManifest\x12\x15\n\rmanifest_json\x18\x01 \x01(\t\"\'\n\x10\x43onvertCompleted\x12\x13\n\x0boutput_path\x18\x01 \x01(\t\"<\n\rConvertFailed\x12+\n\x05\x65rror\x18\x01 \x01(\x0b\x32\x1c.melix.worker.v1.ErrorStatus\"+\n\x13GetModelInfoRequest\x12\x14\n\x0csource_model\x18\x01 \x01(\t\"\xca\x01\n\x14GetModelInfoResponse\x12\n\n\x02ok\x18\x01 \x01(\x08\x12+\n\x05\x65rror\x18\x02 \x01(\x0b\x32\x1c.melix.worker.v1.ErrorStatus\x12\x12\n\nmodel_kind\x18\x03 \x01(\t\x12\x13\n\x0bmax_context\x18\x04 \x01(\r\x12\x19\n\x11supported_parsers\x18\x05 \x03(\t\x12\x1c\n\x14supported_modalities\x18\x06 \x03(\t\x12\x17\n\x0fsupported_tasks\x18\x07 \x03(\t\"j\n\x10RunDoctorRequest\x12\x14\n\x0cmodel_handle\x18\x01 \x01(\t\x12!\n\x19include_cache_diagnostics\x18\x02 \x01(\x08\x12\x1d\n\x15include_memory_report\x18\x03 \x01(\x08\"e\n\x11RunDoctorResponse\x12\n\n\x02ok\x18\x01 \x01(\x08\x12+\n\x05\x65rror\x18\x02 \x01(\x0b\x32\x1c.melix.worker.v1.ErrorStatus\x12\x17\n\x0freport_markdown\x18\x03 \x01(\t\"7\n\x0fRunBenchRequest\x12\x14\n\x0cmodel_handle\x18\x01 \x01(\t\x12\x0e\n\x06suites\x18\x02 \x03(\t\"\x96\x02\n\rRunBenchEvent\x12\x30\n\x07started\x18\x01 \x01(\x0b\x32\x1d.melix.worker.v1.BenchStartedH\x00\x12\x32\n\x08progress\x18\x02 \x01(\x0b\x32\x1e.melix.worker.v1.BenchProgressH\x00\x12.\n\x06metric\x18\x03 \x01(\x0b\x32\x1c.melix.worker.v1.BenchMetricH\x00\x12\x34\n\tcompleted\x18\x04 \x01(\x0b\x32\x1f.melix.worker.v1.BenchCompletedH\x00\x12.\n\x06\x66\x61iled\x18\x05 \x01(\x0b\x32\x1c.melix.worker.v1.BenchFailedH\x00\x42\t\n\x07payload\"\x1e\n\x0c\x42\x65nchStarted\x12\x0e\n\x06job_id\x18\x01 \x01(\t\"+\n\rBenchProgress\x12\r\n\x05suite\x18\x01 \x01(\t\x12\x0b\n\x03pct\x18\x02 \x01(\x02\"8\n\x0b\x42\x65nchMetric\x12\x0c\n\x04name\x18\x01 \x01(\t\x12\r\n\x05value\x18\x02 \x01(\x01\x12\x0c\n\x04unit\x18\x03 \x01(\t\"%\n\x0e\x42\x65nchCompleted\x12\x13\n\x0breport_path\x18\x01 \x01(\t\":\n\x0b\x42\x65nchFailed\x12+\n\x05\x65rror\x18\x01 \x01(\x0b\x32\x1c.melix.worker.v1.ErrorStatus2\xf1\x02\n\x12MaintenanceService\x12Z\n\x0c\x43onvertModel\x12$.melix.worker.v1.ConvertModelRequest\x1a\".melix.worker.v1.ConvertModelEvent0\x01\x12[\n\x0cGetModelInfo\x12$.melix.worker.v1.GetModelInfoRequest\x1a%.melix.worker.v1.GetModelInfoResponse\x12R\n\tRunDoctor\x12!.melix.worker.v1.RunDoctorRequest\x1a\".melix.worker.v1.RunDoctorResponse\x12N\n\x08RunBench\x12 .melix.worker.v1.RunBenchRequest\x1a\x1e.melix.worker.v1.RunBenchEvent0\x01\x62\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -53,25 +53,25 @@ if not _descriptor._USE_C_DESCRIPTORS:
   _globals['_GETMODELINFOREQUEST']._serialized_start=858
   _globals['_GETMODELINFOREQUEST']._serialized_end=901
   _globals['_GETMODELINFORESPONSE']._serialized_start=904
-  _globals['_GETMODELINFORESPONSE']._serialized_end=1081
-  _globals['_RUNDOCTORREQUEST']._serialized_start=1083
-  _globals['_RUNDOCTORREQUEST']._serialized_end=1189
-  _globals['_RUNDOCTORRESPONSE']._serialized_start=1191
-  _globals['_RUNDOCTORRESPONSE']._serialized_end=1292
-  _globals['_RUNBENCHREQUEST']._serialized_start=1294
-  _globals['_RUNBENCHREQUEST']._serialized_end=1349
-  _globals['_RUNBENCHEVENT']._serialized_start=1352
-  _globals['_RUNBENCHEVENT']._serialized_end=1630
-  _globals['_BENCHSTARTED']._serialized_start=1632
-  _globals['_BENCHSTARTED']._serialized_end=1662
-  _globals['_BENCHPROGRESS']._serialized_start=1664
-  _globals['_BENCHPROGRESS']._serialized_end=1707
-  _globals['_BENCHMETRIC']._serialized_start=1709
-  _globals['_BENCHMETRIC']._serialized_end=1765
-  _globals['_BENCHCOMPLETED']._serialized_start=1767
-  _globals['_BENCHCOMPLETED']._serialized_end=1804
-  _globals['_BENCHFAILED']._serialized_start=1806
-  _globals['_BENCHFAILED']._serialized_end=1864
-  _globals['_MAINTENANCESERVICE']._serialized_start=1867
-  _globals['_MAINTENANCESERVICE']._serialized_end=2236
+  _globals['_GETMODELINFORESPONSE']._serialized_end=1106
+  _globals['_RUNDOCTORREQUEST']._serialized_start=1108
+  _globals['_RUNDOCTORREQUEST']._serialized_end=1214
+  _globals['_RUNDOCTORRESPONSE']._serialized_start=1216
+  _globals['_RUNDOCTORRESPONSE']._serialized_end=1317
+  _globals['_RUNBENCHREQUEST']._serialized_start=1319
+  _globals['_RUNBENCHREQUEST']._serialized_end=1374
+  _globals['_RUNBENCHEVENT']._serialized_start=1377
+  _globals['_RUNBENCHEVENT']._serialized_end=1655
+  _globals['_BENCHSTARTED']._serialized_start=1657
+  _globals['_BENCHSTARTED']._serialized_end=1687
+  _globals['_BENCHPROGRESS']._serialized_start=1689
+  _globals['_BENCHPROGRESS']._serialized_end=1732
+  _globals['_BENCHMETRIC']._serialized_start=1734
+  _globals['_BENCHMETRIC']._serialized_end=1790
+  _globals['_BENCHCOMPLETED']._serialized_start=1792
+  _globals['_BENCHCOMPLETED']._serialized_end=1829
+  _globals['_BENCHFAILED']._serialized_start=1831
+  _globals['_BENCHFAILED']._serialized_end=1889
+  _globals['_MAINTENANCESERVICE']._serialized_start=1892
+  _globals['_MAINTENANCESERVICE']._serialized_end=2261
 # @@protoc_insertion_point(module_scope)

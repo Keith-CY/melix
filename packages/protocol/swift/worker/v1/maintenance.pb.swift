@@ -212,6 +212,8 @@ public struct Melix_Worker_V1_GetModelInfoResponse: Sendable {
 
   public var supportedModalities: [String] = []
 
+  public var supportedTasks: [String] = []
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -783,7 +785,7 @@ extension Melix_Worker_V1_GetModelInfoRequest: SwiftProtobuf.Message, SwiftProto
 
 extension Melix_Worker_V1_GetModelInfoResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".GetModelInfoResponse"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}ok\0\u{1}error\0\u{3}model_kind\0\u{3}max_context\0\u{3}supported_parsers\0\u{3}supported_modalities\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}ok\0\u{1}error\0\u{3}model_kind\0\u{3}max_context\0\u{3}supported_parsers\0\u{3}supported_modalities\0\u{3}supported_tasks\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -797,6 +799,7 @@ extension Melix_Worker_V1_GetModelInfoResponse: SwiftProtobuf.Message, SwiftProt
       case 4: try { try decoder.decodeSingularUInt32Field(value: &self.maxContext) }()
       case 5: try { try decoder.decodeRepeatedStringField(value: &self.supportedParsers) }()
       case 6: try { try decoder.decodeRepeatedStringField(value: &self.supportedModalities) }()
+      case 7: try { try decoder.decodeRepeatedStringField(value: &self.supportedTasks) }()
       default: break
       }
     }
@@ -825,6 +828,9 @@ extension Melix_Worker_V1_GetModelInfoResponse: SwiftProtobuf.Message, SwiftProt
     if !self.supportedModalities.isEmpty {
       try visitor.visitRepeatedStringField(value: self.supportedModalities, fieldNumber: 6)
     }
+    if !self.supportedTasks.isEmpty {
+      try visitor.visitRepeatedStringField(value: self.supportedTasks, fieldNumber: 7)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -835,6 +841,7 @@ extension Melix_Worker_V1_GetModelInfoResponse: SwiftProtobuf.Message, SwiftProt
     if lhs.maxContext != rhs.maxContext {return false}
     if lhs.supportedParsers != rhs.supportedParsers {return false}
     if lhs.supportedModalities != rhs.supportedModalities {return false}
+    if lhs.supportedTasks != rhs.supportedTasks {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

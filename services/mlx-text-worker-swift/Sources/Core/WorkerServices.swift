@@ -263,6 +263,17 @@ final class InferenceRPCService: Melix_Worker_V1_InferenceService.SimpleServiceP
         return response
     }
 
+    func speak(
+        request: Melix_Worker_V1_SpeakRequest,
+        context: GRPCCore.ServerContext
+    ) async throws -> Melix_Worker_V1_SpeakResponse {
+        metrics.increment("swift_text.unimplemented_rpc_count")
+
+        var response = Melix_Worker_V1_SpeakResponse()
+        response.error = makeUnimplementedStatus("Speak is handled by the Python worker family.")
+        return response
+    }
+
     func imageGenerate(
         request: Melix_Worker_V1_ImageGenerateRequest,
         context: GRPCCore.ServerContext

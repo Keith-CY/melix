@@ -33,6 +33,10 @@ public enum Melix_Worker_V1_ModelCapabilityClass: SwiftProtobuf.Enum, Swift.Case
   case modelCapabilityRerank // = 3
   case modelCapabilityModelOperations // = 4
   case modelCapabilityMultimodal // = 5
+  case modelCapabilityOcr // = 6
+  case modelCapabilityVlm // = 7
+  case modelCapabilityTranscription // = 8
+  case modelCapabilitySpeech // = 9
   case UNRECOGNIZED(Int)
 
   public init() {
@@ -47,6 +51,10 @@ public enum Melix_Worker_V1_ModelCapabilityClass: SwiftProtobuf.Enum, Swift.Case
     case 3: self = .modelCapabilityRerank
     case 4: self = .modelCapabilityModelOperations
     case 5: self = .modelCapabilityMultimodal
+    case 6: self = .modelCapabilityOcr
+    case 7: self = .modelCapabilityVlm
+    case 8: self = .modelCapabilityTranscription
+    case 9: self = .modelCapabilitySpeech
     default: self = .UNRECOGNIZED(rawValue)
     }
   }
@@ -59,6 +67,10 @@ public enum Melix_Worker_V1_ModelCapabilityClass: SwiftProtobuf.Enum, Swift.Case
     case .modelCapabilityRerank: return 3
     case .modelCapabilityModelOperations: return 4
     case .modelCapabilityMultimodal: return 5
+    case .modelCapabilityOcr: return 6
+    case .modelCapabilityVlm: return 7
+    case .modelCapabilityTranscription: return 8
+    case .modelCapabilitySpeech: return 9
     case .UNRECOGNIZED(let i): return i
     }
   }
@@ -71,6 +83,10 @@ public enum Melix_Worker_V1_ModelCapabilityClass: SwiftProtobuf.Enum, Swift.Case
     .modelCapabilityRerank,
     .modelCapabilityModelOperations,
     .modelCapabilityMultimodal,
+    .modelCapabilityOcr,
+    .modelCapabilityVlm,
+    .modelCapabilityTranscription,
+    .modelCapabilitySpeech,
   ]
 
 }
@@ -83,6 +99,10 @@ public enum Melix_Worker_V1_WorkerRouteClass: SwiftProtobuf.Enum, Swift.CaseIter
   case workerRoutePythonEmbedding // = 3
   case workerRoutePythonRerank // = 4
   case workerRoutePythonModelOperations // = 5
+  case workerRoutePythonOcr // = 6
+  case workerRoutePythonVlm // = 7
+  case workerRoutePythonTranscription // = 8
+  case workerRoutePythonSpeech // = 9
   case UNRECOGNIZED(Int)
 
   public init() {
@@ -97,6 +117,10 @@ public enum Melix_Worker_V1_WorkerRouteClass: SwiftProtobuf.Enum, Swift.CaseIter
     case 3: self = .workerRoutePythonEmbedding
     case 4: self = .workerRoutePythonRerank
     case 5: self = .workerRoutePythonModelOperations
+    case 6: self = .workerRoutePythonOcr
+    case 7: self = .workerRoutePythonVlm
+    case 8: self = .workerRoutePythonTranscription
+    case 9: self = .workerRoutePythonSpeech
     default: self = .UNRECOGNIZED(rawValue)
     }
   }
@@ -109,6 +133,10 @@ public enum Melix_Worker_V1_WorkerRouteClass: SwiftProtobuf.Enum, Swift.CaseIter
     case .workerRoutePythonEmbedding: return 3
     case .workerRoutePythonRerank: return 4
     case .workerRoutePythonModelOperations: return 5
+    case .workerRoutePythonOcr: return 6
+    case .workerRoutePythonVlm: return 7
+    case .workerRoutePythonTranscription: return 8
+    case .workerRoutePythonSpeech: return 9
     case .UNRECOGNIZED(let i): return i
     }
   }
@@ -121,6 +149,10 @@ public enum Melix_Worker_V1_WorkerRouteClass: SwiftProtobuf.Enum, Swift.CaseIter
     .workerRoutePythonEmbedding,
     .workerRoutePythonRerank,
     .workerRoutePythonModelOperations,
+    .workerRoutePythonOcr,
+    .workerRoutePythonVlm,
+    .workerRoutePythonTranscription,
+    .workerRoutePythonSpeech,
   ]
 
 }
@@ -163,6 +195,86 @@ public enum Melix_Worker_V1_MemoryResidencyPolicy: SwiftProtobuf.Enum, Swift.Cas
     .memoryResidencyEvictable,
     .memoryResidencyPinned,
     .memoryResidencyTtl,
+  ]
+
+}
+
+public enum Melix_Worker_V1_MediaType: SwiftProtobuf.Enum, Swift.CaseIterable {
+  public typealias RawValue = Int
+  case unspecified // = 0
+  case text // = 1
+  case image // = 2
+  case audio // = 3
+  case UNRECOGNIZED(Int)
+
+  public init() {
+    self = .unspecified
+  }
+
+  public init?(rawValue: Int) {
+    switch rawValue {
+    case 0: self = .unspecified
+    case 1: self = .text
+    case 2: self = .image
+    case 3: self = .audio
+    default: self = .UNRECOGNIZED(rawValue)
+    }
+  }
+
+  public var rawValue: Int {
+    switch self {
+    case .unspecified: return 0
+    case .text: return 1
+    case .image: return 2
+    case .audio: return 3
+    case .UNRECOGNIZED(let i): return i
+    }
+  }
+
+  // The compiler won't synthesize support with the UNRECOGNIZED case.
+  public static let allCases: [Melix_Worker_V1_MediaType] = [
+    .unspecified,
+    .text,
+    .image,
+    .audio,
+  ]
+
+}
+
+public enum Melix_Worker_V1_MediaSourceKind: SwiftProtobuf.Enum, Swift.CaseIterable {
+  public typealias RawValue = Int
+  case unspecified // = 0
+  case mediaSourceUri // = 1
+  case mediaSourceInlineBytes // = 2
+  case UNRECOGNIZED(Int)
+
+  public init() {
+    self = .unspecified
+  }
+
+  public init?(rawValue: Int) {
+    switch rawValue {
+    case 0: self = .unspecified
+    case 1: self = .mediaSourceUri
+    case 2: self = .mediaSourceInlineBytes
+    default: self = .UNRECOGNIZED(rawValue)
+    }
+  }
+
+  public var rawValue: Int {
+    switch self {
+    case .unspecified: return 0
+    case .mediaSourceUri: return 1
+    case .mediaSourceInlineBytes: return 2
+    case .UNRECOGNIZED(let i): return i
+    }
+  }
+
+  // The compiler won't synthesize support with the UNRECOGNIZED case.
+  public static let allCases: [Melix_Worker_V1_MediaSourceKind] = [
+    .unspecified,
+    .mediaSourceUri,
+    .mediaSourceInlineBytes,
   ]
 
 }
@@ -421,57 +533,57 @@ public struct Melix_Worker_V1_ModelSpec: @unchecked Sendable {
   fileprivate var _storage = _StorageClass.defaultInstance
 }
 
-public struct Melix_Worker_V1_RuntimeCapabilities: Sendable {
+public struct Melix_Worker_V1_RuntimeCapabilities: @unchecked Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
   public var cache: Melix_Worker_V1_CacheCapabilities {
-    get {_cache ?? Melix_Worker_V1_CacheCapabilities()}
-    set {_cache = newValue}
+    get {_storage._cache ?? Melix_Worker_V1_CacheCapabilities()}
+    set {_uniqueStorage()._cache = newValue}
   }
   /// Returns true if `cache` has been explicitly set.
-  public var hasCache: Bool {self._cache != nil}
+  public var hasCache: Bool {_storage._cache != nil}
   /// Clears the value of `cache`. Subsequent reads from it will return its default value.
-  public mutating func clearCache() {self._cache = nil}
+  public mutating func clearCache() {_uniqueStorage()._cache = nil}
 
   public var execution: Melix_Worker_V1_ExecutionCapabilities {
-    get {_execution ?? Melix_Worker_V1_ExecutionCapabilities()}
-    set {_execution = newValue}
+    get {_storage._execution ?? Melix_Worker_V1_ExecutionCapabilities()}
+    set {_uniqueStorage()._execution = newValue}
   }
   /// Returns true if `execution` has been explicitly set.
-  public var hasExecution: Bool {self._execution != nil}
+  public var hasExecution: Bool {_storage._execution != nil}
   /// Clears the value of `execution`. Subsequent reads from it will return its default value.
-  public mutating func clearExecution() {self._execution = nil}
+  public mutating func clearExecution() {_uniqueStorage()._execution = nil}
 
   public var parsing: Melix_Worker_V1_ParserCapabilities {
-    get {_parsing ?? Melix_Worker_V1_ParserCapabilities()}
-    set {_parsing = newValue}
+    get {_storage._parsing ?? Melix_Worker_V1_ParserCapabilities()}
+    set {_uniqueStorage()._parsing = newValue}
   }
   /// Returns true if `parsing` has been explicitly set.
-  public var hasParsing: Bool {self._parsing != nil}
+  public var hasParsing: Bool {_storage._parsing != nil}
   /// Clears the value of `parsing`. Subsequent reads from it will return its default value.
-  public mutating func clearParsing() {self._parsing = nil}
+  public mutating func clearParsing() {_uniqueStorage()._parsing = nil}
 
   public var multimodal: Melix_Worker_V1_MultimodalCapabilities {
-    get {_multimodal ?? Melix_Worker_V1_MultimodalCapabilities()}
-    set {_multimodal = newValue}
+    get {_storage._multimodal ?? Melix_Worker_V1_MultimodalCapabilities()}
+    set {_uniqueStorage()._multimodal = newValue}
   }
   /// Returns true if `multimodal` has been explicitly set.
-  public var hasMultimodal: Bool {self._multimodal != nil}
+  public var hasMultimodal: Bool {_storage._multimodal != nil}
   /// Clears the value of `multimodal`. Subsequent reads from it will return its default value.
-  public mutating func clearMultimodal() {self._multimodal = nil}
+  public mutating func clearMultimodal() {_uniqueStorage()._multimodal = nil}
 
-  public var ext: [Melix_Worker_V1_Capability] = []
+  public var ext: [Melix_Worker_V1_Capability] {
+    get {_storage._ext}
+    set {_uniqueStorage()._ext = newValue}
+  }
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
 
-  fileprivate var _cache: Melix_Worker_V1_CacheCapabilities? = nil
-  fileprivate var _execution: Melix_Worker_V1_ExecutionCapabilities? = nil
-  fileprivate var _parsing: Melix_Worker_V1_ParserCapabilities? = nil
-  fileprivate var _multimodal: Melix_Worker_V1_MultimodalCapabilities? = nil
+  fileprivate var _storage = _StorageClass.defaultInstance
 }
 
 public struct Melix_Worker_V1_CacheCapabilities: Sendable {
@@ -526,6 +638,36 @@ public struct Melix_Worker_V1_ParserCapabilities: Sendable {
   public init() {}
 }
 
+public struct Melix_Worker_V1_MediaMetadata: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var mediaType: Melix_Worker_V1_MediaType = .unspecified
+
+  public var sourceKind: Melix_Worker_V1_MediaSourceKind = .unspecified
+
+  public var mimeType: String = String()
+
+  public var format: String = String()
+
+  public var filename: String = String()
+
+  public var byteLength: UInt64 = 0
+
+  public var durationMs: UInt32 = 0
+
+  public var width: UInt32 = 0
+
+  public var height: UInt32 = 0
+
+  public var preprocessingHints: Dictionary<String,String> = [:]
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
 public struct Melix_Worker_V1_MultimodalCapabilities: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
@@ -536,6 +678,14 @@ public struct Melix_Worker_V1_MultimodalCapabilities: Sendable {
   public var supportsAudio: Bool = false
 
   public var supportsImageGeneration: Bool = false
+
+  public var supportsOcr: Bool = false
+
+  public var supportsVlm: Bool = false
+
+  public var supportsTranscription: Bool = false
+
+  public var supportsSpeech: Bool = false
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -790,6 +940,15 @@ public struct Melix_Worker_V1_MessagePart: Sendable {
     set {part = .audioBytes(newValue)}
   }
 
+  public var media: Melix_Worker_V1_MediaMetadata {
+    get {_media ?? Melix_Worker_V1_MediaMetadata()}
+    set {_media = newValue}
+  }
+  /// Returns true if `media` has been explicitly set.
+  public var hasMedia: Bool {self._media != nil}
+  /// Clears the value of `media`. Subsequent reads from it will return its default value.
+  public mutating func clearMedia() {self._media = nil}
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public enum OneOf_Part: Equatable, Sendable {
@@ -802,6 +961,8 @@ public struct Melix_Worker_V1_MessagePart: Sendable {
   }
 
   public init() {}
+
+  fileprivate var _media: Melix_Worker_V1_MediaMetadata? = nil
 }
 
 public struct Melix_Worker_V1_ChatMessage: Sendable {
@@ -999,15 +1160,23 @@ public struct Melix_Worker_V1_BlockRef: Sendable {
 fileprivate let _protobuf_package = "melix.worker.v1"
 
 extension Melix_Worker_V1_ModelCapabilityClass: SwiftProtobuf._ProtoNameProviding {
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0MODEL_CAPABILITY_CLASS_UNSPECIFIED\0\u{1}MODEL_CAPABILITY_TEXT\0\u{1}MODEL_CAPABILITY_EMBEDDING\0\u{1}MODEL_CAPABILITY_RERANK\0\u{1}MODEL_CAPABILITY_MODEL_OPERATIONS\0\u{1}MODEL_CAPABILITY_MULTIMODAL\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0MODEL_CAPABILITY_CLASS_UNSPECIFIED\0\u{1}MODEL_CAPABILITY_TEXT\0\u{1}MODEL_CAPABILITY_EMBEDDING\0\u{1}MODEL_CAPABILITY_RERANK\0\u{1}MODEL_CAPABILITY_MODEL_OPERATIONS\0\u{1}MODEL_CAPABILITY_MULTIMODAL\0\u{1}MODEL_CAPABILITY_OCR\0\u{1}MODEL_CAPABILITY_VLM\0\u{1}MODEL_CAPABILITY_TRANSCRIPTION\0\u{1}MODEL_CAPABILITY_SPEECH\0")
 }
 
 extension Melix_Worker_V1_WorkerRouteClass: SwiftProtobuf._ProtoNameProviding {
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0WORKER_ROUTE_CLASS_UNSPECIFIED\0\u{1}WORKER_ROUTE_SWIFT_TEXT\0\u{1}WORKER_ROUTE_PYTHON_TEXT_COMPATIBILITY\0\u{1}WORKER_ROUTE_PYTHON_EMBEDDING\0\u{1}WORKER_ROUTE_PYTHON_RERANK\0\u{1}WORKER_ROUTE_PYTHON_MODEL_OPERATIONS\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0WORKER_ROUTE_CLASS_UNSPECIFIED\0\u{1}WORKER_ROUTE_SWIFT_TEXT\0\u{1}WORKER_ROUTE_PYTHON_TEXT_COMPATIBILITY\0\u{1}WORKER_ROUTE_PYTHON_EMBEDDING\0\u{1}WORKER_ROUTE_PYTHON_RERANK\0\u{1}WORKER_ROUTE_PYTHON_MODEL_OPERATIONS\0\u{1}WORKER_ROUTE_PYTHON_OCR\0\u{1}WORKER_ROUTE_PYTHON_VLM\0\u{1}WORKER_ROUTE_PYTHON_TRANSCRIPTION\0\u{1}WORKER_ROUTE_PYTHON_SPEECH\0")
 }
 
 extension Melix_Worker_V1_MemoryResidencyPolicy: SwiftProtobuf._ProtoNameProviding {
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0MEMORY_RESIDENCY_POLICY_UNSPECIFIED\0\u{1}MEMORY_RESIDENCY_EVICTABLE\0\u{1}MEMORY_RESIDENCY_PINNED\0\u{1}MEMORY_RESIDENCY_TTL\0")
+}
+
+extension Melix_Worker_V1_MediaType: SwiftProtobuf._ProtoNameProviding {
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0MEDIA_TYPE_UNSPECIFIED\0\u{1}MEDIA_TYPE_TEXT\0\u{1}MEDIA_TYPE_IMAGE\0\u{1}MEDIA_TYPE_AUDIO\0")
+}
+
+extension Melix_Worker_V1_MediaSourceKind: SwiftProtobuf._ProtoNameProviding {
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0MEDIA_SOURCE_KIND_UNSPECIFIED\0\u{1}MEDIA_SOURCE_URI\0\u{1}MEDIA_SOURCE_INLINE_BYTES\0")
 }
 
 extension Melix_Worker_V1_AdmissionState: SwiftProtobuf._ProtoNameProviding {
@@ -1232,51 +1401,95 @@ extension Melix_Worker_V1_RuntimeCapabilities: SwiftProtobuf.Message, SwiftProto
   public static let protoMessageName: String = _protobuf_package + ".RuntimeCapabilities"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}cache\0\u{1}execution\0\u{1}parsing\0\u{1}multimodal\0\u{1}ext\0")
 
+  fileprivate class _StorageClass {
+    var _cache: Melix_Worker_V1_CacheCapabilities? = nil
+    var _execution: Melix_Worker_V1_ExecutionCapabilities? = nil
+    var _parsing: Melix_Worker_V1_ParserCapabilities? = nil
+    var _multimodal: Melix_Worker_V1_MultimodalCapabilities? = nil
+    var _ext: [Melix_Worker_V1_Capability] = []
+
+      // This property is used as the initial default value for new instances of the type.
+      // The type itself is protecting the reference to its storage via CoW semantics.
+      // This will force a copy to be made of this reference when the first mutation occurs;
+      // hence, it is safe to mark this as `nonisolated(unsafe)`.
+      static nonisolated(unsafe) let defaultInstance = _StorageClass()
+
+    private init() {}
+
+    init(copying source: _StorageClass) {
+      _cache = source._cache
+      _execution = source._execution
+      _parsing = source._parsing
+      _multimodal = source._multimodal
+      _ext = source._ext
+    }
+  }
+
+  fileprivate mutating func _uniqueStorage() -> _StorageClass {
+    if !isKnownUniquelyReferenced(&_storage) {
+      _storage = _StorageClass(copying: _storage)
+    }
+    return _storage
+  }
+
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
-    while let fieldNumber = try decoder.nextFieldNumber() {
-      // The use of inline closures is to circumvent an issue where the compiler
-      // allocates stack space for every case branch when no optimizations are
-      // enabled. https://github.com/apple/swift-protobuf/issues/1034
-      switch fieldNumber {
-      case 1: try { try decoder.decodeSingularMessageField(value: &self._cache) }()
-      case 2: try { try decoder.decodeSingularMessageField(value: &self._execution) }()
-      case 3: try { try decoder.decodeSingularMessageField(value: &self._parsing) }()
-      case 4: try { try decoder.decodeSingularMessageField(value: &self._multimodal) }()
-      case 5: try { try decoder.decodeRepeatedMessageField(value: &self.ext) }()
-      default: break
+    _ = _uniqueStorage()
+    try withExtendedLifetime(_storage) { (_storage: _StorageClass) in
+      while let fieldNumber = try decoder.nextFieldNumber() {
+        // The use of inline closures is to circumvent an issue where the compiler
+        // allocates stack space for every case branch when no optimizations are
+        // enabled. https://github.com/apple/swift-protobuf/issues/1034
+        switch fieldNumber {
+        case 1: try { try decoder.decodeSingularMessageField(value: &_storage._cache) }()
+        case 2: try { try decoder.decodeSingularMessageField(value: &_storage._execution) }()
+        case 3: try { try decoder.decodeSingularMessageField(value: &_storage._parsing) }()
+        case 4: try { try decoder.decodeSingularMessageField(value: &_storage._multimodal) }()
+        case 5: try { try decoder.decodeRepeatedMessageField(value: &_storage._ext) }()
+        default: break
+        }
       }
     }
   }
 
   public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
-    // The use of inline closures is to circumvent an issue where the compiler
-    // allocates stack space for every if/case branch local when no optimizations
-    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
-    // https://github.com/apple/swift-protobuf/issues/1182
-    try { if let v = self._cache {
-      try visitor.visitSingularMessageField(value: v, fieldNumber: 1)
-    } }()
-    try { if let v = self._execution {
-      try visitor.visitSingularMessageField(value: v, fieldNumber: 2)
-    } }()
-    try { if let v = self._parsing {
-      try visitor.visitSingularMessageField(value: v, fieldNumber: 3)
-    } }()
-    try { if let v = self._multimodal {
-      try visitor.visitSingularMessageField(value: v, fieldNumber: 4)
-    } }()
-    if !self.ext.isEmpty {
-      try visitor.visitRepeatedMessageField(value: self.ext, fieldNumber: 5)
+    try withExtendedLifetime(_storage) { (_storage: _StorageClass) in
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every if/case branch local when no optimizations
+      // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+      // https://github.com/apple/swift-protobuf/issues/1182
+      try { if let v = _storage._cache {
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 1)
+      } }()
+      try { if let v = _storage._execution {
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 2)
+      } }()
+      try { if let v = _storage._parsing {
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 3)
+      } }()
+      try { if let v = _storage._multimodal {
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 4)
+      } }()
+      if !_storage._ext.isEmpty {
+        try visitor.visitRepeatedMessageField(value: _storage._ext, fieldNumber: 5)
+      }
     }
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: Melix_Worker_V1_RuntimeCapabilities, rhs: Melix_Worker_V1_RuntimeCapabilities) -> Bool {
-    if lhs._cache != rhs._cache {return false}
-    if lhs._execution != rhs._execution {return false}
-    if lhs._parsing != rhs._parsing {return false}
-    if lhs._multimodal != rhs._multimodal {return false}
-    if lhs.ext != rhs.ext {return false}
+    if lhs._storage !== rhs._storage {
+      let storagesAreEqual: Bool = withExtendedLifetime((lhs._storage, rhs._storage)) { (_args: (_StorageClass, _StorageClass)) in
+        let _storage = _args.0
+        let rhs_storage = _args.1
+        if _storage._cache != rhs_storage._cache {return false}
+        if _storage._execution != rhs_storage._execution {return false}
+        if _storage._parsing != rhs_storage._parsing {return false}
+        if _storage._multimodal != rhs_storage._multimodal {return false}
+        if _storage._ext != rhs_storage._ext {return false}
+        return true
+      }
+      if !storagesAreEqual {return false}
+    }
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -1412,9 +1625,84 @@ extension Melix_Worker_V1_ParserCapabilities: SwiftProtobuf.Message, SwiftProtob
   }
 }
 
+extension Melix_Worker_V1_MediaMetadata: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".MediaMetadata"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}media_type\0\u{3}source_kind\0\u{3}mime_type\0\u{1}format\0\u{1}filename\0\u{3}byte_length\0\u{3}duration_ms\0\u{1}width\0\u{1}height\0\u{3}preprocessing_hints\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularEnumField(value: &self.mediaType) }()
+      case 2: try { try decoder.decodeSingularEnumField(value: &self.sourceKind) }()
+      case 3: try { try decoder.decodeSingularStringField(value: &self.mimeType) }()
+      case 4: try { try decoder.decodeSingularStringField(value: &self.format) }()
+      case 5: try { try decoder.decodeSingularStringField(value: &self.filename) }()
+      case 6: try { try decoder.decodeSingularUInt64Field(value: &self.byteLength) }()
+      case 7: try { try decoder.decodeSingularUInt32Field(value: &self.durationMs) }()
+      case 8: try { try decoder.decodeSingularUInt32Field(value: &self.width) }()
+      case 9: try { try decoder.decodeSingularUInt32Field(value: &self.height) }()
+      case 10: try { try decoder.decodeMapField(fieldType: SwiftProtobuf._ProtobufMap<SwiftProtobuf.ProtobufString,SwiftProtobuf.ProtobufString>.self, value: &self.preprocessingHints) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if self.mediaType != .unspecified {
+      try visitor.visitSingularEnumField(value: self.mediaType, fieldNumber: 1)
+    }
+    if self.sourceKind != .unspecified {
+      try visitor.visitSingularEnumField(value: self.sourceKind, fieldNumber: 2)
+    }
+    if !self.mimeType.isEmpty {
+      try visitor.visitSingularStringField(value: self.mimeType, fieldNumber: 3)
+    }
+    if !self.format.isEmpty {
+      try visitor.visitSingularStringField(value: self.format, fieldNumber: 4)
+    }
+    if !self.filename.isEmpty {
+      try visitor.visitSingularStringField(value: self.filename, fieldNumber: 5)
+    }
+    if self.byteLength != 0 {
+      try visitor.visitSingularUInt64Field(value: self.byteLength, fieldNumber: 6)
+    }
+    if self.durationMs != 0 {
+      try visitor.visitSingularUInt32Field(value: self.durationMs, fieldNumber: 7)
+    }
+    if self.width != 0 {
+      try visitor.visitSingularUInt32Field(value: self.width, fieldNumber: 8)
+    }
+    if self.height != 0 {
+      try visitor.visitSingularUInt32Field(value: self.height, fieldNumber: 9)
+    }
+    if !self.preprocessingHints.isEmpty {
+      try visitor.visitMapField(fieldType: SwiftProtobuf._ProtobufMap<SwiftProtobuf.ProtobufString,SwiftProtobuf.ProtobufString>.self, value: self.preprocessingHints, fieldNumber: 10)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Melix_Worker_V1_MediaMetadata, rhs: Melix_Worker_V1_MediaMetadata) -> Bool {
+    if lhs.mediaType != rhs.mediaType {return false}
+    if lhs.sourceKind != rhs.sourceKind {return false}
+    if lhs.mimeType != rhs.mimeType {return false}
+    if lhs.format != rhs.format {return false}
+    if lhs.filename != rhs.filename {return false}
+    if lhs.byteLength != rhs.byteLength {return false}
+    if lhs.durationMs != rhs.durationMs {return false}
+    if lhs.width != rhs.width {return false}
+    if lhs.height != rhs.height {return false}
+    if lhs.preprocessingHints != rhs.preprocessingHints {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
 extension Melix_Worker_V1_MultimodalCapabilities: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".MultimodalCapabilities"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}supports_vision\0\u{3}supports_audio\0\u{3}supports_image_generation\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}supports_vision\0\u{3}supports_audio\0\u{3}supports_image_generation\0\u{3}supports_ocr\0\u{3}supports_vlm\0\u{3}supports_transcription\0\u{3}supports_speech\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -1425,6 +1713,10 @@ extension Melix_Worker_V1_MultimodalCapabilities: SwiftProtobuf.Message, SwiftPr
       case 1: try { try decoder.decodeSingularBoolField(value: &self.supportsVision) }()
       case 2: try { try decoder.decodeSingularBoolField(value: &self.supportsAudio) }()
       case 3: try { try decoder.decodeSingularBoolField(value: &self.supportsImageGeneration) }()
+      case 4: try { try decoder.decodeSingularBoolField(value: &self.supportsOcr) }()
+      case 5: try { try decoder.decodeSingularBoolField(value: &self.supportsVlm) }()
+      case 6: try { try decoder.decodeSingularBoolField(value: &self.supportsTranscription) }()
+      case 7: try { try decoder.decodeSingularBoolField(value: &self.supportsSpeech) }()
       default: break
       }
     }
@@ -1440,6 +1732,18 @@ extension Melix_Worker_V1_MultimodalCapabilities: SwiftProtobuf.Message, SwiftPr
     if self.supportsImageGeneration != false {
       try visitor.visitSingularBoolField(value: self.supportsImageGeneration, fieldNumber: 3)
     }
+    if self.supportsOcr != false {
+      try visitor.visitSingularBoolField(value: self.supportsOcr, fieldNumber: 4)
+    }
+    if self.supportsVlm != false {
+      try visitor.visitSingularBoolField(value: self.supportsVlm, fieldNumber: 5)
+    }
+    if self.supportsTranscription != false {
+      try visitor.visitSingularBoolField(value: self.supportsTranscription, fieldNumber: 6)
+    }
+    if self.supportsSpeech != false {
+      try visitor.visitSingularBoolField(value: self.supportsSpeech, fieldNumber: 7)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -1447,6 +1751,10 @@ extension Melix_Worker_V1_MultimodalCapabilities: SwiftProtobuf.Message, SwiftPr
     if lhs.supportsVision != rhs.supportsVision {return false}
     if lhs.supportsAudio != rhs.supportsAudio {return false}
     if lhs.supportsImageGeneration != rhs.supportsImageGeneration {return false}
+    if lhs.supportsOcr != rhs.supportsOcr {return false}
+    if lhs.supportsVlm != rhs.supportsVlm {return false}
+    if lhs.supportsTranscription != rhs.supportsTranscription {return false}
+    if lhs.supportsSpeech != rhs.supportsSpeech {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -1918,7 +2226,7 @@ extension Melix_Worker_V1_ToolConfig: SwiftProtobuf.Message, SwiftProtobuf._Mess
 
 extension Melix_Worker_V1_MessagePart: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".MessagePart"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}text\0\u{3}image_uri\0\u{3}image_bytes\0\u{3}audio_uri\0\u{3}audio_bytes\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}text\0\u{3}image_uri\0\u{3}image_bytes\0\u{3}audio_uri\0\u{3}audio_bytes\0\u{1}media\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -1966,6 +2274,7 @@ extension Melix_Worker_V1_MessagePart: SwiftProtobuf.Message, SwiftProtobuf._Mes
           self.part = .audioBytes(v)
         }
       }()
+      case 6: try { try decoder.decodeSingularMessageField(value: &self._media) }()
       default: break
       }
     }
@@ -1999,11 +2308,15 @@ extension Melix_Worker_V1_MessagePart: SwiftProtobuf.Message, SwiftProtobuf._Mes
     }()
     case nil: break
     }
+    try { if let v = self._media {
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 6)
+    } }()
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: Melix_Worker_V1_MessagePart, rhs: Melix_Worker_V1_MessagePart) -> Bool {
     if lhs.part != rhs.part {return false}
+    if lhs._media != rhs._media {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

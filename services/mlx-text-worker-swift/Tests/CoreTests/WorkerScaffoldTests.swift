@@ -1205,6 +1205,18 @@ final class WorkerScaffoldTests: XCTestCase {
             )
         }
 
+        let speakResponse = try await withServerContextRPCCancellationHandle { handle in
+            try await services.inference.speak(
+                request: Melix_Worker_V1_SpeakRequest(),
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_InferenceService.Method.Speak.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
         let imageGenerateResponse = try await withServerContextRPCCancellationHandle { handle in
             try await services.inference.imageGenerate(
                 request: Melix_Worker_V1_ImageGenerateRequest(),
@@ -1232,6 +1244,7 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(embedResponse.error.code, "unimplemented")
         XCTAssertEqual(rerankResponse.error.code, "unimplemented")
         XCTAssertEqual(transcribeResponse.error.code, "unimplemented")
+        XCTAssertEqual(speakResponse.error.code, "unimplemented")
         XCTAssertEqual(imageGenerateResponse.error.code, "unimplemented")
         XCTAssertEqual(imageEditResponse.error.code, "unimplemented")
     }

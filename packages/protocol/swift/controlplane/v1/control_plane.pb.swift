@@ -203,6 +203,10 @@ public enum Melix_Controlplane_V1_ModelCapabilityClass: SwiftProtobuf.Enum, Swif
   case modelCapabilityRerank // = 3
   case modelCapabilityModelOperations // = 4
   case modelCapabilityMultimodal // = 5
+  case modelCapabilityOcr // = 6
+  case modelCapabilityVlm // = 7
+  case modelCapabilityTranscription // = 8
+  case modelCapabilitySpeech // = 9
   case UNRECOGNIZED(Int)
 
   public init() {
@@ -217,6 +221,10 @@ public enum Melix_Controlplane_V1_ModelCapabilityClass: SwiftProtobuf.Enum, Swif
     case 3: self = .modelCapabilityRerank
     case 4: self = .modelCapabilityModelOperations
     case 5: self = .modelCapabilityMultimodal
+    case 6: self = .modelCapabilityOcr
+    case 7: self = .modelCapabilityVlm
+    case 8: self = .modelCapabilityTranscription
+    case 9: self = .modelCapabilitySpeech
     default: self = .UNRECOGNIZED(rawValue)
     }
   }
@@ -229,6 +237,10 @@ public enum Melix_Controlplane_V1_ModelCapabilityClass: SwiftProtobuf.Enum, Swif
     case .modelCapabilityRerank: return 3
     case .modelCapabilityModelOperations: return 4
     case .modelCapabilityMultimodal: return 5
+    case .modelCapabilityOcr: return 6
+    case .modelCapabilityVlm: return 7
+    case .modelCapabilityTranscription: return 8
+    case .modelCapabilitySpeech: return 9
     case .UNRECOGNIZED(let i): return i
     }
   }
@@ -241,6 +253,10 @@ public enum Melix_Controlplane_V1_ModelCapabilityClass: SwiftProtobuf.Enum, Swif
     .modelCapabilityRerank,
     .modelCapabilityModelOperations,
     .modelCapabilityMultimodal,
+    .modelCapabilityOcr,
+    .modelCapabilityVlm,
+    .modelCapabilityTranscription,
+    .modelCapabilitySpeech,
   ]
 
 }
@@ -253,6 +269,10 @@ public enum Melix_Controlplane_V1_WorkerRouteClass: SwiftProtobuf.Enum, Swift.Ca
   case workerRoutePythonEmbedding // = 3
   case workerRoutePythonRerank // = 4
   case workerRoutePythonModelOperations // = 5
+  case workerRoutePythonOcr // = 6
+  case workerRoutePythonVlm // = 7
+  case workerRoutePythonTranscription // = 8
+  case workerRoutePythonSpeech // = 9
   case UNRECOGNIZED(Int)
 
   public init() {
@@ -267,6 +287,10 @@ public enum Melix_Controlplane_V1_WorkerRouteClass: SwiftProtobuf.Enum, Swift.Ca
     case 3: self = .workerRoutePythonEmbedding
     case 4: self = .workerRoutePythonRerank
     case 5: self = .workerRoutePythonModelOperations
+    case 6: self = .workerRoutePythonOcr
+    case 7: self = .workerRoutePythonVlm
+    case 8: self = .workerRoutePythonTranscription
+    case 9: self = .workerRoutePythonSpeech
     default: self = .UNRECOGNIZED(rawValue)
     }
   }
@@ -279,6 +303,10 @@ public enum Melix_Controlplane_V1_WorkerRouteClass: SwiftProtobuf.Enum, Swift.Ca
     case .workerRoutePythonEmbedding: return 3
     case .workerRoutePythonRerank: return 4
     case .workerRoutePythonModelOperations: return 5
+    case .workerRoutePythonOcr: return 6
+    case .workerRoutePythonVlm: return 7
+    case .workerRoutePythonTranscription: return 8
+    case .workerRoutePythonSpeech: return 9
     case .UNRECOGNIZED(let i): return i
     }
   }
@@ -291,6 +319,10 @@ public enum Melix_Controlplane_V1_WorkerRouteClass: SwiftProtobuf.Enum, Swift.Ca
     .workerRoutePythonEmbedding,
     .workerRoutePythonRerank,
     .workerRoutePythonModelOperations,
+    .workerRoutePythonOcr,
+    .workerRoutePythonVlm,
+    .workerRoutePythonTranscription,
+    .workerRoutePythonSpeech,
   ]
 
 }
@@ -2216,6 +2248,16 @@ public struct Melix_Controlplane_V1_ModelSummary: @unchecked Sendable {
   /// Clears the value of `settings`. Subsequent reads from it will return its default value.
   public mutating func clearSettings() {_uniqueStorage()._settings = nil}
 
+  public var supportedModalities: [String] {
+    get {_storage._supportedModalities}
+    set {_uniqueStorage()._supportedModalities = newValue}
+  }
+
+  public var supportedTasks: [String] {
+    get {_storage._supportedTasks}
+    set {_uniqueStorage()._supportedTasks = newValue}
+  }
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -2237,6 +2279,8 @@ public struct Melix_Controlplane_V1_ModelInfo: Sendable {
   public var supportedParsers: [String] = []
 
   public var supportedModalities: [String] = []
+
+  public var supportedTasks: [String] = []
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -2948,11 +2992,11 @@ extension Melix_Controlplane_V1_ModelState: SwiftProtobuf._ProtoNameProviding {
 }
 
 extension Melix_Controlplane_V1_ModelCapabilityClass: SwiftProtobuf._ProtoNameProviding {
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0MODEL_CAPABILITY_CLASS_UNSPECIFIED\0\u{1}MODEL_CAPABILITY_TEXT\0\u{1}MODEL_CAPABILITY_EMBEDDING\0\u{1}MODEL_CAPABILITY_RERANK\0\u{1}MODEL_CAPABILITY_MODEL_OPERATIONS\0\u{1}MODEL_CAPABILITY_MULTIMODAL\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0MODEL_CAPABILITY_CLASS_UNSPECIFIED\0\u{1}MODEL_CAPABILITY_TEXT\0\u{1}MODEL_CAPABILITY_EMBEDDING\0\u{1}MODEL_CAPABILITY_RERANK\0\u{1}MODEL_CAPABILITY_MODEL_OPERATIONS\0\u{1}MODEL_CAPABILITY_MULTIMODAL\0\u{1}MODEL_CAPABILITY_OCR\0\u{1}MODEL_CAPABILITY_VLM\0\u{1}MODEL_CAPABILITY_TRANSCRIPTION\0\u{1}MODEL_CAPABILITY_SPEECH\0")
 }
 
 extension Melix_Controlplane_V1_WorkerRouteClass: SwiftProtobuf._ProtoNameProviding {
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0WORKER_ROUTE_CLASS_UNSPECIFIED\0\u{1}WORKER_ROUTE_SWIFT_TEXT\0\u{1}WORKER_ROUTE_PYTHON_TEXT_COMPATIBILITY\0\u{1}WORKER_ROUTE_PYTHON_EMBEDDING\0\u{1}WORKER_ROUTE_PYTHON_RERANK\0\u{1}WORKER_ROUTE_PYTHON_MODEL_OPERATIONS\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0WORKER_ROUTE_CLASS_UNSPECIFIED\0\u{1}WORKER_ROUTE_SWIFT_TEXT\0\u{1}WORKER_ROUTE_PYTHON_TEXT_COMPATIBILITY\0\u{1}WORKER_ROUTE_PYTHON_EMBEDDING\0\u{1}WORKER_ROUTE_PYTHON_RERANK\0\u{1}WORKER_ROUTE_PYTHON_MODEL_OPERATIONS\0\u{1}WORKER_ROUTE_PYTHON_OCR\0\u{1}WORKER_ROUTE_PYTHON_VLM\0\u{1}WORKER_ROUTE_PYTHON_TRANSCRIPTION\0\u{1}WORKER_ROUTE_PYTHON_SPEECH\0")
 }
 
 extension Melix_Controlplane_V1_MemoryResidencyPolicy: SwiftProtobuf._ProtoNameProviding {
@@ -6220,7 +6264,7 @@ extension Melix_Controlplane_V1_WorkerSummary: SwiftProtobuf.Message, SwiftProto
 
 extension Melix_Controlplane_V1_ModelSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ModelSummary"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}model_id\0\u{1}kind\0\u{1}state\0\u{1}pinned\0\u{3}inflight_requests\0\u{3}estimated_bytes\0\u{3}quant_profile_id\0\u{3}max_context\0\u{1}features\0\u{3}capability_class\0\u{3}route_class\0\u{1}settings\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}model_id\0\u{1}kind\0\u{1}state\0\u{1}pinned\0\u{3}inflight_requests\0\u{3}estimated_bytes\0\u{3}quant_profile_id\0\u{3}max_context\0\u{1}features\0\u{3}capability_class\0\u{3}route_class\0\u{1}settings\0\u{3}supported_modalities\0\u{3}supported_tasks\0")
 
   fileprivate class _StorageClass {
     var _modelID: String = String()
@@ -6235,6 +6279,8 @@ extension Melix_Controlplane_V1_ModelSummary: SwiftProtobuf.Message, SwiftProtob
     var _capabilityClass: Melix_Controlplane_V1_ModelCapabilityClass = .unspecified
     var _routeClass: Melix_Controlplane_V1_WorkerRouteClass = .unspecified
     var _settings: Melix_Controlplane_V1_ModelSettings? = nil
+    var _supportedModalities: [String] = []
+    var _supportedTasks: [String] = []
 
       // This property is used as the initial default value for new instances of the type.
       // The type itself is protecting the reference to its storage via CoW semantics.
@@ -6257,6 +6303,8 @@ extension Melix_Controlplane_V1_ModelSummary: SwiftProtobuf.Message, SwiftProtob
       _capabilityClass = source._capabilityClass
       _routeClass = source._routeClass
       _settings = source._settings
+      _supportedModalities = source._supportedModalities
+      _supportedTasks = source._supportedTasks
     }
   }
 
@@ -6287,6 +6335,8 @@ extension Melix_Controlplane_V1_ModelSummary: SwiftProtobuf.Message, SwiftProtob
         case 10: try { try decoder.decodeSingularEnumField(value: &_storage._capabilityClass) }()
         case 11: try { try decoder.decodeSingularEnumField(value: &_storage._routeClass) }()
         case 12: try { try decoder.decodeSingularMessageField(value: &_storage._settings) }()
+        case 13: try { try decoder.decodeRepeatedStringField(value: &_storage._supportedModalities) }()
+        case 14: try { try decoder.decodeRepeatedStringField(value: &_storage._supportedTasks) }()
         default: break
         }
       }
@@ -6335,6 +6385,12 @@ extension Melix_Controlplane_V1_ModelSummary: SwiftProtobuf.Message, SwiftProtob
       try { if let v = _storage._settings {
         try visitor.visitSingularMessageField(value: v, fieldNumber: 12)
       } }()
+      if !_storage._supportedModalities.isEmpty {
+        try visitor.visitRepeatedStringField(value: _storage._supportedModalities, fieldNumber: 13)
+      }
+      if !_storage._supportedTasks.isEmpty {
+        try visitor.visitRepeatedStringField(value: _storage._supportedTasks, fieldNumber: 14)
+      }
     }
     try unknownFields.traverse(visitor: &visitor)
   }
@@ -6356,6 +6412,8 @@ extension Melix_Controlplane_V1_ModelSummary: SwiftProtobuf.Message, SwiftProtob
         if _storage._capabilityClass != rhs_storage._capabilityClass {return false}
         if _storage._routeClass != rhs_storage._routeClass {return false}
         if _storage._settings != rhs_storage._settings {return false}
+        if _storage._supportedModalities != rhs_storage._supportedModalities {return false}
+        if _storage._supportedTasks != rhs_storage._supportedTasks {return false}
         return true
       }
       if !storagesAreEqual {return false}
@@ -6367,7 +6425,7 @@ extension Melix_Controlplane_V1_ModelSummary: SwiftProtobuf.Message, SwiftProtob
 
 extension Melix_Controlplane_V1_ModelInfo: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ModelInfo"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}ok\0\u{3}model_kind\0\u{3}max_context\0\u{3}supported_parsers\0\u{3}supported_modalities\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}ok\0\u{3}model_kind\0\u{3}max_context\0\u{3}supported_parsers\0\u{3}supported_modalities\0\u{3}supported_tasks\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -6380,6 +6438,7 @@ extension Melix_Controlplane_V1_ModelInfo: SwiftProtobuf.Message, SwiftProtobuf.
       case 3: try { try decoder.decodeSingularUInt32Field(value: &self.maxContext) }()
       case 4: try { try decoder.decodeRepeatedStringField(value: &self.supportedParsers) }()
       case 5: try { try decoder.decodeRepeatedStringField(value: &self.supportedModalities) }()
+      case 6: try { try decoder.decodeRepeatedStringField(value: &self.supportedTasks) }()
       default: break
       }
     }
@@ -6401,6 +6460,9 @@ extension Melix_Controlplane_V1_ModelInfo: SwiftProtobuf.Message, SwiftProtobuf.
     if !self.supportedModalities.isEmpty {
       try visitor.visitRepeatedStringField(value: self.supportedModalities, fieldNumber: 5)
     }
+    if !self.supportedTasks.isEmpty {
+      try visitor.visitRepeatedStringField(value: self.supportedTasks, fieldNumber: 6)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -6410,6 +6472,7 @@ extension Melix_Controlplane_V1_ModelInfo: SwiftProtobuf.Message, SwiftProtobuf.
     if lhs.maxContext != rhs.maxContext {return false}
     if lhs.supportedParsers != rhs.supportedParsers {return false}
     if lhs.supportedModalities != rhs.supportedModalities {return false}
+    if lhs.supportedTasks != rhs.supportedTasks {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

@@ -133,12 +133,81 @@ public actor ModelCatalog {
         return model
     }
 
+    public static func devOCRModel() -> Melix_Controlplane_V1_ModelSummary {
+        var model = Melix_Controlplane_V1_ModelSummary()
+        model.modelID = "melix-dev-ocr"
+        model.kind = "ocr"
+        model.state = .modelDiscovered
+        model.capabilityClass = .modelCapabilityOcr
+        model.routeClass = .workerRoutePythonOcr
+        model.features = ["ocr", "vision"]
+        model.supportedModalities = ["image"]
+        model.supportedTasks = ["ocr"]
+        model.settings.alias = "Melix Dev OCR"
+        model.settings.memoryPolicy = .memoryResidencyEvictable
+        return model
+    }
+
+    public static func devVLMModel() -> Melix_Controlplane_V1_ModelSummary {
+        var model = Melix_Controlplane_V1_ModelSummary()
+        model.modelID = "melix-dev-vlm"
+        model.kind = "vlm"
+        model.state = .modelDiscovered
+        model.capabilityClass = .modelCapabilityVlm
+        model.routeClass = .workerRoutePythonVlm
+        model.features = ["vision", "chat"]
+        model.supportedModalities = ["image", "text"]
+        model.supportedTasks = ["vlm"]
+        model.settings.alias = "Melix Dev VLM"
+        model.settings.memoryPolicy = .memoryResidencyEvictable
+        return model
+    }
+
+    public static func devTranscriptionModel() -> Melix_Controlplane_V1_ModelSummary {
+        var model = Melix_Controlplane_V1_ModelSummary()
+        model.modelID = "melix-dev-transcribe"
+        model.kind = "transcription"
+        model.state = .modelDiscovered
+        model.capabilityClass = .modelCapabilityTranscription
+        model.routeClass = .workerRoutePythonTranscription
+        model.features = ["audio", "transcription"]
+        model.supportedModalities = ["audio"]
+        model.supportedTasks = ["transcribe"]
+        model.settings.alias = "Melix Dev Transcription"
+        model.settings.memoryPolicy = .memoryResidencyEvictable
+        return model
+    }
+
+    public static func devSpeechModel() -> Melix_Controlplane_V1_ModelSummary {
+        var model = Melix_Controlplane_V1_ModelSummary()
+        model.modelID = "melix-dev-speech"
+        model.kind = "speech"
+        model.state = .modelDiscovered
+        model.capabilityClass = .modelCapabilitySpeech
+        model.routeClass = .workerRoutePythonSpeech
+        model.features = ["audio", "speech"]
+        model.supportedModalities = ["text", "audio"]
+        model.supportedTasks = ["speak"]
+        model.settings.alias = "Melix Dev Speech"
+        model.settings.memoryPolicy = .memoryResidencyEvictable
+        return model
+    }
+
     public static func phaseFiveSeedModels() -> [Melix_Controlplane_V1_ModelSummary] {
         [
             devTextModel(),
             devEmbeddingModel(),
             devRerankModel(),
             devModelOpsModel(),
+        ]
+    }
+
+    public static func phaseSixContractSeedModels() -> [Melix_Controlplane_V1_ModelSummary] {
+        phaseFiveSeedModels() + [
+            devOCRModel(),
+            devVLMModel(),
+            devTranscriptionModel(),
+            devSpeechModel(),
         ]
     }
 

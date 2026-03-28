@@ -13,6 +13,7 @@ service InferenceService {
   rpc Embed(EmbedRequest) returns (EmbedResponse);
   rpc Rerank(RerankRequest) returns (RerankResponse);
   rpc Transcribe(TranscribeRequest) returns (TranscribeResponse);
+  rpc Speak(SpeakRequest) returns (SpeakResponse);
   rpc ImageGenerate(ImageGenerateRequest) returns (ImageGenerateResponse);
   rpc ImageEdit(ImageEditRequest) returns (ImageEditResponse);
 }
@@ -243,11 +244,33 @@ message TranscribeRequest {
   bytes audio_bytes = 3;
   string format = 4;
   string task = 5;
+  string audio_uri = 6;
+  MediaMetadata audio = 7;
+  string language = 8;
 }
 
 message TranscribeResponse {
   string text = 1;
   ErrorStatus error = 2;
+  string language = 3;
+  double duration_seconds = 4;
+}
+
+message SpeakRequest {
+  RequestIdentity id = 1;
+  string model_handle = 2;
+  string input = 3;
+  string voice = 4;
+  string format = 5;
+  string instructions = 6;
+  SamplingConfig sampling = 7;
+  map<string, string> ext = 8;
+}
+
+message SpeakResponse {
+  bytes audio_bytes = 1;
+  string format = 2;
+  ErrorStatus error = 3;
 }
 
 message ImageGenerateRequest {

@@ -932,33 +932,64 @@ public struct Melix_Worker_V1_RerankResponse: Sendable {
   fileprivate var _error: Melix_Worker_V1_ErrorStatus? = nil
 }
 
-public struct Melix_Worker_V1_TranscribeRequest: Sendable {
+public struct Melix_Worker_V1_TranscribeRequest: @unchecked Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
   public var id: Melix_Worker_V1_RequestIdentity {
-    get {_id ?? Melix_Worker_V1_RequestIdentity()}
-    set {_id = newValue}
+    get {_storage._id ?? Melix_Worker_V1_RequestIdentity()}
+    set {_uniqueStorage()._id = newValue}
   }
   /// Returns true if `id` has been explicitly set.
-  public var hasID: Bool {self._id != nil}
+  public var hasID: Bool {_storage._id != nil}
   /// Clears the value of `id`. Subsequent reads from it will return its default value.
-  public mutating func clearID() {self._id = nil}
+  public mutating func clearID() {_uniqueStorage()._id = nil}
 
-  public var modelHandle: String = String()
+  public var modelHandle: String {
+    get {_storage._modelHandle}
+    set {_uniqueStorage()._modelHandle = newValue}
+  }
 
-  public var audioBytes: Data = Data()
+  public var audioBytes: Data {
+    get {_storage._audioBytes}
+    set {_uniqueStorage()._audioBytes = newValue}
+  }
 
-  public var format: String = String()
+  public var format: String {
+    get {_storage._format}
+    set {_uniqueStorage()._format = newValue}
+  }
 
-  public var task: String = String()
+  public var task: String {
+    get {_storage._task}
+    set {_uniqueStorage()._task = newValue}
+  }
+
+  public var audioUri: String {
+    get {_storage._audioUri}
+    set {_uniqueStorage()._audioUri = newValue}
+  }
+
+  public var audio: Melix_Worker_V1_MediaMetadata {
+    get {_storage._audio ?? Melix_Worker_V1_MediaMetadata()}
+    set {_uniqueStorage()._audio = newValue}
+  }
+  /// Returns true if `audio` has been explicitly set.
+  public var hasAudio: Bool {_storage._audio != nil}
+  /// Clears the value of `audio`. Subsequent reads from it will return its default value.
+  public mutating func clearAudio() {_uniqueStorage()._audio = nil}
+
+  public var language: String {
+    get {_storage._language}
+    set {_uniqueStorage()._language = newValue}
+  }
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
 
-  fileprivate var _id: Melix_Worker_V1_RequestIdentity? = nil
+  fileprivate var _storage = _StorageClass.defaultInstance
 }
 
 public struct Melix_Worker_V1_TranscribeResponse: Sendable {
@@ -967,6 +998,95 @@ public struct Melix_Worker_V1_TranscribeResponse: Sendable {
   // methods supported on all messages.
 
   public var text: String = String()
+
+  public var error: Melix_Worker_V1_ErrorStatus {
+    get {_error ?? Melix_Worker_V1_ErrorStatus()}
+    set {_error = newValue}
+  }
+  /// Returns true if `error` has been explicitly set.
+  public var hasError: Bool {self._error != nil}
+  /// Clears the value of `error`. Subsequent reads from it will return its default value.
+  public mutating func clearError() {self._error = nil}
+
+  public var language: String = String()
+
+  public var durationSeconds: Double = 0
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+
+  fileprivate var _error: Melix_Worker_V1_ErrorStatus? = nil
+}
+
+public struct Melix_Worker_V1_SpeakRequest: @unchecked Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var id: Melix_Worker_V1_RequestIdentity {
+    get {_storage._id ?? Melix_Worker_V1_RequestIdentity()}
+    set {_uniqueStorage()._id = newValue}
+  }
+  /// Returns true if `id` has been explicitly set.
+  public var hasID: Bool {_storage._id != nil}
+  /// Clears the value of `id`. Subsequent reads from it will return its default value.
+  public mutating func clearID() {_uniqueStorage()._id = nil}
+
+  public var modelHandle: String {
+    get {_storage._modelHandle}
+    set {_uniqueStorage()._modelHandle = newValue}
+  }
+
+  public var input: String {
+    get {_storage._input}
+    set {_uniqueStorage()._input = newValue}
+  }
+
+  public var voice: String {
+    get {_storage._voice}
+    set {_uniqueStorage()._voice = newValue}
+  }
+
+  public var format: String {
+    get {_storage._format}
+    set {_uniqueStorage()._format = newValue}
+  }
+
+  public var instructions: String {
+    get {_storage._instructions}
+    set {_uniqueStorage()._instructions = newValue}
+  }
+
+  public var sampling: Melix_Worker_V1_SamplingConfig {
+    get {_storage._sampling ?? Melix_Worker_V1_SamplingConfig()}
+    set {_uniqueStorage()._sampling = newValue}
+  }
+  /// Returns true if `sampling` has been explicitly set.
+  public var hasSampling: Bool {_storage._sampling != nil}
+  /// Clears the value of `sampling`. Subsequent reads from it will return its default value.
+  public mutating func clearSampling() {_uniqueStorage()._sampling = nil}
+
+  public var ext: Dictionary<String,String> {
+    get {_storage._ext}
+    set {_uniqueStorage()._ext = newValue}
+  }
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+
+  fileprivate var _storage = _StorageClass.defaultInstance
+}
+
+public struct Melix_Worker_V1_SpeakResponse: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var audioBytes: Data = Data()
+
+  public var format: String = String()
 
   public var error: Melix_Worker_V1_ErrorStatus {
     get {_error ?? Melix_Worker_V1_ErrorStatus()}
@@ -2886,53 +3006,118 @@ extension Melix_Worker_V1_RerankResponse: SwiftProtobuf.Message, SwiftProtobuf._
 
 extension Melix_Worker_V1_TranscribeRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".TranscribeRequest"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}id\0\u{3}model_handle\0\u{3}audio_bytes\0\u{1}format\0\u{1}task\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}id\0\u{3}model_handle\0\u{3}audio_bytes\0\u{1}format\0\u{1}task\0\u{3}audio_uri\0\u{1}audio\0\u{1}language\0")
+
+  fileprivate class _StorageClass {
+    var _id: Melix_Worker_V1_RequestIdentity? = nil
+    var _modelHandle: String = String()
+    var _audioBytes: Data = Data()
+    var _format: String = String()
+    var _task: String = String()
+    var _audioUri: String = String()
+    var _audio: Melix_Worker_V1_MediaMetadata? = nil
+    var _language: String = String()
+
+      // This property is used as the initial default value for new instances of the type.
+      // The type itself is protecting the reference to its storage via CoW semantics.
+      // This will force a copy to be made of this reference when the first mutation occurs;
+      // hence, it is safe to mark this as `nonisolated(unsafe)`.
+      static nonisolated(unsafe) let defaultInstance = _StorageClass()
+
+    private init() {}
+
+    init(copying source: _StorageClass) {
+      _id = source._id
+      _modelHandle = source._modelHandle
+      _audioBytes = source._audioBytes
+      _format = source._format
+      _task = source._task
+      _audioUri = source._audioUri
+      _audio = source._audio
+      _language = source._language
+    }
+  }
+
+  fileprivate mutating func _uniqueStorage() -> _StorageClass {
+    if !isKnownUniquelyReferenced(&_storage) {
+      _storage = _StorageClass(copying: _storage)
+    }
+    return _storage
+  }
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
-    while let fieldNumber = try decoder.nextFieldNumber() {
-      // The use of inline closures is to circumvent an issue where the compiler
-      // allocates stack space for every case branch when no optimizations are
-      // enabled. https://github.com/apple/swift-protobuf/issues/1034
-      switch fieldNumber {
-      case 1: try { try decoder.decodeSingularMessageField(value: &self._id) }()
-      case 2: try { try decoder.decodeSingularStringField(value: &self.modelHandle) }()
-      case 3: try { try decoder.decodeSingularBytesField(value: &self.audioBytes) }()
-      case 4: try { try decoder.decodeSingularStringField(value: &self.format) }()
-      case 5: try { try decoder.decodeSingularStringField(value: &self.task) }()
-      default: break
+    _ = _uniqueStorage()
+    try withExtendedLifetime(_storage) { (_storage: _StorageClass) in
+      while let fieldNumber = try decoder.nextFieldNumber() {
+        // The use of inline closures is to circumvent an issue where the compiler
+        // allocates stack space for every case branch when no optimizations are
+        // enabled. https://github.com/apple/swift-protobuf/issues/1034
+        switch fieldNumber {
+        case 1: try { try decoder.decodeSingularMessageField(value: &_storage._id) }()
+        case 2: try { try decoder.decodeSingularStringField(value: &_storage._modelHandle) }()
+        case 3: try { try decoder.decodeSingularBytesField(value: &_storage._audioBytes) }()
+        case 4: try { try decoder.decodeSingularStringField(value: &_storage._format) }()
+        case 5: try { try decoder.decodeSingularStringField(value: &_storage._task) }()
+        case 6: try { try decoder.decodeSingularStringField(value: &_storage._audioUri) }()
+        case 7: try { try decoder.decodeSingularMessageField(value: &_storage._audio) }()
+        case 8: try { try decoder.decodeSingularStringField(value: &_storage._language) }()
+        default: break
+        }
       }
     }
   }
 
   public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
-    // The use of inline closures is to circumvent an issue where the compiler
-    // allocates stack space for every if/case branch local when no optimizations
-    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
-    // https://github.com/apple/swift-protobuf/issues/1182
-    try { if let v = self._id {
-      try visitor.visitSingularMessageField(value: v, fieldNumber: 1)
-    } }()
-    if !self.modelHandle.isEmpty {
-      try visitor.visitSingularStringField(value: self.modelHandle, fieldNumber: 2)
-    }
-    if !self.audioBytes.isEmpty {
-      try visitor.visitSingularBytesField(value: self.audioBytes, fieldNumber: 3)
-    }
-    if !self.format.isEmpty {
-      try visitor.visitSingularStringField(value: self.format, fieldNumber: 4)
-    }
-    if !self.task.isEmpty {
-      try visitor.visitSingularStringField(value: self.task, fieldNumber: 5)
+    try withExtendedLifetime(_storage) { (_storage: _StorageClass) in
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every if/case branch local when no optimizations
+      // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+      // https://github.com/apple/swift-protobuf/issues/1182
+      try { if let v = _storage._id {
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 1)
+      } }()
+      if !_storage._modelHandle.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._modelHandle, fieldNumber: 2)
+      }
+      if !_storage._audioBytes.isEmpty {
+        try visitor.visitSingularBytesField(value: _storage._audioBytes, fieldNumber: 3)
+      }
+      if !_storage._format.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._format, fieldNumber: 4)
+      }
+      if !_storage._task.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._task, fieldNumber: 5)
+      }
+      if !_storage._audioUri.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._audioUri, fieldNumber: 6)
+      }
+      try { if let v = _storage._audio {
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 7)
+      } }()
+      if !_storage._language.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._language, fieldNumber: 8)
+      }
     }
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: Melix_Worker_V1_TranscribeRequest, rhs: Melix_Worker_V1_TranscribeRequest) -> Bool {
-    if lhs._id != rhs._id {return false}
-    if lhs.modelHandle != rhs.modelHandle {return false}
-    if lhs.audioBytes != rhs.audioBytes {return false}
-    if lhs.format != rhs.format {return false}
-    if lhs.task != rhs.task {return false}
+    if lhs._storage !== rhs._storage {
+      let storagesAreEqual: Bool = withExtendedLifetime((lhs._storage, rhs._storage)) { (_args: (_StorageClass, _StorageClass)) in
+        let _storage = _args.0
+        let rhs_storage = _args.1
+        if _storage._id != rhs_storage._id {return false}
+        if _storage._modelHandle != rhs_storage._modelHandle {return false}
+        if _storage._audioBytes != rhs_storage._audioBytes {return false}
+        if _storage._format != rhs_storage._format {return false}
+        if _storage._task != rhs_storage._task {return false}
+        if _storage._audioUri != rhs_storage._audioUri {return false}
+        if _storage._audio != rhs_storage._audio {return false}
+        if _storage._language != rhs_storage._language {return false}
+        return true
+      }
+      if !storagesAreEqual {return false}
+    }
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -2940,7 +3125,7 @@ extension Melix_Worker_V1_TranscribeRequest: SwiftProtobuf.Message, SwiftProtobu
 
 extension Melix_Worker_V1_TranscribeResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".TranscribeResponse"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}text\0\u{1}error\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}text\0\u{1}error\0\u{1}language\0\u{3}duration_seconds\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -2950,6 +3135,8 @@ extension Melix_Worker_V1_TranscribeResponse: SwiftProtobuf.Message, SwiftProtob
       switch fieldNumber {
       case 1: try { try decoder.decodeSingularStringField(value: &self.text) }()
       case 2: try { try decoder.decodeSingularMessageField(value: &self._error) }()
+      case 3: try { try decoder.decodeSingularStringField(value: &self.language) }()
+      case 4: try { try decoder.decodeSingularDoubleField(value: &self.durationSeconds) }()
       default: break
       }
     }
@@ -2966,11 +3153,182 @@ extension Melix_Worker_V1_TranscribeResponse: SwiftProtobuf.Message, SwiftProtob
     try { if let v = self._error {
       try visitor.visitSingularMessageField(value: v, fieldNumber: 2)
     } }()
+    if !self.language.isEmpty {
+      try visitor.visitSingularStringField(value: self.language, fieldNumber: 3)
+    }
+    if self.durationSeconds.bitPattern != 0 {
+      try visitor.visitSingularDoubleField(value: self.durationSeconds, fieldNumber: 4)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: Melix_Worker_V1_TranscribeResponse, rhs: Melix_Worker_V1_TranscribeResponse) -> Bool {
     if lhs.text != rhs.text {return false}
+    if lhs._error != rhs._error {return false}
+    if lhs.language != rhs.language {return false}
+    if lhs.durationSeconds != rhs.durationSeconds {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+extension Melix_Worker_V1_SpeakRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".SpeakRequest"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}id\0\u{3}model_handle\0\u{1}input\0\u{1}voice\0\u{1}format\0\u{1}instructions\0\u{1}sampling\0\u{1}ext\0")
+
+  fileprivate class _StorageClass {
+    var _id: Melix_Worker_V1_RequestIdentity? = nil
+    var _modelHandle: String = String()
+    var _input: String = String()
+    var _voice: String = String()
+    var _format: String = String()
+    var _instructions: String = String()
+    var _sampling: Melix_Worker_V1_SamplingConfig? = nil
+    var _ext: Dictionary<String,String> = [:]
+
+      // This property is used as the initial default value for new instances of the type.
+      // The type itself is protecting the reference to its storage via CoW semantics.
+      // This will force a copy to be made of this reference when the first mutation occurs;
+      // hence, it is safe to mark this as `nonisolated(unsafe)`.
+      static nonisolated(unsafe) let defaultInstance = _StorageClass()
+
+    private init() {}
+
+    init(copying source: _StorageClass) {
+      _id = source._id
+      _modelHandle = source._modelHandle
+      _input = source._input
+      _voice = source._voice
+      _format = source._format
+      _instructions = source._instructions
+      _sampling = source._sampling
+      _ext = source._ext
+    }
+  }
+
+  fileprivate mutating func _uniqueStorage() -> _StorageClass {
+    if !isKnownUniquelyReferenced(&_storage) {
+      _storage = _StorageClass(copying: _storage)
+    }
+    return _storage
+  }
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    _ = _uniqueStorage()
+    try withExtendedLifetime(_storage) { (_storage: _StorageClass) in
+      while let fieldNumber = try decoder.nextFieldNumber() {
+        // The use of inline closures is to circumvent an issue where the compiler
+        // allocates stack space for every case branch when no optimizations are
+        // enabled. https://github.com/apple/swift-protobuf/issues/1034
+        switch fieldNumber {
+        case 1: try { try decoder.decodeSingularMessageField(value: &_storage._id) }()
+        case 2: try { try decoder.decodeSingularStringField(value: &_storage._modelHandle) }()
+        case 3: try { try decoder.decodeSingularStringField(value: &_storage._input) }()
+        case 4: try { try decoder.decodeSingularStringField(value: &_storage._voice) }()
+        case 5: try { try decoder.decodeSingularStringField(value: &_storage._format) }()
+        case 6: try { try decoder.decodeSingularStringField(value: &_storage._instructions) }()
+        case 7: try { try decoder.decodeSingularMessageField(value: &_storage._sampling) }()
+        case 8: try { try decoder.decodeMapField(fieldType: SwiftProtobuf._ProtobufMap<SwiftProtobuf.ProtobufString,SwiftProtobuf.ProtobufString>.self, value: &_storage._ext) }()
+        default: break
+        }
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    try withExtendedLifetime(_storage) { (_storage: _StorageClass) in
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every if/case branch local when no optimizations
+      // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+      // https://github.com/apple/swift-protobuf/issues/1182
+      try { if let v = _storage._id {
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 1)
+      } }()
+      if !_storage._modelHandle.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._modelHandle, fieldNumber: 2)
+      }
+      if !_storage._input.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._input, fieldNumber: 3)
+      }
+      if !_storage._voice.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._voice, fieldNumber: 4)
+      }
+      if !_storage._format.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._format, fieldNumber: 5)
+      }
+      if !_storage._instructions.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._instructions, fieldNumber: 6)
+      }
+      try { if let v = _storage._sampling {
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 7)
+      } }()
+      if !_storage._ext.isEmpty {
+        try visitor.visitMapField(fieldType: SwiftProtobuf._ProtobufMap<SwiftProtobuf.ProtobufString,SwiftProtobuf.ProtobufString>.self, value: _storage._ext, fieldNumber: 8)
+      }
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Melix_Worker_V1_SpeakRequest, rhs: Melix_Worker_V1_SpeakRequest) -> Bool {
+    if lhs._storage !== rhs._storage {
+      let storagesAreEqual: Bool = withExtendedLifetime((lhs._storage, rhs._storage)) { (_args: (_StorageClass, _StorageClass)) in
+        let _storage = _args.0
+        let rhs_storage = _args.1
+        if _storage._id != rhs_storage._id {return false}
+        if _storage._modelHandle != rhs_storage._modelHandle {return false}
+        if _storage._input != rhs_storage._input {return false}
+        if _storage._voice != rhs_storage._voice {return false}
+        if _storage._format != rhs_storage._format {return false}
+        if _storage._instructions != rhs_storage._instructions {return false}
+        if _storage._sampling != rhs_storage._sampling {return false}
+        if _storage._ext != rhs_storage._ext {return false}
+        return true
+      }
+      if !storagesAreEqual {return false}
+    }
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+extension Melix_Worker_V1_SpeakResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".SpeakResponse"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}audio_bytes\0\u{1}format\0\u{1}error\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularBytesField(value: &self.audioBytes) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.format) }()
+      case 3: try { try decoder.decodeSingularMessageField(value: &self._error) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    // The use of inline closures is to circumvent an issue where the compiler
+    // allocates stack space for every if/case branch local when no optimizations
+    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+    // https://github.com/apple/swift-protobuf/issues/1182
+    if !self.audioBytes.isEmpty {
+      try visitor.visitSingularBytesField(value: self.audioBytes, fieldNumber: 1)
+    }
+    if !self.format.isEmpty {
+      try visitor.visitSingularStringField(value: self.format, fieldNumber: 2)
+    }
+    try { if let v = self._error {
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 3)
+    } }()
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Melix_Worker_V1_SpeakResponse, rhs: Melix_Worker_V1_SpeakResponse) -> Bool {
+    if lhs.audioBytes != rhs.audioBytes {return false}
+    if lhs.format != rhs.format {return false}
     if lhs._error != rhs._error {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true

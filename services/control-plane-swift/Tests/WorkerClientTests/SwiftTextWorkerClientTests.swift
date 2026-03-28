@@ -640,6 +640,13 @@ private final class TestInferenceService: Melix_Worker_V1_InferenceService.Simpl
         Melix_Worker_V1_TranscribeResponse()
     }
 
+    func speak(
+        request: Melix_Worker_V1_SpeakRequest,
+        context: ServerContext
+    ) async throws -> Melix_Worker_V1_SpeakResponse {
+        Melix_Worker_V1_SpeakResponse()
+    }
+
     func imageGenerate(
         request: Melix_Worker_V1_ImageGenerateRequest,
         context: ServerContext

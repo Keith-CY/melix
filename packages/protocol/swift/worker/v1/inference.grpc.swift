@@ -111,6 +111,19 @@ public enum Melix_Worker_V1_InferenceService: Sendable {
                 type: .unary
             )
         }
+        /// Namespace for "Speak" metadata.
+        public enum Speak: Sendable {
+            /// Request type for "Speak".
+            public typealias Input = Melix_Worker_V1_SpeakRequest
+            /// Response type for "Speak".
+            public typealias Output = Melix_Worker_V1_SpeakResponse
+            /// Descriptor for "Speak".
+            public static let descriptor = GRPCCore.MethodDescriptor(
+                service: GRPCCore.ServiceDescriptor(fullyQualifiedService: "melix.worker.v1.InferenceService"),
+                method: "Speak",
+                type: .unary
+            )
+        }
         /// Namespace for "ImageGenerate" metadata.
         public enum ImageGenerate: Sendable {
             /// Request type for "ImageGenerate".
@@ -146,6 +159,7 @@ public enum Melix_Worker_V1_InferenceService: Sendable {
             Embed.descriptor,
             Rerank.descriptor,
             Transcribe.descriptor,
+            Speak.descriptor,
             ImageGenerate.descriptor,
             ImageEdit.descriptor
         ]
@@ -270,6 +284,20 @@ extension Melix_Worker_V1_InferenceService {
             request: GRPCCore.StreamingServerRequest<Melix_Worker_V1_TranscribeRequest>,
             context: GRPCCore.ServerContext
         ) async throws -> GRPCCore.StreamingServerResponse<Melix_Worker_V1_TranscribeResponse>
+
+        /// Handle the "Speak" method.
+        ///
+        /// - Parameters:
+        ///   - request: A streaming request of `Melix_Worker_V1_SpeakRequest` messages.
+        ///   - context: Context providing information about the RPC.
+        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
+        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
+        ///     to an internal error.
+        /// - Returns: A streaming response of `Melix_Worker_V1_SpeakResponse` messages.
+        func speak(
+            request: GRPCCore.StreamingServerRequest<Melix_Worker_V1_SpeakRequest>,
+            context: GRPCCore.ServerContext
+        ) async throws -> GRPCCore.StreamingServerResponse<Melix_Worker_V1_SpeakResponse>
 
         /// Handle the "ImageGenerate" method.
         ///
@@ -406,6 +434,20 @@ extension Melix_Worker_V1_InferenceService {
             context: GRPCCore.ServerContext
         ) async throws -> GRPCCore.ServerResponse<Melix_Worker_V1_TranscribeResponse>
 
+        /// Handle the "Speak" method.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Melix_Worker_V1_SpeakRequest` message.
+        ///   - context: Context providing information about the RPC.
+        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
+        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
+        ///     to an internal error.
+        /// - Returns: A response containing a single `Melix_Worker_V1_SpeakResponse` message.
+        func speak(
+            request: GRPCCore.ServerRequest<Melix_Worker_V1_SpeakRequest>,
+            context: GRPCCore.ServerContext
+        ) async throws -> GRPCCore.ServerResponse<Melix_Worker_V1_SpeakResponse>
+
         /// Handle the "ImageGenerate" method.
         ///
         /// - Parameters:
@@ -541,6 +583,20 @@ extension Melix_Worker_V1_InferenceService {
             context: GRPCCore.ServerContext
         ) async throws -> Melix_Worker_V1_TranscribeResponse
 
+        /// Handle the "Speak" method.
+        ///
+        /// - Parameters:
+        ///   - request: A `Melix_Worker_V1_SpeakRequest` message.
+        ///   - context: Context providing information about the RPC.
+        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
+        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
+        ///     to an internal error.
+        /// - Returns: A `Melix_Worker_V1_SpeakResponse` to respond with.
+        func speak(
+            request: Melix_Worker_V1_SpeakRequest,
+            context: GRPCCore.ServerContext
+        ) async throws -> Melix_Worker_V1_SpeakResponse
+
         /// Handle the "ImageGenerate" method.
         ///
         /// - Parameters:
@@ -653,6 +709,17 @@ extension Melix_Worker_V1_InferenceService.StreamingServiceProtocol {
             }
         )
         router.registerHandler(
+            forMethod: Melix_Worker_V1_InferenceService.Method.Speak.descriptor,
+            deserializer: GRPCProtobuf.ProtobufDeserializer<Melix_Worker_V1_SpeakRequest>(),
+            serializer: GRPCProtobuf.ProtobufSerializer<Melix_Worker_V1_SpeakResponse>(),
+            handler: { request, context in
+                try await self.speak(
+                    request: request,
+                    context: context
+                )
+            }
+        )
+        router.registerHandler(
             forMethod: Melix_Worker_V1_InferenceService.Method.ImageGenerate.descriptor,
             deserializer: GRPCProtobuf.ProtobufDeserializer<Melix_Worker_V1_ImageGenerateRequest>(),
             serializer: GRPCProtobuf.ProtobufSerializer<Melix_Worker_V1_ImageGenerateResponse>(),
@@ -751,6 +818,17 @@ extension Melix_Worker_V1_InferenceService.ServiceProtocol {
         context: GRPCCore.ServerContext
     ) async throws -> GRPCCore.StreamingServerResponse<Melix_Worker_V1_TranscribeResponse> {
         let response = try await self.transcribe(
+            request: GRPCCore.ServerRequest(stream: request),
+            context: context
+        )
+        return GRPCCore.StreamingServerResponse(single: response)
+    }
+
+    public func speak(
+        request: GRPCCore.StreamingServerRequest<Melix_Worker_V1_SpeakRequest>,
+        context: GRPCCore.ServerContext
+    ) async throws -> GRPCCore.StreamingServerResponse<Melix_Worker_V1_SpeakResponse> {
+        let response = try await self.speak(
             request: GRPCCore.ServerRequest(stream: request),
             context: context
         )
@@ -875,6 +953,19 @@ extension Melix_Worker_V1_InferenceService.SimpleServiceProtocol {
     ) async throws -> GRPCCore.ServerResponse<Melix_Worker_V1_TranscribeResponse> {
         return GRPCCore.ServerResponse<Melix_Worker_V1_TranscribeResponse>(
             message: try await self.transcribe(
+                request: request.message,
+                context: context
+            ),
+            metadata: [:]
+        )
+    }
+
+    public func speak(
+        request: GRPCCore.ServerRequest<Melix_Worker_V1_SpeakRequest>,
+        context: GRPCCore.ServerContext
+    ) async throws -> GRPCCore.ServerResponse<Melix_Worker_V1_SpeakResponse> {
+        return GRPCCore.ServerResponse<Melix_Worker_V1_SpeakResponse>(
+            message: try await self.speak(
                 request: request.message,
                 context: context
             ),
@@ -1049,6 +1140,25 @@ extension Melix_Worker_V1_InferenceService {
             deserializer: some GRPCCore.MessageDeserializer<Melix_Worker_V1_TranscribeResponse>,
             options: GRPCCore.CallOptions,
             onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Melix_Worker_V1_TranscribeResponse>) async throws -> Result
+        ) async throws -> Result where Result: Sendable
+
+        /// Call the "Speak" method.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Melix_Worker_V1_SpeakRequest` message.
+        ///   - serializer: A serializer for `Melix_Worker_V1_SpeakRequest` messages.
+        ///   - deserializer: A deserializer for `Melix_Worker_V1_SpeakResponse` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response, the result of which is
+        ///       returned to the caller. Returning from the closure will cancel the RPC if it
+        ///       hasn't already finished.
+        /// - Returns: The result of `handleResponse`.
+        func speak<Result>(
+            request: GRPCCore.ClientRequest<Melix_Worker_V1_SpeakRequest>,
+            serializer: some GRPCCore.MessageSerializer<Melix_Worker_V1_SpeakRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Melix_Worker_V1_SpeakResponse>,
+            options: GRPCCore.CallOptions,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Melix_Worker_V1_SpeakResponse>) async throws -> Result
         ) async throws -> Result where Result: Sendable
 
         /// Call the "ImageGenerate" method.
@@ -1312,6 +1422,36 @@ extension Melix_Worker_V1_InferenceService {
             )
         }
 
+        /// Call the "Speak" method.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Melix_Worker_V1_SpeakRequest` message.
+        ///   - serializer: A serializer for `Melix_Worker_V1_SpeakRequest` messages.
+        ///   - deserializer: A deserializer for `Melix_Worker_V1_SpeakResponse` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response, the result of which is
+        ///       returned to the caller. Returning from the closure will cancel the RPC if it
+        ///       hasn't already finished.
+        /// - Returns: The result of `handleResponse`.
+        public func speak<Result>(
+            request: GRPCCore.ClientRequest<Melix_Worker_V1_SpeakRequest>,
+            serializer: some GRPCCore.MessageSerializer<Melix_Worker_V1_SpeakRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Melix_Worker_V1_SpeakResponse>,
+            options: GRPCCore.CallOptions = .defaults,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Melix_Worker_V1_SpeakResponse>) async throws -> Result = { response in
+                try response.message
+            }
+        ) async throws -> Result where Result: Sendable {
+            try await self.client.unary(
+                request: request,
+                descriptor: Melix_Worker_V1_InferenceService.Method.Speak.descriptor,
+                serializer: serializer,
+                deserializer: deserializer,
+                options: options,
+                onResponse: handleResponse
+            )
+        }
+
         /// Call the "ImageGenerate" method.
         ///
         /// - Parameters:
@@ -1543,6 +1683,31 @@ extension Melix_Worker_V1_InferenceService.ClientProtocol {
             request: request,
             serializer: GRPCProtobuf.ProtobufSerializer<Melix_Worker_V1_TranscribeRequest>(),
             deserializer: GRPCProtobuf.ProtobufDeserializer<Melix_Worker_V1_TranscribeResponse>(),
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
+    /// Call the "Speak" method.
+    ///
+    /// - Parameters:
+    ///   - request: A request containing a single `Melix_Worker_V1_SpeakRequest` message.
+    ///   - options: Options to apply to this RPC.
+    ///   - handleResponse: A closure which handles the response, the result of which is
+    ///       returned to the caller. Returning from the closure will cancel the RPC if it
+    ///       hasn't already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func speak<Result>(
+        request: GRPCCore.ClientRequest<Melix_Worker_V1_SpeakRequest>,
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Melix_Worker_V1_SpeakResponse>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        try await self.speak(
+            request: request,
+            serializer: GRPCProtobuf.ProtobufSerializer<Melix_Worker_V1_SpeakRequest>(),
+            deserializer: GRPCProtobuf.ProtobufDeserializer<Melix_Worker_V1_SpeakResponse>(),
             options: options,
             onResponse: handleResponse
         )
@@ -1795,6 +1960,35 @@ extension Melix_Worker_V1_InferenceService.ClientProtocol {
             metadata: metadata
         )
         return try await self.transcribe(
+            request: request,
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
+    /// Call the "Speak" method.
+    ///
+    /// - Parameters:
+    ///   - message: request message to send.
+    ///   - metadata: Additional metadata to send, defaults to empty.
+    ///   - options: Options to apply to this RPC, defaults to `.defaults`.
+    ///   - handleResponse: A closure which handles the response, the result of which is
+    ///       returned to the caller. Returning from the closure will cancel the RPC if it
+    ///       hasn't already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func speak<Result>(
+        _ message: Melix_Worker_V1_SpeakRequest,
+        metadata: GRPCCore.Metadata = [:],
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Melix_Worker_V1_SpeakResponse>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        let request = GRPCCore.ClientRequest<Melix_Worker_V1_SpeakRequest>(
+            message: message,
+            metadata: metadata
+        )
+        return try await self.speak(
             request: request,
             options: options,
             onResponse: handleResponse

@@ -127,6 +127,84 @@ struct WorkerRegistryTests {
         #expect((await registry.client(forModelID: "melix-dev-rerank") as? RouteTestingWorkerClient) === rerankClient)
         #expect((await registry.client(forModelID: "melix-dev-model-ops") as? RouteTestingWorkerClient) === modelOpsClient)
     }
+
+    @Test("phase six multimodal routes resolve to typed python worker families")
+    func phaseSixMultimodalRoutesResolveToTypedPythonWorkerFamilies() async throws {
+        let catalog = ModelCatalog(seedModels: ModelCatalog.phaseSixContractSeedModels())
+        let registry = WorkerRegistry(
+            defaultTextClient: RouteTestingWorkerClient(),
+            pythonCompatibilityClient: RouteTestingWorkerClient(),
+            modelCatalog: catalog
+        )
+
+        #expect(await registry.route(forModelID: "melix-dev-ocr") == .pythonOCR)
+        #expect(await registry.route(forModelID: "melix-dev-vlm") == .pythonVLM)
+        #expect(await registry.route(forModelID: "melix-dev-transcribe") == .pythonTranscription)
+        #expect(await registry.route(forModelID: "melix-dev-speech") == .pythonSpeech)
+    }
+
+    @Test("explicit multimodal route classes override capability inference")
+    func explicitMultimodalRouteClassesOverrideCapabilityInference() async throws {
+        let registry = WorkerRegistry(
+            defaultTextClient: RouteTestingWorkerClient(),
+            pythonCompatibilityClient: RouteTestingWorkerClient()
+        )
+
+        var ocrModel = Melix_Controlplane_V1_ModelSummary()
+        ocrModel.modelID = "melix-dev-ocr"
+        ocrModel.kind = "text"
+        ocrModel.capabilityClass = .modelCapabilityText
+        ocrModel.routeClass = .workerRoutePythonOcr
+
+        var vlmModel = Melix_Controlplane_V1_ModelSummary()
+        vlmModel.modelID = "melix-dev-vlm"
+        vlmModel.kind = "text"
+        vlmModel.capabilityClass = .modelCapabilityText
+        vlmModel.routeClass = .workerRoutePythonVlm
+
+        var transcriptionModel = Melix_Controlplane_V1_ModelSummary()
+        transcriptionModel.modelID = "melix-dev-transcribe"
+        transcriptionModel.kind = "text"
+        transcriptionModel.capabilityClass = .modelCapabilityText
+        transcriptionModel.routeClass = .workerRoutePythonTranscription
+
+        var speechModel = Melix_Controlplane_V1_ModelSummary()
+        speechModel.modelID = "melix-dev-speech"
+        speechModel.kind = "text"
+        speechModel.capabilityClass = .modelCapabilityText
+        speechModel.routeClass = .workerRoutePythonSpeech
+
+        #expect(await registry.route(for: ocrModel) == .pythonOCR)
+        #expect(await registry.route(for: vlmModel) == .pythonVLM)
+        #expect(await registry.route(for: transcriptionModel) == .pythonTranscription)
+        #expect(await registry.route(for: speechModel) == .pythonSpeech)
+    }
+
+    @Test("multimodal worker families use the shared compatibility client when present")
+    func multimodalWorkerFamiliesUseTheSharedCompatibilityClientWhenPresent() async throws {
+        let defaultTextClient = RouteTestingWorkerClient()
+        let sharedPythonClient = RouteTestingWorkerClient()
+        let registry = WorkerRegistry(
+            defaultTextClient: defaultTextClient,
+            pythonCompatibilityClient: sharedPythonClient
+        )
+
+        #expect((await registry.client(for: .pythonOCR) as? RouteTestingWorkerClient) === sharedPythonClient)
+        #expect((await registry.client(for: .pythonVLM) as? RouteTestingWorkerClient) === sharedPythonClient)
+        #expect((await registry.client(for: .pythonTranscription) as? RouteTestingWorkerClient) === sharedPythonClient)
+        #expect((await registry.client(for: .pythonSpeech) as? RouteTestingWorkerClient) === sharedPythonClient)
+        #expect((await registry.client(for: .swiftText) as? RouteTestingWorkerClient) === defaultTextClient)
+    }
+
+    @Test("missing compatibility clients return nil for multimodal worker families")
+    func missingCompatibilityClientsReturnNilForMultimodalWorkerFamilies() async {
+        let registry = WorkerRegistry(defaultTextClient: RouteTestingWorkerClient())
+
+        #expect(await registry.client(for: .pythonOCR) == nil)
+        #expect(await registry.client(for: .pythonVLM) == nil)
+        #expect(await registry.client(for: .pythonTranscription) == nil)
+        #expect(await registry.client(for: .pythonSpeech) == nil)
+    }
 }
 
 private actor RouteTestingWorkerClient: WorkerRoutingClient {
