@@ -35,6 +35,8 @@ class LiveMelixStack:
         token = uuid.uuid4().hex[:10]
         self.swift_socket_path = Path("/tmp") / f"melix-swift-{token}.sock"
         self.python_socket_path = Path("/tmp") / f"melix-python-{token}.sock"
+        self.control_plane_metrics_path = Path("/tmp") / f"melix-control-plane-{token}.json"
+        self.swift_text_worker_metrics_path = Path("/tmp") / f"melix-swift-metrics-{token}.json"
         self.http_port = reserve_port()
         self.swift_backend_mode = swift_backend_mode
         self.python_backend_mode = python_backend_mode
@@ -49,6 +51,7 @@ class LiveMelixStack:
             swift_env = os.environ.copy()
             swift_env["MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH"] = os.fspath(self.swift_socket_path)
             swift_env["MELIX_SWIFT_TEXT_WORKER_BACKEND_MODE"] = self.swift_backend_mode
+            swift_env["MELIX_SWIFT_TEXT_WORKER_METRICS_PATH"] = os.fspath(self.swift_text_worker_metrics_path)
             self.swift_text_worker = subprocess.Popen(
                 [
                     "swift",
@@ -105,6 +108,7 @@ class LiveMelixStack:
         control_plane_env["MELIX_HTTP_PORT"] = str(self.http_port)
         control_plane_env["MELIX_WORKER_SOCKET_PATH"] = os.fspath(self.python_socket_path)
         control_plane_env["MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH"] = os.fspath(self.swift_socket_path)
+        control_plane_env["MELIX_CONTROL_PLANE_METRICS_PATH"] = os.fspath(self.control_plane_metrics_path)
         control_plane_env["MELIX_REPO_ROOT"] = os.fspath(self.repo_root)
 
         self.control_plane = subprocess.Popen(
@@ -136,10 +140,6 @@ class LiveMelixStack:
         self.stop_python_worker()
         self.stop_swift_text_worker()
 
-    def stop_control_plane(self) -> None:
-        self._stop_process("control plane", self.control_plane)
-        self.control_plane = None
-
     def stop_python_worker(self) -> None:
         self._stop_process("python worker", self.python_worker)
         self.python_worker = None
@@ -149,6 +149,12 @@ class LiveMelixStack:
         self._stop_process("swift text worker", self.swift_text_worker)
         self.swift_text_worker = None
         self.swift_socket_path.unlink(missing_ok=True)
+        self.swift_text_worker_metrics_path.unlink(missing_ok=True)
+
+    def stop_control_plane(self) -> None:
+        self._stop_process("control plane", self.control_plane)
+        self.control_plane = None
+        self.control_plane_metrics_path.unlink(missing_ok=True)
 
     def models_url(self) -> str:
         return f"http://127.0.0.1:{self.http_port}/v1/models"

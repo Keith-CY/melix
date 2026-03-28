@@ -3,8 +3,17 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RUNTIME_DIR="${MELIX_RUNTIME_DIR:-$ROOT/.runtime/phase1}"
+RUNTIME_DIR="$(python3 - "$RUNTIME_DIR" <<'PY'
+from pathlib import Path
+import sys
+
+print(Path(sys.argv[1]).resolve())
+PY
+)"
 PYTHON_SOCKET_PATH="${MELIX_WORKER_SOCKET_PATH:-$RUNTIME_DIR/python-worker.sock}"
 SWIFT_TEXT_WORKER_SOCKET_PATH="${MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH:-$RUNTIME_DIR/swift-text-worker.sock}"
+CONTROL_PLANE_METRICS_PATH="${MELIX_CONTROL_PLANE_METRICS_PATH:-$RUNTIME_DIR/control-plane-metrics.json}"
+SWIFT_TEXT_WORKER_METRICS_PATH="${MELIX_SWIFT_TEXT_WORKER_METRICS_PATH:-$RUNTIME_DIR/swift-text-worker-metrics.json}"
 
 stop_pid_file() {
   local pid_file="$1"
@@ -34,10 +43,15 @@ stop_pid_file "$RUNTIME_DIR/control-plane.pid"
 stop_pid_file "$RUNTIME_DIR/python-worker.pid"
 stop_pid_file "$RUNTIME_DIR/swift-text-worker.pid"
 
-rm -f "$PYTHON_SOCKET_PATH" "$SWIFT_TEXT_WORKER_SOCKET_PATH" "$RUNTIME_DIR/env.sh"
+rm -f \
+  "$PYTHON_SOCKET_PATH" \
+  "$SWIFT_TEXT_WORKER_SOCKET_PATH" \
+  "$CONTROL_PLANE_METRICS_PATH" \
+  "$SWIFT_TEXT_WORKER_METRICS_PATH" \
+  "$RUNTIME_DIR/env.sh"
 
 if [[ -d "$RUNTIME_DIR" ]]; then
   rmdir "$RUNTIME_DIR" 2>/dev/null || true
 fi
 
-echo "Melix phase-1 stack is stopped."
+echo "Melix local stack is stopped."

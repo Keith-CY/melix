@@ -208,9 +208,10 @@ struct OpenAIHandlerTests {
         #expect(payload.contains("\"code\":\"worker_unavailable\""))
     }
 
-    @Test("chat requests return 409 when another request is active")
-    func activeRequestReturns409() async throws {
+    @Test("second chat request waits in queue until the active request is cancelled")
+    func secondRequestQueuesUntilTheActiveRequestIsCancelled() async throws {
         let workerClient = BlockingOpenAIWorkerClient()
+        let requestIDs = RequestIDSequence(["req-1", "req-2"])
         let coordinator = RequestCoordinator(
             workerRegistry: WorkerRegistry(defaultTextClient: workerClient),
             abortRegistry: AbortRegistry()
@@ -219,7 +220,7 @@ struct OpenAIHandlerTests {
             modelCatalog: ModelCatalog(seedModels: [warmModel()]),
             requestCoordinator: coordinator,
             translator: ChatRequestTranslator(requestIDGenerator: {
-                UUID().uuidString
+                requestIDs.next()
             })
         )
         let body = try #require(
@@ -237,14 +238,23 @@ struct OpenAIHandlerTests {
         let first = try await handler.handle(
             HTTPRequest(method: .post, path: "/v1/chat/completions", headers: [:], body: body)
         )
-        let second = try await handler.handle(
-            HTTPRequest(method: .post, path: "/v1/chat/completions", headers: [:], body: body)
-        )
-        let payload = try await collectBody(second.body)
+        let secondTask = Task {
+            try await handler.handle(
+                HTTPRequest(method: .post, path: "/v1/chat/completions", headers: [:], body: body)
+            )
+        }
+
+        try await Task.sleep(for: .milliseconds(50))
+        #expect(await workerClient.generatedRequestIDs == ["req-1"])
+
+        #expect(try await coordinator.cancel(requestID: "req-1"))
+
+        let second = try await secondTask.value
+        #expect(await workerClient.generatedRequestIDs == ["req-1", "req-2"])
+        #expect(try await coordinator.cancel(requestID: "req-2"))
 
         #expect(first.statusCode == 200)
-        #expect(second.statusCode == 409)
-        #expect(payload.contains("\"code\":\"request_already_active\""))
+        #expect(second.statusCode == 200)
     }
 
     private func warmModel() -> Melix_Controlplane_V1_ModelSummary {
@@ -316,6 +326,8 @@ private actor UnavailableWorkerClient: WorkerRoutingClient {
 }
 
 private actor BlockingOpenAIWorkerClient: WorkerRoutingClient {
+    private(set) var generatedRequestIDs: [String] = []
+
     func canDispatchRequests() async -> Bool {
         true
     }
@@ -323,7 +335,8 @@ private actor BlockingOpenAIWorkerClient: WorkerRoutingClient {
     func generate(
         request: Melix_Worker_V1_GenerateRequest
     ) async throws -> AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error> {
-        AsyncThrowingStream { _ in }
+        generatedRequestIDs.append(request.execution.id.requestID)
+        return AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error> { _ in }
     }
 
     func abort(requestID: String) async throws -> Bool {
@@ -337,6 +350,21 @@ private actor BlockingOpenAIWorkerClient: WorkerRoutingClient {
         response.ok = true
         response.modelHandle = "melix-dev-text::swift"
         return response
+    }
+}
+
+private final class RequestIDSequence: @unchecked Sendable {
+    private var remaining: [String]
+    private let lock = NSLock()
+
+    init(_ remaining: [String]) {
+        self.remaining = remaining
+    }
+
+    func next() -> String {
+        lock.lock()
+        defer { lock.unlock() }
+        return remaining.removeFirst()
     }
 }
 

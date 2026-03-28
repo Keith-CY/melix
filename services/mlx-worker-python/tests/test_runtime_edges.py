@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import runpy
 from argparse import Namespace
+from pathlib import Path
 from threading import Event
 
 import pytest
@@ -267,7 +268,7 @@ def test_build_server_and_main_bootstrap(monkeypatch) -> None:
             ("melix.worker.v1.RuntimeService", 8),
             ("melix.worker.v1.InferenceService", 9),
         ],
-        "address": "unix:///tmp/melix-test.sock",
+        "address": f"unix://{Path('/tmp/melix-test.sock').resolve()}",
         "stopped": 0,
     }
 
@@ -295,6 +296,31 @@ def test_build_server_and_main_bootstrap(monkeypatch) -> None:
         "started": True,
         "waited": True,
     }
+
+
+def test_build_server_normalizes_relative_socket_path(monkeypatch, tmp_path: Path) -> None:
+    registry = build_registry()
+    seen: dict[str, object] = {}
+
+    class FakeBoundServer:
+        def add_generic_rpc_handlers(self, handlers) -> None:
+            seen["handlers"] = seen.get("handlers", 0) + len(handlers)
+
+        def add_registered_method_handlers(self, service_name, handlers) -> None:
+            services = seen.setdefault("registered_services", [])
+            assert isinstance(services, list)
+            services.append((service_name, len(handlers)))
+
+        def add_insecure_port(self, address: str) -> int:
+            seen["address"] = address
+            return 1
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("worker.grpc_server.grpc.server", lambda executor: FakeBoundServer())
+
+    build_server("relative-worker.sock", registry=registry)
+
+    assert seen["address"] == f"unix://{tmp_path / 'relative-worker.sock'}"
 
 
 def test_bootstrap_module_invokes_grpc_main(monkeypatch) -> None:

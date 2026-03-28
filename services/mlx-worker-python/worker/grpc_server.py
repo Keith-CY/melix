@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import os
 from concurrent import futures
+from pathlib import Path
 
 import grpc
 
@@ -142,6 +143,7 @@ def build_server(
     backend_mode: str = "auto",
 ):
     registry = registry or build_registry_for_backend(backend_mode)
+    socket_path = os.fspath(Path(socket_path).resolve())
     if os.path.exists(socket_path):
         os.unlink(socket_path)
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=4))

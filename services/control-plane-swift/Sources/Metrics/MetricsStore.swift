@@ -1,9 +1,12 @@
+import Foundation
 import MelixControlPlaneProtocol
 
 public actor MetricsStore {
     private var values: [String: Double]
+    private let exportPath: String?
 
-    public init() {
+    public init(exportPath: String? = nil) {
+        self.exportPath = exportPath
         self.values = [
             "requests.inflight": 0,
             "workers.connected": 0,
@@ -22,13 +25,38 @@ public actor MetricsStore {
 
     public func set(_ value: Double, forKey key: String) {
         values[key] = value
+        writeExportIfNeeded()
     }
 
     public func increment(_ key: String, by amount: Double = 1) {
         values[key, default: 0] += amount
+        writeExportIfNeeded()
     }
 
     public func decrement(_ key: String, by amount: Double = 1) {
         values[key, default: 0] = max(0, values[key, default: 0] - amount)
+        writeExportIfNeeded()
+    }
+
+    private func writeExportIfNeeded() {
+        guard let exportPath, !exportPath.isEmpty else {
+            return
+        }
+
+        let payload: [String: Any] = [
+            "updated_at_unix_ms": Int(Date().timeIntervalSince1970 * 1000),
+            "values": values,
+        ]
+
+        guard let data = try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys]) else {
+            return
+        }
+
+        let url = URL(fileURLWithPath: exportPath)
+        try? FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try? data.write(to: url, options: [.atomic])
     }
 }

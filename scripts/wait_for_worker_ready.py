@@ -22,8 +22,9 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
+    socket_path = Path(args.socket_path).resolve()
     deadline = time.time() + args.timeout_seconds
-    channel = grpc.insecure_channel(f"unix://{args.socket_path}")
+    channel = grpc.insecure_channel(f"unix://{socket_path}")
     stub = runtime_pb2_grpc.RuntimeServiceStub(channel)
 
     try:
@@ -38,7 +39,7 @@ def main() -> int:
                     timeout=2,
                 )
                 if response.protocol_version == "melix.worker.v1":
-                    print(os.fspath(Path(args.socket_path)))
+                    print(os.fspath(socket_path))
                     return 0
             except grpc.RpcError:
                 pass
@@ -46,7 +47,7 @@ def main() -> int:
     finally:
         channel.close()
 
-    print(f"Worker did not become ready on {args.socket_path} within {args.timeout_seconds:.1f}s.", file=sys.stderr)
+    print(f"Worker did not become ready on {socket_path} within {args.timeout_seconds:.1f}s.", file=sys.stderr)
     return 1
 
 

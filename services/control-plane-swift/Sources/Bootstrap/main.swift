@@ -6,7 +6,8 @@ import MelixControlPlaneCore
 enum MelixControlPlaneBootstrap {
     static func main() async throws {
         let modelCatalog = ModelCatalog()
-        let metricsStore = MetricsStore()
+        let bootstrapEnvironment = BootstrapEnvironment(environment: ProcessInfo.processInfo.environment)
+        let metricsStore = MetricsStore(exportPath: bootstrapEnvironment.controlPlaneMetricsPath)
         let eventHub = EventSubscriptionHub()
         let schedulerReadModel = SchedulerReadModel(
             metricsStore: metricsStore,
@@ -14,7 +15,6 @@ enum MelixControlPlaneBootstrap {
                 await eventHub.publish(event)
             }
         )
-        let bootstrapEnvironment = BootstrapEnvironment(environment: ProcessInfo.processInfo.environment)
         let swiftTextWorkerClient = SwiftTextWorkerClient(
             socketPath: bootstrapEnvironment.swiftTextWorkerSocketPath
         )
@@ -88,6 +88,7 @@ private struct BootstrapEnvironment {
     let repoRoot: String
     let pythonWorkerSocketPath: String
     let swiftTextWorkerSocketPath: String
+    let controlPlaneMetricsPath: String?
 
     init(environment: [String: String]) {
         if let repoRoot = environment["MELIX_REPO_ROOT"], !repoRoot.isEmpty {
@@ -98,6 +99,7 @@ private struct BootstrapEnvironment {
         self.pythonWorkerSocketPath = environment["MELIX_WORKER_SOCKET_PATH"] ?? "/tmp/melix-worker.sock"
         self.swiftTextWorkerSocketPath =
             environment["MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH"] ?? "/var/run/melix/swift-text-worker.sock"
+        self.controlPlaneMetricsPath = environment["MELIX_CONTROL_PLANE_METRICS_PATH"]
     }
 
     private static func inferRepoRoot() -> String {

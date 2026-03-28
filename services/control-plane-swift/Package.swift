@@ -26,7 +26,17 @@ let package = Package(
                 .product(name: "GRPCNIOTransportHTTP2Posix", package: "grpc-swift-nio-transport"),
             ],
             path: "Sources",
-            exclude: ["Bootstrap"]
+            exclude: ["Bootstrap"],
+            sources: [
+                "EnginePool",
+                "HTTPGateway",
+                "Metrics",
+                "ModelCatalog",
+                "Requests",
+                "Snapshots",
+                "WorkerClient",
+                "XPCService",
+            ]
         ),
         .executableTarget(
             name: "Bootstrap",

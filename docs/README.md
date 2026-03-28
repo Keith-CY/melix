@@ -39,6 +39,7 @@ Current phase-status and planning documents:
 - `plans/2026-03-28-p2-m4-decode-and-speculative-runtime.md`
 - `plans/2026-03-28-p2-m5-accelerated-prefill-and-active-kv-mode.md`
 - `plans/2026-03-28-p2-m6-abort-and-phase-observability.md`
+- `plans/2026-03-28-p2-m7-operator-benchmark-evidence.md`
 - `plans/2026-03-28-p1-m2-swift-text-worker-scaffold.md`
 - `plans/2026-03-28-p1-m3-swift-runtime-lifecycle.md`
 - `plans/2026-03-28-p1-m4-swift-generate-abort.md`
@@ -66,6 +67,7 @@ Recent decision records:
 Current runbooks:
 
 - `runbooks/phase-1-local-stack.md`
+- `runbooks/phase-2-queue-pressure.md`
 
 ## Engineering Standards
 

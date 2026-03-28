@@ -254,6 +254,48 @@ struct CoreUtilityTests {
         #expect(snapshot.values["http.translation_ms"] == 3.5)
     }
 
+    @Test("metrics store exports snapshots when an export path is configured")
+    func metricsStoreExportsSnapshotsWhenAnExportPathIsConfigured() async throws {
+        let exportURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("json")
+        let store = MetricsStore(exportPath: exportURL.path)
+
+        await store.set(12.5, forKey: "scheduler.queue_delay_ms")
+        let data = try Data(contentsOf: exportURL)
+        let payload = try #require(
+            JSONSerialization.jsonObject(with: data) as? [String: Any]
+        )
+        let values = try #require(payload["values"] as? [String: Double])
+
+        #expect(values["scheduler.queue_delay_ms"] == 12.5)
+    }
+
+    @Test("admission gate serializes active requests and admits the next queued request")
+    func admissionGateSerializesActiveRequestsAndAdmitsTheNextQueuedRequest() async {
+        let gate = AdmissionGate()
+
+        let first = await gate.acquire(requestID: "req-1")
+        #expect(first == .admitted)
+        #expect(await gate.nextQueuePosition() == 1)
+
+        let secondTask = Task {
+            await gate.acquire(requestID: "req-2")
+        }
+        await Task.yield()
+        let snapshotBeforeRelease = await gate.snapshot()
+        #expect(snapshotBeforeRelease.activeRequestID == "req-1")
+        #expect(snapshotBeforeRelease.queuedRequestIDs == ["req-2"])
+
+        await gate.release(requestID: "req-1")
+        let second = await secondTask.value
+        let snapshotAfterRelease = await gate.snapshot()
+
+        #expect(second == .admitted)
+        #expect(snapshotAfterRelease.activeRequestID == "req-2")
+        #expect(snapshotAfterRelease.queuedRequestIDs.isEmpty)
+    }
+
     @Test("dev text model has the expected defaults")
     func devTextModelDefaults() {
         let model = ModelCatalog.devTextModel()

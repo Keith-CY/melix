@@ -2,6 +2,7 @@ import Foundation
 
 final class MetricsStore: @unchecked Sendable {
     private let lock = NSLock()
+    private let exportPath: String?
     private var storage: [String: Int] = [
         "swift_text.bootstrap_ms": 0,
         "swift_text.handshake_ms": 0,
@@ -30,6 +31,10 @@ final class MetricsStore: @unchecked Sendable {
         "swift_text.unimplemented_rpc_count": 0,
     ]
 
+    init(exportPath: String? = nil) {
+        self.exportPath = exportPath
+    }
+
     var counters: [String: Int] {
         lock.lock()
         defer { lock.unlock() }
@@ -39,7 +44,9 @@ final class MetricsStore: @unchecked Sendable {
     func increment(_ key: String, by amount: Int = 1) {
         lock.lock()
         storage[key, default: 0] += amount
+        let snapshot = storage
         lock.unlock()
+        writeExportIfNeeded(snapshot)
     }
 
     func recordMilliseconds(_ key: String, value: Int) {
@@ -49,6 +56,30 @@ final class MetricsStore: @unchecked Sendable {
     func set(_ key: String, value: Int) {
         lock.lock()
         storage[key] = value
+        let snapshot = storage
         lock.unlock()
+        writeExportIfNeeded(snapshot)
+    }
+
+    private func writeExportIfNeeded(_ snapshot: [String: Int]) {
+        guard let exportPath, !exportPath.isEmpty else {
+            return
+        }
+
+        let payload: [String: Any] = [
+            "updated_at_unix_ms": Int(Date().timeIntervalSince1970 * 1000),
+            "values": snapshot,
+        ]
+
+        guard let data = try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys]) else {
+            return
+        }
+
+        let url = URL(fileURLWithPath: exportPath)
+        try? FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try? data.write(to: url, options: [.atomic])
     }
 }

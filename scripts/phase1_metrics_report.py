@@ -119,8 +119,8 @@ def resolve_stack_configuration(runtime_dir: Path) -> StackConfiguration:
 
     stack = StackConfiguration(
         runtime_dir=runtime_dir,
-        swift_socket_path=Path(swift_socket),
-        python_socket_path=Path(python_socket),
+        swift_socket_path=Path(swift_socket).resolve(),
+        python_socket_path=Path(python_socket).resolve(),
         http_port=int(http_port_raw),
         swift_backend_mode=values.get("MELIX_SWIFT_TEXT_WORKER_BACKEND_MODE", "unknown"),
         python_backend_mode=values.get("MELIX_BACKEND_MODE", "unknown"),

@@ -31,13 +31,15 @@ final class WorkerScaffoldTests: XCTestCase {
             "MELIX_SWIFT_TEXT_WORKER_ID": "swift-text-worker-dev",
             "MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH": "/tmp/melix-swift-text-worker.sock",
             "MELIX_SWIFT_TEXT_WORKER_BACKEND_MODE": "swift-experimental",
-            "MELIX_SWIFT_TEXT_WORKER_RUNTIME_VERSION": "melix-swift-text-worker/test"
+            "MELIX_SWIFT_TEXT_WORKER_RUNTIME_VERSION": "melix-swift-text-worker/test",
+            "MELIX_SWIFT_TEXT_WORKER_METRICS_PATH": "/tmp/melix-swift-text-worker-metrics.json",
         ])
 
         XCTAssertEqual(configuration.workerID, "swift-text-worker-dev")
         XCTAssertEqual(configuration.socketPath, "/tmp/melix-swift-text-worker.sock")
         XCTAssertEqual(configuration.backendMode, "swift-experimental")
         XCTAssertEqual(configuration.runtimeVersion, "melix-swift-text-worker/test")
+        XCTAssertEqual(configuration.metricsExportPath, "/tmp/melix-swift-text-worker-metrics.json")
     }
 
     func testConfigurationFallsBackToDefaultsForEmptyEnvironment() {
@@ -79,6 +81,20 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(counters["swift_text.unimplemented_rpc_count"], 1)
         XCTAssertEqual(counters["swift_text.custom_counter"], 3)
         XCTAssertEqual(counters["swift_text.runtime_stats_ms"], 12)
+    }
+
+    func testMetricsStoreExportsCountersWhenConfigured() throws {
+        let exportURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("json")
+        let metrics = MetricsStore(exportPath: exportURL.path)
+        metrics.set("swift_text.decode_ttft_ms", value: 24)
+
+        let data = try Data(contentsOf: exportURL)
+        let payload = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let values = try XCTUnwrap(payload["values"] as? [String: Int])
+
+        XCTAssertEqual(values["swift_text.decode_ttft_ms"], 24)
     }
 
     func testHandshakeReturnsExpectedRuntimeMetadata() async throws {

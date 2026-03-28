@@ -7,7 +7,7 @@ package struct WorkerBootstrap: Sendable {
     package let server: GRPCServer<HTTP2ServerTransport.Posix>
 
     package static func build(configuration: WorkerConfiguration) throws -> WorkerBootstrap {
-        let metrics = MetricsStore()
+        let metrics = MetricsStore(exportPath: configuration.metricsExportPath)
         metrics.recordMilliseconds("swift_text.bootstrap_ms", value: 0)
 
         let registry = WorkerRuntimeRegistry(

@@ -5,17 +5,20 @@ package struct WorkerConfiguration: Sendable, Equatable {
     var socketPath: String
     var backendMode: String
     var runtimeVersion: String
+    var metricsExportPath: String?
 
     init(
         workerID: String = "swift-text-worker-001",
         socketPath: String = "/var/run/melix/swift-text-worker.sock",
         backendMode: String = "swift",
-        runtimeVersion: String = "melix-swift-text-worker/dev"
+        runtimeVersion: String = "melix-swift-text-worker/dev",
+        metricsExportPath: String? = nil
     ) {
         self.workerID = workerID
         self.socketPath = socketPath
         self.backendMode = backendMode
         self.runtimeVersion = runtimeVersion
+        self.metricsExportPath = metricsExportPath
     }
 
     package static func fromEnvironment(
@@ -25,7 +28,8 @@ package struct WorkerConfiguration: Sendable, Equatable {
             workerID: environment["MELIX_SWIFT_TEXT_WORKER_ID"] ?? "swift-text-worker-001",
             socketPath: environment["MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH"] ?? "/var/run/melix/swift-text-worker.sock",
             backendMode: environment["MELIX_SWIFT_TEXT_WORKER_BACKEND_MODE"] ?? "swift",
-            runtimeVersion: environment["MELIX_SWIFT_TEXT_WORKER_RUNTIME_VERSION"] ?? "melix-swift-text-worker/dev"
+            runtimeVersion: environment["MELIX_SWIFT_TEXT_WORKER_RUNTIME_VERSION"] ?? "melix-swift-text-worker/dev",
+            metricsExportPath: environment["MELIX_SWIFT_TEXT_WORKER_METRICS_PATH"]
         )
     }
 }

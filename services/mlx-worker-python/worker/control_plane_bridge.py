@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import base64
 import json
+from pathlib import Path
 
 import grpc
 
@@ -15,11 +16,12 @@ def main() -> None:
     parser.add_argument("--socket-path", required=True)
     parser.add_argument("--request-b64", required=True)
     args = parser.parse_args()
+    socket_path = Path(args.socket_path).resolve()
 
     request_bytes = base64.b64decode(args.request_b64)
 
     try:
-        with grpc.insecure_channel(f"unix://{args.socket_path}") as channel:
+        with grpc.insecure_channel(f"unix://{socket_path}") as channel:
             if args.command == "handshake":
                 stub = runtime_pb2_grpc.RuntimeServiceStub(channel)
                 request = runtime_pb2.HandshakeRequest.FromString(request_bytes)

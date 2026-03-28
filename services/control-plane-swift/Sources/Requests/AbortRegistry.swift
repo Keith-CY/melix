@@ -1,39 +1,35 @@
 public actor AbortRegistry {
-    private var activeRequestID: String?
-    private var abortedRequestID: String?
+    private var states: [String: Bool]
 
-    public init() {}
+    public init() {
+        self.states = [:]
+    }
 
     public func begin(requestID: String) -> Bool {
-        guard activeRequestID == nil else {
+        guard states[requestID] == nil else {
             return false
         }
-        activeRequestID = requestID
-        abortedRequestID = nil
+        states[requestID] = false
         return true
     }
 
     public func finish(requestID: String) {
-        guard activeRequestID == requestID else {
-            return
-        }
-        activeRequestID = nil
-        abortedRequestID = nil
+        states.removeValue(forKey: requestID)
     }
 
     public func contains(_ requestID: String) -> Bool {
-        activeRequestID == requestID
+        states[requestID] != nil
     }
 
     public func abort(_ requestID: String) -> Bool {
-        guard activeRequestID == requestID else {
+        guard states[requestID] != nil else {
             return false
         }
-        abortedRequestID = requestID
+        states[requestID] = true
         return true
     }
 
     public func isAborted(_ requestID: String) -> Bool {
-        abortedRequestID == requestID
+        states[requestID] ?? false
     }
 }

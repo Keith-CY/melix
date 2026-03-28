@@ -26,6 +26,7 @@ public struct CoordinatedChatExecution: Sendable {
 public actor RequestCoordinator {
     private let workerRegistry: WorkerRegistry
     private let abortRegistry: AbortRegistry
+    private let admissionGate: AdmissionGate
     private let schedulerReadModel: SchedulerReadModel
     private let metricsStore: MetricsStore
     private let now: @Sendable () -> Date
@@ -34,12 +35,14 @@ public actor RequestCoordinator {
     public init(
         workerRegistry: WorkerRegistry,
         abortRegistry: AbortRegistry = AbortRegistry(),
+        admissionGate: AdmissionGate = AdmissionGate(),
         schedulerReadModel: SchedulerReadModel = SchedulerReadModel(),
         metricsStore: MetricsStore = MetricsStore(),
         now: @escaping @Sendable () -> Date = Date.init
     ) {
         self.workerRegistry = workerRegistry
         self.abortRegistry = abortRegistry
+        self.admissionGate = admissionGate
         self.schedulerReadModel = schedulerReadModel
         self.metricsStore = metricsStore
         self.now = now
@@ -59,11 +62,12 @@ public actor RequestCoordinator {
             )
             throw RequestCoordinatorError.requestAlreadyActive
         }
+        let initialQueuePosition = await admissionGate.nextQueuePosition()
         await schedulerReadModel.recordQueued(
             requestID: request.requestID,
             laneHint: lane,
             priority: priority,
-            queuePosition: 1
+            queuePosition: initialQueuePosition
         )
         let routeStartedAt = now()
         guard let workerClient = await workerRegistry.client(forModelID: request.modelID) else {
@@ -99,6 +103,14 @@ public actor RequestCoordinator {
         )
         if !(await abortRegistry.contains(request.requestID)) {
             return await makeCancelledExecution(requestID: request.requestID, modelID: request.modelID)
+        }
+
+        switch await admissionGate.acquire(requestID: request.requestID) {
+        case .cancelled:
+            await finishRequestTracking(requestID: request.requestID, phase: .requestAborted)
+            return await makeCancelledExecution(requestID: request.requestID, modelID: request.modelID)
+        case .admitted:
+            break
         }
 
         let dispatchStartedAt = now()
@@ -212,6 +224,7 @@ public actor RequestCoordinator {
         requestID: String,
         phase: Melix_Controlplane_V1_RequestPhase? = nil
     ) async {
+        await admissionGate.release(requestID: requestID)
         await abortRegistry.finish(requestID: requestID)
         activeWorkerClients.removeValue(forKey: requestID)
         if let phase {
