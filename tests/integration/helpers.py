@@ -199,6 +199,9 @@ class LiveMelixStack:
     def chat_url(self) -> str:
         return f"http://127.0.0.1:{self.http_port}/v1/chat/completions"
 
+    def responses_url(self) -> str:
+        return f"http://127.0.0.1:{self.http_port}/v1/responses"
+
     def _stop_process(self, name: str, process: subprocess.Popen[str] | None) -> None:
         if process is None:
             return

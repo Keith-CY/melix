@@ -2,6 +2,11 @@ import Foundation
 import MelixWorkerProtocol
 
 public struct SSEStreamWriter: Sendable {
+    public enum StreamShape: Sendable {
+        case chatCompletions
+        case responses
+    }
+
     private let now: @Sendable () -> Date
 
     public init(now: @escaping @Sendable () -> Date = Date.init) {
@@ -11,13 +16,21 @@ public struct SSEStreamWriter: Sendable {
     public func encode(
         stream: AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error>,
         requestID: String,
-        modelID: String
+        modelID: String,
+        shape: StreamShape = .chatCompletions
     ) -> AsyncThrowingStream<Data, Error> {
         AsyncThrowingStream { continuation in
             let task = Task {
                 do {
                     for try await event in stream {
-                        continuation.yield(encode(event: event, requestID: requestID, modelID: modelID))
+                        continuation.yield(
+                            encode(
+                                event: event,
+                                requestID: requestID,
+                                modelID: modelID,
+                                shape: shape
+                            )
+                        )
                     }
                 } catch {
                     continuation.yield(errorFrame(requestID: requestID, code: "transport_error", message: error.localizedDescription))
@@ -34,6 +47,20 @@ public struct SSEStreamWriter: Sendable {
     }
 
     private func encode(
+        event: Melix_Worker_V1_ExecuteEvent,
+        requestID: String,
+        modelID: String,
+        shape: StreamShape
+    ) -> Data {
+        switch shape {
+        case .chatCompletions:
+            return encodeChatCompletions(event: event, requestID: requestID, modelID: modelID)
+        case .responses:
+            return encodeResponses(event: event, requestID: requestID, modelID: modelID)
+        }
+    }
+
+    private func encodeChatCompletions(
         event: Melix_Worker_V1_ExecuteEvent,
         requestID: String,
         modelID: String
@@ -108,6 +135,79 @@ public struct SSEStreamWriter: Sendable {
                 event: "message",
                 json: [
                     "request_id": requestID,
+                    "event_seq": Int(event.seq),
+                ]
+            )
+        }
+    }
+
+    private func encodeResponses(
+        event: Melix_Worker_V1_ExecuteEvent,
+        requestID: String,
+        modelID: String
+    ) -> Data {
+        switch event.payload {
+        case .tokenDelta(let delta):
+            return frame(
+                event: "response.output_text.delta",
+                json: [
+                    "type": "response.output_text.delta",
+                    "response_id": requestID,
+                    "model": modelID,
+                    "output_index": 0,
+                    "content_index": 0,
+                    "delta": delta.text,
+                ]
+            )
+        case .usageDelta(let usage):
+            return frame(
+                event: "response.usage",
+                json: [
+                    "type": "response.usage",
+                    "response_id": requestID,
+                    "usage": [
+                        "input_tokens": Int(usage.promptTokens),
+                        "output_tokens": Int(usage.completionTokens),
+                    ],
+                ]
+            )
+        case .heartbeat(let heartbeat):
+            return frame(
+                event: "response.heartbeat",
+                json: [
+                    "type": "response.heartbeat",
+                    "response_id": requestID,
+                    "unix_ms": Int(heartbeat.unixMs),
+                ]
+            )
+        case .completed(let completed):
+            return frame(
+                event: "response.completed",
+                json: [
+                    "type": "response.completed",
+                    "response_id": requestID,
+                    "model": modelID,
+                    "finish_reason": completed.finishReason,
+                    "output": [
+                        [
+                            "type": "output_text",
+                            "text": completed.assistantText,
+                        ],
+                    ],
+                ]
+            )
+        case .error(let error):
+            return errorFrame(
+                requestID: requestID,
+                code: error.error.code,
+                message: error.error.message
+            )
+        default:
+            return frame(
+                event: "response.event",
+                json: [
+                    "type": "response.event",
+                    "response_id": requestID,
                     "event_seq": Int(event.seq),
                 ]
             )

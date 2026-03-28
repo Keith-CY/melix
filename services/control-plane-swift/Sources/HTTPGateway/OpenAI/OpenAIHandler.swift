@@ -75,6 +75,8 @@ public struct OpenAIHandler: Sendable {
             return try await handleModels()
         case (.post, "/v1/chat/completions"):
             return try await handleChatCompletions(request)
+        case (.post, "/v1/responses"):
+            return try await handleResponses(request)
         default:
             return jsonResponse(
                 statusCode: 404,
@@ -104,20 +106,59 @@ public struct OpenAIHandler: Sendable {
 
     private func handleChatCompletions(_ request: HTTPRequest) async throws -> HTTPResponse {
         let chatRequest = try decoder.decode(OpenAIChatCompletionsRequest.self, from: request.body)
-        guard chatRequest.stream ?? true else {
-            return jsonResponse(
-                statusCode: 400,
-                payload: ["error": ["code": "stream_required", "message": "Phase 0 only supports stream=true."]]
+        do {
+            let translated = try await translatedRequest(
+                modelID: chatRequest.model,
+                stream: chatRequest.stream ?? true
+            ) {
+                try translator.translate(chatRequest, modelHandle: $0)
+            }
+            return try await streamResponse(
+                translated: translated,
+                shape: .chatCompletions
             )
+        } catch let error as HTTPRequestHandlingError {
+            return httpErrorResponse(for: error)
         }
-        guard let modelHandle = await modelCatalog.dispatchHandle(for: chatRequest.model) else {
-            return jsonResponse(
-                statusCode: 409,
-                payload: ["error": ["code": "model_not_ready", "message": "Requested model is not loaded."]]
-            )
-        }
+    }
 
-        let translated = try translator.translate(chatRequest, modelHandle: modelHandle)
+    private func handleResponses(_ request: HTTPRequest) async throws -> HTTPResponse {
+        let responsesRequest = try decoder.decode(OpenAIResponsesRequest.self, from: request.body)
+        let normalized = translator.normalize(responsesRequest)
+        do {
+            let translated = try await translatedRequest(
+                modelID: normalized.model,
+                stream: normalized.stream
+            ) {
+                try translator.translate(normalized, modelHandle: $0)
+            }
+            return try await streamResponse(
+                translated: translated,
+                shape: .responses
+            )
+        } catch let error as HTTPRequestHandlingError {
+            return httpErrorResponse(for: error)
+        }
+    }
+
+    private func translatedRequest(
+        modelID: String,
+        stream: Bool,
+        build: (String) throws -> TranslatedChatRequest
+    ) async throws -> TranslatedChatRequest {
+        guard stream else {
+            throw HTTPRequestHandlingError.streamRequired
+        }
+        guard let modelHandle = await modelCatalog.dispatchHandle(for: modelID) else {
+            throw HTTPRequestHandlingError.modelNotReady
+        }
+        return try build(modelHandle)
+    }
+
+    private func streamResponse(
+        translated: TranslatedChatRequest,
+        shape: SSEStreamWriter.StreamShape
+    ) async throws -> HTTPResponse {
         let execution: CoordinatedChatExecution
 
         do {
@@ -134,7 +175,8 @@ public struct OpenAIHandler: Sendable {
         let stream = sseWriter.encode(
             stream: execution.stream,
             requestID: execution.requestID,
-            modelID: execution.modelID
+            modelID: execution.modelID,
+            shape: shape
         )
 
         return HTTPResponse(
@@ -156,6 +198,26 @@ public struct OpenAIHandler: Sendable {
             body: .data(data)
         )
     }
+
+    private func httpErrorResponse(for error: HTTPRequestHandlingError) -> HTTPResponse {
+        switch error {
+        case .streamRequired:
+            return jsonResponse(
+                statusCode: 400,
+                payload: ["error": ["code": "stream_required", "message": "Phase 4 currently supports stream=true only."]]
+            )
+        case .modelNotReady:
+            return jsonResponse(
+                statusCode: 409,
+                payload: ["error": ["code": "model_not_ready", "message": "Requested model is not loaded."]]
+            )
+        }
+    }
+}
+
+private enum HTTPRequestHandlingError: Error {
+    case streamRequired
+    case modelNotReady
 }
 
 private struct OpenAIModelsResponse: Codable {
