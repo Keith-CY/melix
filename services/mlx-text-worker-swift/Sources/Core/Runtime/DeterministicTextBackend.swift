@@ -25,38 +25,67 @@ struct DeterministicTextBackend: TextRuntimeBackend {
         messages: [Melix_Worker_V1_ChatMessage],
         prefillStepSize: UInt32,
         resumeHint: String,
+        acceleration: Melix_Worker_V1_AccelerationPolicy,
         shouldAbort: @escaping @Sendable () -> Bool
     ) async throws -> RuntimePrefillResult {
         let prompt = deterministicPrompt(from: messages)
         let promptTokens = max(1, prompt.split(whereSeparator: \.isWhitespace).count)
+        let appliedAcceleration = resolveDeterministicPrefillAcceleration(
+            acceleration,
+            prompt: prompt
+        )
+        let prefillDelay = deterministicPrefillDelay(
+            baselineDelay: tokenDelayNanos,
+            prompt: prompt,
+            policy: appliedAcceleration
+        )
+        let prefillGainPct = gainPercent(
+            baseline: tokenDelayNanos,
+            effective: prefillDelay
+        )
+        let activeKVRatio = activeKVQuantizationRatioPercent(for: appliedAcceleration)
+        var storage: [String: String] = [
+            "prompt": prompt,
+            "resume_hint": resumeHint,
+            "prefill_acceleration_mode": String(describing: appliedAcceleration.mode),
+            "prefill_gain_pct": String(prefillGainPct),
+            "active_kv_quant_ratio": String(activeKVRatio),
+        ]
 
-        if tokenDelayNanos > 0 {
-            try? await Task.sleep(nanoseconds: tokenDelayNanos)
+        if !appliedAcceleration.prefillHint.isEmpty {
+            storage["prefill_hint"] = appliedAcceleration.prefillHint
+        }
+        if !appliedAcceleration.activeKvQuantProfile.isEmpty {
+            storage["active_kv_quant_profile"] = appliedAcceleration.activeKvQuantProfile
+        }
+
+        if prefillDelay > 0 {
+            try? await Task.sleep(nanoseconds: prefillDelay)
         }
 
         if shouldAbort() {
             return RuntimePrefillResult(
                 context: TextPrefillContext(
-                    storage: [
-                        "prompt": prompt,
-                        "resume_hint": resumeHint,
-                    ],
+                    storage: storage,
                     promptTokens: promptTokens
                 ),
-                promptTokens: promptTokens
+                promptTokens: promptTokens,
+                appliedAcceleration: appliedAcceleration,
+                acceleratedPrefillGainPct: prefillGainPct,
+                activeKVQuantizationRatio: activeKVRatio
             )
         }
 
+        storage["prefill_step_size"] = String(prefillStepSize)
         return RuntimePrefillResult(
             context: TextPrefillContext(
-                storage: [
-                    "prompt": prompt,
-                    "resume_hint": resumeHint,
-                    "prefill_step_size": String(prefillStepSize),
-                ],
+                storage: storage,
                 promptTokens: promptTokens
             ),
-            promptTokens: promptTokens
+            promptTokens: promptTokens,
+            appliedAcceleration: appliedAcceleration,
+            acceleratedPrefillGainPct: prefillGainPct,
+            activeKVQuantizationRatio: activeKVRatio
         )
     }
 
@@ -238,4 +267,46 @@ private func deterministicDecodeDelay(
     default:
         return baselineDelay
     }
+}
+
+private func deterministicPrefillDelay(
+    baselineDelay: UInt64,
+    prompt: String,
+    policy: Melix_Worker_V1_AccelerationPolicy
+) -> UInt64 {
+    let normalized = normalizedAccelerationPolicy(policy)
+    guard normalized.mode == .acceleratedPrefill else {
+        return baselineDelay
+    }
+
+    let hint = normalized.prefillHint.lowercased()
+    let isStructured = deterministicPromptLooksStructured(prompt)
+    if hint.contains("lookup") || hint.contains("schema") || isStructured {
+        return max(baselineDelay / 5, 1_000_000)
+    }
+    return max(baselineDelay / 3, 1_000_000)
+}
+
+private func resolveDeterministicPrefillAcceleration(
+    _ policy: Melix_Worker_V1_AccelerationPolicy,
+    prompt: String
+) -> Melix_Worker_V1_AccelerationPolicy {
+    var normalized = normalizedAccelerationPolicy(policy)
+    if normalized.mode == .acceleratedPrefill,
+       normalized.prefillHint.isEmpty,
+       deterministicPromptLooksStructured(prompt) {
+        normalized.prefillHint = "structured-reuse"
+    }
+    return normalized
+}
+
+private func deterministicPromptLooksStructured(_ prompt: String) -> Bool {
+    let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else {
+        return false
+    }
+
+    let newlineCount = trimmed.filter { $0 == "\n" }.count
+    let punctuationCount = trimmed.filter { "{}[]():,\"".contains($0) }.count
+    return newlineCount >= 2 || punctuationCount >= max(4, trimmed.count / 12)
 }

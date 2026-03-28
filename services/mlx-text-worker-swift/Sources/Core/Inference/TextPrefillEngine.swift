@@ -41,6 +41,8 @@ struct TextPrefillEngine: Sendable {
             metrics.recordMilliseconds("swift_text.prefill_ms", value: elapsedMilliseconds(since: startedAt))
             metrics.set("swift_text.prefill_prompt_tokens", value: Int(clamping: result.promptTokens))
             metrics.set("swift_text.prefill_context_count", value: await registry.prefillContextCount())
+            metrics.set("swift_text.accelerated_prefill_gain_pct", value: result.acceleratedPrefillGainPct)
+            metrics.set("swift_text.active_kv_quantization_ratio", value: result.activeKVQuantizationRatio)
 
             var response = Melix_Worker_V1_PrefillResponse()
             response.ok = true
@@ -48,7 +50,7 @@ struct TextPrefillEngine: Sendable {
             response.promptTokens = UInt32(max(0, result.promptTokens))
             response.lifecyclePhase = .executionPrefilling
             response.admissionState = .admissionAdmitted
-            response.appliedAcceleration = acceleration
+            response.appliedAcceleration = result.appliedAcceleration
             return response
         } catch let error as WorkerRuntimeRegistryError where error == .unknownModelHandle {
             metrics.increment("swift_text.rpc_error_count")
@@ -73,11 +75,7 @@ struct TextPrefillEngine: Sendable {
 private func resolvedAccelerationPolicy(
     from policy: Melix_Worker_V1_AccelerationPolicy
 ) -> Melix_Worker_V1_AccelerationPolicy {
-    var resolved = policy
-    if resolved.mode == .unspecified {
-        resolved.mode = .baseline
-    }
-    return resolved
+    normalizedAccelerationPolicy(policy)
 }
 
 private func elapsedMilliseconds(since startedAt: Date) -> Int {

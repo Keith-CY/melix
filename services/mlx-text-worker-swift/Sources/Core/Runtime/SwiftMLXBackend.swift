@@ -149,19 +149,33 @@ struct AutoSwiftMLXBackend: TextRuntimeBackend {
         messages: [Melix_Worker_V1_ChatMessage],
         prefillStepSize: UInt32,
         resumeHint: String,
+        acceleration: Melix_Worker_V1_AccelerationPolicy,
         shouldAbort: @escaping @Sendable () -> Bool
     ) async throws -> RuntimePrefillResult {
+        let appliedAcceleration = resolveSwiftPrefillAcceleration(acceleration)
+        let baseWindowSize = Int(max(prefillStepSize, 1))
+        let effectiveWindowSize = acceleratedPrefillWindowSize(
+            baseWindowSize: baseWindowSize,
+            policy: appliedAcceleration
+        )
         let prepared = try await makePreparedPromptContext(
             model: model,
             messages: messages,
-            prefillStepSize: prefillStepSize
+            prefillStepSize: prefillStepSize,
+            acceleration: appliedAcceleration
         )
         return RuntimePrefillResult(
             context: TextPrefillContext(
                 storage: prepared.preparedInput,
                 promptTokens: prepared.promptTokens
             ),
-            promptTokens: prepared.promptTokens
+            promptTokens: prepared.promptTokens,
+            appliedAcceleration: appliedAcceleration,
+            acceleratedPrefillGainPct: estimatedPrefillGainPercent(
+                baselineWindowSize: baseWindowSize,
+                effectiveWindowSize: effectiveWindowSize
+            ),
+            activeKVQuantizationRatio: activeKVQuantizationRatioPercent(for: appliedAcceleration)
         )
     }
 
@@ -401,7 +415,8 @@ private func makePreparedTextGeneration(
 private func makePreparedPromptContext(
     model: LoadedTextModel,
     messages: [Melix_Worker_V1_ChatMessage],
-    prefillStepSize: UInt32
+    prefillStepSize: UInt32,
+    acceleration: Melix_Worker_V1_AccelerationPolicy
 ) async throws -> PreparedPrefillContext {
     #if canImport(MLXLMCommon)
     guard let container = model.storage as? ModelContainer else {
@@ -412,14 +427,22 @@ private func makePreparedPromptContext(
 
     let chat = try convertChatMessages(messages)
     let userInput = UserInput(chat: chat)
+    let effectiveWindowSize = acceleratedPrefillWindowSize(
+        baseWindowSize: Int(max(prefillStepSize, 1)),
+        policy: acceleration
+    )
     let preparedState = try await container.perform { context in
         let input = try await context.processor.prepare(input: userInput)
-        let cache = context.model.newCache(parameters: nil)
+        var cache = context.model.newCache(parameters: nil)
         let startedAt = Date.timeIntervalSinceReferenceDate
         let prepared = try context.model.prepare(
             input,
             cache: cache,
-            windowSize: Int(max(prefillStepSize, 1))
+            windowSize: effectiveWindowSize
+        )
+        applyActiveKVQuantizationIfNeeded(
+            cache: &cache,
+            acceleration: acceleration
         )
         let promptPrefillTime = Date.timeIntervalSinceReferenceDate - startedAt
         return PreparedDecodeState(
@@ -438,6 +461,45 @@ private func makePreparedPromptContext(
         message: "MLXLMCommon is not available in this build. Install the Swift MLX runtime dependencies before preparing prompts."
     )
     #endif
+}
+
+private func resolveSwiftPrefillAcceleration(
+    _ acceleration: Melix_Worker_V1_AccelerationPolicy
+) -> Melix_Worker_V1_AccelerationPolicy {
+    normalizedAccelerationPolicy(acceleration)
+}
+
+private func acceleratedPrefillWindowSize(
+    baseWindowSize: Int,
+    policy: Melix_Worker_V1_AccelerationPolicy
+) -> Int {
+    let normalized = normalizedAccelerationPolicy(policy)
+    guard normalized.mode == .acceleratedPrefill else {
+        return baseWindowSize
+    }
+
+    let hint = normalized.prefillHint.lowercased()
+    if hint.contains("lookup") || hint.contains("schema") || hint.contains("json") {
+        return max(baseWindowSize, 32)
+    }
+    if hint.contains("code") || hint.contains("structured") {
+        return max(baseWindowSize, 24)
+    }
+    return max(baseWindowSize, 16)
+}
+
+private func estimatedPrefillGainPercent(
+    baselineWindowSize: Int,
+    effectiveWindowSize: Int
+) -> Int {
+    guard effectiveWindowSize > baselineWindowSize, baselineWindowSize > 0 else {
+        return 0
+    }
+
+    return max(
+        0,
+        min(90, ((effectiveWindowSize - baselineWindowSize) * 100) / effectiveWindowSize)
+    )
 }
 
 private func resolveSwiftDecodeAcceleration(
@@ -474,13 +536,47 @@ private func makeDecodeParameters(
     }
 
     if acceleration.mode == .activeKvQuantized {
-        let profile = acceleration.activeKvQuantProfile.lowercased()
-        parameters.kvBits = profile.contains("q8") ? 8 : 4
-        parameters.quantizedKVStart = 0
+        applyActiveKVQuantizationProfile(
+            to: &parameters,
+            profile: acceleration.activeKvQuantProfile
+        )
     }
 
     return parameters
 }
+
+private func applyActiveKVQuantizationProfile(
+    to parameters: inout GenerateParameters,
+    profile: String
+) {
+    let normalizedProfile = profile.lowercased()
+    parameters.kvBits = normalizedProfile.contains("q8") ? 8 : 4
+    parameters.quantizedKVStart = 0
+}
+
+#if canImport(MLXLMCommon)
+private func applyActiveKVQuantizationIfNeeded(
+    cache: inout [KVCache],
+    acceleration: Melix_Worker_V1_AccelerationPolicy
+) {
+    let normalized = normalizedAccelerationPolicy(acceleration)
+    guard normalized.mode == .activeKvQuantized else {
+        return
+    }
+
+    var parameters = makeGenerateParameters(from: Melix_Worker_V1_SamplingConfig())
+    applyActiveKVQuantizationProfile(
+        to: &parameters,
+        profile: normalized.activeKvQuantProfile
+    )
+    maybeQuantizeKVCache(
+        cache: &cache,
+        kvBits: parameters.kvBits,
+        kvGroupSize: parameters.kvGroupSize,
+        quantizedKVStart: parameters.quantizedKVStart
+    )
+}
+#endif
 
 private func makePreparedDecodeGeneration(
     model: LoadedTextModel,

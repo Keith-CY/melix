@@ -21,6 +21,9 @@ struct StoredPrefillContext: @unchecked Sendable {
 struct WorkerPrefillResult: Sendable {
     let decodeHandle: String
     let promptTokens: Int
+    let appliedAcceleration: Melix_Worker_V1_AccelerationPolicy
+    let acceleratedPrefillGainPct: Int
+    let activeKVQuantizationRatio: Int
 }
 
 struct WorkerDecodeSession: @unchecked Sendable {
@@ -67,7 +70,7 @@ actor WorkerRuntimeRegistry {
         cache.supportsPrefixCache = true
         cache.supportsPagedCache = false
         cache.supportsDiskCache = false
-        cache.kvQuantProfiles = ["q4"]
+        cache.kvQuantProfiles = ["q4", "q8"]
         cache.supportsBoundarySnapshots = false
         capabilities.cache = cache
 
@@ -79,7 +82,18 @@ actor WorkerRuntimeRegistry {
         var ext = Melix_Worker_V1_Capability()
         ext.name = "engine_family"
         ext.metadata = ["value": configuration.backendMode]
-        capabilities.ext = [ext]
+        var acceleratedPrefill = Melix_Worker_V1_Capability()
+        acceleratedPrefill.name = "accelerated_prefill"
+        acceleratedPrefill.metadata = ["value": supportsAcceleratedPrefill() ? "yes" : "no"]
+
+        var activeKV = Melix_Worker_V1_Capability()
+        activeKV.name = "active_kv_quantized"
+        activeKV.metadata = [
+            "value": supportsActiveKVQuantization() ? "yes" : "no",
+            "profiles": "q4,q8"
+        ]
+
+        capabilities.ext = [ext, acceleratedPrefill, activeKV]
 
         return capabilities
     }
@@ -182,6 +196,7 @@ actor WorkerRuntimeRegistry {
             messages: messages,
             prefillStepSize: prefillStepSize,
             resumeHint: resumeHint,
+            acceleration: acceleration,
             shouldAbort: shouldAbort
         )
 
@@ -195,14 +210,17 @@ actor WorkerRuntimeRegistry {
                 requestID: requestID,
                 promptTokens: result.promptTokens,
                 resumeHint: resumeHint,
-                acceleration: acceleration,
+                acceleration: result.appliedAcceleration,
                 context: result.context
             )
         }
 
         return WorkerPrefillResult(
             decodeHandle: decodeHandle,
-            promptTokens: result.promptTokens
+            promptTokens: result.promptTokens,
+            appliedAcceleration: result.appliedAcceleration,
+            acceleratedPrefillGainPct: result.acceleratedPrefillGainPct,
+            activeKVQuantizationRatio: result.activeKVQuantizationRatio
         )
     }
 
@@ -264,6 +282,14 @@ actor WorkerRuntimeRegistry {
 
     func supportsSpeculativeDecoding() -> Bool {
         configuration.backendMode.lowercased() == "deterministic"
+    }
+
+    func supportsAcceleratedPrefill() -> Bool {
+        true
+    }
+
+    func supportsActiveKVQuantization() -> Bool {
+        true
     }
 
     func runtimeStats() -> Melix_Worker_V1_RuntimeStats {

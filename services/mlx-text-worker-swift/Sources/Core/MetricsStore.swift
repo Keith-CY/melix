@@ -11,6 +11,8 @@ final class MetricsStore: @unchecked Sendable {
         "swift_text.prefill_ms": 0,
         "swift_text.prefill_prompt_tokens": 0,
         "swift_text.prefill_context_count": 0,
+        "swift_text.accelerated_prefill_gain_pct": 0,
+        "swift_text.active_kv_quantization_ratio": 0,
         "swift_text.decode_ms": 0,
         "swift_text.decode_ttft_ms": 0,
         "swift_text.decode_tokens_per_second": 0,

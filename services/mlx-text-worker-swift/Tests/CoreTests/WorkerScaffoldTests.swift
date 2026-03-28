@@ -101,9 +101,13 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(response.protocolVersion, "melix.worker.v1")
         XCTAssertEqual(response.runtimeVersion, "melix-swift-text-worker/dev")
         XCTAssertTrue(response.capabilities.cache.supportsPrefixCache)
+        XCTAssertEqual(response.capabilities.cache.kvQuantProfiles, ["q4", "q8"])
         XCTAssertFalse(response.capabilities.execution.supportsContinuousBatching)
         XCTAssertFalse(response.capabilities.execution.supportsSpeculativeDecoding)
-        XCTAssertEqual(response.capabilities.ext.map { $0.name }, ["engine_family"])
+        XCTAssertEqual(
+            response.capabilities.ext.map { $0.name },
+            ["engine_family", "accelerated_prefill", "active_kv_quantized"]
+        )
     }
 
     func testRuntimeStatsAndModelListReflectEmptyWorkerState() async throws {
@@ -426,6 +430,7 @@ final class WorkerScaffoldTests: XCTestCase {
                     messages: [makeSystemMessage("system"), makeUserMessage("bridge prefill live path")],
                     prefillStepSize: 32,
                     resumeHint: "live-prefill",
+                    acceleration: Melix_Worker_V1_AccelerationPolicy(),
                     shouldAbort: { false }
                 )
             }
@@ -433,6 +438,60 @@ final class WorkerScaffoldTests: XCTestCase {
 
         XCTAssertEqual(result.promptTokens, promptTokens.count)
         XCTAssertEqual(result.context.promptTokens, promptTokens.count)
+    }
+
+    func testAutoSwiftMLXBackendPrefillAppliesAcceleratedPrefillPolicyForLiveBridge() async throws {
+        let backend = AutoSwiftMLXBackend()
+        let promptTokens = [1, 2, 3, 4, 5]
+        var acceleration = Melix_Worker_V1_AccelerationPolicy()
+        acceleration.mode = .acceleratedPrefill
+        acceleration.prefillHint = "json-schema"
+
+        let result = try await withTemporaryDefaultMetallib {
+            try await Device.withDefaultDevice(.cpu) {
+                try await backend.prefill(
+                    model: LoadedTextModel(
+                        storage: makeLiveSwiftMLXModelContainer(promptTokens: promptTokens)
+                    ),
+                    messages: [makeSystemMessage("system"), makeUserMessage("{\"kind\":\"object\"}")],
+                    prefillStepSize: 4,
+                    resumeHint: "live-accelerated-prefill",
+                    acceleration: acceleration,
+                    shouldAbort: { false }
+                )
+            }
+        }
+
+        XCTAssertEqual(result.appliedAcceleration.mode, .acceleratedPrefill)
+        XCTAssertEqual(result.appliedAcceleration.prefillHint, "json-schema")
+        XCTAssertGreaterThan(result.acceleratedPrefillGainPct, 0)
+        XCTAssertEqual(result.activeKVQuantizationRatio, 0)
+    }
+
+    func testAutoSwiftMLXBackendPrefillNormalizesActiveKVProfileForLiveBridge() async throws {
+        let backend = AutoSwiftMLXBackend()
+        let promptTokens = [1, 2, 3, 4, 5]
+        var acceleration = Melix_Worker_V1_AccelerationPolicy()
+        acceleration.mode = .activeKvQuantized
+
+        let result = try await withTemporaryDefaultMetallib {
+            try await Device.withDefaultDevice(.cpu) {
+                try await backend.prefill(
+                    model: LoadedTextModel(
+                        storage: makeQuantizableLiveSwiftMLXModelContainer(promptTokens: promptTokens)
+                    ),
+                    messages: [makeSystemMessage("system"), makeUserMessage("quantized live prefill")],
+                    prefillStepSize: 4,
+                    resumeHint: "live-active-kv",
+                    acceleration: acceleration,
+                    shouldAbort: { false }
+                )
+            }
+        }
+
+        XCTAssertEqual(result.appliedAcceleration.mode, .activeKvQuantized)
+        XCTAssertEqual(result.appliedAcceleration.activeKvQuantProfile, "q4")
+        XCTAssertEqual(result.activeKVQuantizationRatio, 25)
     }
 
     func testAutoSwiftMLXBackendDecodeUsesLiveModelContainerBridge() async throws {
@@ -456,6 +515,7 @@ final class WorkerScaffoldTests: XCTestCase {
                     messages: [makeSystemMessage("system"), makeUserMessage("bridge decode live path")],
                     prefillStepSize: 32,
                     resumeHint: "live-decode",
+                    acceleration: Melix_Worker_V1_AccelerationPolicy(),
                     shouldAbort: { false }
                 )
                 let stream = try await backend.decodeEvents(
@@ -608,6 +668,7 @@ final class WorkerScaffoldTests: XCTestCase {
             messages: [makeUserMessage("prefill runtime")],
             prefillStepSize: 8,
             resumeHint: "runtime-resume",
+            acceleration: Melix_Worker_V1_AccelerationPolicy(),
             shouldAbort: { false }
         )
 
@@ -625,6 +686,7 @@ final class WorkerScaffoldTests: XCTestCase {
                 messages: [makeUserMessage("go")],
                 prefillStepSize: 4,
                 resumeHint: "unavailable",
+                acceleration: Melix_Worker_V1_AccelerationPolicy(),
                 shouldAbort: { false }
             )
         )
@@ -638,6 +700,7 @@ final class WorkerScaffoldTests: XCTestCase {
             messages: [makeUserMessage("decode runtime")],
             prefillStepSize: 8,
             resumeHint: "decode-resume",
+            acceleration: Melix_Worker_V1_AccelerationPolicy(),
             shouldAbort: { false }
         )
 
@@ -1158,7 +1221,108 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(stored?.promptTokens, 1)
         XCTAssertEqual(metrics["swift_text.prefill_context_count"], 1)
         XCTAssertEqual(metrics["swift_text.prefill_prompt_tokens"], 1)
+        XCTAssertEqual(metrics["swift_text.accelerated_prefill_gain_pct"], 0)
+        XCTAssertEqual(metrics["swift_text.active_kv_quantization_ratio"], 0)
         XCTAssertNotNil(metrics["swift_text.prefill_ms"])
+    }
+
+    func testPrefillReturnsAcceleratedPrefillMetricsAndStoredAppliedPolicy() async throws {
+        let services = makeServices(
+            environment: ["MELIX_DEV_TEXT_MODEL_PATH": "mlx-community/melix-dev-text-4bit"],
+            backend: FakeRuntimeBackend()
+        )
+
+        let loadResponse = try await withServerContextRPCCancellationHandle { handle in
+            var request = Melix_Worker_V1_LoadModelRequest()
+            request.model.modelID = "melix-dev-text"
+            return try await services.runtime.loadModel(
+                request: request,
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_RuntimeService.Method.LoadModel.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
+        let response = try await withServerContextRPCCancellationHandle { handle in
+            var request = Melix_Worker_V1_PrefillRequest()
+            request.execution.id.requestID = "req-prefill-accelerated"
+            request.execution.modelHandle = loadResponse.modelHandle
+            request.execution.acceleration.mode = .acceleratedPrefill
+            request.execution.acceleration.prefillHint = "json-schema"
+            request.returnDecodeHandle = true
+            request.messages = [makeUserMessage("{\"kind\":\"structured\"}")]
+            return try await services.inference.prefill(
+                request: request,
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_InferenceService.Method.Prefill.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
+        let stored = await services.registry.prefillContext(for: response.decodeHandle)
+        let metrics = services.metrics.counters
+
+        XCTAssertTrue(response.ok)
+        XCTAssertEqual(response.appliedAcceleration.mode, .acceleratedPrefill)
+        XCTAssertEqual(response.appliedAcceleration.prefillHint, "json-schema")
+        XCTAssertEqual(metrics["swift_text.accelerated_prefill_gain_pct"], 50)
+        XCTAssertEqual(stored?.acceleration.mode, .acceleratedPrefill)
+        XCTAssertEqual(stored?.acceleration.prefillHint, "json-schema")
+    }
+
+    func testPrefillReturnsActiveKVQuantizationRatioAndNormalizedProfile() async throws {
+        let services = makeServices(
+            environment: ["MELIX_DEV_TEXT_MODEL_PATH": "mlx-community/melix-dev-text-4bit"],
+            backend: FakeRuntimeBackend()
+        )
+
+        let loadResponse = try await withServerContextRPCCancellationHandle { handle in
+            var request = Melix_Worker_V1_LoadModelRequest()
+            request.model.modelID = "melix-dev-text"
+            return try await services.runtime.loadModel(
+                request: request,
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_RuntimeService.Method.LoadModel.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
+        let response = try await withServerContextRPCCancellationHandle { handle in
+            var request = Melix_Worker_V1_PrefillRequest()
+            request.execution.id.requestID = "req-prefill-active-kv"
+            request.execution.modelHandle = loadResponse.modelHandle
+            request.execution.acceleration.mode = .activeKvQuantized
+            request.returnDecodeHandle = true
+            request.messages = [makeUserMessage("cache quantized")]
+            return try await services.inference.prefill(
+                request: request,
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_InferenceService.Method.Prefill.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
+        let stored = await services.registry.prefillContext(for: response.decodeHandle)
+        let metrics = services.metrics.counters
+
+        XCTAssertTrue(response.ok)
+        XCTAssertEqual(response.appliedAcceleration.mode, .activeKvQuantized)
+        XCTAssertEqual(response.appliedAcceleration.activeKvQuantProfile, "q4")
+        XCTAssertEqual(metrics["swift_text.active_kv_quantization_ratio"], 25)
+        XCTAssertEqual(stored?.acceleration.mode, .activeKvQuantized)
+        XCTAssertEqual(stored?.acceleration.activeKvQuantProfile, "q4")
     }
 
     func testPrefillSurfacesActivePrefillInRuntimeStatsWhileRunning() async throws {
@@ -1964,6 +2128,74 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(services.metrics.counters["swift_text.speculative_rollback_rate"], 33)
     }
 
+    func testDecodeStreamingRpcRecordsActiveKVQuantizationRatio() async throws {
+        let services = makeServices(
+            environment: [
+                "MELIX_DEV_TEXT_MODEL_PATH": "mlx-community/melix-dev-text-4bit"
+            ],
+            backend: FakeRuntimeBackend(decodedChunks: ["active", " kv"])
+        )
+
+        let loadResponse = try await withServerContextRPCCancellationHandle { handle in
+            var request = Melix_Worker_V1_LoadModelRequest()
+            request.model.modelID = "melix-dev-text"
+            return try await services.runtime.loadModel(
+                request: request,
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_RuntimeService.Method.LoadModel.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
+        var prefillRequest = Melix_Worker_V1_PrefillRequest()
+        prefillRequest.execution.id.requestID = "req-active-kv-prefill"
+        prefillRequest.execution.modelHandle = loadResponse.modelHandle
+        prefillRequest.execution.acceleration.mode = .activeKvQuantized
+        prefillRequest.execution.acceleration.activeKvQuantProfile = "q8"
+        prefillRequest.returnDecodeHandle = true
+        prefillRequest.messages = [makeUserMessage("active kv decode")]
+
+        let prefillResponse = try await withServerContextRPCCancellationHandle { handle in
+            try await services.inference.prefill(
+                request: prefillRequest,
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_InferenceService.Method.Prefill.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
+        let writer = RecordingRPCWriter<Melix_Worker_V1_ExecuteEvent>()
+        var request = Melix_Worker_V1_DecodeRequest()
+        request.execution.id.requestID = "req-active-kv-decode"
+        request.execution.modelHandle = loadResponse.modelHandle
+        request.decodeHandle = prefillResponse.decodeHandle
+
+        try await withServerContextRPCCancellationHandle { handle in
+            try await services.inference.decode(
+                request: request,
+                response: RPCWriter(wrapping: writer),
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_InferenceService.Method.Decode.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
+        let recorded = await writer.snapshot()
+        XCTAssertTrue(matches(recorded.first?.payload, .accelerationApplied))
+        XCTAssertEqual(recorded.first?.accelerationApplied.policy.mode, .activeKvQuantized)
+        XCTAssertEqual(recorded.first?.accelerationApplied.policy.activeKvQuantProfile, "q8")
+        XCTAssertEqual(services.metrics.counters["swift_text.active_kv_quantization_ratio"], 50)
+    }
+
     func testCacheManagementRpcsReturnStructuredUnimplemented() async throws {
         let services = makeServices()
 
@@ -2191,6 +2423,7 @@ final class WorkerScaffoldTests: XCTestCase {
             messages: [makeUserMessage("hello deterministic swift", extraText: "again")],
             prefillStepSize: 16,
             resumeHint: "deterministic-resume",
+            acceleration: Melix_Worker_V1_AccelerationPolicy(),
             shouldAbort: { false }
         )
 
@@ -2206,6 +2439,7 @@ final class WorkerScaffoldTests: XCTestCase {
             messages: [makeUserMessage("hello deterministic swift", extraText: "again")],
             prefillStepSize: 16,
             resumeHint: "deterministic-resume",
+            acceleration: Melix_Worker_V1_AccelerationPolicy(),
             shouldAbort: { true }
         )
 
@@ -2213,6 +2447,59 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(aborted.promptTokens, 4)
         XCTAssertNil(abortedStored["prefill_step_size"])
         XCTAssertEqual(abortedStored["resume_hint"], "deterministic-resume")
+    }
+
+    func testDeterministicBackendAcceleratedPrefillReportsGainAndHint() async throws {
+        let backend = DeterministicTextBackend(tokenDelayNanos: 20_000_000)
+        var spec = Melix_Worker_V1_ModelSpec()
+        spec.modelID = "melix-dev-text"
+        let loaded = try await backend.loadModel(spec: spec)
+        var acceleration = Melix_Worker_V1_AccelerationPolicy()
+        acceleration.mode = .acceleratedPrefill
+        acceleration.prefillHint = "json-schema"
+
+        let result = try await backend.prefill(
+            model: loaded,
+            messages: [makeUserMessage("{\"type\":\"object\",\"name\":\"alpha\"}", extraText: "{\"type\":\"object\",\"name\":\"beta\"}")],
+            prefillStepSize: 16,
+            resumeHint: "structured",
+            acceleration: acceleration,
+            shouldAbort: { false }
+        )
+
+        let stored = try XCTUnwrap(result.context.storage as? [String: String])
+        XCTAssertEqual(result.appliedAcceleration.mode, .acceleratedPrefill)
+        XCTAssertEqual(result.appliedAcceleration.prefillHint, "json-schema")
+        XCTAssertGreaterThan(result.acceleratedPrefillGainPct, 0)
+        XCTAssertEqual(result.activeKVQuantizationRatio, 0)
+        XCTAssertEqual(stored["prefill_hint"], "json-schema")
+        XCTAssertEqual(stored["prefill_gain_pct"], String(result.acceleratedPrefillGainPct))
+    }
+
+    func testDeterministicBackendActiveKVPrefillReportsQuantizationRatio() async throws {
+        let backend = DeterministicTextBackend(tokenDelayNanos: 0)
+        var spec = Melix_Worker_V1_ModelSpec()
+        spec.modelID = "melix-dev-text"
+        let loaded = try await backend.loadModel(spec: spec)
+        var acceleration = Melix_Worker_V1_AccelerationPolicy()
+        acceleration.mode = .activeKvQuantized
+        acceleration.activeKvQuantProfile = "q8"
+
+        let result = try await backend.prefill(
+            model: loaded,
+            messages: [makeUserMessage("quantized cache")],
+            prefillStepSize: 8,
+            resumeHint: "quantized",
+            acceleration: acceleration,
+            shouldAbort: { false }
+        )
+
+        let stored = try XCTUnwrap(result.context.storage as? [String: String])
+        XCTAssertEqual(result.appliedAcceleration.mode, .activeKvQuantized)
+        XCTAssertEqual(result.appliedAcceleration.activeKvQuantProfile, "q8")
+        XCTAssertEqual(result.activeKVQuantizationRatio, 50)
+        XCTAssertEqual(stored["active_kv_quant_profile"], "q8")
+        XCTAssertEqual(stored["active_kv_quant_ratio"], "50")
     }
 
     func testAutoSwiftMLXBackendDefaultPrefillRejectsNonMLXContainers() async {
@@ -2224,6 +2511,7 @@ final class WorkerScaffoldTests: XCTestCase {
                 messages: [makeUserMessage("default prefill factory")],
                 prefillStepSize: 4,
                 resumeHint: "prefill",
+                acceleration: Melix_Worker_V1_AccelerationPolicy(),
                 shouldAbort: { false }
             )
             XCTFail("expected prefill to fail for non-MLX containers")
@@ -2388,6 +2676,7 @@ private final class FakeRuntimeBackend: TextRuntimeBackend, @unchecked Sendable 
         messages: [Melix_Worker_V1_ChatMessage],
         prefillStepSize: UInt32,
         resumeHint: String,
+        acceleration: Melix_Worker_V1_AccelerationPolicy,
         shouldAbort: @escaping @Sendable () -> Bool
     ) async throws -> RuntimePrefillResult {
         if let prefillError {
@@ -2406,7 +2695,10 @@ private final class FakeRuntimeBackend: TextRuntimeBackend, @unchecked Sendable 
                 ],
                 promptTokens: promptTokens
             ),
-            promptTokens: promptTokens
+            promptTokens: promptTokens,
+            appliedAcceleration: normalizedAccelerationPolicy(acceleration),
+            acceleratedPrefillGainPct: acceleration.mode == .acceleratedPrefill ? 50 : 0,
+            activeKVQuantizationRatio: activeKVQuantizationRatioPercent(for: acceleration)
         )
     }
 
@@ -2719,6 +3011,30 @@ private func makeLiveSwiftMLXModelContainer(promptTokens: [Int]) -> ModelContain
 
     let context = ModelContext(
         configuration: ModelConfiguration(id: "melix-tests/live-swift-mlx"),
+        model: model,
+        processor: DeterministicUserInputProcessor(promptTokens: promptTokens),
+        tokenizer: DeterministicTokenizer(vocabularySize: vocabularySize)
+    )
+    return ModelContainer(context: context)
+}
+
+@available(macOS 15.0, *)
+private func makeQuantizableLiveSwiftMLXModelContainer(promptTokens: [Int]) -> ModelContainer {
+    let vocabularySize = 32
+    let configuration = LlamaConfiguration(
+        hiddenSize: 512,
+        hiddenLayers: 1,
+        intermediateSize: 1024,
+        attentionHeads: 8,
+        rmsNormEps: 0.00001,
+        vocabularySize: vocabularySize,
+        kvHeads: 4
+    )
+    let model = LlamaModel(configuration)
+    eval(model)
+
+    let context = ModelContext(
+        configuration: ModelConfiguration(id: "melix-tests/live-swift-mlx-quant"),
         model: model,
         processor: DeterministicUserInputProcessor(promptTokens: promptTokens),
         tokenizer: DeterministicTokenizer(vocabularySize: vocabularySize)

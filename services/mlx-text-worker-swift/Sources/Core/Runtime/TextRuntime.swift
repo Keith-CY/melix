@@ -25,6 +25,9 @@ struct TextPrefillContext: @unchecked Sendable {
 struct RuntimePrefillResult: Sendable {
     let context: TextPrefillContext
     let promptTokens: Int
+    let appliedAcceleration: Melix_Worker_V1_AccelerationPolicy
+    let acceleratedPrefillGainPct: Int
+    let activeKVQuantizationRatio: Int
 }
 
 struct TextGenerationSummary: Sendable {
@@ -64,6 +67,7 @@ protocol TextRuntimeBackend: Sendable {
         messages: [Melix_Worker_V1_ChatMessage],
         prefillStepSize: UInt32,
         resumeHint: String,
+        acceleration: Melix_Worker_V1_AccelerationPolicy,
         shouldAbort: @escaping @Sendable () -> Bool
     ) async throws -> RuntimePrefillResult
     func generateEvents(
@@ -92,6 +96,7 @@ extension TextRuntimeBackend {
         messages: [Melix_Worker_V1_ChatMessage],
         prefillStepSize: UInt32,
         resumeHint: String,
+        acceleration: Melix_Worker_V1_AccelerationPolicy,
         shouldAbort: @escaping @Sendable () -> Bool
     ) async throws -> RuntimePrefillResult {
         throw RuntimeUnavailableError(
@@ -162,6 +167,7 @@ struct TextRuntime: Sendable {
         messages: [Melix_Worker_V1_ChatMessage],
         prefillStepSize: UInt32,
         resumeHint: String,
+        acceleration: Melix_Worker_V1_AccelerationPolicy,
         shouldAbort: @escaping @Sendable () -> Bool
     ) async throws -> RuntimePrefillResult {
         try await backend.prefill(
@@ -169,6 +175,7 @@ struct TextRuntime: Sendable {
             messages: messages,
             prefillStepSize: prefillStepSize,
             resumeHint: resumeHint,
+            acceleration: acceleration,
             shouldAbort: shouldAbort
         )
     }
@@ -241,4 +248,46 @@ private func processResidentMemoryBytes() -> UInt64 {
         return 0
     }
     return UInt64(info.resident_size)
+}
+
+func normalizedAccelerationPolicy(
+    _ policy: Melix_Worker_V1_AccelerationPolicy
+) -> Melix_Worker_V1_AccelerationPolicy {
+    var normalized = policy
+    if normalized.mode == .unspecified {
+        normalized.mode = .baseline
+    }
+
+    if normalized.mode == .activeKvQuantized,
+       normalized.activeKvQuantProfile.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        normalized.activeKvQuantProfile = "q4"
+    }
+
+    return normalized
+}
+
+func activeKVQuantizationRatioPercent(
+    for policy: Melix_Worker_V1_AccelerationPolicy
+) -> Int {
+    let normalized = normalizedAccelerationPolicy(policy)
+    guard normalized.mode == .activeKvQuantized else {
+        return 0
+    }
+
+    let profile = normalized.activeKvQuantProfile.lowercased()
+    if profile.contains("q8") {
+        return 50
+    }
+    return 25
+}
+
+func gainPercent(
+    baseline: UInt64,
+    effective: UInt64
+) -> Int {
+    guard baseline > 0, effective < baseline else {
+        return 0
+    }
+
+    return max(0, min(100, Int(((baseline - effective) * 100) / baseline)))
 }

@@ -179,6 +179,10 @@ struct TextDecodeEngine: Sendable {
                 "swift_text.decode_tokens_per_second",
                 value: max(0, Int((tokensPerSecond ?? 0).rounded()))
             )
+            metrics.set(
+                "swift_text.active_kv_quantization_ratio",
+                value: activeKVQuantizationRatioPercent(for: acceleration)
+            )
             recordSpeculativeMetrics(
                 accepted: speculativeAccepted,
                 rejected: speculativeRejected
