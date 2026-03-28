@@ -1,8 +1,11 @@
 import Foundation
 import MelixWorkerProtocol
 
+#if canImport(MLX)
+@preconcurrency import MLX
+#endif
 #if canImport(MLXLMCommon)
-import MLXLMCommon
+@preconcurrency import MLXLMCommon
 #endif
 
 struct RuntimeUnavailableError: LocalizedError {
@@ -22,6 +25,15 @@ struct PreparedPrefillContext: @unchecked Sendable {
     let preparedInput: Any
     let promptTokens: Int
 }
+
+#if canImport(MLXLMCommon)
+struct PreparedDecodeState: @unchecked Sendable {
+    let input: LMInput
+    let prepared: PrepareResult
+    let cache: [KVCache]
+    let promptPrefillTime: TimeInterval
+}
+#endif
 
 enum RawTextGenerationEvent: Sendable {
     case chunk(String)
@@ -139,7 +151,11 @@ struct AutoSwiftMLXBackend: TextRuntimeBackend {
         resumeHint: String,
         shouldAbort: @escaping @Sendable () -> Bool
     ) async throws -> RuntimePrefillResult {
-        let prepared = try await makePreparedPromptContext(model: model, messages: messages)
+        let prepared = try await makePreparedPromptContext(
+            model: model,
+            messages: messages,
+            prefillStepSize: prefillStepSize
+        )
         return RuntimePrefillResult(
             context: TextPrefillContext(
                 storage: prepared.preparedInput,
@@ -183,6 +199,71 @@ struct AutoSwiftMLXBackend: TextRuntimeBackend {
                             continuation.yield(.token(text))
                         case .summary(let runtimeSummary):
                             summary = runtimeSummary
+                        }
+                    }
+
+                    if summary.completionTokens == 0 {
+                        summary = TextGenerationSummary(
+                            promptTokens: prepared.promptTokens,
+                            completionTokens: emittedTokenCount,
+                            tokensPerSecond: nil
+                        )
+                    }
+
+                    continuation.yield(.summary(summary))
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+        }
+    }
+
+    func decodeEvents(
+        model: LoadedTextModel,
+        context: TextPrefillContext,
+        sampling: Melix_Worker_V1_SamplingConfig,
+        maxOutputTokens: UInt32,
+        decodeStepSize: UInt32,
+        prefillToken: String,
+        acceleration: Melix_Worker_V1_AccelerationPolicy,
+        shouldAbort: @escaping @Sendable () -> Bool
+    ) async throws -> AsyncThrowingStream<TextGenerationEvent, Error> {
+        let effectiveAcceleration = try resolveSwiftDecodeAcceleration(acceleration)
+        let prepared = try await makePreparedDecodeGeneration(
+            model: model,
+            context: context,
+            sampling: sampling,
+            maxOutputTokens: maxOutputTokens,
+            decodeStepSize: decodeStepSize,
+            prefillToken: prefillToken,
+            acceleration: effectiveAcceleration
+        )
+
+        return AsyncThrowingStream { continuation in
+            Task {
+                var emittedTokenCount = 0
+                var summary = TextGenerationSummary(
+                    promptTokens: prepared.promptTokens,
+                    completionTokens: 0,
+                    tokensPerSecond: nil
+                )
+
+                do {
+                    for try await runtimeEvent in prepared.runtimeEvents {
+                        if shouldAbort() {
+                            break
+                        }
+
+                        switch runtimeEvent {
+                        case .chunk(let text):
+                            guard !text.isEmpty else {
+                                continue
+                            }
+                            continuation.yield(.token(text))
+                        case .summary(let runtimeSummary):
+                            summary = runtimeSummary
+                            emittedTokenCount = runtimeSummary.completionTokens
                         }
                     }
 
@@ -319,7 +400,8 @@ private func makePreparedTextGeneration(
 
 private func makePreparedPromptContext(
     model: LoadedTextModel,
-    messages: [Melix_Worker_V1_ChatMessage]
+    messages: [Melix_Worker_V1_ChatMessage],
+    prefillStepSize: UInt32
 ) async throws -> PreparedPrefillContext {
     #if canImport(MLXLMCommon)
     guard let container = model.storage as? ModelContainer else {
@@ -330,10 +412,26 @@ private func makePreparedPromptContext(
 
     let chat = try convertChatMessages(messages)
     let userInput = UserInput(chat: chat)
-    let input = try await container.prepare(input: userInput)
+    let preparedState = try await container.perform { context in
+        let input = try await context.processor.prepare(input: userInput)
+        let cache = context.model.newCache(parameters: nil)
+        let startedAt = Date.timeIntervalSinceReferenceDate
+        let prepared = try context.model.prepare(
+            input,
+            cache: cache,
+            windowSize: Int(max(prefillStepSize, 1))
+        )
+        let promptPrefillTime = Date.timeIntervalSinceReferenceDate - startedAt
+        return PreparedDecodeState(
+            input: input,
+            prepared: prepared,
+            cache: cache,
+            promptPrefillTime: promptPrefillTime
+        )
+    }
     return PreparedPrefillContext(
-        preparedInput: input,
-        promptTokens: input.text.tokens.size
+        preparedInput: preparedState,
+        promptTokens: preparedState.input.text.tokens.size
     )
     #else
     throw RuntimeUnavailableError(
@@ -341,3 +439,213 @@ private func makePreparedPromptContext(
     )
     #endif
 }
+
+private func resolveSwiftDecodeAcceleration(
+    _ acceleration: Melix_Worker_V1_AccelerationPolicy
+) throws -> Melix_Worker_V1_AccelerationPolicy {
+    guard acceleration.mode == .speculativeDecode else {
+        return acceleration
+    }
+
+    if acceleration.allowBaselineFallback {
+        var baseline = acceleration
+        baseline.mode = .baseline
+        return baseline
+    }
+
+    throw RuntimeUnavailableError(
+        message: "Speculative decode is not yet available for the Swift MLX backend."
+    )
+}
+
+private func makeDecodeParameters(
+    from sampling: Melix_Worker_V1_SamplingConfig,
+    maxOutputTokens: UInt32,
+    decodeStepSize: UInt32,
+    acceleration: Melix_Worker_V1_AccelerationPolicy
+) -> GenerateParameters {
+    var parameters = makeGenerateParameters(from: sampling)
+
+    if maxOutputTokens > 0 {
+        parameters.maxTokens = Int(maxOutputTokens)
+    }
+    if decodeStepSize > 0 {
+        parameters.prefillStepSize = Int(decodeStepSize)
+    }
+
+    if acceleration.mode == .activeKvQuantized {
+        let profile = acceleration.activeKvQuantProfile.lowercased()
+        parameters.kvBits = profile.contains("q8") ? 8 : 4
+        parameters.quantizedKVStart = 0
+    }
+
+    return parameters
+}
+
+private func makePreparedDecodeGeneration(
+    model: LoadedTextModel,
+    context: TextPrefillContext,
+    sampling: Melix_Worker_V1_SamplingConfig,
+    maxOutputTokens: UInt32,
+    decodeStepSize: UInt32,
+    prefillToken: String,
+    acceleration: Melix_Worker_V1_AccelerationPolicy
+) async throws -> PreparedTextGeneration {
+    #if canImport(MLXLMCommon)
+    _ = prefillToken
+
+    guard let container = model.storage as? ModelContainer else {
+        throw RuntimeUnavailableError(
+            message: "Loaded model is not a Swift MLX model container."
+        )
+    }
+    guard let decodeState = context.storage as? PreparedDecodeState else {
+        throw RuntimeUnavailableError(
+            message: "Decode context is not a prepared Swift MLX prefill state."
+        )
+    }
+
+    let parameters = makeDecodeParameters(
+        from: sampling,
+        maxOutputTokens: maxOutputTokens,
+        decodeStepSize: decodeStepSize,
+        acceleration: acceleration
+    )
+
+    let runtimeEvents = try await container.perform(values: decodeState) { modelContext, decodeState in
+        try makePreparedDecodeEvents(
+            decodeState: decodeState,
+            context: modelContext,
+            parameters: parameters
+        )
+    }
+
+    return PreparedTextGeneration(
+        promptTokens: decodeState.input.text.tokens.size,
+        runtimeEvents: runtimeEvents
+    )
+    #else
+    throw RuntimeUnavailableError(
+        message: "MLXLMCommon is not available in this build. Install the Swift MLX runtime dependencies before decoding."
+    )
+    #endif
+}
+
+#if canImport(MLXLMCommon)
+private func makePreparedDecodeEvents(
+    decodeState: PreparedDecodeState,
+    context: ModelContext,
+    parameters: GenerateParameters
+) throws -> AsyncThrowingStream<RawTextGenerationEvent, Error> {
+    let (stream, continuation) = AsyncThrowingStream<RawTextGenerationEvent, Error>.makeStream()
+
+    let task = Task {
+        do {
+            var cache = decodeState.cache
+            var processor = parameters.processor()
+            let sampler = parameters.sampler()
+            processor?.prompt(decodeState.input.text.tokens)
+
+            let additionalEOSTokenIds = Set(
+                context.configuration.extraEOSTokens.compactMap {
+                    context.tokenizer.convertTokenToId($0)
+                }
+            )
+            var detokenizer = NaiveStreamingDetokenizer(tokenizer: context.tokenizer)
+            var output = try makeInitialDecodeOutput(
+                decodeState: decodeState,
+                context: context,
+                cache: cache
+            )
+            var generatedTokenCount = 0
+            let startedAt = Date.timeIntervalSinceReferenceDate
+
+            while parameters.maxTokens.map({ generatedTokenCount < $0 }) ?? true {
+                if Task.isCancelled {
+                    break
+                }
+
+                let token = sampleNextToken(
+                    logits: output.logits,
+                    processor: &processor,
+                    sampler: sampler
+                )
+                let tokenID = token.item(Int.self)
+
+                if tokenID == context.tokenizer.unknownTokenId
+                    || tokenID == context.tokenizer.eosTokenId
+                    || additionalEOSTokenIds.contains(tokenID)
+                {
+                    break
+                }
+
+                generatedTokenCount += 1
+                detokenizer.append(token: tokenID)
+                if let chunk = detokenizer.next() {
+                    continuation.yield(.chunk(chunk))
+                }
+
+                let nextInput = LMInput.Text(tokens: token)
+                output = context.model(
+                    nextInput[text: .newAxis],
+                    cache: cache.isEmpty ? nil : cache,
+                    state: output.state
+                )
+                maybeQuantizeKVCache(
+                    cache: &cache,
+                    kvBits: parameters.kvBits,
+                    kvGroupSize: parameters.kvGroupSize,
+                    quantizedKVStart: parameters.quantizedKVStart
+                )
+            }
+
+            let elapsed = max(Date.timeIntervalSinceReferenceDate - startedAt, 0.000_001)
+            continuation.yield(.summary(
+                TextGenerationSummary(
+                    promptTokens: decodeState.input.text.tokens.size,
+                    completionTokens: generatedTokenCount,
+                    tokensPerSecond: Double(generatedTokenCount) / elapsed
+                )
+            ))
+            continuation.finish()
+        } catch {
+            continuation.finish(throwing: error)
+        }
+    }
+
+    continuation.onTermination = { _ in
+        task.cancel()
+    }
+
+    return stream
+}
+
+private func makeInitialDecodeOutput(
+    decodeState: PreparedDecodeState,
+    context: ModelContext,
+    cache: [KVCache]
+) throws -> LMOutput {
+    switch decodeState.prepared {
+    case .tokens(let tokens):
+        return context.model(
+            tokens[text: .newAxis],
+            cache: cache.isEmpty ? nil : cache,
+            state: nil
+        )
+    case .logits(let output):
+        return output
+    }
+}
+
+private func sampleNextToken(
+    logits: MLXArray,
+    processor: inout (any LogitProcessor)?,
+    sampler: any LogitSampler
+) -> MLXArray {
+    var logits = logits[0..., -1, 0...]
+    logits = processor?.process(logits: logits) ?? logits
+    let token = sampler.sample(logits: logits)
+    processor?.didSample(token: token)
+    return token
+}
+#endif

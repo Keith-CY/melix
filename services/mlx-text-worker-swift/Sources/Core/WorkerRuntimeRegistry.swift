@@ -23,6 +23,11 @@ struct WorkerPrefillResult: Sendable {
     let promptTokens: Int
 }
 
+struct WorkerDecodeSession: @unchecked Sendable {
+    let loadedModel: LoadedModelRecord
+    let prefill: StoredPrefillContext
+}
+
 actor WorkerRuntimeRegistry {
     private let configuration: WorkerConfiguration
     private let modelCatalog: WorkerModelCatalog
@@ -68,7 +73,7 @@ actor WorkerRuntimeRegistry {
 
         var execution = Melix_Worker_V1_ExecutionCapabilities()
         execution.supportsContinuousBatching = false
-        execution.supportsSpeculativeDecoding = false
+        execution.supportsSpeculativeDecoding = supportsSpeculativeDecoding()
         capabilities.execution = execution
 
         var ext = Melix_Worker_V1_Capability()
@@ -209,6 +214,58 @@ actor WorkerRuntimeRegistry {
         prefillContexts.count
     }
 
+    func beginDecode(decodeHandle: String) throws -> WorkerDecodeSession {
+        guard let stored = prefillContexts[decodeHandle] else {
+            throw WorkerRuntimeRegistryError.unknownDecodeHandle
+        }
+        guard let loaded = loadedModels[stored.modelHandle] else {
+            throw WorkerRuntimeRegistryError.unknownModelHandle
+        }
+
+        prefillContexts.removeValue(forKey: decodeHandle)
+        activeRequests += 1
+        activeDecodes += 1
+
+        return WorkerDecodeSession(
+            loadedModel: loaded,
+            prefill: stored
+        )
+    }
+
+    func finishDecode() {
+        if activeRequests > 0 {
+            activeRequests -= 1
+        }
+        if activeDecodes > 0 {
+            activeDecodes -= 1
+        }
+    }
+
+    func decodeEvents(
+        session: WorkerDecodeSession,
+        sampling: Melix_Worker_V1_SamplingConfig,
+        maxOutputTokens: UInt32,
+        decodeStepSize: UInt32,
+        prefillToken: String,
+        acceleration: Melix_Worker_V1_AccelerationPolicy,
+        shouldAbort: @escaping @Sendable () -> Bool
+    ) async throws -> AsyncThrowingStream<TextGenerationEvent, Error> {
+        try await runtime.decodeEvents(
+            model: session.loadedModel.runtimeModel,
+            context: session.prefill.context,
+            sampling: sampling,
+            maxOutputTokens: maxOutputTokens,
+            decodeStepSize: decodeStepSize,
+            prefillToken: prefillToken,
+            acceleration: acceleration,
+            shouldAbort: shouldAbort
+        )
+    }
+
+    func supportsSpeculativeDecoding() -> Bool {
+        configuration.backendMode.lowercased() == "deterministic"
+    }
+
     func runtimeStats() -> Melix_Worker_V1_RuntimeStats {
         var stats = Melix_Worker_V1_RuntimeStats()
         if draining {
@@ -236,11 +293,14 @@ actor WorkerRuntimeRegistry {
 
 enum WorkerRuntimeRegistryError: Error, LocalizedError {
     case unknownModelHandle
+    case unknownDecodeHandle
 
     var errorDescription: String? {
         switch self {
         case .unknownModelHandle:
             return "Unknown model handle."
+        case .unknownDecodeHandle:
+            return "Unknown decode handle."
         }
     }
 }

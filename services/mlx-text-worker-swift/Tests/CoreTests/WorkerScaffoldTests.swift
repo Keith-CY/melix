@@ -348,6 +348,26 @@ final class WorkerScaffoldTests: XCTestCase {
         }
     }
 
+    func testAutoSwiftMLXBackendDecodeRejectsUnsupportedSpeculativeModeWithoutFallback() async {
+        let backend = AutoSwiftMLXBackend()
+        var acceleration = Melix_Worker_V1_AccelerationPolicy()
+        acceleration.mode = .speculativeDecode
+        acceleration.allowBaselineFallback = false
+
+        await XCTAssertThrowsErrorAsync(
+            try await backend.decodeEvents(
+                model: LoadedTextModel(storage: ["kind": "fake"]),
+                context: TextPrefillContext(storage: [:], promptTokens: 1),
+                sampling: Melix_Worker_V1_SamplingConfig(),
+                maxOutputTokens: 2,
+                decodeStepSize: 1,
+                prefillToken: "",
+                acceleration: acceleration,
+                shouldAbort: { false }
+            )
+        )
+    }
+
     func testAutoSwiftMLXBackendDefaultPreparedGenerationFactoryRejectsNonMLXContainers() async {
         let backend = AutoSwiftMLXBackend()
 
@@ -413,6 +433,50 @@ final class WorkerScaffoldTests: XCTestCase {
 
         XCTAssertEqual(result.promptTokens, promptTokens.count)
         XCTAssertEqual(result.context.promptTokens, promptTokens.count)
+    }
+
+    func testAutoSwiftMLXBackendDecodeUsesLiveModelContainerBridge() async throws {
+        let backend = AutoSwiftMLXBackend()
+        let promptTokens = [1, 2, 3, 4, 5]
+        var sampling = Melix_Worker_V1_SamplingConfig()
+        sampling.temperature = 0
+        sampling.topP = 1
+        sampling.maxOutputTokens = 2
+
+        var acceleration = Melix_Worker_V1_AccelerationPolicy()
+        acceleration.mode = .baseline
+
+        let events = try await withTemporaryDefaultMetallib {
+            try await Device.withDefaultDevice(.cpu) {
+                let model = LoadedTextModel(
+                    storage: makeLiveSwiftMLXModelContainer(promptTokens: promptTokens)
+                )
+                let prefill = try await backend.prefill(
+                    model: model,
+                    messages: [makeSystemMessage("system"), makeUserMessage("bridge decode live path")],
+                    prefillStepSize: 32,
+                    resumeHint: "live-decode",
+                    shouldAbort: { false }
+                )
+                let stream = try await backend.decodeEvents(
+                    model: model,
+                    context: prefill.context,
+                    sampling: sampling,
+                    maxOutputTokens: 2,
+                    decodeStepSize: 1,
+                    prefillToken: "",
+                    acceleration: acceleration,
+                    shouldAbort: { false }
+                )
+                return try await collectTextGenerationEvents(from: stream)
+            }
+        }
+
+        XCTAssertFalse(renderedTokenChunks(from: events).joined().isEmpty)
+        let summary = try XCTUnwrap(renderedSummary(from: events))
+        XCTAssertEqual(summary.promptTokens, promptTokens.count)
+        XCTAssertGreaterThan(summary.completionTokens, 0)
+        XCTAssertNotNil(summary.tokensPerSecond)
     }
     #endif
 
@@ -561,6 +625,51 @@ final class WorkerScaffoldTests: XCTestCase {
                 messages: [makeUserMessage("go")],
                 prefillStepSize: 4,
                 resumeHint: "unavailable",
+                shouldAbort: { false }
+            )
+        )
+    }
+
+    func testTextRuntimeForwardsDecodeAndDefaultDecodeThrowsUnavailable() async throws {
+        let runtime = TextRuntime(backend: FakeRuntimeBackend(decodedChunks: ["decode", " path"]))
+        let loaded = try await runtime.loadModel(spec: Melix_Worker_V1_ModelSpec())
+        let prefill = try await runtime.prefill(
+            model: loaded.model,
+            messages: [makeUserMessage("decode runtime")],
+            prefillStepSize: 8,
+            resumeHint: "decode-resume",
+            shouldAbort: { false }
+        )
+
+        var acceleration = Melix_Worker_V1_AccelerationPolicy()
+        acceleration.mode = .baseline
+
+        let decoded = try await runtime.decodeEvents(
+            model: loaded.model,
+            context: prefill.context,
+            sampling: Melix_Worker_V1_SamplingConfig(),
+            maxOutputTokens: 8,
+            decodeStepSize: 1,
+            prefillToken: "",
+            acceleration: acceleration,
+            shouldAbort: { false }
+        )
+        let events = try await collectTextGenerationEvents(from: decoded)
+        XCTAssertEqual(renderedTokenChunks(from: events), ["decode", " path"])
+        XCTAssertEqual(renderedSummary(from: events)?.completionTokens, 2)
+
+        let unavailableRuntime = TextRuntime(backend: DefaultUnloadBackend())
+        let unavailableModel = try await unavailableRuntime.loadModel(spec: Melix_Worker_V1_ModelSpec())
+
+        await XCTAssertThrowsErrorAsync(
+            try await unavailableRuntime.decodeEvents(
+                model: unavailableModel.model,
+                context: TextPrefillContext(storage: [:], promptTokens: 1),
+                sampling: Melix_Worker_V1_SamplingConfig(),
+                maxOutputTokens: 4,
+                decodeStepSize: 1,
+                prefillToken: "",
+                acceleration: acceleration,
                 shouldAbort: { false }
             )
         )
@@ -749,6 +858,51 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertTrue(unloaded)
         XCTAssertEqual(countAfterUnload, 0)
         XCTAssertNil(storedAfterUnload)
+    }
+
+    func testRuntimeRegistryBeginDecodeConsumesStoredContextAndTracksActiveDecodeState() async throws {
+        let registry = WorkerRuntimeRegistry(
+            configuration: WorkerConfiguration(),
+            modelCatalog: WorkerModelCatalog(environment: [
+                "MELIX_DEV_TEXT_MODEL_PATH": "mlx-community/melix-dev-text-4bit"
+            ]),
+            runtime: TextRuntime(backend: FakeRuntimeBackend())
+        )
+
+        var loadRequest = Melix_Worker_V1_ModelSpec()
+        loadRequest.modelID = "melix-dev-text"
+        let loaded = try await registry.loadModel(loadRequest)
+
+        var acceleration = Melix_Worker_V1_AccelerationPolicy()
+        acceleration.mode = .baseline
+        let prefill = try await registry.prefill(
+            requestID: "req-prefill-begin-decode",
+            modelHandle: loaded.handle,
+            messages: [makeUserMessage("registry decode")],
+            prefillStepSize: 8,
+            returnDecodeHandle: true,
+            resumeHint: "begin-decode",
+            acceleration: acceleration,
+            shouldAbort: { false }
+        )
+
+        let session = try await registry.beginDecode(decodeHandle: prefill.decodeHandle)
+        let statsDuringDecode = await registry.runtimeStats()
+        let storedAfterBegin = await registry.prefillContext(for: prefill.decodeHandle)
+        await registry.finishDecode()
+        let statsAfterDecode = await registry.runtimeStats()
+
+        XCTAssertEqual(session.prefill.requestID, "req-prefill-begin-decode")
+        XCTAssertEqual(session.loadedModel.handle, loaded.handle)
+        XCTAssertEqual(statsDuringDecode.activeDecodes, 1)
+        XCTAssertEqual(statsDuringDecode.activeRequests, 1)
+        XCTAssertNil(storedAfterBegin)
+        XCTAssertEqual(statsAfterDecode.activeDecodes, 0)
+        XCTAssertEqual(statsAfterDecode.activeRequests, 0)
+
+        await XCTAssertThrowsErrorAsync(
+            try await registry.beginDecode(decodeHandle: "missing-decode")
+        )
     }
 
     func testRuntimeLifecycleLoadAndUnloadTrackModelState() async throws {
@@ -1306,11 +1460,81 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertNotNil(services.metrics.counters["swift_text.abort_ms"])
     }
 
-    func testDecodeStreamingRpcEmitsStructuredUnimplementedEvent() async throws {
-        let services = makeServices()
+    func testDecodeStreamingRpcStreamsTokensAndCleansUpStoredContext() async throws {
+        let services = makeServices(
+            environment: ["MELIX_DEV_TEXT_MODEL_PATH": "mlx-community/melix-dev-text-4bit"],
+            backend: FakeRuntimeBackend(decodedChunks: ["decode", " result"])
+        )
+        let loadResponse = try await withServerContextRPCCancellationHandle { handle in
+            var request = Melix_Worker_V1_LoadModelRequest()
+            request.model.modelID = "melix-dev-text"
+            return try await services.runtime.loadModel(
+                request: request,
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_RuntimeService.Method.LoadModel.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
+        var prefillRequest = Melix_Worker_V1_PrefillRequest()
+        prefillRequest.execution.id.requestID = "req-decode-prefill"
+        prefillRequest.execution.modelHandle = loadResponse.modelHandle
+        prefillRequest.returnDecodeHandle = true
+        prefillRequest.messages = [makeUserMessage("decode rpc")]
+        let prefillResponse = try await withServerContextRPCCancellationHandle { handle in
+            try await services.inference.prefill(
+                request: prefillRequest,
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_InferenceService.Method.Prefill.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
         let writer = RecordingRPCWriter<Melix_Worker_V1_ExecuteEvent>()
         var request = Melix_Worker_V1_DecodeRequest()
         request.execution.id.requestID = "req-decode"
+        request.execution.modelHandle = loadResponse.modelHandle
+        request.decodeHandle = prefillResponse.decodeHandle
+        request.returnUsage = true
+
+        try await withServerContextRPCCancellationHandle { handle in
+            try await services.inference.decode(
+                request: request,
+                response: RPCWriter(wrapping: writer),
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_InferenceService.Method.Decode.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
+        let recorded = await writer.snapshot()
+        XCTAssertGreaterThanOrEqual(recorded.count, 4)
+        XCTAssertEqual(recorded[0].decodeStarted.decodeHandle, prefillResponse.decodeHandle)
+        XCTAssertEqual(recorded[0].executionKind, "decode")
+        XCTAssertEqual(recorded[1].tokenDelta.text, "decode")
+        XCTAssertEqual(recorded[2].tokenDelta.text, " result")
+        XCTAssertEqual(recorded[3].usageDelta.completionTokens, 2)
+        XCTAssertEqual(recorded.last?.completed.finishReason, "stop")
+        let storedAfterDecode = await services.registry.prefillContext(for: prefillResponse.decodeHandle)
+        XCTAssertNil(storedAfterDecode)
+        XCTAssertEqual(services.metrics.counters["swift_text.decode_tokens_per_second"], 16)
+    }
+
+    func testDecodeStreamingRpcReturnsStructuredNotFoundForMissingDecodeHandle() async throws {
+        let services = makeServices()
+        let writer = RecordingRPCWriter<Melix_Worker_V1_ExecuteEvent>()
+        var request = Melix_Worker_V1_DecodeRequest()
+        request.execution.id.requestID = "req-missing-decode"
+        request.decodeHandle = "missing-decode"
 
         try await withServerContextRPCCancellationHandle { handle in
             try await services.inference.decode(
@@ -1327,9 +1551,417 @@ final class WorkerScaffoldTests: XCTestCase {
 
         let recorded = await writer.snapshot()
         XCTAssertEqual(recorded.count, 1)
-        XCTAssertEqual(recorded[0].requestID, "req-decode")
-        XCTAssertEqual(recorded[0].executionKind, "decode")
+        XCTAssertEqual(recorded[0].error.error.code, "not_found")
+    }
+
+    func testDecodeStreamingRpcFallsBackToStoredRequestIDAndHandlesSummaryOnlyDecode() async throws {
+        let services = makeServices(
+            environment: ["MELIX_DEV_TEXT_MODEL_PATH": "mlx-community/melix-dev-text-4bit"],
+            backend: FakeRuntimeBackend(decodedChunks: [])
+        )
+        let loadResponse = try await withServerContextRPCCancellationHandle { handle in
+            var request = Melix_Worker_V1_LoadModelRequest()
+            request.model.modelID = "melix-dev-text"
+            return try await services.runtime.loadModel(
+                request: request,
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_RuntimeService.Method.LoadModel.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
+        var prefillRequest = Melix_Worker_V1_PrefillRequest()
+        prefillRequest.execution.id.requestID = "req-stored-decode"
+        prefillRequest.execution.modelHandle = loadResponse.modelHandle
+        prefillRequest.returnDecodeHandle = true
+        prefillRequest.messages = [makeUserMessage("summary only decode")]
+        let prefillResponse = try await withServerContextRPCCancellationHandle { handle in
+            try await services.inference.prefill(
+                request: prefillRequest,
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_InferenceService.Method.Prefill.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
+        let writer = RecordingRPCWriter<Melix_Worker_V1_ExecuteEvent>()
+        var request = Melix_Worker_V1_DecodeRequest()
+        request.execution.modelHandle = loadResponse.modelHandle
+        request.decodeHandle = prefillResponse.decodeHandle
+        request.returnUsage = true
+
+        try await withServerContextRPCCancellationHandle { handle in
+            try await services.inference.decode(
+                request: request,
+                response: RPCWriter(wrapping: writer),
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_InferenceService.Method.Decode.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
+        let recorded = await writer.snapshot()
+        XCTAssertEqual(recorded.count, 3)
+        XCTAssertEqual(recorded[0].requestID, "req-stored-decode")
+        XCTAssertGreaterThan(recorded[1].usageDelta.promptTokens, 0)
+        XCTAssertEqual(recorded[1].usageDelta.completionTokens, 0)
+        XCTAssertEqual(recorded[2].completed.assistantText, "")
+        XCTAssertEqual(recorded[2].completed.finishReason, "stop")
+        XCTAssertNotNil(services.metrics.counters["swift_text.decode_ttft_ms"])
+    }
+
+    func testDecodeStreamingRpcReturnsStructuredRuntimeErrorForBackendDecodeFailure() async throws {
+        let services = makeServices(
+            environment: ["MELIX_DEV_TEXT_MODEL_PATH": "mlx-community/melix-dev-text-4bit"],
+            backend: FakeRuntimeBackend(decodeError: FakeRuntimeBackendError.decodeFailed)
+        )
+        let loadResponse = try await withServerContextRPCCancellationHandle { handle in
+            var request = Melix_Worker_V1_LoadModelRequest()
+            request.model.modelID = "melix-dev-text"
+            return try await services.runtime.loadModel(
+                request: request,
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_RuntimeService.Method.LoadModel.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
+        var prefillRequest = Melix_Worker_V1_PrefillRequest()
+        prefillRequest.execution.id.requestID = "req-runtime-error-prefill"
+        prefillRequest.execution.modelHandle = loadResponse.modelHandle
+        prefillRequest.returnDecodeHandle = true
+        prefillRequest.messages = [makeUserMessage("runtime error decode")]
+        let prefillResponse = try await withServerContextRPCCancellationHandle { handle in
+            try await services.inference.prefill(
+                request: prefillRequest,
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_InferenceService.Method.Prefill.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
+        let writer = RecordingRPCWriter<Melix_Worker_V1_ExecuteEvent>()
+        var request = Melix_Worker_V1_DecodeRequest()
+        request.execution.id.requestID = "req-runtime-error"
+        request.execution.modelHandle = loadResponse.modelHandle
+        request.decodeHandle = prefillResponse.decodeHandle
+
+        try await withServerContextRPCCancellationHandle { handle in
+            try await services.inference.decode(
+                request: request,
+                response: RPCWriter(wrapping: writer),
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_InferenceService.Method.Decode.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
+        let recorded = await writer.snapshot()
+        XCTAssertEqual(recorded.count, 1)
+        XCTAssertEqual(recorded[0].error.error.code, "runtime_error")
+    }
+
+    func testDecodeStreamingRpcFallsBackToBaselineWhenSpeculativeDecodeAllowsFallback() async throws {
+        let services = makeServices(
+            environment: [
+                "MELIX_DEV_TEXT_MODEL_PATH": "mlx-community/melix-dev-text-4bit",
+                "MELIX_SWIFT_TEXT_WORKER_BACKEND_MODE": "auto",
+            ],
+            backend: FakeRuntimeBackend(decodedChunks: ["fallback"])
+        )
+        let loadResponse = try await withServerContextRPCCancellationHandle { handle in
+            var request = Melix_Worker_V1_LoadModelRequest()
+            request.model.modelID = "melix-dev-text"
+            return try await services.runtime.loadModel(
+                request: request,
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_RuntimeService.Method.LoadModel.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
+        var prefillRequest = Melix_Worker_V1_PrefillRequest()
+        prefillRequest.execution.id.requestID = "req-fallback-prefill"
+        prefillRequest.execution.modelHandle = loadResponse.modelHandle
+        prefillRequest.execution.acceleration.mode = .speculativeDecode
+        prefillRequest.execution.acceleration.allowBaselineFallback = true
+        prefillRequest.returnDecodeHandle = true
+        prefillRequest.messages = [makeUserMessage("fallback decode")]
+        let prefillResponse = try await withServerContextRPCCancellationHandle { handle in
+            try await services.inference.prefill(
+                request: prefillRequest,
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_InferenceService.Method.Prefill.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
+        let writer = RecordingRPCWriter<Melix_Worker_V1_ExecuteEvent>()
+        var request = Melix_Worker_V1_DecodeRequest()
+        request.execution.id.requestID = "req-fallback-decode"
+        request.execution.modelHandle = loadResponse.modelHandle
+        request.execution.acceleration.mode = .speculativeDecode
+        request.execution.acceleration.allowBaselineFallback = true
+        request.decodeHandle = prefillResponse.decodeHandle
+
+        try await withServerContextRPCCancellationHandle { handle in
+            try await services.inference.decode(
+                request: request,
+                response: RPCWriter(wrapping: writer),
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_InferenceService.Method.Decode.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
+        let recorded = await writer.snapshot()
+        XCTAssertEqual(recorded.first?.decodeStarted.decodeHandle, prefillResponse.decodeHandle)
+        XCTAssertEqual(recorded.first?.accelerationMode, .baseline)
+        XCTAssertFalse(matches(recorded.first?.payload, .accelerationApplied))
+        XCTAssertEqual(recorded.last?.completed.finishReason, "stop")
+    }
+
+    func testDecodeStreamingRpcReturnsStructuredUnimplementedWhenSpeculativeDecodeCannotFallback() async throws {
+        let services = makeServices(
+            environment: [
+                "MELIX_DEV_TEXT_MODEL_PATH": "mlx-community/melix-dev-text-4bit",
+                "MELIX_SWIFT_TEXT_WORKER_BACKEND_MODE": "auto",
+            ],
+            backend: FakeRuntimeBackend(decodedChunks: ["unused"])
+        )
+        let loadResponse = try await withServerContextRPCCancellationHandle { handle in
+            var request = Melix_Worker_V1_LoadModelRequest()
+            request.model.modelID = "melix-dev-text"
+            return try await services.runtime.loadModel(
+                request: request,
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_RuntimeService.Method.LoadModel.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
+        var prefillRequest = Melix_Worker_V1_PrefillRequest()
+        prefillRequest.execution.id.requestID = "req-no-fallback-prefill"
+        prefillRequest.execution.modelHandle = loadResponse.modelHandle
+        prefillRequest.returnDecodeHandle = true
+        prefillRequest.messages = [makeUserMessage("no fallback decode")]
+        let prefillResponse = try await withServerContextRPCCancellationHandle { handle in
+            try await services.inference.prefill(
+                request: prefillRequest,
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_InferenceService.Method.Prefill.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
+        let writer = RecordingRPCWriter<Melix_Worker_V1_ExecuteEvent>()
+        var request = Melix_Worker_V1_DecodeRequest()
+        request.execution.id.requestID = "req-no-fallback-decode"
+        request.execution.modelHandle = loadResponse.modelHandle
+        request.execution.acceleration.mode = .speculativeDecode
+        request.execution.acceleration.allowBaselineFallback = false
+        request.decodeHandle = prefillResponse.decodeHandle
+
+        try await withServerContextRPCCancellationHandle { handle in
+            try await services.inference.decode(
+                request: request,
+                response: RPCWriter(wrapping: writer),
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_InferenceService.Method.Decode.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
+        let recorded = await writer.snapshot()
+        XCTAssertEqual(recorded.count, 1)
         XCTAssertEqual(recorded[0].error.error.code, "unimplemented")
+    }
+
+    func testDecodeStreamingRpcCanBeAbortedWithoutUsageTrailer() async throws {
+        let services = makeServices(
+            environment: ["MELIX_DEV_TEXT_MODEL_PATH": "mlx-community/melix-dev-text-4bit"],
+            backend: FakeRuntimeBackend(
+                decodedChunks: ["decode", " cancel", " tail"],
+                decodeDelayNanos: 40_000_000
+            )
+        )
+        let loadResponse = try await withServerContextRPCCancellationHandle { handle in
+            var request = Melix_Worker_V1_LoadModelRequest()
+            request.model.modelID = "melix-dev-text"
+            return try await services.runtime.loadModel(
+                request: request,
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_RuntimeService.Method.LoadModel.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
+        var prefillRequest = Melix_Worker_V1_PrefillRequest()
+        prefillRequest.execution.id.requestID = "req-decode-cancel-prefill"
+        prefillRequest.execution.modelHandle = loadResponse.modelHandle
+        prefillRequest.returnDecodeHandle = true
+        prefillRequest.messages = [makeUserMessage("cancel decode")]
+        let prefillResponse = try await withServerContextRPCCancellationHandle { handle in
+            try await services.inference.prefill(
+                request: prefillRequest,
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_InferenceService.Method.Prefill.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
+        let writer = RecordingRPCWriter<Melix_Worker_V1_ExecuteEvent>()
+        var request = Melix_Worker_V1_DecodeRequest()
+        request.execution.id.requestID = "req-decode-cancel"
+        request.execution.modelHandle = loadResponse.modelHandle
+        request.decodeHandle = prefillResponse.decodeHandle
+        request.returnUsage = true
+
+        let decodeTask = Task {
+            try await withServerContextRPCCancellationHandle { handle in
+                try await services.inference.decode(
+                    request: request,
+                    response: RPCWriter(wrapping: writer),
+                    context: ServerContext(
+                        descriptor: Melix_Worker_V1_InferenceService.Method.Decode.descriptor,
+                        remotePeer: "in-process:test",
+                        localPeer: "in-process:test",
+                        cancellation: handle
+                    )
+                )
+            }
+        }
+
+        try await Task.sleep(nanoseconds: 60_000_000)
+        _ = try await withServerContextRPCCancellationHandle { handle in
+            var abortRequest = Melix_Worker_V1_AbortRequest()
+            abortRequest.requestID = "req-decode-cancel"
+            return try await services.inference.abort(
+                request: abortRequest,
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_InferenceService.Method.Abort.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
+        _ = try await decodeTask.value
+
+        let recorded = await writer.snapshot()
+        XCTAssertEqual(recorded.last?.completed.finishReason, "cancelled")
+        XCTAssertFalse(recorded.contains(where: { matches($0.payload, .usageDelta) }))
+    }
+
+    func testDecodeStreamingRpcSupportsDeterministicSpeculativeMetrics() async throws {
+        let services = makeServices(
+            environment: [
+                "MELIX_DEV_TEXT_MODEL_PATH": "mlx-community/melix-dev-text-4bit",
+                "MELIX_SWIFT_TEXT_WORKER_BACKEND_MODE": "deterministic",
+            ],
+            backend: DeterministicTextBackend(tokenDelayNanos: 1_000_000)
+        )
+        let loadResponse = try await withServerContextRPCCancellationHandle { handle in
+            var request = Melix_Worker_V1_LoadModelRequest()
+            request.model.modelID = "melix-dev-text"
+            return try await services.runtime.loadModel(
+                request: request,
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_RuntimeService.Method.LoadModel.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
+        var prefillRequest = Melix_Worker_V1_PrefillRequest()
+        prefillRequest.execution.id.requestID = "req-spec-prefill"
+        prefillRequest.execution.modelHandle = loadResponse.modelHandle
+        prefillRequest.execution.acceleration.mode = .speculativeDecode
+        prefillRequest.execution.acceleration.allowBaselineFallback = false
+        prefillRequest.returnDecodeHandle = true
+        prefillRequest.messages = [makeUserMessage("speculative decode")]
+        let prefillResponse = try await withServerContextRPCCancellationHandle { handle in
+            try await services.inference.prefill(
+                request: prefillRequest,
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_InferenceService.Method.Prefill.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
+        let writer = RecordingRPCWriter<Melix_Worker_V1_ExecuteEvent>()
+        var request = Melix_Worker_V1_DecodeRequest()
+        request.execution.id.requestID = "req-spec-decode"
+        request.execution.modelHandle = loadResponse.modelHandle
+        request.execution.acceleration.mode = .speculativeDecode
+        request.execution.acceleration.allowBaselineFallback = false
+        request.decodeHandle = prefillResponse.decodeHandle
+
+        try await withServerContextRPCCancellationHandle { handle in
+            try await services.inference.decode(
+                request: request,
+                response: RPCWriter(wrapping: writer),
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_InferenceService.Method.Decode.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
+        let recorded = await writer.snapshot()
+        XCTAssertEqual(recorded.first?.accelerationApplied.policy.mode, .speculativeDecode)
+        XCTAssertEqual(services.metrics.counters["swift_text.speculative_acceptance_rate"], 66)
+        XCTAssertEqual(services.metrics.counters["swift_text.speculative_rollback_rate"], 33)
     }
 
     func testCacheManagementRpcsReturnStructuredUnimplemented() async throws {
@@ -1639,7 +2271,7 @@ private func makeServices(
     backend: some TextRuntimeBackend = FakeRuntimeBackend(),
     residentMemorySamples: [UInt64] = [0, 0]
 ) -> WorkerServices {
-    let configuration = WorkerConfiguration()
+    let configuration = WorkerConfiguration.fromEnvironment(environment)
     let metrics = MetricsStore()
     let abortRegistry = AbortRegistry()
     let catalog = WorkerModelCatalog(environment: environment)
@@ -1682,6 +2314,7 @@ private actor RecordingRPCWriterStorage<Element: Sendable> {
 private enum FakeRuntimeBackendError: Error {
     case loadFailed
     case prefillFailed
+    case decodeFailed
 }
 
 @available(macOS 15.0, *)
@@ -1703,27 +2336,36 @@ private final class FakeRuntimeBackend: TextRuntimeBackend, @unchecked Sendable 
 
     private let loadError: Error?
     private let prefillError: Error?
+    private let decodeError: Error?
     private let residentBytesHint: UInt64
     private let generatedChunks: [String]
+    private let decodedChunks: [String]
     private let tokenDelayNanos: UInt64
     private let prefillDelayNanos: UInt64
+    private let decodeDelayNanos: UInt64
     private let storage = FakeRuntimeBackendStorage()
     private let unloadedStorage = FakeRuntimeBackendUnloadStorage()
 
     init(
         loadError: Error? = nil,
         prefillError: Error? = nil,
+        decodeError: Error? = nil,
         residentBytesHint: UInt64 = 0,
         generatedChunks: [String] = ["Hello", " from Swift"],
+        decodedChunks: [String]? = nil,
         tokenDelayNanos: UInt64 = 0,
-        prefillDelayNanos: UInt64 = 0
+        prefillDelayNanos: UInt64 = 0,
+        decodeDelayNanos: UInt64 = 0
     ) {
         self.loadError = loadError
         self.prefillError = prefillError
+        self.decodeError = decodeError
         self.residentBytesHint = residentBytesHint
         self.generatedChunks = generatedChunks
+        self.decodedChunks = decodedChunks ?? generatedChunks
         self.tokenDelayNanos = tokenDelayNanos
         self.prefillDelayNanos = prefillDelayNanos
+        self.decodeDelayNanos = decodeDelayNanos
     }
 
     func loadModel(spec: Melix_Worker_V1_ModelSpec) async throws -> LoadedTextModel {
@@ -1798,6 +2440,58 @@ private final class FakeRuntimeBackend: TextRuntimeBackend, @unchecked Sendable 
                         promptTokens: max(1, messages.count),
                         completionTokens: emitted,
                         tokensPerSecond: emitted > 0 ? Double(emitted) * 10.0 : nil
+                    )
+                ))
+                continuation.finish()
+            }
+        }
+    }
+
+    func decodeEvents(
+        model: LoadedTextModel,
+        context: TextPrefillContext,
+        sampling: Melix_Worker_V1_SamplingConfig,
+        maxOutputTokens: UInt32,
+        decodeStepSize: UInt32,
+        prefillToken: String,
+        acceleration: Melix_Worker_V1_AccelerationPolicy,
+        shouldAbort: @escaping @Sendable () -> Bool
+    ) async throws -> AsyncThrowingStream<TextGenerationEvent, Error> {
+        if let decodeError {
+            throw decodeError
+        }
+
+        let chunks = maxOutputTokens > 0
+            ? Array(decodedChunks.prefix(Int(maxOutputTokens)))
+            : decodedChunks
+
+        return AsyncThrowingStream { continuation in
+            Task {
+                var emitted = 0
+
+                for chunk in chunks {
+                    if shouldAbort() {
+                        break
+                    }
+                    if decodeDelayNanos > 0 {
+                        try? await Task.sleep(nanoseconds: decodeDelayNanos)
+                    }
+                    if shouldAbort() {
+                        break
+                    }
+                    emitted += 1
+                    continuation.yield(.token(chunk))
+                }
+
+                let speculativeAccepted = acceleration.mode == .speculativeDecode ? max(emitted - 1, 0) : nil
+                let speculativeRejected = acceleration.mode == .speculativeDecode && emitted > 0 ? 1 : nil
+                continuation.yield(.summary(
+                    TextGenerationSummary(
+                        promptTokens: max(1, context.promptTokens),
+                        completionTokens: emitted,
+                        tokensPerSecond: emitted > 0 ? Double(emitted) * 8.0 : nil,
+                        speculativeAcceptedTokens: speculativeAccepted,
+                        speculativeRejectedTokens: speculativeRejected
                     )
                 ))
                 continuation.finish()
@@ -1884,6 +2578,8 @@ private func matches(
 
     switch (payload, matcher) {
     case (.prefillStarted, .prefillStarted),
+         (.decodeStarted, .decodeStarted),
+         (.accelerationApplied, .accelerationApplied),
          (.tokenDelta, .tokenDelta),
          (.usageDelta, .usageDelta),
          (.completed, .completed),
@@ -1897,6 +2593,8 @@ private func matches(
 @available(macOS 15.0, *)
 private enum ExecuteEventPayloadMatcher {
     case prefillStarted
+    case decodeStarted
+    case accelerationApplied
     case tokenDelta
     case usageDelta
     case completed

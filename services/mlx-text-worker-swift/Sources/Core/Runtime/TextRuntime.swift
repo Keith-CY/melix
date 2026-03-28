@@ -31,6 +31,22 @@ struct TextGenerationSummary: Sendable {
     let promptTokens: Int
     let completionTokens: Int
     let tokensPerSecond: Double?
+    let speculativeAcceptedTokens: Int?
+    let speculativeRejectedTokens: Int?
+
+    init(
+        promptTokens: Int,
+        completionTokens: Int,
+        tokensPerSecond: Double?,
+        speculativeAcceptedTokens: Int? = nil,
+        speculativeRejectedTokens: Int? = nil
+    ) {
+        self.promptTokens = promptTokens
+        self.completionTokens = completionTokens
+        self.tokensPerSecond = tokensPerSecond
+        self.speculativeAcceptedTokens = speculativeAcceptedTokens
+        self.speculativeRejectedTokens = speculativeRejectedTokens
+    }
 }
 
 enum TextGenerationEvent: Sendable {
@@ -54,6 +70,16 @@ protocol TextRuntimeBackend: Sendable {
         model: LoadedTextModel,
         messages: [Melix_Worker_V1_ChatMessage],
         sampling: Melix_Worker_V1_SamplingConfig,
+        shouldAbort: @escaping @Sendable () -> Bool
+    ) async throws -> AsyncThrowingStream<TextGenerationEvent, Error>
+    func decodeEvents(
+        model: LoadedTextModel,
+        context: TextPrefillContext,
+        sampling: Melix_Worker_V1_SamplingConfig,
+        maxOutputTokens: UInt32,
+        decodeStepSize: UInt32,
+        prefillToken: String,
+        acceleration: Melix_Worker_V1_AccelerationPolicy,
         shouldAbort: @escaping @Sendable () -> Bool
     ) async throws -> AsyncThrowingStream<TextGenerationEvent, Error>
 }
@@ -81,6 +107,21 @@ extension TextRuntimeBackend {
     ) async throws -> AsyncThrowingStream<TextGenerationEvent, Error> {
         throw RuntimeUnavailableError(
             message: "Text generation is not available for the current backend."
+        )
+    }
+
+    func decodeEvents(
+        model: LoadedTextModel,
+        context: TextPrefillContext,
+        sampling: Melix_Worker_V1_SamplingConfig,
+        maxOutputTokens: UInt32,
+        decodeStepSize: UInt32,
+        prefillToken: String,
+        acceleration: Melix_Worker_V1_AccelerationPolicy,
+        shouldAbort: @escaping @Sendable () -> Bool
+    ) async throws -> AsyncThrowingStream<TextGenerationEvent, Error> {
+        throw RuntimeUnavailableError(
+            message: "Decode is not available for the current backend."
         )
     }
 }
@@ -142,6 +183,28 @@ struct TextRuntime: Sendable {
             model: model,
             messages: messages,
             sampling: sampling,
+            shouldAbort: shouldAbort
+        )
+    }
+
+    func decodeEvents(
+        model: LoadedTextModel,
+        context: TextPrefillContext,
+        sampling: Melix_Worker_V1_SamplingConfig,
+        maxOutputTokens: UInt32,
+        decodeStepSize: UInt32,
+        prefillToken: String,
+        acceleration: Melix_Worker_V1_AccelerationPolicy,
+        shouldAbort: @escaping @Sendable () -> Bool
+    ) async throws -> AsyncThrowingStream<TextGenerationEvent, Error> {
+        try await backend.decodeEvents(
+            model: model,
+            context: context,
+            sampling: sampling,
+            maxOutputTokens: maxOutputTokens,
+            decodeStepSize: decodeStepSize,
+            prefillToken: prefillToken,
+            acceleration: acceleration,
             shouldAbort: shouldAbort
         )
     }

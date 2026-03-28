@@ -176,6 +176,7 @@ final class InferenceRPCService: Melix_Worker_V1_InferenceService.SimpleServiceP
     private let metrics: MetricsStore
     private let generationEngine: TextGenerationEngine
     private let prefillEngine: TextPrefillEngine
+    private let decodeEngine: TextDecodeEngine
 
     init(
         configuration: WorkerConfiguration,
@@ -189,6 +190,7 @@ final class InferenceRPCService: Melix_Worker_V1_InferenceService.SimpleServiceP
         self.metrics = metrics
         self.generationEngine = TextGenerationEngine(registry: registry, abortRegistry: abortRegistry, metrics: metrics)
         self.prefillEngine = TextPrefillEngine(registry: registry, abortRegistry: abortRegistry, metrics: metrics)
+        self.decodeEngine = TextDecodeEngine(registry: registry, abortRegistry: abortRegistry, metrics: metrics)
     }
 
     func generate(
@@ -211,12 +213,7 @@ final class InferenceRPCService: Melix_Worker_V1_InferenceService.SimpleServiceP
         response: GRPCCore.RPCWriter<Melix_Worker_V1_ExecuteEvent>,
         context: GRPCCore.ServerContext
     ) async throws {
-        metrics.increment("swift_text.unimplemented_rpc_count")
-        try await response.write(makeUnimplementedExecuteEvent(
-            requestID: request.execution.id.requestID,
-            executionKind: "decode",
-            message: "Decode is deferred until Phase 2."
-        ))
+        try await decodeEngine.runDecode(request: request, response: response)
     }
 
     func abort(

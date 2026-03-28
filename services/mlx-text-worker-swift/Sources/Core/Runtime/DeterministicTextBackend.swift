@@ -115,6 +115,69 @@ struct DeterministicTextBackend: TextRuntimeBackend {
             }
         }
     }
+
+    func decodeEvents(
+        model: LoadedTextModel,
+        context: TextPrefillContext,
+        sampling: Melix_Worker_V1_SamplingConfig,
+        maxOutputTokens: UInt32,
+        decodeStepSize: UInt32,
+        prefillToken: String,
+        acceleration: Melix_Worker_V1_AccelerationPolicy,
+        shouldAbort: @escaping @Sendable () -> Bool
+    ) async throws -> AsyncThrowingStream<TextGenerationEvent, Error> {
+        let prompt = deterministicPrompt(from: context)
+        let promptTokens = max(1, context.promptTokens)
+        let response = deterministicDecodeResponse(prompt: prompt, prefillToken: prefillToken)
+        let outputTokens = deterministicChunks(
+            from: response,
+            maxOutputTokens: maxOutputTokens
+        )
+        let tokenDelay = deterministicDecodeDelay(
+            baselineDelay: tokenDelayNanos,
+            mode: acceleration.mode
+        )
+
+        return AsyncThrowingStream { continuation in
+            Task {
+                let startedAt = ContinuousClock.now
+                var emitted = 0
+
+                for chunk in outputTokens {
+                    if shouldAbort() {
+                        break
+                    }
+                    if tokenDelay > 0 {
+                        try? await Task.sleep(nanoseconds: tokenDelay)
+                    }
+                    if shouldAbort() {
+                        break
+                    }
+                    emitted += 1
+                    continuation.yield(.token(chunk))
+                }
+
+                let elapsed = startedAt.duration(to: .now)
+                let elapsedSeconds = max(
+                    Double(elapsed.components.seconds) + Double(elapsed.components.attoseconds) / 1_000_000_000_000_000_000,
+                    0.000_001
+                )
+                let speculativeAccepted = acceleration.mode == .speculativeDecode ? max(emitted - 1, 0) : nil
+                let speculativeRejected = acceleration.mode == .speculativeDecode && emitted > 0 ? 1 : nil
+
+                continuation.yield(.summary(
+                    TextGenerationSummary(
+                        promptTokens: promptTokens,
+                        completionTokens: emitted,
+                        tokensPerSecond: emitted > 0 ? Double(emitted) / elapsedSeconds : 0,
+                        speculativeAcceptedTokens: speculativeAccepted,
+                        speculativeRejectedTokens: speculativeRejected
+                    )
+                ))
+                continuation.finish()
+            }
+        }
+    }
 }
 
 private func deterministicPrompt(
@@ -126,4 +189,53 @@ private func deterministicPrompt(
         .filter { !$0.isEmpty }
 
     return lines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+}
+
+private func deterministicPrompt(
+    from context: TextPrefillContext
+) -> String {
+    ((context.storage as? [String: String])?["prompt"] ?? "")
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+}
+
+private func deterministicDecodeResponse(
+    prompt: String,
+    prefillToken: String
+) -> String {
+    let base = prompt.isEmpty ? "empty" : prompt
+    if prefillToken.isEmpty {
+        return "Decoded: \(base)"
+    }
+    return "Decoded: \(prefillToken) \(base)"
+}
+
+private func deterministicChunks(
+    from response: String,
+    maxOutputTokens: UInt32
+) -> [String] {
+    let chunks = response
+        .split(separator: " ", omittingEmptySubsequences: false)
+        .enumerated()
+        .map { index, part in
+            index == response.split(separator: " ", omittingEmptySubsequences: false).count - 1
+                ? String(part)
+                : "\(part) "
+        }
+
+    guard maxOutputTokens > 0 else {
+        return chunks
+    }
+    return Array(chunks.prefix(Int(maxOutputTokens)))
+}
+
+private func deterministicDecodeDelay(
+    baselineDelay: UInt64,
+    mode: Melix_Worker_V1_AccelerationMode
+) -> UInt64 {
+    switch mode {
+    case .speculativeDecode:
+        return max(baselineDelay / 2, 1_000_000)
+    default:
+        return baselineDelay
+    }
 }
