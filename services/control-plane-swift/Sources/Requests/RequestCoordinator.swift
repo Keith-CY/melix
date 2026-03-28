@@ -200,6 +200,7 @@ public actor RequestCoordinator {
             let stream = AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error> { continuation in
                 let task = Task {
                     var firstDeltaRecorded = false
+                    var firstSemanticEventRecorded = false
                     var eventCount = 0.0
 
                     do {
@@ -210,6 +211,15 @@ public actor RequestCoordinator {
                                 requestIdentity: request.workerRequest.execution.id,
                                 event: event
                             )
+                            if !firstSemanticEventRecorded,
+                               self.isSemanticStreamEvent(event) {
+                                firstSemanticEventRecorded = true
+                                let firstEventMs = now().timeIntervalSince(dispatchStartedAt) * 1000
+                                await metricsStore.set(
+                                    firstEventMs,
+                                    forKey: "http.stream_first_event_ms"
+                                )
+                            }
                             if !firstDeltaRecorded, case .tokenDelta = event.payload {
                                 firstDeltaRecorded = true
                                 let ttftMs = now().timeIntervalSince(dispatchStartedAt) * 1000
@@ -218,6 +228,14 @@ public actor RequestCoordinator {
                                     forKey: "http.ttfd_ms"
                                 )
                                 await self.recordTTFTMetrics(requestID: requestID, ttftMs: ttftMs)
+                            }
+                            switch event.payload {
+                            case .reasoningDelta:
+                                await metricsStore.increment("http.reasoning_delta_count")
+                            case .toolCallDelta:
+                                await metricsStore.increment("http.tool_delta_count")
+                            default:
+                                break
                             }
                             eventCount += 1
                             await metricsStore.set(eventCount, forKey: "http.stream_event_count")
@@ -257,6 +275,15 @@ public actor RequestCoordinator {
             await metricsStore.decrement("requests.inflight")
             await finishRequestTracking(requestID: request.requestID, phase: .requestFailed)
             throw error
+        }
+    }
+
+    private func isSemanticStreamEvent(_ event: Melix_Worker_V1_ExecuteEvent) -> Bool {
+        switch event.payload {
+        case .tokenDelta, .reasoningDelta, .toolCallDelta:
+            return true
+        default:
+            return false
         }
     }
 

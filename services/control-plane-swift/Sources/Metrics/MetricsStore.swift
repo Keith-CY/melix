@@ -12,8 +12,11 @@ public actor MetricsStore {
             "workers.connected": 0,
             "http.translation_ms": 0,
             "http.ttfd_ms": 0,
+            "http.stream_first_event_ms": 0,
             "http.abort_ms": 0,
             "http.stream_event_count": 0,
+            "http.reasoning_delta_count": 0,
+            "http.tool_delta_count": 0,
         ]
     }
 

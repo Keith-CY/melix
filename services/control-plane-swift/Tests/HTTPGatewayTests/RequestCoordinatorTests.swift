@@ -280,9 +280,11 @@ struct RequestCoordinatorTests {
     func toolCallDeltasHydrateSessionGraphToolMetadata() async throws {
         let workerClient = ToolCallingWorkerClient()
         let sessionGraphStore = SessionGraphStore(nowUnixMs: { 8_000 })
+        let metricsStore = MetricsStore()
         let coordinator = RequestCoordinator(
             workerRegistry: WorkerRegistry(defaultTextClient: workerClient),
             abortRegistry: AbortRegistry(),
+            metricsStore: metricsStore,
             sessionGraphStore: sessionGraphStore
         )
 
@@ -298,8 +300,10 @@ struct RequestCoordinatorTests {
         }
 
         let state = await sessionGraphStore.state(for: "session-tools")
+        let metrics = await metricsStore.snapshot()
         #expect(state?.latestToolCallID == "tool-call-1")
         #expect(state?.branches.first?.lastToolCallID == "tool-call-1")
+        #expect(metrics.values["http.tool_delta_count", default: 0] == 1)
     }
 
     @Test("session follow-up requests restore the latest branch snapshot through phase-aware prefill")
@@ -807,10 +811,12 @@ struct RequestCoordinatorTests {
     func phaseAwareStreamEventsPreserveAccelerationMetadataAndTerminalAborts() async throws {
         let workerClient = PhaseAwareWorkerClient()
         let schedulerReadModel = SchedulerReadModel()
+        let metricsStore = MetricsStore()
         let coordinator = RequestCoordinator(
             workerRegistry: WorkerRegistry(defaultTextClient: workerClient),
             abortRegistry: AbortRegistry(),
-            schedulerReadModel: schedulerReadModel
+            schedulerReadModel: schedulerReadModel,
+            metricsStore: metricsStore
         )
 
         let execution = try await coordinator.startChatCompletion(
@@ -873,8 +879,11 @@ struct RequestCoordinatorTests {
             requestID: "req-phase-metadata",
             phase: .requestAborted
         )
+        let metrics = await metricsStore.snapshot()
         #expect(terminalProgress?.phase == .requestAborted)
         #expect(terminalProgress?.lane == "text.decode.interactive")
+        #expect(metrics.values["http.reasoning_delta_count", default: 0] == 1)
+        #expect(metrics.values["http.stream_first_event_ms", default: -1] >= 0)
     }
 
 }

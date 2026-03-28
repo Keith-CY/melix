@@ -329,6 +329,95 @@ struct SSEStreamWriterTests {
         #expect(payload.contains("\"text\":\"A\""))
         #expect(payload.contains("data: [DONE]"))
     }
+
+    @Test("chat completions streams emit reasoning and tool deltas in order")
+    func emitsChatReasoningAndToolFrames() async throws {
+        let writer = SSEStreamWriter(now: { Date(timeIntervalSince1970: 456) })
+
+        let stream = AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error> { continuation in
+            continuation.yield(makeReasoningEvent(requestID: "chat-deltas", seq: 1, text: "think"))
+            continuation.yield(makeToolCallEvent(
+                requestID: "chat-deltas",
+                seq: 2,
+                callID: "tool-1",
+                toolName: "search",
+                argumentsJSONFragment: "{\"q\":\"melix\"}"
+            ))
+            continuation.yield(makeCompletedEvent(requestID: "chat-deltas", seq: 3, finishReason: "stop", assistantText: "done"))
+            continuation.finish()
+        }
+
+        let payload = try await collectChunks(
+            writer.encode(
+                stream: stream,
+                requestID: "chat-deltas",
+                modelID: "melix-dev-text",
+                shape: .chatCompletions
+            )
+        )
+
+        #expect(payload.contains("event: reasoning"))
+        #expect(payload.contains("\"object\":\"chat.completion.reasoning.delta\""))
+        #expect(payload.contains("\"reasoning\":\"think\""))
+        #expect(payload.contains("event: tool_call"))
+        #expect(payload.contains("\"object\":\"chat.completion.tool_call.delta\""))
+        #expect(payload.contains("\"name\":\"search\""))
+        #expect(payload.contains("\"arguments\":\"{\\\"q\\\":\\\"melix\\\"}\""))
+        #expect(orderedRanges(in: payload, needles: [
+            "event: reasoning",
+            "event: tool_call",
+            "event: message",
+            "data: [DONE]",
+        ]))
+    }
+
+    @Test("responses messages and completions streams emit endpoint-specific reasoning and tool deltas")
+    func emitsEndpointSpecificReasoningAndToolFrames() async throws {
+        let writer = SSEStreamWriter(now: { Date(timeIntervalSince1970: 456) })
+
+        func payload(for shape: SSEStreamWriter.StreamShape, requestID: String) async throws -> String {
+            let stream = AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error> { continuation in
+                continuation.yield(makeReasoningEvent(requestID: requestID, seq: 1, text: "think"))
+                continuation.yield(makeToolCallEvent(
+                    requestID: requestID,
+                    seq: 2,
+                    callID: "tool-1",
+                    toolName: "search",
+                    argumentsJSONFragment: "{\"q\":\"melix\"}"
+                ))
+                continuation.finish()
+            }
+
+            return try await collectChunks(
+                writer.encode(
+                    stream: stream,
+                    requestID: requestID,
+                    modelID: "melix-dev-text",
+                    shape: shape
+                )
+            )
+        }
+
+        let completionsPayload = try await payload(for: .completions, requestID: "cmp-deltas")
+        #expect(completionsPayload.contains("event: reasoning"))
+        #expect(completionsPayload.contains("\"type\":\"completion.reasoning.delta\""))
+        #expect(completionsPayload.contains("\"delta\":\"think\""))
+        #expect(completionsPayload.contains("event: tool_call"))
+        #expect(completionsPayload.contains("\"type\":\"completion.tool_call.delta\""))
+        #expect(completionsPayload.contains("\"call_id\":\"tool-1\""))
+
+        let responsesPayload = try await payload(for: .responses, requestID: "resp-deltas")
+        #expect(responsesPayload.contains("event: response.reasoning.delta"))
+        #expect(responsesPayload.contains("\"type\":\"response.reasoning.delta\""))
+        #expect(responsesPayload.contains("event: response.tool_call.delta"))
+        #expect(responsesPayload.contains("\"type\":\"response.tool_call.delta\""))
+
+        let messagesPayload = try await payload(for: .messages, requestID: "msg-deltas")
+        #expect(messagesPayload.contains("event: message.reasoning.delta"))
+        #expect(messagesPayload.contains("\"type\":\"message.reasoning.delta\""))
+        #expect(messagesPayload.contains("event: message.tool_call.delta"))
+        #expect(messagesPayload.contains("\"type\":\"message.tool_call.delta\""))
+    }
 }
 
 private func collectChunks(

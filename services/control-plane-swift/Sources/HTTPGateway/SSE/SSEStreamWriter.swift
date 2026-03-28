@@ -100,6 +100,34 @@ public struct SSEStreamWriter: Sendable {
                     ],
                 ]
             )
+        case .reasoningDelta(let reasoning):
+            return frame(
+                event: "reasoning",
+                json: [
+                    "id": requestID,
+                    "type": "completion.reasoning.delta",
+                    "object": "text_completion.reasoning.delta",
+                    "created": Int(now().timeIntervalSince1970),
+                    "model": modelID,
+                    "delta": reasoning.text,
+                ]
+            )
+        case .toolCallDelta(let toolCall):
+            return frame(
+                event: "tool_call",
+                json: [
+                    "id": requestID,
+                    "type": "completion.tool_call.delta",
+                    "object": "text_completion.tool_call.delta",
+                    "created": Int(now().timeIntervalSince1970),
+                    "model": modelID,
+                    "tool_call": [
+                        "call_id": toolCall.callID,
+                        "tool_name": toolCall.toolName,
+                        "arguments": toolCall.argumentsJsonFragment,
+                    ],
+                ]
+            )
         case .heartbeat(let heartbeat):
             return frame(
                 event: "heartbeat",
@@ -178,6 +206,53 @@ public struct SSEStreamWriter: Sendable {
                     ],
                 ]
             )
+        case .reasoningDelta(let reasoning):
+            return frame(
+                event: "reasoning",
+                json: [
+                    "id": requestID,
+                    "object": "chat.completion.reasoning.delta",
+                    "created": Int(now().timeIntervalSince1970),
+                    "model": modelID,
+                    "choices": [
+                        [
+                            "index": 0,
+                            "delta": [
+                                "reasoning": reasoning.text,
+                            ],
+                            "finish_reason": NSNull(),
+                        ],
+                    ],
+                ]
+            )
+        case .toolCallDelta(let toolCall):
+            return frame(
+                event: "tool_call",
+                json: [
+                    "id": requestID,
+                    "object": "chat.completion.tool_call.delta",
+                    "created": Int(now().timeIntervalSince1970),
+                    "model": modelID,
+                    "choices": [
+                        [
+                            "index": 0,
+                            "delta": [
+                                "tool_calls": [
+                                    [
+                                        "id": toolCall.callID,
+                                        "type": "function",
+                                        "function": [
+                                            "name": toolCall.toolName,
+                                            "arguments": toolCall.argumentsJsonFragment,
+                                        ],
+                                    ],
+                                ],
+                            ],
+                            "finish_reason": NSNull(),
+                        ],
+                    ],
+                ]
+            )
         case .heartbeat(let heartbeat):
             return frame(
                 event: "heartbeat",
@@ -253,6 +328,28 @@ public struct SSEStreamWriter: Sendable {
                     ],
                 ]
             )
+        case .reasoningDelta(let reasoning):
+            return frame(
+                event: "response.reasoning.delta",
+                json: [
+                    "type": "response.reasoning.delta",
+                    "response_id": requestID,
+                    "model": modelID,
+                    "delta": reasoning.text,
+                ]
+            )
+        case .toolCallDelta(let toolCall):
+            return frame(
+                event: "response.tool_call.delta",
+                json: [
+                    "type": "response.tool_call.delta",
+                    "response_id": requestID,
+                    "model": modelID,
+                    "call_id": toolCall.callID,
+                    "tool_name": toolCall.toolName,
+                    "arguments": toolCall.argumentsJsonFragment,
+                ]
+            )
         case .heartbeat(let heartbeat):
             return frame(
                 event: "response.heartbeat",
@@ -310,6 +407,28 @@ public struct SSEStreamWriter: Sendable {
                     "message_id": requestID,
                     "model": modelID,
                     "delta": delta.text,
+                ]
+            )
+        case .reasoningDelta(let reasoning):
+            return frame(
+                event: "message.reasoning.delta",
+                json: [
+                    "type": "message.reasoning.delta",
+                    "message_id": requestID,
+                    "model": modelID,
+                    "delta": reasoning.text,
+                ]
+            )
+        case .toolCallDelta(let toolCall):
+            return frame(
+                event: "message.tool_call.delta",
+                json: [
+                    "type": "message.tool_call.delta",
+                    "message_id": requestID,
+                    "model": modelID,
+                    "call_id": toolCall.callID,
+                    "tool_name": toolCall.toolName,
+                    "arguments": toolCall.argumentsJsonFragment,
                 ]
             )
         case .usageDelta(let usage):

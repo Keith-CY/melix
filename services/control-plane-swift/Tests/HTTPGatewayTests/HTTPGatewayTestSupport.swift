@@ -32,6 +32,38 @@ func makeUsageEvent(
     return event
 }
 
+func makeReasoningEvent(
+    requestID: String,
+    seq: UInt64,
+    text: String
+) -> Melix_Worker_V1_ExecuteEvent {
+    var event = Melix_Worker_V1_ExecuteEvent()
+    event.requestID = requestID
+    event.executionKind = "generate"
+    event.seq = seq
+    event.reasoningDelta = Melix_Worker_V1_ReasoningDelta()
+    event.reasoningDelta.text = text
+    return event
+}
+
+func makeToolCallEvent(
+    requestID: String,
+    seq: UInt64,
+    callID: String,
+    toolName: String,
+    argumentsJSONFragment: String
+) -> Melix_Worker_V1_ExecuteEvent {
+    var event = Melix_Worker_V1_ExecuteEvent()
+    event.requestID = requestID
+    event.executionKind = "generate"
+    event.seq = seq
+    event.toolCallDelta = Melix_Worker_V1_ToolCallDelta()
+    event.toolCallDelta.callID = callID
+    event.toolCallDelta.toolName = toolName
+    event.toolCallDelta.argumentsJsonFragment = argumentsJSONFragment
+    return event
+}
+
 func makeCompletedEvent(
     requestID: String,
     seq: UInt64,

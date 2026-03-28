@@ -284,6 +284,60 @@ struct OpenAIHandlerTests {
         #expect(payload.contains("data: [DONE]"))
     }
 
+    @Test("POST /v1/responses forwards reasoning and tool delta events")
+    func postResponsesForwardsReasoningAndToolDeltas() async throws {
+        let catalog = ModelCatalog(seedModels: [warmModel()])
+        let workerClient = ScriptedWorkerClient(events: [
+            makeReasoningEvent(requestID: "resp-deltas", seq: 1, text: "think"),
+            makeToolCallEvent(
+                requestID: "resp-deltas",
+                seq: 2,
+                callID: "tool-1",
+                toolName: "search",
+                argumentsJSONFragment: "{\"q\":\"melix\"}"
+            ),
+            makeCompletedEvent(requestID: "resp-deltas", seq: 3, finishReason: "stop", assistantText: "done"),
+        ])
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: workerClient),
+                abortRegistry: AbortRegistry()
+            ),
+            translator: ChatRequestTranslator(requestIDGenerator: { "resp-deltas" }),
+            sseWriter: SSEStreamWriter(now: { Date(timeIntervalSince1970: 456) })
+        )
+
+        let body = try #require(
+            """
+            {
+              "model": "melix-dev-text",
+              "stream": true,
+              "input": "hello responses"
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/responses",
+                headers: ["content-type": "application/json"],
+                body: body
+            )
+        )
+        let payload = try await collectBody(response.body)
+
+        #expect(response.statusCode == 200)
+        #expect(payload.contains("event: response.reasoning.delta"))
+        #expect(payload.contains("\"type\":\"response.reasoning.delta\""))
+        #expect(payload.contains("\"delta\":\"think\""))
+        #expect(payload.contains("event: response.tool_call.delta"))
+        #expect(payload.contains("\"type\":\"response.tool_call.delta\""))
+        #expect(payload.contains("\"tool_name\":\"search\""))
+        #expect(payload.contains("event: response.completed"))
+    }
+
     @Test("responses requests default stream to true when omitted")
     func responsesRequestsDefaultStreamToTrue() async throws {
         let catalog = ModelCatalog(seedModels: [warmModel()])
