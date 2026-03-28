@@ -18,12 +18,18 @@ class EngineCore:
             yield self._error_event(request_id, 1, "not_found", "Unknown model handle.")
             return
 
+        runtime = self._registry.runtime_for_loaded_model(loaded_model)
         state = self._registry.start_request(request_id)
-        prompt = self._registry.runtime.render_prompt(request.messages, loaded_model=loaded_model.runtime_model)
+        prompt = runtime.render_prompt(request.messages, loaded_model=loaded_model.runtime_model)
+        prompt_tokens_default = (
+            runtime.prompt_token_count(prompt)
+            if hasattr(runtime, "prompt_token_count")
+            else len(prompt.split())
+        )
         last_runtime_event = None
 
         try:
-            for runtime_event in self._registry.runtime.generate_tokens(
+            for runtime_event in runtime.generate_tokens(
                 loaded_model.runtime_model,
                 prompt,
                 request.sampling,
@@ -42,7 +48,7 @@ class EngineCore:
                     )
 
             if request.return_usage and not state.cancel_event.is_set():
-                prompt_tokens = len(prompt.split())
+                prompt_tokens = prompt_tokens_default
                 completion_tokens = len(state.emitted_tokens)
                 if last_runtime_event is not None:
                     prompt_tokens = int(last_runtime_event.prompt_tokens or prompt_tokens)

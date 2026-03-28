@@ -8,3 +8,4 @@ docs/product-brief.md
 __pycache__/
 .pytest_cache/
 .coverage
+*.profraw

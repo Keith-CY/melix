@@ -91,3 +91,45 @@ def test_load_model_supports_rerank_models() -> None:
 
     assert response.ok is True
     assert response.model_handle.startswith("melix-dev-rerank::")
+
+
+def test_load_model_supports_ocr_and_vlm_models() -> None:
+    service = build_runtime_service()
+
+    ocr = service.LoadModel(
+        runtime_pb2.LoadModelRequest(
+            model=WorkerModelCatalog.dev_ocr_model(),
+            memory_budget_bytes=4096,
+        ),
+        context=None,
+    )
+    vlm = service.LoadModel(
+        runtime_pb2.LoadModelRequest(
+            model=WorkerModelCatalog.dev_vlm_model(),
+            memory_budget_bytes=4096,
+        ),
+        context=None,
+    )
+
+    assert ocr.ok is True
+    assert vlm.ok is True
+    assert ocr.model_handle.startswith("melix-dev-ocr::")
+    assert vlm.model_handle.startswith("melix-dev-vlm::")
+
+
+def test_handshake_reports_phase_six_multimodal_capabilities() -> None:
+    service = build_runtime_service()
+
+    response = service.Handshake(
+        runtime_pb2.HandshakeRequest(
+            protocol_version="melix.worker.v1",
+            worker_id="worker-text-001",
+            controlplane_instance_id="controlplane-1",
+        ),
+        context=None,
+    )
+
+    assert response.capabilities.multimodal.supports_ocr is True
+    assert response.capabilities.multimodal.supports_vlm is True
+    assert response.capabilities.multimodal.supports_transcription is False
+    assert response.capabilities.multimodal.supports_speech is False

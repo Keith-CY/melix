@@ -94,13 +94,22 @@ class MaintenanceCore:
                 error=common_pb2.ErrorStatus(code="not_found", message="Unknown source model."),
             )
 
+        supported_modalities = ["text"]
+        supported_tasks = ["generate"]
+        if model.model_kind == "ocr":
+            supported_modalities = ["text", "image"]
+            supported_tasks = ["ocr", "generate"]
+        elif model.model_kind == "vlm":
+            supported_modalities = ["text", "image"]
+            supported_tasks = ["vlm", "generate"]
+
         return maintenance_pb2.GetModelInfoResponse(
             ok=True,
             model_kind=model.model_kind,
             max_context=model.max_context,
             supported_parsers=[model.parser_mode] if model.parser_mode else [],
-            supported_modalities=["text"],
-            supported_tasks=["generate"],
+            supported_modalities=supported_modalities,
+            supported_tasks=supported_tasks,
         )
 
     @staticmethod
