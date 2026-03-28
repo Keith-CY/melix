@@ -10,6 +10,7 @@ from worker.engine.request_state import RequestState
 from worker.model_registry.catalog import WorkerModelCatalog
 from worker.runtime.mlx_text_runtime import MLXTextRuntime
 from worker.runtime.deterministic_embedding_runtime import DeterministicEmbeddingRuntime
+from worker.runtime.deterministic_rerank_runtime import DeterministicRerankRuntime
 
 
 @dataclass
@@ -26,11 +27,13 @@ class WorkerRegistry:
         self,
         runtime: MLXTextRuntime | None = None,
         embedding_runtime: DeterministicEmbeddingRuntime | None = None,
+        rerank_runtime: DeterministicRerankRuntime | None = None,
         model_catalog: WorkerModelCatalog | None = None,
         worker_id: str = "worker-text-001",
     ) -> None:
         self.runtime = runtime or MLXTextRuntime()
         self.embedding_runtime = embedding_runtime or DeterministicEmbeddingRuntime()
+        self.rerank_runtime = rerank_runtime or DeterministicRerankRuntime()
         self.model_catalog = model_catalog or WorkerModelCatalog()
         self.worker_id = worker_id
         self._lock = Lock()
@@ -135,4 +138,6 @@ class WorkerRegistry:
     def _runtime_for_model(self, model_spec: common_pb2.ModelSpec) -> tuple[str, Any]:
         if model_spec.model_kind == "embedding":
             return "embedding", self.embedding_runtime
+        if model_spec.model_kind == "rerank":
+            return "rerank", self.rerank_runtime
         return "text", self.runtime

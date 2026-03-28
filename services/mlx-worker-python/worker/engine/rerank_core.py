@@ -1,0 +1,51 @@
+from __future__ import annotations
+
+from packages.protocol.python.worker.v1 import common_pb2, inference_pb2
+
+from worker.registry import WorkerRegistry
+
+
+class RerankCore:
+    def __init__(self, registry: WorkerRegistry) -> None:
+        self._registry = registry
+
+    def rerank(self, request: inference_pb2.RerankRequest) -> inference_pb2.RerankResponse:
+        loaded_model = self._registry.get_loaded_model(request.model_handle)
+        if loaded_model is None:
+            return inference_pb2.RerankResponse(
+                error=common_pb2.ErrorStatus(code="not_found", message="Unknown model handle.")
+            )
+
+        if loaded_model.runtime_kind != "rerank":
+            return inference_pb2.RerankResponse(
+                error=common_pb2.ErrorStatus(
+                    code="invalid_argument",
+                    message="Loaded model does not support rerank operations.",
+                )
+            )
+
+        try:
+            scores = self._registry.rerank_runtime.score_documents(
+                loaded_model.runtime_model,
+                request.query,
+                list(request.documents),
+            )
+        except Exception as exc:  # pragma: no cover - defensive branch
+            return inference_pb2.RerankResponse(
+                error=common_pb2.ErrorStatus(code="runtime_error", message=str(exc))
+            )
+
+        ranked = sorted(
+            enumerate(scores),
+            key=lambda item: (-item[1], item[0]),
+        )
+        limit = int(request.top_k) if request.top_k else len(ranked)
+        if limit < len(ranked):
+            ranked = ranked[:limit]
+
+        return inference_pb2.RerankResponse(
+            items=[
+                inference_pb2.RerankItem(index=index, score=score)
+                for index, score in ranked
+            ]
+        )

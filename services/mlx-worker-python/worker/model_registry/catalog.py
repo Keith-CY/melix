@@ -11,6 +11,7 @@ class WorkerModelCatalog:
         self._models = {
             "melix-dev-text": self.dev_text_model(environment=self._environment),
             "melix-dev-embed": self.dev_embedding_model(environment=self._environment),
+            "melix-dev-rerank": self.dev_rerank_model(environment=self._environment),
         }
 
     def get(self, model_id: str) -> common_pb2.ModelSpec | None:
@@ -40,6 +41,21 @@ class WorkerModelCatalog:
             model_kind="embedding",
             revision="dev",
             tokenizer_hash="tok-embed-dev",
+            quant_profile_id="q8",
+            parser_mode="text",
+            reasoning_mode="off",
+            max_context=8192,
+        )
+
+    @staticmethod
+    def dev_rerank_model(environment: dict[str, str] | None = None) -> common_pb2.ModelSpec:
+        environment = dict(environment or os.environ)
+        return common_pb2.ModelSpec(
+            model_id="melix-dev-rerank",
+            model_path=environment.get("MELIX_DEV_RERANK_MODEL_PATH", "models/melix-dev-rerank"),
+            model_kind="rerank",
+            revision="dev",
+            tokenizer_hash="tok-rerank-dev",
             quant_profile_id="q8",
             parser_mode="text",
             reasoning_mode="off",

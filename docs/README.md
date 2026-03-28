@@ -54,6 +54,7 @@ Current phase-status and planning documents:
 - `plans/2026-03-28-p4-m6-native-desktop-foundation.md`
 - `plans/2026-03-28-p5-m1-capability-and-settings-model.md`
 - `plans/2026-03-28-p5-m2-embeddings-runtime.md`
+- `plans/2026-03-28-p5-m3-rerank-runtime.md`
 - `plans/2026-03-28-p1-m2-swift-text-worker-scaffold.md`
 - `plans/2026-03-28-p1-m3-swift-runtime-lifecycle.md`
 - `plans/2026-03-28-p1-m4-swift-generate-abort.md`

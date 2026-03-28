@@ -238,14 +238,30 @@ def test_inference_service_covers_error_and_unimplemented_paths() -> None:
         ),
         context=None,
     )
-    rerank = inference_service.Rerank(inference_pb2.RerankRequest(), context=None)
+    rerank_model = runtime_service.LoadModel(
+        runtime_pb2.LoadModelRequest(model=WorkerModelCatalog.dev_rerank_model()),
+        context=None,
+    )
+    assert rerank_model.ok is True
+
+    rerank = inference_service.Rerank(
+        inference_pb2.RerankRequest(
+            id=common_pb2.RequestIdentity(request_id="req-rerank"),
+            model_handle=rerank_model.model_handle,
+            query="swift runtime worker",
+            documents=["swift runtime worker", "image generation", "embedding vector"],
+            top_k=2,
+        ),
+        context=None,
+    )
     transcribe = inference_service.Transcribe(inference_pb2.TranscribeRequest(), context=None)
     image_generate = inference_service.ImageGenerate(inference_pb2.ImageGenerateRequest(), context=None)
     image_edit = inference_service.ImageEdit(inference_pb2.ImageEditRequest(), context=None)
 
     assert embed.error.code == ""
     assert len(embed.embeddings) == 2
-    assert rerank.error.code == "unimplemented"
+    assert rerank.error.code == ""
+    assert len(rerank.items) == 2
     assert transcribe.error.code == "unimplemented"
     assert image_generate.error.code == "unimplemented"
     assert image_edit.error.code == "unimplemented"

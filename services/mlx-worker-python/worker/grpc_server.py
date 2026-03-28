@@ -17,9 +17,11 @@ from packages.protocol.python.worker.v1 import (
 
 from worker.engine.embedding_core import EmbeddingCore
 from worker.engine.engine_core import EngineCore
+from worker.engine.rerank_core import RerankCore
 from worker.registry import WorkerRegistry
 from worker.runtime.deterministic_embedding_runtime import DeterministicEmbeddingRuntime
 from worker.runtime.deterministic_backend import DeterministicTextBackend
+from worker.runtime.deterministic_rerank_runtime import DeterministicRerankRuntime
 from worker.runtime.mlx_text_runtime import MLXTextRuntime
 
 
@@ -84,6 +86,7 @@ class WorkerInferenceService(inference_pb2_grpc.InferenceServiceServicer):
         self._registry = registry
         self._engine = EngineCore(registry)
         self._embedding = EmbeddingCore(registry)
+        self._rerank = RerankCore(registry)
 
     def Generate(self, request, context):
         yield from self._engine.generate(request)
@@ -112,9 +115,7 @@ class WorkerInferenceService(inference_pb2_grpc.InferenceServiceServicer):
         return self._embedding.embed(request)
 
     def Rerank(self, request, context):
-        return inference_pb2.RerankResponse(
-            error=common_pb2.ErrorStatus(code="unimplemented", message="Rerank is deferred in phase 0.")
-        )
+        return self._rerank.rerank(request)
 
     def Transcribe(self, request, context):
         return inference_pb2.TranscribeResponse(
@@ -137,6 +138,7 @@ def build_registry_for_backend(backend_mode: str) -> WorkerRegistry:
         return WorkerRegistry(
             runtime=MLXTextRuntime(backend=DeterministicTextBackend()),
             embedding_runtime=DeterministicEmbeddingRuntime(),
+            rerank_runtime=DeterministicRerankRuntime(),
         )
     return WorkerRegistry()
 
