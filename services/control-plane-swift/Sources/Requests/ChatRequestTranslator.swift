@@ -69,7 +69,7 @@ public struct ChatRequestTranslator: Sendable {
         generateRequest.execution.id.latencyClass = "interactive"
         generateRequest.execution.modelHandle = modelHandle
         generateRequest.execution.scheduling = Melix_Worker_V1_SchedulingHints()
-        generateRequest.execution.scheduling.lane = "text.interactive"
+        generateRequest.execution.scheduling.lane = "text.decode.interactive"
         generateRequest.execution.scheduling.priority = 100
         generateRequest.execution.scheduling.latencySensitive = true
         generateRequest.sampling = Melix_Worker_V1_SamplingConfig()

@@ -25,6 +25,156 @@ fileprivate struct _GeneratedWithProtocGenSwiftVersion: SwiftProtobuf.ProtobufAP
   typealias Version = _2
 }
 
+public enum Melix_Worker_V1_AdmissionState: SwiftProtobuf.Enum, Swift.CaseIterable {
+  public typealias RawValue = Int
+  case unspecified // = 0
+  case admissionQueued // = 1
+  case admissionAdmitted // = 2
+  case admissionRejected // = 3
+  case admissionDropped // = 4
+  case UNRECOGNIZED(Int)
+
+  public init() {
+    self = .unspecified
+  }
+
+  public init?(rawValue: Int) {
+    switch rawValue {
+    case 0: self = .unspecified
+    case 1: self = .admissionQueued
+    case 2: self = .admissionAdmitted
+    case 3: self = .admissionRejected
+    case 4: self = .admissionDropped
+    default: self = .UNRECOGNIZED(rawValue)
+    }
+  }
+
+  public var rawValue: Int {
+    switch self {
+    case .unspecified: return 0
+    case .admissionQueued: return 1
+    case .admissionAdmitted: return 2
+    case .admissionRejected: return 3
+    case .admissionDropped: return 4
+    case .UNRECOGNIZED(let i): return i
+    }
+  }
+
+  // The compiler won't synthesize support with the UNRECOGNIZED case.
+  public static let allCases: [Melix_Worker_V1_AdmissionState] = [
+    .unspecified,
+    .admissionQueued,
+    .admissionAdmitted,
+    .admissionRejected,
+    .admissionDropped,
+  ]
+
+}
+
+public enum Melix_Worker_V1_ExecutionPhase: SwiftProtobuf.Enum, Swift.CaseIterable {
+  public typealias RawValue = Int
+  case unspecified // = 0
+  case executionQueued // = 1
+  case executionAdmitted // = 2
+  case executionPrefilling // = 3
+  case executionDecoding // = 4
+  case executionCompleted // = 5
+  case executionAborted // = 6
+  case executionFailed // = 7
+  case UNRECOGNIZED(Int)
+
+  public init() {
+    self = .unspecified
+  }
+
+  public init?(rawValue: Int) {
+    switch rawValue {
+    case 0: self = .unspecified
+    case 1: self = .executionQueued
+    case 2: self = .executionAdmitted
+    case 3: self = .executionPrefilling
+    case 4: self = .executionDecoding
+    case 5: self = .executionCompleted
+    case 6: self = .executionAborted
+    case 7: self = .executionFailed
+    default: self = .UNRECOGNIZED(rawValue)
+    }
+  }
+
+  public var rawValue: Int {
+    switch self {
+    case .unspecified: return 0
+    case .executionQueued: return 1
+    case .executionAdmitted: return 2
+    case .executionPrefilling: return 3
+    case .executionDecoding: return 4
+    case .executionCompleted: return 5
+    case .executionAborted: return 6
+    case .executionFailed: return 7
+    case .UNRECOGNIZED(let i): return i
+    }
+  }
+
+  // The compiler won't synthesize support with the UNRECOGNIZED case.
+  public static let allCases: [Melix_Worker_V1_ExecutionPhase] = [
+    .unspecified,
+    .executionQueued,
+    .executionAdmitted,
+    .executionPrefilling,
+    .executionDecoding,
+    .executionCompleted,
+    .executionAborted,
+    .executionFailed,
+  ]
+
+}
+
+public enum Melix_Worker_V1_AccelerationMode: SwiftProtobuf.Enum, Swift.CaseIterable {
+  public typealias RawValue = Int
+  case unspecified // = 0
+  case baseline // = 1
+  case speculativeDecode // = 2
+  case acceleratedPrefill // = 3
+  case activeKvQuantized // = 4
+  case UNRECOGNIZED(Int)
+
+  public init() {
+    self = .unspecified
+  }
+
+  public init?(rawValue: Int) {
+    switch rawValue {
+    case 0: self = .unspecified
+    case 1: self = .baseline
+    case 2: self = .speculativeDecode
+    case 3: self = .acceleratedPrefill
+    case 4: self = .activeKvQuantized
+    default: self = .UNRECOGNIZED(rawValue)
+    }
+  }
+
+  public var rawValue: Int {
+    switch self {
+    case .unspecified: return 0
+    case .baseline: return 1
+    case .speculativeDecode: return 2
+    case .acceleratedPrefill: return 3
+    case .activeKvQuantized: return 4
+    case .UNRECOGNIZED(let i): return i
+    }
+  }
+
+  // The compiler won't synthesize support with the UNRECOGNIZED case.
+  public static let allCases: [Melix_Worker_V1_AccelerationMode] = [
+    .unspecified,
+    .baseline,
+    .speculativeDecode,
+    .acceleratedPrefill,
+    .activeKvQuantized,
+  ]
+
+}
+
 public struct Melix_Worker_V1_ErrorStatus: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
@@ -474,6 +624,34 @@ public struct Melix_Worker_V1_SchedulingHints: Sendable {
 
   public var queueDelayMs: UInt32 = 0
 
+  public var queuePosition: UInt32 = 0
+
+  public var admissionPolicy: String = String()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public struct Melix_Worker_V1_AccelerationPolicy: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var mode: Melix_Worker_V1_AccelerationMode = .unspecified
+
+  public var profileID: String = String()
+
+  public var draftModelID: String = String()
+
+  public var prefillHint: String = String()
+
+  public var activeKvQuantProfile: String = String()
+
+  public var allowBaselineFallback: Bool = false
+
+  public var ext: Dictionary<String,String> = [:]
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -512,6 +690,18 @@ public struct Melix_Worker_V1_BlockRef: Sendable {
 // MARK: - Code below here is support for the SwiftProtobuf runtime.
 
 fileprivate let _protobuf_package = "melix.worker.v1"
+
+extension Melix_Worker_V1_AdmissionState: SwiftProtobuf._ProtoNameProviding {
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0ADMISSION_STATE_UNSPECIFIED\0\u{1}ADMISSION_QUEUED\0\u{1}ADMISSION_ADMITTED\0\u{1}ADMISSION_REJECTED\0\u{1}ADMISSION_DROPPED\0")
+}
+
+extension Melix_Worker_V1_ExecutionPhase: SwiftProtobuf._ProtoNameProviding {
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0EXECUTION_PHASE_UNSPECIFIED\0\u{1}EXECUTION_QUEUED\0\u{1}EXECUTION_ADMITTED\0\u{1}EXECUTION_PREFILLING\0\u{1}EXECUTION_DECODING\0\u{1}EXECUTION_COMPLETED\0\u{1}EXECUTION_ABORTED\0\u{1}EXECUTION_FAILED\0")
+}
+
+extension Melix_Worker_V1_AccelerationMode: SwiftProtobuf._ProtoNameProviding {
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0ACCELERATION_MODE_UNSPECIFIED\0\u{1}ACCELERATION_MODE_BASELINE\0\u{1}ACCELERATION_MODE_SPECULATIVE_DECODE\0\u{1}ACCELERATION_MODE_ACCELERATED_PREFILL\0\u{1}ACCELERATION_MODE_ACTIVE_KV_QUANTIZED\0")
+}
 
 extension Melix_Worker_V1_ErrorStatus: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ErrorStatus"
@@ -1467,7 +1657,7 @@ extension Melix_Worker_V1_RequestIdentity: SwiftProtobuf.Message, SwiftProtobuf.
 
 extension Melix_Worker_V1_SchedulingHints: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".SchedulingHints"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}priority\0\u{1}lane\0\u{3}latency_sensitive\0\u{3}queue_delay_ms\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}priority\0\u{1}lane\0\u{3}latency_sensitive\0\u{3}queue_delay_ms\0\u{3}queue_position\0\u{3}admission_policy\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -1479,6 +1669,8 @@ extension Melix_Worker_V1_SchedulingHints: SwiftProtobuf.Message, SwiftProtobuf.
       case 2: try { try decoder.decodeSingularStringField(value: &self.lane) }()
       case 3: try { try decoder.decodeSingularBoolField(value: &self.latencySensitive) }()
       case 4: try { try decoder.decodeSingularUInt32Field(value: &self.queueDelayMs) }()
+      case 5: try { try decoder.decodeSingularUInt32Field(value: &self.queuePosition) }()
+      case 6: try { try decoder.decodeSingularStringField(value: &self.admissionPolicy) }()
       default: break
       }
     }
@@ -1497,6 +1689,12 @@ extension Melix_Worker_V1_SchedulingHints: SwiftProtobuf.Message, SwiftProtobuf.
     if self.queueDelayMs != 0 {
       try visitor.visitSingularUInt32Field(value: self.queueDelayMs, fieldNumber: 4)
     }
+    if self.queuePosition != 0 {
+      try visitor.visitSingularUInt32Field(value: self.queuePosition, fieldNumber: 5)
+    }
+    if !self.admissionPolicy.isEmpty {
+      try visitor.visitSingularStringField(value: self.admissionPolicy, fieldNumber: 6)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -1505,6 +1703,68 @@ extension Melix_Worker_V1_SchedulingHints: SwiftProtobuf.Message, SwiftProtobuf.
     if lhs.lane != rhs.lane {return false}
     if lhs.latencySensitive != rhs.latencySensitive {return false}
     if lhs.queueDelayMs != rhs.queueDelayMs {return false}
+    if lhs.queuePosition != rhs.queuePosition {return false}
+    if lhs.admissionPolicy != rhs.admissionPolicy {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+extension Melix_Worker_V1_AccelerationPolicy: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".AccelerationPolicy"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}mode\0\u{3}profile_id\0\u{3}draft_model_id\0\u{3}prefill_hint\0\u{3}active_kv_quant_profile\0\u{3}allow_baseline_fallback\0\u{1}ext\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularEnumField(value: &self.mode) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.profileID) }()
+      case 3: try { try decoder.decodeSingularStringField(value: &self.draftModelID) }()
+      case 4: try { try decoder.decodeSingularStringField(value: &self.prefillHint) }()
+      case 5: try { try decoder.decodeSingularStringField(value: &self.activeKvQuantProfile) }()
+      case 6: try { try decoder.decodeSingularBoolField(value: &self.allowBaselineFallback) }()
+      case 7: try { try decoder.decodeMapField(fieldType: SwiftProtobuf._ProtobufMap<SwiftProtobuf.ProtobufString,SwiftProtobuf.ProtobufString>.self, value: &self.ext) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if self.mode != .unspecified {
+      try visitor.visitSingularEnumField(value: self.mode, fieldNumber: 1)
+    }
+    if !self.profileID.isEmpty {
+      try visitor.visitSingularStringField(value: self.profileID, fieldNumber: 2)
+    }
+    if !self.draftModelID.isEmpty {
+      try visitor.visitSingularStringField(value: self.draftModelID, fieldNumber: 3)
+    }
+    if !self.prefillHint.isEmpty {
+      try visitor.visitSingularStringField(value: self.prefillHint, fieldNumber: 4)
+    }
+    if !self.activeKvQuantProfile.isEmpty {
+      try visitor.visitSingularStringField(value: self.activeKvQuantProfile, fieldNumber: 5)
+    }
+    if self.allowBaselineFallback != false {
+      try visitor.visitSingularBoolField(value: self.allowBaselineFallback, fieldNumber: 6)
+    }
+    if !self.ext.isEmpty {
+      try visitor.visitMapField(fieldType: SwiftProtobuf._ProtobufMap<SwiftProtobuf.ProtobufString,SwiftProtobuf.ProtobufString>.self, value: self.ext, fieldNumber: 7)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Melix_Worker_V1_AccelerationPolicy, rhs: Melix_Worker_V1_AccelerationPolicy) -> Bool {
+    if lhs.mode != rhs.mode {return false}
+    if lhs.profileID != rhs.profileID {return false}
+    if lhs.draftModelID != rhs.draftModelID {return false}
+    if lhs.prefillHint != rhs.prefillHint {return false}
+    if lhs.activeKvQuantProfile != rhs.activeKvQuantProfile {return false}
+    if lhs.allowBaselineFallback != rhs.allowBaselineFallback {return false}
+    if lhs.ext != rhs.ext {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

@@ -322,7 +322,7 @@ private func makeTranslatedChatRequest(requestID: String, modelID: String = "mel
     workerRequest.execution.id.requestID = requestID
     workerRequest.execution.modelHandle = "melix-dev-text::local"
     workerRequest.execution.scheduling = Melix_Worker_V1_SchedulingHints()
-    workerRequest.execution.scheduling.lane = "text.interactive"
+    workerRequest.execution.scheduling.lane = "text.decode.interactive"
     workerRequest.execution.scheduling.priority = 100
     workerRequest.execution.scheduling.latencySensitive = true
 

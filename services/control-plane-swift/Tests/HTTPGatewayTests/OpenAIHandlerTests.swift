@@ -58,7 +58,7 @@ struct OpenAIHandlerTests {
         #expect(response.headers["content-type"] == "text/event-stream; charset=utf-8")
         #expect(request.execution.id.requestID == "req-fixed")
         #expect(request.execution.modelHandle == "melix-dev-text::local")
-        #expect(request.execution.scheduling.lane == "text.interactive")
+        #expect(request.execution.scheduling.lane == "text.decode.interactive")
         #expect(request.execution.scheduling.priority == 100)
         #expect(request.execution.scheduling.latencySensitive)
         #expect(request.messages.count == 1)

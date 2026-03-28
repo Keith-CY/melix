@@ -42,6 +42,10 @@ Delivered outcome:
 
 ### Phase 1: Swift Text Worker Hot Path
 
+Status:
+
+- complete
+
 Primary objective:
 
 - move the default text `Generate` path into an independent Swift text worker
@@ -60,6 +64,12 @@ Exit criteria:
 - Python remains the execution layer for non-text families
 - the control plane can route by worker engine class without changing the public API shape
 
+Delivered evidence:
+
+- deterministic local stack and runbook
+- Swift-vs-Python hot-path comparison metrics
+- explicit Swift-worker failure-path integration coverage
+
 Phase probes:
 
 - TTFT
@@ -69,6 +79,10 @@ Phase probes:
 - peak memory for the default text model
 
 ### Phase 2: Text Runtime Depth and Acceleration
+
+Current entry slice:
+
+- `P2-M1` phase-aware protocol shapes
 
 Primary objective:
 

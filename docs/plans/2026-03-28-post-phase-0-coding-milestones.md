@@ -22,6 +22,10 @@
 
 ## Phase 1: Swift Text Worker Hot Path
 
+Status:
+
+- complete
+
 Detailed plan:
 
 - `plans/2026-03-27-phase-1-swift-text-worker.md`

@@ -19,13 +19,18 @@ public struct ServerSnapshotBuilder {
 
     private func emptyQueueSummary() -> Melix_Controlplane_V1_QueueSummary {
         var queue = Melix_Controlplane_V1_QueueSummary()
-        queue.lanes = [lane(id: "Q0"), lane(id: "Q1"), lane(id: "Q2"), lane(id: "Q3")]
+        queue.lanes = [
+            lane(id: "text.decode.interactive", laneClass: "interactive-decode"),
+            lane(id: "text.prefill.hot", laneClass: "hot-prefill"),
+            lane(id: "text.prefill.background", laneClass: "background-prefill"),
+        ]
         return queue
     }
 
-    private func lane(id: String) -> Melix_Controlplane_V1_QueueLaneSummary {
+    private func lane(id: String, laneClass: String) -> Melix_Controlplane_V1_QueueLaneSummary {
         var lane = Melix_Controlplane_V1_QueueLaneSummary()
         lane.laneID = id
+        lane.laneClass = laneClass
         return lane
     }
 }

@@ -206,6 +206,8 @@ public enum Melix_Controlplane_V1_RequestPhase: SwiftProtobuf.Enum, Swift.CaseIt
   case requestCompleted // = 6
   case requestAborted // = 7
   case requestFailed // = 8
+  case requestAdmitted // = 9
+  case requestRejected // = 10
   case UNRECOGNIZED(Int)
 
   public init() {
@@ -223,6 +225,8 @@ public enum Melix_Controlplane_V1_RequestPhase: SwiftProtobuf.Enum, Swift.CaseIt
     case 6: self = .requestCompleted
     case 7: self = .requestAborted
     case 8: self = .requestFailed
+    case 9: self = .requestAdmitted
+    case 10: self = .requestRejected
     default: self = .UNRECOGNIZED(rawValue)
     }
   }
@@ -238,6 +242,8 @@ public enum Melix_Controlplane_V1_RequestPhase: SwiftProtobuf.Enum, Swift.CaseIt
     case .requestCompleted: return 6
     case .requestAborted: return 7
     case .requestFailed: return 8
+    case .requestAdmitted: return 9
+    case .requestRejected: return 10
     case .UNRECOGNIZED(let i): return i
     }
   }
@@ -253,6 +259,100 @@ public enum Melix_Controlplane_V1_RequestPhase: SwiftProtobuf.Enum, Swift.CaseIt
     .requestCompleted,
     .requestAborted,
     .requestFailed,
+    .requestAdmitted,
+    .requestRejected,
+  ]
+
+}
+
+public enum Melix_Controlplane_V1_AdmissionState: SwiftProtobuf.Enum, Swift.CaseIterable {
+  public typealias RawValue = Int
+  case unspecified // = 0
+  case admissionQueued // = 1
+  case admissionAdmitted // = 2
+  case admissionRejected // = 3
+  case admissionDropped // = 4
+  case UNRECOGNIZED(Int)
+
+  public init() {
+    self = .unspecified
+  }
+
+  public init?(rawValue: Int) {
+    switch rawValue {
+    case 0: self = .unspecified
+    case 1: self = .admissionQueued
+    case 2: self = .admissionAdmitted
+    case 3: self = .admissionRejected
+    case 4: self = .admissionDropped
+    default: self = .UNRECOGNIZED(rawValue)
+    }
+  }
+
+  public var rawValue: Int {
+    switch self {
+    case .unspecified: return 0
+    case .admissionQueued: return 1
+    case .admissionAdmitted: return 2
+    case .admissionRejected: return 3
+    case .admissionDropped: return 4
+    case .UNRECOGNIZED(let i): return i
+    }
+  }
+
+  // The compiler won't synthesize support with the UNRECOGNIZED case.
+  public static let allCases: [Melix_Controlplane_V1_AdmissionState] = [
+    .unspecified,
+    .admissionQueued,
+    .admissionAdmitted,
+    .admissionRejected,
+    .admissionDropped,
+  ]
+
+}
+
+public enum Melix_Controlplane_V1_AccelerationMode: SwiftProtobuf.Enum, Swift.CaseIterable {
+  public typealias RawValue = Int
+  case unspecified // = 0
+  case baseline // = 1
+  case speculativeDecode // = 2
+  case acceleratedPrefill // = 3
+  case activeKvQuantized // = 4
+  case UNRECOGNIZED(Int)
+
+  public init() {
+    self = .unspecified
+  }
+
+  public init?(rawValue: Int) {
+    switch rawValue {
+    case 0: self = .unspecified
+    case 1: self = .baseline
+    case 2: self = .speculativeDecode
+    case 3: self = .acceleratedPrefill
+    case 4: self = .activeKvQuantized
+    default: self = .UNRECOGNIZED(rawValue)
+    }
+  }
+
+  public var rawValue: Int {
+    switch self {
+    case .unspecified: return 0
+    case .baseline: return 1
+    case .speculativeDecode: return 2
+    case .acceleratedPrefill: return 3
+    case .activeKvQuantized: return 4
+    case .UNRECOGNIZED(let i): return i
+    }
+  }
+
+  // The compiler won't synthesize support with the UNRECOGNIZED case.
+  public static let allCases: [Melix_Controlplane_V1_AccelerationMode] = [
+    .unspecified,
+    .baseline,
+    .speculativeDecode,
+    .acceleratedPrefill,
+    .activeKvQuantized,
   ]
 
 }
@@ -1835,6 +1935,10 @@ public struct Melix_Controlplane_V1_QueueSummary: Sendable {
 
   public var backpressure: Double = 0
 
+  public var admittedRequests: UInt32 = 0
+
+  public var rejectedRequests: UInt32 = 0
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -1858,6 +1962,10 @@ public struct Melix_Controlplane_V1_QueueLaneSummary: Sendable {
   public var admissionRate: Double = 0
 
   public var backpressure: Double = 0
+
+  public var laneClass: String = String()
+
+  public var priorityScore: Double = 0
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -2146,6 +2254,18 @@ public struct Melix_Controlplane_V1_RequestProgressEvent: Sendable {
 
   public var workerID: String = String()
 
+  public var admissionState: Melix_Controlplane_V1_AdmissionState = .unspecified
+
+  public var queuePosition: UInt32 = 0
+
+  public var decodeHandle: String = String()
+
+  public var accelerationMode: Melix_Controlplane_V1_AccelerationMode = .unspecified
+
+  public var accelerationProfileID: String = String()
+
+  public var draftModelID: String = String()
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -2275,7 +2395,15 @@ extension Melix_Controlplane_V1_ModelState: SwiftProtobuf._ProtoNameProviding {
 }
 
 extension Melix_Controlplane_V1_RequestPhase: SwiftProtobuf._ProtoNameProviding {
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0REQUEST_PHASE_UNSPECIFIED\0\u{1}REQUEST_QUEUED\0\u{1}REQUEST_PREFILLING\0\u{1}REQUEST_DECODING\0\u{1}REQUEST_TOOL_WAIT\0\u{1}REQUEST_CHECKPOINTING\0\u{1}REQUEST_COMPLETED\0\u{1}REQUEST_ABORTED\0\u{1}REQUEST_FAILED\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0REQUEST_PHASE_UNSPECIFIED\0\u{1}REQUEST_QUEUED\0\u{1}REQUEST_PREFILLING\0\u{1}REQUEST_DECODING\0\u{1}REQUEST_TOOL_WAIT\0\u{1}REQUEST_CHECKPOINTING\0\u{1}REQUEST_COMPLETED\0\u{1}REQUEST_ABORTED\0\u{1}REQUEST_FAILED\0\u{1}REQUEST_ADMITTED\0\u{1}REQUEST_REJECTED\0")
+}
+
+extension Melix_Controlplane_V1_AdmissionState: SwiftProtobuf._ProtoNameProviding {
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0ADMISSION_STATE_UNSPECIFIED\0\u{1}ADMISSION_QUEUED\0\u{1}ADMISSION_ADMITTED\0\u{1}ADMISSION_REJECTED\0\u{1}ADMISSION_DROPPED\0")
+}
+
+extension Melix_Controlplane_V1_AccelerationMode: SwiftProtobuf._ProtoNameProviding {
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0ACCELERATION_MODE_UNSPECIFIED\0\u{1}ACCELERATION_MODE_BASELINE\0\u{1}ACCELERATION_MODE_SPECULATIVE_DECODE\0\u{1}ACCELERATION_MODE_ACCELERATED_PREFILL\0\u{1}ACCELERATION_MODE_ACTIVE_KV_QUANTIZED\0")
 }
 
 extension Melix_Controlplane_V1_EventTopic: SwiftProtobuf._ProtoNameProviding {
@@ -5346,7 +5474,7 @@ extension Melix_Controlplane_V1_ModelSummary: SwiftProtobuf.Message, SwiftProtob
 
 extension Melix_Controlplane_V1_QueueSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".QueueSummary"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}lanes\0\u{3}queued_requests\0\u{3}active_requests\0\u{3}admission_latency_ms\0\u{1}backpressure\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}lanes\0\u{3}queued_requests\0\u{3}active_requests\0\u{3}admission_latency_ms\0\u{1}backpressure\0\u{3}admitted_requests\0\u{3}rejected_requests\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -5359,6 +5487,8 @@ extension Melix_Controlplane_V1_QueueSummary: SwiftProtobuf.Message, SwiftProtob
       case 3: try { try decoder.decodeSingularUInt32Field(value: &self.activeRequests) }()
       case 4: try { try decoder.decodeSingularDoubleField(value: &self.admissionLatencyMs) }()
       case 5: try { try decoder.decodeSingularDoubleField(value: &self.backpressure) }()
+      case 6: try { try decoder.decodeSingularUInt32Field(value: &self.admittedRequests) }()
+      case 7: try { try decoder.decodeSingularUInt32Field(value: &self.rejectedRequests) }()
       default: break
       }
     }
@@ -5380,6 +5510,12 @@ extension Melix_Controlplane_V1_QueueSummary: SwiftProtobuf.Message, SwiftProtob
     if self.backpressure.bitPattern != 0 {
       try visitor.visitSingularDoubleField(value: self.backpressure, fieldNumber: 5)
     }
+    if self.admittedRequests != 0 {
+      try visitor.visitSingularUInt32Field(value: self.admittedRequests, fieldNumber: 6)
+    }
+    if self.rejectedRequests != 0 {
+      try visitor.visitSingularUInt32Field(value: self.rejectedRequests, fieldNumber: 7)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -5389,6 +5525,8 @@ extension Melix_Controlplane_V1_QueueSummary: SwiftProtobuf.Message, SwiftProtob
     if lhs.activeRequests != rhs.activeRequests {return false}
     if lhs.admissionLatencyMs != rhs.admissionLatencyMs {return false}
     if lhs.backpressure != rhs.backpressure {return false}
+    if lhs.admittedRequests != rhs.admittedRequests {return false}
+    if lhs.rejectedRequests != rhs.rejectedRequests {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -5396,7 +5534,7 @@ extension Melix_Controlplane_V1_QueueSummary: SwiftProtobuf.Message, SwiftProtob
 
 extension Melix_Controlplane_V1_QueueLaneSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".QueueLaneSummary"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}lane_id\0\u{3}queued_requests\0\u{3}active_requests\0\u{3}queue_delay_ms_p50\0\u{3}queue_delay_ms_p95\0\u{3}admission_rate\0\u{1}backpressure\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}lane_id\0\u{3}queued_requests\0\u{3}active_requests\0\u{3}queue_delay_ms_p50\0\u{3}queue_delay_ms_p95\0\u{3}admission_rate\0\u{1}backpressure\0\u{3}lane_class\0\u{3}priority_score\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -5411,6 +5549,8 @@ extension Melix_Controlplane_V1_QueueLaneSummary: SwiftProtobuf.Message, SwiftPr
       case 5: try { try decoder.decodeSingularDoubleField(value: &self.queueDelayMsP95) }()
       case 6: try { try decoder.decodeSingularDoubleField(value: &self.admissionRate) }()
       case 7: try { try decoder.decodeSingularDoubleField(value: &self.backpressure) }()
+      case 8: try { try decoder.decodeSingularStringField(value: &self.laneClass) }()
+      case 9: try { try decoder.decodeSingularDoubleField(value: &self.priorityScore) }()
       default: break
       }
     }
@@ -5438,6 +5578,12 @@ extension Melix_Controlplane_V1_QueueLaneSummary: SwiftProtobuf.Message, SwiftPr
     if self.backpressure.bitPattern != 0 {
       try visitor.visitSingularDoubleField(value: self.backpressure, fieldNumber: 7)
     }
+    if !self.laneClass.isEmpty {
+      try visitor.visitSingularStringField(value: self.laneClass, fieldNumber: 8)
+    }
+    if self.priorityScore.bitPattern != 0 {
+      try visitor.visitSingularDoubleField(value: self.priorityScore, fieldNumber: 9)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -5449,6 +5595,8 @@ extension Melix_Controlplane_V1_QueueLaneSummary: SwiftProtobuf.Message, SwiftPr
     if lhs.queueDelayMsP95 != rhs.queueDelayMsP95 {return false}
     if lhs.admissionRate != rhs.admissionRate {return false}
     if lhs.backpressure != rhs.backpressure {return false}
+    if lhs.laneClass != rhs.laneClass {return false}
+    if lhs.priorityScore != rhs.priorityScore {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -6095,7 +6243,7 @@ extension Melix_Controlplane_V1_ModelStateChanged: SwiftProtobuf.Message, SwiftP
 
 extension Melix_Controlplane_V1_RequestProgressEvent: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".RequestProgressEvent"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}request_id\0\u{1}phase\0\u{1}lane\0\u{3}queue_delay_ms\0\u{3}priority_score\0\u{1}backpressure\0\u{3}worker_id\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}request_id\0\u{1}phase\0\u{1}lane\0\u{3}queue_delay_ms\0\u{3}priority_score\0\u{1}backpressure\0\u{3}worker_id\0\u{3}admission_state\0\u{3}queue_position\0\u{3}decode_handle\0\u{3}acceleration_mode\0\u{3}acceleration_profile_id\0\u{3}draft_model_id\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -6110,6 +6258,12 @@ extension Melix_Controlplane_V1_RequestProgressEvent: SwiftProtobuf.Message, Swi
       case 5: try { try decoder.decodeSingularDoubleField(value: &self.priorityScore) }()
       case 6: try { try decoder.decodeSingularDoubleField(value: &self.backpressure) }()
       case 7: try { try decoder.decodeSingularStringField(value: &self.workerID) }()
+      case 8: try { try decoder.decodeSingularEnumField(value: &self.admissionState) }()
+      case 9: try { try decoder.decodeSingularUInt32Field(value: &self.queuePosition) }()
+      case 10: try { try decoder.decodeSingularStringField(value: &self.decodeHandle) }()
+      case 11: try { try decoder.decodeSingularEnumField(value: &self.accelerationMode) }()
+      case 12: try { try decoder.decodeSingularStringField(value: &self.accelerationProfileID) }()
+      case 13: try { try decoder.decodeSingularStringField(value: &self.draftModelID) }()
       default: break
       }
     }
@@ -6137,6 +6291,24 @@ extension Melix_Controlplane_V1_RequestProgressEvent: SwiftProtobuf.Message, Swi
     if !self.workerID.isEmpty {
       try visitor.visitSingularStringField(value: self.workerID, fieldNumber: 7)
     }
+    if self.admissionState != .unspecified {
+      try visitor.visitSingularEnumField(value: self.admissionState, fieldNumber: 8)
+    }
+    if self.queuePosition != 0 {
+      try visitor.visitSingularUInt32Field(value: self.queuePosition, fieldNumber: 9)
+    }
+    if !self.decodeHandle.isEmpty {
+      try visitor.visitSingularStringField(value: self.decodeHandle, fieldNumber: 10)
+    }
+    if self.accelerationMode != .unspecified {
+      try visitor.visitSingularEnumField(value: self.accelerationMode, fieldNumber: 11)
+    }
+    if !self.accelerationProfileID.isEmpty {
+      try visitor.visitSingularStringField(value: self.accelerationProfileID, fieldNumber: 12)
+    }
+    if !self.draftModelID.isEmpty {
+      try visitor.visitSingularStringField(value: self.draftModelID, fieldNumber: 13)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -6148,6 +6320,12 @@ extension Melix_Controlplane_V1_RequestProgressEvent: SwiftProtobuf.Message, Swi
     if lhs.priorityScore != rhs.priorityScore {return false}
     if lhs.backpressure != rhs.backpressure {return false}
     if lhs.workerID != rhs.workerID {return false}
+    if lhs.admissionState != rhs.admissionState {return false}
+    if lhs.queuePosition != rhs.queuePosition {return false}
+    if lhs.decodeHandle != rhs.decodeHandle {return false}
+    if lhs.accelerationMode != rhs.accelerationMode {return false}
+    if lhs.accelerationProfileID != rhs.accelerationProfileID {return false}
+    if lhs.draftModelID != rhs.draftModelID {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

@@ -267,6 +267,13 @@ Melix should use four scheduling lanes:
 - `Q2`: cold or long prefill, including chunked prefill and checkpoint-friendly work
 - `Q3`: background work such as embeddings, rerank, convert, bench, warmup, image, and audio tasks
 
+The control-plane and worker protocols should use explicit lane identifiers rather than exporting the `Q0-Q3` shorthand directly:
+
+- `Q0` maps to `text.decode.interactive`
+- `Q1` maps to `text.prefill.hot`
+- `Q2` maps to `text.prefill.background`
+- `Q3` remains the conceptual background lane family for later non-text phases
+
 The control plane protocol should expose queue read models, including lane-level queued counts, active counts, queue delay, admission latency, and backpressure.
 
 Worker requests should also carry scheduling hints such as lane, priority, latency sensitivity, and queue delay so execution can honor control-plane intent without turning the worker into the global scheduler.

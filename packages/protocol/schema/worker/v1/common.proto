@@ -154,6 +154,45 @@ message SchedulingHints {
   string lane = 2;
   bool latency_sensitive = 3;
   uint32 queue_delay_ms = 4;
+  uint32 queue_position = 5;
+  string admission_policy = 6;
+}
+
+enum AdmissionState {
+  ADMISSION_STATE_UNSPECIFIED = 0;
+  ADMISSION_QUEUED = 1;
+  ADMISSION_ADMITTED = 2;
+  ADMISSION_REJECTED = 3;
+  ADMISSION_DROPPED = 4;
+}
+
+enum ExecutionPhase {
+  EXECUTION_PHASE_UNSPECIFIED = 0;
+  EXECUTION_QUEUED = 1;
+  EXECUTION_ADMITTED = 2;
+  EXECUTION_PREFILLING = 3;
+  EXECUTION_DECODING = 4;
+  EXECUTION_COMPLETED = 5;
+  EXECUTION_ABORTED = 6;
+  EXECUTION_FAILED = 7;
+}
+
+enum AccelerationMode {
+  ACCELERATION_MODE_UNSPECIFIED = 0;
+  ACCELERATION_MODE_BASELINE = 1;
+  ACCELERATION_MODE_SPECULATIVE_DECODE = 2;
+  ACCELERATION_MODE_ACCELERATED_PREFILL = 3;
+  ACCELERATION_MODE_ACTIVE_KV_QUANTIZED = 4;
+}
+
+message AccelerationPolicy {
+  AccelerationMode mode = 1;
+  string profile_id = 2;
+  string draft_model_id = 3;
+  string prefill_hint = 4;
+  string active_kv_quant_profile = 5;
+  bool allow_baseline_fallback = 6;
+  map<string, string> ext = 7;
 }
 
 message BlockTable {

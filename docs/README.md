@@ -33,6 +33,7 @@ Current phase-status and planning documents:
 - `plans/2026-03-27-swift-text-runtime-direction.md`
 - `plans/2026-03-28-post-phase-0-coding-milestones.md`
 - `plans/2026-03-27-phase-1-swift-text-worker.md`
+- `plans/2026-03-28-p2-m1-phase-aware-protocol-shapes.md`
 - `plans/2026-03-28-p1-m2-swift-text-worker-scaffold.md`
 - `plans/2026-03-28-p1-m3-swift-runtime-lifecycle.md`
 - `plans/2026-03-28-p1-m4-swift-generate-abort.md`
@@ -50,6 +51,7 @@ Current roadmap and phase-status documents:
 
 - `phase-roadmap.md`
 - `plans/2026-03-27-phase-0-thin-path.md`
+- `plans/2026-03-27-phase-1-swift-text-worker.md`
 
 Recent decision records:
 

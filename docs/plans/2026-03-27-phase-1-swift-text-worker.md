@@ -8,6 +8,42 @@
 
 **Tech Stack:** Swift 6, Swift Package Manager, MLX Swift bindings, gRPC over Unix Domain Sockets, SwiftProtobuf-generated protocol models, generated Swift worker RPC stubs, XCTest, existing Python worker for compatibility and integration contrast.
 
+## Status
+
+- complete as of `2026-03-28`
+- completed milestones:
+  - `P1-M1` protocol and package baseline
+  - `P1-M2` Swift worker service scaffold
+  - `P1-M3` runtime lifecycle
+  - `P1-M4` generate and abort
+  - `P1-M5` control-plane routing
+  - `P1-M6` workflow and evidence
+- operator evidence:
+  - deterministic local stack workflow
+  - Swift text worker as the default text route
+  - explicit Swift-worker failure behavior
+  - reproducible Phase 1 metrics report via `make phase1-metrics`
+
+## Delivered Outcome
+
+Phase 1 has moved the default text hot path into an independent Swift text worker without changing the public Phase 0 HTTP surface.
+
+Delivered system behavior:
+
+- `POST /v1/chat/completions` routes to the Swift text worker by default
+- `POST /v1/chat/completions` still streams over the existing control-plane HTTP and SSE path
+- text abort works end-to-end through the Swift worker route
+- the Python worker remains available for non-text families and targeted comparison only
+- the deterministic integration path remains available for CI and local repeatability
+
+Completion evidence is recorded in:
+
+- `docs/plans/2026-03-28-p1-m2-swift-text-worker-scaffold.md`
+- `docs/plans/2026-03-28-p1-m3-swift-runtime-lifecycle.md`
+- `docs/plans/2026-03-28-p1-m4-swift-generate-abort.md`
+- `docs/plans/2026-03-28-p1-m5-control-plane-routing.md`
+- `docs/plans/2026-03-28-p1-m6-workflow-integration-metrics.md`
+
 ---
 
 ## Goal

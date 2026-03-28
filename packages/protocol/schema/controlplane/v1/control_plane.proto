@@ -311,6 +311,24 @@ enum RequestPhase {
   REQUEST_COMPLETED = 6;
   REQUEST_ABORTED = 7;
   REQUEST_FAILED = 8;
+  REQUEST_ADMITTED = 9;
+  REQUEST_REJECTED = 10;
+}
+
+enum AdmissionState {
+  ADMISSION_STATE_UNSPECIFIED = 0;
+  ADMISSION_QUEUED = 1;
+  ADMISSION_ADMITTED = 2;
+  ADMISSION_REJECTED = 3;
+  ADMISSION_DROPPED = 4;
+}
+
+enum AccelerationMode {
+  ACCELERATION_MODE_UNSPECIFIED = 0;
+  ACCELERATION_MODE_BASELINE = 1;
+  ACCELERATION_MODE_SPECULATIVE_DECODE = 2;
+  ACCELERATION_MODE_ACCELERATED_PREFILL = 3;
+  ACCELERATION_MODE_ACTIVE_KV_QUANTIZED = 4;
 }
 
 enum EventTopic {
@@ -375,6 +393,8 @@ message QueueSummary {
   uint32 active_requests = 3;
   double admission_latency_ms = 4;
   double backpressure = 5;
+  uint32 admitted_requests = 6;
+  uint32 rejected_requests = 7;
 }
 
 message QueueLaneSummary {
@@ -385,6 +405,8 @@ message QueueLaneSummary {
   double queue_delay_ms_p95 = 5;
   double admission_rate = 6;
   double backpressure = 7;
+  string lane_class = 8;
+  double priority_score = 9;
 }
 
 message CacheSummary {
@@ -492,6 +514,12 @@ message RequestProgressEvent {
   double priority_score = 5;
   double backpressure = 6;
   string worker_id = 7;
+  AdmissionState admission_state = 8;
+  uint32 queue_position = 9;
+  string decode_handle = 10;
+  AccelerationMode acceleration_mode = 11;
+  string acceleration_profile_id = 12;
+  string draft_model_id = 13;
 }
 
 message SessionStateChanged {

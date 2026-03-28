@@ -103,6 +103,15 @@ public struct Melix_Worker_V1_ExecutionMetadata: @unchecked Sendable {
     set {_uniqueStorage()._ext = newValue}
   }
 
+  public var acceleration: Melix_Worker_V1_AccelerationPolicy {
+    get {_storage._acceleration ?? Melix_Worker_V1_AccelerationPolicy()}
+    set {_uniqueStorage()._acceleration = newValue}
+  }
+  /// Returns true if `acceleration` has been explicitly set.
+  public var hasAcceleration: Bool {_storage._acceleration != nil}
+  /// Clears the value of `acceleration`. Subsequent reads from it will return its default value.
+  public mutating func clearAcceleration() {_uniqueStorage()._acceleration = nil}
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -242,6 +251,10 @@ public struct Melix_Worker_V1_PrefillRequest: Sendable {
 
   public var prefillStepSize: UInt32 = 0
 
+  public var returnDecodeHandle: Bool = false
+
+  public var resumeHint: String = String()
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -249,45 +262,78 @@ public struct Melix_Worker_V1_PrefillRequest: Sendable {
   fileprivate var _execution: Melix_Worker_V1_ExecutionMetadata? = nil
 }
 
-public struct Melix_Worker_V1_PrefillResponse: Sendable {
+public struct Melix_Worker_V1_PrefillResponse: @unchecked Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
-  public var ok: Bool = false
+  public var ok: Bool {
+    get {_storage._ok}
+    set {_uniqueStorage()._ok = newValue}
+  }
 
   public var error: Melix_Worker_V1_ErrorStatus {
-    get {_error ?? Melix_Worker_V1_ErrorStatus()}
-    set {_error = newValue}
+    get {_storage._error ?? Melix_Worker_V1_ErrorStatus()}
+    set {_uniqueStorage()._error = newValue}
   }
   /// Returns true if `error` has been explicitly set.
-  public var hasError: Bool {self._error != nil}
+  public var hasError: Bool {_storage._error != nil}
   /// Clears the value of `error`. Subsequent reads from it will return its default value.
-  public mutating func clearError() {self._error = nil}
+  public mutating func clearError() {_uniqueStorage()._error = nil}
 
-  public var decodeHandle: String = String()
+  public var decodeHandle: String {
+    get {_storage._decodeHandle}
+    set {_uniqueStorage()._decodeHandle = newValue}
+  }
 
-  public var blockTableID: String = String()
+  public var blockTableID: String {
+    get {_storage._blockTableID}
+    set {_uniqueStorage()._blockTableID = newValue}
+  }
 
   public var blockTable: Melix_Worker_V1_BlockTable {
-    get {_blockTable ?? Melix_Worker_V1_BlockTable()}
-    set {_blockTable = newValue}
+    get {_storage._blockTable ?? Melix_Worker_V1_BlockTable()}
+    set {_uniqueStorage()._blockTable = newValue}
   }
   /// Returns true if `blockTable` has been explicitly set.
-  public var hasBlockTable: Bool {self._blockTable != nil}
+  public var hasBlockTable: Bool {_storage._blockTable != nil}
   /// Clears the value of `blockTable`. Subsequent reads from it will return its default value.
-  public mutating func clearBlockTable() {self._blockTable = nil}
+  public mutating func clearBlockTable() {_uniqueStorage()._blockTable = nil}
 
-  public var restoredSnapshotID: String = String()
+  public var restoredSnapshotID: String {
+    get {_storage._restoredSnapshotID}
+    set {_uniqueStorage()._restoredSnapshotID = newValue}
+  }
 
-  public var promptTokens: UInt32 = 0
+  public var promptTokens: UInt32 {
+    get {_storage._promptTokens}
+    set {_uniqueStorage()._promptTokens = newValue}
+  }
+
+  public var lifecyclePhase: Melix_Worker_V1_ExecutionPhase {
+    get {_storage._lifecyclePhase}
+    set {_uniqueStorage()._lifecyclePhase = newValue}
+  }
+
+  public var admissionState: Melix_Worker_V1_AdmissionState {
+    get {_storage._admissionState}
+    set {_uniqueStorage()._admissionState = newValue}
+  }
+
+  public var appliedAcceleration: Melix_Worker_V1_AccelerationPolicy {
+    get {_storage._appliedAcceleration ?? Melix_Worker_V1_AccelerationPolicy()}
+    set {_uniqueStorage()._appliedAcceleration = newValue}
+  }
+  /// Returns true if `appliedAcceleration` has been explicitly set.
+  public var hasAppliedAcceleration: Bool {_storage._appliedAcceleration != nil}
+  /// Clears the value of `appliedAcceleration`. Subsequent reads from it will return its default value.
+  public mutating func clearAppliedAcceleration() {_uniqueStorage()._appliedAcceleration = nil}
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
 
-  fileprivate var _error: Melix_Worker_V1_ErrorStatus? = nil
-  fileprivate var _blockTable: Melix_Worker_V1_BlockTable? = nil
+  fileprivate var _storage = _StorageClass.defaultInstance
 }
 
 public struct Melix_Worker_V1_DecodeRequest: Sendable {
@@ -318,6 +364,10 @@ public struct Melix_Worker_V1_DecodeRequest: Sendable {
   public var maxOutputTokens: UInt32 = 0
 
   public var returnUsage: Bool = false
+
+  public var decodeStepSize: UInt32 = 0
+
+  public var prefillToken: String = String()
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -363,6 +413,18 @@ public struct Melix_Worker_V1_ExecuteEvent: Sendable {
   public var executionKind: String = String()
 
   public var seq: UInt64 = 0
+
+  public var phase: Melix_Worker_V1_ExecutionPhase = .unspecified
+
+  public var admissionState: Melix_Worker_V1_AdmissionState = .unspecified
+
+  public var lane: String = String()
+
+  public var queuePosition: UInt32 = 0
+
+  public var queueDelayMs: Double = 0
+
+  public var accelerationMode: Melix_Worker_V1_AccelerationMode = .unspecified
 
   public var payload: Melix_Worker_V1_ExecuteEvent.OneOf_Payload? = nil
 
@@ -454,6 +516,38 @@ public struct Melix_Worker_V1_ExecuteEvent: Sendable {
     set {payload = .heartbeat(newValue)}
   }
 
+  public var queued: Melix_Worker_V1_Queued {
+    get {
+      if case .queued(let v)? = payload {return v}
+      return Melix_Worker_V1_Queued()
+    }
+    set {payload = .queued(newValue)}
+  }
+
+  public var admitted: Melix_Worker_V1_Admitted {
+    get {
+      if case .admitted(let v)? = payload {return v}
+      return Melix_Worker_V1_Admitted()
+    }
+    set {payload = .admitted(newValue)}
+  }
+
+  public var decodeStarted: Melix_Worker_V1_DecodeStarted {
+    get {
+      if case .decodeStarted(let v)? = payload {return v}
+      return Melix_Worker_V1_DecodeStarted()
+    }
+    set {payload = .decodeStarted(newValue)}
+  }
+
+  public var accelerationApplied: Melix_Worker_V1_AccelerationApplied {
+    get {
+      if case .accelerationApplied(let v)? = payload {return v}
+      return Melix_Worker_V1_AccelerationApplied()
+    }
+    set {payload = .accelerationApplied(newValue)}
+  }
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public enum OneOf_Payload: Equatable, Sendable {
@@ -468,8 +562,46 @@ public struct Melix_Worker_V1_ExecuteEvent: Sendable {
     case completed(Melix_Worker_V1_Completed)
     case error(Melix_Worker_V1_ErrorEvent)
     case heartbeat(Melix_Worker_V1_Heartbeat)
+    case queued(Melix_Worker_V1_Queued)
+    case admitted(Melix_Worker_V1_Admitted)
+    case decodeStarted(Melix_Worker_V1_DecodeStarted)
+    case accelerationApplied(Melix_Worker_V1_AccelerationApplied)
 
   }
+
+  public init() {}
+}
+
+public struct Melix_Worker_V1_Queued: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var lane: String = String()
+
+  public var queuePosition: UInt32 = 0
+
+  public var priorityScore: Double = 0
+
+  public var backpressure: Double = 0
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public struct Melix_Worker_V1_Admitted: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var lane: String = String()
+
+  public var workerID: String = String()
+
+  public var queueDelayMs: Double = 0
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
 }
@@ -498,6 +630,22 @@ public struct Melix_Worker_V1_PrefillProgress: Sendable {
   public var processedTokens: UInt32 = 0
 
   public var totalTokens: UInt32 = 0
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public struct Melix_Worker_V1_DecodeStarted: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var decodeHandle: String = String()
+
+  public var maxOutputTokens: UInt32 = 0
+
+  public var resumedFromPrefill: Bool = false
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -572,6 +720,27 @@ public struct Melix_Worker_V1_CacheDecision: Sendable {
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
+}
+
+public struct Melix_Worker_V1_AccelerationApplied: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var policy: Melix_Worker_V1_AccelerationPolicy {
+    get {_policy ?? Melix_Worker_V1_AccelerationPolicy()}
+    set {_policy = newValue}
+  }
+  /// Returns true if `policy` has been explicitly set.
+  public var hasPolicy: Bool {self._policy != nil}
+  /// Clears the value of `policy`. Subsequent reads from it will return its default value.
+  public mutating func clearPolicy() {self._policy = nil}
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+
+  fileprivate var _policy: Melix_Worker_V1_AccelerationPolicy? = nil
 }
 
 public struct Melix_Worker_V1_BoundarySnapshotCreated: Sendable {
@@ -929,7 +1098,7 @@ fileprivate let _protobuf_package = "melix.worker.v1"
 
 extension Melix_Worker_V1_ExecutionMetadata: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ExecutionMetadata"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}id\0\u{3}model_handle\0\u{1}scope\0\u{3}cache_key\0\u{1}scheduling\0\u{3}tool_config\0\u{1}reasoning\0\u{3}cache_hints\0\u{1}ext\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}id\0\u{3}model_handle\0\u{1}scope\0\u{3}cache_key\0\u{1}scheduling\0\u{3}tool_config\0\u{1}reasoning\0\u{3}cache_hints\0\u{1}ext\0\u{1}acceleration\0")
 
   fileprivate class _StorageClass {
     var _id: Melix_Worker_V1_RequestIdentity? = nil
@@ -941,6 +1110,7 @@ extension Melix_Worker_V1_ExecutionMetadata: SwiftProtobuf.Message, SwiftProtobu
     var _reasoning: Melix_Worker_V1_ReasoningConfig? = nil
     var _cacheHints: Melix_Worker_V1_CacheHints? = nil
     var _ext: Dictionary<String,String> = [:]
+    var _acceleration: Melix_Worker_V1_AccelerationPolicy? = nil
 
       // This property is used as the initial default value for new instances of the type.
       // The type itself is protecting the reference to its storage via CoW semantics.
@@ -960,6 +1130,7 @@ extension Melix_Worker_V1_ExecutionMetadata: SwiftProtobuf.Message, SwiftProtobu
       _reasoning = source._reasoning
       _cacheHints = source._cacheHints
       _ext = source._ext
+      _acceleration = source._acceleration
     }
   }
 
@@ -987,6 +1158,7 @@ extension Melix_Worker_V1_ExecutionMetadata: SwiftProtobuf.Message, SwiftProtobu
         case 7: try { try decoder.decodeSingularMessageField(value: &_storage._reasoning) }()
         case 8: try { try decoder.decodeSingularMessageField(value: &_storage._cacheHints) }()
         case 9: try { try decoder.decodeMapField(fieldType: SwiftProtobuf._ProtobufMap<SwiftProtobuf.ProtobufString,SwiftProtobuf.ProtobufString>.self, value: &_storage._ext) }()
+        case 10: try { try decoder.decodeSingularMessageField(value: &_storage._acceleration) }()
         default: break
         }
       }
@@ -1026,6 +1198,9 @@ extension Melix_Worker_V1_ExecutionMetadata: SwiftProtobuf.Message, SwiftProtobu
       if !_storage._ext.isEmpty {
         try visitor.visitMapField(fieldType: SwiftProtobuf._ProtobufMap<SwiftProtobuf.ProtobufString,SwiftProtobuf.ProtobufString>.self, value: _storage._ext, fieldNumber: 9)
       }
+      try { if let v = _storage._acceleration {
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 10)
+      } }()
     }
     try unknownFields.traverse(visitor: &visitor)
   }
@@ -1044,6 +1219,7 @@ extension Melix_Worker_V1_ExecutionMetadata: SwiftProtobuf.Message, SwiftProtobu
         if _storage._reasoning != rhs_storage._reasoning {return false}
         if _storage._cacheHints != rhs_storage._cacheHints {return false}
         if _storage._ext != rhs_storage._ext {return false}
+        if _storage._acceleration != rhs_storage._acceleration {return false}
         return true
       }
       if !storagesAreEqual {return false}
@@ -1272,7 +1448,7 @@ extension Melix_Worker_V1_GenerateRequest: SwiftProtobuf.Message, SwiftProtobuf.
 
 extension Melix_Worker_V1_PrefillRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".PrefillRequest"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}execution\0\u{1}messages\0\u{3}prefill_step_size\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}execution\0\u{1}messages\0\u{3}prefill_step_size\0\u{3}return_decode_handle\0\u{3}resume_hint\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -1283,6 +1459,8 @@ extension Melix_Worker_V1_PrefillRequest: SwiftProtobuf.Message, SwiftProtobuf._
       case 1: try { try decoder.decodeSingularMessageField(value: &self._execution) }()
       case 2: try { try decoder.decodeRepeatedMessageField(value: &self.messages) }()
       case 3: try { try decoder.decodeSingularUInt32Field(value: &self.prefillStepSize) }()
+      case 4: try { try decoder.decodeSingularBoolField(value: &self.returnDecodeHandle) }()
+      case 5: try { try decoder.decodeSingularStringField(value: &self.resumeHint) }()
       default: break
       }
     }
@@ -1302,6 +1480,12 @@ extension Melix_Worker_V1_PrefillRequest: SwiftProtobuf.Message, SwiftProtobuf._
     if self.prefillStepSize != 0 {
       try visitor.visitSingularUInt32Field(value: self.prefillStepSize, fieldNumber: 3)
     }
+    if self.returnDecodeHandle != false {
+      try visitor.visitSingularBoolField(value: self.returnDecodeHandle, fieldNumber: 4)
+    }
+    if !self.resumeHint.isEmpty {
+      try visitor.visitSingularStringField(value: self.resumeHint, fieldNumber: 5)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -1309,6 +1493,8 @@ extension Melix_Worker_V1_PrefillRequest: SwiftProtobuf.Message, SwiftProtobuf._
     if lhs._execution != rhs._execution {return false}
     if lhs.messages != rhs.messages {return false}
     if lhs.prefillStepSize != rhs.prefillStepSize {return false}
+    if lhs.returnDecodeHandle != rhs.returnDecodeHandle {return false}
+    if lhs.resumeHint != rhs.resumeHint {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -1316,63 +1502,132 @@ extension Melix_Worker_V1_PrefillRequest: SwiftProtobuf.Message, SwiftProtobuf._
 
 extension Melix_Worker_V1_PrefillResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".PrefillResponse"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}ok\0\u{1}error\0\u{3}decode_handle\0\u{3}block_table_id\0\u{3}block_table\0\u{3}restored_snapshot_id\0\u{3}prompt_tokens\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}ok\0\u{1}error\0\u{3}decode_handle\0\u{3}block_table_id\0\u{3}block_table\0\u{3}restored_snapshot_id\0\u{3}prompt_tokens\0\u{3}lifecycle_phase\0\u{3}admission_state\0\u{3}applied_acceleration\0")
+
+  fileprivate class _StorageClass {
+    var _ok: Bool = false
+    var _error: Melix_Worker_V1_ErrorStatus? = nil
+    var _decodeHandle: String = String()
+    var _blockTableID: String = String()
+    var _blockTable: Melix_Worker_V1_BlockTable? = nil
+    var _restoredSnapshotID: String = String()
+    var _promptTokens: UInt32 = 0
+    var _lifecyclePhase: Melix_Worker_V1_ExecutionPhase = .unspecified
+    var _admissionState: Melix_Worker_V1_AdmissionState = .unspecified
+    var _appliedAcceleration: Melix_Worker_V1_AccelerationPolicy? = nil
+
+      // This property is used as the initial default value for new instances of the type.
+      // The type itself is protecting the reference to its storage via CoW semantics.
+      // This will force a copy to be made of this reference when the first mutation occurs;
+      // hence, it is safe to mark this as `nonisolated(unsafe)`.
+      static nonisolated(unsafe) let defaultInstance = _StorageClass()
+
+    private init() {}
+
+    init(copying source: _StorageClass) {
+      _ok = source._ok
+      _error = source._error
+      _decodeHandle = source._decodeHandle
+      _blockTableID = source._blockTableID
+      _blockTable = source._blockTable
+      _restoredSnapshotID = source._restoredSnapshotID
+      _promptTokens = source._promptTokens
+      _lifecyclePhase = source._lifecyclePhase
+      _admissionState = source._admissionState
+      _appliedAcceleration = source._appliedAcceleration
+    }
+  }
+
+  fileprivate mutating func _uniqueStorage() -> _StorageClass {
+    if !isKnownUniquelyReferenced(&_storage) {
+      _storage = _StorageClass(copying: _storage)
+    }
+    return _storage
+  }
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
-    while let fieldNumber = try decoder.nextFieldNumber() {
-      // The use of inline closures is to circumvent an issue where the compiler
-      // allocates stack space for every case branch when no optimizations are
-      // enabled. https://github.com/apple/swift-protobuf/issues/1034
-      switch fieldNumber {
-      case 1: try { try decoder.decodeSingularBoolField(value: &self.ok) }()
-      case 2: try { try decoder.decodeSingularMessageField(value: &self._error) }()
-      case 3: try { try decoder.decodeSingularStringField(value: &self.decodeHandle) }()
-      case 4: try { try decoder.decodeSingularStringField(value: &self.blockTableID) }()
-      case 5: try { try decoder.decodeSingularMessageField(value: &self._blockTable) }()
-      case 6: try { try decoder.decodeSingularStringField(value: &self.restoredSnapshotID) }()
-      case 7: try { try decoder.decodeSingularUInt32Field(value: &self.promptTokens) }()
-      default: break
+    _ = _uniqueStorage()
+    try withExtendedLifetime(_storage) { (_storage: _StorageClass) in
+      while let fieldNumber = try decoder.nextFieldNumber() {
+        // The use of inline closures is to circumvent an issue where the compiler
+        // allocates stack space for every case branch when no optimizations are
+        // enabled. https://github.com/apple/swift-protobuf/issues/1034
+        switch fieldNumber {
+        case 1: try { try decoder.decodeSingularBoolField(value: &_storage._ok) }()
+        case 2: try { try decoder.decodeSingularMessageField(value: &_storage._error) }()
+        case 3: try { try decoder.decodeSingularStringField(value: &_storage._decodeHandle) }()
+        case 4: try { try decoder.decodeSingularStringField(value: &_storage._blockTableID) }()
+        case 5: try { try decoder.decodeSingularMessageField(value: &_storage._blockTable) }()
+        case 6: try { try decoder.decodeSingularStringField(value: &_storage._restoredSnapshotID) }()
+        case 7: try { try decoder.decodeSingularUInt32Field(value: &_storage._promptTokens) }()
+        case 8: try { try decoder.decodeSingularEnumField(value: &_storage._lifecyclePhase) }()
+        case 9: try { try decoder.decodeSingularEnumField(value: &_storage._admissionState) }()
+        case 10: try { try decoder.decodeSingularMessageField(value: &_storage._appliedAcceleration) }()
+        default: break
+        }
       }
     }
   }
 
   public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
-    // The use of inline closures is to circumvent an issue where the compiler
-    // allocates stack space for every if/case branch local when no optimizations
-    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
-    // https://github.com/apple/swift-protobuf/issues/1182
-    if self.ok != false {
-      try visitor.visitSingularBoolField(value: self.ok, fieldNumber: 1)
-    }
-    try { if let v = self._error {
-      try visitor.visitSingularMessageField(value: v, fieldNumber: 2)
-    } }()
-    if !self.decodeHandle.isEmpty {
-      try visitor.visitSingularStringField(value: self.decodeHandle, fieldNumber: 3)
-    }
-    if !self.blockTableID.isEmpty {
-      try visitor.visitSingularStringField(value: self.blockTableID, fieldNumber: 4)
-    }
-    try { if let v = self._blockTable {
-      try visitor.visitSingularMessageField(value: v, fieldNumber: 5)
-    } }()
-    if !self.restoredSnapshotID.isEmpty {
-      try visitor.visitSingularStringField(value: self.restoredSnapshotID, fieldNumber: 6)
-    }
-    if self.promptTokens != 0 {
-      try visitor.visitSingularUInt32Field(value: self.promptTokens, fieldNumber: 7)
+    try withExtendedLifetime(_storage) { (_storage: _StorageClass) in
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every if/case branch local when no optimizations
+      // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+      // https://github.com/apple/swift-protobuf/issues/1182
+      if _storage._ok != false {
+        try visitor.visitSingularBoolField(value: _storage._ok, fieldNumber: 1)
+      }
+      try { if let v = _storage._error {
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 2)
+      } }()
+      if !_storage._decodeHandle.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._decodeHandle, fieldNumber: 3)
+      }
+      if !_storage._blockTableID.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._blockTableID, fieldNumber: 4)
+      }
+      try { if let v = _storage._blockTable {
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 5)
+      } }()
+      if !_storage._restoredSnapshotID.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._restoredSnapshotID, fieldNumber: 6)
+      }
+      if _storage._promptTokens != 0 {
+        try visitor.visitSingularUInt32Field(value: _storage._promptTokens, fieldNumber: 7)
+      }
+      if _storage._lifecyclePhase != .unspecified {
+        try visitor.visitSingularEnumField(value: _storage._lifecyclePhase, fieldNumber: 8)
+      }
+      if _storage._admissionState != .unspecified {
+        try visitor.visitSingularEnumField(value: _storage._admissionState, fieldNumber: 9)
+      }
+      try { if let v = _storage._appliedAcceleration {
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 10)
+      } }()
     }
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: Melix_Worker_V1_PrefillResponse, rhs: Melix_Worker_V1_PrefillResponse) -> Bool {
-    if lhs.ok != rhs.ok {return false}
-    if lhs._error != rhs._error {return false}
-    if lhs.decodeHandle != rhs.decodeHandle {return false}
-    if lhs.blockTableID != rhs.blockTableID {return false}
-    if lhs._blockTable != rhs._blockTable {return false}
-    if lhs.restoredSnapshotID != rhs.restoredSnapshotID {return false}
-    if lhs.promptTokens != rhs.promptTokens {return false}
+    if lhs._storage !== rhs._storage {
+      let storagesAreEqual: Bool = withExtendedLifetime((lhs._storage, rhs._storage)) { (_args: (_StorageClass, _StorageClass)) in
+        let _storage = _args.0
+        let rhs_storage = _args.1
+        if _storage._ok != rhs_storage._ok {return false}
+        if _storage._error != rhs_storage._error {return false}
+        if _storage._decodeHandle != rhs_storage._decodeHandle {return false}
+        if _storage._blockTableID != rhs_storage._blockTableID {return false}
+        if _storage._blockTable != rhs_storage._blockTable {return false}
+        if _storage._restoredSnapshotID != rhs_storage._restoredSnapshotID {return false}
+        if _storage._promptTokens != rhs_storage._promptTokens {return false}
+        if _storage._lifecyclePhase != rhs_storage._lifecyclePhase {return false}
+        if _storage._admissionState != rhs_storage._admissionState {return false}
+        if _storage._appliedAcceleration != rhs_storage._appliedAcceleration {return false}
+        return true
+      }
+      if !storagesAreEqual {return false}
+    }
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -1380,7 +1635,7 @@ extension Melix_Worker_V1_PrefillResponse: SwiftProtobuf.Message, SwiftProtobuf.
 
 extension Melix_Worker_V1_DecodeRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".DecodeRequest"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}execution\0\u{3}decode_handle\0\u{1}sampling\0\u{3}max_output_tokens\0\u{3}return_usage\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}execution\0\u{3}decode_handle\0\u{1}sampling\0\u{3}max_output_tokens\0\u{3}return_usage\0\u{3}decode_step_size\0\u{3}prefill_token\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -1393,6 +1648,8 @@ extension Melix_Worker_V1_DecodeRequest: SwiftProtobuf.Message, SwiftProtobuf._M
       case 3: try { try decoder.decodeSingularMessageField(value: &self._sampling) }()
       case 4: try { try decoder.decodeSingularUInt32Field(value: &self.maxOutputTokens) }()
       case 5: try { try decoder.decodeSingularBoolField(value: &self.returnUsage) }()
+      case 6: try { try decoder.decodeSingularUInt32Field(value: &self.decodeStepSize) }()
+      case 7: try { try decoder.decodeSingularStringField(value: &self.prefillToken) }()
       default: break
       }
     }
@@ -1418,6 +1675,12 @@ extension Melix_Worker_V1_DecodeRequest: SwiftProtobuf.Message, SwiftProtobuf._M
     if self.returnUsage != false {
       try visitor.visitSingularBoolField(value: self.returnUsage, fieldNumber: 5)
     }
+    if self.decodeStepSize != 0 {
+      try visitor.visitSingularUInt32Field(value: self.decodeStepSize, fieldNumber: 6)
+    }
+    if !self.prefillToken.isEmpty {
+      try visitor.visitSingularStringField(value: self.prefillToken, fieldNumber: 7)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -1427,6 +1690,8 @@ extension Melix_Worker_V1_DecodeRequest: SwiftProtobuf.Message, SwiftProtobuf._M
     if lhs._sampling != rhs._sampling {return false}
     if lhs.maxOutputTokens != rhs.maxOutputTokens {return false}
     if lhs.returnUsage != rhs.returnUsage {return false}
+    if lhs.decodeStepSize != rhs.decodeStepSize {return false}
+    if lhs.prefillToken != rhs.prefillToken {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -1499,7 +1764,7 @@ extension Melix_Worker_V1_AbortResponse: SwiftProtobuf.Message, SwiftProtobuf._M
 
 extension Melix_Worker_V1_ExecuteEvent: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ExecuteEvent"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}request_id\0\u{3}execution_kind\0\u{1}seq\0\u{4}\u{7}prefill_started\0\u{3}prefill_progress\0\u{3}token_delta\0\u{3}reasoning_delta\0\u{3}tool_call_delta\0\u{3}usage_delta\0\u{3}cache_decision\0\u{3}snapshot_created\0\u{1}completed\0\u{1}error\0\u{1}heartbeat\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}request_id\0\u{3}execution_kind\0\u{1}seq\0\u{1}phase\0\u{3}admission_state\0\u{1}lane\0\u{3}queue_position\0\u{3}queue_delay_ms\0\u{3}acceleration_mode\0\u{3}prefill_started\0\u{3}prefill_progress\0\u{3}token_delta\0\u{3}reasoning_delta\0\u{3}tool_call_delta\0\u{3}usage_delta\0\u{3}cache_decision\0\u{3}snapshot_created\0\u{1}completed\0\u{1}error\0\u{1}heartbeat\0\u{1}queued\0\u{1}admitted\0\u{3}decode_started\0\u{3}acceleration_applied\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -1510,6 +1775,12 @@ extension Melix_Worker_V1_ExecuteEvent: SwiftProtobuf.Message, SwiftProtobuf._Me
       case 1: try { try decoder.decodeSingularStringField(value: &self.requestID) }()
       case 2: try { try decoder.decodeSingularStringField(value: &self.executionKind) }()
       case 3: try { try decoder.decodeSingularUInt64Field(value: &self.seq) }()
+      case 4: try { try decoder.decodeSingularEnumField(value: &self.phase) }()
+      case 5: try { try decoder.decodeSingularEnumField(value: &self.admissionState) }()
+      case 6: try { try decoder.decodeSingularStringField(value: &self.lane) }()
+      case 7: try { try decoder.decodeSingularUInt32Field(value: &self.queuePosition) }()
+      case 8: try { try decoder.decodeSingularDoubleField(value: &self.queueDelayMs) }()
+      case 9: try { try decoder.decodeSingularEnumField(value: &self.accelerationMode) }()
       case 10: try {
         var v: Melix_Worker_V1_PrefillStarted?
         var hadOneofValue = false
@@ -1653,6 +1924,58 @@ extension Melix_Worker_V1_ExecuteEvent: SwiftProtobuf.Message, SwiftProtobuf._Me
           self.payload = .heartbeat(v)
         }
       }()
+      case 21: try {
+        var v: Melix_Worker_V1_Queued?
+        var hadOneofValue = false
+        if let current = self.payload {
+          hadOneofValue = true
+          if case .queued(let m) = current {v = m}
+        }
+        try decoder.decodeSingularMessageField(value: &v)
+        if let v = v {
+          if hadOneofValue {try decoder.handleConflictingOneOf()}
+          self.payload = .queued(v)
+        }
+      }()
+      case 22: try {
+        var v: Melix_Worker_V1_Admitted?
+        var hadOneofValue = false
+        if let current = self.payload {
+          hadOneofValue = true
+          if case .admitted(let m) = current {v = m}
+        }
+        try decoder.decodeSingularMessageField(value: &v)
+        if let v = v {
+          if hadOneofValue {try decoder.handleConflictingOneOf()}
+          self.payload = .admitted(v)
+        }
+      }()
+      case 23: try {
+        var v: Melix_Worker_V1_DecodeStarted?
+        var hadOneofValue = false
+        if let current = self.payload {
+          hadOneofValue = true
+          if case .decodeStarted(let m) = current {v = m}
+        }
+        try decoder.decodeSingularMessageField(value: &v)
+        if let v = v {
+          if hadOneofValue {try decoder.handleConflictingOneOf()}
+          self.payload = .decodeStarted(v)
+        }
+      }()
+      case 24: try {
+        var v: Melix_Worker_V1_AccelerationApplied?
+        var hadOneofValue = false
+        if let current = self.payload {
+          hadOneofValue = true
+          if case .accelerationApplied(let m) = current {v = m}
+        }
+        try decoder.decodeSingularMessageField(value: &v)
+        if let v = v {
+          if hadOneofValue {try decoder.handleConflictingOneOf()}
+          self.payload = .accelerationApplied(v)
+        }
+      }()
       default: break
       }
     }
@@ -1671,6 +1994,24 @@ extension Melix_Worker_V1_ExecuteEvent: SwiftProtobuf.Message, SwiftProtobuf._Me
     }
     if self.seq != 0 {
       try visitor.visitSingularUInt64Field(value: self.seq, fieldNumber: 3)
+    }
+    if self.phase != .unspecified {
+      try visitor.visitSingularEnumField(value: self.phase, fieldNumber: 4)
+    }
+    if self.admissionState != .unspecified {
+      try visitor.visitSingularEnumField(value: self.admissionState, fieldNumber: 5)
+    }
+    if !self.lane.isEmpty {
+      try visitor.visitSingularStringField(value: self.lane, fieldNumber: 6)
+    }
+    if self.queuePosition != 0 {
+      try visitor.visitSingularUInt32Field(value: self.queuePosition, fieldNumber: 7)
+    }
+    if self.queueDelayMs.bitPattern != 0 {
+      try visitor.visitSingularDoubleField(value: self.queueDelayMs, fieldNumber: 8)
+    }
+    if self.accelerationMode != .unspecified {
+      try visitor.visitSingularEnumField(value: self.accelerationMode, fieldNumber: 9)
     }
     switch self.payload {
     case .prefillStarted?: try {
@@ -1717,6 +2058,22 @@ extension Melix_Worker_V1_ExecuteEvent: SwiftProtobuf.Message, SwiftProtobuf._Me
       guard case .heartbeat(let v)? = self.payload else { preconditionFailure() }
       try visitor.visitSingularMessageField(value: v, fieldNumber: 20)
     }()
+    case .queued?: try {
+      guard case .queued(let v)? = self.payload else { preconditionFailure() }
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 21)
+    }()
+    case .admitted?: try {
+      guard case .admitted(let v)? = self.payload else { preconditionFailure() }
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 22)
+    }()
+    case .decodeStarted?: try {
+      guard case .decodeStarted(let v)? = self.payload else { preconditionFailure() }
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 23)
+    }()
+    case .accelerationApplied?: try {
+      guard case .accelerationApplied(let v)? = self.payload else { preconditionFailure() }
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 24)
+    }()
     case nil: break
     }
     try unknownFields.traverse(visitor: &visitor)
@@ -1726,7 +2083,98 @@ extension Melix_Worker_V1_ExecuteEvent: SwiftProtobuf.Message, SwiftProtobuf._Me
     if lhs.requestID != rhs.requestID {return false}
     if lhs.executionKind != rhs.executionKind {return false}
     if lhs.seq != rhs.seq {return false}
+    if lhs.phase != rhs.phase {return false}
+    if lhs.admissionState != rhs.admissionState {return false}
+    if lhs.lane != rhs.lane {return false}
+    if lhs.queuePosition != rhs.queuePosition {return false}
+    if lhs.queueDelayMs != rhs.queueDelayMs {return false}
+    if lhs.accelerationMode != rhs.accelerationMode {return false}
     if lhs.payload != rhs.payload {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+extension Melix_Worker_V1_Queued: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".Queued"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}lane\0\u{3}queue_position\0\u{3}priority_score\0\u{1}backpressure\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.lane) }()
+      case 2: try { try decoder.decodeSingularUInt32Field(value: &self.queuePosition) }()
+      case 3: try { try decoder.decodeSingularDoubleField(value: &self.priorityScore) }()
+      case 4: try { try decoder.decodeSingularDoubleField(value: &self.backpressure) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.lane.isEmpty {
+      try visitor.visitSingularStringField(value: self.lane, fieldNumber: 1)
+    }
+    if self.queuePosition != 0 {
+      try visitor.visitSingularUInt32Field(value: self.queuePosition, fieldNumber: 2)
+    }
+    if self.priorityScore.bitPattern != 0 {
+      try visitor.visitSingularDoubleField(value: self.priorityScore, fieldNumber: 3)
+    }
+    if self.backpressure.bitPattern != 0 {
+      try visitor.visitSingularDoubleField(value: self.backpressure, fieldNumber: 4)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Melix_Worker_V1_Queued, rhs: Melix_Worker_V1_Queued) -> Bool {
+    if lhs.lane != rhs.lane {return false}
+    if lhs.queuePosition != rhs.queuePosition {return false}
+    if lhs.priorityScore != rhs.priorityScore {return false}
+    if lhs.backpressure != rhs.backpressure {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+extension Melix_Worker_V1_Admitted: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".Admitted"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}lane\0\u{3}worker_id\0\u{3}queue_delay_ms\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.lane) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.workerID) }()
+      case 3: try { try decoder.decodeSingularDoubleField(value: &self.queueDelayMs) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.lane.isEmpty {
+      try visitor.visitSingularStringField(value: self.lane, fieldNumber: 1)
+    }
+    if !self.workerID.isEmpty {
+      try visitor.visitSingularStringField(value: self.workerID, fieldNumber: 2)
+    }
+    if self.queueDelayMs.bitPattern != 0 {
+      try visitor.visitSingularDoubleField(value: self.queueDelayMs, fieldNumber: 3)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Melix_Worker_V1_Admitted, rhs: Melix_Worker_V1_Admitted) -> Bool {
+    if lhs.lane != rhs.lane {return false}
+    if lhs.workerID != rhs.workerID {return false}
+    if lhs.queueDelayMs != rhs.queueDelayMs {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -1802,6 +2250,46 @@ extension Melix_Worker_V1_PrefillProgress: SwiftProtobuf.Message, SwiftProtobuf.
   public static func ==(lhs: Melix_Worker_V1_PrefillProgress, rhs: Melix_Worker_V1_PrefillProgress) -> Bool {
     if lhs.processedTokens != rhs.processedTokens {return false}
     if lhs.totalTokens != rhs.totalTokens {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+extension Melix_Worker_V1_DecodeStarted: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".DecodeStarted"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}decode_handle\0\u{3}max_output_tokens\0\u{3}resumed_from_prefill\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.decodeHandle) }()
+      case 2: try { try decoder.decodeSingularUInt32Field(value: &self.maxOutputTokens) }()
+      case 3: try { try decoder.decodeSingularBoolField(value: &self.resumedFromPrefill) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.decodeHandle.isEmpty {
+      try visitor.visitSingularStringField(value: self.decodeHandle, fieldNumber: 1)
+    }
+    if self.maxOutputTokens != 0 {
+      try visitor.visitSingularUInt32Field(value: self.maxOutputTokens, fieldNumber: 2)
+    }
+    if self.resumedFromPrefill != false {
+      try visitor.visitSingularBoolField(value: self.resumedFromPrefill, fieldNumber: 3)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Melix_Worker_V1_DecodeStarted, rhs: Melix_Worker_V1_DecodeStarted) -> Bool {
+    if lhs.decodeHandle != rhs.decodeHandle {return false}
+    if lhs.maxOutputTokens != rhs.maxOutputTokens {return false}
+    if lhs.resumedFromPrefill != rhs.resumedFromPrefill {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -1977,6 +2465,40 @@ extension Melix_Worker_V1_CacheDecision: SwiftProtobuf.Message, SwiftProtobuf._M
     if lhs.blockTableID != rhs.blockTableID {return false}
     if lhs.restoredSnapshotID != rhs.restoredSnapshotID {return false}
     if lhs.persistedToL2 != rhs.persistedToL2 {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+extension Melix_Worker_V1_AccelerationApplied: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".AccelerationApplied"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}policy\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularMessageField(value: &self._policy) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    // The use of inline closures is to circumvent an issue where the compiler
+    // allocates stack space for every if/case branch local when no optimizations
+    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+    // https://github.com/apple/swift-protobuf/issues/1182
+    try { if let v = self._policy {
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 1)
+    } }()
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Melix_Worker_V1_AccelerationApplied, rhs: Melix_Worker_V1_AccelerationApplied) -> Bool {
+    if lhs._policy != rhs._policy {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

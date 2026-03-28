@@ -27,6 +27,7 @@ message ExecutionMetadata {
   ReasoningConfig reasoning = 7;
   CacheHints cache_hints = 8;
   map<string, string> ext = 9;
+  AccelerationPolicy acceleration = 10;
 }
 
 message ExecutionMode {
@@ -59,6 +60,8 @@ message PrefillRequest {
   ExecutionMetadata execution = 1;
   repeated ChatMessage messages = 2;
   uint32 prefill_step_size = 3;
+  bool return_decode_handle = 4;
+  string resume_hint = 5;
 }
 
 message PrefillResponse {
@@ -69,6 +72,9 @@ message PrefillResponse {
   BlockTable block_table = 5;
   string restored_snapshot_id = 6;
   uint32 prompt_tokens = 7;
+  ExecutionPhase lifecycle_phase = 8;
+  AdmissionState admission_state = 9;
+  AccelerationPolicy applied_acceleration = 10;
 }
 
 message DecodeRequest {
@@ -77,6 +83,8 @@ message DecodeRequest {
   SamplingConfig sampling = 3;
   uint32 max_output_tokens = 4;
   bool return_usage = 5;
+  uint32 decode_step_size = 6;
+  string prefill_token = 7;
 }
 
 message AbortRequest {
@@ -92,6 +100,12 @@ message ExecuteEvent {
   string request_id = 1;
   string execution_kind = 2;
   uint64 seq = 3;
+  ExecutionPhase phase = 4;
+  AdmissionState admission_state = 5;
+  string lane = 6;
+  uint32 queue_position = 7;
+  double queue_delay_ms = 8;
+  AccelerationMode acceleration_mode = 9;
 
   oneof payload {
     PrefillStarted prefill_started = 10;
@@ -105,7 +119,24 @@ message ExecuteEvent {
     Completed completed = 18;
     ErrorEvent error = 19;
     Heartbeat heartbeat = 20;
+    Queued queued = 21;
+    Admitted admitted = 22;
+    DecodeStarted decode_started = 23;
+    AccelerationApplied acceleration_applied = 24;
   }
+}
+
+message Queued {
+  string lane = 1;
+  uint32 queue_position = 2;
+  double priority_score = 3;
+  double backpressure = 4;
+}
+
+message Admitted {
+  string lane = 1;
+  string worker_id = 2;
+  double queue_delay_ms = 3;
 }
 
 message PrefillStarted {
@@ -117,6 +148,12 @@ message PrefillStarted {
 message PrefillProgress {
   uint32 processed_tokens = 1;
   uint32 total_tokens = 2;
+}
+
+message DecodeStarted {
+  string decode_handle = 1;
+  uint32 max_output_tokens = 2;
+  bool resumed_from_prefill = 3;
 }
 
 message TokenDelta {
@@ -142,6 +179,10 @@ message CacheDecision {
   string block_table_id = 1;
   string restored_snapshot_id = 2;
   bool persisted_to_l2 = 3;
+}
+
+message AccelerationApplied {
+  AccelerationPolicy policy = 1;
 }
 
 message BoundarySnapshotCreated {

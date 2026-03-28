@@ -67,6 +67,98 @@ struct EventSubscriptionHubTests {
         let delivered = try await consumer.value
         #expect(delivered.seq == 42)
     }
+
+    @Test("request progress events preserve phase-aware lifecycle and acceleration fields")
+    func requestProgressEventsPreservePhaseAwareFields() async throws {
+        let hub = EventSubscriptionHub()
+        let subscription = await hub.subscribe()
+
+        let consumer = Task { () -> [Melix_Controlplane_V1_ControlPlaneEvent] in
+            var iterator = subscription.stream.makeAsyncIterator()
+            let first = try #require(await iterator.next())
+            let second = try #require(await iterator.next())
+            let third = try #require(await iterator.next())
+            let fourth = try #require(await iterator.next())
+            let fifth = try #require(await iterator.next())
+            return [first, second, third, fourth, fifth]
+        }
+
+        var queued = Melix_Controlplane_V1_ControlPlaneEvent()
+        queued.eventType = "request.progress"
+        queued.source = "scheduler"
+        queued.requestProgress = Melix_Controlplane_V1_RequestProgressEvent()
+        queued.requestProgress.requestID = "req-queued"
+        queued.requestProgress.phase = .requestQueued
+        queued.requestProgress.lane = "text.decode.interactive"
+        queued.requestProgress.queuePosition = 2
+        queued.requestProgress.admissionState = .admissionQueued
+
+        var admitted = Melix_Controlplane_V1_ControlPlaneEvent()
+        admitted.eventType = "request.progress"
+        admitted.source = "scheduler"
+        admitted.requestProgress = Melix_Controlplane_V1_RequestProgressEvent()
+        admitted.requestProgress.requestID = "req-admitted"
+        admitted.requestProgress.phase = .requestAdmitted
+        admitted.requestProgress.lane = "text.decode.interactive"
+        admitted.requestProgress.workerID = "swift-text-worker"
+        admitted.requestProgress.queueDelayMs = 5
+        admitted.requestProgress.admissionState = .admissionAdmitted
+
+        var prefill = Melix_Controlplane_V1_ControlPlaneEvent()
+        prefill.eventType = "request.progress"
+        prefill.source = "swift-text-worker"
+        prefill.requestProgress = Melix_Controlplane_V1_RequestProgressEvent()
+        prefill.requestProgress.requestID = "req-prefill"
+        prefill.requestProgress.phase = .requestPrefilling
+        prefill.requestProgress.lane = "text.prefill.hot"
+        prefill.requestProgress.accelerationMode = .acceleratedPrefill
+        prefill.requestProgress.accelerationProfileID = "lookup-v1"
+
+        var decode = Melix_Controlplane_V1_ControlPlaneEvent()
+        decode.eventType = "request.progress"
+        decode.source = "swift-text-worker"
+        decode.requestProgress = Melix_Controlplane_V1_RequestProgressEvent()
+        decode.requestProgress.requestID = "req-decode"
+        decode.requestProgress.phase = .requestDecoding
+        decode.requestProgress.lane = "text.decode.interactive"
+        decode.requestProgress.decodeHandle = "decode-123"
+        decode.requestProgress.accelerationMode = .speculativeDecode
+        decode.requestProgress.draftModelID = "draft-q4"
+
+        var completed = Melix_Controlplane_V1_ControlPlaneEvent()
+        completed.eventType = "request.progress"
+        completed.source = "swift-text-worker"
+        completed.requestProgress = Melix_Controlplane_V1_RequestProgressEvent()
+        completed.requestProgress.requestID = "req-done"
+        completed.requestProgress.phase = .requestCompleted
+        completed.requestProgress.lane = "text.decode.interactive"
+        completed.requestProgress.workerID = "swift-text-worker"
+
+        await hub.publish(queued)
+        await hub.publish(admitted)
+        await hub.publish(prefill)
+        await hub.publish(decode)
+        await hub.publish(completed)
+
+        let events = try await consumer.value
+        #expect(events.count == 5)
+        #expect(events[0].requestProgress.phase == .requestQueued)
+        #expect(events[0].requestProgress.queuePosition == 2)
+        #expect(events[0].requestProgress.admissionState == .admissionQueued)
+        #expect(events[1].requestProgress.phase == .requestAdmitted)
+        #expect(events[1].requestProgress.workerID == "swift-text-worker")
+        #expect(events[2].requestProgress.phase == .requestPrefilling)
+        #expect(events[2].requestProgress.accelerationMode == .acceleratedPrefill)
+        #expect(events[2].requestProgress.accelerationProfileID == "lookup-v1")
+        #expect(events[3].requestProgress.phase == .requestDecoding)
+        #expect(events[3].requestProgress.decodeHandle == "decode-123")
+        #expect(events[3].requestProgress.accelerationMode == .speculativeDecode)
+        #expect(events[3].requestProgress.draftModelID == "draft-q4")
+        #expect(events[4].requestProgress.phase == .requestCompleted)
+        #expect(events[4].requestProgress.workerID == "swift-text-worker")
+
+        await hub.unsubscribe(subscription.subscriptionID)
+    }
 }
 
 @Suite("Core Utilities")
@@ -150,6 +242,28 @@ struct CoreUtilityTests {
         #expect(model.quantProfileID == "dev-q4")
         #expect(model.maxContext == 8192)
         #expect(model.features == ["chat"])
+    }
+
+    @Test("server snapshot builder exposes Phase 2 lane identities")
+    func serverSnapshotBuilderExposesPhaseTwoLaneIdentities() {
+        let builder = ServerSnapshotBuilder()
+        let snapshot = builder.build(
+            models: [],
+            metrics: Melix_Controlplane_V1_MetricsSummary()
+        )
+
+        let lanes = snapshot.queues.lanes
+        #expect(lanes.count == 3)
+        #expect(lanes.map(\.laneID) == [
+            "text.decode.interactive",
+            "text.prefill.hot",
+            "text.prefill.background",
+        ])
+        #expect(lanes.map(\.laneClass) == [
+            "interactive-decode",
+            "hot-prefill",
+            "background-prefill",
+        ])
     }
 }
 

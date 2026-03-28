@@ -373,18 +373,28 @@ message QueueSummary {
   uint32 active_requests = 3;
   double admission_latency_ms = 4;
   double backpressure = 5;
+  uint32 admitted_requests = 6;
+  uint32 rejected_requests = 7;
 }
 
 message QueueLaneSummary {
-  string lane_id = 1;           // Q0 / Q1 / Q2 / Q3
+  string lane_id = 1;           // text.decode.interactive / text.prefill.hot / text.prefill.background
   uint32 queued_requests = 2;
   uint32 active_requests = 3;
   double queue_delay_ms_p50 = 4;
   double queue_delay_ms_p95 = 5;
   double admission_rate = 6;
   double backpressure = 7;
+  string lane_class = 8;
+  double priority_score = 9;
 }
 ```
+
+Default lane identities should already be meaningful before the full Phase 2 scheduler lands:
+
+- `text.decode.interactive`
+- `text.prefill.hot`
+- `text.prefill.background`
 
 ### RequestProgressEvent
 
@@ -395,6 +405,9 @@ Recommended request-progress fields should include more than phase changes:
 - queue delay
 - priority score
 - admission state
+- queue position
+- decode handle when one exists
+- acceleration mode and acceleration profile
 - backpressure at decision time
 - active model handle or worker id when known
 
