@@ -15,8 +15,10 @@ from packages.protocol.python.worker.v1 import (
     runtime_pb2_grpc,
 )
 
+from worker.engine.embedding_core import EmbeddingCore
 from worker.engine.engine_core import EngineCore
 from worker.registry import WorkerRegistry
+from worker.runtime.deterministic_embedding_runtime import DeterministicEmbeddingRuntime
 from worker.runtime.deterministic_backend import DeterministicTextBackend
 from worker.runtime.mlx_text_runtime import MLXTextRuntime
 
@@ -81,6 +83,7 @@ class WorkerInferenceService(inference_pb2_grpc.InferenceServiceServicer):
     def __init__(self, registry: WorkerRegistry) -> None:
         self._registry = registry
         self._engine = EngineCore(registry)
+        self._embedding = EmbeddingCore(registry)
 
     def Generate(self, request, context):
         yield from self._engine.generate(request)
@@ -106,9 +109,7 @@ class WorkerInferenceService(inference_pb2_grpc.InferenceServiceServicer):
         return inference_pb2.AbortResponse(ok=found, found=found)
 
     def Embed(self, request, context):
-        return inference_pb2.EmbedResponse(
-            error=common_pb2.ErrorStatus(code="unimplemented", message="Embed is deferred in phase 0.")
-        )
+        return self._embedding.embed(request)
 
     def Rerank(self, request, context):
         return inference_pb2.RerankResponse(
@@ -133,7 +134,10 @@ class WorkerInferenceService(inference_pb2_grpc.InferenceServiceServicer):
 
 def build_registry_for_backend(backend_mode: str) -> WorkerRegistry:
     if backend_mode == "deterministic":
-        return WorkerRegistry(runtime=MLXTextRuntime(backend=DeterministicTextBackend()))
+        return WorkerRegistry(
+            runtime=MLXTextRuntime(backend=DeterministicTextBackend()),
+            embedding_runtime=DeterministicEmbeddingRuntime(),
+        )
     return WorkerRegistry()
 
 

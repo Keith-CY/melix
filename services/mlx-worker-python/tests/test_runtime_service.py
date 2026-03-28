@@ -61,3 +61,18 @@ def test_load_model_returns_handle_and_lists_model() -> None:
     )
 
     assert listed.model_handles == [response.model_handle]
+
+
+def test_load_model_supports_embedding_models() -> None:
+    service = build_runtime_service()
+
+    response = service.LoadModel(
+        runtime_pb2.LoadModelRequest(
+            model=WorkerModelCatalog.dev_embedding_model(),
+            memory_budget_bytes=4096,
+        ),
+        context=None,
+    )
+
+    assert response.ok is True
+    assert response.model_handle.startswith("melix-dev-embed::")

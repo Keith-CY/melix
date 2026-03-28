@@ -2,12 +2,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from threading import Lock
+from typing import Any
 
 from packages.protocol.python.worker.v1 import common_pb2, runtime_pb2
 
 from worker.engine.request_state import RequestState
 from worker.model_registry.catalog import WorkerModelCatalog
 from worker.runtime.mlx_text_runtime import MLXTextRuntime
+from worker.runtime.deterministic_embedding_runtime import DeterministicEmbeddingRuntime
 
 
 @dataclass
@@ -16,16 +18,19 @@ class LoadedModel:
     spec: common_pb2.ModelSpec
     runtime_model: object
     estimated_resident_bytes: int
+    runtime_kind: str
 
 
 class WorkerRegistry:
     def __init__(
         self,
         runtime: MLXTextRuntime | None = None,
+        embedding_runtime: DeterministicEmbeddingRuntime | None = None,
         model_catalog: WorkerModelCatalog | None = None,
         worker_id: str = "worker-text-001",
     ) -> None:
         self.runtime = runtime or MLXTextRuntime()
+        self.embedding_runtime = embedding_runtime or DeterministicEmbeddingRuntime()
         self.model_catalog = model_catalog or WorkerModelCatalog()
         self.worker_id = worker_id
         self._lock = Lock()
@@ -56,8 +61,9 @@ class WorkerRegistry:
 
     def load_model(self, model_spec: common_pb2.ModelSpec) -> LoadedModel:
         resolved = self.model_catalog.get(model_spec.model_id) or model_spec
-        runtime_model = self.runtime.load_model(resolved)
-        estimated = self.runtime.estimate_resident_bytes(resolved)
+        runtime_kind, runtime = self._runtime_for_model(resolved)
+        runtime_model = runtime.load_model(resolved)
+        estimated = runtime.estimate_resident_bytes(resolved)
 
         with self._lock:
             handle = f"{resolved.model_id}::{self._next_model_handle}"
@@ -67,6 +73,7 @@ class WorkerRegistry:
                 spec=resolved,
                 runtime_model=runtime_model,
                 estimated_resident_bytes=estimated,
+                runtime_kind=runtime_kind,
             )
             self._loaded_models[handle] = loaded
             return loaded
@@ -124,3 +131,8 @@ class WorkerRegistry:
     def set_draining(self, draining: bool) -> None:
         with self._lock:
             self._draining = draining
+
+    def _runtime_for_model(self, model_spec: common_pb2.ModelSpec) -> tuple[str, Any]:
+        if model_spec.model_kind == "embedding":
+            return "embedding", self.embedding_runtime
+        return "text", self.runtime
