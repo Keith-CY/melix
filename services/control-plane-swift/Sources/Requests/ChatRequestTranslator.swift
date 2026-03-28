@@ -12,6 +12,12 @@ public enum TextEndpointKind: String, Sendable, Codable, Equatable {
     case messages = "messages"
 }
 
+public enum TextWorkflowKind: String, Sendable, Codable, Equatable {
+    case interactive = "interactive"
+    case toolFollowup = "tool_followup"
+    case backgroundAnalysis = "background_analysis"
+}
+
 public struct NormalizedTextMessage: Sendable, Codable, Equatable {
     public let role: String
     public let content: String
@@ -35,6 +41,10 @@ public struct NormalizedTextRequest: Sendable, Codable, Equatable {
     public let parentRequestID: String?
     public let restoreSnapshotID: String?
     public let saveBoundarySnapshot: Bool?
+    public let presetID: String?
+    public let workflow: TextWorkflowKind?
+    public let workflowRunID: String?
+    public let workflowNodeID: String?
 
     public init(
         endpoint: TextEndpointKind,
@@ -48,7 +58,11 @@ public struct NormalizedTextRequest: Sendable, Codable, Equatable {
         branchID: String?,
         parentRequestID: String?,
         restoreSnapshotID: String?,
-        saveBoundarySnapshot: Bool?
+        saveBoundarySnapshot: Bool?,
+        presetID: String? = nil,
+        workflow: TextWorkflowKind? = nil,
+        workflowRunID: String? = nil,
+        workflowNodeID: String? = nil
     ) {
         self.endpoint = endpoint
         self.model = model
@@ -62,7 +76,36 @@ public struct NormalizedTextRequest: Sendable, Codable, Equatable {
         self.parentRequestID = parentRequestID
         self.restoreSnapshotID = restoreSnapshotID
         self.saveBoundarySnapshot = saveBoundarySnapshot
+        self.presetID = presetID
+        self.workflow = workflow
+        self.workflowRunID = workflowRunID
+        self.workflowNodeID = workflowNodeID
     }
+}
+
+public struct ShapedTextRequest: Sendable, Equatable {
+    public let endpoint: TextEndpointKind
+    public let model: String
+    public let messages: [NormalizedTextMessage]
+    public let stream: Bool
+    public let temperature: Double
+    public let topP: Double
+    public let maxTokens: UInt32
+    public let sessionID: String?
+    public let branchID: String?
+    public let parentRequestID: String?
+    public let restoreSnapshotID: String?
+    public let saveBoundarySnapshot: Bool
+    public let presetID: String?
+    public let workflow: TextWorkflowKind?
+    public let workflowRunID: String?
+    public let workflowNodeID: String?
+    public let latencyClass: String
+    public let lane: String
+    public let priority: Int32
+    public let latencySensitive: Bool
+    public let admissionPolicy: String
+    public let cachePolicy: String?
 }
 
 public struct TranslatedChatRequest: Sendable {
@@ -106,6 +149,10 @@ public struct OpenAIChatCompletionsRequest: Codable, Sendable {
     public let parentRequestID: String?
     public let restoreSnapshotID: String?
     public let saveBoundarySnapshot: Bool?
+    public let presetID: String?
+    public let workflow: TextWorkflowKind?
+    public let workflowRunID: String?
+    public let workflowNodeID: String?
 
     enum CodingKeys: String, CodingKey {
         case model
@@ -119,6 +166,10 @@ public struct OpenAIChatCompletionsRequest: Codable, Sendable {
         case parentRequestID = "parent_request_id"
         case restoreSnapshotID = "restore_snapshot_id"
         case saveBoundarySnapshot = "save_boundary_snapshot"
+        case presetID = "preset_id"
+        case workflow
+        case workflowRunID = "workflow_run_id"
+        case workflowNodeID = "workflow_node_id"
     }
 
     public init(
@@ -132,7 +183,11 @@ public struct OpenAIChatCompletionsRequest: Codable, Sendable {
         branchID: String? = nil,
         parentRequestID: String? = nil,
         restoreSnapshotID: String? = nil,
-        saveBoundarySnapshot: Bool? = nil
+        saveBoundarySnapshot: Bool? = nil,
+        presetID: String? = nil,
+        workflow: TextWorkflowKind? = nil,
+        workflowRunID: String? = nil,
+        workflowNodeID: String? = nil
     ) {
         self.model = model
         self.messages = messages
@@ -145,6 +200,10 @@ public struct OpenAIChatCompletionsRequest: Codable, Sendable {
         self.parentRequestID = parentRequestID
         self.restoreSnapshotID = restoreSnapshotID
         self.saveBoundarySnapshot = saveBoundarySnapshot
+        self.presetID = presetID
+        self.workflow = workflow
+        self.workflowRunID = workflowRunID
+        self.workflowNodeID = workflowNodeID
     }
 }
 
@@ -160,6 +219,10 @@ public struct OpenAICompletionsRequest: Codable, Sendable {
     public let parentRequestID: String?
     public let restoreSnapshotID: String?
     public let saveBoundarySnapshot: Bool?
+    public let presetID: String?
+    public let workflow: TextWorkflowKind?
+    public let workflowRunID: String?
+    public let workflowNodeID: String?
 
     enum CodingKeys: String, CodingKey {
         case model
@@ -173,6 +236,10 @@ public struct OpenAICompletionsRequest: Codable, Sendable {
         case parentRequestID = "parent_request_id"
         case restoreSnapshotID = "restore_snapshot_id"
         case saveBoundarySnapshot = "save_boundary_snapshot"
+        case presetID = "preset_id"
+        case workflow
+        case workflowRunID = "workflow_run_id"
+        case workflowNodeID = "workflow_node_id"
     }
 
     public init(
@@ -186,7 +253,11 @@ public struct OpenAICompletionsRequest: Codable, Sendable {
         branchID: String? = nil,
         parentRequestID: String? = nil,
         restoreSnapshotID: String? = nil,
-        saveBoundarySnapshot: Bool? = nil
+        saveBoundarySnapshot: Bool? = nil,
+        presetID: String? = nil,
+        workflow: TextWorkflowKind? = nil,
+        workflowRunID: String? = nil,
+        workflowNodeID: String? = nil
     ) {
         self.model = model
         self.prompt = prompt
@@ -199,6 +270,10 @@ public struct OpenAICompletionsRequest: Codable, Sendable {
         self.parentRequestID = parentRequestID
         self.restoreSnapshotID = restoreSnapshotID
         self.saveBoundarySnapshot = saveBoundarySnapshot
+        self.presetID = presetID
+        self.workflow = workflow
+        self.workflowRunID = workflowRunID
+        self.workflowNodeID = workflowNodeID
     }
 }
 
@@ -249,6 +324,10 @@ public struct OpenAIResponsesRequest: Codable, Sendable {
     public let parentRequestID: String?
     public let restoreSnapshotID: String?
     public let saveBoundarySnapshot: Bool?
+    public let presetID: String?
+    public let workflow: TextWorkflowKind?
+    public let workflowRunID: String?
+    public let workflowNodeID: String?
 
     enum CodingKeys: String, CodingKey {
         case model
@@ -263,6 +342,10 @@ public struct OpenAIResponsesRequest: Codable, Sendable {
         case parentRequestID = "parent_request_id"
         case restoreSnapshotID = "restore_snapshot_id"
         case saveBoundarySnapshot = "save_boundary_snapshot"
+        case presetID = "preset_id"
+        case workflow
+        case workflowRunID = "workflow_run_id"
+        case workflowNodeID = "workflow_node_id"
     }
 
     public init(
@@ -277,7 +360,11 @@ public struct OpenAIResponsesRequest: Codable, Sendable {
         branchID: String? = nil,
         parentRequestID: String? = nil,
         restoreSnapshotID: String? = nil,
-        saveBoundarySnapshot: Bool? = nil
+        saveBoundarySnapshot: Bool? = nil,
+        presetID: String? = nil,
+        workflow: TextWorkflowKind? = nil,
+        workflowRunID: String? = nil,
+        workflowNodeID: String? = nil
     ) {
         self.model = model
         self.input = input
@@ -291,6 +378,10 @@ public struct OpenAIResponsesRequest: Codable, Sendable {
         self.parentRequestID = parentRequestID
         self.restoreSnapshotID = restoreSnapshotID
         self.saveBoundarySnapshot = saveBoundarySnapshot
+        self.presetID = presetID
+        self.workflow = workflow
+        self.workflowRunID = workflowRunID
+        self.workflowNodeID = workflowNodeID
     }
 }
 
@@ -317,6 +408,10 @@ public struct MelixMessagesRequest: Codable, Sendable {
     public let parentRequestID: String?
     public let restoreSnapshotID: String?
     public let saveBoundarySnapshot: Bool?
+    public let presetID: String?
+    public let workflow: TextWorkflowKind?
+    public let workflowRunID: String?
+    public let workflowNodeID: String?
 
     enum CodingKeys: String, CodingKey {
         case model
@@ -331,6 +426,10 @@ public struct MelixMessagesRequest: Codable, Sendable {
         case parentRequestID = "parent_request_id"
         case restoreSnapshotID = "restore_snapshot_id"
         case saveBoundarySnapshot = "save_boundary_snapshot"
+        case presetID = "preset_id"
+        case workflow
+        case workflowRunID = "workflow_run_id"
+        case workflowNodeID = "workflow_node_id"
     }
 
     public init(
@@ -345,7 +444,11 @@ public struct MelixMessagesRequest: Codable, Sendable {
         branchID: String? = nil,
         parentRequestID: String? = nil,
         restoreSnapshotID: String? = nil,
-        saveBoundarySnapshot: Bool? = nil
+        saveBoundarySnapshot: Bool? = nil,
+        presetID: String? = nil,
+        workflow: TextWorkflowKind? = nil,
+        workflowRunID: String? = nil,
+        workflowNodeID: String? = nil
     ) {
         self.model = model
         self.messages = messages
@@ -359,6 +462,10 @@ public struct MelixMessagesRequest: Codable, Sendable {
         self.parentRequestID = parentRequestID
         self.restoreSnapshotID = restoreSnapshotID
         self.saveBoundarySnapshot = saveBoundarySnapshot
+        self.presetID = presetID
+        self.workflow = workflow
+        self.workflowRunID = workflowRunID
+        self.workflowNodeID = workflowNodeID
     }
 }
 
@@ -403,11 +510,14 @@ public struct MelixMessagesEvent: Codable, Sendable, Equatable {
 
 public struct ChatRequestTranslator: Sendable {
     private let requestIDGenerator: @Sendable () -> String
+    private let requestShaper: TextRequestShaper
 
     public init(
-        requestIDGenerator: @escaping @Sendable () -> String = { UUID().uuidString }
+        requestIDGenerator: @escaping @Sendable () -> String = { UUID().uuidString },
+        requestShaper: TextRequestShaper = TextRequestShaper()
     ) {
         self.requestIDGenerator = requestIDGenerator
+        self.requestShaper = requestShaper
     }
 
     public func normalize(
@@ -427,7 +537,11 @@ public struct ChatRequestTranslator: Sendable {
             branchID: request.branchID,
             parentRequestID: request.parentRequestID,
             restoreSnapshotID: request.restoreSnapshotID,
-            saveBoundarySnapshot: request.saveBoundarySnapshot
+            saveBoundarySnapshot: request.saveBoundarySnapshot,
+            presetID: request.presetID,
+            workflow: request.workflow,
+            workflowRunID: request.workflowRunID,
+            workflowNodeID: request.workflowNodeID
         )
     }
 
@@ -448,7 +562,11 @@ public struct ChatRequestTranslator: Sendable {
             branchID: request.branchID,
             parentRequestID: request.parentRequestID,
             restoreSnapshotID: request.restoreSnapshotID,
-            saveBoundarySnapshot: request.saveBoundarySnapshot
+            saveBoundarySnapshot: request.saveBoundarySnapshot,
+            presetID: request.presetID,
+            workflow: request.workflow,
+            workflowRunID: request.workflowRunID,
+            workflowNodeID: request.workflowNodeID
         )
     }
 
@@ -482,7 +600,11 @@ public struct ChatRequestTranslator: Sendable {
             branchID: request.branchID,
             parentRequestID: request.parentRequestID,
             restoreSnapshotID: request.restoreSnapshotID,
-            saveBoundarySnapshot: request.saveBoundarySnapshot
+            saveBoundarySnapshot: request.saveBoundarySnapshot,
+            presetID: request.presetID,
+            workflow: request.workflow,
+            workflowRunID: request.workflowRunID,
+            workflowNodeID: request.workflowNodeID
         )
     }
 
@@ -511,8 +633,16 @@ public struct ChatRequestTranslator: Sendable {
             branchID: request.branchID,
             parentRequestID: request.parentRequestID,
             restoreSnapshotID: request.restoreSnapshotID,
-            saveBoundarySnapshot: request.saveBoundarySnapshot
+            saveBoundarySnapshot: request.saveBoundarySnapshot,
+            presetID: request.presetID,
+            workflow: request.workflow,
+            workflowRunID: request.workflowRunID,
+            workflowNodeID: request.workflowNodeID
         )
+    }
+
+    public func shape(_ normalizedRequest: NormalizedTextRequest) -> ShapedTextRequest {
+        requestShaper.shape(normalizedRequest)
     }
 
     public func translate(
@@ -523,42 +653,73 @@ public struct ChatRequestTranslator: Sendable {
     }
 
     public func translate(
+        _ request: OpenAICompletionsRequest,
+        modelHandle: String
+    ) throws -> TranslatedChatRequest {
+        try translate(normalize(request), modelHandle: modelHandle)
+    }
+
+    public func translate(
+        _ request: OpenAIResponsesRequest,
+        modelHandle: String
+    ) throws -> TranslatedChatRequest {
+        try translate(normalize(request), modelHandle: modelHandle)
+    }
+
+    public func translate(
+        _ request: MelixMessagesRequest,
+        modelHandle: String
+    ) throws -> TranslatedChatRequest {
+        try translate(normalize(request), modelHandle: modelHandle)
+    }
+
+    public func translate(
         _ normalizedRequest: NormalizedTextRequest,
         modelHandle: String
     ) throws -> TranslatedChatRequest {
         let requestID = requestIDGenerator()
+        let shapedRequest = shape(normalizedRequest)
 
         var generateRequest = Melix_Worker_V1_GenerateRequest()
         generateRequest.execution = Melix_Worker_V1_ExecutionMetadata()
         generateRequest.execution.id = Melix_Worker_V1_RequestIdentity()
         generateRequest.execution.id.requestID = requestID
-        generateRequest.execution.id.latencyClass = "interactive"
-        generateRequest.execution.id.sessionID = normalizedRequest.sessionID ?? ""
-        generateRequest.execution.id.branchID = normalizedRequest.branchID ?? ""
-        generateRequest.execution.id.parentRequestID = normalizedRequest.parentRequestID ?? ""
+        generateRequest.execution.id.latencyClass = shapedRequest.latencyClass
+        generateRequest.execution.id.sessionID = shapedRequest.sessionID ?? ""
+        generateRequest.execution.id.branchID = shapedRequest.branchID ?? ""
+        generateRequest.execution.id.parentRequestID = shapedRequest.parentRequestID ?? ""
+        generateRequest.execution.id.workflowRunID = shapedRequest.workflowRunID ?? ""
+        generateRequest.execution.id.workflowNodeID = shapedRequest.workflowNodeID ?? ""
         generateRequest.execution.modelHandle = modelHandle
         generateRequest.execution.scheduling = Melix_Worker_V1_SchedulingHints()
-        generateRequest.execution.scheduling.lane = "text.decode.interactive"
-        generateRequest.execution.scheduling.priority = 100
-        generateRequest.execution.scheduling.latencySensitive = true
+        generateRequest.execution.scheduling.lane = shapedRequest.lane
+        generateRequest.execution.scheduling.priority = shapedRequest.priority
+        generateRequest.execution.scheduling.latencySensitive = shapedRequest.latencySensitive
+        generateRequest.execution.scheduling.admissionPolicy = shapedRequest.admissionPolicy
         generateRequest.execution.cacheHints = Melix_Worker_V1_CacheHints()
-        if !(normalizedRequest.sessionID ?? "").isEmpty {
+        generateRequest.execution.cacheHints.cachePolicy = shapedRequest.cachePolicy ?? ""
+        if let presetID = shapedRequest.presetID {
+            generateRequest.execution.ext["melix.preset_id"] = presetID
+        }
+        if let workflow = shapedRequest.workflow {
+            generateRequest.execution.ext["melix.workflow"] = workflow.rawValue
+        }
+        generateRequest.execution.ext["melix.endpoint"] = shapedRequest.endpoint.rawValue
+        if !(shapedRequest.sessionID ?? "").isEmpty {
             generateRequest.execution.cacheHints.allowL1 = true
             generateRequest.execution.cacheHints.allowL2 = true
             generateRequest.execution.cacheHints.persistL2 = true
             generateRequest.execution.cacheHints.preferHotPrefix = true
-            generateRequest.execution.id.branchID = normalizedRequest.branchID ?? "branch-main"
         }
-        generateRequest.execution.cacheHints.restoreSnapshotID = normalizedRequest.restoreSnapshotID ?? ""
-        generateRequest.execution.cacheHints.saveBoundarySnapshot = normalizedRequest.saveBoundarySnapshot
-            ?? !(normalizedRequest.sessionID ?? "").isEmpty
+        generateRequest.execution.cacheHints.restoreSnapshotID = shapedRequest.restoreSnapshotID ?? ""
+        generateRequest.execution.cacheHints.saveBoundarySnapshot = shapedRequest.saveBoundarySnapshot
         generateRequest.sampling = Melix_Worker_V1_SamplingConfig()
-        generateRequest.sampling.temperature = Float(normalizedRequest.temperature ?? 0.7)
-        generateRequest.sampling.topP = Float(normalizedRequest.topP ?? 1.0)
-        generateRequest.sampling.maxOutputTokens = normalizedRequest.maxTokens ?? 256
-        generateRequest.stream = normalizedRequest.stream
+        generateRequest.sampling.temperature = Float(shapedRequest.temperature)
+        generateRequest.sampling.topP = Float(shapedRequest.topP)
+        generateRequest.sampling.maxOutputTokens = shapedRequest.maxTokens
+        generateRequest.stream = shapedRequest.stream
         generateRequest.returnUsage = true
-        generateRequest.messages = normalizedRequest.messages.map { message in
+        generateRequest.messages = shapedRequest.messages.map { message in
             var chatMessage = Melix_Worker_V1_ChatMessage()
             chatMessage.role = message.role
             var part = Melix_Worker_V1_MessagePart()
@@ -569,7 +730,7 @@ public struct ChatRequestTranslator: Sendable {
 
         return TranslatedChatRequest(
             requestID: requestID,
-            modelID: normalizedRequest.model,
+            modelID: shapedRequest.model,
             workerRequest: generateRequest,
             stream: generateRequest.stream
         )

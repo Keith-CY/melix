@@ -49,6 +49,7 @@ public struct HTTPResponse: Sendable {
 public struct OpenAIHandler: Sendable {
     private let modelCatalog: ModelCatalog
     private let requestCoordinator: RequestCoordinator
+    private let metricsStore: MetricsStore
     private let translator: ChatRequestTranslator
     private let sseWriter: SSEStreamWriter
     private let decoder: JSONDecoder
@@ -57,11 +58,13 @@ public struct OpenAIHandler: Sendable {
     public init(
         modelCatalog: ModelCatalog,
         requestCoordinator: RequestCoordinator,
+        metricsStore: MetricsStore = MetricsStore(),
         translator: ChatRequestTranslator = ChatRequestTranslator(),
         sseWriter: SSEStreamWriter = SSEStreamWriter()
     ) {
         self.modelCatalog = modelCatalog
         self.requestCoordinator = requestCoordinator
+        self.metricsStore = metricsStore
         self.translator = translator
         self.sseWriter = sseWriter
         self.decoder = JSONDecoder()
@@ -110,13 +113,9 @@ public struct OpenAIHandler: Sendable {
 
     private func handleChatCompletions(_ request: HTTPRequest) async throws -> HTTPResponse {
         let chatRequest = try decoder.decode(OpenAIChatCompletionsRequest.self, from: request.body)
+        let normalized = translator.normalize(chatRequest)
         do {
-            let translated = try await translatedRequest(
-                modelID: chatRequest.model,
-                stream: chatRequest.stream ?? true
-            ) {
-                try translator.translate(chatRequest, modelHandle: $0)
-            }
+            let translated = try await translatedRequest(normalized)
             return try await streamResponse(
                 translated: translated,
                 shape: .chatCompletions
@@ -130,12 +129,7 @@ public struct OpenAIHandler: Sendable {
         let completionsRequest = try decoder.decode(OpenAICompletionsRequest.self, from: request.body)
         let normalized = translator.normalize(completionsRequest)
         do {
-            let translated = try await translatedRequest(
-                modelID: normalized.model,
-                stream: normalized.stream
-            ) {
-                try translator.translate(normalized, modelHandle: $0)
-            }
+            let translated = try await translatedRequest(normalized)
             return try await streamResponse(
                 translated: translated,
                 shape: .completions
@@ -149,12 +143,7 @@ public struct OpenAIHandler: Sendable {
         let responsesRequest = try decoder.decode(OpenAIResponsesRequest.self, from: request.body)
         let normalized = translator.normalize(responsesRequest)
         do {
-            let translated = try await translatedRequest(
-                modelID: normalized.model,
-                stream: normalized.stream
-            ) {
-                try translator.translate(normalized, modelHandle: $0)
-            }
+            let translated = try await translatedRequest(normalized)
             return try await streamResponse(
                 translated: translated,
                 shape: .responses
@@ -168,12 +157,7 @@ public struct OpenAIHandler: Sendable {
         let messagesRequest = try decoder.decode(MelixMessagesRequest.self, from: request.body)
         let normalized = translator.normalize(messagesRequest)
         do {
-            let translated = try await translatedRequest(
-                modelID: normalized.model,
-                stream: normalized.stream
-            ) {
-                try translator.translate(normalized, modelHandle: $0)
-            }
+            let translated = try await translatedRequest(normalized)
             return try await streamResponse(
                 translated: translated,
                 shape: .messages
@@ -184,17 +168,34 @@ public struct OpenAIHandler: Sendable {
     }
 
     private func translatedRequest(
-        modelID: String,
-        stream: Bool,
-        build: (String) throws -> TranslatedChatRequest
+        _ normalized: NormalizedTextRequest
     ) async throws -> TranslatedChatRequest {
-        guard stream else {
+        guard normalized.stream else {
             throw HTTPRequestHandlingError.streamRequired
         }
-        guard let modelHandle = await modelCatalog.dispatchHandle(for: modelID) else {
+        guard let modelHandle = await modelCatalog.dispatchHandle(for: normalized.model) else {
             throw HTTPRequestHandlingError.modelNotReady
         }
-        return try build(modelHandle)
+        let shapingStartedAt = Date()
+        let translated = try translator.translate(normalized, modelHandle: modelHandle)
+        await recordShapingMetrics(for: translated, startedAt: shapingStartedAt)
+        return translated
+    }
+
+    private func recordShapingMetrics(
+        for translated: TranslatedChatRequest,
+        startedAt: Date
+    ) async {
+        await metricsStore.set(
+            Date().timeIntervalSince(startedAt) * 1000,
+            forKey: "http.shaping_ms"
+        )
+        if translated.workerRequest.execution.ext["melix.preset_id"] != nil {
+            await metricsStore.increment("http.preset_shaped_count")
+        }
+        if translated.workerRequest.execution.ext["melix.workflow"] != nil {
+            await metricsStore.increment("http.workflow_shaped_count")
+        }
     }
 
     private func streamResponse(

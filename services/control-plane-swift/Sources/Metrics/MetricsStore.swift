@@ -11,12 +11,15 @@ public actor MetricsStore {
             "requests.inflight": 0,
             "workers.connected": 0,
             "http.translation_ms": 0,
+            "http.shaping_ms": 0,
             "http.ttfd_ms": 0,
             "http.stream_first_event_ms": 0,
             "http.abort_ms": 0,
             "http.stream_event_count": 0,
             "http.reasoning_delta_count": 0,
             "http.tool_delta_count": 0,
+            "http.preset_shaped_count": 0,
+            "http.workflow_shaped_count": 0,
         ]
     }
 

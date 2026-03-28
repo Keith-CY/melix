@@ -291,6 +291,211 @@ struct TextEndpointContractTests {
         #expect(translated.workerRequest.execution.cacheHints.preferHotPrefix)
     }
 
+    @Test("request contracts decode preset and workflow shaping metadata across endpoint variants")
+    func requestContractsDecodePresetAndWorkflowMetadata() throws {
+        let decoder = JSONDecoder()
+
+        let chat = try decoder.decode(
+            OpenAIChatCompletionsRequest.self,
+            from: Data(
+                """
+                {
+                  "model": "melix-dev-text",
+                  "messages": [{ "role": "user", "content": "hello" }],
+                  "preset_id": "deep_reasoning",
+                  "workflow": "tool_followup",
+                  "workflow_run_id": "wf-1",
+                  "workflow_node_id": "node-1"
+                }
+                """.utf8
+            )
+        )
+        let responses = try decoder.decode(
+            OpenAIResponsesRequest.self,
+            from: Data(
+                """
+                {
+                  "model": "melix-dev-text",
+                  "input": "hello",
+                  "preset_id": "deep_reasoning",
+                  "workflow": "tool_followup",
+                  "workflow_run_id": "wf-1",
+                  "workflow_node_id": "node-1"
+                }
+                """.utf8
+            )
+        )
+
+        #expect(chat.presetID == "deep_reasoning")
+        #expect(chat.workflow == .toolFollowup)
+        #expect(chat.workflowRunID == "wf-1")
+        #expect(chat.workflowNodeID == "node-1")
+        #expect(responses.presetID == "deep_reasoning")
+        #expect(responses.workflow == .toolFollowup)
+        #expect(responses.workflowRunID == "wf-1")
+        #expect(responses.workflowNodeID == "node-1")
+    }
+
+    @Test("equivalent endpoint requests shape into the same worker metadata for one logical session")
+    func equivalentEndpointRequestsShapeIntoSameWorkerMetadata() throws {
+        let translator = ChatRequestTranslator(requestIDGenerator: { "req-shaped" })
+
+        let chatTranslated = try translator.translate(
+            translator.normalize(
+                OpenAIChatCompletionsRequest(
+                    model: "melix-dev-text",
+                    messages: [.init(role: "user", content: "Explain the cache.")],
+                    sessionID: "session-shaped",
+                    presetID: "deep_reasoning",
+                    workflow: .toolFollowup,
+                    workflowRunID: "wf-1",
+                    workflowNodeID: "node-1"
+                )
+            ),
+            modelHandle: "melix-dev-text::swift"
+        )
+        let completionsTranslated = try translator.translate(
+            translator.normalize(
+                OpenAICompletionsRequest(
+                    model: "melix-dev-text",
+                    prompt: "Explain the cache.",
+                    sessionID: "session-shaped",
+                    presetID: "deep_reasoning",
+                    workflow: .toolFollowup,
+                    workflowRunID: "wf-1",
+                    workflowNodeID: "node-1"
+                )
+            ),
+            modelHandle: "melix-dev-text::swift"
+        )
+        let responsesTranslated = try translator.translate(
+            translator.normalize(
+                OpenAIResponsesRequest(
+                    model: "melix-dev-text",
+                    input: .text("Explain the cache."),
+                    sessionID: "session-shaped",
+                    presetID: "deep_reasoning",
+                    workflow: .toolFollowup,
+                    workflowRunID: "wf-1",
+                    workflowNodeID: "node-1"
+                )
+            ),
+            modelHandle: "melix-dev-text::swift"
+        )
+        let messagesTranslated = try translator.translate(
+            translator.normalize(
+                MelixMessagesRequest(
+                    model: "melix-dev-text",
+                    messages: [.init(role: "user", content: "Explain the cache.")],
+                    sessionID: "session-shaped",
+                    presetID: "deep_reasoning",
+                    workflow: .toolFollowup,
+                    workflowRunID: "wf-1",
+                    workflowNodeID: "node-1"
+                )
+            ),
+            modelHandle: "melix-dev-text::swift"
+        )
+
+        let variants = [
+            chatTranslated.workerRequest,
+            completionsTranslated.workerRequest,
+            responsesTranslated.workerRequest,
+            messagesTranslated.workerRequest,
+        ]
+
+        for request in variants {
+            #expect(request.execution.id.sessionID == "session-shaped")
+            #expect(request.execution.id.branchID == "branch-main")
+            #expect(request.execution.id.workflowRunID == "wf-1")
+            #expect(request.execution.id.workflowNodeID == "node-1")
+            #expect(request.execution.scheduling.lane == "text.prefill.hot")
+            #expect(request.execution.scheduling.priority == 120)
+            #expect(request.execution.scheduling.admissionPolicy == "workflow.tool_followup")
+            #expect(request.execution.cacheHints.cachePolicy == "session-hot")
+            #expect(request.execution.ext["melix.preset_id"] == "deep_reasoning")
+            #expect(request.execution.ext["melix.workflow"] == "tool_followup")
+            #expect(request.sampling.temperature == 0.2)
+            #expect(request.sampling.maxOutputTokens == 512)
+        }
+    }
+
+    @Test("explicit request fields override preset defaults while workflow routing remains stable")
+    func explicitRequestFieldsOverridePresetDefaultsWhileWorkflowRoutingRemainsStable() throws {
+        let translator = ChatRequestTranslator(requestIDGenerator: { "req-override" })
+        let translated = try translator.translate(
+            OpenAIResponsesRequest(
+                model: "melix-dev-text",
+                input: .text("Continue"),
+                temperature: 0.8,
+                maxTokens: 64,
+                sessionID: "session-override",
+                branchID: "branch-alt",
+                saveBoundarySnapshot: false,
+                presetID: "deep_reasoning",
+                workflow: .toolFollowup,
+                workflowRunID: "wf-override",
+                workflowNodeID: "node-override"
+            ),
+            modelHandle: "melix-dev-text::swift"
+        )
+
+        #expect(translated.workerRequest.sampling.temperature == 0.8)
+        #expect(translated.workerRequest.sampling.maxOutputTokens == 64)
+        #expect(translated.workerRequest.execution.id.branchID == "branch-alt")
+        #expect(translated.workerRequest.execution.cacheHints.saveBoundarySnapshot == false)
+        #expect(translated.workerRequest.execution.scheduling.lane == "text.prefill.hot")
+        #expect(translated.workerRequest.execution.scheduling.priority == 120)
+    }
+
+    @Test("endpoint-specific translate wrappers delegate through shared workflow-aware shaping")
+    func endpointSpecificTranslateWrappersDelegateThroughSharedShaping() throws {
+        let translator = ChatRequestTranslator(requestIDGenerator: { "req-wrapper" })
+
+        let completions = try translator.translate(
+            OpenAICompletionsRequest(
+                model: "melix-dev-text",
+                prompt: "Continue",
+                sessionID: "session-wrapper",
+                presetID: "deep_reasoning",
+                workflow: .toolFollowup,
+                workflowRunID: "wf-wrapper",
+                workflowNodeID: "node-wrapper"
+            ),
+            modelHandle: "melix-dev-text::swift"
+        )
+        let responses = try translator.translate(
+            OpenAIResponsesRequest(
+                model: "melix-dev-text",
+                input: .text("Continue"),
+                sessionID: "session-wrapper",
+                presetID: "deep_reasoning",
+                workflow: .toolFollowup,
+                workflowRunID: "wf-wrapper",
+                workflowNodeID: "node-wrapper"
+            ),
+            modelHandle: "melix-dev-text::swift"
+        )
+        let messages = try translator.translate(
+            MelixMessagesRequest(
+                model: "melix-dev-text",
+                messages: [.init(role: "user", content: "Continue")],
+                sessionID: "session-wrapper",
+                presetID: "deep_reasoning",
+                workflow: .toolFollowup,
+                workflowRunID: "wf-wrapper",
+                workflowNodeID: "node-wrapper"
+            ),
+            modelHandle: "melix-dev-text::swift"
+        )
+
+        for request in [completions.workerRequest, responses.workerRequest, messages.workerRequest] {
+            #expect(request.execution.id.workflowRunID == "wf-wrapper")
+            #expect(request.execution.scheduling.lane == "text.prefill.hot")
+            #expect(request.execution.ext["melix.workflow"] == "tool_followup")
+        }
+    }
+
     @Test("endpoint response contracts encode their public discriminators")
     func endpointResponseContractsEncodeExpectedDiscriminators() throws {
         let encoder = JSONEncoder()

@@ -769,6 +769,60 @@ struct OpenAIHandlerTests {
         #expect(try await coordinator.cancel(requestID: "req-duplicate"))
     }
 
+    @Test("handler applies workflow-aware shaping and records shaping metrics")
+    func handlerAppliesWorkflowAwareShapingAndRecordsMetrics() async throws {
+        let workerClient = ScriptedWorkerClient(events: [
+            makeCompletedEvent(requestID: "msg-workflow", seq: 1, finishReason: "stop", assistantText: "done"),
+        ])
+        let metricsStore = MetricsStore()
+        let handler = OpenAIHandler(
+            modelCatalog: ModelCatalog(seedModels: [warmModel()]),
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: workerClient),
+                abortRegistry: AbortRegistry(),
+                metricsStore: metricsStore
+            ),
+            metricsStore: metricsStore,
+            translator: ChatRequestTranslator(requestIDGenerator: { "msg-workflow" })
+        )
+        let body = try #require(
+            """
+            {
+              "model": "melix-dev-text",
+              "stream": true,
+              "preset_id": "deep_reasoning",
+              "workflow": "tool_followup",
+              "workflow_run_id": "wf-handler",
+              "workflow_node_id": "node-handler",
+              "session_id": "session-handler",
+              "messages": [
+                { "role": "user", "content": "Continue the tool result." }
+              ]
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(method: .post, path: "/v1/messages", headers: [:], body: body)
+        )
+        let payload = try await collectBody(response.body)
+        let generated = await workerClient.lastGenerateRequest
+        let metrics = await metricsStore.snapshot()
+
+        #expect(response.statusCode == 200)
+        #expect(payload.contains("event: message.completed"))
+        #expect(generated?.execution.id.workflowRunID == "wf-handler")
+        #expect(generated?.execution.id.workflowNodeID == "node-handler")
+        #expect(generated?.execution.scheduling.lane == "text.prefill.hot")
+        #expect(generated?.execution.scheduling.admissionPolicy == "workflow.tool_followup")
+        #expect(generated?.execution.cacheHints.cachePolicy == "session-hot")
+        #expect(generated?.execution.ext["melix.preset_id"] == "deep_reasoning")
+        #expect(generated?.execution.ext["melix.workflow"] == "tool_followup")
+        #expect(metrics.values["http.preset_shaped_count", default: 0] == 1)
+        #expect(metrics.values["http.workflow_shaped_count", default: 0] == 1)
+        #expect(metrics.values["http.shaping_ms", default: -1] >= 0)
+    }
+
     private func warmModel() -> Melix_Controlplane_V1_ModelSummary {
         var model = ModelCatalog.devTextModel()
         model.state = .modelWarm

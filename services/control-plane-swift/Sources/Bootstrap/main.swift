@@ -66,7 +66,8 @@ enum MelixControlPlaneBootstrap {
                 metricsStore: metricsStore,
                 sessionGraphStore: sessionGraphStore,
                 cacheMetadataStore: cacheMetadataStore
-            )
+            ),
+            metricsStore: metricsStore
         )
 
         let server = try BootstrapHTTPServer(
