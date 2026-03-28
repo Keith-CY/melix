@@ -14,6 +14,8 @@ from pathlib import Path
 import grpc
 
 from packages.protocol.python.worker.v1 import (
+    cache_pb2,
+    cache_pb2_grpc,
     inference_pb2,
     inference_pb2_grpc,
     runtime_pb2,
@@ -30,6 +32,7 @@ class LiveMelixStack:
         python_backend_mode: str = "deterministic",
         start_swift_text_worker: bool = True,
         start_python_worker: bool = True,
+        swift_cache_root: Path | None = None,
     ) -> None:
         self.repo_root = repo_root
         token = uuid.uuid4().hex[:10]
@@ -44,6 +47,8 @@ class LiveMelixStack:
         self.python_worker_stderr_path = Path("/tmp") / f"melix-python-worker-{token}.stderr.log"
         self.control_plane_stdout_path = Path("/tmp") / f"melix-control-plane-{token}.stdout.log"
         self.control_plane_stderr_path = Path("/tmp") / f"melix-control-plane-{token}.stderr.log"
+        self.swift_cache_root = swift_cache_root or (Path("/tmp") / f"melix-swift-cache-{token}")
+        self.cleanup_swift_cache_root = swift_cache_root is None
         self.swift_backend_mode = swift_backend_mode
         self.python_backend_mode = python_backend_mode
         self.should_start_swift_text_worker = start_swift_text_worker
@@ -64,6 +69,7 @@ class LiveMelixStack:
             swift_env["MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH"] = os.fspath(self.swift_socket_path)
             swift_env["MELIX_SWIFT_TEXT_WORKER_BACKEND_MODE"] = self.swift_backend_mode
             swift_env["MELIX_SWIFT_TEXT_WORKER_METRICS_PATH"] = os.fspath(self.swift_text_worker_metrics_path)
+            swift_env["MELIX_SWIFT_TEXT_WORKER_CACHE_ROOT"] = os.fspath(self.swift_cache_root)
             self.swift_text_worker_stdout = self.swift_text_worker_stdout_path.open("w", encoding="utf-8")
             self.swift_text_worker_stderr = self.swift_text_worker_stderr_path.open("w", encoding="utf-8")
             self.swift_text_worker = subprocess.Popen(
@@ -180,6 +186,8 @@ class LiveMelixStack:
         self._close_logs("swift_text_worker")
         self.swift_socket_path.unlink(missing_ok=True)
         self.swift_text_worker_metrics_path.unlink(missing_ok=True)
+        if self.cleanup_swift_cache_root:
+            self._remove_tree(self.swift_cache_root)
 
     def stop_control_plane(self) -> None:
         self._stop_process("control plane", self.control_plane)
@@ -215,6 +223,16 @@ class LiveMelixStack:
             path = getattr(self, f"{prefix}_{suffix}_path", None)
             if isinstance(path, Path):
                 path.unlink(missing_ok=True)
+
+    def _remove_tree(self, root: Path) -> None:
+        if not root.exists():
+            return
+        for child in sorted(root.rglob("*"), reverse=True):
+            if child.is_file() or child.is_symlink():
+                child.unlink(missing_ok=True)
+            else:
+                child.rmdir()
+        root.rmdir()
 
 
 def reserve_port() -> int:
@@ -323,6 +341,19 @@ def abort_worker_request(socket_path: Path, request_id: str) -> bool:
         return bool(response.ok and response.found)
     finally:
         channel.close()
+
+
+def get_cache_stats(socket_path: Path) -> cache_pb2.GetCacheStatsResponse:
+    channel = grpc.insecure_channel(f"unix://{socket_path}")
+    try:
+        stub = cache_pb2_grpc.CacheServiceStub(channel)
+        return stub.GetCacheStats(cache_pb2.GetCacheStatsRequest(), timeout=5)
+    finally:
+        channel.close()
+
+
+def read_metrics_export(path: Path) -> dict[str, object]:
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def _format_process_failure(message: str, stdout_path: Path | None, stderr_path: Path | None) -> str:

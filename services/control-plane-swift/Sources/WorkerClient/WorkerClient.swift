@@ -13,6 +13,16 @@ public protocol WorkerClient: Sendable {
     func abort(requestID: String) async throws -> Bool
 }
 
+public protocol PhaseAwareWorkerClientProtocol: WorkerClient {
+    func prefill(
+        request: Melix_Worker_V1_PrefillRequest
+    ) async throws -> Melix_Worker_V1_PrefillResponse
+
+    func decode(
+        request: Melix_Worker_V1_DecodeRequest
+    ) async throws -> AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error>
+}
+
 public protocol WorkerRoutingClient: WorkerClient {
     func loadModel(
         request: Melix_Worker_V1_LoadModelRequest

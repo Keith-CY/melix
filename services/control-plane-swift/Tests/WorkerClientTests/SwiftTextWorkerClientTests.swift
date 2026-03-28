@@ -53,6 +53,44 @@ struct SwiftTextWorkerClientTests {
         #expect(events[1].completed.finishReason == "stop")
     }
 
+    @Test("prefill forwards unary responses from the runner")
+    func prefillForwardsUnaryResponsesFromTheRunner() async throws {
+        let runner = ScriptedSwiftTextWorkerRunner()
+        await runner.setHandshakeResponse(makeHandshakeResponse())
+
+        var prefillResponse = Melix_Worker_V1_PrefillResponse()
+        prefillResponse.ok = true
+        prefillResponse.decodeHandle = "melix-dev-text::decode::prefill"
+        prefillResponse.restoredSnapshotID = "snapshot-prefill"
+        prefillResponse.appliedAcceleration.mode = .baseline
+        await runner.setPrefillResponse(prefillResponse)
+
+        let client = SwiftTextWorkerClient(socketPath: "/tmp/melix-swift-test.sock", runner: runner)
+        let response = try await client.prefill(request: makePrefillRequest(requestID: "req-prefill"))
+
+        #expect(response.ok)
+        #expect(response.decodeHandle == "melix-dev-text::decode::prefill")
+        #expect(response.restoredSnapshotID == "snapshot-prefill")
+    }
+
+    @Test("decode forwards streamed execute events from the runner")
+    func decodeForwardsStreamedExecuteEventsFromTheRunner() async throws {
+        let runner = ScriptedSwiftTextWorkerRunner()
+        await runner.setHandshakeResponse(makeHandshakeResponse())
+        await runner.setDecodeEvents([
+            makeTokenEvent(requestID: "req-decode", seq: 1, text: "De"),
+            makeCompletedEvent(requestID: "req-decode", seq: 2, finishReason: "stop", assistantText: "Decode"),
+        ])
+
+        let client = SwiftTextWorkerClient(socketPath: "/tmp/melix-swift-test.sock", runner: runner)
+        let stream = try await client.decode(request: makeDecodeRequest(requestID: "req-decode"))
+        let events = try await collect(stream)
+
+        #expect(events.count == 2)
+        #expect(events[0].tokenDelta.text == "De")
+        #expect(events[1].completed.assistantText == "Decode")
+    }
+
     @Test("abort returns the found bit from the runner response")
     func abortReturnsFoundBitFromTheRunnerResponse() async throws {
         let runner = ScriptedSwiftTextWorkerRunner()
@@ -98,9 +136,20 @@ struct SwiftTextWorkerClientTests {
                 response.modelHandle = "melix-dev-text::swift-live"
                 return response
             }(),
+            prefillResponse: {
+                var response = Melix_Worker_V1_PrefillResponse()
+                response.ok = true
+                response.decodeHandle = "melix-dev-text::decode::live"
+                response.appliedAcceleration.mode = .baseline
+                return response
+            }(),
             generateEvents: [
                 makeTokenEvent(requestID: "req-live", seq: 1, text: "Hel"),
                 makeCompletedEvent(requestID: "req-live", seq: 2, finishReason: "stop", assistantText: "Hel"),
+            ],
+            decodeEvents: [
+                makeTokenEvent(requestID: "req-live-decode", seq: 1, text: "Dec"),
+                makeCompletedEvent(requestID: "req-live-decode", seq: 2, finishReason: "stop", assistantText: "Decode"),
             ],
             abortFound: true
         )
@@ -119,6 +168,16 @@ struct SwiftTextWorkerClientTests {
         #expect(events[0].tokenDelta.text == "Hel")
         #expect(events[1].completed.assistantText == "Hel")
 
+        let prefill = try await client.prefill(request: makePrefillRequest(requestID: "req-live-prefill"))
+        #expect(prefill.ok)
+        #expect(prefill.decodeHandle == "melix-dev-text::decode::live")
+
+        let decode = try await client.decode(request: makeDecodeRequest(requestID: "req-live-decode"))
+        let decodeEvents = try await collect(decode)
+        #expect(decodeEvents.count == 2)
+        #expect(decodeEvents[0].tokenDelta.text == "Dec")
+        #expect(decodeEvents[1].completed.assistantText == "Decode")
+
         let aborted = try await client.abort(requestID: "req-live")
         #expect(aborted)
     }
@@ -128,6 +187,8 @@ private actor ScriptedSwiftTextWorkerRunner: SwiftTextWorkerRPCRunning {
     private var handshakeResponse: Melix_Worker_V1_HandshakeResponse?
     private var loadModelResponse: Melix_Worker_V1_LoadModelResponse?
     private var generateEvents: [Melix_Worker_V1_ExecuteEvent] = []
+    private var prefillResponse: Melix_Worker_V1_PrefillResponse?
+    private var decodeEvents: [Melix_Worker_V1_ExecuteEvent] = []
     private var abortResponse: Melix_Worker_V1_AbortResponse?
     private var failHandshakeFlag = false
     private var failGenerateFlag = false
@@ -142,6 +203,14 @@ private actor ScriptedSwiftTextWorkerRunner: SwiftTextWorkerRPCRunning {
 
     func setGenerateEvents(_ events: [Melix_Worker_V1_ExecuteEvent]) {
         generateEvents = events
+    }
+
+    func setPrefillResponse(_ response: Melix_Worker_V1_PrefillResponse) {
+        prefillResponse = response
+    }
+
+    func setDecodeEvents(_ events: [Melix_Worker_V1_ExecuteEvent]) {
+        decodeEvents = events
     }
 
     func setAbortResponse(_ response: Melix_Worker_V1_AbortResponse) {
@@ -195,6 +264,31 @@ private actor ScriptedSwiftTextWorkerRunner: SwiftTextWorkerRPCRunning {
         }
     }
 
+    func prefill(
+        socketPath: String,
+        request: Melix_Worker_V1_PrefillRequest
+    ) async throws -> Melix_Worker_V1_PrefillResponse {
+        prefillResponse ?? {
+            var response = Melix_Worker_V1_PrefillResponse()
+            response.ok = true
+            response.appliedAcceleration.mode = .baseline
+            return response
+        }()
+    }
+
+    func decode(
+        socketPath: String,
+        request: Melix_Worker_V1_DecodeRequest
+    ) async throws -> AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error> {
+        let events = decodeEvents
+        return AsyncThrowingStream { continuation in
+            for event in events {
+                continuation.yield(event)
+            }
+            continuation.finish()
+        }
+    }
+
     func abort(
         socketPath: String,
         request: Melix_Worker_V1_AbortRequest
@@ -226,7 +320,9 @@ private actor LiveSwiftWorkerFixture {
     static func start(
         handshakeResponse: Melix_Worker_V1_HandshakeResponse,
         loadModelResponse: Melix_Worker_V1_LoadModelResponse,
+        prefillResponse: Melix_Worker_V1_PrefillResponse,
         generateEvents: [Melix_Worker_V1_ExecuteEvent],
+        decodeEvents: [Melix_Worker_V1_ExecuteEvent],
         abortFound: Bool
     ) async throws -> LiveSwiftWorkerFixture {
         let socketPath = "/tmp/melix-swift-\(UUID().uuidString.prefix(8)).sock"
@@ -237,7 +333,9 @@ private actor LiveSwiftWorkerFixture {
             loadModelResponse: loadModelResponse
         )
         let inference = TestInferenceService(
+            prefillResponse: prefillResponse,
             generateEvents: generateEvents,
+            decodeEvents: decodeEvents,
             abortFound: abortFound
         )
 
@@ -341,11 +439,20 @@ private final class TestRuntimeService: Melix_Worker_V1_RuntimeService.SimpleSer
 }
 
 private final class TestInferenceService: Melix_Worker_V1_InferenceService.SimpleServiceProtocol, @unchecked Sendable {
+    private let prefillResponse: Melix_Worker_V1_PrefillResponse
     private let generateEvents: [Melix_Worker_V1_ExecuteEvent]
+    private let decodeEvents: [Melix_Worker_V1_ExecuteEvent]
     private let abortFound: Bool
 
-    init(generateEvents: [Melix_Worker_V1_ExecuteEvent], abortFound: Bool) {
+    init(
+        prefillResponse: Melix_Worker_V1_PrefillResponse,
+        generateEvents: [Melix_Worker_V1_ExecuteEvent],
+        decodeEvents: [Melix_Worker_V1_ExecuteEvent],
+        abortFound: Bool
+    ) {
+        self.prefillResponse = prefillResponse
         self.generateEvents = generateEvents
+        self.decodeEvents = decodeEvents
         self.abortFound = abortFound
     }
 
@@ -363,14 +470,18 @@ private final class TestInferenceService: Melix_Worker_V1_InferenceService.Simpl
         request: Melix_Worker_V1_PrefillRequest,
         context: ServerContext
     ) async throws -> Melix_Worker_V1_PrefillResponse {
-        Melix_Worker_V1_PrefillResponse()
+        prefillResponse
     }
 
     func decode(
         request: Melix_Worker_V1_DecodeRequest,
         response: RPCWriter<Melix_Worker_V1_ExecuteEvent>,
         context: ServerContext
-    ) async throws {}
+    ) async throws {
+        for event in decodeEvents {
+            try await response.write(event)
+        }
+    }
 
     func abort(
         request: Melix_Worker_V1_AbortRequest,
@@ -436,6 +547,22 @@ private func makeGenerateRequest(requestID: String) -> Melix_Worker_V1_GenerateR
     var request = Melix_Worker_V1_GenerateRequest()
     request.execution.id.requestID = requestID
     request.execution.modelHandle = "melix-dev-text::swift"
+    return request
+}
+
+private func makePrefillRequest(requestID: String) -> Melix_Worker_V1_PrefillRequest {
+    var request = Melix_Worker_V1_PrefillRequest()
+    request.execution.id.requestID = requestID
+    request.execution.modelHandle = "melix-dev-text::swift"
+    request.returnDecodeHandle = true
+    return request
+}
+
+private func makeDecodeRequest(requestID: String) -> Melix_Worker_V1_DecodeRequest {
+    var request = Melix_Worker_V1_DecodeRequest()
+    request.execution.id.requestID = requestID
+    request.execution.modelHandle = "melix-dev-text::swift"
+    request.decodeHandle = "melix-dev-text::decode::live"
     return request
 }
 

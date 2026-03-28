@@ -44,6 +44,7 @@ Current phase-status and planning documents:
 - `plans/2026-03-28-p3-m2-hot-tier-cache-primitives.md`
 - `plans/2026-03-28-p3-m3-disk-and-quantized-cache-tier.md`
 - `plans/2026-03-28-p3-m4-session-graph-state.md`
+- `plans/2026-03-28-p3-m5-recovery-flows.md`
 - `plans/2026-03-28-p1-m2-swift-text-worker-scaffold.md`
 - `plans/2026-03-28-p1-m3-swift-runtime-lifecycle.md`
 - `plans/2026-03-28-p1-m4-swift-generate-abort.md`

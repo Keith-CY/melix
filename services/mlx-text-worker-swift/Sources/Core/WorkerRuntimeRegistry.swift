@@ -19,6 +19,7 @@ struct StoredPrefillContext: @unchecked Sendable {
     let activeKVQuantizationRatio: Int
     let blockTableID: String
     let blockTable: Melix_Worker_V1_BlockTable
+    let restoredSnapshotID: String
     let prefix: Melix_Worker_V1_PrefixRef?
     let context: TextPrefillContext
 }
@@ -28,6 +29,7 @@ struct WorkerPrefillResult: Sendable {
     let blockTableID: String
     let blockTable: Melix_Worker_V1_BlockTable
     let promptTokens: Int
+    let restoredSnapshotID: String
     let appliedAcceleration: Melix_Worker_V1_AccelerationPolicy
     let acceleratedPrefillGainPct: Int
     let activeKVQuantizationRatio: Int
@@ -207,6 +209,51 @@ actor WorkerRuntimeRegistry {
             }
         }
 
+        if !execution.cacheHints.restoreSnapshotID.isEmpty {
+            let restored = try await restoreBoundarySnapshotRecord(snapshotID: execution.cacheHints.restoreSnapshotID)
+            let requestMessages = messages.isEmpty ? restored.messages : messages
+            let runtimePrefill = try await runtime.prefill(
+                model: loaded.runtimeModel,
+                messages: requestMessages,
+                prefillStepSize: 0,
+                resumeHint: restored.resumeHint,
+                acceleration: restored.acceleration,
+                shouldAbort: shouldAbort
+            )
+
+            let decodeHandle = "\(modelHandle)::decode::\(nextDecodeHandle)"
+            nextDecodeHandle += 1
+            prefillContexts[decodeHandle] = StoredPrefillContext(
+                decodeHandle: decodeHandle,
+                modelHandle: loaded.handle,
+                requestID: restored.snapshot.requestID.isEmpty ? requestID : restored.snapshot.requestID,
+                promptTokens: restored.promptTokens,
+                messages: requestMessages,
+                resumeHint: restored.resumeHint,
+                acceleration: restored.acceleration,
+                activeKVQuantizationRatio: activeKVQuantizationRatio(from: restored.acceleration),
+                blockTableID: restored.blockTableID,
+                blockTable: restored.blockTable,
+                restoredSnapshotID: restored.snapshot.snapshotID,
+                prefix: await cacheStore.lookupPrefix(for: restored.blockTable.cacheKey),
+                context: runtimePrefill.context
+            )
+
+            let cacheSnapshot = await cacheStore.snapshot()
+            return WorkerPrefillResult(
+                decodeHandle: decodeHandle,
+                blockTableID: restored.blockTableID,
+                blockTable: restored.blockTable,
+                promptTokens: restored.promptTokens,
+                restoredSnapshotID: restored.snapshot.snapshotID,
+                appliedAcceleration: restored.acceleration,
+                acceleratedPrefillGainPct: 0,
+                activeKVQuantizationRatio: activeKVQuantizationRatio(from: restored.acceleration),
+                cacheStats: cacheSnapshot.stats,
+                hotPrefixCount: cacheSnapshot.hotPrefixes.count
+            )
+        }
+
         let result = try await runtime.prefill(
             model: loaded.runtimeModel,
             messages: messages,
@@ -243,6 +290,7 @@ actor WorkerRuntimeRegistry {
                 activeKVQuantizationRatio: result.activeKVQuantizationRatio,
                 blockTableID: blockTableID,
                 blockTable: blockTable,
+                restoredSnapshotID: "",
                 prefix: registration.prefix,
                 context: result.context
             )
@@ -255,6 +303,7 @@ actor WorkerRuntimeRegistry {
             blockTableID: blockTableID,
             blockTable: blockTable,
             promptTokens: result.promptTokens,
+            restoredSnapshotID: "",
             appliedAcceleration: result.appliedAcceleration,
             acceleratedPrefillGainPct: result.acceleratedPrefillGainPct,
             activeKVQuantizationRatio: result.activeKVQuantizationRatio,
@@ -432,9 +481,54 @@ actor WorkerRuntimeRegistry {
         return response
     }
 
+    func saveBoundarySnapshot(
+        requestID: String,
+        session: WorkerDecodeSession,
+        tokenBoundary: UInt32
+    ) async -> Melix_Worker_V1_SaveBoundarySnapshotResponse {
+        let effectiveRequestID = requestID.isEmpty ? session.prefill.requestID : requestID
+        let boundary = tokenBoundary > 0 ? tokenBoundary : UInt32(max(0, session.prefill.promptTokens))
+        let snapshot = await cacheStore.saveBoundarySnapshot(
+            requestID: effectiveRequestID,
+            tokenBoundary: boundary,
+            model: session.loadedModel.spec,
+            prefill: session.prefill
+        )
+
+        var response = Melix_Worker_V1_SaveBoundarySnapshotResponse()
+        response.ok = true
+        response.snapshotID = snapshot.snapshotID
+        response.snapshot = snapshot
+        return response
+    }
+
     func restoreBoundarySnapshot(
         snapshotID: String
     ) async throws -> Melix_Worker_V1_RestoreBoundarySnapshotResponse {
+        let restored = try await restoreBoundarySnapshotRecord(snapshotID: snapshotID)
+
+        var response = Melix_Worker_V1_RestoreBoundarySnapshotResponse()
+        response.ok = true
+        response.decodeHandle = restored.decodeHandle
+        response.blockTableID = restored.blockTableID
+        response.blockTable = restored.blockTable
+        response.snapshot = restored.snapshot
+        return response
+    }
+
+    private func restoreBoundarySnapshotRecord(
+        snapshotID: String
+    ) async throws -> (
+        snapshot: Melix_Worker_V1_SnapshotRef,
+        model: Melix_Worker_V1_ModelSpec,
+        messages: [Melix_Worker_V1_ChatMessage],
+        resumeHint: String,
+        acceleration: Melix_Worker_V1_AccelerationPolicy,
+        promptTokens: Int,
+        blockTableID: String,
+        blockTable: Melix_Worker_V1_BlockTable,
+        decodeHandle: String
+    ) {
         guard let restored = await cacheStore.restoreBoundarySnapshot(snapshotID: snapshotID) else {
             throw WorkerRuntimeRegistryError.unknownSnapshotID
         }
@@ -467,17 +561,22 @@ actor WorkerRuntimeRegistry {
             activeKVQuantizationRatio: activeKVQuantizationRatio(from: restored.acceleration),
             blockTableID: restored.blockTableID,
             blockTable: restored.blockTable,
+            restoredSnapshotID: restored.snapshot.snapshotID,
             prefix: await cacheStore.lookupPrefix(for: restored.blockTable.cacheKey),
             context: runtimePrefill.context
         )
 
-        var response = Melix_Worker_V1_RestoreBoundarySnapshotResponse()
-        response.ok = true
-        response.decodeHandle = decodeHandle
-        response.blockTableID = restored.blockTableID
-        response.blockTable = restored.blockTable
-        response.snapshot = restored.snapshot
-        return response
+        return (
+            snapshot: restored.snapshot,
+            model: restored.model,
+            messages: restored.messages,
+            resumeHint: restored.resumeHint,
+            acceleration: restored.acceleration,
+            promptTokens: restored.promptTokens,
+            blockTableID: restored.blockTableID,
+            blockTable: restored.blockTable,
+            decodeHandle: decodeHandle
+        )
     }
 }
 

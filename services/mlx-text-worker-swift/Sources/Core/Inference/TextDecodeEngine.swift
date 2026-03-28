@@ -94,6 +94,26 @@ struct TextDecodeEngine: Sendable {
             seq += 1
             eventCount += 1
 
+            if !session.prefill.restoredSnapshotID.isEmpty {
+                var cacheDecisionEvent = Melix_Worker_V1_ExecuteEvent()
+                cacheDecisionEvent.requestID = requestID
+                cacheDecisionEvent.executionKind = "decode"
+                cacheDecisionEvent.seq = seq
+                cacheDecisionEvent.phase = .executionDecoding
+                cacheDecisionEvent.admissionState = .admissionAdmitted
+                cacheDecisionEvent.lane = lane
+                cacheDecisionEvent.accelerationMode = acceleration.mode
+
+                var cacheDecision = Melix_Worker_V1_CacheDecision()
+                cacheDecision.blockTableID = session.prefill.blockTableID
+                cacheDecision.restoredSnapshotID = session.prefill.restoredSnapshotID
+                cacheDecision.persistedToL2 = true
+                cacheDecisionEvent.cacheDecision = cacheDecision
+                try await response.write(cacheDecisionEvent)
+                seq += 1
+                eventCount += 1
+            }
+
             for try await runtimeEvent in runtimeStream {
                 switch runtimeEvent {
                 case .prefillStarted:
@@ -149,6 +169,38 @@ struct TextDecodeEngine: Sendable {
                 try await response.write(event)
                 seq += 1
                 eventCount += 1
+            }
+
+            if request.execution.cacheHints.saveBoundarySnapshot && !(abortHandle?.isAborted ?? false) {
+                let snapshotStartedAt = Date()
+                let boundary = UInt32(max(0, session.prefill.promptTokens + completionTokens))
+                let snapshot = await registry.saveBoundarySnapshot(
+                    requestID: requestID,
+                    session: session,
+                    tokenBoundary: boundary
+                )
+
+                var snapshotEvent = Melix_Worker_V1_ExecuteEvent()
+                snapshotEvent.requestID = requestID
+                snapshotEvent.executionKind = "decode"
+                snapshotEvent.seq = seq
+                snapshotEvent.phase = .executionDecoding
+                snapshotEvent.admissionState = .admissionAdmitted
+                snapshotEvent.lane = lane
+                snapshotEvent.accelerationMode = acceleration.mode
+
+                var snapshotCreated = Melix_Worker_V1_BoundarySnapshotCreated()
+                snapshotCreated.snapshotID = snapshot.snapshotID
+                snapshotCreated.tokenBoundary = boundary
+                snapshotEvent.snapshotCreated = snapshotCreated
+                try await response.write(snapshotEvent)
+                seq += 1
+                eventCount += 1
+
+                metrics.recordMilliseconds(
+                    "swift_text.cache_snapshot_save_ms",
+                    value: elapsedMilliseconds(since: snapshotStartedAt)
+                )
             }
 
             var completed = Melix_Worker_V1_Completed()

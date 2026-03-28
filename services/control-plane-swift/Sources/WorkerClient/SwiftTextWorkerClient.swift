@@ -20,13 +20,23 @@ public protocol SwiftTextWorkerRPCRunning: Sendable {
         request: Melix_Worker_V1_GenerateRequest
     ) async throws -> AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error>
 
+    func prefill(
+        socketPath: String,
+        request: Melix_Worker_V1_PrefillRequest
+    ) async throws -> Melix_Worker_V1_PrefillResponse
+
+    func decode(
+        socketPath: String,
+        request: Melix_Worker_V1_DecodeRequest
+    ) async throws -> AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error>
+
     func abort(
         socketPath: String,
         request: Melix_Worker_V1_AbortRequest
     ) async throws -> Melix_Worker_V1_AbortResponse
 }
 
-public struct SwiftTextWorkerClient: WorkerRoutingClient, Sendable {
+public struct SwiftTextWorkerClient: WorkerRoutingClient, PhaseAwareWorkerClientProtocol, Sendable {
     private let socketPath: String
     private let runner: any SwiftTextWorkerRPCRunning
 
@@ -63,6 +73,18 @@ public struct SwiftTextWorkerClient: WorkerRoutingClient, Sendable {
         request: Melix_Worker_V1_GenerateRequest
     ) async throws -> AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error> {
         try await runner.generate(socketPath: socketPath, request: request)
+    }
+
+    public func prefill(
+        request: Melix_Worker_V1_PrefillRequest
+    ) async throws -> Melix_Worker_V1_PrefillResponse {
+        try await runner.prefill(socketPath: socketPath, request: request)
+    }
+
+    public func decode(
+        request: Melix_Worker_V1_DecodeRequest
+    ) async throws -> AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error> {
+        try await runner.decode(socketPath: socketPath, request: request)
     }
 
     public func abort(requestID: String) async throws -> Bool {
@@ -104,6 +126,41 @@ public struct GRPCSwiftTextWorkerRunner: SwiftTextWorkerRPCRunning, Sendable {
                 do {
                     try await withRPCClients(socketPath: socketPath) { _, inferenceClient in
                         try await inferenceClient.generate(request) { response in
+                            for try await event in response.messages {
+                                continuation.yield(event)
+                            }
+                        }
+                    }
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: WorkerClientError.unavailable)
+                }
+            }
+
+            continuation.onTermination = { _ in
+                task.cancel()
+            }
+        }
+    }
+
+    public func prefill(
+        socketPath: String,
+        request: Melix_Worker_V1_PrefillRequest
+    ) async throws -> Melix_Worker_V1_PrefillResponse {
+        try await withRPCClients(socketPath: socketPath) { _, inferenceClient in
+            try await inferenceClient.prefill(request)
+        }
+    }
+
+    public func decode(
+        socketPath: String,
+        request: Melix_Worker_V1_DecodeRequest
+    ) async throws -> AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error> {
+        AsyncThrowingStream { continuation in
+            let task = Task {
+                do {
+                    try await withRPCClients(socketPath: socketPath) { _, inferenceClient in
+                        try await inferenceClient.decode(request) { response in
                             for try await event in response.messages {
                                 continuation.yield(event)
                             }

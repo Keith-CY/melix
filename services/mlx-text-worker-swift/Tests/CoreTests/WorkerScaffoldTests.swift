@@ -2584,6 +2584,197 @@ final class WorkerScaffoldTests: XCTestCase {
         }
     }
 
+    func testPrefillCanRestoreBoundarySnapshotsFromCacheHints() async throws {
+        try await withTemporaryCacheRoot { cacheRoot in
+            let environment = ["MELIX_SWIFT_TEXT_WORKER_CACHE_ROOT": cacheRoot.path]
+            let services = makeServices(
+                environment: environment,
+                backend: DeterministicTextBackend(tokenDelayNanos: 0)
+            )
+
+            let loadResponse = try await withServerContextRPCCancellationHandle { handle in
+                var request = Melix_Worker_V1_LoadModelRequest()
+                request.model.modelID = "melix-dev-text"
+                return try await services.runtime.loadModel(
+                    request: request,
+                    context: ServerContext(
+                        descriptor: Melix_Worker_V1_RuntimeService.Method.LoadModel.descriptor,
+                        remotePeer: "in-process:test",
+                        localPeer: "in-process:test",
+                        cancellation: handle
+                    )
+                )
+            }
+
+            var initialPrefill = Melix_Worker_V1_PrefillRequest()
+            initialPrefill.execution.id.requestID = "req-restore-source"
+            initialPrefill.execution.modelHandle = loadResponse.modelHandle
+            initialPrefill.execution.cacheHints.allowL2 = true
+            initialPrefill.execution.cacheHints.persistL2 = true
+            initialPrefill.returnDecodeHandle = true
+            initialPrefill.messages = [makeUserMessage("persist this boundary")]
+            let initialPrefillResponse = try await withServerContextRPCCancellationHandle { handle in
+                try await services.inference.prefill(
+                    request: initialPrefill,
+                    context: ServerContext(
+                        descriptor: Melix_Worker_V1_InferenceService.Method.Prefill.descriptor,
+                        remotePeer: "in-process:test",
+                        localPeer: "in-process:test",
+                        cancellation: handle
+                    )
+                )
+            }
+
+            let savedSnapshot = try await withServerContextRPCCancellationHandle { handle in
+                var request = Melix_Worker_V1_SaveBoundarySnapshotRequest()
+                request.requestID = "req-restore-source"
+                request.decodeHandle = initialPrefillResponse.decodeHandle
+                request.tokenBoundary = initialPrefillResponse.promptTokens
+                return try await services.cache.saveBoundarySnapshot(
+                    request: request,
+                    context: ServerContext(
+                        descriptor: Melix_Worker_V1_CacheService.Method.SaveBoundarySnapshot.descriptor,
+                        remotePeer: "in-process:test",
+                        localPeer: "in-process:test",
+                        cancellation: handle
+                    )
+                )
+            }
+
+            var restorePrefill = Melix_Worker_V1_PrefillRequest()
+            restorePrefill.execution.id.requestID = "req-restore-target"
+            restorePrefill.execution.modelHandle = loadResponse.modelHandle
+            restorePrefill.execution.cacheHints.restoreSnapshotID = savedSnapshot.snapshotID
+            restorePrefill.returnDecodeHandle = true
+            let restoreResponse = try await withServerContextRPCCancellationHandle { handle in
+                try await services.inference.prefill(
+                    request: restorePrefill,
+                    context: ServerContext(
+                        descriptor: Melix_Worker_V1_InferenceService.Method.Prefill.descriptor,
+                        remotePeer: "in-process:test",
+                        localPeer: "in-process:test",
+                        cancellation: handle
+                    )
+                )
+            }
+
+            XCTAssertTrue(restoreResponse.ok)
+            XCTAssertEqual(restoreResponse.restoredSnapshotID, savedSnapshot.snapshotID)
+            XCTAssertEqual(restoreResponse.blockTableID, initialPrefillResponse.blockTableID)
+            XCTAssertFalse(restoreResponse.decodeHandle.isEmpty)
+            let restoredContext = await services.registry.prefillContext(for: restoreResponse.decodeHandle)
+            XCTAssertEqual(restoredContext?.restoredSnapshotID, savedSnapshot.snapshotID)
+        }
+    }
+
+    func testDecodeStreamingRpcEmitsRecoveryEventsForRestoredSnapshots() async throws {
+        try await withTemporaryCacheRoot { cacheRoot in
+            let environment = ["MELIX_SWIFT_TEXT_WORKER_CACHE_ROOT": cacheRoot.path]
+            let services = makeServices(
+                environment: environment,
+                backend: FakeRuntimeBackend(decodedChunks: ["resume", " ok"])
+            )
+
+            let loadResponse = try await withServerContextRPCCancellationHandle { handle in
+                var request = Melix_Worker_V1_LoadModelRequest()
+                request.model.modelID = "melix-dev-text"
+                return try await services.runtime.loadModel(
+                    request: request,
+                    context: ServerContext(
+                        descriptor: Melix_Worker_V1_RuntimeService.Method.LoadModel.descriptor,
+                        remotePeer: "in-process:test",
+                        localPeer: "in-process:test",
+                        cancellation: handle
+                    )
+                )
+            }
+
+            var sourcePrefill = Melix_Worker_V1_PrefillRequest()
+            sourcePrefill.execution.id.requestID = "req-recovery-source"
+            sourcePrefill.execution.modelHandle = loadResponse.modelHandle
+            sourcePrefill.execution.cacheHints.allowL2 = true
+            sourcePrefill.execution.cacheHints.persistL2 = true
+            sourcePrefill.returnDecodeHandle = true
+            sourcePrefill.messages = [makeUserMessage("persist for recovery decode")]
+            let sourcePrefillResponse = try await withServerContextRPCCancellationHandle { handle in
+                try await services.inference.prefill(
+                    request: sourcePrefill,
+                    context: ServerContext(
+                        descriptor: Melix_Worker_V1_InferenceService.Method.Prefill.descriptor,
+                        remotePeer: "in-process:test",
+                        localPeer: "in-process:test",
+                        cancellation: handle
+                    )
+                )
+            }
+
+            let savedSnapshot = try await withServerContextRPCCancellationHandle { handle in
+                var request = Melix_Worker_V1_SaveBoundarySnapshotRequest()
+                request.requestID = "req-recovery-source"
+                request.decodeHandle = sourcePrefillResponse.decodeHandle
+                request.tokenBoundary = sourcePrefillResponse.promptTokens
+                return try await services.cache.saveBoundarySnapshot(
+                    request: request,
+                    context: ServerContext(
+                        descriptor: Melix_Worker_V1_CacheService.Method.SaveBoundarySnapshot.descriptor,
+                        remotePeer: "in-process:test",
+                        localPeer: "in-process:test",
+                        cancellation: handle
+                    )
+                )
+            }
+
+            var restorePrefill = Melix_Worker_V1_PrefillRequest()
+            restorePrefill.execution.id.requestID = "req-recovery-decode"
+            restorePrefill.execution.modelHandle = loadResponse.modelHandle
+            restorePrefill.execution.cacheHints.restoreSnapshotID = savedSnapshot.snapshotID
+            restorePrefill.returnDecodeHandle = true
+            let restorePrefillResponse = try await withServerContextRPCCancellationHandle { handle in
+                try await services.inference.prefill(
+                    request: restorePrefill,
+                    context: ServerContext(
+                        descriptor: Melix_Worker_V1_InferenceService.Method.Prefill.descriptor,
+                        remotePeer: "in-process:test",
+                        localPeer: "in-process:test",
+                        cancellation: handle
+                    )
+                )
+            }
+
+            let writer = RecordingRPCWriter<Melix_Worker_V1_ExecuteEvent>()
+            var decodeRequest = Melix_Worker_V1_DecodeRequest()
+            decodeRequest.execution.id.requestID = "req-recovery-decode"
+            decodeRequest.execution.modelHandle = loadResponse.modelHandle
+            decodeRequest.execution.cacheHints.saveBoundarySnapshot = true
+            decodeRequest.decodeHandle = restorePrefillResponse.decodeHandle
+            decodeRequest.returnUsage = true
+
+            try await withServerContextRPCCancellationHandle { handle in
+                try await services.inference.decode(
+                    request: decodeRequest,
+                    response: RPCWriter(wrapping: writer),
+                    context: ServerContext(
+                        descriptor: Melix_Worker_V1_InferenceService.Method.Decode.descriptor,
+                        remotePeer: "in-process:test",
+                        localPeer: "in-process:test",
+                        cancellation: handle
+                    )
+                )
+            }
+
+            let recorded = await writer.snapshot()
+            let startedEvent = try XCTUnwrap(recorded.first(where: { !$0.decodeStarted.decodeHandle.isEmpty }))
+            XCTAssertEqual(startedEvent.decodeStarted.decodeHandle, restorePrefillResponse.decodeHandle)
+            let cacheDecisionEvent = try XCTUnwrap(recorded.first(where: { !$0.cacheDecision.restoredSnapshotID.isEmpty }))
+            XCTAssertEqual(cacheDecisionEvent.cacheDecision.restoredSnapshotID, savedSnapshot.snapshotID)
+            let snapshotEvent = try XCTUnwrap(recorded.first(where: { !$0.snapshotCreated.snapshotID.isEmpty }))
+            XCTAssertFalse(snapshotEvent.snapshotCreated.snapshotID.isEmpty)
+            XCTAssertGreaterThan(snapshotEvent.snapshotCreated.tokenBoundary, 0)
+            XCTAssertEqual(recorded.last?.completed.finishReason, "stop")
+            XCTAssertNotNil(services.metrics.counters["swift_text.cache_snapshot_save_ms"])
+        }
+    }
+
     func testCacheManagementRpcsReturnStructuredErrorsForUnknownRefsAndUnloadedSnapshotModels() async throws {
         try await withTemporaryCacheRoot { cacheRoot in
             let environment = ["MELIX_SWIFT_TEXT_WORKER_CACHE_ROOT": cacheRoot.path]

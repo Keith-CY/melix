@@ -60,6 +60,12 @@ struct TextPrefillEngine: Sendable {
                 "swift_text.cache_block_reuse_ratio",
                 value: Int((result.cacheStats.dedupRatio * 100.0).rounded())
             )
+            if !result.restoredSnapshotID.isEmpty {
+                metrics.recordMilliseconds(
+                    "swift_text.cache_snapshot_restore_ms",
+                    value: elapsedMilliseconds(since: startedAt)
+                )
+            }
 
             var response = Melix_Worker_V1_PrefillResponse()
             response.ok = true
@@ -67,6 +73,7 @@ struct TextPrefillEngine: Sendable {
             response.blockTableID = result.blockTableID
             response.blockTable = result.blockTable
             response.promptTokens = UInt32(max(0, result.promptTokens))
+            response.restoredSnapshotID = result.restoredSnapshotID
             response.lifecyclePhase = .executionPrefilling
             response.admissionState = .admissionAdmitted
             response.appliedAcceleration = result.appliedAcceleration

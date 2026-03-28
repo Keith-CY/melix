@@ -53,8 +53,9 @@ public actor RequestCoordinator {
     }
 
     public func startChatCompletion(
-        _ request: TranslatedChatRequest
+        _ translatedRequest: TranslatedChatRequest
     ) async throws -> CoordinatedChatExecution {
+        let request = await resolvedRecoveryRequest(translatedRequest)
         await hydrateSessionGraph(for: request.workerRequest.execution.id)
         let lane = request.workerRequest.execution.scheduling.lane
         let priority = request.workerRequest.execution.scheduling.priority
@@ -130,7 +131,16 @@ public actor RequestCoordinator {
         }
 
         do {
-            let upstream = try await workerClient.generate(request: request.workerRequest)
+            let upstream: AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error>
+            if let phaseAwareClient = workerClient as? any PhaseAwareWorkerClientProtocol,
+               shouldUsePhaseAwareExecution(for: request.workerRequest) {
+                upstream = makePhaseAwareUpstream(
+                    client: phaseAwareClient,
+                    request: request.workerRequest
+                )
+            } else {
+                upstream = try await workerClient.generate(request: request.workerRequest)
+            }
             if !(await abortRegistry.contains(request.requestID)) {
                 _ = try? await workerClient.abort(requestID: request.requestID)
                 await finishRequestTracking(requestID: request.requestID, phase: .requestAborted)
@@ -272,12 +282,31 @@ public actor RequestCoordinator {
                 accelerationMode: controlPlaneAccelerationMode(from: event.accelerationMode),
                 source: "swift-text-worker"
             )
-            if case .toolCallDelta(let toolCallDelta) = event.payload {
-                await hydrateToolResult(
-                    requestIdentity: requestIdentity,
-                    toolCallID: toolCallDelta.callID
-                )
+                if case .toolCallDelta(let toolCallDelta) = event.payload {
+                    await hydrateToolResult(
+                        requestIdentity: requestIdentity,
+                        toolCallID: toolCallDelta.callID
+                    )
+                }
+        case .cacheDecision(let cacheDecision):
+            await schedulerReadModel.recordPhaseTransition(
+                requestID: requestID,
+                phase: .requestDecoding,
+                laneHint: event.lane.isEmpty ? fallbackLane : event.lane,
+                workerID: "swift-text-worker",
+                accelerationMode: controlPlaneAccelerationMode(from: event.accelerationMode),
+                source: "swift-text-worker"
+            )
+            if !cacheDecision.restoredSnapshotID.isEmpty {
+                await metricsStore.increment("session_graph.restore_snapshot_count")
             }
+        case .snapshotCreated(let snapshotCreated):
+            await hydrateSnapshotCreated(
+                requestIdentity: requestIdentity,
+                requestID: requestID,
+                snapshotID: snapshotCreated.snapshotID,
+                tokenBoundary: snapshotCreated.tokenBoundary
+            )
         case .completed:
             if event.phase == .executionAborted {
                 await schedulerReadModel.recordPhaseTransition(
@@ -330,6 +359,221 @@ public actor RequestCoordinator {
             branchID: requestIdentity.branchID,
             toolCallID: toolCallID
         )
+    }
+
+    private func hydrateSnapshotCreated(
+        requestIdentity: Melix_Worker_V1_RequestIdentity,
+        requestID: String,
+        snapshotID: String,
+        tokenBoundary: UInt32
+    ) async {
+        guard
+            let sessionGraphStore,
+            !requestIdentity.sessionID.isEmpty,
+            !snapshotID.isEmpty
+        else {
+            return
+        }
+
+        var snapshot = Melix_Controlplane_V1_SnapshotRef()
+        snapshot.snapshotID = snapshotID
+        snapshot.tokenBoundary = tokenBoundary
+        snapshot.requestID = requestID
+        snapshot.sessionID = requestIdentity.sessionID
+        snapshot.branchID = requestIdentity.branchID
+
+        _ = await sessionGraphStore.recordSnapshotHydration(
+            sessionID: requestIdentity.sessionID,
+            branchID: requestIdentity.branchID,
+            snapshot: snapshot
+        )
+    }
+
+    private func shouldUsePhaseAwareExecution(
+        for request: Melix_Worker_V1_GenerateRequest
+    ) -> Bool {
+        !request.execution.cacheHints.restoreSnapshotID.isEmpty || request.execution.cacheHints.saveBoundarySnapshot
+    }
+
+    private func resolvedRecoveryRequest(
+        _ translatedRequest: TranslatedChatRequest
+    ) async -> TranslatedChatRequest {
+        guard
+            let sessionGraphStore,
+            !translatedRequest.workerRequest.execution.id.sessionID.isEmpty
+        else {
+            return translatedRequest
+        }
+
+        var workerRequest = translatedRequest.workerRequest
+        if workerRequest.execution.id.branchID.isEmpty {
+            workerRequest.execution.id.branchID = "branch-main"
+        }
+
+        if workerRequest.execution.cacheHints.restoreSnapshotID.isEmpty,
+           !workerRequest.execution.id.parentRequestID.isEmpty,
+           let session = await sessionGraphStore.state(for: workerRequest.execution.id.sessionID) {
+            let requestedBranchID = workerRequest.execution.id.branchID.isEmpty
+                ? session.activeBranchID
+                : workerRequest.execution.id.branchID
+            let branch = session.branches.first(where: { $0.branchID == requestedBranchID })
+                ?? session.branches.first(where: { $0.branchID == session.activeBranchID })
+            if let branch, !branch.resumeSnapshotID.isEmpty {
+                workerRequest.execution.cacheHints.restoreSnapshotID = branch.resumeSnapshotID
+            }
+        }
+
+        return TranslatedChatRequest(
+            requestID: translatedRequest.requestID,
+            modelID: translatedRequest.modelID,
+            workerRequest: workerRequest,
+            stream: translatedRequest.stream
+        )
+    }
+
+    private func makePhaseAwareUpstream(
+        client: any PhaseAwareWorkerClientProtocol,
+        request: Melix_Worker_V1_GenerateRequest
+    ) -> AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error> {
+        AsyncThrowingStream { continuation in
+            let task = Task {
+                do {
+                    var nextSeq: UInt64 = 1
+                    let prefillRequest = makePrefillRequest(from: request)
+                    let prefillResponse = try await client.prefill(request: prefillRequest)
+                    guard prefillResponse.ok, !prefillResponse.decodeHandle.isEmpty else {
+                        var failureEvent = makePrefillFailureEvent(
+                            requestID: request.execution.id.requestID,
+                            error: prefillResponse.error
+                        )
+                        failureEvent.seq = nextSeq
+                        continuation.yield(failureEvent)
+                        continuation.finish()
+                        return
+                    }
+
+                    var prefillEvent = makePrefillStartedEvent(request: request, response: prefillResponse)
+                    prefillEvent.seq = nextSeq
+                    nextSeq += 1
+                    continuation.yield(prefillEvent)
+                    if !prefillResponse.restoredSnapshotID.isEmpty {
+                        var cacheDecisionEvent = makeCacheDecisionEvent(
+                            requestID: request.execution.id.requestID,
+                            lane: request.execution.scheduling.lane,
+                            blockTableID: prefillResponse.blockTableID,
+                            restoredSnapshotID: prefillResponse.restoredSnapshotID,
+                            accelerationMode: prefillResponse.appliedAcceleration.mode
+                        )
+                        cacheDecisionEvent.seq = nextSeq
+                        nextSeq += 1
+                        continuation.yield(cacheDecisionEvent)
+                    }
+
+                    let decodeRequest = makeDecodeRequest(
+                        from: request,
+                        prefillResponse: prefillResponse
+                    )
+                    let upstream = try await client.decode(request: decodeRequest)
+                    for try await upstreamEvent in upstream {
+                        var event = upstreamEvent
+                        event.seq = nextSeq
+                        nextSeq += 1
+                        continuation.yield(event)
+                    }
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+
+            continuation.onTermination = { _ in
+                task.cancel()
+            }
+        }
+    }
+
+    private func makePrefillRequest(
+        from request: Melix_Worker_V1_GenerateRequest
+    ) -> Melix_Worker_V1_PrefillRequest {
+        var prefill = Melix_Worker_V1_PrefillRequest()
+        prefill.execution = request.execution
+        prefill.messages = request.messages
+        prefill.returnDecodeHandle = true
+        prefill.prefillStepSize = 0
+        prefill.resumeHint = request.execution.id.parentRequestID
+        return prefill
+    }
+
+    private func makeDecodeRequest(
+        from request: Melix_Worker_V1_GenerateRequest,
+        prefillResponse: Melix_Worker_V1_PrefillResponse
+    ) -> Melix_Worker_V1_DecodeRequest {
+        var decode = Melix_Worker_V1_DecodeRequest()
+        decode.execution = request.execution
+        decode.decodeHandle = prefillResponse.decodeHandle
+        decode.sampling = request.sampling
+        decode.maxOutputTokens = request.sampling.maxOutputTokens
+        decode.returnUsage = request.returnUsage
+        return decode
+    }
+
+    private func makePrefillStartedEvent(
+        request: Melix_Worker_V1_GenerateRequest,
+        response: Melix_Worker_V1_PrefillResponse
+    ) -> Melix_Worker_V1_ExecuteEvent {
+        var event = Melix_Worker_V1_ExecuteEvent()
+        event.requestID = request.execution.id.requestID
+        event.executionKind = "prefill"
+        event.seq = 1
+        event.phase = response.lifecyclePhase
+        event.admissionState = response.admissionState
+        event.lane = "text.prefill.hot"
+        event.accelerationMode = response.appliedAcceleration.mode
+
+        var payload = Melix_Worker_V1_PrefillStarted()
+        payload.inputTokens = response.promptTokens
+        event.prefillStarted = payload
+        return event
+    }
+
+    private func makeCacheDecisionEvent(
+        requestID: String,
+        lane: String,
+        blockTableID: String,
+        restoredSnapshotID: String,
+        accelerationMode: Melix_Worker_V1_AccelerationMode
+    ) -> Melix_Worker_V1_ExecuteEvent {
+        var event = Melix_Worker_V1_ExecuteEvent()
+        event.requestID = requestID
+        event.executionKind = "prefill"
+        event.seq = 2
+        event.phase = .executionPrefilling
+        event.admissionState = .admissionAdmitted
+        event.lane = lane.isEmpty ? "text.prefill.hot" : lane
+        event.accelerationMode = accelerationMode
+
+        var payload = Melix_Worker_V1_CacheDecision()
+        payload.blockTableID = blockTableID
+        payload.restoredSnapshotID = restoredSnapshotID
+        payload.persistedToL2 = true
+        event.cacheDecision = payload
+        return event
+    }
+
+    private func makePrefillFailureEvent(
+        requestID: String,
+        error: Melix_Worker_V1_ErrorStatus
+    ) -> Melix_Worker_V1_ExecuteEvent {
+        var event = Melix_Worker_V1_ExecuteEvent()
+        event.requestID = requestID
+        event.executionKind = "prefill"
+        event.seq = 1
+        event.phase = .executionFailed
+
+        var payload = Melix_Worker_V1_ErrorEvent()
+        payload.error = error
+        event.error = payload
+        return event
     }
 
     private func terminalPhase(

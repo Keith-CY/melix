@@ -74,6 +74,58 @@ struct OpenAIHandlerTests {
         #expect(payload.contains("data: [DONE]"))
     }
 
+    @Test("chat completions translator preserves recovery metadata on worker requests")
+    func postChatCompletionsPreservesRecoveryMetadata() async throws {
+        let catalog = ModelCatalog(seedModels: [warmModel()])
+        let workerClient = ScriptedWorkerClient(events: [
+            makeCompletedEvent(requestID: "req-recovery", seq: 1, finishReason: "stop", assistantText: "done"),
+        ])
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(defaultTextClient: workerClient),
+            abortRegistry: AbortRegistry()
+        )
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: coordinator,
+            translator: ChatRequestTranslator(requestIDGenerator: { "req-recovery" })
+        )
+
+        let body = try #require(
+            """
+            {
+              "model": "melix-dev-text",
+              "stream": true,
+              "session_id": "session-recovery",
+              "branch_id": "branch-main",
+              "parent_request_id": "req-parent",
+              "restore_snapshot_id": "snap-parent",
+              "save_boundary_snapshot": true,
+              "messages": [
+                { "role": "user", "content": "Resume" }
+              ]
+            }
+            """.data(using: .utf8)
+        )
+
+        _ = try await handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/chat/completions",
+                headers: ["content-type": "application/json"],
+                body: body
+            )
+        )
+
+        let request = try #require(await workerClient.lastGenerateRequest)
+        #expect(request.execution.id.sessionID == "session-recovery")
+        #expect(request.execution.id.branchID == "branch-main")
+        #expect(request.execution.id.parentRequestID == "req-parent")
+        #expect(request.execution.cacheHints.restoreSnapshotID == "snap-parent")
+        #expect(request.execution.cacheHints.saveBoundarySnapshot)
+        #expect(request.execution.cacheHints.persistL2)
+        #expect(request.execution.cacheHints.preferHotPrefix)
+    }
+
     @Test("GET /v1/models returns model state from the catalog")
     func getModelsReturnsCatalogState() async throws {
         let catalog = ModelCatalog(seedModels: [warmModel()])

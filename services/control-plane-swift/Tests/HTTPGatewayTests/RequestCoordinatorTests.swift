@@ -298,6 +298,104 @@ struct RequestCoordinatorTests {
         #expect(state?.branches.first?.lastToolCallID == "tool-call-1")
     }
 
+    @Test("session follow-up requests restore the latest branch snapshot through phase-aware prefill")
+    func sessionFollowUpRequestsRestoreLatestBranchSnapshot() async throws {
+        let workerClient = PhaseAwareWorkerClient()
+        let sessionGraphStore = SessionGraphStore(nowUnixMs: { 9_000 })
+        let metricsStore = MetricsStore()
+        _ = await sessionGraphStore.recordRequestStart(
+            sessionID: "session-resume",
+            branchID: "branch-main",
+            requestID: "req-parent"
+        )
+        var snapshot = Melix_Controlplane_V1_SnapshotRef()
+        snapshot.snapshotID = "snap-parent"
+        snapshot.requestID = "req-parent"
+        snapshot.tokenBoundary = 6
+        _ = await sessionGraphStore.recordSnapshotHydration(
+            sessionID: "session-resume",
+            branchID: "branch-main",
+            snapshot: snapshot
+        )
+
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(defaultTextClient: workerClient),
+            abortRegistry: AbortRegistry(),
+            metricsStore: metricsStore,
+            sessionGraphStore: sessionGraphStore
+        )
+
+        let execution = try await coordinator.startChatCompletion(
+            makeTranslatedChatRequest(
+                requestID: "req-resume",
+                sessionID: "session-resume",
+                branchID: "branch-main",
+                parentRequestID: "req-parent",
+                saveBoundarySnapshot: true
+            )
+        )
+        let consumer = Task {
+            do {
+                for try await _ in execution.stream {
+                }
+            } catch {
+            }
+        }
+
+        let prefillRequest = try #require(await workerClient.lastPrefillRequest())
+        #expect(prefillRequest.execution.cacheHints.restoreSnapshotID == "snap-parent")
+        #expect(await workerClient.generatedRequestIDs.isEmpty)
+
+        await workerClient.emitDecodeStarted(requestID: "req-resume", decodeHandle: prefillRequest.execution.id.requestID)
+        await workerClient.emitToken(requestID: "req-resume", text: "restored")
+        await workerClient.finishDecode(requestID: "req-resume")
+        _ = await consumer.result
+
+        let metrics = await metricsStore.snapshot()
+        #expect(metrics.values["session_graph.restore_snapshot_count", default: 0] >= 1)
+    }
+
+    @Test("snapshot created events hydrate branch resume metadata during phase-aware decode")
+    func snapshotCreatedEventsHydrateBranchResumeMetadata() async throws {
+        let workerClient = PhaseAwareWorkerClient()
+        let sessionGraphStore = SessionGraphStore(nowUnixMs: { 10_000 })
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(defaultTextClient: workerClient),
+            abortRegistry: AbortRegistry(),
+            sessionGraphStore: sessionGraphStore
+        )
+
+        let execution = try await coordinator.startChatCompletion(
+            makeTranslatedChatRequest(
+                requestID: "req-snapshot",
+                sessionID: "session-snapshot",
+                branchID: "branch-main",
+                saveBoundarySnapshot: true
+            )
+        )
+        let consumer = Task {
+            do {
+                for try await _ in execution.stream {
+                }
+            } catch {
+            }
+        }
+
+        await workerClient.emitDecodeStarted(requestID: "req-snapshot", decodeHandle: "decode-snapshot")
+        await workerClient.emitSnapshotCreated(
+            requestID: "req-snapshot",
+            snapshotID: "snap-created",
+            tokenBoundary: 12
+        )
+        await workerClient.finishDecode(requestID: "req-snapshot")
+        _ = await consumer.result
+
+        let state = await sessionGraphStore.state(for: "session-snapshot")
+        #expect(state?.latestSnapshotID == "snap-created")
+        #expect(state?.branches.first?.resumeSnapshotID == "snap-created")
+        #expect(state?.branches.first?.headRequestID == "req-snapshot")
+    }
+
     @Test("swift route failure does not fall back to python text execution")
     func swiftRouteFailureDoesNotFallBackToPythonTextExecution() async throws {
         let pythonWorker = BlockingWorkerClient()
@@ -842,9 +940,12 @@ private actor ThrowingStreamWorkerClient: WorkerRoutingClient {
     }
 }
 
-private actor PhaseAwareWorkerClient: WorkerRoutingClient {
+private actor PhaseAwareWorkerClient: WorkerRoutingClient, PhaseAwareWorkerClientProtocol {
     private var continuations: [String: AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error>.Continuation] = [:]
+    private var prefillRequests: [Melix_Worker_V1_PrefillRequest] = []
+    private var decodeRequests: [Melix_Worker_V1_DecodeRequest] = []
     private(set) var abortedRequestIDs: [String] = []
+    private(set) var generatedRequestIDs: [String] = []
 
     func canDispatchRequests() async -> Bool {
         true
@@ -853,6 +954,36 @@ private actor PhaseAwareWorkerClient: WorkerRoutingClient {
     func generate(
         request: Melix_Worker_V1_GenerateRequest
     ) async throws -> AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error> {
+        generatedRequestIDs.append(request.execution.id.requestID)
+        let requestID = request.execution.id.requestID
+        return AsyncThrowingStream { continuation in
+            continuations[requestID] = continuation
+        }
+    }
+
+    func prefill(
+        request: Melix_Worker_V1_PrefillRequest
+    ) async throws -> Melix_Worker_V1_PrefillResponse {
+        prefillRequests.append(request)
+
+        var response = Melix_Worker_V1_PrefillResponse()
+        response.ok = true
+        response.decodeHandle = "decode-\(request.execution.id.requestID)"
+        response.blockTableID = "block-\(request.execution.id.requestID)"
+        response.promptTokens = 4
+        response.lifecyclePhase = .executionPrefilling
+        response.admissionState = .admissionAdmitted
+        response.restoredSnapshotID = request.execution.cacheHints.restoreSnapshotID
+        if response.appliedAcceleration.mode == .unspecified {
+            response.appliedAcceleration.mode = .baseline
+        }
+        return response
+    }
+
+    func decode(
+        request: Melix_Worker_V1_DecodeRequest
+    ) async throws -> AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error> {
+        decodeRequests.append(request)
         let requestID = request.execution.id.requestID
         return AsyncThrowingStream { continuation in
             continuations[requestID] = continuation
@@ -905,6 +1036,27 @@ private actor PhaseAwareWorkerClient: WorkerRoutingClient {
         payload.maxOutputTokens = 64
         payload.resumedFromPrefill = true
         event.decodeStarted = payload
+        continuation.yield(event)
+    }
+
+    func emitSnapshotCreated(
+        requestID: String,
+        snapshotID: String,
+        tokenBoundary: UInt32
+    ) {
+        guard let continuation = continuations[requestID] else {
+            return
+        }
+        var event = Melix_Worker_V1_ExecuteEvent()
+        event.requestID = requestID
+        event.executionKind = "decode"
+        event.phase = .executionDecoding
+        event.admissionState = .admissionAdmitted
+        event.lane = "text.decode.interactive"
+        var payload = Melix_Worker_V1_BoundarySnapshotCreated()
+        payload.snapshotID = snapshotID
+        payload.tokenBoundary = tokenBoundary
+        event.snapshotCreated = payload
         continuation.yield(event)
     }
 
@@ -990,6 +1142,10 @@ private actor PhaseAwareWorkerClient: WorkerRoutingClient {
     }
 
     func finish(requestID: String) {
+        finishDecode(requestID: requestID)
+    }
+
+    func finishDecode(requestID: String) {
         guard let continuation = continuations.removeValue(forKey: requestID) else {
             return
         }
@@ -1005,6 +1161,14 @@ private actor PhaseAwareWorkerClient: WorkerRoutingClient {
         event.completed = completed
         continuation.yield(event)
         continuation.finish()
+    }
+
+    func lastPrefillRequest() -> Melix_Worker_V1_PrefillRequest? {
+        prefillRequests.last
+    }
+
+    func lastDecodeRequest() -> Melix_Worker_V1_DecodeRequest? {
+        decodeRequests.last
     }
 
     func finishAborted(requestID: String) {
@@ -1121,7 +1285,10 @@ private func makeTranslatedChatRequest(
     requestID: String,
     modelID: String = "melix-dev-text",
     sessionID: String = "",
-    branchID: String = ""
+    branchID: String = "",
+    parentRequestID: String = "",
+    restoreSnapshotID: String = "",
+    saveBoundarySnapshot: Bool = false
 ) -> TranslatedChatRequest {
     var workerRequest = Melix_Worker_V1_GenerateRequest()
     workerRequest.execution = Melix_Worker_V1_ExecutionMetadata()
@@ -1129,11 +1296,15 @@ private func makeTranslatedChatRequest(
     workerRequest.execution.id.requestID = requestID
     workerRequest.execution.id.sessionID = sessionID
     workerRequest.execution.id.branchID = branchID
+    workerRequest.execution.id.parentRequestID = parentRequestID
     workerRequest.execution.modelHandle = "melix-dev-text::local"
     workerRequest.execution.scheduling = Melix_Worker_V1_SchedulingHints()
     workerRequest.execution.scheduling.lane = "text.decode.interactive"
     workerRequest.execution.scheduling.priority = 100
     workerRequest.execution.scheduling.latencySensitive = true
+    workerRequest.execution.cacheHints = Melix_Worker_V1_CacheHints()
+    workerRequest.execution.cacheHints.restoreSnapshotID = restoreSnapshotID
+    workerRequest.execution.cacheHints.saveBoundarySnapshot = saveBoundarySnapshot
 
     return TranslatedChatRequest(
         requestID: requestID,
