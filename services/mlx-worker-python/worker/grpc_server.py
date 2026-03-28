@@ -11,12 +11,15 @@ from packages.protocol.python.worker.v1 import (
     common_pb2,
     inference_pb2,
     inference_pb2_grpc,
+    maintenance_pb2,
+    maintenance_pb2_grpc,
     runtime_pb2,
     runtime_pb2_grpc,
 )
 
 from worker.engine.embedding_core import EmbeddingCore
 from worker.engine.engine_core import EngineCore
+from worker.engine.maintenance_core import MaintenanceCore
 from worker.engine.rerank_core import RerankCore
 from worker.registry import WorkerRegistry
 from worker.runtime.deterministic_embedding_runtime import DeterministicEmbeddingRuntime
@@ -133,6 +136,24 @@ class WorkerInferenceService(inference_pb2_grpc.InferenceServiceServicer):
         )
 
 
+class WorkerMaintenanceService(maintenance_pb2_grpc.MaintenanceServiceServicer):
+    def __init__(self, registry: WorkerRegistry, jobs_root: Path | str | None = None) -> None:
+        root = Path(jobs_root or ".runtime/model-ops")
+        self._core = MaintenanceCore(registry, jobs_root=root)
+
+    def ConvertModel(self, request, context):
+        yield from self._core.convert_model(request)
+
+    def GetModelInfo(self, request, context):
+        return self._core.get_model_info(request)
+
+    def RunDoctor(self, request, context):
+        return self._core.doctor_response()
+
+    def RunBench(self, request, context):
+        yield from self._core.bench_events()
+
+
 def build_registry_for_backend(backend_mode: str) -> WorkerRegistry:
     if backend_mode == "deterministic":
         return WorkerRegistry(
@@ -155,8 +176,10 @@ def build_server(
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=4))
     runtime_service = WorkerRuntimeService(registry)
     inference_service = WorkerInferenceService(registry)
+    maintenance_service = WorkerMaintenanceService(registry)
     runtime_pb2_grpc.add_RuntimeServiceServicer_to_server(runtime_service, server)
     inference_pb2_grpc.add_InferenceServiceServicer_to_server(inference_service, server)
+    maintenance_pb2_grpc.add_MaintenanceServiceServicer_to_server(maintenance_service, server)
     server.add_insecure_port(f"unix://{socket_path}")
     return server, runtime_service, inference_service
 

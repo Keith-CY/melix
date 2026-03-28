@@ -7,9 +7,15 @@ from threading import Event
 
 import pytest
 
-from packages.protocol.python.worker.v1 import common_pb2, inference_pb2, runtime_pb2
+from packages.protocol.python.worker.v1 import common_pb2, inference_pb2, maintenance_pb2, runtime_pb2
 
-from worker.grpc_server import WorkerInferenceService, WorkerRuntimeService, build_server, main
+from worker.grpc_server import (
+    WorkerInferenceService,
+    WorkerMaintenanceService,
+    WorkerRuntimeService,
+    build_server,
+    main,
+)
 from worker.model_registry.catalog import WorkerModelCatalog
 from worker.registry import WorkerRegistry
 from worker.runtime.mlx_text_runtime import AutoMLXBackend, MLXTextRuntime, RuntimeUnavailableError
@@ -293,10 +299,11 @@ def test_build_server_and_main_bootstrap(monkeypatch) -> None:
     assert isinstance(runtime_service, WorkerRuntimeService)
     assert isinstance(inference_service, WorkerInferenceService)
     assert seen_build == {
-        "handlers": 2,
+        "handlers": 3,
         "registered_services": [
             ("melix.worker.v1.RuntimeService", 8),
             ("melix.worker.v1.InferenceService", 9),
+            ("melix.worker.v1.MaintenanceService", 4),
         ],
         "address": f"unix://{Path('/tmp/melix-test.sock').resolve()}",
         "stopped": 0,
@@ -351,6 +358,25 @@ def test_build_server_normalizes_relative_socket_path(monkeypatch, tmp_path: Pat
     build_server("relative-worker.sock", registry=registry)
 
     assert seen["address"] == f"unix://{tmp_path / 'relative-worker.sock'}"
+
+
+def test_maintenance_service_keeps_doctor_and_bench_structured(tmp_path: Path) -> None:
+    service = WorkerMaintenanceService(build_registry(), jobs_root=tmp_path / "ops")
+
+    doctor = service.RunDoctor(
+        maintenance_pb2.RunDoctorRequest(model_handle="melix-dev-text::1"),
+        context=None,
+    )
+    bench_events = list(
+        service.RunBench(
+            maintenance_pb2.RunBenchRequest(model_handle="melix-dev-text::1", suites=["smoke"]),
+            context=None,
+        )
+    )
+
+    assert doctor.ok is False
+    assert doctor.error.code == "unimplemented"
+    assert bench_events[0].failed.error.code == "unimplemented"
 
 
 def test_bootstrap_module_invokes_grpc_main(monkeypatch) -> None:
