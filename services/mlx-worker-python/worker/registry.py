@@ -9,6 +9,8 @@ from packages.protocol.python.worker.v1 import common_pb2, runtime_pb2
 from worker.engine.request_state import RequestState
 from worker.model_registry.catalog import WorkerModelCatalog
 from worker.runtime.deterministic_ocr_runtime import DeterministicOCRRuntime
+from worker.runtime.deterministic_speech_runtime import DeterministicSpeechRuntime
+from worker.runtime.deterministic_transcription_runtime import DeterministicTranscriptionRuntime
 from worker.runtime.deterministic_vlm_runtime import DeterministicVLMRuntime
 from worker.runtime.mlx_text_runtime import MLXTextRuntime
 from worker.runtime.deterministic_embedding_runtime import DeterministicEmbeddingRuntime
@@ -32,6 +34,8 @@ class WorkerRegistry:
         rerank_runtime: DeterministicRerankRuntime | None = None,
         ocr_runtime: DeterministicOCRRuntime | None = None,
         vlm_runtime: DeterministicVLMRuntime | None = None,
+        transcription_runtime: DeterministicTranscriptionRuntime | None = None,
+        speech_runtime: DeterministicSpeechRuntime | None = None,
         model_catalog: WorkerModelCatalog | None = None,
         worker_id: str = "worker-text-001",
     ) -> None:
@@ -40,6 +44,8 @@ class WorkerRegistry:
         self.rerank_runtime = rerank_runtime or DeterministicRerankRuntime()
         self.ocr_runtime = ocr_runtime or DeterministicOCRRuntime()
         self.vlm_runtime = vlm_runtime or DeterministicVLMRuntime()
+        self.transcription_runtime = transcription_runtime or DeterministicTranscriptionRuntime()
+        self.speech_runtime = speech_runtime or DeterministicSpeechRuntime()
         self.model_catalog = model_catalog or WorkerModelCatalog()
         self.worker_id = worker_id
         self._lock = Lock()
@@ -68,8 +74,8 @@ class WorkerRegistry:
             multimodal=common_pb2.MultimodalCapabilities(
                 supports_ocr=True,
                 supports_vlm=True,
-                supports_transcription=False,
-                supports_speech=False,
+                supports_transcription=True,
+                supports_speech=True,
             ),
         )
 
@@ -159,4 +165,8 @@ class WorkerRegistry:
             return "ocr", self.ocr_runtime
         if model_spec.model_kind == "vlm":
             return "vlm", self.vlm_runtime
+        if model_spec.model_kind == "transcription":
+            return "transcription", self.transcription_runtime
+        if model_spec.model_kind == "speech":
+            return "speech", self.speech_runtime
         return "text", self.runtime

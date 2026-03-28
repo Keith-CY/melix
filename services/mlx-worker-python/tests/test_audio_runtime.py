@@ -1,0 +1,218 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+
+from packages.protocol.python.worker.v1 import common_pb2, inference_pb2, maintenance_pb2, runtime_pb2
+
+from worker.engine.maintenance_core import MaintenanceCore
+from worker.grpc_server import WorkerInferenceService, WorkerRuntimeService
+from worker.model_registry.catalog import WorkerModelCatalog
+from worker.registry import WorkerRegistry
+from worker.runtime.audio_preprocessing import AudioPreprocessError, prepare_audio_input
+from worker.runtime.deterministic_speech_runtime import DeterministicSpeechRuntime
+from worker.runtime.deterministic_transcription_runtime import DeterministicTranscriptionRuntime
+from worker.runtime.mlx_text_runtime import MLXTextRuntime
+
+
+class PassiveTextBackend:
+    runtime_name = "passive-text"
+
+    def load_model(self, model_spec):
+        return {"model_id": model_spec.model_id}
+
+    def estimate_resident_bytes(self, model_spec):
+        return 1024
+
+
+def build_services():
+    registry = WorkerRegistry(
+        runtime=MLXTextRuntime(backend=PassiveTextBackend()),
+        model_catalog=WorkerModelCatalog(),
+    )
+    runtime_service = WorkerRuntimeService(registry)
+    inference_service = WorkerInferenceService(registry)
+    maintenance_core = MaintenanceCore(registry, jobs_root=Path(".runtime/test-model-ops"))
+    return runtime_service, inference_service, maintenance_core
+
+
+def load_model(runtime_service: WorkerRuntimeService, model: common_pb2.ModelSpec) -> str:
+    response = runtime_service.LoadModel(
+        runtime_pb2.LoadModelRequest(model=model),
+        context=None,
+    )
+    assert response.ok is True
+    return response.model_handle
+
+
+def test_transcribe_returns_text_from_inline_audio_bytes() -> None:
+    runtime_service, inference_service, maintenance_core = build_services()
+    model_handle = load_model(runtime_service, WorkerModelCatalog.dev_transcription_model())
+
+    response = inference_service.Transcribe(
+        inference_pb2.TranscribeRequest(
+            id=common_pb2.RequestIdentity(request_id="transcribe-inline"),
+            model_handle=model_handle,
+            audio_bytes=b"hello deterministic audio",
+            format="wav",
+            task="transcribe",
+            audio=common_pb2.MediaMetadata(
+                media_type=common_pb2.MEDIA_TYPE_AUDIO,
+                source_kind=common_pb2.MEDIA_SOURCE_INLINE_BYTES,
+                mime_type="audio/wav",
+                format="wav",
+                filename="inline.wav",
+            ),
+            language="en",
+        ),
+        context=None,
+    )
+    model_info = maintenance_core.get_model_info(
+        maintenance_pb2.GetModelInfoRequest(source_model="melix-dev-transcribe")
+    )
+
+    assert response.error.code == ""
+    assert response.text == "hello deterministic audio"
+    assert response.language == "en"
+    assert response.duration_seconds > 0.0
+    assert model_info.ok is True
+    assert model_info.supported_modalities == ["audio", "text"]
+    assert model_info.supported_tasks == ["transcribe"]
+
+
+def test_transcribe_reads_audio_from_file_uri(tmp_path: Path) -> None:
+    runtime_service, inference_service, _ = build_services()
+    model_handle = load_model(runtime_service, WorkerModelCatalog.dev_transcription_model())
+    audio_path = tmp_path / "sample.wav"
+    audio_path.write_bytes(b"audio file transcript")
+
+    response = inference_service.Transcribe(
+        inference_pb2.TranscribeRequest(
+            id=common_pb2.RequestIdentity(request_id="transcribe-uri"),
+            model_handle=model_handle,
+            audio_uri=audio_path.as_uri(),
+            format="wav",
+            task="transcribe",
+            audio=common_pb2.MediaMetadata(
+                media_type=common_pb2.MEDIA_TYPE_AUDIO,
+                source_kind=common_pb2.MEDIA_SOURCE_URI,
+                mime_type="audio/wav",
+                format="wav",
+                filename=audio_path.name,
+            ),
+        ),
+        context=None,
+    )
+
+    assert response.error.code == ""
+    assert response.text == "audio file transcript"
+    assert response.duration_seconds > 0.0
+
+
+def test_speak_returns_audio_bytes_and_format() -> None:
+    runtime_service, inference_service, maintenance_core = build_services()
+    model_handle = load_model(runtime_service, WorkerModelCatalog.dev_speech_model())
+
+    response = inference_service.Speak(
+        inference_pb2.SpeakRequest(
+            id=common_pb2.RequestIdentity(request_id="speak-1"),
+            model_handle=model_handle,
+            input="hello speech",
+            voice="alloy",
+            format="wav",
+            instructions="neutral",
+        ),
+        context=None,
+    )
+    model_info = maintenance_core.get_model_info(
+        maintenance_pb2.GetModelInfoRequest(source_model="melix-dev-speech")
+    )
+
+    assert response.error.code == ""
+    assert response.format == "wav"
+    assert response.audio_bytes == b"VOICE=alloy\nFORMAT=wav\nTEXT=hello speech"
+    assert model_info.ok is True
+    assert model_info.supported_modalities == ["text", "audio"]
+    assert model_info.supported_tasks == ["speak"]
+
+
+def test_audio_preprocessing_accepts_plain_local_paths_and_fills_metadata(tmp_path: Path) -> None:
+    audio_path = tmp_path / "sample.raw"
+    audio_path.write_bytes(b"path based audio")
+
+    prepared = prepare_audio_input(
+        inference_pb2.TranscribeRequest(
+            audio_uri=str(audio_path),
+            audio=common_pb2.MediaMetadata(
+                media_type=common_pb2.MEDIA_TYPE_AUDIO,
+                source_kind=common_pb2.MEDIA_SOURCE_URI,
+            ),
+        )
+    )
+
+    assert prepared.source_kind == "uri"
+    assert prepared.format == "raw"
+    assert prepared.filename == "sample.raw"
+    assert prepared.decoded_text() == "path based audio"
+    assert prepared.chunk_count >= 1
+
+
+def test_audio_preprocessing_rejects_missing_and_unsupported_inputs(tmp_path: Path) -> None:
+    missing_path = tmp_path / "missing.wav"
+
+    with pytest.raises(AudioPreprocessError, match="No audio input provided"):
+        prepare_audio_input(inference_pb2.TranscribeRequest())
+
+    with pytest.raises(AudioPreprocessError, match="Missing local audio input"):
+        prepare_audio_input(inference_pb2.TranscribeRequest(audio_uri=str(missing_path)))
+
+    with pytest.raises(AudioPreprocessError, match="Unsupported audio URI scheme"):
+        prepare_audio_input(inference_pb2.TranscribeRequest(audio_uri="https://example.com/audio.wav"))
+
+
+def test_transcribe_and_speak_reject_wrong_loaded_model_kinds() -> None:
+    runtime_service, inference_service, _ = build_services()
+    text_model_handle = load_model(runtime_service, WorkerModelCatalog.dev_text_model())
+
+    transcribe = inference_service.Transcribe(
+        inference_pb2.TranscribeRequest(
+            id=common_pb2.RequestIdentity(request_id="wrong-transcribe"),
+            model_handle=text_model_handle,
+            audio_bytes=b"hello",
+        ),
+        context=None,
+    )
+    speak = inference_service.Speak(
+        inference_pb2.SpeakRequest(
+            id=common_pb2.RequestIdentity(request_id="wrong-speak"),
+            model_handle=text_model_handle,
+            input="hello",
+        ),
+        context=None,
+    )
+
+    assert transcribe.error.code == "invalid_argument"
+    assert speak.error.code == "invalid_argument"
+
+
+def test_deterministic_audio_runtimes_expose_probe_snapshots() -> None:
+    transcription_runtime = DeterministicTranscriptionRuntime()
+    transcript = transcription_runtime.transcribe(
+        {},
+        inference_pb2.TranscribeRequest(audio_bytes=b" ", language=""),
+    )
+    transcription_probe = transcription_runtime.last_probe_snapshot()
+
+    speech_runtime = DeterministicSpeechRuntime()
+    speech = speech_runtime.speak({}, inference_pb2.SpeakRequest(input="hello", voice="", format=""))
+    speech_probe = speech_runtime.last_probe_snapshot()
+
+    assert transcript.text == "<silence>"
+    assert transcript.language == "und"
+    assert transcription_probe.chunk_count >= 1
+    assert transcription_probe.estimated_duration_seconds > 0.0
+    assert speech.audio_bytes.startswith(b"VOICE=default")
+    assert speech.format == "wav"
+    assert speech_probe.output_bytes == len(speech.audio_bytes)
+    assert speech_probe.speech_latency_ms > 0.0

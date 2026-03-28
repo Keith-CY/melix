@@ -269,8 +269,8 @@ def test_inference_service_covers_error_and_unimplemented_paths() -> None:
     assert len(embed.embeddings) == 2
     assert rerank.error.code == ""
     assert len(rerank.items) == 2
-    assert transcribe.error.code == "unimplemented"
-    assert speak.error.code == "unimplemented"
+    assert transcribe.error.code == "not_found"
+    assert speak.error.code == "not_found"
     assert image_generate.error.code == "unimplemented"
     assert image_edit.error.code == "unimplemented"
 

@@ -21,6 +21,8 @@ from worker.engine.embedding_core import EmbeddingCore
 from worker.engine.engine_core import EngineCore
 from worker.engine.maintenance_core import MaintenanceCore
 from worker.engine.rerank_core import RerankCore
+from worker.engine.speech_core import SpeechCore
+from worker.engine.transcription_core import TranscriptionCore
 from worker.registry import WorkerRegistry
 from worker.runtime.deterministic_embedding_runtime import DeterministicEmbeddingRuntime
 from worker.runtime.deterministic_backend import DeterministicTextBackend
@@ -90,6 +92,8 @@ class WorkerInferenceService(inference_pb2_grpc.InferenceServiceServicer):
         self._engine = EngineCore(registry)
         self._embedding = EmbeddingCore(registry)
         self._rerank = RerankCore(registry)
+        self._transcription = TranscriptionCore(registry)
+        self._speech = SpeechCore(registry)
 
     def Generate(self, request, context):
         yield from self._engine.generate(request)
@@ -121,14 +125,10 @@ class WorkerInferenceService(inference_pb2_grpc.InferenceServiceServicer):
         return self._rerank.rerank(request)
 
     def Transcribe(self, request, context):
-        return inference_pb2.TranscribeResponse(
-            error=common_pb2.ErrorStatus(code="unimplemented", message="Transcribe is deferred in phase 0.")
-        )
+        return self._transcription.transcribe(request)
 
     def Speak(self, request, context):
-        return inference_pb2.SpeakResponse(
-            error=common_pb2.ErrorStatus(code="unimplemented", message="Speak is deferred in phase 6.")
-        )
+        return self._speech.speak(request)
 
     def ImageGenerate(self, request, context):
         return inference_pb2.ImageGenerateResponse(

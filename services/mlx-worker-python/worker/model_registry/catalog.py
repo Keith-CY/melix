@@ -14,6 +14,8 @@ class WorkerModelCatalog:
             "melix-dev-rerank": self.dev_rerank_model(environment=self._environment),
             "melix-dev-ocr": self.dev_ocr_model(environment=self._environment),
             "melix-dev-vlm": self.dev_vlm_model(environment=self._environment),
+            "melix-dev-transcribe": self.dev_transcription_model(environment=self._environment),
+            "melix-dev-speech": self.dev_speech_model(environment=self._environment),
         }
 
     def get(self, model_id: str) -> common_pb2.ModelSpec | None:
@@ -88,6 +90,36 @@ class WorkerModelCatalog:
             model_kind="vlm",
             revision="dev",
             tokenizer_hash="tok-vlm-dev",
+            quant_profile_id="q8",
+            parser_mode="text",
+            reasoning_mode="off",
+            max_context=4096,
+        )
+
+    @staticmethod
+    def dev_transcription_model(environment: dict[str, str] | None = None) -> common_pb2.ModelSpec:
+        environment = dict(environment or os.environ)
+        return common_pb2.ModelSpec(
+            model_id="melix-dev-transcribe",
+            model_path=environment.get("MELIX_DEV_TRANSCRIBE_MODEL_PATH", "models/melix-dev-transcribe"),
+            model_kind="transcription",
+            revision="dev",
+            tokenizer_hash="tok-transcribe-dev",
+            quant_profile_id="q8",
+            parser_mode="text",
+            reasoning_mode="off",
+            max_context=4096,
+        )
+
+    @staticmethod
+    def dev_speech_model(environment: dict[str, str] | None = None) -> common_pb2.ModelSpec:
+        environment = dict(environment or os.environ)
+        return common_pb2.ModelSpec(
+            model_id="melix-dev-speech",
+            model_path=environment.get("MELIX_DEV_SPEECH_MODEL_PATH", "models/melix-dev-speech"),
+            model_kind="speech",
+            revision="dev",
+            tokenizer_hash="tok-speech-dev",
             quant_profile_id="q8",
             parser_mode="text",
             reasoning_mode="off",

@@ -102,6 +102,12 @@ class MaintenanceCore:
         elif model.model_kind == "vlm":
             supported_modalities = ["text", "image"]
             supported_tasks = ["vlm", "generate"]
+        elif model.model_kind == "transcription":
+            supported_modalities = ["audio", "text"]
+            supported_tasks = ["transcribe"]
+        elif model.model_kind == "speech":
+            supported_modalities = ["text", "audio"]
+            supported_tasks = ["speak"]
 
         return maintenance_pb2.GetModelInfoResponse(
             ok=True,

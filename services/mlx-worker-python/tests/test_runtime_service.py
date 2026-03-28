@@ -117,6 +117,30 @@ def test_load_model_supports_ocr_and_vlm_models() -> None:
     assert vlm.model_handle.startswith("melix-dev-vlm::")
 
 
+def test_load_model_supports_transcription_and_speech_models() -> None:
+    service = build_runtime_service()
+
+    transcription = service.LoadModel(
+        runtime_pb2.LoadModelRequest(
+            model=WorkerModelCatalog.dev_transcription_model(),
+            memory_budget_bytes=4096,
+        ),
+        context=None,
+    )
+    speech = service.LoadModel(
+        runtime_pb2.LoadModelRequest(
+            model=WorkerModelCatalog.dev_speech_model(),
+            memory_budget_bytes=4096,
+        ),
+        context=None,
+    )
+
+    assert transcription.ok is True
+    assert speech.ok is True
+    assert transcription.model_handle.startswith("melix-dev-transcribe::")
+    assert speech.model_handle.startswith("melix-dev-speech::")
+
+
 def test_handshake_reports_phase_six_multimodal_capabilities() -> None:
     service = build_runtime_service()
 
@@ -131,5 +155,5 @@ def test_handshake_reports_phase_six_multimodal_capabilities() -> None:
 
     assert response.capabilities.multimodal.supports_ocr is True
     assert response.capabilities.multimodal.supports_vlm is True
-    assert response.capabilities.multimodal.supports_transcription is False
-    assert response.capabilities.multimodal.supports_speech is False
+    assert response.capabilities.multimodal.supports_transcription is True
+    assert response.capabilities.multimodal.supports_speech is True
