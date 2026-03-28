@@ -46,6 +46,7 @@ Current phase-status and planning documents:
 - `plans/2026-03-28-p3-m4-session-graph-state.md`
 - `plans/2026-03-28-p3-m5-recovery-flows.md`
 - `plans/2026-03-28-p3-m6-cache-aware-scheduling.md`
+- `plans/2026-03-28-p4-m1-endpoint-contract-alignment.md`
 - `plans/2026-03-28-p1-m2-swift-text-worker-scaffold.md`
 - `plans/2026-03-28-p1-m3-swift-runtime-lifecycle.md`
 - `plans/2026-03-28-p1-m4-swift-generate-abort.md`
