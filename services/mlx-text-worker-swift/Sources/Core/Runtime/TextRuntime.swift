@@ -102,6 +102,24 @@ struct TextRuntime: Sendable {
     }
 }
 
+func makeTextRuntime(
+    for configuration: WorkerConfiguration,
+    residentMemoryReader: @escaping @Sendable () -> UInt64 = processResidentMemoryBytes
+) -> TextRuntime {
+    switch configuration.backendMode.lowercased() {
+    case "deterministic":
+        return TextRuntime(
+            backend: DeterministicTextBackend(),
+            residentMemoryReader: residentMemoryReader
+        )
+    default:
+        return TextRuntime(
+            backend: AutoSwiftMLXBackend(),
+            residentMemoryReader: residentMemoryReader
+        )
+    }
+}
+
 private func processResidentMemoryBytes() -> UInt64 {
     var info = mach_task_basic_info()
     var count = mach_msg_type_number_t(MemoryLayout<mach_task_basic_info_data_t>.size / MemoryLayout<natural_t>.size)

@@ -3,6 +3,7 @@ docs/product-brief.md
 .build
 .swift-home
 .uv-cache
+.runtime
 .venv
 __pycache__/
 .pytest_cache/

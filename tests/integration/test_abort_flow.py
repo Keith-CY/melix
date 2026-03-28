@@ -30,12 +30,19 @@ def test_abort_finishes_the_live_stream_with_cancelled_completion() -> None:
         )
 
         first_chunk = response.readline().decode("utf-8")
-        while first_chunk and not first_chunk.startswith("data: "):
+        payload: dict[str, object] | None = None
+        while first_chunk:
+            if first_chunk.startswith("data: "):
+                payload = json.loads(first_chunk.removeprefix("data: ").strip())
+                request_id = payload.get("id") or payload.get("request_id")
+                if isinstance(request_id, str) and request_id:
+                    break
             first_chunk = response.readline().decode("utf-8")
 
-        payload = json.loads(first_chunk.removeprefix("data: ").strip())
-        request_id = payload["id"]
-        assert abort_worker_request(stack.socket_path, request_id) is True
+        assert payload is not None
+        request_id = payload.get("id") or payload.get("request_id")
+        assert isinstance(request_id, str) and request_id
+        assert abort_worker_request(stack.swift_socket_path, request_id) is True
 
         body = first_chunk + response.read().decode("utf-8")
         assert "\"finish_reason\":\"cancelled\"" in body

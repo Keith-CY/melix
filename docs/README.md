@@ -37,6 +37,7 @@ Current phase-status and planning documents:
 - `plans/2026-03-28-p1-m3-swift-runtime-lifecycle.md`
 - `plans/2026-03-28-p1-m4-swift-generate-abort.md`
 - `plans/2026-03-28-p1-m5-control-plane-routing.md`
+- `plans/2026-03-28-p1-m6-workflow-integration-metrics.md`
 - `plans/2026-03-27-phase-2-text-runtime-depth.md`
 - `plans/2026-03-27-phase-3-cache-session-recovery.md`
 - `plans/2026-03-27-phase-4-text-api-breadth-agent-semantics.md`
@@ -54,6 +55,10 @@ Recent decision records:
 
 - `decisions/2026-03-27-swift-text-runtime.md`
 - `decisions/2026-03-28-product-scope-and-runtime-priorities.md`
+
+Current runbooks:
+
+- `runbooks/phase-1-local-stack.md`
 
 ## Engineering Standards
 

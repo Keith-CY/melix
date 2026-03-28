@@ -36,11 +36,12 @@ make coverage
 
 ## Local Operator Loop
 
-Bring up the deterministic phase-0 stack:
+Bring up the deterministic phase-1 stack:
 
 ```bash
 bash scripts/dev_up.sh
 curl -sS http://127.0.0.1:11434/v1/models
+make phase1-metrics
 ```
 
 Shut it down:
@@ -53,11 +54,35 @@ Optional real MLX smoke path:
 
 ```bash
 MELIX_DEV_TEXT_MODEL_PATH="<local path or hf repo>" \
-MELIX_BACKEND_MODE=auto \
+MELIX_SWIFT_TEXT_WORKER_BACKEND_MODE=swift \
 bash scripts/dev_up.sh
 ```
 
-`auto` is the real MLX runtime path. `deterministic` remains the default integration and repeatability path.
+`deterministic` remains the default integration and repeatability path.
+`swift` is the real Swift MLX runtime path for the text worker and requires
+`MELIX_DEV_TEXT_MODEL_PATH`.
+
+`scripts/dev_up.sh` now starts three processes:
+
+- the Swift text worker on a dedicated UDS socket
+- the Python compatibility worker on a dedicated UDS socket
+- the Swift control plane on the local HTTP port
+
+The runtime directory defaults to `.runtime/phase1` under the repository root. After startup,
+source the emitted `env.sh` file there if you need the exact socket and port values for local
+debugging.
+
+The default phase-1 metrics report compares:
+
+- the direct Swift worker text path
+- the direct Python compatibility text path
+- the control-plane HTTP/SSE text path
+
+Use JSON output when automation needs a machine-readable report:
+
+```bash
+make phase1-metrics PHASE1_METRICS_ARGS="--json"
+```
 
 `make proto` currently generates:
 
@@ -73,7 +98,12 @@ bash scripts/dev_up.sh
 - `docs/product-brief.md` is intentionally ignored and untracked.
 - `make coverage` is the repository entrypoint for source coverage checks before commit.
 
-The live runtime, HTTP gateway, and menu bar behavior are added incrementally in later tasks under `docs/plans/2026-03-27-phase-0-thin-path.md`.
+The current phase-status and implementation guidance live under:
+
+- `docs/plans/2026-03-27-phase-0-thin-path.md`
+- `docs/plans/2026-03-27-phase-1-swift-text-worker.md`
+- `docs/plans/2026-03-28-p1-m6-workflow-integration-metrics.md`
+- `docs/runbooks/phase-1-local-stack.md`
 
 ## License
 

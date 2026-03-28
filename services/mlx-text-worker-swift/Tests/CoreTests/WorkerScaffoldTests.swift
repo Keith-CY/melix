@@ -1167,6 +1167,57 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(bootstrap.services.metrics.counters["swift_text.unimplemented_rpc_count"], 0)
     }
 
+    func testDeterministicBackendModeBuildsARepeatableTextRuntime() async throws {
+        let runtime = makeTextRuntime(for: WorkerConfiguration(backendMode: "deterministic"))
+
+        XCTAssertEqual(runtime.runtimeName, "deterministic-text")
+
+        var spec = Melix_Worker_V1_ModelSpec()
+        spec.modelID = "melix-dev-text"
+        let loaded = try await runtime.loadModel(spec: spec)
+        let events = try await collectTextGenerationEvents(
+            from: try await runtime.generateEvents(
+                model: loaded.model,
+                messages: [makeUserMessage("hello deterministic swift")],
+                sampling: Melix_Worker_V1_SamplingConfig(),
+                shouldAbort: { false }
+            )
+        )
+
+        XCTAssertEqual(renderedPromptTokens(from: events), 3)
+        XCTAssertEqual(renderedTokenChunks(from: events), ["Echo: ", "hello ", "deterministic ", "swift"])
+        XCTAssertEqual(renderedSummary(from: events)?.completionTokens, 4)
+    }
+
+    func testDeterministicBackendRendersEmptyPromptAndStopsWhenAborted() async throws {
+        let runtime = makeTextRuntime(for: WorkerConfiguration(backendMode: "deterministic"))
+        var spec = Melix_Worker_V1_ModelSpec()
+        spec.modelID = "melix-dev-text"
+        let loaded = try await runtime.loadModel(spec: spec)
+
+        let emptyPromptEvents = try await collectTextGenerationEvents(
+            from: try await runtime.generateEvents(
+                model: loaded.model,
+                messages: [makeUserMessage("   ")],
+                sampling: Melix_Worker_V1_SamplingConfig(),
+                shouldAbort: { false }
+            )
+        )
+        XCTAssertEqual(renderedTokenChunks(from: emptyPromptEvents), ["Echo: ", "empty"])
+        XCTAssertEqual(renderedSummary(from: emptyPromptEvents)?.completionTokens, 2)
+
+        let abortedEvents = try await collectTextGenerationEvents(
+            from: try await runtime.generateEvents(
+                model: loaded.model,
+                messages: [makeUserMessage("abort after one token")],
+                sampling: Melix_Worker_V1_SamplingConfig(),
+                shouldAbort: { true }
+            )
+        )
+        XCTAssertEqual(renderedTokenChunks(from: abortedEvents), [])
+        XCTAssertEqual(renderedSummary(from: abortedEvents)?.completionTokens, 0)
+    }
+
     func testWarmupAndShutdownReturnExpectedStructuredResponses() async throws {
         let services = makeServices()
 

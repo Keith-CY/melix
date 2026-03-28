@@ -11,3 +11,7 @@ Use runbooks for:
 - operational checklists
 
 A runbook should let a new contributor or agent diagnose and recover a known class of problem without relying on unwritten context.
+
+Current runbooks:
+
+- `phase-1-local-stack.md`

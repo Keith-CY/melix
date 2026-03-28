@@ -13,7 +13,7 @@ package struct WorkerBootstrap: Sendable {
         let registry = WorkerRuntimeRegistry(
             configuration: configuration,
             modelCatalog: WorkerModelCatalog(),
-            runtime: TextRuntime()
+            runtime: makeTextRuntime(for: configuration)
         )
         let abortRegistry = AbortRegistry()
         let services = WorkerServices(
