@@ -116,6 +116,37 @@ struct ControlPlaneServiceTests {
         #expect(response.ops.metrics.values["workers.connected"] == 0)
     }
 
+    @Test("handshake includes live scheduler queue summary")
+    func handshakeIncludesLiveSchedulerQueueSummary() async throws {
+        let schedulerReadModel = SchedulerReadModel()
+        _ = await schedulerReadModel.recordAdmitted(
+            requestID: "req-live-queue",
+            laneHint: "text.decode.interactive",
+            priority: 100,
+            workerID: "swift-text-worker",
+            admissionLatencyMs: 3
+        )
+        let service = ControlPlaneService(schedulerReadModel: schedulerReadModel)
+
+        var request = Melix_Controlplane_V1_HandshakeRequest()
+        request.protocolVersion = "melix.controlplane.v1"
+        request.appVersion = "0.1.0"
+        request.bundleID = "com.melix.app"
+        request.clientInstanceID = "ui-live-queue"
+
+        let response = try await service.handshake(request)
+        let interactiveLane = response.snapshot.queues.lanes.first { lane in
+            lane.laneID == "text.decode.interactive"
+        }
+
+        #expect(response.snapshot.queues.activeRequests == 1)
+        #expect(response.snapshot.queues.admittedRequests == 1)
+        #expect(response.snapshot.queues.admissionLatencyMs == 3)
+        #expect(response.snapshot.queues.backpressure == 1)
+        #expect(interactiveLane?.activeRequests == 1)
+        #expect(interactiveLane?.backpressure == 1)
+    }
+
     @Test("execute returns unimplemented for unsupported command families")
     func executeReturnsUnimplementedForUnsupportedCommandFamilies() async throws {
         let service = ControlPlaneService()

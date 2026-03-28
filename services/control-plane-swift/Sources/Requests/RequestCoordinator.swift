@@ -1,4 +1,5 @@
 import Foundation
+import MelixControlPlaneProtocol
 import MelixWorkerProtocol
 
 public enum RequestCoordinatorError: Error, Equatable {
@@ -25,6 +26,7 @@ public struct CoordinatedChatExecution: Sendable {
 public actor RequestCoordinator {
     private let workerRegistry: WorkerRegistry
     private let abortRegistry: AbortRegistry
+    private let schedulerReadModel: SchedulerReadModel
     private let metricsStore: MetricsStore
     private let now: @Sendable () -> Date
     private var activeWorkerClients: [String: any WorkerClient]
@@ -32,11 +34,13 @@ public actor RequestCoordinator {
     public init(
         workerRegistry: WorkerRegistry,
         abortRegistry: AbortRegistry = AbortRegistry(),
+        schedulerReadModel: SchedulerReadModel = SchedulerReadModel(),
         metricsStore: MetricsStore = MetricsStore(),
         now: @escaping @Sendable () -> Date = Date.init
     ) {
         self.workerRegistry = workerRegistry
         self.abortRegistry = abortRegistry
+        self.schedulerReadModel = schedulerReadModel
         self.metricsStore = metricsStore
         self.now = now
         self.activeWorkerClients = [:]
@@ -45,12 +49,24 @@ public actor RequestCoordinator {
     public func startChatCompletion(
         _ request: TranslatedChatRequest
     ) async throws -> CoordinatedChatExecution {
+        let lane = request.workerRequest.execution.scheduling.lane
+        let priority = request.workerRequest.execution.scheduling.priority
         guard await abortRegistry.begin(requestID: request.requestID) else {
+            _ = await schedulerReadModel.recordRejected(
+                requestID: request.requestID,
+                laneHint: lane,
+                priority: priority
+            )
             throw RequestCoordinatorError.requestAlreadyActive
         }
         let routeStartedAt = now()
         guard let workerClient = await workerRegistry.client(forModelID: request.modelID) else {
             await abortRegistry.finish(requestID: request.requestID)
+            _ = await schedulerReadModel.recordRejected(
+                requestID: request.requestID,
+                laneHint: lane,
+                priority: priority
+            )
             throw RequestCoordinatorError.workerUnavailable
         }
         await metricsStore.set(
@@ -61,6 +77,11 @@ public actor RequestCoordinator {
         let connectStartedAt = now()
         guard await workerClient.canDispatchRequests() else {
             await abortRegistry.finish(requestID: request.requestID)
+            _ = await schedulerReadModel.recordRejected(
+                requestID: request.requestID,
+                laneHint: lane,
+                priority: priority
+            )
             throw RequestCoordinatorError.workerUnavailable
         }
         await metricsStore.set(
@@ -69,6 +90,12 @@ public actor RequestCoordinator {
         )
 
         let dispatchStartedAt = now()
+        _ = await schedulerReadModel.recordAdmitted(
+            requestID: request.requestID,
+            laneHint: lane,
+            priority: priority,
+            admissionLatencyMs: now().timeIntervalSince(dispatchStartedAt) * 1000
+        )
         await metricsStore.increment("requests.inflight")
         activeWorkerClients[request.requestID] = workerClient
 
@@ -98,11 +125,11 @@ public actor RequestCoordinator {
                             continuation.yield(event)
                         }
                         await metricsStore.decrement("requests.inflight")
-                        await self.finishRequestTracking(requestID: requestID)
+                        await self.finishRequestTracking(requestID: requestID, phase: .requestCompleted)
                         continuation.finish()
                     } catch {
                         await metricsStore.decrement("requests.inflight")
-                        await self.finishRequestTracking(requestID: requestID)
+                        await self.finishRequestTracking(requestID: requestID, phase: .requestFailed)
                         continuation.finish(throwing: error)
                     }
                 }
@@ -119,13 +146,11 @@ public actor RequestCoordinator {
             return CoordinatedChatExecution(requestID: requestID, modelID: modelID, stream: stream)
         } catch let error as WorkerClientError where error == .unavailable {
             await metricsStore.decrement("requests.inflight")
-            await abortRegistry.finish(requestID: request.requestID)
-            activeWorkerClients.removeValue(forKey: request.requestID)
+            await finishRequestTracking(requestID: request.requestID, phase: .requestFailed)
             throw RequestCoordinatorError.workerUnavailable
         } catch {
             await metricsStore.decrement("requests.inflight")
-            await abortRegistry.finish(requestID: request.requestID)
-            activeWorkerClients.removeValue(forKey: request.requestID)
+            await finishRequestTracking(requestID: request.requestID, phase: .requestFailed)
             throw error
         }
     }
@@ -145,13 +170,19 @@ public actor RequestCoordinator {
                 now().timeIntervalSince(startedAt) * 1000,
                 forKey: "http.abort_ms"
             )
-            await finishRequestTracking(requestID: requestID)
+            await finishRequestTracking(requestID: requestID, phase: .requestAborted)
         }
         return aborted
     }
 
-    private func finishRequestTracking(requestID: String) async {
+    private func finishRequestTracking(
+        requestID: String,
+        phase: Melix_Controlplane_V1_RequestPhase? = nil
+    ) async {
         await abortRegistry.finish(requestID: requestID)
         activeWorkerClients.removeValue(forKey: requestID)
+        if let phase {
+            await schedulerReadModel.recordTerminalState(requestID: requestID, phase: phase)
+        }
     }
 }

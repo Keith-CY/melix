@@ -9,6 +9,7 @@ public actor ControlPlaneService {
     private let eventHub: EventSubscriptionHub
     private let snapshotBuilder: ServerSnapshotBuilder
     private let enginePool: EnginePool
+    private let schedulerReadModel: SchedulerReadModel
 
     public init(
         serverVersion: String = "0.1.0",
@@ -17,7 +18,8 @@ public actor ControlPlaneService {
         metricsStore: MetricsStore = MetricsStore(),
         eventHub: EventSubscriptionHub = EventSubscriptionHub(),
         snapshotBuilder: ServerSnapshotBuilder = ServerSnapshotBuilder(),
-        enginePool: EnginePool = EnginePool()
+        enginePool: EnginePool = EnginePool(),
+        schedulerReadModel: SchedulerReadModel? = nil
     ) {
         self.serverVersion = serverVersion
         self.daemonInstanceID = daemonInstanceID
@@ -26,6 +28,12 @@ public actor ControlPlaneService {
         self.eventHub = eventHub
         self.snapshotBuilder = snapshotBuilder
         self.enginePool = enginePool
+        self.schedulerReadModel = schedulerReadModel ?? SchedulerReadModel(
+            metricsStore: metricsStore,
+            eventPublisher: { event in
+                await eventHub.publish(event)
+            }
+        )
     }
 
     public func handshake(
@@ -144,7 +152,8 @@ public actor ControlPlaneService {
     private func buildSnapshot() async -> Melix_Controlplane_V1_ServerSnapshot {
         let models = await modelCatalog.listModels()
         let metrics = await metricsStore.snapshot()
-        return snapshotBuilder.build(models: models, metrics: metrics)
+        let queues = await schedulerReadModel.snapshot()
+        return snapshotBuilder.build(models: models, metrics: metrics, queues: queues)
     }
 
     private func okResponse(

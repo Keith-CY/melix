@@ -48,7 +48,8 @@ struct RequestCoordinatorTests {
             abortRegistry: AbortRegistry()
         )
 
-        _ = try await coordinator.startChatCompletion(makeTranslatedChatRequest(requestID: "req-1"))
+        let execution = try await coordinator.startChatCompletion(makeTranslatedChatRequest(requestID: "req-1"))
+        #expect(execution.requestID == "req-1")
 
         do {
             _ = try await coordinator.startChatCompletion(makeTranslatedChatRequest(requestID: "req-2"))
@@ -192,6 +193,62 @@ struct RequestCoordinatorTests {
 
         let cancelled = try await coordinator.cancel(requestID: "req-missing-worker")
         #expect(!cancelled)
+    }
+
+    @Test("scheduler snapshots track admitted rejected and aborted coordinator lifecycle")
+    func schedulerSnapshotsTrackCoordinatorLifecycle() async throws {
+        let workerClient = BlockingWorkerClient()
+        let schedulerReadModel = SchedulerReadModel()
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(defaultTextClient: workerClient),
+            abortRegistry: AbortRegistry(),
+            schedulerReadModel: schedulerReadModel
+        )
+
+        let execution = try await coordinator.startChatCompletion(makeTranslatedChatRequest(requestID: "req-1"))
+        let streamTask = Task {
+            do {
+                for try await _ in execution.stream {
+                }
+            } catch {
+            }
+        }
+
+        let admittedSnapshot = await schedulerReadModel.snapshot()
+        let admittedProgress = await schedulerReadModel.progressSnapshot(for: "req-1")
+
+        #expect(admittedSnapshot.activeRequests == 1)
+        #expect(admittedSnapshot.admittedRequests == 1)
+        #expect(admittedProgress?.phase == .requestAdmitted)
+        #expect(admittedProgress?.lane == "text.decode.interactive")
+        #expect(admittedProgress?.admissionState == .admissionAdmitted)
+
+        do {
+            _ = try await coordinator.startChatCompletion(makeTranslatedChatRequest(requestID: "req-2"))
+            Issue.record("Expected the second request to be rejected.")
+        } catch let error as RequestCoordinatorError {
+            #expect(error == .requestAlreadyActive)
+        }
+
+        let rejectedSnapshot = await schedulerReadModel.snapshot()
+        let rejectedProgress = await schedulerReadModel.progressSnapshot(for: "req-2")
+
+        #expect(rejectedSnapshot.activeRequests == 1)
+        #expect(rejectedSnapshot.rejectedRequests == 1)
+        #expect(rejectedProgress?.phase == .requestRejected)
+        #expect(rejectedProgress?.queuePosition == 1)
+        #expect(rejectedProgress?.admissionState == .admissionRejected)
+
+        let cancelled = try await coordinator.cancel(requestID: "req-1")
+        #expect(cancelled)
+        _ = await streamTask.result
+
+        let terminalSnapshot = await schedulerReadModel.snapshot()
+        let terminalProgress = await schedulerReadModel.progressSnapshot(for: "req-1")
+
+        #expect(terminalSnapshot.activeRequests == 0)
+        #expect(terminalSnapshot.backpressure == 0)
+        #expect(terminalProgress?.phase == .requestAborted)
     }
 }
 

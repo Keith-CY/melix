@@ -7,6 +7,13 @@ enum MelixControlPlaneBootstrap {
     static func main() async throws {
         let modelCatalog = ModelCatalog()
         let metricsStore = MetricsStore()
+        let eventHub = EventSubscriptionHub()
+        let schedulerReadModel = SchedulerReadModel(
+            metricsStore: metricsStore,
+            eventPublisher: { event in
+                await eventHub.publish(event)
+            }
+        )
         let bootstrapEnvironment = BootstrapEnvironment(environment: ProcessInfo.processInfo.environment)
         let swiftTextWorkerClient = SwiftTextWorkerClient(
             socketPath: bootstrapEnvironment.swiftTextWorkerSocketPath
@@ -41,7 +48,9 @@ enum MelixControlPlaneBootstrap {
 
         _ = ControlPlaneService(
             modelCatalog: modelCatalog,
-            metricsStore: metricsStore
+            metricsStore: metricsStore,
+            eventHub: eventHub,
+            schedulerReadModel: schedulerReadModel
         )
 
         let handler = OpenAIHandler(
@@ -49,6 +58,7 @@ enum MelixControlPlaneBootstrap {
             requestCoordinator: RequestCoordinator(
                 workerRegistry: workerRegistry,
                 abortRegistry: AbortRegistry(),
+                schedulerReadModel: schedulerReadModel,
                 metricsStore: metricsStore
             )
         )

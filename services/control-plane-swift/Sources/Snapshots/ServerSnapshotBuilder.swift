@@ -5,12 +5,13 @@ public struct ServerSnapshotBuilder {
 
     public func build(
         models: [Melix_Controlplane_V1_ModelSummary],
-        metrics: Melix_Controlplane_V1_MetricsSummary
+        metrics: Melix_Controlplane_V1_MetricsSummary,
+        queues: Melix_Controlplane_V1_QueueSummary? = nil
     ) -> Melix_Controlplane_V1_ServerSnapshot {
         var snapshot = Melix_Controlplane_V1_ServerSnapshot()
         snapshot.serverState = .serverReady
         snapshot.models = models
-        snapshot.queues = emptyQueueSummary()
+        snapshot.queues = queues ?? emptyQueueSummary()
         snapshot.cache = Melix_Controlplane_V1_CacheSummary()
         snapshot.resources = Melix_Controlplane_V1_ResourceSnapshot()
         snapshot.metrics = metrics
