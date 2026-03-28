@@ -8,6 +8,21 @@ struct LoadedModelRecord: @unchecked Sendable {
     let estimatedResidentBytes: UInt64
 }
 
+struct StoredPrefillContext: @unchecked Sendable {
+    let decodeHandle: String
+    let modelHandle: String
+    let requestID: String
+    let promptTokens: Int
+    let resumeHint: String
+    let acceleration: Melix_Worker_V1_AccelerationPolicy
+    let context: TextPrefillContext
+}
+
+struct WorkerPrefillResult: Sendable {
+    let decodeHandle: String
+    let promptTokens: Int
+}
+
 actor WorkerRuntimeRegistry {
     private let configuration: WorkerConfiguration
     private let modelCatalog: WorkerModelCatalog
@@ -15,8 +30,12 @@ actor WorkerRuntimeRegistry {
 
     private var loadedModels: [String: LoadedModelRecord]
     private var activeRequests: UInt64
+    private var activePrefills: UInt64
+    private var activeDecodes: UInt64
     private var draining: Bool
     private var nextModelHandle: UInt64
+    private var nextDecodeHandle: UInt64
+    private var prefillContexts: [String: StoredPrefillContext]
 
     init(
         configuration: WorkerConfiguration,
@@ -28,8 +47,12 @@ actor WorkerRuntimeRegistry {
         self.runtime = runtime
         self.loadedModels = [:]
         self.activeRequests = 0
+        self.activePrefills = 0
+        self.activeDecodes = 0
         self.draining = false
         self.nextModelHandle = 1
+        self.nextDecodeHandle = 1
+        self.prefillContexts = [:]
     }
 
     func capabilities() -> Melix_Worker_V1_RuntimeCapabilities {
@@ -79,6 +102,7 @@ actor WorkerRuntimeRegistry {
         guard let removed = loadedModels.removeValue(forKey: handle) else {
             return false
         }
+        prefillContexts = prefillContexts.filter { $0.value.modelHandle != handle }
         await runtime.unloadModel(removed.runtimeModel)
         return true
     }
@@ -123,6 +147,68 @@ actor WorkerRuntimeRegistry {
         )
     }
 
+    func prefill(
+        requestID: String,
+        modelHandle: String,
+        messages: [Melix_Worker_V1_ChatMessage],
+        prefillStepSize: UInt32,
+        returnDecodeHandle: Bool,
+        resumeHint: String,
+        acceleration: Melix_Worker_V1_AccelerationPolicy,
+        shouldAbort: @escaping @Sendable () -> Bool
+    ) async throws -> WorkerPrefillResult {
+        guard let loaded = loadedModels[modelHandle] else {
+            throw WorkerRuntimeRegistryError.unknownModelHandle
+        }
+
+        activeRequests += 1
+        activePrefills += 1
+        defer {
+            if activeRequests > 0 {
+                activeRequests -= 1
+            }
+            if activePrefills > 0 {
+                activePrefills -= 1
+            }
+        }
+
+        let result = try await runtime.prefill(
+            model: loaded.runtimeModel,
+            messages: messages,
+            prefillStepSize: prefillStepSize,
+            resumeHint: resumeHint,
+            shouldAbort: shouldAbort
+        )
+
+        var decodeHandle = ""
+        if returnDecodeHandle {
+            decodeHandle = "\(modelHandle)::decode::\(nextDecodeHandle)"
+            nextDecodeHandle += 1
+            prefillContexts[decodeHandle] = StoredPrefillContext(
+                decodeHandle: decodeHandle,
+                modelHandle: modelHandle,
+                requestID: requestID,
+                promptTokens: result.promptTokens,
+                resumeHint: resumeHint,
+                acceleration: acceleration,
+                context: result.context
+            )
+        }
+
+        return WorkerPrefillResult(
+            decodeHandle: decodeHandle,
+            promptTokens: result.promptTokens
+        )
+    }
+
+    func prefillContext(for decodeHandle: String) -> StoredPrefillContext? {
+        prefillContexts[decodeHandle]
+    }
+
+    func prefillContextCount() -> Int {
+        prefillContexts.count
+    }
+
     func runtimeStats() -> Melix_Worker_V1_RuntimeStats {
         var stats = Melix_Worker_V1_RuntimeStats()
         if draining {
@@ -134,8 +220,8 @@ actor WorkerRuntimeRegistry {
         }
         stats.residentBytes = loadedModels.values.reduce(0) { $0 + $1.estimatedResidentBytes }
         stats.activeRequests = activeRequests
-        stats.activePrefills = 0
-        stats.activeDecodes = 0
+        stats.activePrefills = activePrefills
+        stats.activeDecodes = activeDecodes
         stats.l1CacheBytes = 0
         stats.l2CacheBytes = 0
         stats.l1HitRate = 0

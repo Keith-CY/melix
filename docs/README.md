@@ -35,6 +35,7 @@ Current phase-status and planning documents:
 - `plans/2026-03-27-phase-1-swift-text-worker.md`
 - `plans/2026-03-28-p2-m1-phase-aware-protocol-shapes.md`
 - `plans/2026-03-28-p2-m2-scheduler-lane-read-model.md`
+- `plans/2026-03-28-p2-m3-prefill-runtime.md`
 - `plans/2026-03-28-p1-m2-swift-text-worker-scaffold.md`
 - `plans/2026-03-28-p1-m3-swift-runtime-lifecycle.md`
 - `plans/2026-03-28-p1-m4-swift-generate-abort.md`

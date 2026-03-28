@@ -17,6 +17,16 @@ struct RuntimeLoadResult: Sendable {
     let estimatedResidentBytes: UInt64
 }
 
+struct TextPrefillContext: @unchecked Sendable {
+    let storage: Any
+    let promptTokens: Int
+}
+
+struct RuntimePrefillResult: Sendable {
+    let context: TextPrefillContext
+    let promptTokens: Int
+}
+
 struct TextGenerationSummary: Sendable {
     let promptTokens: Int
     let completionTokens: Int
@@ -33,6 +43,13 @@ protocol TextRuntimeBackend: Sendable {
     var runtimeName: String { get }
     func loadModel(spec: Melix_Worker_V1_ModelSpec) async throws -> LoadedTextModel
     func unloadModel(_ model: LoadedTextModel) async
+    func prefill(
+        model: LoadedTextModel,
+        messages: [Melix_Worker_V1_ChatMessage],
+        prefillStepSize: UInt32,
+        resumeHint: String,
+        shouldAbort: @escaping @Sendable () -> Bool
+    ) async throws -> RuntimePrefillResult
     func generateEvents(
         model: LoadedTextModel,
         messages: [Melix_Worker_V1_ChatMessage],
@@ -43,6 +60,18 @@ protocol TextRuntimeBackend: Sendable {
 
 extension TextRuntimeBackend {
     func unloadModel(_ model: LoadedTextModel) async {}
+
+    func prefill(
+        model: LoadedTextModel,
+        messages: [Melix_Worker_V1_ChatMessage],
+        prefillStepSize: UInt32,
+        resumeHint: String,
+        shouldAbort: @escaping @Sendable () -> Bool
+    ) async throws -> RuntimePrefillResult {
+        throw RuntimeUnavailableError(
+            message: "Prefill is not available for the current backend."
+        )
+    }
 
     func generateEvents(
         model: LoadedTextModel,
@@ -85,6 +114,22 @@ struct TextRuntime: Sendable {
 
     func unloadModel(_ model: LoadedTextModel) async {
         await backend.unloadModel(model)
+    }
+
+    func prefill(
+        model: LoadedTextModel,
+        messages: [Melix_Worker_V1_ChatMessage],
+        prefillStepSize: UInt32,
+        resumeHint: String,
+        shouldAbort: @escaping @Sendable () -> Bool
+    ) async throws -> RuntimePrefillResult {
+        try await backend.prefill(
+            model: model,
+            messages: messages,
+            prefillStepSize: prefillStepSize,
+            resumeHint: resumeHint,
+            shouldAbort: shouldAbort
+        )
     }
 
     func generateEvents(

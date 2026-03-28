@@ -20,6 +20,46 @@ struct DeterministicTextBackend: TextRuntimeBackend {
         )
     }
 
+    func prefill(
+        model: LoadedTextModel,
+        messages: [Melix_Worker_V1_ChatMessage],
+        prefillStepSize: UInt32,
+        resumeHint: String,
+        shouldAbort: @escaping @Sendable () -> Bool
+    ) async throws -> RuntimePrefillResult {
+        let prompt = deterministicPrompt(from: messages)
+        let promptTokens = max(1, prompt.split(whereSeparator: \.isWhitespace).count)
+
+        if tokenDelayNanos > 0 {
+            try? await Task.sleep(nanoseconds: tokenDelayNanos)
+        }
+
+        if shouldAbort() {
+            return RuntimePrefillResult(
+                context: TextPrefillContext(
+                    storage: [
+                        "prompt": prompt,
+                        "resume_hint": resumeHint,
+                    ],
+                    promptTokens: promptTokens
+                ),
+                promptTokens: promptTokens
+            )
+        }
+
+        return RuntimePrefillResult(
+            context: TextPrefillContext(
+                storage: [
+                    "prompt": prompt,
+                    "resume_hint": resumeHint,
+                    "prefill_step_size": String(prefillStepSize),
+                ],
+                promptTokens: promptTokens
+            ),
+            promptTokens: promptTokens
+        )
+    }
+
     func generateEvents(
         model: LoadedTextModel,
         messages: [Melix_Worker_V1_ChatMessage],

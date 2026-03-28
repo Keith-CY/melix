@@ -18,6 +18,11 @@ struct PreparedTextGeneration: Sendable {
     let runtimeEvents: AsyncThrowingStream<RawTextGenerationEvent, Error>
 }
 
+struct PreparedPrefillContext: @unchecked Sendable {
+    let preparedInput: Any
+    let promptTokens: Int
+}
+
 enum RawTextGenerationEvent: Sendable {
     case chunk(String)
     case summary(TextGenerationSummary)
@@ -125,6 +130,23 @@ struct AutoSwiftMLXBackend: TextRuntimeBackend {
 
         let revision = spec.revision.isEmpty ? "main" : spec.revision
         return try await identifierLoader(modelSource, revision)
+    }
+
+    func prefill(
+        model: LoadedTextModel,
+        messages: [Melix_Worker_V1_ChatMessage],
+        prefillStepSize: UInt32,
+        resumeHint: String,
+        shouldAbort: @escaping @Sendable () -> Bool
+    ) async throws -> RuntimePrefillResult {
+        let prepared = try await makePreparedPromptContext(model: model, messages: messages)
+        return RuntimePrefillResult(
+            context: TextPrefillContext(
+                storage: prepared.preparedInput,
+                promptTokens: prepared.promptTokens
+            ),
+            promptTokens: prepared.promptTokens
+        )
     }
 
     func generateEvents(
@@ -291,6 +313,31 @@ private func makePreparedTextGeneration(
     #else
     throw RuntimeUnavailableError(
         message: "MLXLMCommon is not available in this build. Install the Swift MLX runtime dependencies before generating tokens."
+    )
+    #endif
+}
+
+private func makePreparedPromptContext(
+    model: LoadedTextModel,
+    messages: [Melix_Worker_V1_ChatMessage]
+) async throws -> PreparedPrefillContext {
+    #if canImport(MLXLMCommon)
+    guard let container = model.storage as? ModelContainer else {
+        throw RuntimeUnavailableError(
+            message: "Loaded model is not a Swift MLX model container."
+        )
+    }
+
+    let chat = try convertChatMessages(messages)
+    let userInput = UserInput(chat: chat)
+    let input = try await container.prepare(input: userInput)
+    return PreparedPrefillContext(
+        preparedInput: input,
+        promptTokens: input.text.tokens.size
+    )
+    #else
+    throw RuntimeUnavailableError(
+        message: "MLXLMCommon is not available in this build. Install the Swift MLX runtime dependencies before preparing prompts."
     )
     #endif
 }

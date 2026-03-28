@@ -392,6 +392,28 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertGreaterThan(summary.completionTokens, 0)
         XCTAssertNotNil(summary.tokensPerSecond)
     }
+
+    func testAutoSwiftMLXBackendPrefillUsesLiveModelContainerBridge() async throws {
+        let backend = AutoSwiftMLXBackend()
+        let promptTokens = [1, 2, 3, 4, 5]
+
+        let result = try await withTemporaryDefaultMetallib {
+            try await Device.withDefaultDevice(.cpu) {
+                try await backend.prefill(
+                    model: LoadedTextModel(
+                        storage: makeLiveSwiftMLXModelContainer(promptTokens: promptTokens)
+                    ),
+                    messages: [makeSystemMessage("system"), makeUserMessage("bridge prefill live path")],
+                    prefillStepSize: 32,
+                    resumeHint: "live-prefill",
+                    shouldAbort: { false }
+                )
+            }
+        }
+
+        XCTAssertEqual(result.promptTokens, promptTokens.count)
+        XCTAssertEqual(result.context.promptTokens, promptTokens.count)
+    }
     #endif
 
     func testChatMessageConversionFlattensTextAndRejectsUnsupportedParts() throws {
@@ -514,6 +536,36 @@ final class WorkerScaffoldTests: XCTestCase {
         )
     }
 
+    func testTextRuntimeForwardsPrefillAndDefaultPrefillThrowsUnavailable() async throws {
+        let runtime = TextRuntime(backend: FakeRuntimeBackend())
+        let loaded = try await runtime.loadModel(spec: Melix_Worker_V1_ModelSpec())
+        let result = try await runtime.prefill(
+            model: loaded.model,
+            messages: [makeUserMessage("prefill runtime")],
+            prefillStepSize: 8,
+            resumeHint: "runtime-resume",
+            shouldAbort: { false }
+        )
+
+        XCTAssertEqual(result.promptTokens, 1)
+        XCTAssertEqual(result.context.promptTokens, 1)
+        XCTAssertEqual((result.context.storage as? [String: String])?["resume_hint"], "runtime-resume")
+        XCTAssertEqual((result.context.storage as? [String: String])?["prefill_step_size"], "8")
+
+        let unavailableRuntime = TextRuntime(backend: DefaultUnloadBackend())
+        let unavailableModel = try await unavailableRuntime.loadModel(spec: Melix_Worker_V1_ModelSpec())
+
+        await XCTAssertThrowsErrorAsync(
+            try await unavailableRuntime.prefill(
+                model: unavailableModel.model,
+                messages: [makeUserMessage("go")],
+                prefillStepSize: 4,
+                resumeHint: "unavailable",
+                shouldAbort: { false }
+            )
+        )
+    }
+
     func testDrainTransitionsRuntimeStateToDraining() async throws {
         let services = makeServices()
 
@@ -605,6 +657,98 @@ final class WorkerScaffoldTests: XCTestCase {
                 shouldAbort: { false }
             )
         )
+    }
+
+    func testRuntimeRegistryStoresPrefillContextsForLoadedModel() async throws {
+        let registry = WorkerRuntimeRegistry(
+            configuration: WorkerConfiguration(),
+            modelCatalog: WorkerModelCatalog(environment: [
+                "MELIX_DEV_TEXT_MODEL_PATH": "mlx-community/melix-dev-text-4bit"
+            ]),
+            runtime: TextRuntime(backend: FakeRuntimeBackend())
+        )
+
+        var loadRequest = Melix_Worker_V1_ModelSpec()
+        loadRequest.modelID = "melix-dev-text"
+        let loaded = try await registry.loadModel(loadRequest)
+
+        var acceleration = Melix_Worker_V1_AccelerationPolicy()
+        acceleration.mode = .baseline
+
+        let result = try await registry.prefill(
+            requestID: "req-prefill-registry",
+            modelHandle: loaded.handle,
+            messages: [makeUserMessage("registry prefill")],
+            prefillStepSize: 16,
+            returnDecodeHandle: true,
+            resumeHint: "registry-resume",
+            acceleration: acceleration,
+            shouldAbort: { false }
+        )
+
+        let stored = await registry.prefillContext(for: result.decodeHandle)
+        let contextCount = await registry.prefillContextCount()
+
+        XCTAssertFalse(result.decodeHandle.isEmpty)
+        XCTAssertEqual(result.promptTokens, 1)
+        XCTAssertEqual(contextCount, 1)
+        XCTAssertEqual(stored?.modelHandle, loaded.handle)
+        XCTAssertEqual(stored?.promptTokens, 1)
+        XCTAssertEqual(stored?.requestID, "req-prefill-registry")
+    }
+
+    func testRuntimeRegistryPrefillWithoutDecodeHandleDoesNotStoreContextAndUnloadClearsStoredContexts() async throws {
+        let registry = WorkerRuntimeRegistry(
+            configuration: WorkerConfiguration(),
+            modelCatalog: WorkerModelCatalog(environment: [
+                "MELIX_DEV_TEXT_MODEL_PATH": "mlx-community/melix-dev-text-4bit"
+            ]),
+            runtime: TextRuntime(backend: FakeRuntimeBackend())
+        )
+
+        var loadRequest = Melix_Worker_V1_ModelSpec()
+        loadRequest.modelID = "melix-dev-text"
+        let loaded = try await registry.loadModel(loadRequest)
+
+        var acceleration = Melix_Worker_V1_AccelerationPolicy()
+        acceleration.mode = .baseline
+
+        let withoutHandle = try await registry.prefill(
+            requestID: "req-prefill-no-handle",
+            modelHandle: loaded.handle,
+            messages: [makeUserMessage("registry prefill no handle")],
+            prefillStepSize: 8,
+            returnDecodeHandle: false,
+            resumeHint: "no-handle",
+            acceleration: acceleration,
+            shouldAbort: { false }
+        )
+
+        XCTAssertTrue(withoutHandle.decodeHandle.isEmpty)
+        let countWithoutHandle = await registry.prefillContextCount()
+        XCTAssertEqual(countWithoutHandle, 0)
+
+        let withHandle = try await registry.prefill(
+            requestID: "req-prefill-clear",
+            modelHandle: loaded.handle,
+            messages: [makeUserMessage("registry prefill clear")],
+            prefillStepSize: 8,
+            returnDecodeHandle: true,
+            resumeHint: "clear",
+            acceleration: acceleration,
+            shouldAbort: { false }
+        )
+
+        XCTAssertFalse(withHandle.decodeHandle.isEmpty)
+        let countWithHandle = await registry.prefillContextCount()
+        XCTAssertEqual(countWithHandle, 1)
+
+        let unloaded = await registry.unloadModel(loaded.handle)
+        let countAfterUnload = await registry.prefillContextCount()
+        let storedAfterUnload = await registry.prefillContext(for: withHandle.decodeHandle)
+        XCTAssertTrue(unloaded)
+        XCTAssertEqual(countAfterUnload, 0)
+        XCTAssertNil(storedAfterUnload)
     }
 
     func testRuntimeLifecycleLoadAndUnloadTrackModelState() async throws {
@@ -736,18 +880,6 @@ final class WorkerScaffoldTests: XCTestCase {
     func testInferenceUnaryFallbackRpcsReturnStructuredUnimplemented() async throws {
         let services = makeServices()
 
-        let prefillResponse = try await withServerContextRPCCancellationHandle { handle in
-            try await services.inference.prefill(
-                request: Melix_Worker_V1_PrefillRequest(),
-                context: ServerContext(
-                    descriptor: Melix_Worker_V1_InferenceService.Method.Prefill.descriptor,
-                    remotePeer: "in-process:test",
-                    localPeer: "in-process:test",
-                    cancellation: handle
-                )
-            )
-        }
-
         let embedResponse = try await withServerContextRPCCancellationHandle { handle in
             try await services.inference.embed(
                 request: Melix_Worker_V1_EmbedRequest(),
@@ -808,13 +940,211 @@ final class WorkerScaffoldTests: XCTestCase {
             )
         }
 
-        XCTAssertFalse(prefillResponse.ok)
-        XCTAssertEqual(prefillResponse.error.code, "unimplemented")
         XCTAssertEqual(embedResponse.error.code, "unimplemented")
         XCTAssertEqual(rerankResponse.error.code, "unimplemented")
         XCTAssertEqual(transcribeResponse.error.code, "unimplemented")
         XCTAssertEqual(imageGenerateResponse.error.code, "unimplemented")
         XCTAssertEqual(imageEditResponse.error.code, "unimplemented")
+    }
+
+    func testPrefillReturnsDecodeHandleAndMetricsForLoadedModel() async throws {
+        let services = makeServices(
+            environment: ["MELIX_DEV_TEXT_MODEL_PATH": "mlx-community/melix-dev-text-4bit"],
+            backend: FakeRuntimeBackend(),
+            residentMemorySamples: [100, 2_148]
+        )
+
+        let loadResponse = try await withServerContextRPCCancellationHandle { handle in
+            var request = Melix_Worker_V1_LoadModelRequest()
+            request.model.modelID = "melix-dev-text"
+            return try await services.runtime.loadModel(
+                request: request,
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_RuntimeService.Method.LoadModel.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
+        let response = try await withServerContextRPCCancellationHandle { handle in
+            var request = Melix_Worker_V1_PrefillRequest()
+            request.execution.id.requestID = "req-prefill-success"
+            request.execution.modelHandle = loadResponse.modelHandle
+            request.returnDecodeHandle = true
+            request.prefillStepSize = 32
+            request.resumeHint = "tool-follow-up"
+            request.execution.acceleration.mode = .baseline
+            request.messages = [makeUserMessage("prefill me")]
+
+            return try await services.inference.prefill(
+                request: request,
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_InferenceService.Method.Prefill.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
+        let stored = await services.registry.prefillContext(for: response.decodeHandle)
+        let contextCount = await services.registry.prefillContextCount()
+        let metrics = services.metrics.counters
+
+        XCTAssertTrue(response.ok)
+        XCTAssertFalse(response.decodeHandle.isEmpty)
+        XCTAssertEqual(response.promptTokens, 1)
+        XCTAssertEqual(response.lifecyclePhase, .executionPrefilling)
+        XCTAssertEqual(response.admissionState, .admissionAdmitted)
+        XCTAssertEqual(response.appliedAcceleration.mode, .baseline)
+        XCTAssertEqual(contextCount, 1)
+        XCTAssertEqual(stored?.modelHandle, loadResponse.modelHandle)
+        XCTAssertEqual(stored?.promptTokens, 1)
+        XCTAssertEqual(metrics["swift_text.prefill_context_count"], 1)
+        XCTAssertEqual(metrics["swift_text.prefill_prompt_tokens"], 1)
+        XCTAssertNotNil(metrics["swift_text.prefill_ms"])
+    }
+
+    func testPrefillSurfacesActivePrefillInRuntimeStatsWhileRunning() async throws {
+        let services = makeServices(
+            environment: ["MELIX_DEV_TEXT_MODEL_PATH": "mlx-community/melix-dev-text-4bit"],
+            backend: FakeRuntimeBackend(prefillDelayNanos: 150_000_000)
+        )
+
+        let loadResponse = try await withServerContextRPCCancellationHandle { handle in
+            var request = Melix_Worker_V1_LoadModelRequest()
+            request.model.modelID = "melix-dev-text"
+            return try await services.runtime.loadModel(
+                request: request,
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_RuntimeService.Method.LoadModel.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
+        let task = Task {
+            try await withServerContextRPCCancellationHandle { handle in
+                var request = Melix_Worker_V1_PrefillRequest()
+                request.execution.id.requestID = "req-prefill-busy"
+                request.execution.modelHandle = loadResponse.modelHandle
+                request.returnDecodeHandle = true
+                request.messages = [makeUserMessage("slow prefill")]
+                return try await services.inference.prefill(
+                    request: request,
+                    context: ServerContext(
+                        descriptor: Melix_Worker_V1_InferenceService.Method.Prefill.descriptor,
+                        remotePeer: "in-process:test",
+                        localPeer: "in-process:test",
+                        cancellation: handle
+                    )
+                )
+            }
+        }
+
+        try? await Task.sleep(nanoseconds: 30_000_000)
+
+        let statsWhileBusy = try await withServerContextRPCCancellationHandle { handle in
+            try await services.runtime.getRuntimeStats(
+                request: Melix_Worker_V1_GetRuntimeStatsRequest(),
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_RuntimeService.Method.GetRuntimeStats.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
+        _ = try await task.value
+
+        let statsAfter = try await withServerContextRPCCancellationHandle { handle in
+            try await services.runtime.getRuntimeStats(
+                request: Melix_Worker_V1_GetRuntimeStatsRequest(),
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_RuntimeService.Method.GetRuntimeStats.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
+        XCTAssertEqual(statsWhileBusy.stats.workerState, "busy")
+        XCTAssertEqual(statsWhileBusy.stats.activeRequests, 1)
+        XCTAssertEqual(statsWhileBusy.stats.activePrefills, 1)
+        XCTAssertEqual(statsWhileBusy.stats.activeDecodes, 0)
+        XCTAssertEqual(statsAfter.stats.activePrefills, 0)
+    }
+
+    func testPrefillReturnsNotFoundForUnknownModelHandle() async throws {
+        let services = makeServices()
+
+        let response = try await withServerContextRPCCancellationHandle { handle in
+            var request = Melix_Worker_V1_PrefillRequest()
+            request.execution.id.requestID = "req-prefill-missing"
+            request.execution.modelHandle = "missing-handle"
+            request.returnDecodeHandle = true
+            request.messages = [makeUserMessage("missing")]
+            return try await services.inference.prefill(
+                request: request,
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_InferenceService.Method.Prefill.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
+        XCTAssertFalse(response.ok)
+        XCTAssertEqual(response.error.code, "not_found")
+    }
+
+    func testPrefillReturnsRuntimeErrorForBackendFailureWithoutRequestID() async throws {
+        let services = makeServices(
+            environment: ["MELIX_DEV_TEXT_MODEL_PATH": "mlx-community/melix-dev-text-4bit"],
+            backend: FakeRuntimeBackend(prefillError: FakeRuntimeBackendError.prefillFailed)
+        )
+
+        let loadResponse = try await withServerContextRPCCancellationHandle { handle in
+            var request = Melix_Worker_V1_LoadModelRequest()
+            request.model.modelID = "melix-dev-text"
+            return try await services.runtime.loadModel(
+                request: request,
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_RuntimeService.Method.LoadModel.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
+        let response = try await withServerContextRPCCancellationHandle { handle in
+            var request = Melix_Worker_V1_PrefillRequest()
+            request.execution.modelHandle = loadResponse.modelHandle
+            request.returnDecodeHandle = true
+            request.messages = [makeUserMessage("prefill error")]
+            return try await services.inference.prefill(
+                request: request,
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_InferenceService.Method.Prefill.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
+        XCTAssertFalse(response.ok)
+        XCTAssertEqual(response.error.code, "runtime_error")
+        XCTAssertEqual(services.metrics.counters["swift_text.rpc_error_count"], 1)
+        XCTAssertNotNil(services.metrics.counters["swift_text.prefill_ms"])
     }
 
     func testGenerateStreamsPrefillTokenUsageAndCompletedForLoadedModel() async throws {
@@ -1218,6 +1548,58 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(renderedSummary(from: abortedEvents)?.completionTokens, 0)
     }
 
+    func testDeterministicBackendPrefillCapturesPromptMetadataAndAbortBranch() async throws {
+        let backend = DeterministicTextBackend(tokenDelayNanos: 0)
+        var spec = Melix_Worker_V1_ModelSpec()
+        spec.modelID = "melix-dev-text"
+        let loaded = try await backend.loadModel(spec: spec)
+
+        let result = try await backend.prefill(
+            model: loaded,
+            messages: [makeUserMessage("hello deterministic swift", extraText: "again")],
+            prefillStepSize: 16,
+            resumeHint: "deterministic-resume",
+            shouldAbort: { false }
+        )
+
+        let stored = try XCTUnwrap(result.context.storage as? [String: String])
+        XCTAssertEqual(result.promptTokens, 4)
+        XCTAssertEqual(result.context.promptTokens, 4)
+        XCTAssertEqual(stored["prompt"], "hello deterministic swift\nagain")
+        XCTAssertEqual(stored["resume_hint"], "deterministic-resume")
+        XCTAssertEqual(stored["prefill_step_size"], "16")
+
+        let aborted = try await backend.prefill(
+            model: loaded,
+            messages: [makeUserMessage("hello deterministic swift", extraText: "again")],
+            prefillStepSize: 16,
+            resumeHint: "deterministic-resume",
+            shouldAbort: { true }
+        )
+
+        let abortedStored = try XCTUnwrap(aborted.context.storage as? [String: String])
+        XCTAssertEqual(aborted.promptTokens, 4)
+        XCTAssertNil(abortedStored["prefill_step_size"])
+        XCTAssertEqual(abortedStored["resume_hint"], "deterministic-resume")
+    }
+
+    func testAutoSwiftMLXBackendDefaultPrefillRejectsNonMLXContainers() async {
+        let backend = AutoSwiftMLXBackend()
+
+        do {
+            _ = try await backend.prefill(
+                model: LoadedTextModel(storage: ["kind": "not-a-container"]),
+                messages: [makeUserMessage("default prefill factory")],
+                prefillStepSize: 4,
+                resumeHint: "prefill",
+                shouldAbort: { false }
+            )
+            XCTFail("expected prefill to fail for non-MLX containers")
+        } catch {
+            XCTAssertTrue(error.localizedDescription.contains("Loaded model is not a Swift MLX model container"))
+        }
+    }
+
     func testWarmupAndShutdownReturnExpectedStructuredResponses() async throws {
         let services = makeServices()
 
@@ -1299,6 +1681,7 @@ private actor RecordingRPCWriterStorage<Element: Sendable> {
 @available(macOS 15.0, *)
 private enum FakeRuntimeBackendError: Error {
     case loadFailed
+    case prefillFailed
 }
 
 @available(macOS 15.0, *)
@@ -1319,22 +1702,28 @@ private final class FakeRuntimeBackend: TextRuntimeBackend, @unchecked Sendable 
     let runtimeName: String = "fake-mlx-swift"
 
     private let loadError: Error?
+    private let prefillError: Error?
     private let residentBytesHint: UInt64
     private let generatedChunks: [String]
     private let tokenDelayNanos: UInt64
+    private let prefillDelayNanos: UInt64
     private let storage = FakeRuntimeBackendStorage()
     private let unloadedStorage = FakeRuntimeBackendUnloadStorage()
 
     init(
         loadError: Error? = nil,
+        prefillError: Error? = nil,
         residentBytesHint: UInt64 = 0,
         generatedChunks: [String] = ["Hello", " from Swift"],
-        tokenDelayNanos: UInt64 = 0
+        tokenDelayNanos: UInt64 = 0,
+        prefillDelayNanos: UInt64 = 0
     ) {
         self.loadError = loadError
+        self.prefillError = prefillError
         self.residentBytesHint = residentBytesHint
         self.generatedChunks = generatedChunks
         self.tokenDelayNanos = tokenDelayNanos
+        self.prefillDelayNanos = prefillDelayNanos
     }
 
     func loadModel(spec: Melix_Worker_V1_ModelSpec) async throws -> LoadedTextModel {
@@ -1350,6 +1739,33 @@ private final class FakeRuntimeBackend: TextRuntimeBackend, @unchecked Sendable 
 
     func unloadModel(_ model: LoadedTextModel) async {
         await unloadedStorage.increment()
+    }
+
+    func prefill(
+        model: LoadedTextModel,
+        messages: [Melix_Worker_V1_ChatMessage],
+        prefillStepSize: UInt32,
+        resumeHint: String,
+        shouldAbort: @escaping @Sendable () -> Bool
+    ) async throws -> RuntimePrefillResult {
+        if let prefillError {
+            throw prefillError
+        }
+        if prefillDelayNanos > 0 {
+            try? await Task.sleep(nanoseconds: prefillDelayNanos)
+        }
+
+        let promptTokens = max(1, messages.count)
+        return RuntimePrefillResult(
+            context: TextPrefillContext(
+                storage: [
+                    "resume_hint": resumeHint,
+                    "prefill_step_size": String(prefillStepSize),
+                ],
+                promptTokens: promptTokens
+            ),
+            promptTokens: promptTokens
+        )
     }
 
     func generateEvents(

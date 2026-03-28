@@ -174,7 +174,8 @@ final class InferenceRPCService: Melix_Worker_V1_InferenceService.SimpleServiceP
     private let registry: WorkerRuntimeRegistry
     private let abortRegistry: AbortRegistry
     private let metrics: MetricsStore
-    private let engine: TextGenerationEngine
+    private let generationEngine: TextGenerationEngine
+    private let prefillEngine: TextPrefillEngine
 
     init(
         configuration: WorkerConfiguration,
@@ -186,7 +187,8 @@ final class InferenceRPCService: Melix_Worker_V1_InferenceService.SimpleServiceP
         self.registry = registry
         self.abortRegistry = abortRegistry
         self.metrics = metrics
-        self.engine = TextGenerationEngine(registry: registry, abortRegistry: abortRegistry, metrics: metrics)
+        self.generationEngine = TextGenerationEngine(registry: registry, abortRegistry: abortRegistry, metrics: metrics)
+        self.prefillEngine = TextPrefillEngine(registry: registry, abortRegistry: abortRegistry, metrics: metrics)
     }
 
     func generate(
@@ -194,19 +196,14 @@ final class InferenceRPCService: Melix_Worker_V1_InferenceService.SimpleServiceP
         response: GRPCCore.RPCWriter<Melix_Worker_V1_ExecuteEvent>,
         context: GRPCCore.ServerContext
     ) async throws {
-        try await engine.runGenerate(request: request, response: response)
+        try await generationEngine.runGenerate(request: request, response: response)
     }
 
     func prefill(
         request: Melix_Worker_V1_PrefillRequest,
         context: GRPCCore.ServerContext
     ) async throws -> Melix_Worker_V1_PrefillResponse {
-        metrics.increment("swift_text.unimplemented_rpc_count")
-
-        var response = Melix_Worker_V1_PrefillResponse()
-        response.ok = false
-        response.error = makeUnimplementedStatus("Prefill is deferred until Phase 2.")
-        return response
+        await prefillEngine.runPrefill(request: request)
     }
 
     func decode(
