@@ -44,6 +44,18 @@ struct ControlPlaneXPCClientTests {
         #expect(unloaded.state == .modelUnloaded)
     }
 
+    @Test("local client can request a fresh server snapshot through control-plane execute")
+    func localClientFetchesServerSnapshot() async throws {
+        let service = ControlPlaneService()
+        let client = LocalControlPlaneXPCClient(service: service)
+
+        let snapshot = try await client.serverSnapshot()
+
+        #expect(snapshot.serverState == .serverReady)
+        #expect(snapshot.models.first?.modelID == "melix-dev-text")
+        #expect(snapshot.queues.lanes.contains(where: { $0.laneID == "text.decode.interactive" }))
+    }
+
     @Test("load and unload surface request failures for unknown models")
     func loadAndUnloadSurfaceRequestFailures() async throws {
         let service = ControlPlaneService()
@@ -72,5 +84,64 @@ struct ControlPlaneXPCClientTests {
                 )
             )
         }
+    }
+
+    @Test("local client surfaces snapshot request failures")
+    func localClientSurfacesSnapshotRequestFailures() async throws {
+        let service = FailingExecuteControlPlaneService(
+            code: "unavailable",
+            message: "Snapshot path unavailable."
+        )
+        let client = LocalControlPlaneXPCClient(service: service)
+
+        do {
+            _ = try await client.serverSnapshot()
+            Issue.record("Expected serverSnapshot to throw for a failed execute response")
+        } catch let error as ControlPlaneXPCClientError {
+            #expect(
+                error == .requestFailed(
+                    code: "unavailable",
+                    message: "Snapshot path unavailable."
+                )
+            )
+        }
+    }
+}
+
+private actor FailingExecuteControlPlaneService: ControlPlaneExecuting {
+    private let code: String
+    private let message: String
+
+    init(code: String, message: String) {
+        self.code = code
+        self.message = message
+    }
+
+    func handshake(_ request: Melix_Controlplane_V1_HandshakeRequest) async throws -> Melix_Controlplane_V1_HandshakeResponse {
+        _ = request
+        return Melix_Controlplane_V1_HandshakeResponse()
+    }
+
+    func subscribe(_ request: Melix_Controlplane_V1_SubscribeRequest) async -> ControlPlaneSubscription {
+        _ = request
+        return ControlPlaneSubscription(
+            subscriptionID: "test",
+            stream: AsyncStream { continuation in
+                continuation.finish()
+            }
+        )
+    }
+
+    func unsubscribe(_ subscriptionID: String) async {
+        _ = subscriptionID
+    }
+
+    func execute(_ request: Melix_Controlplane_V1_ControlPlaneRequest) async throws -> Melix_Controlplane_V1_ControlPlaneResponse {
+        _ = request
+        var response = Melix_Controlplane_V1_ControlPlaneResponse()
+        response.ok = false
+        response.error.code = code
+        response.error.message = message
+        return response
     }
 }

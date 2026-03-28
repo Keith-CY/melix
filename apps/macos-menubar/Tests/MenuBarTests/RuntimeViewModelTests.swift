@@ -181,6 +181,152 @@ struct RuntimeViewModelTests {
         #expect(makeRuntimeModelRow(state: .modelPinned).isLoaded)
         #expect(makeRuntimeModelRow(state: .modelDiscovered).isLoaded == false)
     }
+
+    @Test("desktop foundation derives dashboard settings bench and api state from control-plane truth")
+    @MainActor
+    func desktopFoundationDerivesOperatorPanelsFromSnapshotTruth() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+
+        let foundation = viewModel.desktopFoundationState
+        #expect(foundation.title == "Melix Ready")
+        #expect(foundation.dashboardCards.contains(where: { $0.id == "server" && $0.value == "Ready" }))
+        #expect(foundation.queueLanes.contains(where: { $0.id == "text.decode.interactive" }))
+        #expect(foundation.models.contains(where: { $0.modelID == "melix-dev-text" }))
+        #expect(foundation.settings.contains(where: { $0.key == "Protocol" && $0.value == "melix.controlplane.v1" }))
+        #expect(foundation.benchMetrics.contains(where: { $0.name == "http.translation_ms" }))
+        #expect(foundation.apiReference.contains(where: { $0.path == "/v1/responses" }))
+    }
+
+    @Test("desktop foundation refresh pulls a fresh server snapshot and records metrics")
+    @MainActor
+    func desktopFoundationRefreshPullsFreshSnapshotAndRecordsMetrics() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let metrics = MenuBarMetricsStore()
+        let viewModel = RuntimeViewModel(client: client, metrics: metrics)
+        await viewModel.start()
+
+        var refreshedSnapshot = makeSnapshot(
+            serverState: .serverDegraded,
+            models: [makeModelSummary(state: .modelWarm)]
+        )
+        refreshedSnapshot.sessions = {
+            var summary = Melix_Controlplane_V1_SessionSummary()
+            summary.sessionID = "session-1"
+            summary.activeBranchID = "branch-main"
+            summary.branchCount = 1
+            return [summary]
+        }()
+        refreshedSnapshot.metrics.values["http.stream_first_event_ms"] = 12.5
+        await client.configureSnapshot(refreshedSnapshot)
+
+        await viewModel.refreshDesktopFoundation()
+
+        let foundation = viewModel.desktopFoundationState
+        #expect(viewModel.statusTitle == "Melix Degraded")
+        #expect(foundation.dashboardCards.contains(where: { $0.id == "sessions" && $0.value == "1" }))
+        #expect(foundation.models.contains(where: { $0.modelID == "melix-dev-text" && $0.stateText == "Warm" }))
+        #expect(await metrics.snapshot()["menu.foundation_refresh_ms"] != nil)
+        #expect(await client.recordedActions.contains("snapshot"))
+    }
+
+    @Test("desktop foundation refresh records local snapshot errors")
+    @MainActor
+    func desktopFoundationRefreshRecordsSnapshotErrors() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let metrics = MenuBarMetricsStore()
+        let viewModel = RuntimeViewModel(client: client, metrics: metrics)
+
+        await viewModel.start()
+        await client.configureErrors(snapshot: MenuBarTestError(description: "snapshot failed"))
+
+        await viewModel.refreshDesktopFoundation()
+
+        let foundation = viewModel.desktopFoundationState
+        #expect(viewModel.lastError?.contains("snapshot failed") == true)
+        #expect(foundation.logs.first?.message.contains("snapshot failed") == true)
+        #expect(await metrics.snapshot()["menu.foundation_refresh_ms"] == nil)
+    }
+
+    @Test("event log records streamed control-plane events for the desktop foundation")
+    @MainActor
+    func eventLogRecordsStreamedControlPlaneEvents() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+        await client.sendLog(level: "warning", message: "queue pressure rising")
+        try await Task.sleep(for: .milliseconds(20))
+
+        let foundation = viewModel.desktopFoundationState
+        #expect(foundation.logs.contains(where: { $0.message == "queue pressure rising" }))
+    }
+
+    @Test("streamed control-plane events update dashboard state")
+    @MainActor
+    func streamedEventsUpdateDashboardState() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+        await client.sendServerStateChanged(state: .serverDraining)
+        await client.sendSessionStateChanged(sessionID: "session-42", branchCount: 2)
+        await client.sendCacheStats(l1Bytes: 32 * 1024 * 1024, l2Bytes: 128 * 1024 * 1024)
+        await client.sendResourcePressure(scope: "metal", usedBytes: 4 * 1024 * 1024 * 1024, totalBytes: 8 * 1024 * 1024 * 1024)
+        await client.sendRequestProgress(requestID: "request-42", phase: .requestDecoding)
+        await client.sendHeartbeat()
+        await client.sendLog(level: "error", message: "thermal pressure")
+        try await Task.sleep(for: .milliseconds(30))
+
+        let foundation = viewModel.desktopFoundationState
+        #expect(viewModel.statusTitle == "Melix Draining")
+        #expect(viewModel.lastError == "thermal pressure")
+        #expect(foundation.dashboardCards.contains(where: { $0.id == "sessions" && $0.value == "1" }))
+        #expect(foundation.dashboardCards.contains(where: { $0.id == "cache" && $0.detail == "L1 / L2" }))
+        #expect(foundation.dashboardCards.contains(where: { $0.id == "memory" && $0.detail.contains("8") }))
+        #expect(foundation.logs.contains(where: { $0.message == "Session session-42 updated" }))
+        #expect(foundation.logs.contains(where: { $0.message == "Cache summary updated" }))
+        #expect(foundation.logs.contains(where: { $0.message == "Resource pressure in metal" && $0.level == "warning" }))
+        #expect(foundation.logs.contains(where: { $0.message.contains("request-42") }))
+        #expect(foundation.logs.contains(where: { $0.message == "Heartbeat" }))
+    }
+
+    @Test("recent logs are trimmed to the last forty entries")
+    @MainActor
+    func recentLogsAreTrimmedToFortyEntries() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+        for index in 0..<45 {
+            await client.sendLog(level: "info", message: "log-\(index)")
+        }
+        try await Task.sleep(for: .milliseconds(30))
+
+        let foundation = viewModel.desktopFoundationState
+        #expect(foundation.logs.count == 40)
+        #expect(foundation.logs.first?.message == "log-44")
+        #expect(foundation.logs.contains(where: { $0.message == "log-5" }))
+        #expect(foundation.logs.contains(where: { $0.message == "log-4" }) == false)
+    }
+
+    @Test("featureless model responses still hydrate model rows")
+    @MainActor
+    func featurelessModelResponsesStillHydrateModelRows() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+        await client.configureModelResponseFeatures([])
+
+        await viewModel.loadModel(modelID: "melix-dev-text")
+
+        #expect(viewModel.primaryModel?.modelID == "melix-dev-text")
+        #expect(viewModel.primaryModel?.stateText == "Warm")
+        #expect(viewModel.desktopFoundationState.models.contains(where: { $0.modelID == "melix-dev-text" }))
+    }
 }
 
 private actor EmptySnapshotControlPlaneXPCClient: ControlPlaneXPCClient {
@@ -201,6 +347,12 @@ private actor EmptySnapshotControlPlaneXPCClient: ControlPlaneXPCClient {
         return AsyncStream { continuation in
             continuation.finish()
         }
+    }
+
+    func serverSnapshot() async throws -> Melix_Controlplane_V1_ServerSnapshot {
+        var snapshot = Melix_Controlplane_V1_ServerSnapshot()
+        snapshot.serverState = .serverReady
+        return snapshot
     }
 
     func loadModel(modelID: String) async throws -> Melix_Controlplane_V1_ModelSummary {
@@ -235,6 +387,10 @@ private actor SnapshotControlPlaneXPCClient: ControlPlaneXPCClient {
         return AsyncStream { continuation in
             continuation.finish()
         }
+    }
+
+    func serverSnapshot() async throws -> Melix_Controlplane_V1_ServerSnapshot {
+        snapshot
     }
 
     func loadModel(modelID: String) async throws -> Melix_Controlplane_V1_ModelSummary {
@@ -275,6 +431,10 @@ private actor EventingSnapshotControlPlaneXPCClient: ControlPlaneXPCClient {
     func subscribe(lastSeenSeq: UInt64) async -> AsyncStream<Melix_Controlplane_V1_ControlPlaneEvent> {
         _ = lastSeenSeq
         return stream
+    }
+
+    func serverSnapshot() async throws -> Melix_Controlplane_V1_ServerSnapshot {
+        snapshot
     }
 
     func loadModel(modelID: String) async throws -> Melix_Controlplane_V1_ModelSummary {

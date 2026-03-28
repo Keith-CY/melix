@@ -24,6 +24,7 @@ struct StatusMenuTests {
                 .info("Server: Ready"),
                 .info("melix-dev-text: Discovered"),
                 .action("Load", .loadPrimaryModel),
+                .action("Open Melix Console", .openConsole),
                 .separator,
                 .action("Quit Melix", .quit),
             ]
@@ -94,6 +95,35 @@ struct StatusMenuTests {
         menu.perform(.quit)
 
         #expect(termination.wasCalled)
+    }
+
+    @Test("perform open console calls the injected console handler")
+    @MainActor
+    func performOpenConsoleCallsInjectedHandler() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(client: client)
+        let recorder = OpenConsoleRecorder()
+        let menu = StatusMenu(
+            viewModel: viewModel,
+            renderer: RecordingStatusMenuRenderer(),
+            openConsoleHandler: { recorder.open() }
+        )
+
+        menu.perform(.openConsole)
+
+        #expect(recorder.wasCalled)
+    }
+
+    @Test("default console handler is safe to invoke")
+    @MainActor
+    func defaultConsoleHandlerIsSafeToInvoke() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(client: client)
+        let menu = StatusMenu(viewModel: viewModel, renderer: RecordingStatusMenuRenderer())
+
+        menu.perform(.openConsole)
+
+        #expect(await client.recordedActions.isEmpty)
     }
 
     @Test("handle menu action ignores unrecognized menu items")
@@ -203,6 +233,15 @@ private final class TerminationRecorder {
     private(set) var wasCalled = false
 
     func terminate() {
+        wasCalled = true
+    }
+}
+
+@MainActor
+private final class OpenConsoleRecorder {
+    private(set) var wasCalled = false
+
+    func open() {
         wasCalled = true
     }
 }

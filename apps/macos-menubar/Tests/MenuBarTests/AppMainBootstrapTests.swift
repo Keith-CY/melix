@@ -26,7 +26,7 @@ struct AppMainBootstrapTests {
         let bootstrap = MelixMenuBarBootstrap(
             client: client,
             metrics: metrics,
-            statusMenuFactory: { _ in menu }
+            statusMenuFactory: { _, _ in menu }
         )
 
         bootstrap.start()
@@ -45,7 +45,7 @@ struct AppMainBootstrapTests {
         let menu = RecordingInstallStatusMenu()
         let bootstrap = MelixMenuBarBootstrap(
             client: client,
-            statusMenuFactory: { _ in menu }
+            statusMenuFactory: { _, _ in menu }
         )
         var retainedBootstrap: MelixMenuBarBootstrap?
 
@@ -84,7 +84,7 @@ struct AppMainBootstrapTests {
         let menu = RecordingInstallStatusMenu()
         let bootstrap = MelixMenuBarBootstrap(
             client: client,
-            statusMenuFactory: { _ in menu }
+            statusMenuFactory: { _, _ in menu }
         )
 
         MelixMenuBarApp.launchLive(
@@ -98,6 +98,31 @@ struct AppMainBootstrapTests {
         #expect(menu.installCount == 1)
         #expect(await client.handshakeCount == 1)
     }
+
+    @Test("bootstrap wires the desktop foundation presenter into the status menu")
+    @MainActor
+    func bootstrapWiresDesktopFoundationPresenter() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let metrics = MenuBarMetricsStore()
+        let menu = RecordingConsoleAwareStatusMenu()
+        let presenter = RecordingDesktopFoundationPresenter()
+        let bootstrap = MelixMenuBarBootstrap(
+            client: client,
+            metrics: metrics,
+            desktopFoundationPresenterFactory: { _, _ in presenter },
+            statusMenuFactory: { _, openConsole in
+                menu.openConsole = openConsole
+                return menu
+            }
+        )
+
+        bootstrap.start()
+        try await Task.sleep(for: .milliseconds(20))
+        menu.openConsole?()
+
+        #expect(menu.installCount == 1)
+        #expect(presenter.showCount == 1)
+    }
 }
 
 @MainActor
@@ -106,6 +131,25 @@ private final class RecordingInstallStatusMenu: StatusMenuInstalling {
 
     func install() {
         installCount += 1
+    }
+}
+
+@MainActor
+private final class RecordingConsoleAwareStatusMenu: StatusMenuInstalling {
+    private(set) var installCount = 0
+    var openConsole: (@MainActor @Sendable () -> Void)?
+
+    func install() {
+        installCount += 1
+    }
+}
+
+@MainActor
+private final class RecordingDesktopFoundationPresenter: DesktopFoundationPresenting {
+    private(set) var showCount = 0
+
+    func show() {
+        showCount += 1
     }
 }
 

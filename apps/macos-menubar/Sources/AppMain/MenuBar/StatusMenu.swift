@@ -2,6 +2,7 @@ import AppKit
 import Foundation
 
 public enum StatusMenuAction: String, Equatable, Sendable {
+    case openConsole
     case loadPrimaryModel
     case unloadPrimaryModel
     case quit
@@ -83,15 +84,18 @@ public final class AppKitStatusMenuRenderer: StatusMenuRendering {
 public final class StatusMenu: NSObject {
     private let renderer: any StatusMenuRendering
     private let viewModel: RuntimeViewModel
+    private let openConsoleHandler: @MainActor @Sendable () -> Void
     private let terminationHandler: @MainActor @Sendable () -> Void
 
     public init(
         viewModel: RuntimeViewModel,
         renderer: any StatusMenuRendering = AppKitStatusMenuRenderer(),
+        openConsoleHandler: @escaping @MainActor @Sendable () -> Void = {},
         terminationHandler: @escaping @MainActor @Sendable () -> Void = { NSApplication.shared.terminate(nil) }
     ) {
         self.viewModel = viewModel
         self.renderer = renderer
+        self.openConsoleHandler = openConsoleHandler
         self.terminationHandler = terminationHandler
         super.init()
     }
@@ -118,6 +122,8 @@ public final class StatusMenu: NSObject {
             )
         }
 
+        items.append(.action("Open Melix Console", .openConsole))
+
         if let lastError = viewModel.lastError {
             items.append(.error(lastError))
         }
@@ -130,6 +136,8 @@ public final class StatusMenu: NSObject {
 
     func perform(_ action: StatusMenuAction) {
         switch action {
+        case .openConsole:
+            openConsoleHandler()
         case .loadPrimaryModel:
             Task { @MainActor in
                 await viewModel.loadPrimaryModel()
