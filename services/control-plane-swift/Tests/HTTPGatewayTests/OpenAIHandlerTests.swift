@@ -572,6 +572,467 @@ struct OpenAIHandlerTests {
         #expect(body.contains("\"melix_state\":\"unknown\""))
     }
 
+    @Test("POST /v1/embeddings routes to the embedding worker and returns JSON")
+    func postEmbeddingsRoutesAndReturnsJSON() async throws {
+        let textClient = ScriptedWorkerClient(events: [])
+        let embeddingClient = ScriptedPhaseFiveWorkerClient()
+        await embeddingClient.setEmbedResponse({
+            var response = Melix_Worker_V1_EmbedResponse()
+            response.embeddings = [
+                {
+                    var embedding = Melix_Worker_V1_Embedding()
+                    embedding.values = [0.1, 0.2]
+                    return embedding
+                }(),
+                {
+                    var embedding = Melix_Worker_V1_Embedding()
+                    embedding.values = [0.3, 0.4]
+                    return embedding
+                }(),
+            ]
+            return response
+        }())
+
+        let metricsStore = MetricsStore()
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel(), ModelCatalog.devEmbeddingModel()])
+        _ = await catalog.loadModel(id: "melix-dev-embed", dispatchHandle: "melix-dev-embed::python")
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: textClient),
+                abortRegistry: AbortRegistry()
+            ),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: textClient,
+                embeddingClient: embeddingClient
+            ),
+            metricsStore: metricsStore
+        )
+
+        let body = try #require(
+            """
+            {
+              "model": "melix-dev-embed",
+              "input": ["alpha", "beta"]
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(method: .post, path: "/v1/embeddings", headers: [:], body: body)
+        )
+        let payload = try await collectBody(response.body)
+        let request = try #require(await embeddingClient.lastEmbedRequest)
+        let metrics = await metricsStore.snapshot()
+
+        #expect(response.statusCode == 200)
+        #expect(response.headers["content-type"] == "application/json")
+        #expect(request.modelHandle == "melix-dev-embed::python")
+        #expect(request.inputs == ["alpha", "beta"])
+        #expect(payload.contains("\"object\":\"list\""))
+        #expect(payload.contains("\"embedding\":[0.1,0.2]"))
+        #expect(payload.contains("\"model\":\"melix-dev-embed\""))
+        #expect(metrics.values["embeddings.request_latency_ms", default: -1] >= 0)
+        #expect(metrics.values["embeddings.items_per_second", default: 0] > 0)
+    }
+
+    @Test("POST /v1/rerank routes to the rerank worker and returns JSON")
+    func postRerankRoutesAndReturnsJSON() async throws {
+        let textClient = ScriptedWorkerClient(events: [])
+        let rerankClient = ScriptedPhaseFiveWorkerClient()
+        await rerankClient.setRerankResponse({
+            var response = Melix_Worker_V1_RerankResponse()
+            response.items = [
+                {
+                    var item = Melix_Worker_V1_RerankItem()
+                    item.index = 1
+                    item.score = 0.91
+                    return item
+                }(),
+                {
+                    var item = Melix_Worker_V1_RerankItem()
+                    item.index = 0
+                    item.score = 0.73
+                    return item
+                }(),
+            ]
+            return response
+        }())
+
+        let metricsStore = MetricsStore()
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel(), ModelCatalog.devRerankModel()])
+        _ = await catalog.loadModel(id: "melix-dev-rerank", dispatchHandle: "melix-dev-rerank::python")
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: textClient),
+                abortRegistry: AbortRegistry()
+            ),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: textClient,
+                rerankClient: rerankClient
+            ),
+            metricsStore: metricsStore
+        )
+
+        let body = try #require(
+            """
+            {
+              "model": "melix-dev-rerank",
+              "query": "swift worker",
+              "documents": ["python bridge", "swift worker"],
+              "top_k": 2
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(method: .post, path: "/v1/rerank", headers: [:], body: body)
+        )
+        let payload = try await collectBody(response.body)
+        let request = try #require(await rerankClient.lastRerankRequest)
+        let metrics = await metricsStore.snapshot()
+
+        #expect(response.statusCode == 200)
+        #expect(request.modelHandle == "melix-dev-rerank::python")
+        #expect(request.query == "swift worker")
+        #expect(request.documents == ["python bridge", "swift worker"])
+        #expect(payload.contains("\"model\":\"melix-dev-rerank\""))
+        #expect(payload.contains("\"index\":1"))
+        #expect(payload.contains("\"score\":0.91"))
+        #expect(metrics.values["rerank.request_latency_ms", default: -1] >= 0)
+        #expect(metrics.values["rerank.documents_per_second", default: 0] > 0)
+    }
+
+    @Test("GET /health reports route readiness and model counts")
+    func getHealthReportsRouteReadinessAndModelCounts() async throws {
+        let healthyClient = ScriptedWorkerClient(events: [])
+        let unhealthyClient = UnavailableWorkerClient()
+        let metricsStore = MetricsStore()
+        let handler = OpenAIHandler(
+            modelCatalog: ModelCatalog(seedModels: [warmModel(), warmEmbeddingModel(), warmRerankModel()]),
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: healthyClient),
+                abortRegistry: AbortRegistry()
+            ),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: healthyClient,
+                embeddingClient: healthyClient,
+                rerankClient: unhealthyClient,
+                modelOperationsClient: healthyClient
+            ),
+            metricsStore: metricsStore
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(method: .get, path: "/health", headers: [:], body: Data())
+        )
+        let payload = try await collectBody(response.body)
+        let metrics = await metricsStore.snapshot()
+
+        #expect(response.statusCode == 200)
+        #expect(payload.contains("\"status\":\"degraded\""))
+        #expect(payload.contains("\"swift_text\":true"))
+        #expect(payload.contains("\"python_embedding\":true"))
+        #expect(payload.contains("\"python_rerank\":false"))
+        #expect(payload.contains("\"models_ready\":3"))
+        #expect(payload.contains("\"models_total\":3"))
+        #expect(metrics.values["operator.health_latency_ms", default: -1] >= 0)
+    }
+
+    @Test("GET /health degrades cleanly when no worker registry is wired")
+    func getHealthDegradesCleanlyWithoutAWorkerRegistry() async throws {
+        let handler = OpenAIHandler(
+            modelCatalog: ModelCatalog(seedModels: [warmModel()]),
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: ScriptedWorkerClient(events: [])),
+                abortRegistry: AbortRegistry()
+            )
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(method: .get, path: "/health", headers: [:], body: Data())
+        )
+        let payload = try await collectBody(response.body)
+
+        #expect(response.statusCode == 200)
+        #expect(payload.contains("\"status\":\"degraded\""))
+        #expect(payload.contains("\"swift_text\":false"))
+        #expect(payload.contains("\"python_embedding\":false"))
+        #expect(payload.contains("\"python_rerank\":false"))
+        #expect(payload.contains("\"python_model_operations\":false"))
+    }
+
+    @Test("GET /v1/cache/stats renders the control-plane cache summary")
+    func getCacheStatsRendersControlPlaneCacheSummary() async throws {
+        var snapshot = CacheMetadataStore.emptySnapshot()
+        snapshot.summary.l1Bytes = 2048
+        snapshot.summary.l2Bytes = 4096
+        snapshot.summary.l1HitRate = 0.5
+        snapshot.summary.l2RestoreHitRate = 0.75
+        snapshot.summary.compressionRatio = 0.25
+        snapshot.summary.quantizedBytes = 1024
+
+        let handler = OpenAIHandler(
+            modelCatalog: ModelCatalog(seedModels: [warmModel()]),
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: ScriptedWorkerClient(events: [])),
+                abortRegistry: AbortRegistry()
+            ),
+            cacheMetadataStore: CacheMetadataStore(snapshot: snapshot)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(method: .get, path: "/v1/cache/stats", headers: [:], body: Data())
+        )
+        let payload = try await collectBody(response.body)
+
+        #expect(response.statusCode == 200)
+        #expect(payload.contains("\"l1_bytes\":2048"))
+        #expect(payload.contains("\"l2_bytes\":4096"))
+        #expect(payload.contains("\"l1_hit_rate\":0.5"))
+        #expect(payload.contains("\"l2_restore_hit_rate\":0.75"))
+        #expect(payload.contains("\"compression_ratio\":0.25"))
+        #expect(payload.contains("\"quantized_bytes\":1024"))
+    }
+
+    @Test("GET /v1/cache/stats returns empty zeros and metrics without a cache store")
+    func getCacheStatsReturnsEmptyZerosAndMetricsWithoutACacheStore() async throws {
+        let metricsStore = MetricsStore()
+        let handler = OpenAIHandler(
+            modelCatalog: ModelCatalog(seedModels: [warmModel()]),
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: ScriptedWorkerClient(events: [])),
+                abortRegistry: AbortRegistry()
+            ),
+            metricsStore: metricsStore
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(method: .get, path: "/v1/cache/stats", headers: [:], body: Data())
+        )
+        let payload = try await collectBody(response.body)
+        let metrics = await metricsStore.snapshot()
+
+        #expect(response.statusCode == 200)
+        #expect(payload.contains("\"l1_bytes\":0"))
+        #expect(payload.contains("\"l2_bytes\":0"))
+        #expect(payload.contains("\"compression_ratio\":0"))
+        #expect(metrics.values["operator.cache_stats_latency_ms", default: -1] >= 0)
+    }
+
+    @Test("POST /v1/embeddings accepts a single string input and estimates usage")
+    func postEmbeddingsAcceptsASingleStringInputAndEstimatesUsage() async throws {
+        let embeddingClient = ScriptedPhaseFiveWorkerClient()
+        await embeddingClient.setEmbedResponse({
+            var response = Melix_Worker_V1_EmbedResponse()
+            response.embeddings = [
+                {
+                    var embedding = Melix_Worker_V1_Embedding()
+                    embedding.values = [0.9, 0.1]
+                    return embedding
+                }(),
+            ]
+            return response
+        }())
+
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel(), ModelCatalog.devEmbeddingModel()])
+        _ = await catalog.loadModel(id: "melix-dev-embed", dispatchHandle: "melix-dev-embed::python")
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: ScriptedWorkerClient(events: [])),
+                abortRegistry: AbortRegistry()
+            ),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: ScriptedWorkerClient(events: []),
+                embeddingClient: embeddingClient
+            )
+        )
+
+        let body = try #require(
+            """
+            {
+              "model": "melix-dev-embed",
+              "input": "alpha beta"
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(method: .post, path: "/v1/embeddings", headers: [:], body: body)
+        )
+        let payload = try await collectBody(response.body)
+        let request = try #require(await embeddingClient.lastEmbedRequest)
+
+        #expect(response.statusCode == 200)
+        #expect(request.inputs == ["alpha beta"])
+        #expect(payload.contains("\"prompt_tokens\":2"))
+        #expect(payload.contains("\"total_tokens\":2"))
+    }
+
+    @Test("POST /v1/embeddings returns 409 when the embedding model is not loaded")
+    func postEmbeddingsReturns409WhenTheEmbeddingModelIsNotLoaded() async throws {
+        let handler = OpenAIHandler(
+            modelCatalog: ModelCatalog(seedModels: [ModelCatalog.devEmbeddingModel()]),
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: ScriptedWorkerClient(events: [])),
+                abortRegistry: AbortRegistry()
+            ),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: ScriptedWorkerClient(events: []),
+                embeddingClient: ScriptedPhaseFiveWorkerClient()
+            )
+        )
+
+        let body = try #require(
+            """
+            {
+              "model": "melix-dev-embed",
+              "input": ["alpha"]
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(method: .post, path: "/v1/embeddings", headers: [:], body: body)
+        )
+        let payload = try await collectBody(response.body)
+
+        #expect(response.statusCode == 409)
+        #expect(payload.contains("\"code\":\"model_not_ready\""))
+    }
+
+    @Test("POST /v1/embeddings returns 503 when no compatible embedding worker is available")
+    func postEmbeddingsReturns503WhenNoCompatibleEmbeddingWorkerIsAvailable() async throws {
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devEmbeddingModel()])
+        _ = await catalog.loadModel(id: "melix-dev-embed", dispatchHandle: "melix-dev-embed::python")
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: ScriptedWorkerClient(events: [])),
+                abortRegistry: AbortRegistry()
+            ),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: ScriptedWorkerClient(events: []),
+                embeddingClient: ScriptedWorkerClient(events: [])
+            )
+        )
+
+        let body = try #require(
+            """
+            {
+              "model": "melix-dev-embed",
+              "input": ["alpha"]
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(method: .post, path: "/v1/embeddings", headers: [:], body: body)
+        )
+        let payload = try await collectBody(response.body)
+
+        #expect(response.statusCode == 503)
+        #expect(payload.contains("\"code\":\"worker_unavailable\""))
+    }
+
+    @Test("POST /v1/embeddings maps worker error payloads to HTTP responses")
+    func postEmbeddingsMapsWorkerErrorPayloadsToHTTPResponses() async throws {
+        let embeddingClient = ScriptedPhaseFiveWorkerClient()
+        await embeddingClient.setEmbedResponse({
+            var response = Melix_Worker_V1_EmbedResponse()
+            response.error.code = "invalid_argument"
+            response.error.message = "bad embedding input"
+            return response
+        }())
+
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devEmbeddingModel()])
+        _ = await catalog.loadModel(id: "melix-dev-embed", dispatchHandle: "melix-dev-embed::python")
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: ScriptedWorkerClient(events: [])),
+                abortRegistry: AbortRegistry()
+            ),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: ScriptedWorkerClient(events: []),
+                embeddingClient: embeddingClient
+            )
+        )
+
+        let body = try #require(
+            """
+            {
+              "model": "melix-dev-embed",
+              "input": ["alpha"]
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(method: .post, path: "/v1/embeddings", headers: [:], body: body)
+        )
+        let payload = try await collectBody(response.body)
+
+        #expect(response.statusCode == 400)
+        #expect(payload.contains("\"code\":\"invalid_argument\""))
+        #expect(payload.contains("\"message\":\"bad embedding input\""))
+    }
+
+    @Test("POST /v1/rerank maps worker errors and thrown failures to HTTP responses")
+    func postRerankMapsWorkerErrorsAndThrownFailuresToHTTPResponses() async throws {
+        let rerankClient = ScriptedPhaseFiveWorkerClient()
+        await rerankClient.setRerankResponse({
+            var response = Melix_Worker_V1_RerankResponse()
+            response.error.code = "not_found"
+            response.error.message = "rerank model missing"
+            return response
+        }())
+
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devRerankModel()])
+        _ = await catalog.loadModel(id: "melix-dev-rerank", dispatchHandle: "melix-dev-rerank::python")
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: ScriptedWorkerClient(events: [])),
+                abortRegistry: AbortRegistry()
+            ),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: ScriptedWorkerClient(events: []),
+                rerankClient: rerankClient
+            )
+        )
+
+        let body = try #require(
+            """
+            {
+              "model": "melix-dev-rerank",
+              "query": "swift worker",
+              "documents": ["swift worker"],
+              "top_k": 1
+            }
+            """.data(using: .utf8)
+        )
+
+        let errorResponse = try await handler.handle(
+            HTTPRequest(method: .post, path: "/v1/rerank", headers: [:], body: body)
+        )
+        let errorPayload = try await collectBody(errorResponse.body)
+
+        #expect(errorResponse.statusCode == 404)
+        #expect(errorPayload.contains("\"code\":\"not_found\""))
+
+        await rerankClient.setThrownFailure(WorkerClientError.unavailable)
+        let unavailableResponse = try await handler.handle(
+            HTTPRequest(method: .post, path: "/v1/rerank", headers: [:], body: body)
+        )
+        let unavailablePayload = try await collectBody(unavailableResponse.body)
+
+        #expect(unavailableResponse.statusCode == 503)
+        #expect(unavailablePayload.contains("\"code\":\"worker_unavailable\""))
+    }
+
     @Test("unknown routes return 404 json")
     func unknownRoutesReturn404() async throws {
         let handler = OpenAIHandler(
@@ -828,6 +1289,18 @@ struct OpenAIHandlerTests {
         model.state = .modelWarm
         return model
     }
+
+    private func warmEmbeddingModel() -> Melix_Controlplane_V1_ModelSummary {
+        var model = ModelCatalog.devEmbeddingModel()
+        model.state = .modelWarm
+        return model
+    }
+
+    private func warmRerankModel() -> Melix_Controlplane_V1_ModelSummary {
+        var model = ModelCatalog.devRerankModel()
+        model.state = .modelWarm
+        return model
+    }
 }
 
 private actor ScriptedWorkerClient: WorkerRoutingClient {
@@ -866,6 +1339,71 @@ private actor ScriptedWorkerClient: WorkerRoutingClient {
         response.ok = true
         response.modelHandle = "melix-dev-text::swift"
         return response
+    }
+}
+
+private actor ScriptedPhaseFiveWorkerClient: WorkerRoutingClient, NonTextInferenceWorkerClientProtocol {
+    private(set) var lastEmbedRequest: Melix_Worker_V1_EmbedRequest?
+    private(set) var lastRerankRequest: Melix_Worker_V1_RerankRequest?
+    private var embedResponse = Melix_Worker_V1_EmbedResponse()
+    private var rerankResponse = Melix_Worker_V1_RerankResponse()
+    private var thrownFailure: Error?
+
+    func setEmbedResponse(_ response: Melix_Worker_V1_EmbedResponse) {
+        embedResponse = response
+    }
+
+    func setRerankResponse(_ response: Melix_Worker_V1_RerankResponse) {
+        rerankResponse = response
+    }
+
+    func setThrownFailure(_ failure: Error?) {
+        thrownFailure = failure
+    }
+
+    func canDispatchRequests() async -> Bool {
+        true
+    }
+
+    func generate(
+        request: Melix_Worker_V1_GenerateRequest
+    ) async throws -> AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error> {
+        AsyncThrowingStream { continuation in
+            continuation.finish()
+        }
+    }
+
+    func abort(requestID: String) async throws -> Bool {
+        true
+    }
+
+    func loadModel(
+        request: Melix_Worker_V1_LoadModelRequest
+    ) async throws -> Melix_Worker_V1_LoadModelResponse {
+        var response = Melix_Worker_V1_LoadModelResponse()
+        response.ok = true
+        response.modelHandle = "\(request.model.modelID)::python"
+        return response
+    }
+
+    func embed(
+        request: Melix_Worker_V1_EmbedRequest
+    ) async throws -> Melix_Worker_V1_EmbedResponse {
+        if let thrownFailure {
+            throw thrownFailure
+        }
+        lastEmbedRequest = request
+        return embedResponse
+    }
+
+    func rerank(
+        request: Melix_Worker_V1_RerankRequest
+    ) async throws -> Melix_Worker_V1_RerankResponse {
+        if let thrownFailure {
+            throw thrownFailure
+        }
+        lastRerankRequest = request
+        return rerankResponse
     }
 }
 

@@ -287,7 +287,25 @@ public actor SchedulerReadModel {
         guard let record = requestRecords[requestID] else {
             return
         }
-        guard !isTerminal(record.phase) else {
+        if isTerminal(record.phase) {
+            guard record.phase == .requestCompleted, phase == .requestAborted else {
+                return
+            }
+
+            var progress = requestProgressSnapshots[requestID] ?? Melix_Controlplane_V1_RequestProgressEvent()
+            progress.requestID = requestID
+            progress.phase = .requestAborted
+            progress.lane = record.laneID
+            progress.workerID = workerID ?? progress.workerID
+            requestRecords[requestID] = RequestRecord(
+                laneID: record.laneID,
+                phase: .requestAborted,
+                admissionState: record.admissionState,
+                priorityScore: record.priorityScore,
+                queuedAt: record.queuedAt
+            )
+            requestProgressSnapshots[requestID] = progress
+            await publish(progress, source: "scheduler")
             return
         }
 

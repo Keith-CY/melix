@@ -1660,17 +1660,19 @@ final class WorkerScaffoldTests: XCTestCase {
         message.parts = [part]
         generateRequest.messages = [message]
 
-        async let generateTask: Void = withServerContextRPCCancellationHandle { handle in
-            try await services.inference.generate(
-                request: generateRequest,
-                response: RPCWriter(wrapping: writer),
-                context: ServerContext(
-                    descriptor: Melix_Worker_V1_InferenceService.Method.Generate.descriptor,
-                    remotePeer: "in-process:test",
-                    localPeer: "in-process:test",
-                    cancellation: handle
+        let generateTask = Task {
+            try await withServerContextRPCCancellationHandle { handle in
+                try await services.inference.generate(
+                    request: generateRequest,
+                    response: RPCWriter(wrapping: writer),
+                    context: ServerContext(
+                        descriptor: Melix_Worker_V1_InferenceService.Method.Generate.descriptor,
+                        remotePeer: "in-process:test",
+                        localPeer: "in-process:test",
+                        cancellation: handle
+                    )
                 )
-            )
+            }
         }
 
         try await Task.sleep(nanoseconds: 20_000_000)
@@ -1689,7 +1691,7 @@ final class WorkerScaffoldTests: XCTestCase {
             )
         }
 
-        _ = try await generateTask
+        _ = try await generateTask.value
 
         let recorded = await writer.snapshot()
         XCTAssertTrue(abortResponse.ok)

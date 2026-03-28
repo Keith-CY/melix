@@ -940,16 +940,22 @@ public actor RequestCoordinator {
         await metricsStore.set(cachePressure, forKey: "scheduler.cache_pressure")
 
         if let cacheMetadataStore {
-            await cacheMetadataStore.replace(snapshot: controlPlaneCacheSnapshot(from: cacheStats.snapshot))
+            await cacheMetadataStore.replace(
+                snapshot: controlPlaneCacheSnapshot(
+                    from: cacheStats.snapshot,
+                    overridingSummary: cacheStats.stats
+                )
+            )
         }
     }
 }
 
 private func controlPlaneCacheSnapshot(
-    from workerSnapshot: Melix_Worker_V1_CacheSnapshot
+    from workerSnapshot: Melix_Worker_V1_CacheSnapshot,
+    overridingSummary workerStats: Melix_Worker_V1_CacheStats? = nil
 ) -> Melix_Controlplane_V1_CacheSnapshot {
     var snapshot = Melix_Controlplane_V1_CacheSnapshot()
-    snapshot.summary = controlPlaneCacheSummary(from: workerSnapshot.stats)
+    snapshot.summary = controlPlaneCacheSummary(from: workerStats ?? workerSnapshot.stats)
     snapshot.pinnedPrefixes = workerSnapshot.pinnedPrefixes.map(controlPlanePrefixRef(from:))
     snapshot.hotPrefixes = workerSnapshot.hotPrefixes.map(controlPlanePrefixRef(from:))
     snapshot.snapshots = workerSnapshot.snapshots.map(controlPlaneSnapshotRef(from:))

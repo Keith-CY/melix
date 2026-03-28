@@ -228,6 +228,40 @@ struct SchedulerReadModelTests {
         #expect(progress?.workerID == "swift-text-worker")
         #expect(snapshot.activeRequests == 0)
     }
+
+    @Test("aborted terminal state overrides a previously completed request")
+    func abortedTerminalStateOverridesAPreviouslyCompletedRequest() async {
+        let recorder = SchedulerEventRecorder()
+        let readModel = SchedulerReadModel(
+            eventPublisher: { event in
+                await recorder.append(event)
+            }
+        )
+
+        _ = await readModel.recordAdmitted(
+            requestID: "req-terminal-upgrade",
+            laneHint: "text.decode.interactive",
+            priority: 0,
+            workerID: "swift-text-worker",
+            admissionLatencyMs: 1
+        )
+        await readModel.recordTerminalState(
+            requestID: "req-terminal-upgrade",
+            phase: .requestCompleted,
+            workerID: "swift-text-worker"
+        )
+        await readModel.recordTerminalState(
+            requestID: "req-terminal-upgrade",
+            phase: .requestAborted,
+            workerID: "swift-text-worker"
+        )
+
+        let progress = await readModel.progressSnapshot(for: "req-terminal-upgrade")
+        let events = await recorder.snapshot()
+
+        #expect(progress?.phase == .requestAborted)
+        #expect(events.last?.requestProgress.phase == .requestAborted)
+    }
 }
 
 private final class TestClock: @unchecked Sendable {

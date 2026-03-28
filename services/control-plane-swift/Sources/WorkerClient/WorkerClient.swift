@@ -13,6 +13,16 @@ public protocol WorkerClient: Sendable {
     func abort(requestID: String) async throws -> Bool
 }
 
+public protocol NonTextInferenceWorkerClientProtocol: WorkerClient {
+    func embed(
+        request: Melix_Worker_V1_EmbedRequest
+    ) async throws -> Melix_Worker_V1_EmbedResponse
+
+    func rerank(
+        request: Melix_Worker_V1_RerankRequest
+    ) async throws -> Melix_Worker_V1_RerankResponse
+}
+
 public protocol PhaseAwareWorkerClientProtocol: WorkerClient {
     func prefill(
         request: Melix_Worker_V1_PrefillRequest
@@ -34,7 +44,17 @@ public protocol WorkerRoutingClient: WorkerClient {
     ) async throws -> Melix_Worker_V1_LoadModelResponse
 }
 
-public struct NullWorkerClient: WorkerClient {
+public protocol ModelOperationsWorkerClientProtocol: WorkerClient {
+    func getModelInfo(
+        request: Melix_Worker_V1_GetModelInfoRequest
+    ) async throws -> Melix_Worker_V1_GetModelInfoResponse
+
+    func convertModel(
+        request: Melix_Worker_V1_ConvertModelRequest
+    ) async throws -> AsyncThrowingStream<Melix_Worker_V1_ConvertModelEvent, Error>
+}
+
+public struct NullWorkerClient: WorkerRoutingClient {
     public init() {}
 
     public func canDispatchRequests() async -> Bool {
@@ -49,5 +69,11 @@ public struct NullWorkerClient: WorkerClient {
 
     public func abort(requestID: String) async throws -> Bool {
         false
+    }
+
+    public func loadModel(
+        request: Melix_Worker_V1_LoadModelRequest
+    ) async throws -> Melix_Worker_V1_LoadModelResponse {
+        throw WorkerClientError.unavailable
     }
 }

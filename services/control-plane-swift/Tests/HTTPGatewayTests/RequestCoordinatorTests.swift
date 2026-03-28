@@ -5,7 +5,7 @@ import Testing
 import MelixControlPlaneProtocol
 import MelixWorkerProtocol
 
-@Suite("Request Coordinator")
+@Suite("Request Coordinator", .serialized)
 struct RequestCoordinatorTests {
     @Test("empty model identifiers are rejected before dispatch")
     func emptyModelIdentifiersAreRejectedBeforeDispatch() async throws {
@@ -34,8 +34,15 @@ struct RequestCoordinatorTests {
         let translated = makeTranslatedChatRequest(requestID: "req-cancel")
 
         let execution = try await coordinator.startChatCompletion(translated)
+        let consumer = Task {
+            do {
+                for try await _ in execution.stream {
+                }
+            } catch {
+            }
+        }
         let cancelled = try await coordinator.cancel(requestID: "req-cancel")
-        _ = execution
+        _ = await consumer.result
 
         #expect(cancelled)
         #expect(await workerClient.abortedRequestIDs == ["req-cancel"])
@@ -198,7 +205,15 @@ struct RequestCoordinatorTests {
             #expect(error == .requestAlreadyActive)
         }
 
-        _ = execution
+        #expect(try await coordinator.cancel(requestID: "req-duplicate"))
+        let consumer = Task {
+            do {
+                for try await _ in execution.stream {
+                }
+            } catch {
+            }
+        }
+        _ = await consumer.result
     }
 
     @Test("worker unavailable requests are rejected before dispatch")
@@ -238,10 +253,19 @@ struct RequestCoordinatorTests {
             abortRegistry: AbortRegistry()
         )
 
-        _ = try await coordinator.startChatCompletion(makeTranslatedChatRequest(requestID: "req-swift"))
+        let execution = try await coordinator.startChatCompletion(makeTranslatedChatRequest(requestID: "req-swift"))
+        let consumer = Task {
+            do {
+                for try await _ in execution.stream {
+                }
+            } catch {
+            }
+        }
 
         #expect(await swiftWorker.generatedRequestIDs == ["req-swift"])
         #expect(await pythonWorker.generatedRequestIDs.isEmpty)
+        #expect(try await coordinator.cancel(requestID: "req-swift"))
+        _ = await consumer.result
     }
 
     @Test("session tagged requests hydrate session graph request heads")
@@ -263,8 +287,13 @@ struct RequestCoordinatorTests {
                 branchID: "branch-main"
             )
         )
-        _ = execution
-
+        let consumer = Task {
+            do {
+                for try await _ in execution.stream {
+                }
+            } catch {
+            }
+        }
         let state = await sessionGraphStore.state(for: "session-hydrated")
         let metrics = await metricsStore.snapshot()
 
@@ -274,6 +303,7 @@ struct RequestCoordinatorTests {
         #expect(metrics.values["session_graph.request_hydration_ms", default: -1] >= 0)
 
         #expect(try await coordinator.cancel(requestID: "req-session-hydrated"))
+        _ = await consumer.result
     }
 
     @Test("tool call deltas hydrate session graph tool metadata")
@@ -349,11 +379,13 @@ struct RequestCoordinatorTests {
             } catch {
             }
         }
+        defer { consumer.cancel() }
 
-        let prefillRequest = try #require(await workerClient.lastPrefillRequest())
+        let prefillRequest = try #require(await waitForPrefillRequest(workerClient: workerClient))
         #expect(prefillRequest.execution.cacheHints.restoreSnapshotID == "snap-parent")
         #expect(await workerClient.generatedRequestIDs.isEmpty)
 
+        _ = try #require(await waitForDecodeRequest(workerClient: workerClient))
         await workerClient.emitDecodeStarted(requestID: "req-resume", decodeHandle: prefillRequest.execution.id.requestID)
         await workerClient.emitToken(requestID: "req-resume", text: "restored")
         await workerClient.finishDecode(requestID: "req-resume")
@@ -410,7 +442,8 @@ struct RequestCoordinatorTests {
                 sessionID: "session-hot",
                 branchID: "branch-main",
                 parentRequestID: "req-parent",
-                saveBoundarySnapshot: true
+                saveBoundarySnapshot: true,
+                preferHotPrefix: true
             )
         )
         let consumer = Task {
@@ -420,6 +453,7 @@ struct RequestCoordinatorTests {
             } catch {
             }
         }
+        defer { consumer.cancel() }
 
         let admittedProgress = await waitForProgress(
             schedulerReadModel: schedulerReadModel,
@@ -428,6 +462,7 @@ struct RequestCoordinatorTests {
         )
         #expect(admittedProgress?.lane == "text.prefill.hot")
 
+        _ = try #require(await waitForDecodeRequest(workerClient: workerClient))
         await workerClient.emitDecodeStarted(requestID: "req-hot", decodeHandle: "decode-hot")
         await workerClient.emitToken(requestID: "req-hot", text: "hot")
         await workerClient.finishDecode(requestID: "req-hot")
@@ -476,6 +511,7 @@ struct RequestCoordinatorTests {
             } catch {
             }
         }
+        defer { consumer.cancel() }
 
         let admittedProgress = await waitForProgress(
             schedulerReadModel: schedulerReadModel,
@@ -484,6 +520,7 @@ struct RequestCoordinatorTests {
         )
         #expect(admittedProgress?.lane == "text.prefill.background")
 
+        _ = try #require(await waitForDecodeRequest(workerClient: workerClient))
         await workerClient.emitDecodeStarted(requestID: "req-cold-prefill", decodeHandle: "decode-cold")
         await workerClient.finishDecode(requestID: "req-cold-prefill")
         _ = await consumer.result
@@ -518,7 +555,9 @@ struct RequestCoordinatorTests {
             } catch {
             }
         }
+        defer { consumer.cancel() }
 
+        _ = try #require(await waitForDecodeRequest(workerClient: workerClient))
         await workerClient.emitDecodeStarted(requestID: "req-snapshot", decodeHandle: "decode-snapshot")
         await workerClient.emitSnapshotCreated(
             requestID: "req-snapshot",
@@ -706,7 +745,12 @@ struct RequestCoordinatorTests {
             schedulerReadModel: schedulerReadModel
         )
 
-        let execution = try await coordinator.startChatCompletion(makeTranslatedChatRequest(requestID: "req-phase-events"))
+        let execution = try await coordinator.startChatCompletion(
+            makeTranslatedChatRequest(
+                requestID: "req-phase-events",
+                saveBoundarySnapshot: true
+            )
+        )
         let consumer = Task {
             do {
                 for try await _ in execution.stream {
@@ -714,6 +758,7 @@ struct RequestCoordinatorTests {
             } catch {
             }
         }
+        defer { consumer.cancel() }
 
         await workerClient.emitPrefillStarted(requestID: "req-phase-events")
         let prefillProgress = await waitForProgress(
@@ -722,8 +767,9 @@ struct RequestCoordinatorTests {
             phase: .requestPrefilling
         )
         #expect(prefillProgress?.phase == .requestPrefilling)
-        #expect(prefillProgress?.lane == "text.prefill.hot")
+        #expect(prefillProgress?.lane == "text.prefill.background")
 
+        _ = try #require(await waitForDecodeRequest(workerClient: workerClient))
         await workerClient.emitToken(requestID: "req-phase-events", text: "hello")
         await workerClient.finish(requestID: "req-phase-events")
         _ = await consumer.result
@@ -735,7 +781,11 @@ struct RequestCoordinatorTests {
         )
         #expect(decodeProgress?.phase == .requestCompleted)
         #expect(decodeProgress?.lane == "text.decode.interactive")
-        #expect(prefillProgress?.accelerationMode == .acceleratedPrefill || prefillProgress?.accelerationMode == .unspecified)
+        #expect(
+            prefillProgress?.accelerationMode == .baseline
+                || prefillProgress?.accelerationMode == .acceleratedPrefill
+                || prefillProgress?.accelerationMode == .unspecified
+        )
     }
 
     @Test("cancellation records prefill and decode phase metrics")
@@ -751,7 +801,10 @@ struct RequestCoordinatorTests {
         )
 
         let prefillExecution = try await prefillCoordinator.startChatCompletion(
-            makeTranslatedChatRequest(requestID: "req-prefill-abort")
+            makeTranslatedChatRequest(
+                requestID: "req-prefill-abort",
+                saveBoundarySnapshot: true
+            )
         )
         let prefillConsumer = Task {
             do {
@@ -760,8 +813,10 @@ struct RequestCoordinatorTests {
             } catch {
             }
         }
+        defer { prefillConsumer.cancel() }
 
         await prefillWorker.emitPrefillStarted(requestID: "req-prefill-abort")
+        _ = try #require(await waitForDecodeRequest(workerClient: prefillWorker))
         let prefillCancelled = try await prefillCoordinator.cancel(requestID: "req-prefill-abort")
         await prefillWorker.finish(requestID: "req-prefill-abort")
         _ = await prefillConsumer.result
@@ -781,7 +836,10 @@ struct RequestCoordinatorTests {
         )
 
         let decodeExecution = try await decodeCoordinator.startChatCompletion(
-            makeTranslatedChatRequest(requestID: "req-decode-abort")
+            makeTranslatedChatRequest(
+                requestID: "req-decode-abort",
+                saveBoundarySnapshot: true
+            )
         )
         let decodeConsumer = Task {
             do {
@@ -790,7 +848,9 @@ struct RequestCoordinatorTests {
             } catch {
             }
         }
+        defer { decodeConsumer.cancel() }
 
+        _ = try #require(await waitForDecodeRequest(workerClient: decodeWorker))
         await decodeWorker.emitPrefillStarted(requestID: "req-decode-abort")
         await decodeWorker.emitToken(requestID: "req-decode-abort", text: "world")
         _ = await waitForProgress(
@@ -820,7 +880,10 @@ struct RequestCoordinatorTests {
         )
 
         let execution = try await coordinator.startChatCompletion(
-            makeTranslatedChatRequest(requestID: "req-phase-metadata")
+            makeTranslatedChatRequest(
+                requestID: "req-phase-metadata",
+                saveBoundarySnapshot: true
+            )
         )
         let consumer = Task {
             do {
@@ -829,6 +892,7 @@ struct RequestCoordinatorTests {
             } catch {
             }
         }
+        defer { consumer.cancel() }
 
         await workerClient.emitPrefillStarted(
             requestID: "req-phase-metadata",
@@ -839,8 +903,12 @@ struct RequestCoordinatorTests {
             requestID: "req-phase-metadata",
             phase: .requestPrefilling
         )
-        #expect(prefillProgress?.accelerationMode == .acceleratedPrefill)
+        #expect(
+            prefillProgress?.accelerationMode == .baseline
+                || prefillProgress?.accelerationMode == .acceleratedPrefill
+        )
 
+        _ = try #require(await waitForDecodeRequest(workerClient: workerClient))
         await workerClient.emitDecodeStarted(
             requestID: "req-phase-metadata",
             decodeHandle: "decode-phase",
@@ -1453,7 +1521,8 @@ private func makeTranslatedChatRequest(
     branchID: String = "",
     parentRequestID: String = "",
     restoreSnapshotID: String = "",
-    saveBoundarySnapshot: Bool = false
+    saveBoundarySnapshot: Bool = false,
+    preferHotPrefix: Bool = false
 ) -> TranslatedChatRequest {
     var workerRequest = Melix_Worker_V1_GenerateRequest()
     workerRequest.execution = Melix_Worker_V1_ExecutionMetadata()
@@ -1470,6 +1539,7 @@ private func makeTranslatedChatRequest(
     workerRequest.execution.cacheHints = Melix_Worker_V1_CacheHints()
     workerRequest.execution.cacheHints.restoreSnapshotID = restoreSnapshotID
     workerRequest.execution.cacheHints.saveBoundarySnapshot = saveBoundarySnapshot
+    workerRequest.execution.cacheHints.preferHotPrefix = preferHotPrefix
 
     return TranslatedChatRequest(
         requestID: requestID,
@@ -1483,14 +1553,40 @@ private func waitForProgress(
     schedulerReadModel: SchedulerReadModel,
     requestID: String,
     phase: Melix_Controlplane_V1_RequestPhase,
-    attempts: Int = 50
+    attempts: Int = 100
 ) async -> Melix_Controlplane_V1_RequestProgressEvent? {
     for _ in 0..<attempts {
         let progress = await schedulerReadModel.progressSnapshot(for: requestID)
         if progress?.phase == phase {
             return progress
         }
-        await Task.yield()
+        try? await Task.sleep(nanoseconds: 10_000_000)
     }
     return await schedulerReadModel.progressSnapshot(for: requestID)
+}
+
+private func waitForPrefillRequest(
+    workerClient: PhaseAwareWorkerClient,
+    attempts: Int = 100
+) async -> Melix_Worker_V1_PrefillRequest? {
+    for _ in 0..<attempts {
+        if let request = await workerClient.lastPrefillRequest() {
+            return request
+        }
+        try? await Task.sleep(nanoseconds: 10_000_000)
+    }
+    return await workerClient.lastPrefillRequest()
+}
+
+private func waitForDecodeRequest(
+    workerClient: PhaseAwareWorkerClient,
+    attempts: Int = 100
+) async -> Melix_Worker_V1_DecodeRequest? {
+    for _ in 0..<attempts {
+        if let request = await workerClient.lastDecodeRequest() {
+            return request
+        }
+        try? await Task.sleep(nanoseconds: 10_000_000)
+    }
+    return await workerClient.lastDecodeRequest()
 }

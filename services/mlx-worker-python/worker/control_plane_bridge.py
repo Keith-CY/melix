@@ -7,12 +7,31 @@ from pathlib import Path
 
 import grpc
 
-from packages.protocol.python.worker.v1 import inference_pb2, inference_pb2_grpc, runtime_pb2, runtime_pb2_grpc
+from packages.protocol.python.worker.v1 import (
+    inference_pb2,
+    inference_pb2_grpc,
+    maintenance_pb2,
+    maintenance_pb2_grpc,
+    runtime_pb2,
+    runtime_pb2_grpc,
+)
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("command", choices=["handshake", "load-model", "generate", "abort"])
+    parser.add_argument(
+        "command",
+        choices=[
+            "handshake",
+            "load-model",
+            "generate",
+            "abort",
+            "embed",
+            "rerank",
+            "get-model-info",
+            "convert-model",
+        ],
+    )
     parser.add_argument("--socket-path", required=True)
     parser.add_argument("--request-b64", required=True)
     args = parser.parse_args()
@@ -34,6 +53,23 @@ def main() -> None:
                 stub = inference_pb2_grpc.InferenceServiceStub(channel)
                 request = inference_pb2.GenerateRequest.FromString(request_bytes)
                 for event in stub.Generate(request):
+                    emit_message(event.SerializeToString())
+            elif args.command == "embed":
+                stub = inference_pb2_grpc.InferenceServiceStub(channel)
+                request = inference_pb2.EmbedRequest.FromString(request_bytes)
+                emit_message(stub.Embed(request).SerializeToString())
+            elif args.command == "rerank":
+                stub = inference_pb2_grpc.InferenceServiceStub(channel)
+                request = inference_pb2.RerankRequest.FromString(request_bytes)
+                emit_message(stub.Rerank(request).SerializeToString())
+            elif args.command == "get-model-info":
+                stub = maintenance_pb2_grpc.MaintenanceServiceStub(channel)
+                request = maintenance_pb2.GetModelInfoRequest.FromString(request_bytes)
+                emit_message(stub.GetModelInfo(request).SerializeToString())
+            elif args.command == "convert-model":
+                stub = maintenance_pb2_grpc.MaintenanceServiceStub(channel)
+                request = maintenance_pb2.ConvertModelRequest.FromString(request_bytes)
+                for event in stub.ConvertModel(request):
                     emit_message(event.SerializeToString())
             else:
                 stub = inference_pb2_grpc.InferenceServiceStub(channel)

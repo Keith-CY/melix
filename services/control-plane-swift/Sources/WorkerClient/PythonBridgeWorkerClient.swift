@@ -8,6 +8,10 @@ public enum BridgeCommandKind: String, Sendable {
     case loadModel = "load-model"
     case generate = "generate"
     case abort = "abort"
+    case embed = "embed"
+    case rerank = "rerank"
+    case getModelInfo = "get-model-info"
+    case convertModel = "convert-model"
 }
 
 public struct BridgeCommand: Sendable {
@@ -27,7 +31,12 @@ public protocol WorkerBridgeRunning: Sendable {
     func runStream(command: BridgeCommand) async throws -> AsyncThrowingStream<String, Error>
 }
 
-public struct PythonBridgeWorkerClient: WorkerRoutingClient, Sendable {
+public struct PythonBridgeWorkerClient:
+    WorkerRoutingClient,
+    NonTextInferenceWorkerClientProtocol,
+    ModelOperationsWorkerClientProtocol,
+    Sendable
+{
     private let socketPath: String
     private let runner: any WorkerBridgeRunning
 
@@ -116,6 +125,58 @@ public struct PythonBridgeWorkerClient: WorkerRoutingClient, Sendable {
         return response.ok && response.found
     }
 
+    public func embed(
+        request: Melix_Worker_V1_EmbedRequest
+    ) async throws -> Melix_Worker_V1_EmbedResponse {
+        try await sendUnary(kind: .embed, request: request, as: Melix_Worker_V1_EmbedResponse.self)
+    }
+
+    public func rerank(
+        request: Melix_Worker_V1_RerankRequest
+    ) async throws -> Melix_Worker_V1_RerankResponse {
+        try await sendUnary(kind: .rerank, request: request, as: Melix_Worker_V1_RerankResponse.self)
+    }
+
+    public func getModelInfo(
+        request: Melix_Worker_V1_GetModelInfoRequest
+    ) async throws -> Melix_Worker_V1_GetModelInfoResponse {
+        try await sendUnary(
+            kind: .getModelInfo,
+            request: request,
+            as: Melix_Worker_V1_GetModelInfoResponse.self
+        )
+    }
+
+    public func convertModel(
+        request: Melix_Worker_V1_ConvertModelRequest
+    ) async throws -> AsyncThrowingStream<Melix_Worker_V1_ConvertModelEvent, Error> {
+        let lineStream = try await runner.runStream(
+            command: BridgeCommand(
+                kind: .convertModel,
+                socketPath: socketPath,
+                requestData: try request.serializedData()
+            )
+        )
+
+        return AsyncThrowingStream { continuation in
+            let task = Task {
+                do {
+                    for try await line in lineStream {
+                        let event: Melix_Worker_V1_ConvertModelEvent = try decodeLine(line)
+                        continuation.yield(event)
+                    }
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+
+            continuation.onTermination = { _ in
+                task.cancel()
+            }
+        }
+    }
+
     private func sendUnary<Request: SwiftProtobuf.Message, Response: SwiftProtobuf.Message>(
         kind: BridgeCommandKind,
         request: Request,
@@ -153,8 +214,42 @@ public enum BootstrapWorkerPreparation {
         modelCatalog: ModelCatalog,
         memoryBudgetBytes: UInt64 = 0
     ) async throws -> Bool {
+        try await preloadModel(
+            workerClient: workerClient,
+            modelCatalog: modelCatalog,
+            model: devTextModel(),
+            memoryBudgetBytes: memoryBudgetBytes
+        )
+    }
+
+    public static func preloadPhaseFivePythonModels(
+        workerClient: any WorkerRoutingClient,
+        modelCatalog: ModelCatalog,
+        memoryBudgetBytes: UInt64 = 0
+    ) async throws {
+        _ = try await preloadModel(
+            workerClient: workerClient,
+            modelCatalog: modelCatalog,
+            model: devEmbeddingModel(),
+            memoryBudgetBytes: memoryBudgetBytes
+        )
+        _ = try await preloadModel(
+            workerClient: workerClient,
+            modelCatalog: modelCatalog,
+            model: devRerankModel(),
+            memoryBudgetBytes: memoryBudgetBytes
+        )
+    }
+
+    @discardableResult
+    private static func preloadModel(
+        workerClient: any WorkerRoutingClient,
+        modelCatalog: ModelCatalog,
+        model: Melix_Worker_V1_ModelSpec,
+        memoryBudgetBytes: UInt64
+    ) async throws -> Bool {
         var request = Melix_Worker_V1_LoadModelRequest()
-        request.model = devTextModel()
+        request.model = model
         request.memoryBudgetBytes = memoryBudgetBytes
         request.pinOnLoad = true
         request.warmupAfterLoad = false
@@ -176,6 +271,34 @@ public enum BootstrapWorkerPreparation {
         model.revision = "dev"
         model.tokenizerHash = "tok-dev"
         model.quantProfileID = "q4"
+        model.parserMode = "text"
+        model.reasoningMode = "off"
+        model.maxContext = 8192
+        return model
+    }
+
+    private static func devEmbeddingModel() -> Melix_Worker_V1_ModelSpec {
+        var model = Melix_Worker_V1_ModelSpec()
+        model.modelID = "melix-dev-embed"
+        model.modelPath = "models/melix-dev-embed"
+        model.modelKind = "embedding"
+        model.revision = "dev"
+        model.tokenizerHash = "tok-embed-dev"
+        model.quantProfileID = "q8"
+        model.parserMode = "text"
+        model.reasoningMode = "off"
+        model.maxContext = 8192
+        return model
+    }
+
+    private static func devRerankModel() -> Melix_Worker_V1_ModelSpec {
+        var model = Melix_Worker_V1_ModelSpec()
+        model.modelID = "melix-dev-rerank"
+        model.modelPath = "models/melix-dev-rerank"
+        model.modelKind = "rerank"
+        model.revision = "dev"
+        model.tokenizerHash = "tok-rerank-dev"
+        model.quantProfileID = "q8"
         model.parserMode = "text"
         model.reasoningMode = "off"
         model.maxContext = 8192

@@ -2,6 +2,7 @@ import Foundation
 import Testing
 
 @testable import MelixControlPlaneCore
+import MelixControlPlaneProtocol
 import MelixWorkerProtocol
 
 @Suite("Worker Registry")
@@ -64,6 +65,67 @@ struct WorkerRegistryTests {
 
         #expect(preloaded)
         #expect(await catalog.dispatchHandle(for: "melix-dev-text") == "melix-dev-text::swift")
+    }
+
+    @Test("route selection honors explicit route classes before capability inference")
+    func routeSelectionHonorsExplicitRouteClassesBeforeCapabilityInference() async {
+        let registry = WorkerRegistry(defaultTextClient: RouteTestingWorkerClient())
+        var model = Melix_Controlplane_V1_ModelSummary()
+        model.modelID = "melix-dev-embed"
+        model.kind = "embedding"
+        model.capabilityClass = .modelCapabilityText
+        model.routeClass = .workerRoutePythonEmbedding
+
+        #expect(await registry.route(for: model) == .pythonEmbedding)
+    }
+
+    @Test("route inference falls back to model kind when capability metadata is unspecified")
+    func routeInferenceFallsBackToModelKindWhenCapabilityMetadataIsUnspecified() async {
+        let registry = WorkerRegistry(defaultTextClient: RouteTestingWorkerClient())
+        var textModel = Melix_Controlplane_V1_ModelSummary()
+        textModel.modelID = "melix-dev-text"
+        textModel.kind = "text"
+
+        var compatibilityModel = Melix_Controlplane_V1_ModelSummary()
+        compatibilityModel.modelID = "melix-dev-audio"
+        compatibilityModel.kind = "audio"
+
+        #expect(await registry.route(for: textModel) == .swiftText)
+        #expect(await registry.route(for: compatibilityModel) == .pythonCompatibility)
+    }
+
+    @Test("empty model identifiers and missing compatibility clients return nil")
+    func emptyModelIdentifiersAndMissingCompatibilityClientsReturnNil() async {
+        let registry = WorkerRegistry(defaultTextClient: RouteTestingWorkerClient())
+
+        #expect(await registry.route(forModelID: "") == nil)
+        #expect(await registry.client(for: .pythonCompatibility) == nil)
+        #expect(await registry.client(for: .pythonEmbedding) == nil)
+        #expect(await registry.client(for: .pythonRerank) == nil)
+        #expect(await registry.client(for: .pythonModelOperations) == nil)
+    }
+
+    @Test("dedicated phase-five clients win over the shared python compatibility client")
+    func dedicatedPhaseFiveClientsWinOverTheSharedPythonCompatibilityClient() async throws {
+        let catalog = ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels())
+        let defaultTextClient = RouteTestingWorkerClient()
+        let sharedPythonClient = RouteTestingWorkerClient()
+        let embeddingClient = RouteTestingWorkerClient()
+        let rerankClient = RouteTestingWorkerClient()
+        let modelOpsClient = RouteTestingWorkerClient()
+        let registry = WorkerRegistry(
+            defaultTextClient: defaultTextClient,
+            pythonCompatibilityClient: sharedPythonClient,
+            embeddingClient: embeddingClient,
+            rerankClient: rerankClient,
+            modelOperationsClient: modelOpsClient,
+            modelCatalog: catalog
+        )
+
+        #expect((await registry.client(forModelID: "melix-dev-text") as? RouteTestingWorkerClient) === defaultTextClient)
+        #expect((await registry.client(forModelID: "melix-dev-embed") as? RouteTestingWorkerClient) === embeddingClient)
+        #expect((await registry.client(forModelID: "melix-dev-rerank") as? RouteTestingWorkerClient) === rerankClient)
+        #expect((await registry.client(forModelID: "melix-dev-model-ops") as? RouteTestingWorkerClient) === modelOpsClient)
     }
 }
 
