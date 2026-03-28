@@ -29,6 +29,7 @@ public actor RequestCoordinator {
     private let admissionGate: AdmissionGate
     private let schedulerReadModel: SchedulerReadModel
     private let metricsStore: MetricsStore
+    private let sessionGraphStore: SessionGraphStore?
     private let now: @Sendable () -> Date
     private var activeWorkerClients: [String: any WorkerClient]
 
@@ -38,6 +39,7 @@ public actor RequestCoordinator {
         admissionGate: AdmissionGate = AdmissionGate(),
         schedulerReadModel: SchedulerReadModel = SchedulerReadModel(),
         metricsStore: MetricsStore = MetricsStore(),
+        sessionGraphStore: SessionGraphStore? = nil,
         now: @escaping @Sendable () -> Date = Date.init
     ) {
         self.workerRegistry = workerRegistry
@@ -45,6 +47,7 @@ public actor RequestCoordinator {
         self.admissionGate = admissionGate
         self.schedulerReadModel = schedulerReadModel
         self.metricsStore = metricsStore
+        self.sessionGraphStore = sessionGraphStore
         self.now = now
         self.activeWorkerClients = [:]
     }
@@ -52,6 +55,7 @@ public actor RequestCoordinator {
     public func startChatCompletion(
         _ request: TranslatedChatRequest
     ) async throws -> CoordinatedChatExecution {
+        await hydrateSessionGraph(for: request.workerRequest.execution.id)
         let lane = request.workerRequest.execution.scheduling.lane
         let priority = request.workerRequest.execution.scheduling.priority
         guard await abortRegistry.begin(requestID: request.requestID) else {
@@ -149,6 +153,7 @@ public actor RequestCoordinator {
                             await self.recordPhaseObservability(
                                 requestID: requestID,
                                 fallbackLane: lane,
+                                requestIdentity: request.workerRequest.execution.id,
                                 event: event
                             )
                             if !firstDeltaRecorded, case .tokenDelta = event.payload {
@@ -235,6 +240,7 @@ public actor RequestCoordinator {
     private func recordPhaseObservability(
         requestID: String,
         fallbackLane: String,
+        requestIdentity: Melix_Worker_V1_RequestIdentity,
         event: Melix_Worker_V1_ExecuteEvent
     ) async {
         switch event.payload {
@@ -266,6 +272,12 @@ public actor RequestCoordinator {
                 accelerationMode: controlPlaneAccelerationMode(from: event.accelerationMode),
                 source: "swift-text-worker"
             )
+            if case .toolCallDelta(let toolCallDelta) = event.payload {
+                await hydrateToolResult(
+                    requestIdentity: requestIdentity,
+                    toolCallID: toolCallDelta.callID
+                )
+            }
         case .completed:
             if event.phase == .executionAborted {
                 await schedulerReadModel.recordPhaseTransition(
@@ -279,6 +291,45 @@ public actor RequestCoordinator {
         default:
             return
         }
+    }
+
+    private func hydrateSessionGraph(for identity: Melix_Worker_V1_RequestIdentity) async {
+        guard
+            let sessionGraphStore,
+            !identity.sessionID.isEmpty
+        else {
+            return
+        }
+
+        let startedAt = now()
+        _ = await sessionGraphStore.recordRequestStart(
+            sessionID: identity.sessionID,
+            branchID: identity.branchID,
+            requestID: identity.requestID
+        )
+        await metricsStore.set(
+            now().timeIntervalSince(startedAt) * 1000,
+            forKey: "session_graph.request_hydration_ms"
+        )
+    }
+
+    private func hydrateToolResult(
+        requestIdentity: Melix_Worker_V1_RequestIdentity,
+        toolCallID: String
+    ) async {
+        guard
+            let sessionGraphStore,
+            !requestIdentity.sessionID.isEmpty,
+            !toolCallID.isEmpty
+        else {
+            return
+        }
+
+        _ = try? await sessionGraphStore.registerToolResult(
+            sessionID: requestIdentity.sessionID,
+            branchID: requestIdentity.branchID,
+            toolCallID: toolCallID
+        )
     }
 
     private func terminalPhase(

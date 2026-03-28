@@ -240,6 +240,64 @@ struct RequestCoordinatorTests {
         #expect(await pythonWorker.generatedRequestIDs.isEmpty)
     }
 
+    @Test("session tagged requests hydrate session graph request heads")
+    func sessionTaggedRequestsHydrateSessionGraphRequestHeads() async throws {
+        let workerClient = BlockingWorkerClient()
+        let sessionGraphStore = SessionGraphStore(nowUnixMs: { 7_000 })
+        let metricsStore = MetricsStore()
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(defaultTextClient: workerClient),
+            abortRegistry: AbortRegistry(),
+            metricsStore: metricsStore,
+            sessionGraphStore: sessionGraphStore
+        )
+
+        let execution = try await coordinator.startChatCompletion(
+            makeTranslatedChatRequest(
+                requestID: "req-session-hydrated",
+                sessionID: "session-hydrated",
+                branchID: "branch-main"
+            )
+        )
+        _ = execution
+
+        let state = await sessionGraphStore.state(for: "session-hydrated")
+        let metrics = await metricsStore.snapshot()
+
+        #expect(state?.latestRequestID == "req-session-hydrated")
+        #expect(state?.activeBranchID == "branch-main")
+        #expect(state?.branches.first?.headRequestID == "req-session-hydrated")
+        #expect(metrics.values["session_graph.request_hydration_ms", default: -1] >= 0)
+
+        #expect(try await coordinator.cancel(requestID: "req-session-hydrated"))
+    }
+
+    @Test("tool call deltas hydrate session graph tool metadata")
+    func toolCallDeltasHydrateSessionGraphToolMetadata() async throws {
+        let workerClient = ToolCallingWorkerClient()
+        let sessionGraphStore = SessionGraphStore(nowUnixMs: { 8_000 })
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(defaultTextClient: workerClient),
+            abortRegistry: AbortRegistry(),
+            sessionGraphStore: sessionGraphStore
+        )
+
+        let execution = try await coordinator.startChatCompletion(
+            makeTranslatedChatRequest(
+                requestID: "req-tool-hydrated",
+                sessionID: "session-tools",
+                branchID: "branch-main"
+            )
+        )
+
+        for try await _ in execution.stream {
+        }
+
+        let state = await sessionGraphStore.state(for: "session-tools")
+        #expect(state?.latestToolCallID == "tool-call-1")
+        #expect(state?.branches.first?.lastToolCallID == "tool-call-1")
+    }
+
     @Test("swift route failure does not fall back to python text execution")
     func swiftRouteFailureDoesNotFallBackToPythonTextExecution() async throws {
         let pythonWorker = BlockingWorkerClient()
@@ -1007,16 +1065,70 @@ private actor FailingGenerateWorkerClient: WorkerRoutingClient {
     }
 }
 
+private actor ToolCallingWorkerClient: WorkerRoutingClient {
+    func generate(
+        request: Melix_Worker_V1_GenerateRequest
+    ) async throws -> AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error> {
+        AsyncThrowingStream { continuation in
+            var toolCall = Melix_Worker_V1_ToolCallDelta()
+            toolCall.callID = "tool-call-1"
+            toolCall.toolName = "search"
+
+            var toolEvent = Melix_Worker_V1_ExecuteEvent()
+            toolEvent.requestID = request.execution.id.requestID
+            toolEvent.executionKind = "generate"
+            toolEvent.phase = .executionDecoding
+            toolEvent.toolCallDelta = toolCall
+            continuation.yield(toolEvent)
+
+            var completed = Melix_Worker_V1_Completed()
+            completed.finishReason = "stop"
+
+            var terminal = Melix_Worker_V1_ExecuteEvent()
+            terminal.requestID = request.execution.id.requestID
+            terminal.executionKind = "generate"
+            terminal.phase = .executionCompleted
+            terminal.completed = completed
+            continuation.yield(terminal)
+            continuation.finish()
+        }
+    }
+
+    func abort(requestID: String) async throws -> Bool {
+        true
+    }
+
+    func canDispatchRequests() async -> Bool {
+        true
+    }
+
+    func loadModel(
+        request: Melix_Worker_V1_LoadModelRequest
+    ) async throws -> Melix_Worker_V1_LoadModelResponse {
+        var response = Melix_Worker_V1_LoadModelResponse()
+        response.ok = true
+        response.modelHandle = "melix-dev-text::swift"
+        return response
+    }
+}
+
 private enum TestWorkerFailure: Error, Equatable {
     case streamFailed
     case generateFailed
 }
 
-private func makeTranslatedChatRequest(requestID: String, modelID: String = "melix-dev-text") -> TranslatedChatRequest {
+private func makeTranslatedChatRequest(
+    requestID: String,
+    modelID: String = "melix-dev-text",
+    sessionID: String = "",
+    branchID: String = ""
+) -> TranslatedChatRequest {
     var workerRequest = Melix_Worker_V1_GenerateRequest()
     workerRequest.execution = Melix_Worker_V1_ExecutionMetadata()
     workerRequest.execution.id = Melix_Worker_V1_RequestIdentity()
     workerRequest.execution.id.requestID = requestID
+    workerRequest.execution.id.sessionID = sessionID
+    workerRequest.execution.id.branchID = branchID
     workerRequest.execution.modelHandle = "melix-dev-text::local"
     workerRequest.execution.scheduling = Melix_Worker_V1_SchedulingHints()
     workerRequest.execution.scheduling.lane = "text.decode.interactive"

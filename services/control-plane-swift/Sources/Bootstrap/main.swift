@@ -9,6 +9,7 @@ enum MelixControlPlaneBootstrap {
         let bootstrapEnvironment = BootstrapEnvironment(environment: ProcessInfo.processInfo.environment)
         let metricsStore = MetricsStore(exportPath: bootstrapEnvironment.controlPlaneMetricsPath)
         let eventHub = EventSubscriptionHub()
+        let sessionGraphStore = SessionGraphStore(metricsStore: metricsStore)
         let schedulerReadModel = SchedulerReadModel(
             metricsStore: metricsStore,
             eventPublisher: { event in
@@ -50,7 +51,8 @@ enum MelixControlPlaneBootstrap {
             modelCatalog: modelCatalog,
             metricsStore: metricsStore,
             eventHub: eventHub,
-            schedulerReadModel: schedulerReadModel
+            schedulerReadModel: schedulerReadModel,
+            sessionGraphStore: sessionGraphStore
         )
 
         let handler = OpenAIHandler(
@@ -59,7 +61,8 @@ enum MelixControlPlaneBootstrap {
                 workerRegistry: workerRegistry,
                 abortRegistry: AbortRegistry(),
                 schedulerReadModel: schedulerReadModel,
-                metricsStore: metricsStore
+                metricsStore: metricsStore,
+                sessionGraphStore: sessionGraphStore
             )
         )
 

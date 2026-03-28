@@ -43,6 +43,7 @@ Current phase-status and planning documents:
 - `plans/2026-03-28-p3-m1-cache-session-contracts.md`
 - `plans/2026-03-28-p3-m2-hot-tier-cache-primitives.md`
 - `plans/2026-03-28-p3-m3-disk-and-quantized-cache-tier.md`
+- `plans/2026-03-28-p3-m4-session-graph-state.md`
 - `plans/2026-03-28-p1-m2-swift-text-worker-scaffold.md`
 - `plans/2026-03-28-p1-m3-swift-runtime-lifecycle.md`
 - `plans/2026-03-28-p1-m4-swift-generate-abort.md`

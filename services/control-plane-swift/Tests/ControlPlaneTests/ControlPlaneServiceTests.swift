@@ -158,6 +158,125 @@ struct ControlPlaneServiceTests {
         #expect(response.error.code == "not_found")
     }
 
+    @Test("execute handles session lifecycle mutations and publishes typed state events")
+    func executeHandlesSessionLifecycleMutations() async throws {
+        let service = ControlPlaneService()
+        let subscription = await service.subscribe()
+
+        let created = try await service.execute(makeSessionCreateRequest())
+        #expect(created.ok)
+        let sessionID = created.session.session.sessionID
+        #expect(!sessionID.isEmpty)
+        #expect(created.session.session.activeBranchID == "branch-main")
+
+        let branched = try await service.execute(
+            makeCreateBranchRequest(sessionID: sessionID, parentBranchID: "branch-main")
+        )
+        #expect(branched.ok)
+        #expect(branched.session.session.branches.count == 2)
+        let derivedBranchID = branched.session.session.activeBranchID
+        #expect(!derivedBranchID.isEmpty)
+        #expect(derivedBranchID != "branch-main")
+
+        var iterator = subscription.stream.makeAsyncIterator()
+        let firstEvent = await iterator.next()
+        let secondEvent = await iterator.next()
+        #expect(firstEvent?.eventType == "session.state_changed")
+        #expect(firstEvent?.source == "session_graph")
+        #expect(secondEvent?.eventType == "session.state_changed")
+        #expect(secondEvent?.source == "session_graph")
+        #expect(secondEvent?.sessionState.state.activeBranchID == derivedBranchID)
+    }
+
+    @Test("execute handles tool registration, resume, and close for sessions")
+    func executeHandlesToolResumeAndCloseForSessions() async throws {
+        let sessionStore = SessionGraphStore(
+            sessions: [makeSessionState()],
+            nowUnixMs: { 5_000 }
+        )
+        let service = ControlPlaneService(sessionGraphStore: sessionStore)
+
+        let registered = try await service.execute(
+            makeRegisterToolResultRequest(
+                sessionID: "session-1",
+                branchID: "branch-alt",
+                toolCallID: "tool-99"
+            )
+        )
+        #expect(registered.ok)
+        #expect(registered.session.session.activeBranchID == "branch-alt")
+        #expect(registered.session.session.latestToolCallID == "tool-99")
+
+        let resumed = try await service.execute(
+            makeResumeAfterToolRequest(
+                sessionID: "session-1",
+                branchID: "branch-alt",
+                snapshotID: "snap-tool"
+            )
+        )
+        #expect(resumed.ok)
+        #expect(resumed.session.session.latestSnapshotID == "snap-tool")
+        #expect(resumed.session.session.branches.last?.resumeSnapshotID == "snap-tool")
+
+        let closed = try await service.execute(makeCloseSessionRequest(sessionID: "session-1"))
+        #expect(closed.ok)
+        #expect(closed.session.session.sessionID == "session-1")
+
+        let missing = try await service.execute(makeSessionStateRequest(sessionID: "session-1"))
+        #expect(!missing.ok)
+        #expect(missing.error.code == "not_found")
+    }
+
+    @Test("execute returns not found for invalid session mutation requests")
+    func executeReturnsNotFoundForInvalidSessionMutations() async throws {
+        let sessionStore = SessionGraphStore(sessions: [makeSessionState()])
+        let service = ControlPlaneService(sessionGraphStore: sessionStore)
+
+        let missingSession = try await service.execute(
+            makeCreateBranchRequest(sessionID: "missing-session", parentBranchID: "branch-main")
+        )
+        let missingBranch = try await service.execute(
+            makeRegisterToolResultRequest(
+                sessionID: "session-1",
+                branchID: "branch-missing",
+                toolCallID: "tool-404"
+            )
+        )
+        let missingResumeBranch = try await service.execute(
+            makeResumeAfterToolRequest(
+                sessionID: "session-1",
+                branchID: "branch-missing",
+                snapshotID: "snap-404"
+            )
+        )
+        let missingClose = try await service.execute(makeCloseSessionRequest(sessionID: "missing-session"))
+
+        #expect(!missingSession.ok)
+        #expect(missingSession.error.code == "not_found")
+        #expect(!missingBranch.ok)
+        #expect(missingBranch.error.code == "not_found")
+        #expect(!missingResumeBranch.ok)
+        #expect(missingResumeBranch.error.code == "not_found")
+        #expect(!missingClose.ok)
+        #expect(missingClose.error.code == "not_found")
+    }
+
+    @Test("session mutation responses preserve correlation metadata")
+    func sessionMutationResponsesPreserveCorrelationMetadata() async throws {
+        let service = ControlPlaneService()
+        var request = makeSessionCreateRequest()
+        request.correlationID = "corr-session"
+        request.causationID = "cause-session"
+
+        let response = try await service.execute(request)
+
+        #expect(response.ok)
+        #expect(response.requestID == request.requestID)
+        #expect(response.commandType == request.commandType)
+        #expect(response.correlationID == "corr-session")
+        #expect(response.causationID == "cause-session")
+    }
+
     @Test("handshake includes live scheduler queue summary")
     func handshakeIncludesLiveSchedulerQueueSummary() async throws {
         let schedulerReadModel = SchedulerReadModel()
@@ -216,11 +335,11 @@ struct ControlPlaneServiceTests {
     @Test("execute returns unimplemented for unsupported command families")
     func executeReturnsUnimplementedForUnsupportedCommandFamilies() async throws {
         let service = ControlPlaneService()
-        let response = try await service.execute(makeSessionRequest())
+        let response = try await service.execute(makePresetRequest())
 
         #expect(!response.ok)
-        #expect(response.requestID == "req-session-create")
-        #expect(response.commandType == "session.create")
+        #expect(response.requestID == "req-preset-list")
+        #expect(response.commandType == "preset.list")
         #expect(response.error.code == "unimplemented")
     }
 
@@ -318,12 +437,77 @@ struct ControlPlaneServiceTests {
         return request
     }
 
-    private func makeSessionRequest() -> Melix_Controlplane_V1_ControlPlaneRequest {
+    private func makeSessionCreateRequest() -> Melix_Controlplane_V1_ControlPlaneRequest {
         var request = Melix_Controlplane_V1_ControlPlaneRequest()
         request.requestID = "req-session-create"
         request.commandType = "session.create"
         request.session = Melix_Controlplane_V1_SessionCommand()
         request.session.createSession = Melix_Controlplane_V1_CreateSession()
+        return request
+    }
+
+    private func makeCreateBranchRequest(
+        sessionID: String,
+        parentBranchID: String
+    ) -> Melix_Controlplane_V1_ControlPlaneRequest {
+        var request = Melix_Controlplane_V1_ControlPlaneRequest()
+        request.requestID = "req-session-branch-\(sessionID)"
+        request.commandType = "session.create_branch"
+        request.session = Melix_Controlplane_V1_SessionCommand()
+        request.session.createBranch = Melix_Controlplane_V1_CreateBranch()
+        request.session.createBranch.sessionID = sessionID
+        request.session.createBranch.parentBranchID = parentBranchID
+        return request
+    }
+
+    private func makeRegisterToolResultRequest(
+        sessionID: String,
+        branchID: String,
+        toolCallID: String
+    ) -> Melix_Controlplane_V1_ControlPlaneRequest {
+        var request = Melix_Controlplane_V1_ControlPlaneRequest()
+        request.requestID = "req-session-tool-\(toolCallID)"
+        request.commandType = "session.register_tool_result"
+        request.session = Melix_Controlplane_V1_SessionCommand()
+        request.session.registerToolResult = Melix_Controlplane_V1_RegisterToolResult()
+        request.session.registerToolResult.sessionID = sessionID
+        request.session.registerToolResult.branchID = branchID
+        request.session.registerToolResult.toolCallID = toolCallID
+        return request
+    }
+
+    private func makeResumeAfterToolRequest(
+        sessionID: String,
+        branchID: String,
+        snapshotID: String
+    ) -> Melix_Controlplane_V1_ControlPlaneRequest {
+        var request = Melix_Controlplane_V1_ControlPlaneRequest()
+        request.requestID = "req-session-resume-\(snapshotID)"
+        request.commandType = "session.resume_after_tool"
+        request.session = Melix_Controlplane_V1_SessionCommand()
+        request.session.resumeAfterTool = Melix_Controlplane_V1_ResumeAfterTool()
+        request.session.resumeAfterTool.sessionID = sessionID
+        request.session.resumeAfterTool.branchID = branchID
+        request.session.resumeAfterTool.snapshotID = snapshotID
+        return request
+    }
+
+    private func makeCloseSessionRequest(sessionID: String) -> Melix_Controlplane_V1_ControlPlaneRequest {
+        var request = Melix_Controlplane_V1_ControlPlaneRequest()
+        request.requestID = "req-session-close-\(sessionID)"
+        request.commandType = "session.close"
+        request.session = Melix_Controlplane_V1_SessionCommand()
+        request.session.closeSession = Melix_Controlplane_V1_CloseSession()
+        request.session.closeSession.sessionID = sessionID
+        return request
+    }
+
+    private func makePresetRequest() -> Melix_Controlplane_V1_ControlPlaneRequest {
+        var request = Melix_Controlplane_V1_ControlPlaneRequest()
+        request.requestID = "req-preset-list"
+        request.commandType = "preset.list"
+        request.preset = Melix_Controlplane_V1_PresetCommand()
+        request.preset.list = Melix_Controlplane_V1_ListPresets()
         return request
     }
 

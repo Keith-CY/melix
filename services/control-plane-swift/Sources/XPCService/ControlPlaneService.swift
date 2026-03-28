@@ -165,6 +165,33 @@ public actor ControlPlaneService {
         command: Melix_Controlplane_V1_SessionCommand
     ) async -> Melix_Controlplane_V1_ControlPlaneResponse {
         switch command.kind {
+        case .createSession:
+            let session = await sessionGraphStore.createSession()
+            await publishSessionStateChanged(session)
+            var reply = Melix_Controlplane_V1_SessionReply()
+            reply.session = session
+            return okResponse(for: request, session: reply)
+        case .createBranch(let createBranch):
+            do {
+                let session = try await sessionGraphStore.createBranch(
+                    sessionID: createBranch.sessionID,
+                    parentBranchID: createBranch.parentBranchID
+                )
+                await publishSessionStateChanged(session)
+                var reply = Melix_Controlplane_V1_SessionReply()
+                reply.session = session
+                return okResponse(for: request, session: reply)
+            } catch {
+                return sessionErrorResponse(for: request, error: error)
+            }
+        case .closeSession(let closeSession):
+            guard let session = await sessionGraphStore.closeSession(sessionID: closeSession.sessionID) else {
+                return errorResponse(for: request, code: "not_found", message: "Unknown session ID.")
+            }
+            await publishSessionStateChanged(session)
+            var reply = Melix_Controlplane_V1_SessionReply()
+            reply.session = session
+            return okResponse(for: request, session: reply)
         case .getState(let getState):
             guard let session = await sessionGraphStore.state(for: getState.sessionID) else {
                 return errorResponse(for: request, code: "not_found", message: "Unknown session ID.")
@@ -172,6 +199,34 @@ public actor ControlPlaneService {
             var reply = Melix_Controlplane_V1_SessionReply()
             reply.session = session
             return okResponse(for: request, session: reply)
+        case .registerToolResult(let registerToolResult):
+            do {
+                let session = try await sessionGraphStore.registerToolResult(
+                    sessionID: registerToolResult.sessionID,
+                    branchID: registerToolResult.branchID,
+                    toolCallID: registerToolResult.toolCallID
+                )
+                await publishSessionStateChanged(session)
+                var reply = Melix_Controlplane_V1_SessionReply()
+                reply.session = session
+                return okResponse(for: request, session: reply)
+            } catch {
+                return sessionErrorResponse(for: request, error: error)
+            }
+        case .resumeAfterTool(let resumeAfterTool):
+            do {
+                let session = try await sessionGraphStore.resumeAfterTool(
+                    sessionID: resumeAfterTool.sessionID,
+                    branchID: resumeAfterTool.branchID,
+                    snapshotID: resumeAfterTool.snapshotID
+                )
+                await publishSessionStateChanged(session)
+                var reply = Melix_Controlplane_V1_SessionReply()
+                reply.session = session
+                return okResponse(for: request, session: reply)
+            } catch {
+                return sessionErrorResponse(for: request, error: error)
+            }
         default:
             return errorResponse(
                 for: request,
@@ -272,5 +327,28 @@ public actor ControlPlaneService {
         event.modelState.modelID = model.modelID
         event.modelState.state = model.state
         await eventHub.publish(event)
+    }
+
+    private func publishSessionStateChanged(_ session: Melix_Controlplane_V1_SessionState) async {
+        var event = Melix_Controlplane_V1_ControlPlaneEvent()
+        event.eventType = "session.state_changed"
+        event.source = "session_graph"
+        event.sessionState = Melix_Controlplane_V1_SessionStateChanged()
+        event.sessionState.state = session
+        await eventHub.publish(event)
+    }
+
+    private func sessionErrorResponse(
+        for request: Melix_Controlplane_V1_ControlPlaneRequest,
+        error: Error
+    ) -> Melix_Controlplane_V1_ControlPlaneResponse {
+        switch error {
+        case SessionGraphStoreError.unknownSessionID:
+            return errorResponse(for: request, code: "not_found", message: "Unknown session ID.")
+        case SessionGraphStoreError.unknownBranchID:
+            return errorResponse(for: request, code: "not_found", message: "Unknown branch ID.")
+        default:
+            return errorResponse(for: request, code: "internal", message: "Failed to mutate session state.")
+        }
     }
 }

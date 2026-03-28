@@ -63,6 +63,181 @@ struct SnapshotStoreTests {
         #expect(state?.latestRequestID == "req-updated")
     }
 
+    @Test("session graph store creates sessions and derived branches with lineage metadata")
+    func sessionGraphStoreCreatesSessionsAndBranches() async throws {
+        let metricsStore = MetricsStore()
+        let store = SessionGraphStore(
+            metricsStore: metricsStore,
+            nowUnixMs: { 1_000 },
+            sessionIDGenerator: { "session-created" },
+            branchIDGenerator: { "branch-derived" }
+        )
+
+        let session = await store.createSession()
+        let branched = try await store.createBranch(sessionID: session.sessionID, parentBranchID: "branch-main")
+        let metrics = await metricsStore.snapshot()
+
+        #expect(session.sessionID == "session-created")
+        #expect(session.activeBranchID == "branch-main")
+        #expect(branched.activeBranchID == "branch-derived")
+        #expect(branched.branches.count == 2)
+        #expect(branched.branches.last?.parentBranchID == "branch-main")
+        #expect(metrics.values["session_graph.session_count"] == 1)
+        #expect(metrics.values["session_graph.branch_count"] == 2)
+    }
+
+    @Test("session graph store tracks tool and resume metadata")
+    func sessionGraphStoreTracksToolAndResumeMetadata() async throws {
+        let metricsStore = MetricsStore()
+        let store = SessionGraphStore(
+            metricsStore: metricsStore,
+            nowUnixMs: { 2_000 },
+            sessionIDGenerator: { "session-stateful" }
+        )
+        _ = await store.createSession()
+
+        let withTool = try await store.registerToolResult(
+            sessionID: "session-stateful",
+            branchID: "branch-main",
+            toolCallID: "tool-123"
+        )
+        let resumed = try await store.resumeAfterTool(
+            sessionID: "session-stateful",
+            branchID: "branch-main",
+            snapshotID: "snap-resume"
+        )
+        let metrics = await metricsStore.snapshot()
+
+        #expect(withTool.latestToolCallID == "tool-123")
+        #expect(withTool.branches.first?.lastToolCallID == "tool-123")
+        #expect(resumed.latestSnapshotID == "snap-resume")
+        #expect(resumed.branches.first?.resumeSnapshotID == "snap-resume")
+        #expect(resumed.availableSnapshots.first?.snapshotID == "snap-resume")
+        #expect(metrics.values["session_graph.resume_snapshot_count"] == 1)
+    }
+
+    @Test("session graph store rejects unknown session and branch mutations")
+    func sessionGraphStoreRejectsUnknownMutations() async throws {
+        let store = SessionGraphStore(
+            sessions: [makeSessionState(id: "session-1")],
+            nowUnixMs: { 4_000 }
+        )
+
+        await #expect(throws: SessionGraphStoreError.unknownSessionID) {
+            _ = try await store.createBranch(sessionID: "missing-session", parentBranchID: "branch-main")
+        }
+        await #expect(throws: SessionGraphStoreError.unknownBranchID) {
+            _ = try await store.createBranch(sessionID: "session-1", parentBranchID: "branch-missing")
+        }
+        await #expect(throws: SessionGraphStoreError.unknownSessionID) {
+            _ = try await store.registerToolResult(
+                sessionID: "missing-session",
+                branchID: "branch-main",
+                toolCallID: "tool-missing"
+            )
+        }
+        await #expect(throws: SessionGraphStoreError.unknownBranchID) {
+            _ = try await store.resumeAfterTool(
+                sessionID: "session-1",
+                branchID: "branch-missing",
+                snapshotID: "snap-missing"
+            )
+        }
+    }
+
+    @Test("session graph store deduplicates generated identifiers and closing updates metrics")
+    func sessionGraphStoreDeduplicatesGeneratedIdentifiers() async throws {
+        let metricsStore = MetricsStore()
+        let store = SessionGraphStore(
+            sessions: [makeSessionState(id: "session-fixed")],
+            metricsStore: metricsStore,
+            nowUnixMs: { 5_000 },
+            sessionIDGenerator: { "session-fixed" },
+            branchIDGenerator: { "branch-main" }
+        )
+
+        let created = await store.createSession()
+        let branched = try await store.createBranch(
+            sessionID: "session-fixed",
+            parentBranchID: "branch-main"
+        )
+        let closed = await store.closeSession(sessionID: "session-fixed")
+        let missing = await store.closeSession(sessionID: "missing-session")
+        let metrics = await metricsStore.snapshot()
+
+        #expect(created.sessionID == "session-fixed-1")
+        #expect(branched.activeBranchID == "branch-main-1")
+        #expect(closed?.sessionID == "session-fixed")
+        #expect(missing == nil)
+        #expect(metrics.values["session_graph.session_count"] == 1)
+        #expect(metrics.values["session_graph.branch_count"] == 1)
+    }
+
+    @Test("session graph store hydrates request and snapshot metadata for missing sessions")
+    func sessionGraphStoreHydratesRequestAndSnapshotMetadata() async {
+        let metricsStore = MetricsStore()
+        let store = SessionGraphStore(metricsStore: metricsStore, nowUnixMs: { 3_000 })
+
+        let started = await store.recordRequestStart(
+            sessionID: "session-hydrated",
+            branchID: "branch-review",
+            requestID: "req-hydrated"
+        )
+
+        var snapshot = Melix_Controlplane_V1_SnapshotRef()
+        snapshot.snapshotID = "snap-hydrated"
+        snapshot.requestID = "req-hydrated"
+        snapshot.checkpointID = "ckpt-hydrated"
+
+        let hydrated = await store.recordSnapshotHydration(
+            sessionID: "session-hydrated",
+            branchID: "branch-review",
+            snapshot: snapshot
+        )
+        let metrics = await metricsStore.snapshot()
+
+        #expect(started.activeBranchID == "branch-review")
+        #expect(started.branches.first?.branchID == "branch-review")
+        #expect(hydrated.latestRequestID == "req-hydrated")
+        #expect(hydrated.latestSnapshotID == "snap-hydrated")
+        #expect(hydrated.latestCheckpointID == "ckpt-hydrated")
+        #expect(hydrated.branches.first?.headRequestID == "req-hydrated")
+        #expect(hydrated.availableSnapshots.first?.branchID == "branch-review")
+        #expect(metrics.values["session_graph.active_branch_changes"] == 1)
+    }
+
+    @Test("session graph store refreshes existing snapshots and branch cache keys")
+    func sessionGraphStoreRefreshesExistingSnapshots() async {
+        let store = SessionGraphStore(
+            sessions: [makeSessionState(id: "session-1")],
+            nowUnixMs: { 6_000 }
+        )
+
+        var scope = Melix_Controlplane_V1_CacheScopeKey()
+        scope.modelID = "melix-dev-text"
+        scope.tokenizerHash = "tok-v2"
+
+        var cacheKey = Melix_Controlplane_V1_CacheKey()
+        cacheKey.scope = scope
+
+        var snapshot = Melix_Controlplane_V1_SnapshotRef()
+        snapshot.snapshotID = "snap-session-1"
+        snapshot.requestID = "req-refresh"
+        snapshot.checkpointID = "ckpt-refresh"
+
+        let hydrated = await store.recordSnapshotHydration(
+            sessionID: "session-1",
+            branchID: "branch-main",
+            snapshot: snapshot,
+            headCacheKey: cacheKey
+        )
+
+        #expect(hydrated.availableSnapshots.count == 1)
+        #expect(hydrated.availableSnapshots.first?.requestID == "req-refresh")
+        #expect(hydrated.branches.first?.headCacheKey.scope.tokenizerHash == "tok-v2")
+        #expect(hydrated.latestCheckpointID == "ckpt-refresh")
+    }
+
     private func makeSessionState(id: String) -> Melix_Controlplane_V1_SessionState {
         var scope = Melix_Controlplane_V1_CacheScopeKey()
         scope.modelID = "melix-dev-text"
