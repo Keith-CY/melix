@@ -1,4 +1,4 @@
-from packages.protocol.python.worker.v1 import runtime_pb2
+from packages.protocol.python.worker.v1 import common_pb2, runtime_pb2
 
 from worker.grpc_server import WorkerRuntimeService
 from worker.model_registry.catalog import WorkerModelCatalog
@@ -61,6 +61,37 @@ def test_load_model_returns_handle_and_lists_model() -> None:
     )
 
     assert listed.model_handles == [response.model_handle]
+
+
+def test_load_model_returns_residency_contract_and_loaded_model_summaries() -> None:
+    service = build_runtime_service()
+
+    response = service.LoadModel(
+        runtime_pb2.LoadModelRequest(
+            model=WorkerModelCatalog.dev_text_model(),
+            memory_budget_bytes=4096,
+            pin_on_load=True,
+        ),
+        context=None,
+    )
+
+    assert response.ok is True
+    assert response.residency.state == common_pb2.RESIDENCY_STATE_PINNED
+    assert response.residency.pin_requested is True
+    assert response.residency.pinned is True
+    assert response.residency.policy == common_pb2.MEMORY_RESIDENCY_PINNED
+
+    listed = service.ListLoadedModels(
+        runtime_pb2.ListLoadedModelsRequest(),
+        context=None,
+    )
+
+    assert listed.model_handles == [response.model_handle]
+    assert len(listed.loaded_models) == 1
+    assert listed.loaded_models[0].model_handle == response.model_handle
+    assert listed.loaded_models[0].model.model_id == "melix-dev-text"
+    assert listed.loaded_models[0].residency.state == common_pb2.RESIDENCY_STATE_PINNED
+    assert listed.loaded_models[0].residency.pinned is True
 
 
 def test_load_model_supports_embedding_models() -> None:

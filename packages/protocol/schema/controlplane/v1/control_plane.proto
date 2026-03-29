@@ -390,6 +390,17 @@ enum MemoryResidencyPolicy {
   MEMORY_RESIDENCY_TTL = 3;
 }
 
+enum ResidencyState {
+  RESIDENCY_STATE_UNSPECIFIED = 0;
+  RESIDENCY_STATE_DISCOVERED = 1;
+  RESIDENCY_STATE_LOADING = 2;
+  RESIDENCY_STATE_WARM = 3;
+  RESIDENCY_STATE_PINNED = 4;
+  RESIDENCY_STATE_EVICTING = 5;
+  RESIDENCY_STATE_UNLOADED = 6;
+  RESIDENCY_STATE_FAILED = 7;
+}
+
 enum RequestPhase {
   REQUEST_PHASE_UNSPECIFIED = 0;
   REQUEST_QUEUED = 1;
@@ -429,6 +440,14 @@ message ModelSettings {
   AccelerationMode default_acceleration_mode = 6;
   string acceleration_profile_id = 7;
   map<string, string> ext = 8;
+}
+
+message ResidencySummary {
+  ResidencyState state = 1;
+  MemoryResidencyPolicy policy = 2;
+  bool pin_requested = 3;
+  bool pinned = 4;
+  uint32 ttl_seconds = 5;
 }
 
 enum EventTopic {
@@ -549,6 +568,7 @@ message ModelSummary {
   ModelSettings settings = 12;
   repeated string supported_modalities = 13;
   repeated string supported_tasks = 14;
+  ResidencySummary residency = 15;
 }
 
 message ModelInfo {

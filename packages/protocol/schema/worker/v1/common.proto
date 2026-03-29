@@ -61,6 +61,26 @@ enum MemoryResidencyPolicy {
   MEMORY_RESIDENCY_TTL = 3;
 }
 
+enum ResidencyState {
+  RESIDENCY_STATE_UNSPECIFIED = 0;
+  RESIDENCY_STATE_DISCOVERED = 1;
+  RESIDENCY_STATE_LOADING = 2;
+  RESIDENCY_STATE_WARM = 3;
+  RESIDENCY_STATE_PINNED = 4;
+  RESIDENCY_STATE_EVICTING = 5;
+  RESIDENCY_STATE_UNLOADED = 6;
+  RESIDENCY_STATE_FAILED = 7;
+}
+
+message ResidencyInfo {
+  ResidencyState state = 1;
+  MemoryResidencyPolicy policy = 2;
+  bool pin_requested = 3;
+  bool pinned = 4;
+  uint32 ttl_seconds = 5;
+  string transition_reason = 6;
+}
+
 message RuntimeCapabilities {
   CacheCapabilities cache = 1;
   ExecutionCapabilities execution = 2;

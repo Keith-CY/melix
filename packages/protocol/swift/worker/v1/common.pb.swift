@@ -207,6 +207,64 @@ public enum Melix_Worker_V1_MemoryResidencyPolicy: SwiftProtobuf.Enum, Swift.Cas
 
 }
 
+public enum Melix_Worker_V1_ResidencyState: SwiftProtobuf.Enum, Swift.CaseIterable {
+  public typealias RawValue = Int
+  case unspecified // = 0
+  case discovered // = 1
+  case loading // = 2
+  case warm // = 3
+  case pinned // = 4
+  case evicting // = 5
+  case unloaded // = 6
+  case failed // = 7
+  case UNRECOGNIZED(Int)
+
+  public init() {
+    self = .unspecified
+  }
+
+  public init?(rawValue: Int) {
+    switch rawValue {
+    case 0: self = .unspecified
+    case 1: self = .discovered
+    case 2: self = .loading
+    case 3: self = .warm
+    case 4: self = .pinned
+    case 5: self = .evicting
+    case 6: self = .unloaded
+    case 7: self = .failed
+    default: self = .UNRECOGNIZED(rawValue)
+    }
+  }
+
+  public var rawValue: Int {
+    switch self {
+    case .unspecified: return 0
+    case .discovered: return 1
+    case .loading: return 2
+    case .warm: return 3
+    case .pinned: return 4
+    case .evicting: return 5
+    case .unloaded: return 6
+    case .failed: return 7
+    case .UNRECOGNIZED(let i): return i
+    }
+  }
+
+  // The compiler won't synthesize support with the UNRECOGNIZED case.
+  public static let allCases: [Melix_Worker_V1_ResidencyState] = [
+    .unspecified,
+    .discovered,
+    .loading,
+    .warm,
+    .pinned,
+    .evicting,
+    .unloaded,
+    .failed,
+  ]
+
+}
+
 public enum Melix_Worker_V1_MediaType: SwiftProtobuf.Enum, Swift.CaseIterable {
   public typealias RawValue = Int
   case unspecified // = 0
@@ -639,6 +697,28 @@ public struct Melix_Worker_V1_ModelSpec: @unchecked Sendable {
   public init() {}
 
   fileprivate var _storage = _StorageClass.defaultInstance
+}
+
+public struct Melix_Worker_V1_ResidencyInfo: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var state: Melix_Worker_V1_ResidencyState = .unspecified
+
+  public var policy: Melix_Worker_V1_MemoryResidencyPolicy = .unspecified
+
+  public var pinRequested: Bool = false
+
+  public var pinned: Bool = false
+
+  public var ttlSeconds: UInt32 = 0
+
+  public var transitionReason: String = String()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
 }
 
 public struct Melix_Worker_V1_RuntimeCapabilities: @unchecked Sendable {
@@ -1331,6 +1411,10 @@ extension Melix_Worker_V1_MemoryResidencyPolicy: SwiftProtobuf._ProtoNameProvidi
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0MEMORY_RESIDENCY_POLICY_UNSPECIFIED\0\u{1}MEMORY_RESIDENCY_EVICTABLE\0\u{1}MEMORY_RESIDENCY_PINNED\0\u{1}MEMORY_RESIDENCY_TTL\0")
 }
 
+extension Melix_Worker_V1_ResidencyState: SwiftProtobuf._ProtoNameProviding {
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0RESIDENCY_STATE_UNSPECIFIED\0\u{1}RESIDENCY_STATE_DISCOVERED\0\u{1}RESIDENCY_STATE_LOADING\0\u{1}RESIDENCY_STATE_WARM\0\u{1}RESIDENCY_STATE_PINNED\0\u{1}RESIDENCY_STATE_EVICTING\0\u{1}RESIDENCY_STATE_UNLOADED\0\u{1}RESIDENCY_STATE_FAILED\0")
+}
+
 extension Melix_Worker_V1_MediaType: SwiftProtobuf._ProtoNameProviding {
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0MEDIA_TYPE_UNSPECIFIED\0\u{1}MEDIA_TYPE_TEXT\0\u{1}MEDIA_TYPE_IMAGE\0\u{1}MEDIA_TYPE_AUDIO\0")
 }
@@ -1560,6 +1644,61 @@ extension Melix_Worker_V1_ModelSpec: SwiftProtobuf.Message, SwiftProtobuf._Messa
       }
       if !storagesAreEqual {return false}
     }
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+extension Melix_Worker_V1_ResidencyInfo: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".ResidencyInfo"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}state\0\u{1}policy\0\u{3}pin_requested\0\u{1}pinned\0\u{3}ttl_seconds\0\u{3}transition_reason\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularEnumField(value: &self.state) }()
+      case 2: try { try decoder.decodeSingularEnumField(value: &self.policy) }()
+      case 3: try { try decoder.decodeSingularBoolField(value: &self.pinRequested) }()
+      case 4: try { try decoder.decodeSingularBoolField(value: &self.pinned) }()
+      case 5: try { try decoder.decodeSingularUInt32Field(value: &self.ttlSeconds) }()
+      case 6: try { try decoder.decodeSingularStringField(value: &self.transitionReason) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if self.state != .unspecified {
+      try visitor.visitSingularEnumField(value: self.state, fieldNumber: 1)
+    }
+    if self.policy != .unspecified {
+      try visitor.visitSingularEnumField(value: self.policy, fieldNumber: 2)
+    }
+    if self.pinRequested != false {
+      try visitor.visitSingularBoolField(value: self.pinRequested, fieldNumber: 3)
+    }
+    if self.pinned != false {
+      try visitor.visitSingularBoolField(value: self.pinned, fieldNumber: 4)
+    }
+    if self.ttlSeconds != 0 {
+      try visitor.visitSingularUInt32Field(value: self.ttlSeconds, fieldNumber: 5)
+    }
+    if !self.transitionReason.isEmpty {
+      try visitor.visitSingularStringField(value: self.transitionReason, fieldNumber: 6)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Melix_Worker_V1_ResidencyInfo, rhs: Melix_Worker_V1_ResidencyInfo) -> Bool {
+    if lhs.state != rhs.state {return false}
+    if lhs.policy != rhs.policy {return false}
+    if lhs.pinRequested != rhs.pinRequested {return false}
+    if lhs.pinned != rhs.pinned {return false}
+    if lhs.ttlSeconds != rhs.ttlSeconds {return false}
+    if lhs.transitionReason != rhs.transitionReason {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

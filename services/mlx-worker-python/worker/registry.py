@@ -25,6 +25,7 @@ class LoadedModel:
     runtime_model: object
     estimated_resident_bytes: int
     runtime_kind: str
+    residency: common_pb2.ResidencyInfo
 
 
 class WorkerRegistry:
@@ -97,11 +98,12 @@ class WorkerRegistry:
             ),
         )
 
-    def load_model(self, model_spec: common_pb2.ModelSpec) -> LoadedModel:
+    def load_model(self, model_spec: common_pb2.ModelSpec, pin_on_load: bool = False) -> LoadedModel:
         resolved = self.model_catalog.get(model_spec.model_id) or model_spec
         runtime_kind, runtime = self._runtime_for_model(resolved)
         runtime_model = runtime.load_model(resolved)
         estimated = runtime.estimate_resident_bytes(resolved)
+        residency = self._loaded_residency(resolved, pin_on_load=pin_on_load)
 
         with self._lock:
             handle = f"{resolved.model_id}::{self._next_model_handle}"
@@ -112,6 +114,7 @@ class WorkerRegistry:
                 runtime_model=runtime_model,
                 estimated_resident_bytes=estimated,
                 runtime_kind=runtime_kind,
+                residency=residency,
             )
             self._loaded_models[handle] = loaded
             return loaded
@@ -127,6 +130,11 @@ class WorkerRegistry:
     def list_loaded_models(self) -> list[str]:
         with self._lock:
             return sorted(self._loaded_models)
+
+    def list_loaded_model_summaries(self) -> list[runtime_pb2.LoadedModelSummary]:
+        with self._lock:
+            loaded_models = [self._loaded_models[handle] for handle in sorted(self._loaded_models)]
+        return [self._loaded_model_summary(loaded) for loaded in loaded_models]
 
     def start_request(self, request_id: str, runtime_kind: str = "text") -> RequestState:
         state = RequestState(request_id=request_id, runtime_kind=runtime_kind)
@@ -290,3 +298,46 @@ class WorkerRegistry:
         if model_spec.model_kind == "image":
             return "image", self.image_generation_runtime
         return "text", self.runtime
+
+    def _loaded_model_summary(self, loaded: LoadedModel) -> runtime_pb2.LoadedModelSummary:
+        summary = runtime_pb2.LoadedModelSummary()
+        summary.model_handle = loaded.handle
+        summary.model.CopyFrom(loaded.spec)
+        summary.residency.CopyFrom(loaded.residency)
+        summary.estimated_resident_bytes = loaded.estimated_resident_bytes
+        return summary
+
+    def _loaded_residency(
+        self,
+        model_spec: common_pb2.ModelSpec,
+        *,
+        pin_on_load: bool,
+    ) -> common_pb2.ResidencyInfo:
+        policy = self._effective_residency_policy(model_spec, pin_on_load=pin_on_load)
+        residency = common_pb2.ResidencyInfo()
+        residency.state = (
+            common_pb2.RESIDENCY_STATE_PINNED
+            if policy == common_pb2.MEMORY_RESIDENCY_PINNED
+            else common_pb2.RESIDENCY_STATE_WARM
+        )
+        residency.policy = policy
+        residency.pin_requested = pin_on_load or model_spec.settings.pin_on_load
+        residency.pinned = residency.state == common_pb2.RESIDENCY_STATE_PINNED
+        residency.ttl_seconds = model_spec.settings.ttl_seconds
+        residency.transition_reason = "load_model"
+        return residency
+
+    def _effective_residency_policy(
+        self,
+        model_spec: common_pb2.ModelSpec,
+        *,
+        pin_on_load: bool,
+    ) -> int:
+        settings = model_spec.settings
+        if pin_on_load or settings.pin_on_load:
+            return common_pb2.MEMORY_RESIDENCY_PINNED
+        if settings.memory_policy != common_pb2.MEMORY_RESIDENCY_POLICY_UNSPECIFIED:
+            return settings.memory_policy
+        if settings.ttl_seconds > 0:
+            return common_pb2.MEMORY_RESIDENCY_TTL
+        return common_pb2.MEMORY_RESIDENCY_EVICTABLE

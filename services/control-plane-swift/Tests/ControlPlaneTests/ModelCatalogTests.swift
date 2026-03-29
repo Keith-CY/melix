@@ -47,6 +47,80 @@ struct ModelCatalogTests {
         #expect(reloaded == updated)
     }
 
+    @Test("residency summary follows seed defaults and load-unload transitions")
+    func residencySummaryFollowsSeedDefaultsAndLoadUnloadTransitions() async throws {
+        let catalog = ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels())
+        let discovered = try #require(await catalog.model(id: "melix-dev-text"))
+
+        #expect(discovered.residency.state == .discovered)
+        #expect(discovered.residency.policy == .memoryResidencyEvictable)
+        #expect(!discovered.residency.pinRequested)
+        #expect(!discovered.residency.pinned)
+
+        var pinnedSettings = discovered.settings
+        pinnedSettings.pinOnLoad = true
+        pinnedSettings.memoryPolicy = .memoryResidencyPinned
+
+        let updated = try #require(await catalog.updateSettings(id: "melix-dev-text", settings: pinnedSettings))
+        #expect(updated.residency.pinRequested)
+        #expect(updated.residency.policy == .memoryResidencyPinned)
+
+        let loaded = try #require(await catalog.loadModel(id: "melix-dev-text"))
+        #expect(loaded.state == .modelPinned)
+        #expect(loaded.residency.state == .pinned)
+        #expect(loaded.residency.pinned)
+
+        let unloaded = try #require(await catalog.unloadModel(id: "melix-dev-text"))
+        #expect(unloaded.state == .modelUnloaded)
+        #expect(unloaded.residency.state == .unloaded)
+        #expect(unloaded.residency.policy == .memoryResidencyPinned)
+    }
+
+    @Test("residency summary maps ttl and non-terminal states")
+    func residencySummaryMapsTtlAndNonTerminalStates() async throws {
+        func makeSeed(
+            id: String,
+            state: Melix_Controlplane_V1_ModelState,
+            ttlSeconds: UInt32 = 0
+        ) -> Melix_Controlplane_V1_ModelSummary {
+            var model = Melix_Controlplane_V1_ModelSummary()
+            model.modelID = id
+            model.state = state
+            if ttlSeconds > 0 {
+                model.settings.ttlSeconds = ttlSeconds
+            }
+            return model
+        }
+
+        let catalog = ModelCatalog(seedModels: [
+            makeSeed(id: "ttl-loading", state: .modelLoading, ttlSeconds: 60),
+            makeSeed(id: "warm", state: .modelWarm),
+            makeSeed(id: "evicting", state: .modelEvicting),
+            makeSeed(id: "failed", state: .modelFailed),
+            makeSeed(id: "unspecified", state: .unspecified),
+        ])
+
+        let models = await catalog.listModels()
+        let byID = Dictionary(uniqueKeysWithValues: models.map { ($0.modelID, $0) })
+
+        let ttlLoading = try #require(byID["ttl-loading"])
+        #expect(ttlLoading.residency.policy == .memoryResidencyTtl)
+        #expect(ttlLoading.residency.state == .loading)
+
+        let warm = try #require(byID["warm"])
+        #expect(warm.residency.state == .warm)
+        #expect(warm.residency.policy == .memoryResidencyEvictable)
+
+        let evicting = try #require(byID["evicting"])
+        #expect(evicting.residency.state == .evicting)
+
+        let failed = try #require(byID["failed"])
+        #expect(failed.residency.state == .failed)
+
+        let unspecified = try #require(byID["unspecified"])
+        #expect(unspecified.residency.state == .unspecified)
+    }
+
     @Test("phase six contract seed models expose multimodal routes and task visibility")
     func phaseSixContractSeedModelsExposeMultimodalRoutesAndTasks() async throws {
         let catalog = ModelCatalog(seedModels: ModelCatalog.phaseSixContractSeedModels())

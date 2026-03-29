@@ -377,6 +377,64 @@ public enum Melix_Controlplane_V1_MemoryResidencyPolicy: SwiftProtobuf.Enum, Swi
 
 }
 
+public enum Melix_Controlplane_V1_ResidencyState: SwiftProtobuf.Enum, Swift.CaseIterable {
+  public typealias RawValue = Int
+  case unspecified // = 0
+  case discovered // = 1
+  case loading // = 2
+  case warm // = 3
+  case pinned // = 4
+  case evicting // = 5
+  case unloaded // = 6
+  case failed // = 7
+  case UNRECOGNIZED(Int)
+
+  public init() {
+    self = .unspecified
+  }
+
+  public init?(rawValue: Int) {
+    switch rawValue {
+    case 0: self = .unspecified
+    case 1: self = .discovered
+    case 2: self = .loading
+    case 3: self = .warm
+    case 4: self = .pinned
+    case 5: self = .evicting
+    case 6: self = .unloaded
+    case 7: self = .failed
+    default: self = .UNRECOGNIZED(rawValue)
+    }
+  }
+
+  public var rawValue: Int {
+    switch self {
+    case .unspecified: return 0
+    case .discovered: return 1
+    case .loading: return 2
+    case .warm: return 3
+    case .pinned: return 4
+    case .evicting: return 5
+    case .unloaded: return 6
+    case .failed: return 7
+    case .UNRECOGNIZED(let i): return i
+    }
+  }
+
+  // The compiler won't synthesize support with the UNRECOGNIZED case.
+  public static let allCases: [Melix_Controlplane_V1_ResidencyState] = [
+    .unspecified,
+    .discovered,
+    .loading,
+    .warm,
+    .pinned,
+    .evicting,
+    .unloaded,
+    .failed,
+  ]
+
+}
+
 public enum Melix_Controlplane_V1_RequestPhase: SwiftProtobuf.Enum, Swift.CaseIterable {
   public typealias RawValue = Int
   case unspecified // = 0
@@ -2326,6 +2384,26 @@ public struct Melix_Controlplane_V1_ModelSettings: Sendable {
   public init() {}
 }
 
+public struct Melix_Controlplane_V1_ResidencySummary: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var state: Melix_Controlplane_V1_ResidencyState = .unspecified
+
+  public var policy: Melix_Controlplane_V1_MemoryResidencyPolicy = .unspecified
+
+  public var pinRequested: Bool = false
+
+  public var pinned: Bool = false
+
+  public var ttlSeconds: UInt32 = 0
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
 public struct Melix_Controlplane_V1_ImageJobProgress: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
@@ -2679,6 +2757,15 @@ public struct Melix_Controlplane_V1_ModelSummary: @unchecked Sendable {
     get {_storage._supportedTasks}
     set {_uniqueStorage()._supportedTasks = newValue}
   }
+
+  public var residency: Melix_Controlplane_V1_ResidencySummary {
+    get {_storage._residency ?? Melix_Controlplane_V1_ResidencySummary()}
+    set {_uniqueStorage()._residency = newValue}
+  }
+  /// Returns true if `residency` has been explicitly set.
+  public var hasResidency: Bool {_storage._residency != nil}
+  /// Clears the value of `residency`. Subsequent reads from it will return its default value.
+  public mutating func clearResidency() {_uniqueStorage()._residency = nil}
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -3446,6 +3533,10 @@ extension Melix_Controlplane_V1_WorkerRouteClass: SwiftProtobuf._ProtoNameProvid
 
 extension Melix_Controlplane_V1_MemoryResidencyPolicy: SwiftProtobuf._ProtoNameProviding {
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0MEMORY_RESIDENCY_POLICY_UNSPECIFIED\0\u{1}MEMORY_RESIDENCY_EVICTABLE\0\u{1}MEMORY_RESIDENCY_PINNED\0\u{1}MEMORY_RESIDENCY_TTL\0")
+}
+
+extension Melix_Controlplane_V1_ResidencyState: SwiftProtobuf._ProtoNameProviding {
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0RESIDENCY_STATE_UNSPECIFIED\0\u{1}RESIDENCY_STATE_DISCOVERED\0\u{1}RESIDENCY_STATE_LOADING\0\u{1}RESIDENCY_STATE_WARM\0\u{1}RESIDENCY_STATE_PINNED\0\u{1}RESIDENCY_STATE_EVICTING\0\u{1}RESIDENCY_STATE_UNLOADED\0\u{1}RESIDENCY_STATE_FAILED\0")
 }
 
 extension Melix_Controlplane_V1_RequestPhase: SwiftProtobuf._ProtoNameProviding {
@@ -6804,6 +6895,56 @@ extension Melix_Controlplane_V1_ModelSettings: SwiftProtobuf.Message, SwiftProto
   }
 }
 
+extension Melix_Controlplane_V1_ResidencySummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".ResidencySummary"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}state\0\u{1}policy\0\u{3}pin_requested\0\u{1}pinned\0\u{3}ttl_seconds\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularEnumField(value: &self.state) }()
+      case 2: try { try decoder.decodeSingularEnumField(value: &self.policy) }()
+      case 3: try { try decoder.decodeSingularBoolField(value: &self.pinRequested) }()
+      case 4: try { try decoder.decodeSingularBoolField(value: &self.pinned) }()
+      case 5: try { try decoder.decodeSingularUInt32Field(value: &self.ttlSeconds) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if self.state != .unspecified {
+      try visitor.visitSingularEnumField(value: self.state, fieldNumber: 1)
+    }
+    if self.policy != .unspecified {
+      try visitor.visitSingularEnumField(value: self.policy, fieldNumber: 2)
+    }
+    if self.pinRequested != false {
+      try visitor.visitSingularBoolField(value: self.pinRequested, fieldNumber: 3)
+    }
+    if self.pinned != false {
+      try visitor.visitSingularBoolField(value: self.pinned, fieldNumber: 4)
+    }
+    if self.ttlSeconds != 0 {
+      try visitor.visitSingularUInt32Field(value: self.ttlSeconds, fieldNumber: 5)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Melix_Controlplane_V1_ResidencySummary, rhs: Melix_Controlplane_V1_ResidencySummary) -> Bool {
+    if lhs.state != rhs.state {return false}
+    if lhs.policy != rhs.policy {return false}
+    if lhs.pinRequested != rhs.pinRequested {return false}
+    if lhs.pinned != rhs.pinned {return false}
+    if lhs.ttlSeconds != rhs.ttlSeconds {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
 extension Melix_Controlplane_V1_ImageJobProgress: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ImageJobProgress"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}stage\0\u{1}pct\0\u{3}completed_steps\0\u{3}total_steps\0")
@@ -7349,7 +7490,7 @@ extension Melix_Controlplane_V1_WorkerSummary: SwiftProtobuf.Message, SwiftProto
 
 extension Melix_Controlplane_V1_ModelSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ModelSummary"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}model_id\0\u{1}kind\0\u{1}state\0\u{1}pinned\0\u{3}inflight_requests\0\u{3}estimated_bytes\0\u{3}quant_profile_id\0\u{3}max_context\0\u{1}features\0\u{3}capability_class\0\u{3}route_class\0\u{1}settings\0\u{3}supported_modalities\0\u{3}supported_tasks\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}model_id\0\u{1}kind\0\u{1}state\0\u{1}pinned\0\u{3}inflight_requests\0\u{3}estimated_bytes\0\u{3}quant_profile_id\0\u{3}max_context\0\u{1}features\0\u{3}capability_class\0\u{3}route_class\0\u{1}settings\0\u{3}supported_modalities\0\u{3}supported_tasks\0\u{1}residency\0")
 
   fileprivate class _StorageClass {
     var _modelID: String = String()
@@ -7366,6 +7507,7 @@ extension Melix_Controlplane_V1_ModelSummary: SwiftProtobuf.Message, SwiftProtob
     var _settings: Melix_Controlplane_V1_ModelSettings? = nil
     var _supportedModalities: [String] = []
     var _supportedTasks: [String] = []
+    var _residency: Melix_Controlplane_V1_ResidencySummary? = nil
 
       // This property is used as the initial default value for new instances of the type.
       // The type itself is protecting the reference to its storage via CoW semantics.
@@ -7390,6 +7532,7 @@ extension Melix_Controlplane_V1_ModelSummary: SwiftProtobuf.Message, SwiftProtob
       _settings = source._settings
       _supportedModalities = source._supportedModalities
       _supportedTasks = source._supportedTasks
+      _residency = source._residency
     }
   }
 
@@ -7422,6 +7565,7 @@ extension Melix_Controlplane_V1_ModelSummary: SwiftProtobuf.Message, SwiftProtob
         case 12: try { try decoder.decodeSingularMessageField(value: &_storage._settings) }()
         case 13: try { try decoder.decodeRepeatedStringField(value: &_storage._supportedModalities) }()
         case 14: try { try decoder.decodeRepeatedStringField(value: &_storage._supportedTasks) }()
+        case 15: try { try decoder.decodeSingularMessageField(value: &_storage._residency) }()
         default: break
         }
       }
@@ -7476,6 +7620,9 @@ extension Melix_Controlplane_V1_ModelSummary: SwiftProtobuf.Message, SwiftProtob
       if !_storage._supportedTasks.isEmpty {
         try visitor.visitRepeatedStringField(value: _storage._supportedTasks, fieldNumber: 14)
       }
+      try { if let v = _storage._residency {
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 15)
+      } }()
     }
     try unknownFields.traverse(visitor: &visitor)
   }
@@ -7499,6 +7646,7 @@ extension Melix_Controlplane_V1_ModelSummary: SwiftProtobuf.Message, SwiftProtob
         if _storage._settings != rhs_storage._settings {return false}
         if _storage._supportedModalities != rhs_storage._supportedModalities {return false}
         if _storage._supportedTasks != rhs_storage._supportedTasks {return false}
+        if _storage._residency != rhs_storage._residency {return false}
         return true
       }
       if !storagesAreEqual {return false}

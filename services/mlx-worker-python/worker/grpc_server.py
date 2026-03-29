@@ -97,19 +97,20 @@ class WorkerRuntimeService(runtime_pb2_grpc.RuntimeServiceServicer):
 
     def LoadModel(self, request, context):
         try:
-            loaded = self._registry.load_model(request.model)
+            loaded = self._registry.load_model(request.model, pin_on_load=request.pin_on_load)
         except Exception as exc:
             return runtime_pb2.LoadModelResponse(
                 ok=False,
                 error=common_pb2.ErrorStatus(code="load_failed", message=str(exc)),
             )
-
-        return runtime_pb2.LoadModelResponse(
+        response = runtime_pb2.LoadModelResponse(
             ok=True,
             model_handle=loaded.handle,
             estimated_resident_bytes=loaded.estimated_resident_bytes,
             resolved_capabilities=self._registry.capabilities(),
         )
+        response.residency.CopyFrom(loaded.residency)
+        return response
 
     def UnloadModel(self, request, context):
         found = self._registry.unload_model(request.model_handle)
@@ -129,7 +130,8 @@ class WorkerRuntimeService(runtime_pb2_grpc.RuntimeServiceServicer):
 
     def ListLoadedModels(self, request, context):
         return runtime_pb2.ListLoadedModelsResponse(
-            model_handles=self._registry.list_loaded_models()
+            model_handles=self._registry.list_loaded_models(),
+            loaded_models=self._registry.list_loaded_model_summaries(),
         )
 
     def Drain(self, request, context):

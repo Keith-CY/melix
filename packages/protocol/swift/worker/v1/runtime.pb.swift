@@ -117,12 +117,22 @@ public struct Melix_Worker_V1_LoadModelResponse: Sendable {
   /// Clears the value of `resolvedCapabilities`. Subsequent reads from it will return its default value.
   public mutating func clearResolvedCapabilities() {self._resolvedCapabilities = nil}
 
+  public var residency: Melix_Worker_V1_ResidencyInfo {
+    get {_residency ?? Melix_Worker_V1_ResidencyInfo()}
+    set {_residency = newValue}
+  }
+  /// Returns true if `residency` has been explicitly set.
+  public var hasResidency: Bool {self._residency != nil}
+  /// Clears the value of `residency`. Subsequent reads from it will return its default value.
+  public mutating func clearResidency() {self._residency = nil}
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
 
   fileprivate var _error: Melix_Worker_V1_ErrorStatus? = nil
   fileprivate var _resolvedCapabilities: Melix_Worker_V1_RuntimeCapabilities? = nil
+  fileprivate var _residency: Melix_Worker_V1_ResidencyInfo? = nil
 }
 
 public struct Melix_Worker_V1_UnloadModelRequest: Sendable {
@@ -381,9 +391,46 @@ public struct Melix_Worker_V1_ListLoadedModelsResponse: Sendable {
 
   public var modelHandles: [String] = []
 
+  public var loadedModels: [Melix_Worker_V1_LoadedModelSummary] = []
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
+}
+
+public struct Melix_Worker_V1_LoadedModelSummary: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var modelHandle: String = String()
+
+  public var model: Melix_Worker_V1_ModelSpec {
+    get {_model ?? Melix_Worker_V1_ModelSpec()}
+    set {_model = newValue}
+  }
+  /// Returns true if `model` has been explicitly set.
+  public var hasModel: Bool {self._model != nil}
+  /// Clears the value of `model`. Subsequent reads from it will return its default value.
+  public mutating func clearModel() {self._model = nil}
+
+  public var residency: Melix_Worker_V1_ResidencyInfo {
+    get {_residency ?? Melix_Worker_V1_ResidencyInfo()}
+    set {_residency = newValue}
+  }
+  /// Returns true if `residency` has been explicitly set.
+  public var hasResidency: Bool {self._residency != nil}
+  /// Clears the value of `residency`. Subsequent reads from it will return its default value.
+  public mutating func clearResidency() {self._residency = nil}
+
+  public var estimatedResidentBytes: UInt64 = 0
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+
+  fileprivate var _model: Melix_Worker_V1_ModelSpec? = nil
+  fileprivate var _residency: Melix_Worker_V1_ResidencyInfo? = nil
 }
 
 public struct Melix_Worker_V1_DrainRequest: Sendable {
@@ -573,7 +620,7 @@ extension Melix_Worker_V1_LoadModelRequest: SwiftProtobuf.Message, SwiftProtobuf
 
 extension Melix_Worker_V1_LoadModelResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".LoadModelResponse"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}ok\0\u{1}error\0\u{3}model_handle\0\u{3}estimated_resident_bytes\0\u{3}resolved_capabilities\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}ok\0\u{1}error\0\u{3}model_handle\0\u{3}estimated_resident_bytes\0\u{3}resolved_capabilities\0\u{1}residency\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -586,6 +633,7 @@ extension Melix_Worker_V1_LoadModelResponse: SwiftProtobuf.Message, SwiftProtobu
       case 3: try { try decoder.decodeSingularStringField(value: &self.modelHandle) }()
       case 4: try { try decoder.decodeSingularUInt64Field(value: &self.estimatedResidentBytes) }()
       case 5: try { try decoder.decodeSingularMessageField(value: &self._resolvedCapabilities) }()
+      case 6: try { try decoder.decodeSingularMessageField(value: &self._residency) }()
       default: break
       }
     }
@@ -611,6 +659,9 @@ extension Melix_Worker_V1_LoadModelResponse: SwiftProtobuf.Message, SwiftProtobu
     try { if let v = self._resolvedCapabilities {
       try visitor.visitSingularMessageField(value: v, fieldNumber: 5)
     } }()
+    try { if let v = self._residency {
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 6)
+    } }()
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -620,6 +671,7 @@ extension Melix_Worker_V1_LoadModelResponse: SwiftProtobuf.Message, SwiftProtobu
     if lhs.modelHandle != rhs.modelHandle {return false}
     if lhs.estimatedResidentBytes != rhs.estimatedResidentBytes {return false}
     if lhs._resolvedCapabilities != rhs._resolvedCapabilities {return false}
+    if lhs._residency != rhs._residency {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -1079,7 +1131,7 @@ extension Melix_Worker_V1_ListLoadedModelsRequest: SwiftProtobuf.Message, SwiftP
 
 extension Melix_Worker_V1_ListLoadedModelsResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ListLoadedModelsResponse"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}model_handles\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}model_handles\0\u{3}loaded_models\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -1088,6 +1140,7 @@ extension Melix_Worker_V1_ListLoadedModelsResponse: SwiftProtobuf.Message, Swift
       // enabled. https://github.com/apple/swift-protobuf/issues/1034
       switch fieldNumber {
       case 1: try { try decoder.decodeRepeatedStringField(value: &self.modelHandles) }()
+      case 2: try { try decoder.decodeRepeatedMessageField(value: &self.loadedModels) }()
       default: break
       }
     }
@@ -1097,11 +1150,64 @@ extension Melix_Worker_V1_ListLoadedModelsResponse: SwiftProtobuf.Message, Swift
     if !self.modelHandles.isEmpty {
       try visitor.visitRepeatedStringField(value: self.modelHandles, fieldNumber: 1)
     }
+    if !self.loadedModels.isEmpty {
+      try visitor.visitRepeatedMessageField(value: self.loadedModels, fieldNumber: 2)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: Melix_Worker_V1_ListLoadedModelsResponse, rhs: Melix_Worker_V1_ListLoadedModelsResponse) -> Bool {
     if lhs.modelHandles != rhs.modelHandles {return false}
+    if lhs.loadedModels != rhs.loadedModels {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+extension Melix_Worker_V1_LoadedModelSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".LoadedModelSummary"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}model_handle\0\u{1}model\0\u{1}residency\0\u{3}estimated_resident_bytes\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.modelHandle) }()
+      case 2: try { try decoder.decodeSingularMessageField(value: &self._model) }()
+      case 3: try { try decoder.decodeSingularMessageField(value: &self._residency) }()
+      case 4: try { try decoder.decodeSingularUInt64Field(value: &self.estimatedResidentBytes) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    // The use of inline closures is to circumvent an issue where the compiler
+    // allocates stack space for every if/case branch local when no optimizations
+    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+    // https://github.com/apple/swift-protobuf/issues/1182
+    if !self.modelHandle.isEmpty {
+      try visitor.visitSingularStringField(value: self.modelHandle, fieldNumber: 1)
+    }
+    try { if let v = self._model {
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 2)
+    } }()
+    try { if let v = self._residency {
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 3)
+    } }()
+    if self.estimatedResidentBytes != 0 {
+      try visitor.visitSingularUInt64Field(value: self.estimatedResidentBytes, fieldNumber: 4)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Melix_Worker_V1_LoadedModelSummary, rhs: Melix_Worker_V1_LoadedModelSummary) -> Bool {
+    if lhs.modelHandle != rhs.modelHandle {return false}
+    if lhs._model != rhs._model {return false}
+    if lhs._residency != rhs._residency {return false}
+    if lhs.estimatedResidentBytes != rhs.estimatedResidentBytes {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

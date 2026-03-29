@@ -40,6 +40,7 @@ message LoadModelResponse {
   string model_handle = 3;
   uint64 estimated_resident_bytes = 4;
   RuntimeCapabilities resolved_capabilities = 5;
+  ResidencyInfo residency = 6;
 }
 
 message UnloadModelRequest {
@@ -100,6 +101,14 @@ message ListLoadedModelsRequest {}
 
 message ListLoadedModelsResponse {
   repeated string model_handles = 1;
+  repeated LoadedModelSummary loaded_models = 2;
+}
+
+message LoadedModelSummary {
+  string model_handle = 1;
+  ModelSpec model = 2;
+  ResidencyInfo residency = 3;
+  uint64 estimated_resident_bytes = 4;
 }
 
 message DrainRequest {

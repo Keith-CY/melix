@@ -5,9 +5,10 @@ public actor ModelCatalog {
     private var dispatchHandles: [String: String]
 
     public init(seedModels: [Melix_Controlplane_V1_ModelSummary] = [ModelCatalog.devTextModel()]) {
-        self.models = Dictionary(uniqueKeysWithValues: seedModels.map { ($0.modelID, $0) })
+        let normalizedSeedModels = seedModels.map { ModelCatalog.withSynchronizedResidency($0) }
+        self.models = Dictionary(uniqueKeysWithValues: normalizedSeedModels.map { ($0.modelID, $0) })
         self.dispatchHandles = Dictionary(
-            uniqueKeysWithValues: seedModels.compactMap { model in
+            uniqueKeysWithValues: normalizedSeedModels.compactMap { model in
                 guard model.state == .modelWarm || model.state == .modelPinned else {
                     return nil
                 }
@@ -32,7 +33,9 @@ public actor ModelCatalog {
         guard var model = models[id] else {
             return nil
         }
-        model.state = .modelWarm
+        model.state = ModelCatalog.loadState(for: model.settings)
+        model.pinned = model.state == .modelPinned
+        model = ModelCatalog.withSynchronizedResidency(model)
         models[id] = model
         dispatchHandles[id] = dispatchHandle
         return model
@@ -43,6 +46,8 @@ public actor ModelCatalog {
             return nil
         }
         model.state = .modelUnloaded
+        model.pinned = false
+        model = ModelCatalog.withSynchronizedResidency(model)
         models[id] = model
         dispatchHandles.removeValue(forKey: id)
         return model
@@ -57,6 +62,7 @@ public actor ModelCatalog {
         }
         model.settings = settings
         model.pinned = settings.pinOnLoad
+        model = ModelCatalog.withSynchronizedResidency(model)
         models[id] = model
         return model
     }
@@ -85,7 +91,7 @@ public actor ModelCatalog {
         model.settings.pinOnLoad = false
         model.settings.memoryPolicy = .memoryResidencyEvictable
         model.settings.defaultAccelerationMode = .baseline
-        return model
+        return withSynchronizedResidency(model)
     }
 
     public static func devEmbeddingModel() -> Melix_Controlplane_V1_ModelSummary {
@@ -100,7 +106,7 @@ public actor ModelCatalog {
         model.features = ["embeddings"]
         model.settings.alias = "Melix Dev Embed"
         model.settings.memoryPolicy = .memoryResidencyEvictable
-        return model
+        return withSynchronizedResidency(model)
     }
 
     public static func devRerankModel() -> Melix_Controlplane_V1_ModelSummary {
@@ -115,7 +121,7 @@ public actor ModelCatalog {
         model.features = ["rerank"]
         model.settings.alias = "Melix Dev Rerank"
         model.settings.memoryPolicy = .memoryResidencyEvictable
-        return model
+        return withSynchronizedResidency(model)
     }
 
     public static func devModelOpsModel() -> Melix_Controlplane_V1_ModelSummary {
@@ -130,7 +136,7 @@ public actor ModelCatalog {
         model.features = ["quantize", "download", "upload"]
         model.settings.alias = "Melix Dev Model Ops"
         model.settings.memoryPolicy = .memoryResidencyEvictable
-        return model
+        return withSynchronizedResidency(model)
     }
 
     public static func devOCRModel() -> Melix_Controlplane_V1_ModelSummary {
@@ -145,7 +151,7 @@ public actor ModelCatalog {
         model.supportedTasks = ["ocr"]
         model.settings.alias = "Melix Dev OCR"
         model.settings.memoryPolicy = .memoryResidencyEvictable
-        return model
+        return withSynchronizedResidency(model)
     }
 
     public static func devVLMModel() -> Melix_Controlplane_V1_ModelSummary {
@@ -160,7 +166,7 @@ public actor ModelCatalog {
         model.supportedTasks = ["vlm"]
         model.settings.alias = "Melix Dev VLM"
         model.settings.memoryPolicy = .memoryResidencyEvictable
-        return model
+        return withSynchronizedResidency(model)
     }
 
     public static func devTranscriptionModel() -> Melix_Controlplane_V1_ModelSummary {
@@ -175,7 +181,7 @@ public actor ModelCatalog {
         model.supportedTasks = ["transcribe"]
         model.settings.alias = "Melix Dev Transcription"
         model.settings.memoryPolicy = .memoryResidencyEvictable
-        return model
+        return withSynchronizedResidency(model)
     }
 
     public static func devSpeechModel() -> Melix_Controlplane_V1_ModelSummary {
@@ -190,7 +196,7 @@ public actor ModelCatalog {
         model.supportedTasks = ["speak"]
         model.settings.alias = "Melix Dev Speech"
         model.settings.memoryPolicy = .memoryResidencyEvictable
-        return model
+        return withSynchronizedResidency(model)
     }
 
     public static func devImageModel() -> Melix_Controlplane_V1_ModelSummary {
@@ -205,7 +211,7 @@ public actor ModelCatalog {
         model.supportedTasks = ["image_generate", "image_edit"]
         model.settings.alias = "Melix Dev Image"
         model.settings.memoryPolicy = .memoryResidencyEvictable
-        return model
+        return withSynchronizedResidency(model)
     }
 
     public static func phaseFiveSeedModels() -> [Melix_Controlplane_V1_ModelSummary] {
@@ -234,5 +240,70 @@ public actor ModelCatalog {
 
     private static func defaultDispatchHandle(for id: String) -> String {
         "\(id)::local"
+    }
+
+    private static func withSynchronizedResidency(
+        _ source: Melix_Controlplane_V1_ModelSummary
+    ) -> Melix_Controlplane_V1_ModelSummary {
+        var model = source
+        model.pinned = model.state == .modelPinned || model.settings.pinOnLoad
+        model.residency = residencySummary(for: model)
+        return model
+    }
+
+    private static func residencySummary(
+        for model: Melix_Controlplane_V1_ModelSummary
+    ) -> Melix_Controlplane_V1_ResidencySummary {
+        var residency = Melix_Controlplane_V1_ResidencySummary()
+        residency.state = residencyState(for: model.state)
+        residency.policy = effectivePolicy(for: model.settings)
+        residency.pinRequested = model.settings.pinOnLoad
+        residency.pinned = model.state == .modelPinned || model.pinned
+        residency.ttlSeconds = model.settings.ttlSeconds
+        return residency
+    }
+
+    private static func effectivePolicy(
+        for settings: Melix_Controlplane_V1_ModelSettings
+    ) -> Melix_Controlplane_V1_MemoryResidencyPolicy {
+        if settings.pinOnLoad {
+            return .memoryResidencyPinned
+        }
+        if settings.memoryPolicy != .unspecified {
+            return settings.memoryPolicy
+        }
+        if settings.ttlSeconds > 0 {
+            return .memoryResidencyTtl
+        }
+        return .memoryResidencyEvictable
+    }
+
+    private static func loadState(
+        for settings: Melix_Controlplane_V1_ModelSettings
+    ) -> Melix_Controlplane_V1_ModelState {
+        effectivePolicy(for: settings) == .memoryResidencyPinned ? .modelPinned : .modelWarm
+    }
+
+    private static func residencyState(
+        for state: Melix_Controlplane_V1_ModelState
+    ) -> Melix_Controlplane_V1_ResidencyState {
+        switch state {
+        case .modelDiscovered:
+            return .discovered
+        case .modelLoading:
+            return .loading
+        case .modelWarm:
+            return .warm
+        case .modelPinned:
+            return .pinned
+        case .modelEvicting:
+            return .evicting
+        case .modelUnloaded:
+            return .unloaded
+        case .modelFailed:
+            return .failed
+        default:
+            return .unspecified
+        }
     }
 }
