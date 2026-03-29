@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import json
 import sys
 from types import SimpleNamespace
@@ -439,10 +440,21 @@ def test_wait_for_metrics_ignores_transient_decode_errors(
 
     monkeypatch.setattr(phase8_runtime_probes, "read_metrics_export", FlakyReader())
 
+    parameters = inspect.signature(phase8_runtime_probes.wait_for_metrics).parameters
+    assert "clock" in parameters
+    assert "sleep_fn" in parameters
+
+    ticks = iter([0.0, 0.04, 0.08, 0.08])
+
+    def fake_clock() -> float:
+        return next(ticks)
+
     assert phase8_runtime_probes.wait_for_metrics(
         metrics_path,
         ["control_plane.http_ready_ms"],
         timeout_seconds=0.1,
+        clock=fake_clock,
+        sleep_fn=lambda _: None,
     ) == {"control_plane.http_ready_ms": 12.5}
 
 

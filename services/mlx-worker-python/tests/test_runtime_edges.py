@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import runpy
 from argparse import Namespace
 from pathlib import Path
@@ -16,6 +17,9 @@ from worker.grpc_server import (
     WorkerInferenceService,
     WorkerMaintenanceService,
     WorkerRuntimeService,
+    _elapsed_milliseconds_from_origin,
+    _elapsed_milliseconds_since,
+    build_registry_for_backend,
     build_server,
     main,
 )
@@ -468,6 +472,39 @@ def test_build_server_and_main_bootstrap(monkeypatch, tmp_path: Path) -> None:
     assert main_metrics["python_worker.bootstrap_ms"] == 80
 
 
+def test_bootstrap_metrics_exporter_writes_atomically(monkeypatch, tmp_path: Path) -> None:
+    metrics_path = tmp_path / "python-worker-metrics.json"
+    seen: dict[str, str] = {}
+    original_replace = os.replace
+
+    def record_replace(source: str, destination: str) -> None:
+        seen["source"] = source
+        seen["destination"] = destination
+        original_replace(source, destination)
+
+    monkeypatch.setattr("worker.grpc_server.os.replace", record_replace)
+
+    exporter = BootstrapMetricsExporter(str(metrics_path))
+    exporter.set_milliseconds("python_worker.bootstrap_ms", 42.0)
+
+    assert seen["destination"] == os.fspath(metrics_path)
+    assert Path(seen["source"]).parent == metrics_path.parent
+    assert json.loads(metrics_path.read_text(encoding="utf-8"))["values"]["python_worker.bootstrap_ms"] == 42
+
+
+def test_bootstrap_metrics_exporter_is_noop_without_export_path() -> None:
+    exporter = BootstrapMetricsExporter(None)
+    exporter.set_milliseconds("python_worker.bootstrap_ms", 12.0)
+
+
+def test_build_registry_for_backend_uses_deterministic_runtime() -> None:
+    registry = build_registry_for_backend("deterministic")
+
+    assert registry.runtime.runtime_name == "deterministic-text"
+    assert registry.embedding_runtime.runtime_name == "deterministic-embed"
+    assert registry.rerank_runtime.runtime_name == "deterministic-rerank"
+
+
 def test_build_server_normalizes_relative_socket_path(monkeypatch, tmp_path: Path) -> None:
     registry = build_registry()
     seen: dict[str, object] = {}
@@ -491,6 +528,35 @@ def test_build_server_normalizes_relative_socket_path(monkeypatch, tmp_path: Pat
     build_server("relative-worker.sock", registry=registry)
 
     assert seen["address"] == f"unix://{tmp_path / 'relative-worker.sock'}"
+
+
+def test_build_server_removes_existing_socket_file(monkeypatch, tmp_path: Path) -> None:
+    registry = build_registry()
+    socket_path = tmp_path / "existing.sock"
+    socket_path.write_text("stale", encoding="utf-8")
+
+    class FakeBoundServer:
+        def add_generic_rpc_handlers(self, handlers) -> None:
+            return None
+
+        def add_registered_method_handlers(self, service_name, handlers) -> None:
+            return None
+
+        def add_insecure_port(self, address: str) -> int:
+            return 1
+
+    monkeypatch.setattr("worker.grpc_server.grpc.server", lambda executor: FakeBoundServer())
+
+    build_server(os.fspath(socket_path), registry=registry)
+
+    assert not socket_path.exists()
+
+
+def test_elapsed_helpers_guard_invalid_origins() -> None:
+    assert _elapsed_milliseconds_since(10, now_nanoseconds=5) == 0.0
+    assert _elapsed_milliseconds_from_origin(None, now_nanoseconds=100) == 0.0
+    assert _elapsed_milliseconds_from_origin("bad", now_nanoseconds=100) == 0.0
+    assert _elapsed_milliseconds_from_origin("-1", now_nanoseconds=100) == 0.0
 
 
 def test_maintenance_service_keeps_doctor_and_bench_structured(tmp_path: Path) -> None:

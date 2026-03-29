@@ -4,7 +4,7 @@ import json
 import tempfile
 import time
 import urllib.request
-from typing import Any
+from typing import Any, Callable
 from pathlib import Path
 
 from tests.integration.helpers import LiveMelixStack, get_cache_stats, read_metrics_export
@@ -230,11 +230,14 @@ def wait_for_metrics(
     keys: list[str],
     *,
     timeout_seconds: float = 60.0,
+    poll_interval_seconds: float = 0.05,
+    clock: Callable[[], float] = time.perf_counter,
+    sleep_fn: Callable[[float], None] = time.sleep,
 ) -> dict[str, float]:
-    deadline = time.perf_counter() + timeout_seconds
+    deadline = clock() + timeout_seconds
     last_values: dict[str, Any] = {}
 
-    while time.perf_counter() < deadline:
+    while True:
         if metrics_path.exists():
             try:
                 payload = read_metrics_export(metrics_path)
@@ -245,7 +248,10 @@ def wait_for_metrics(
                         return {key: float(values[key]) for key in keys}
             except (OSError, ValueError, json.JSONDecodeError):
                 pass
-        time.sleep(0.05)
+        now = clock()
+        if now >= deadline:
+            break
+        sleep_fn(min(poll_interval_seconds, max(0.0, deadline - now)))
 
     raise RuntimeError(
         f"Timed out waiting for metrics {keys} in {metrics_path}: last={last_values}"

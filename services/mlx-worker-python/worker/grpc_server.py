@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import tempfile
 import time
 from concurrent import futures
 from pathlib import Path
@@ -61,7 +62,26 @@ class BootstrapMetricsExporter:
             "updated_at_unix_ms": int(time.time() * 1000),
             "values": self._values,
         }
-        self._export_path.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
+        _write_json_atomically(self._export_path, payload)
+
+
+def _write_json_atomically(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp_file = tempfile.NamedTemporaryFile(
+        mode="w",
+        encoding="utf-8",
+        dir=path.parent,
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+        delete=False,
+    )
+    temp_path = Path(temp_file.name)
+    try:
+        with temp_file:
+            json.dump(payload, temp_file, sort_keys=True)
+        os.replace(os.fspath(temp_path), os.fspath(path))
+    finally:
+        temp_path.unlink(missing_ok=True)
 
 
 class WorkerRuntimeService(runtime_pb2_grpc.RuntimeServiceServicer):
