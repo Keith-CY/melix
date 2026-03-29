@@ -74,6 +74,52 @@ struct OpenAIHandlerTests {
         #expect(payload.contains("data: [DONE]"))
     }
 
+    @Test("POST /v1/chat/completions returns invalid argument for malformed multimodal payloads")
+    func postChatCompletionsReturnsInvalidArgumentForMalformedMultimodalPayloads() async throws {
+        let workerClient = ScriptedWorkerClient(events: [])
+        let handler = OpenAIHandler(
+            modelCatalog: ModelCatalog(seedModels: [warmModel()]),
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: workerClient),
+                abortRegistry: AbortRegistry()
+            ),
+            translator: ChatRequestTranslator(requestIDGenerator: { "req-invalid-mm" })
+        )
+
+        let body = try #require(
+            """
+            {
+              "model": "melix-dev-vlm",
+              "stream": true,
+              "messages": [
+                {
+                  "role": "user",
+                  "content": [
+                    { "type": "text", "text": "Describe the image." },
+                    { "type": "input_image", "input_image": {} }
+                  ]
+                }
+              ]
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/chat/completions",
+                headers: ["content-type": "application/json"],
+                body: body
+            )
+        )
+        let payload = try await collectBody(response.body)
+
+        #expect(response.statusCode == 400)
+        #expect(payload.contains("\"code\":\"invalid_argument\""))
+        #expect(payload.contains("\"message\":\"input_image.data is required.\""))
+        #expect(await workerClient.lastGenerateRequest == nil)
+    }
+
     @Test("chat completions translator preserves recovery metadata on worker requests")
     func postChatCompletionsPreservesRecoveryMetadata() async throws {
         let catalog = ModelCatalog(seedModels: [warmModel()])

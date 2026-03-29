@@ -1,8 +1,39 @@
 import Foundation
 import Testing
 @testable import MelixControlPlaneCore
+import MelixWorkerProtocol
 
 struct TextEndpointContractTests {
+    @Test("multimodal normalization errors expose operator-facing messages")
+    func multimodalNormalizationErrorsExposeOperatorMessages() {
+        #expect(
+            MultimodalRequestNormalizationError.missingValue("input_image").operatorMessage
+                == "input_image is required."
+        )
+        #expect(
+            MultimodalRequestNormalizationError.invalidBase64("image").operatorMessage
+                == "image_base64 must be valid base64."
+        )
+        #expect(
+            MultimodalRequestNormalizationError.unsupportedPartType("video").operatorMessage
+                == "Unsupported multimodal part type: video."
+        )
+    }
+
+    @Test("normalized text messages flatten non-empty text parts into content")
+    func normalizedTextMessagesFlattenNonEmptyTextPartsIntoContent() {
+        var first = Melix_Worker_V1_MessagePart()
+        first.text = "alpha"
+        var second = Melix_Worker_V1_MessagePart()
+        second.text = ""
+        var third = Melix_Worker_V1_MessagePart()
+        third.text = "beta"
+
+        let message = NormalizedTextMessage(role: "user", parts: [first, second, third])
+
+        #expect(message.content == "alpha\nbeta")
+    }
+
     @Test("request contracts decode melix session metadata across endpoint variants")
     func requestContractsDecodeMelixSessionMetadata() throws {
         let decoder = JSONDecoder()
@@ -99,6 +130,130 @@ struct TextEndpointContractTests {
         let encoded = try String(decoding: encoder.encode(messageRequest), as: UTF8.self)
         #expect(encoded.contains("\"instructions\":\"Be terse.\""))
         #expect(encoded.contains("\"input\":["))
+    }
+
+    @Test("chat request contracts decode multimodal content arrays and normalize worker parts")
+    func chatRequestContractsDecodeMultimodalContentArrays() throws {
+        let decoder = JSONDecoder()
+        let translator = ChatRequestTranslator()
+
+        let request = try decoder.decode(
+            OpenAIChatCompletionsRequest.self,
+            from: Data(
+                """
+                {
+                  "model": "melix-dev-ocr",
+                  "stream": true,
+                  "messages": [
+                    {
+                      "role": "user",
+                      "content": [
+                        { "type": "text", "text": "Extract the image text." },
+                        {
+                          "type": "input_image",
+                          "input_image": {
+                            "data": "aGVsbG8=",
+                            "mime_type": "image/png",
+                            "format": "png",
+                            "filename": "fixture.png"
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+                """.utf8
+            )
+        )
+
+        let normalized = try translator.normalizeMultimodalChat(request)
+        let message = try #require(normalized.messages.first)
+
+        #expect(request.messages.first?.hasMultimodalContent == true)
+        #expect(message.role == "user")
+        #expect(message.parts.count == 2)
+        #expect(message.parts[0].text == "Extract the image text.")
+        #expect(message.parts[1].imageBytes == Data("hello".utf8))
+        #expect(message.parts[1].media.mimeType == "image/png")
+    }
+
+    @Test("chat request messages round-trip text and multimodal content payloads")
+    func chatRequestMessagesRoundTripTextAndMultimodalContentPayloads() throws {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let decoder = JSONDecoder()
+
+        let textMessage = OpenAIChatCompletionsRequest.Message(role: "user", content: "hello")
+        let encodedText = try encoder.encode(textMessage)
+        let decodedText = try decoder.decode(OpenAIChatCompletionsRequest.Message.self, from: encodedText)
+
+        #expect(decodedText.role == "user")
+        #expect(decodedText.content == "hello")
+        #expect(decodedText.contentParts == nil)
+        #expect(decodedText.hasMultimodalContent == false)
+
+        let multimodalMessage = OpenAIChatCompletionsRequest.Message(
+            role: "user",
+            contentParts: [
+                .init(type: .text, text: "Describe the image."),
+                .init(
+                    type: .inputImage,
+                    inputImage: .init(
+                        data: "aGVsbG8=",
+                        mimeType: "image/png",
+                        format: "png",
+                        filename: "fixture.png"
+                    )
+                ),
+            ]
+        )
+        let encodedMultimodal = try encoder.encode(multimodalMessage)
+        let decodedMultimodal = try decoder.decode(
+            OpenAIChatCompletionsRequest.Message.self,
+            from: encodedMultimodal
+        )
+
+        #expect(decodedMultimodal.role == "user")
+        #expect(decodedMultimodal.content == "Describe the image.")
+        #expect(decodedMultimodal.hasMultimodalContent)
+        #expect(decodedMultimodal.contentParts?.count == 2)
+        #expect(String(decoding: encodedMultimodal, as: UTF8.self).contains("\"content\":["))
+    }
+
+    @Test("multimodal chat normalization preserves text-only and multimodal messages in order")
+    func multimodalChatNormalizationPreservesTextOnlyAndMultimodalMessagesInOrder() throws {
+        let translator = ChatRequestTranslator()
+        let request = OpenAIChatCompletionsRequest(
+            model: "melix-dev-vlm",
+            messages: [
+                .init(role: "system", content: "Be terse."),
+                .init(
+                    role: "user",
+                    contentParts: [
+                        .init(type: .text, text: "Describe the image."),
+                        .init(
+                            type: .inputImage,
+                            inputImage: .init(
+                                data: "aGVsbG8=",
+                                mimeType: "image/png",
+                                format: "png",
+                                filename: "fixture.png"
+                            )
+                        ),
+                    ]
+                ),
+            ],
+            stream: true
+        )
+
+        let normalized = try translator.normalizeMultimodalChat(request)
+
+        #expect(normalized.messages.count == 2)
+        #expect(normalized.messages[0] == NormalizedTextMessage(role: "system", content: "Be terse."))
+        #expect(normalized.messages[1].role == "user")
+        #expect(normalized.messages[1].content == "Describe the image.")
+        #expect(normalized.messages[1].parts.count == 2)
+        #expect(normalized.messages[1].parts[1].imageBytes == Data("hello".utf8))
     }
 
     @Test("equivalent single-turn requests normalize to the same internal text shape")

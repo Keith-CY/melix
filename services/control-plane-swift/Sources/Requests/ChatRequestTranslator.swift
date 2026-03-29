@@ -18,17 +18,31 @@ public enum TextWorkflowKind: String, Sendable, Codable, Equatable {
     case backgroundAnalysis = "background_analysis"
 }
 
-public struct NormalizedTextMessage: Sendable, Codable, Equatable {
+public struct NormalizedTextMessage: Sendable, Equatable {
     public let role: String
-    public let content: String
+    public let parts: [Melix_Worker_V1_MessagePart]
 
     public init(role: String, content: String) {
         self.role = role
-        self.content = content
+        var part = Melix_Worker_V1_MessagePart()
+        part.text = content
+        self.parts = [part]
+    }
+
+    public init(role: String, parts: [Melix_Worker_V1_MessagePart]) {
+        self.role = role
+        self.parts = parts
+    }
+
+    public var content: String {
+        parts
+            .map(\.text)
+            .filter { !$0.isEmpty }
+            .joined(separator: "\n")
     }
 }
 
-public struct NormalizedTextRequest: Sendable, Codable, Equatable {
+public struct NormalizedTextRequest: Sendable, Equatable {
     public let endpoint: TextEndpointKind
     public let model: String
     public let messages: [NormalizedTextMessage]
@@ -131,10 +145,50 @@ public struct OpenAIChatCompletionsRequest: Codable, Sendable {
     public struct Message: Codable, Sendable, Equatable {
         public let role: String
         public let content: String
+        public let contentParts: [OpenAIMultimodalContentPart]?
+
+        enum CodingKeys: String, CodingKey {
+            case role
+            case content
+        }
 
         public init(role: String, content: String) {
             self.role = role
             self.content = content
+            self.contentParts = nil
+        }
+
+        public init(role: String, contentParts: [OpenAIMultimodalContentPart]) {
+            self.role = role
+            self.content = contentParts.compactMap(\.text).joined(separator: "\n")
+            self.contentParts = contentParts
+        }
+
+        public init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            role = try container.decode(String.self, forKey: .role)
+            if let text = try? container.decode(String.self, forKey: .content) {
+                content = text
+                contentParts = nil
+            } else {
+                let parts = try container.decode([OpenAIMultimodalContentPart].self, forKey: .content)
+                content = parts.compactMap(\.text).joined(separator: "\n")
+                contentParts = parts
+            }
+        }
+
+        public func encode(to encoder: Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            try container.encode(role, forKey: .role)
+            if let contentParts {
+                try container.encode(contentParts, forKey: .content)
+            } else {
+                try container.encode(content, forKey: .content)
+            }
+        }
+
+        public var hasMultimodalContent: Bool {
+            contentParts != nil
         }
     }
 
@@ -545,6 +599,40 @@ public struct ChatRequestTranslator: Sendable {
         )
     }
 
+    public func normalizeMultimodalChat(
+        _ request: OpenAIChatCompletionsRequest
+    ) throws -> NormalizedTextRequest {
+        let normalizer = MultimodalRequestNormalizer()
+        let messages = try request.messages.map { message in
+            if let contentParts = message.contentParts {
+                let normalized = try normalizer.normalize(
+                    OpenAIMultimodalMessage(role: message.role, content: contentParts)
+                )
+                return NormalizedTextMessage(role: normalized.role, parts: Array(normalized.parts))
+            }
+            return NormalizedTextMessage(role: message.role, content: message.content)
+        }
+
+        return NormalizedTextRequest(
+            endpoint: .chatCompletions,
+            model: request.model,
+            messages: messages,
+            stream: request.stream ?? true,
+            temperature: request.temperature,
+            topP: request.topP,
+            maxTokens: request.maxTokens,
+            sessionID: request.sessionID,
+            branchID: request.branchID,
+            parentRequestID: request.parentRequestID,
+            restoreSnapshotID: request.restoreSnapshotID,
+            saveBoundarySnapshot: request.saveBoundarySnapshot,
+            presetID: request.presetID,
+            workflow: request.workflow,
+            workflowRunID: request.workflowRunID,
+            workflowNodeID: request.workflowNodeID
+        )
+    }
+
     public func normalize(
         _ request: OpenAICompletionsRequest
     ) -> NormalizedTextRequest {
@@ -722,9 +810,7 @@ public struct ChatRequestTranslator: Sendable {
         generateRequest.messages = shapedRequest.messages.map { message in
             var chatMessage = Melix_Worker_V1_ChatMessage()
             chatMessage.role = message.role
-            var part = Melix_Worker_V1_MessagePart()
-            part.text = message.content
-            chatMessage.parts = [part]
+            chatMessage.parts = message.parts
             return chatMessage
         }
 

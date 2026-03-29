@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from worker.runtime.audio_preprocessing import prepare_audio_input
+from worker.runtime.deterministic_delay import sleep_if_configured
 
 
 @dataclass(frozen=True)
@@ -36,6 +37,7 @@ class DeterministicTranscriptionRuntime:
 
     def transcribe(self, loaded_model, request) -> DeterministicTranscript:
         prepared = prepare_audio_input(request)
+        sleep_if_configured("transcription")
         transcript = prepared.decoded_text() or "<silence>"
         self._last_probe = TranscriptionProbeSnapshot(
             preprocess_latency_ms=prepared.preprocess_latency_ms,

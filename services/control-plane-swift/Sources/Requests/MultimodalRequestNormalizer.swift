@@ -7,6 +7,19 @@ public enum MultimodalRequestNormalizationError: Error, Equatable {
     case unsupportedPartType(String)
 }
 
+extension MultimodalRequestNormalizationError {
+    var operatorMessage: String {
+        switch self {
+        case let .missingValue(field):
+            return "\(field) is required."
+        case let .invalidBase64(kind):
+            return "\(kind)_base64 must be valid base64."
+        case let .unsupportedPartType(kind):
+            return "Unsupported multimodal part type: \(kind)."
+        }
+    }
+}
+
 public struct OpenAIMultimodalImageReference: Sendable, Codable, Equatable {
     public let url: String?
     public let data: String?

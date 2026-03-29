@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from threading import Event
 
+from worker.runtime.deterministic_delay import sleep_if_configured
 from worker.runtime.mlx_text_runtime import RuntimeTokenEvent
 from worker.runtime.multimodal_preprocessing import PreparedVisionRequest, prepare_vision_request
 
@@ -58,6 +59,7 @@ class DeterministicVLMRuntime:
             preprocess_peak_memory_bytes=prepared_request.preprocess_peak_memory_bytes,
             first_token_latency_ms=max(0.0, prepared_request.preprocess_latency_ms / 2.0),
         )
+        sleep_if_configured("vlm")
         if cancel_event.is_set():
             return
         yield RuntimeTokenEvent(

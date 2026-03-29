@@ -33,6 +33,7 @@ class LiveMelixStack:
         start_swift_text_worker: bool = True,
         start_python_worker: bool = True,
         swift_cache_root: Path | None = None,
+        environment_overrides: dict[str, str] | None = None,
     ) -> None:
         self.repo_root = repo_root
         token = uuid.uuid4().hex[:10]
@@ -51,6 +52,7 @@ class LiveMelixStack:
         self.cleanup_swift_cache_root = swift_cache_root is None
         self.swift_backend_mode = swift_backend_mode
         self.python_backend_mode = python_backend_mode
+        self.environment_overrides = dict(environment_overrides or {})
         self.should_start_swift_text_worker = start_swift_text_worker
         self.should_start_python_worker = start_python_worker
         self.swift_text_worker: subprocess.Popen[str] | None = None
@@ -71,6 +73,7 @@ class LiveMelixStack:
                 product_name="melix-text-worker-swift",
             )
             swift_env = os.environ.copy()
+            swift_env.update(self.environment_overrides)
             swift_env["MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH"] = os.fspath(self.swift_socket_path)
             swift_env["MELIX_SWIFT_TEXT_WORKER_BACKEND_MODE"] = self.swift_backend_mode
             swift_env["MELIX_SWIFT_TEXT_WORKER_METRICS_PATH"] = os.fspath(self.swift_text_worker_metrics_path)
@@ -96,6 +99,7 @@ class LiveMelixStack:
 
         if self.should_start_python_worker:
             worker_env = os.environ.copy()
+            worker_env.update(self.environment_overrides)
             worker_env["PYTHONPATH"] = f"{self.repo_root}:{self.repo_root / 'services/mlx-worker-python'}"
             self.python_worker_stdout = self.python_worker_stdout_path.open("w", encoding="utf-8")
             self.python_worker_stderr = self.python_worker_stderr_path.open("w", encoding="utf-8")
@@ -135,6 +139,7 @@ class LiveMelixStack:
             product_name="melix-control-plane",
         )
         control_plane_env = os.environ.copy()
+        control_plane_env.update(self.environment_overrides)
         control_plane_env["MELIX_HTTP_PORT"] = str(self.http_port)
         control_plane_env["MELIX_WORKER_SOCKET_PATH"] = os.fspath(self.python_socket_path)
         control_plane_env["MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH"] = os.fspath(self.swift_socket_path)

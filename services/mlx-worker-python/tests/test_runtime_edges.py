@@ -19,6 +19,7 @@ from worker.grpc_server import (
 )
 from worker.model_registry.catalog import WorkerModelCatalog
 from worker.registry import WorkerRegistry
+from worker.runtime.deterministic_delay import configured_delay_ms
 from worker.runtime.mlx_text_runtime import AutoMLXBackend, MLXTextRuntime, RuntimeUnavailableError
 
 
@@ -190,6 +191,19 @@ def test_registry_capabilities_and_request_lifecycle() -> None:
     registry.finish_request("req-transcription")
     registry.finish_request("req-speech")
     assert registry.runtime_stats().active_multimodal_requests == 0
+
+
+def test_deterministic_multimodal_delay_prefers_specific_keys_and_shared_fallback() -> None:
+    assert configured_delay_ms("transcription", {}) == 0.0
+    assert configured_delay_ms("transcription", {"MELIX_DETERMINISTIC_MULTIMODAL_DELAY_MS": "25"}) == 25.0
+    assert configured_delay_ms(
+        "transcription",
+        {
+            "MELIX_DETERMINISTIC_MULTIMODAL_DELAY_MS": "25",
+            "MELIX_DETERMINISTIC_TRANSCRIPTION_DELAY_MS": "150",
+        },
+    ) == 150.0
+    assert configured_delay_ms("ocr", {"MELIX_DETERMINISTIC_OCR_DELAY_MS": "invalid"}) == 0.0
 
 
 def test_runtime_wrapper_and_unavailable_backend_paths() -> None:

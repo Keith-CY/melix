@@ -188,14 +188,20 @@ public struct OpenAIHandler: Sendable {
     }
 
     private func handleChatCompletions(_ request: HTTPRequest) async throws -> HTTPResponse {
-        let chatRequest = try decoder.decode(OpenAIChatCompletionsRequest.self, from: request.body)
-        let normalized = translator.normalize(chatRequest)
         do {
+            let chatRequest = try decoder.decode(OpenAIChatCompletionsRequest.self, from: request.body)
+            let normalized = if chatRequest.messages.contains(where: \.hasMultimodalContent) {
+                try translator.normalizeMultimodalChat(chatRequest)
+            } else {
+                translator.normalize(chatRequest)
+            }
             let translated = try await translatedRequest(normalized)
             return try await streamResponse(
                 translated: translated,
                 shape: .chatCompletions
             )
+        } catch let error as MultimodalRequestNormalizationError {
+            return invalidArgumentResponse(message: error.operatorMessage)
         } catch let error as HTTPRequestHandlingError {
             return httpErrorResponse(for: error)
         }

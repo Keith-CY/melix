@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from worker.runtime.deterministic_delay import sleep_if_configured
 
 @dataclass(frozen=True)
 class SpeechProbeSnapshot:
@@ -30,6 +31,7 @@ class DeterministicSpeechRuntime:
     def speak(self, loaded_model, request) -> DeterministicSpeechResult:
         output_format = request.format or "wav"
         payload = f"VOICE={request.voice or 'default'}\nFORMAT={output_format}\nTEXT={request.input}".encode("utf-8")
+        sleep_if_configured("speech")
         self._last_probe = SpeechProbeSnapshot(
             speech_latency_ms=max(0.001, len(payload) / 1000.0),
             output_bytes=len(payload),
