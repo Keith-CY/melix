@@ -194,6 +194,58 @@ struct PythonBridgeWorkerClientTests {
         #expect(spoken.format == "wav")
     }
 
+    @Test("image generate and image edit decode unary payloads from the bridge")
+    func imageGenerateAndEditDecodeUnaryPayloadsFromTheBridge() async throws {
+        var generateRequest = Melix_Worker_V1_ImageGenerateRequest()
+        generateRequest.id.requestID = "image-generate-bridge"
+        generateRequest.modelHandle = "melix-dev-image::bridge"
+        generateRequest.prompt = "red fox"
+        generateRequest.size = "256x256"
+        generateRequest.responseFormat = "png"
+
+        var generateResponse = Melix_Worker_V1_ImageGenerateResponse()
+        generateResponse.images = [Data("generated-image".utf8)]
+        generateResponse.job.requestID = "image-generate-bridge"
+        generateResponse.job.jobID = "image-generate-bridge::image-generate"
+        generateResponse.job.modelHandle = "melix-dev-image::bridge"
+        generateResponse.job.operation = "image_generate"
+
+        var editRequest = Melix_Worker_V1_ImageEditRequest()
+        editRequest.id.requestID = "image-edit-bridge"
+        editRequest.modelHandle = "melix-dev-image::bridge"
+        editRequest.prompt = "add glow"
+        editRequest.image = Data("source".utf8)
+        editRequest.mask = Data("mask".utf8)
+        editRequest.size = "256x256"
+        editRequest.responseFormat = "png"
+
+        var editResponse = Melix_Worker_V1_ImageEditResponse()
+        editResponse.images = [Data("edited-image".utf8)]
+        editResponse.job.requestID = "image-edit-bridge"
+        editResponse.job.jobID = "image-edit-bridge::image-edit"
+        editResponse.job.modelHandle = "melix-dev-image::bridge"
+        editResponse.job.operation = "image_edit"
+
+        let runner = ScriptedBridgeRunner()
+        await runner.setUnaryResponse(
+            .imageGenerate,
+            line: bridgeMessageLine(message: try generateResponse.serializedData())
+        )
+        await runner.setUnaryResponse(
+            .imageEdit,
+            line: bridgeMessageLine(message: try editResponse.serializedData())
+        )
+
+        let client = PythonBridgeWorkerClient(socketPath: "/tmp/melix-test.sock", runner: runner)
+        let generated = try await client.imageGenerate(request: generateRequest)
+        let edited = try await client.imageEdit(request: editRequest)
+
+        #expect(generated.job.jobID == "image-generate-bridge::image-generate")
+        #expect(generated.images == [Data("generated-image".utf8)])
+        #expect(edited.job.jobID == "image-edit-bridge::image-edit")
+        #expect(edited.images == [Data("edited-image".utf8)])
+    }
+
     @Test("model-ops bridge methods decode info and streamed convert events")
     func modelOpsBridgeMethodsDecodeInfoAndStreamedConvertEvents() async throws {
         var infoRequest = Melix_Worker_V1_GetModelInfoRequest()
@@ -312,6 +364,39 @@ struct PythonBridgeWorkerClientTests {
         #expect(await catalog.dispatchHandle(for: "melix-dev-speech") == "melix-dev-speech::bridge")
     }
 
+    @Test("phase-seven preload writes image handles into the model catalog")
+    func phaseSevenPreloadWritesImageHandlesIntoTheModelCatalog() async throws {
+        let runner = ScriptedBridgeRunner()
+        for handle in [
+            "melix-dev-embed::bridge",
+            "melix-dev-rerank::bridge",
+            "melix-dev-ocr::bridge",
+            "melix-dev-vlm::bridge",
+            "melix-dev-transcribe::bridge",
+            "melix-dev-speech::bridge",
+            "melix-dev-image::bridge",
+        ] {
+            var response = Melix_Worker_V1_LoadModelResponse()
+            response.ok = true
+            response.modelHandle = handle
+            await runner.enqueueUnaryResponse(
+                .loadModel,
+                line: bridgeMessageLine(message: try response.serializedData())
+            )
+        }
+
+        let client = PythonBridgeWorkerClient(socketPath: "/tmp/melix-test.sock", runner: runner)
+        let catalog = ModelCatalog(seedModels: ModelCatalog.phaseSevenContractSeedModels())
+
+        try await BootstrapWorkerPreparation.preloadPhaseSevenPythonModels(
+            workerClient: client,
+            modelCatalog: catalog,
+            memoryBudgetBytes: 4096
+        )
+
+        #expect(await catalog.dispatchHandle(for: "melix-dev-image") == "melix-dev-image::bridge")
+    }
+
     @Test("phase-five unary methods surface helper errors as unavailable")
     func phaseFiveUnaryMethodsSurfaceHelperErrorsAsUnavailable() async throws {
         let runner = ScriptedBridgeRunner()
@@ -385,6 +470,42 @@ struct PythonBridgeWorkerClientTests {
         do {
             _ = try await client.speak(request: speakRequest)
             Issue.record("Expected speak bridge call to fail.")
+        } catch let error as WorkerClientError {
+            #expect(error == .unavailable)
+        }
+    }
+
+    @Test("image unary methods surface helper errors as unavailable")
+    func imageUnaryMethodsSurfaceHelperErrorsAsUnavailable() async throws {
+        let runner = ScriptedBridgeRunner()
+        await runner.setUnaryResponse(.imageGenerate, line: bridgeErrorLine(code: "UNAVAILABLE", message: "image generate down"))
+        await runner.setUnaryResponse(.imageEdit, line: bridgeErrorLine(code: "UNAVAILABLE", message: "image edit down"))
+
+        let client = PythonBridgeWorkerClient(socketPath: "/tmp/melix-test.sock", runner: runner)
+
+        var generateRequest = Melix_Worker_V1_ImageGenerateRequest()
+        generateRequest.id.requestID = "image-generate-error"
+        generateRequest.modelHandle = "melix-dev-image::bridge"
+        generateRequest.prompt = "red fox"
+        generateRequest.size = "256x256"
+
+        var editRequest = Melix_Worker_V1_ImageEditRequest()
+        editRequest.id.requestID = "image-edit-error"
+        editRequest.modelHandle = "melix-dev-image::bridge"
+        editRequest.prompt = "add glow"
+        editRequest.image = Data("source".utf8)
+        editRequest.size = "256x256"
+
+        do {
+            _ = try await client.imageGenerate(request: generateRequest)
+            Issue.record("Expected image-generate bridge call to fail.")
+        } catch let error as WorkerClientError {
+            #expect(error == .unavailable)
+        }
+
+        do {
+            _ = try await client.imageEdit(request: editRequest)
+            Issue.record("Expected image-edit bridge call to fail.")
         } catch let error as WorkerClientError {
             #expect(error == .unavailable)
         }

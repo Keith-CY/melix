@@ -11,6 +11,11 @@ enum MelixControlPlaneBootstrap {
         let eventHub = EventSubscriptionHub()
         let sessionGraphStore = SessionGraphStore(metricsStore: metricsStore)
         let cacheMetadataStore = CacheMetadataStore()
+        let imageJobReadModel = ImageJobReadModel(
+            eventPublisher: { event in
+                await eventHub.publish(event)
+            }
+        )
         let schedulerReadModel = SchedulerReadModel(
             metricsStore: metricsStore,
             eventPublisher: { event in
@@ -50,12 +55,12 @@ enum MelixControlPlaneBootstrap {
         }
 
         do {
-            try await BootstrapWorkerPreparation.preloadPhaseSixPythonModels(
+            try await BootstrapWorkerPreparation.preloadPhaseSevenPythonModels(
                 workerClient: pythonCompatibilityClient,
                 modelCatalog: modelCatalog
             )
         } catch {
-            print("Melix phase-6 python model preload skipped: \(error)")
+            print("Melix phase-7 python model preload skipped: \(error)")
         }
 
         _ = ControlPlaneService(
@@ -64,7 +69,8 @@ enum MelixControlPlaneBootstrap {
             eventHub: eventHub,
             schedulerReadModel: schedulerReadModel,
             cacheMetadataStore: cacheMetadataStore,
-            sessionGraphStore: sessionGraphStore
+            sessionGraphStore: sessionGraphStore,
+            imageJobReadModel: imageJobReadModel
         )
 
         let handler = OpenAIHandler(
@@ -80,6 +86,7 @@ enum MelixControlPlaneBootstrap {
             workerRegistry: workerRegistry,
             metricsStore: metricsStore,
             schedulerReadModel: schedulerReadModel,
+            imageJobReadModel: imageJobReadModel,
             cacheMetadataStore: cacheMetadataStore
         )
 

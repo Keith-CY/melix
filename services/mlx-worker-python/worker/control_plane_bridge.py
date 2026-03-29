@@ -31,6 +31,8 @@ def main() -> None:
             "rerank",
             "transcribe",
             "speak",
+            "image-generate",
+            "image-edit",
             "get-model-info",
             "convert-model",
         ],
@@ -77,6 +79,14 @@ def main() -> None:
                 stub = inference_pb2_grpc.InferenceServiceStub(channel)
                 request = inference_pb2.SpeakRequest.FromString(request_bytes)
                 emit_message(stub.Speak(request).SerializeToString())
+            elif args.command == "image-generate":
+                stub = inference_pb2_grpc.InferenceServiceStub(channel)
+                request = inference_pb2.ImageGenerateRequest.FromString(request_bytes)
+                emit_message(stub.ImageGenerate(request).SerializeToString())
+            elif args.command == "image-edit":
+                stub = inference_pb2_grpc.InferenceServiceStub(channel)
+                request = inference_pb2.ImageEditRequest.FromString(request_bytes)
+                emit_message(stub.ImageEdit(request).SerializeToString())
             elif args.command == "get-model-info":
                 stub = maintenance_pb2_grpc.MaintenanceServiceStub(channel)
                 request = maintenance_pb2.GetModelInfoRequest.FromString(request_bytes)

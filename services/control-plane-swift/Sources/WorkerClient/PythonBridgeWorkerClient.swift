@@ -13,6 +13,8 @@ public enum BridgeCommandKind: String, Sendable {
     case rerank = "rerank"
     case transcribe = "transcribe"
     case speak = "speak"
+    case imageGenerate = "image-generate"
+    case imageEdit = "image-edit"
     case getModelInfo = "get-model-info"
     case convertModel = "convert-model"
 }
@@ -161,6 +163,18 @@ public struct PythonBridgeWorkerClient:
         try await sendUnary(kind: .speak, request: request, as: Melix_Worker_V1_SpeakResponse.self)
     }
 
+    public func imageGenerate(
+        request: Melix_Worker_V1_ImageGenerateRequest
+    ) async throws -> Melix_Worker_V1_ImageGenerateResponse {
+        try await sendUnary(kind: .imageGenerate, request: request, as: Melix_Worker_V1_ImageGenerateResponse.self)
+    }
+
+    public func imageEdit(
+        request: Melix_Worker_V1_ImageEditRequest
+    ) async throws -> Melix_Worker_V1_ImageEditResponse {
+        try await sendUnary(kind: .imageEdit, request: request, as: Melix_Worker_V1_ImageEditResponse.self)
+    }
+
     public func getModelInfo(
         request: Melix_Worker_V1_GetModelInfoRequest
     ) async throws -> Melix_Worker_V1_GetModelInfoResponse {
@@ -301,6 +315,24 @@ public enum BootstrapWorkerPreparation {
         )
     }
 
+    public static func preloadPhaseSevenPythonModels(
+        workerClient: any WorkerRoutingClient,
+        modelCatalog: ModelCatalog,
+        memoryBudgetBytes: UInt64 = 0
+    ) async throws {
+        try await preloadPhaseSixPythonModels(
+            workerClient: workerClient,
+            modelCatalog: modelCatalog,
+            memoryBudgetBytes: memoryBudgetBytes
+        )
+        _ = try await preloadModel(
+            workerClient: workerClient,
+            modelCatalog: modelCatalog,
+            model: devImageModel(),
+            memoryBudgetBytes: memoryBudgetBytes
+        )
+    }
+
     @discardableResult
     private static func preloadModel(
         workerClient: any WorkerRoutingClient,
@@ -414,6 +446,20 @@ public enum BootstrapWorkerPreparation {
         model.modelKind = "speech"
         model.revision = "dev"
         model.tokenizerHash = "tok-speech-dev"
+        model.quantProfileID = "q8"
+        model.parserMode = "text"
+        model.reasoningMode = "off"
+        model.maxContext = 4096
+        return model
+    }
+
+    private static func devImageModel() -> Melix_Worker_V1_ModelSpec {
+        var model = Melix_Worker_V1_ModelSpec()
+        model.modelID = "melix-dev-image"
+        model.modelPath = "models/melix-dev-image"
+        model.modelKind = "image"
+        model.revision = "dev"
+        model.tokenizerHash = "tok-image-dev"
         model.quantProfileID = "q8"
         model.parserMode = "text"
         model.reasoningMode = "off"

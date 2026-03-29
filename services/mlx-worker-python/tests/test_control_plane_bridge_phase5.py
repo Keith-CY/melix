@@ -49,6 +49,30 @@ class FakeInferenceStub:
             format=request.format or "wav",
         )
 
+    def ImageGenerate(self, request):
+        return inference_pb2.ImageGenerateResponse(
+            images=[b"generated-image"],
+            job=inference_pb2.ImageJobDescriptor(
+                request_id=request.id.request_id,
+                job_id=f"{request.id.request_id}::image-generate",
+                model_handle=request.model_handle,
+                operation="image_generate",
+                state=common_pb2.IMAGE_JOB_COMPLETED,
+            ),
+        )
+
+    def ImageEdit(self, request):
+        return inference_pb2.ImageEditResponse(
+            images=[b"edited-image"],
+            job=inference_pb2.ImageJobDescriptor(
+                request_id=request.id.request_id,
+                job_id=f"{request.id.request_id}::image-edit",
+                model_handle=request.model_handle,
+                operation="image_edit",
+                state=common_pb2.IMAGE_JOB_COMPLETED,
+            ),
+        )
+
 
 class FakeMaintenanceStub:
     def GetModelInfo(self, request):
@@ -217,3 +241,60 @@ def test_bridge_helper_forwards_phase6_audio_unary_commands(monkeypatch, capsys)
     speak_payload = inference_pb2.SpeakResponse.FromString(base64.b64decode(speak_line["message_b64"]))
     assert speak_payload.audio_bytes == b"VOICE=alloy\nFORMAT=wav\nTEXT=hello speech"
     assert speak_payload.format == "wav"
+
+
+def test_bridge_helper_forwards_phase7_image_unary_commands(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(control_plane_bridge.grpc, "insecure_channel", lambda target: FakeChannel())
+    monkeypatch.setattr(control_plane_bridge.inference_pb2_grpc, "InferenceServiceStub", lambda channel: FakeInferenceStub())
+
+    image_generate_request = inference_pb2.ImageGenerateRequest(
+        id=common_pb2.RequestIdentity(request_id="image-generate-bridge"),
+        model_handle="melix-dev-image::bridge",
+        prompt="red fox",
+        size="256x256",
+        response_format="png",
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "control_plane_bridge.py",
+            "image-generate",
+            "--socket-path",
+            "/tmp/unused.sock",
+            "--request-b64",
+            base64.b64encode(image_generate_request.SerializeToString()).decode("ascii"),
+        ],
+    )
+    control_plane_bridge.main()
+    generate_line = json.loads(capsys.readouterr().out.strip())
+    generate_payload = inference_pb2.ImageGenerateResponse.FromString(base64.b64decode(generate_line["message_b64"]))
+    assert generate_payload.job.job_id == "image-generate-bridge::image-generate"
+    assert generate_payload.images == [b"generated-image"]
+
+    image_edit_request = inference_pb2.ImageEditRequest(
+        id=common_pb2.RequestIdentity(request_id="image-edit-bridge"),
+        model_handle="melix-dev-image::bridge",
+        prompt="add glow",
+        image=b"SOURCE",
+        mask=b"MASK",
+        size="256x256",
+        response_format="png",
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "control_plane_bridge.py",
+            "image-edit",
+            "--socket-path",
+            "/tmp/unused.sock",
+            "--request-b64",
+            base64.b64encode(image_edit_request.SerializeToString()).decode("ascii"),
+        ],
+    )
+    control_plane_bridge.main()
+    edit_line = json.loads(capsys.readouterr().out.strip())
+    edit_payload = inference_pb2.ImageEditResponse.FromString(base64.b64decode(edit_line["message_b64"]))
+    assert edit_payload.job.job_id == "image-edit-bridge::image-edit"
+    assert edit_payload.images == [b"edited-image"]

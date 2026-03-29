@@ -1339,6 +1339,513 @@ struct OpenAIHandlerTests {
         #expect(unavailablePayload.contains("\"code\":\"worker_unavailable\""))
     }
 
+    @Test("POST /v1/images/generations routes to the image worker and returns JSON")
+    func postImageGenerationsRoutesAndReturnsJSON() async throws {
+        let textClient = ScriptedWorkerClient(events: [])
+        let imageClient = ScriptedPhaseFiveWorkerClient()
+        await imageClient.setImageGenerateResponse({
+            var response = Melix_Worker_V1_ImageGenerateResponse()
+            response.images = [Data("generated-image".utf8)]
+            response.job.requestID = "image-generate-1"
+            response.job.jobID = "image-generate-1::image-generate"
+            response.job.modelHandle = "melix-dev-image::python"
+            response.job.operation = "image_generate"
+            response.job.state = .imageJobCompleted
+            response.job.progress.stage = "completed"
+            response.job.progress.pct = 1
+            response.job.artifacts = [makeWorkerArtifact(jobID: "image-generate-1::image-generate", role: .imageArtifactGenerated)]
+            return response
+        }())
+
+        let metricsStore = MetricsStore()
+        let schedulerReadModel = SchedulerReadModel(metricsStore: metricsStore)
+        let imageJobReadModel = ImageJobReadModel()
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel(), ModelCatalog.devImageModel()])
+        _ = await catalog.loadModel(id: "melix-dev-image", dispatchHandle: "melix-dev-image::python")
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: textClient),
+                abortRegistry: AbortRegistry()
+            ),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: textClient,
+                pythonCompatibilityClient: imageClient,
+                modelCatalog: catalog
+            ),
+            metricsStore: metricsStore,
+            schedulerReadModel: schedulerReadModel,
+            imageJobReadModel: imageJobReadModel
+        )
+
+        let body = try #require(
+            """
+            {
+              "id": "image-generate-1",
+              "model": "melix-dev-image",
+              "prompt": "red fox in snow",
+              "size": "256x256",
+              "n": 1,
+              "response_format": "png",
+              "artifact_namespace": "tests"
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(method: .post, path: "/v1/images/generations", headers: [:], body: body)
+        )
+        let payload = try await collectBody(response.body)
+        let request = try #require(await imageClient.lastImageGenerateRequest)
+        let metrics = await metricsStore.snapshot()
+        let job = try #require(await imageJobReadModel.job(requestID: "image-generate-1"))
+
+        #expect(response.statusCode == 200)
+        #expect(response.headers["content-type"] == "application/json")
+        #expect(request.modelHandle == "melix-dev-image::python")
+        #expect(request.prompt == "red fox in snow")
+        #expect(request.size == "256x256")
+        #expect(request.responseFormat == "png")
+        #expect(request.artifactNamespace == "tests")
+        #expect(payload.contains("\"job_id\":\"image-generate-1::image-generate\""))
+        #expect(payload.contains("\"operation\":\"image_generate\""))
+        #expect(payload.contains("\"b64_json\":\"Z2VuZXJhdGVkLWltYWdl\""))
+        #expect(job.state == .imageJobCompleted)
+        #expect(job.lane == "image.generate.background")
+        #expect(job.artifacts.count == 1)
+        #expect(metrics.values["images.request_latency_ms", default: -1] >= 0)
+        #expect(metrics.values["images.output_bytes", default: 0] == 15)
+    }
+
+    @Test("POST /v1/images/edits routes to the image worker and returns JSON")
+    func postImageEditsRoutesAndReturnsJSON() async throws {
+        let textClient = ScriptedWorkerClient(events: [])
+        let imageClient = ScriptedPhaseFiveWorkerClient()
+        await imageClient.setImageEditResponse({
+            var response = Melix_Worker_V1_ImageEditResponse()
+            response.images = [Data("edited-image".utf8)]
+            response.job.requestID = "image-edit-1"
+            response.job.jobID = "image-edit-1::image-edit"
+            response.job.modelHandle = "melix-dev-image::python"
+            response.job.operation = "image_edit"
+            response.job.state = .imageJobCompleted
+            response.job.progress.stage = "completed"
+            response.job.progress.pct = 1
+            response.job.artifacts = [
+                makeWorkerArtifact(jobID: "image-edit-1::image-edit", role: .imageArtifactEditSource, artifactID: "source"),
+                makeWorkerArtifact(jobID: "image-edit-1::image-edit", role: .imageArtifactMask, artifactID: "mask"),
+                makeWorkerArtifact(jobID: "image-edit-1::image-edit", role: .imageArtifactGenerated),
+            ]
+            return response
+        }())
+
+        let imageJobReadModel = ImageJobReadModel()
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel(), ModelCatalog.devImageModel()])
+        _ = await catalog.loadModel(id: "melix-dev-image", dispatchHandle: "melix-dev-image::python")
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: textClient),
+                abortRegistry: AbortRegistry()
+            ),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: textClient,
+                pythonCompatibilityClient: imageClient,
+                modelCatalog: catalog
+            ),
+            imageJobReadModel: imageJobReadModel
+        )
+
+        let body = try #require(
+            """
+            {
+              "id": "image-edit-1",
+              "model": "melix-dev-image",
+              "prompt": "add glow",
+              "image_base64": "U09VUkNF",
+              "mask_base64": "TUFTSw==",
+              "strength": 0.55,
+              "size": "256x256",
+              "response_format": "png",
+              "n": 1
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(method: .post, path: "/v1/images/edits", headers: [:], body: body)
+        )
+        let payload = try await collectBody(response.body)
+        let request = try #require(await imageClient.lastImageEditRequest)
+        let job = try #require(await imageJobReadModel.job(requestID: "image-edit-1"))
+
+        #expect(response.statusCode == 200)
+        #expect(request.modelHandle == "melix-dev-image::python")
+        #expect(request.prompt == "add glow")
+        #expect(request.image == Data("SOURCE".utf8))
+        #expect(request.mask == Data("MASK".utf8))
+        #expect(request.strength == 0.55)
+        #expect(payload.contains("\"job_id\":\"image-edit-1::image-edit\""))
+        #expect(payload.contains("\"operation\":\"image_edit\""))
+        #expect(payload.contains("\"b64_json\":\"ZWRpdGVkLWltYWdl\""))
+        #expect(job.state == .imageJobCompleted)
+        #expect(job.artifacts.count == 3)
+    }
+
+    @Test("image endpoints validate payloads and return 409 and 503 when routing is unavailable")
+    func imageEndpointsValidatePayloadsAndReturnUnavailableResponses() async throws {
+        let invalidHandler = OpenAIHandler(
+            modelCatalog: ModelCatalog(seedModels: [ModelCatalog.devImageModel()]),
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: ScriptedWorkerClient(events: [])),
+                abortRegistry: AbortRegistry()
+            ),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: ScriptedWorkerClient(events: []),
+                pythonCompatibilityClient: ScriptedWorkerClient(events: [])
+            )
+        )
+
+        let invalidEditBody = try #require(
+            """
+            {
+              "model": "melix-dev-image",
+              "prompt": "broken",
+              "image_base64": "%%%not-base64%%%"
+            }
+            """.data(using: .utf8)
+        )
+        let invalidEditResponse = try await invalidHandler.handle(
+            HTTPRequest(method: .post, path: "/v1/images/edits", headers: [:], body: invalidEditBody)
+        )
+        let invalidEditPayload = try await collectBody(invalidEditResponse.body)
+
+        #expect(invalidEditResponse.statusCode == 400)
+        #expect(invalidEditPayload.contains("\"code\":\"invalid_argument\""))
+
+        let unloadedHandler = OpenAIHandler(
+            modelCatalog: ModelCatalog(seedModels: [ModelCatalog.devImageModel()]),
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: ScriptedWorkerClient(events: [])),
+                abortRegistry: AbortRegistry()
+            ),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: ScriptedWorkerClient(events: []),
+                pythonCompatibilityClient: ScriptedWorkerClient(events: [])
+            )
+        )
+        let generateBody = try #require(
+            """
+            {
+              "model": "melix-dev-image",
+              "prompt": "red fox"
+            }
+            """.data(using: .utf8)
+        )
+        let unloadedResponse = try await unloadedHandler.handle(
+            HTTPRequest(method: .post, path: "/v1/images/generations", headers: [:], body: generateBody)
+        )
+        let unloadedPayload = try await collectBody(unloadedResponse.body)
+
+        #expect(unloadedResponse.statusCode == 409)
+        #expect(unloadedPayload.contains("\"code\":\"model_not_ready\""))
+
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devImageModel()])
+        _ = await catalog.loadModel(id: "melix-dev-image", dispatchHandle: "melix-dev-image::python")
+        let unavailableHandler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: ScriptedWorkerClient(events: [])),
+                abortRegistry: AbortRegistry()
+            ),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: ScriptedWorkerClient(events: []),
+                pythonCompatibilityClient: ScriptedWorkerClient(events: [])
+            )
+        )
+
+        let unavailableResponse = try await unavailableHandler.handle(
+            HTTPRequest(method: .post, path: "/v1/images/generations", headers: [:], body: generateBody)
+        )
+        let unavailablePayload = try await collectBody(unavailableResponse.body)
+
+        #expect(unavailableResponse.statusCode == 503)
+        #expect(unavailablePayload.contains("\"code\":\"worker_unavailable\""))
+    }
+
+    @Test("image endpoints map cancellation thrown failures and non-terminal states into operator-visible responses")
+    func imageEndpointsMapCancellationThrownFailuresAndNonTerminalStates() async throws {
+        let textClient = ScriptedWorkerClient(events: [])
+        let imageClient = ScriptedPhaseFiveWorkerClient()
+        let imageJobReadModel = ImageJobReadModel()
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devImageModel()])
+        _ = await catalog.loadModel(id: "melix-dev-image", dispatchHandle: "melix-dev-image::python")
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: textClient),
+                abortRegistry: AbortRegistry()
+            ),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: textClient,
+                pythonCompatibilityClient: imageClient,
+                modelCatalog: catalog
+            ),
+            imageJobReadModel: imageJobReadModel
+        )
+
+        let generateBody = try #require(
+            """
+            {
+              "id": "image-generate-cancelled",
+              "model": "melix-dev-image",
+              "prompt": "cancel this"
+            }
+            """.data(using: .utf8)
+        )
+        await imageClient.setImageGenerateResponse({
+            var response = Melix_Worker_V1_ImageGenerateResponse()
+            response.job.requestID = "image-generate-cancelled"
+            response.job.jobID = "image-generate-cancelled::image-generate"
+            response.job.modelHandle = "melix-dev-image::python"
+            response.job.operation = "image_generate"
+            response.job.state = .imageJobCanceled
+            response.error.code = "cancelled"
+            response.error.message = "request cancelled"
+            return response
+        }())
+
+        let cancelledResponse = try await handler.handle(
+            HTTPRequest(method: .post, path: "/v1/images/generations", headers: [:], body: generateBody)
+        )
+        let cancelledPayload = try await collectBody(cancelledResponse.body)
+        let cancelledJob = try #require(await imageJobReadModel.job(requestID: "image-generate-cancelled"))
+
+        #expect(cancelledResponse.statusCode == 409)
+        #expect(cancelledPayload.contains("\"code\":\"cancelled\""))
+        #expect(cancelledJob.state == .imageJobCanceled)
+
+        let runningBody = try #require(
+            """
+            {
+              "id": "image-generate-running",
+              "model": "melix-dev-image",
+              "prompt": "still running"
+            }
+            """.data(using: .utf8)
+        )
+        await imageClient.setImageGenerateResponse({
+            var response = Melix_Worker_V1_ImageGenerateResponse()
+            response.images = [Data("preview".utf8)]
+            response.job.requestID = "image-generate-running"
+            response.job.jobID = "image-generate-running::image-generate"
+            response.job.modelHandle = "melix-dev-image::python"
+            response.job.operation = "image_generate"
+            response.job.state = .imageJobRunning
+            response.job.artifacts = [
+                makeWorkerArtifact(
+                    jobID: "image-generate-running::image-generate",
+                    role: .imageArtifactPreview
+                )
+            ]
+            return response
+        }())
+
+        let runningResponse = try await handler.handle(
+            HTTPRequest(method: .post, path: "/v1/images/generations", headers: [:], body: runningBody)
+        )
+        let runningPayload = try await collectBody(runningResponse.body)
+        let runningJob = try #require(await imageJobReadModel.job(requestID: "image-generate-running"))
+
+        #expect(runningResponse.statusCode == 200)
+        #expect(runningPayload.contains("\"state\":\"running\""))
+        #expect(runningPayload.contains("\"role\":\"preview\""))
+        #expect(runningJob.state == .imageJobFailed)
+        #expect(runningJob.error.code == "runtime_error")
+
+        await imageClient.setThrownFailure(WorkerClientError.unavailable)
+        let thrownResponse = try await handler.handle(
+            HTTPRequest(method: .post, path: "/v1/images/generations", headers: [:], body: generateBody)
+        )
+        let thrownPayload = try await collectBody(thrownResponse.body)
+
+        #expect(thrownResponse.statusCode == 503)
+        #expect(thrownPayload.contains("\"code\":\"worker_unavailable\""))
+    }
+
+    @Test("image edit endpoints accept image URLs and validate missing or malformed image inputs")
+    func imageEditEndpointsAcceptImageURLsAndValidateMissingOrMalformedInputs() async throws {
+        let textClient = ScriptedWorkerClient(events: [])
+        let imageClient = ScriptedPhaseFiveWorkerClient()
+        await imageClient.setImageEditResponse({
+            var response = Melix_Worker_V1_ImageEditResponse()
+            response.images = [Data("input".utf8)]
+            response.job.requestID = "image-edit-url"
+            response.job.jobID = "image-edit-url::image-edit"
+            response.job.modelHandle = "melix-dev-image::python"
+            response.job.operation = "image_edit"
+            response.job.state = .imageJobQueued
+            response.job.artifacts = [
+                makeWorkerArtifact(jobID: "image-edit-url::image-edit", role: .imageArtifactInput, artifactID: "input"),
+                makeWorkerArtifact(jobID: "image-edit-url::image-edit", role: .unspecified, artifactID: "unknown"),
+            ]
+            return response
+        }())
+
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devImageModel()])
+        _ = await catalog.loadModel(id: "melix-dev-image", dispatchHandle: "melix-dev-image::python")
+        let imageJobReadModel = ImageJobReadModel()
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: textClient),
+                abortRegistry: AbortRegistry()
+            ),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: textClient,
+                pythonCompatibilityClient: imageClient,
+                modelCatalog: catalog
+            ),
+            imageJobReadModel: imageJobReadModel
+        )
+
+        let urlBody = try #require(
+            """
+            {
+              "id": "image-edit-url",
+              "model": "melix-dev-image",
+              "prompt": "use a URL",
+              "image_url": "file:///tmp/source.png"
+            }
+            """.data(using: .utf8)
+        )
+        let urlResponse = try await handler.handle(
+            HTTPRequest(method: .post, path: "/v1/images/edits", headers: [:], body: urlBody)
+        )
+        let urlPayload = try await collectBody(urlResponse.body)
+        let urlRequest = try #require(await imageClient.lastImageEditRequest)
+        let urlJob = try #require(await imageJobReadModel.job(requestID: "image-edit-url"))
+
+        #expect(urlResponse.statusCode == 200)
+        #expect(urlRequest.image.isEmpty)
+        #expect(urlRequest.imageUri == "file:///tmp/source.png")
+        #expect(urlPayload.contains("\"state\":\"queued\""))
+        #expect(urlPayload.contains("\"role\":\"input\""))
+        #expect(urlPayload.contains("\"role\":\"unspecified\""))
+        #expect(urlJob.state == .imageJobFailed)
+        #expect(urlJob.error.code == "runtime_error")
+
+        let missingImageBody = try #require(
+            """
+            {
+              "model": "melix-dev-image",
+              "prompt": "missing image"
+            }
+            """.data(using: .utf8)
+        )
+        let missingImageResponse = try await handler.handle(
+            HTTPRequest(method: .post, path: "/v1/images/edits", headers: [:], body: missingImageBody)
+        )
+        let missingImagePayload = try await collectBody(missingImageResponse.body)
+
+        #expect(missingImageResponse.statusCode == 400)
+        #expect(missingImagePayload.contains("image_base64 or image_url is required."))
+
+        let invalidMaskBody = try #require(
+            """
+            {
+              "model": "melix-dev-image",
+              "prompt": "bad mask",
+              "image_base64": "U09VUkNF",
+              "mask_base64": "%%%bad-mask%%%"
+            }
+            """.data(using: .utf8)
+        )
+        let invalidMaskResponse = try await handler.handle(
+            HTTPRequest(method: .post, path: "/v1/images/edits", headers: [:], body: invalidMaskBody)
+        )
+        let invalidMaskPayload = try await collectBody(invalidMaskResponse.body)
+
+        #expect(invalidMaskResponse.statusCode == 400)
+        #expect(invalidMaskPayload.contains("mask_base64 must be valid base64."))
+    }
+
+    @Test("image edit responses map failed and completed states into payloads and job summaries")
+    func imageEditResponsesMapFailedAndCompletedStatesIntoPayloadsAndJobSummaries() async throws {
+        let textClient = ScriptedWorkerClient(events: [])
+        let imageClient = ScriptedPhaseFiveWorkerClient()
+        let imageJobReadModel = ImageJobReadModel()
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devImageModel()])
+        _ = await catalog.loadModel(id: "melix-dev-image", dispatchHandle: "melix-dev-image::python")
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: textClient),
+                abortRegistry: AbortRegistry()
+            ),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: textClient,
+                pythonCompatibilityClient: imageClient,
+                modelCatalog: catalog
+            ),
+            imageJobReadModel: imageJobReadModel
+        )
+
+        let body = try #require(
+            """
+            {
+              "id": "image-edit-failed",
+              "model": "melix-dev-image",
+              "prompt": "failed edit",
+              "image_base64": "U09VUkNF"
+            }
+            """.data(using: .utf8)
+        )
+
+        await imageClient.setImageEditResponse({
+            var response = Melix_Worker_V1_ImageEditResponse()
+            response.images = [Data("failed".utf8)]
+            response.job.requestID = "image-edit-failed"
+            response.job.jobID = "image-edit-failed::image-edit"
+            response.job.modelHandle = "melix-dev-image::python"
+            response.job.operation = "image_edit"
+            response.job.state = .imageJobFailed
+            response.job.artifacts = [makeWorkerArtifact(jobID: "image-edit-failed::image-edit", role: .imageArtifactGenerated)]
+            return response
+        }())
+
+        let failedResponse = try await handler.handle(
+            HTTPRequest(method: .post, path: "/v1/images/edits", headers: [:], body: body)
+        )
+        let failedPayload = try await collectBody(failedResponse.body)
+        let failedJob = try #require(await imageJobReadModel.job(requestID: "image-edit-failed"))
+
+        #expect(failedResponse.statusCode == 200)
+        #expect(failedPayload.contains("\"state\":\"failed\""))
+        #expect(failedJob.state == .imageJobFailed)
+
+        await imageClient.setImageEditResponse({
+            var response = Melix_Worker_V1_ImageEditResponse()
+            response.images = [Data("done".utf8)]
+            response.job.requestID = "image-edit-failed"
+            response.job.jobID = "image-edit-failed::image-edit"
+            response.job.modelHandle = "melix-dev-image::python"
+            response.job.operation = "image_edit"
+            response.job.state = .imageJobCompleted
+            response.job.artifacts = [makeWorkerArtifact(jobID: "image-edit-failed::image-edit", role: .imageArtifactGenerated)]
+            return response
+        }())
+
+        let completedResponse = try await handler.handle(
+            HTTPRequest(method: .post, path: "/v1/images/edits", headers: [:], body: body)
+        )
+        let completedPayload = try await collectBody(completedResponse.body)
+
+        #expect(completedResponse.statusCode == 200)
+        #expect(completedPayload.contains("\"state\":\"completed\""))
+        #expect(completedPayload.contains("\"role\":\"generated\""))
+    }
+
     @Test("GET /health reports route readiness and model counts")
     func getHealthReportsRouteReadinessAndModelCounts() async throws {
         let healthyClient = ScriptedWorkerClient(events: [])
@@ -1373,6 +1880,7 @@ struct OpenAIHandlerTests {
         #expect(payload.contains("\"python_rerank\":false"))
         #expect(payload.contains("\"python_transcription\":true"))
         #expect(payload.contains("\"python_speech\":true"))
+        #expect(payload.contains("\"python_image\":true"))
         #expect(payload.contains("\"models_ready\":3"))
         #expect(payload.contains("\"models_total\":3"))
         #expect(metrics.values["operator.health_latency_ms", default: -1] >= 0)
@@ -2095,6 +2603,12 @@ struct OpenAIHandlerTests {
         model.state = .modelWarm
         return model
     }
+
+    private func warmImageModel() -> Melix_Controlplane_V1_ModelSummary {
+        var model = ModelCatalog.devImageModel()
+        model.state = .modelWarm
+        return model
+    }
 }
 
 private actor ScriptedWorkerClient: WorkerRoutingClient {
@@ -2145,10 +2659,14 @@ private actor ScriptedPhaseFiveWorkerClient:
     private(set) var lastRerankRequest: Melix_Worker_V1_RerankRequest?
     private(set) var lastTranscribeRequest: Melix_Worker_V1_TranscribeRequest?
     private(set) var lastSpeakRequest: Melix_Worker_V1_SpeakRequest?
+    private(set) var lastImageGenerateRequest: Melix_Worker_V1_ImageGenerateRequest?
+    private(set) var lastImageEditRequest: Melix_Worker_V1_ImageEditRequest?
     private var embedResponse = Melix_Worker_V1_EmbedResponse()
     private var rerankResponse = Melix_Worker_V1_RerankResponse()
     private var transcribeResponse = Melix_Worker_V1_TranscribeResponse()
     private var speakResponse = Melix_Worker_V1_SpeakResponse()
+    private var imageGenerateResponse = Melix_Worker_V1_ImageGenerateResponse()
+    private var imageEditResponse = Melix_Worker_V1_ImageEditResponse()
     private var runtimeStatsResponse = Melix_Worker_V1_GetRuntimeStatsResponse()
     private var thrownFailure: Error?
 
@@ -2166,6 +2684,14 @@ private actor ScriptedPhaseFiveWorkerClient:
 
     func setSpeakResponse(_ response: Melix_Worker_V1_SpeakResponse) {
         speakResponse = response
+    }
+
+    func setImageGenerateResponse(_ response: Melix_Worker_V1_ImageGenerateResponse) {
+        imageGenerateResponse = response
+    }
+
+    func setImageEditResponse(_ response: Melix_Worker_V1_ImageEditResponse) {
+        imageEditResponse = response
     }
 
     func setRuntimeStatsResponse(_ response: Melix_Worker_V1_GetRuntimeStatsResponse) {
@@ -2241,12 +2767,52 @@ private actor ScriptedPhaseFiveWorkerClient:
         return speakResponse
     }
 
+    func imageGenerate(
+        request: Melix_Worker_V1_ImageGenerateRequest
+    ) async throws -> Melix_Worker_V1_ImageGenerateResponse {
+        if let thrownFailure {
+            throw thrownFailure
+        }
+        lastImageGenerateRequest = request
+        return imageGenerateResponse
+    }
+
+    func imageEdit(
+        request: Melix_Worker_V1_ImageEditRequest
+    ) async throws -> Melix_Worker_V1_ImageEditResponse {
+        if let thrownFailure {
+            throw thrownFailure
+        }
+        lastImageEditRequest = request
+        return imageEditResponse
+    }
+
     func runtimeStats() async throws -> Melix_Worker_V1_GetRuntimeStatsResponse {
         if let thrownFailure {
             throw thrownFailure
         }
         return runtimeStatsResponse
     }
+}
+
+private func makeWorkerArtifact(
+    jobID: String,
+    role: Melix_Worker_V1_ImageArtifactRole,
+    artifactID: String = "artifact-0"
+) -> Melix_Worker_V1_ImageArtifactMetadata {
+    var artifact = Melix_Worker_V1_ImageArtifactMetadata()
+    artifact.artifactID = "\(jobID)::\(artifactID)"
+    artifact.jobID = jobID
+    artifact.role = role
+    artifact.mimeType = "image/png"
+    artifact.format = "png"
+    artifact.width = 256
+    artifact.height = 256
+    artifact.byteLength = 15
+    artifact.storageUri = "/tmp/\(artifactID).png"
+    artifact.sha256 = "sha256-\(artifactID)"
+    artifact.variantIndex = 0
+    return artifact
 }
 
 private actor UnavailableWorkerClient: WorkerRoutingClient {

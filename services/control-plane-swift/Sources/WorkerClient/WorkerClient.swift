@@ -29,6 +29,14 @@ public protocol NonTextInferenceWorkerClientProtocol: WorkerClient {
     func speak(
         request: Melix_Worker_V1_SpeakRequest
     ) async throws -> Melix_Worker_V1_SpeakResponse
+
+    func imageGenerate(
+        request: Melix_Worker_V1_ImageGenerateRequest
+    ) async throws -> Melix_Worker_V1_ImageGenerateResponse
+
+    func imageEdit(
+        request: Melix_Worker_V1_ImageEditRequest
+    ) async throws -> Melix_Worker_V1_ImageEditResponse
 }
 
 public protocol PhaseAwareWorkerClientProtocol: WorkerClient {
