@@ -17,6 +17,8 @@ public enum BridgeCommandKind: String, Sendable {
     case imageEdit = "image-edit"
     case getModelInfo = "get-model-info"
     case convertModel = "convert-model"
+    case runDoctor = "run-doctor"
+    case runBench = "run-bench"
 }
 
 public struct BridgeCommand: Sendable {
@@ -201,6 +203,46 @@ public struct PythonBridgeWorkerClient:
                 do {
                     for try await line in lineStream {
                         let event: Melix_Worker_V1_ConvertModelEvent = try decodeLine(line)
+                        continuation.yield(event)
+                    }
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+
+            continuation.onTermination = { _ in
+                task.cancel()
+            }
+        }
+    }
+
+    public func runDoctor(
+        request: Melix_Worker_V1_RunDoctorRequest
+    ) async throws -> Melix_Worker_V1_RunDoctorResponse {
+        try await sendUnary(
+            kind: .runDoctor,
+            request: request,
+            as: Melix_Worker_V1_RunDoctorResponse.self
+        )
+    }
+
+    public func runBench(
+        request: Melix_Worker_V1_RunBenchRequest
+    ) async throws -> AsyncThrowingStream<Melix_Worker_V1_RunBenchEvent, Error> {
+        let lineStream = try await runner.runStream(
+            command: BridgeCommand(
+                kind: .runBench,
+                socketPath: socketPath,
+                requestData: try request.serializedData()
+            )
+        )
+
+        return AsyncThrowingStream { continuation in
+            let task = Task {
+                do {
+                    for try await line in lineStream {
+                        let event: Melix_Worker_V1_RunBenchEvent = try decodeLine(line)
                         continuation.yield(event)
                     }
                     continuation.finish()

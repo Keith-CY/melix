@@ -91,6 +91,23 @@ class FakeMaintenanceStub:
             completed=maintenance_pb2.ConvertCompleted(output_path="/tmp/model-ops/quantize.artifact")
         )
 
+    def RunDoctor(self, request):
+        return maintenance_pb2.RunDoctorResponse(
+            ok=True,
+            report_markdown=f"# Melix Doctor\n\n- model_handle: {request.model_handle}\n",
+        )
+
+    def RunBench(self, request):
+        yield maintenance_pb2.RunBenchEvent(
+            started=maintenance_pb2.BenchStarted(job_id="bench-1")
+        )
+        yield maintenance_pb2.RunBenchEvent(
+            metric=maintenance_pb2.BenchMetric(name="bench.smoke.ttft_ms", value=24.45, unit="ms")
+        )
+        yield maintenance_pb2.RunBenchEvent(
+            completed=maintenance_pb2.BenchCompleted(report_path="/tmp/model-ops/bench-report.md")
+        )
+
 
 def test_bridge_helper_forwards_phase5_unary_and_streaming_commands(monkeypatch, capsys) -> None:
     monkeypatch.setattr(control_plane_bridge.grpc, "insecure_channel", lambda target: FakeChannel())
@@ -185,6 +202,45 @@ def test_bridge_helper_forwards_phase5_unary_and_streaming_commands(monkeypatch,
     last_payload = maintenance_pb2.ConvertModelEvent.FromString(base64.b64decode(convert_lines[-1]["message_b64"]))
     assert first_payload.started.job_id == "job-1"
     assert last_payload.completed.output_path == "/tmp/model-ops/quantize.artifact"
+
+    doctor_request = maintenance_pb2.RunDoctorRequest(model_handle="melix-dev-text::1")
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "control_plane_bridge.py",
+            "run-doctor",
+            "--socket-path",
+            "/tmp/unused.sock",
+            "--request-b64",
+            base64.b64encode(doctor_request.SerializeToString()).decode("ascii"),
+        ],
+    )
+    control_plane_bridge.main()
+    doctor_line = json.loads(capsys.readouterr().out.strip())
+    doctor_payload = maintenance_pb2.RunDoctorResponse.FromString(base64.b64decode(doctor_line["message_b64"]))
+    assert doctor_payload.ok is True
+    assert "melix-dev-text::1" in doctor_payload.report_markdown
+
+    bench_request = maintenance_pb2.RunBenchRequest(model_handle="melix-dev-text::1", suites=["smoke"])
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "control_plane_bridge.py",
+            "run-bench",
+            "--socket-path",
+            "/tmp/unused.sock",
+            "--request-b64",
+            base64.b64encode(bench_request.SerializeToString()).decode("ascii"),
+        ],
+    )
+    control_plane_bridge.main()
+    bench_lines = [json.loads(line) for line in capsys.readouterr().out.splitlines() if line.strip()]
+    bench_started = maintenance_pb2.RunBenchEvent.FromString(base64.b64decode(bench_lines[0]["message_b64"]))
+    bench_completed = maintenance_pb2.RunBenchEvent.FromString(base64.b64decode(bench_lines[-1]["message_b64"]))
+    assert bench_started.started.job_id == "bench-1"
+    assert bench_completed.completed.report_path == "/tmp/model-ops/bench-report.md"
 
 
 def test_bridge_helper_forwards_phase6_audio_unary_commands(monkeypatch, capsys) -> None:

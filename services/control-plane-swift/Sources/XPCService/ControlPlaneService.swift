@@ -340,6 +340,10 @@ public actor ControlPlaneService {
             var reply = Melix_Controlplane_V1_OpsReply()
             reply.metrics = await metricsStore.snapshot()
             return okResponse(for: request, ops: reply)
+        case .runDoctor(let runDoctor):
+            return await handleRunDoctor(request: request, command: runDoctor)
+        case .runBench(let runBench):
+            return await handleRunBench(request: request, command: runBench)
         case .cancelRequest(let cancelRequest):
             return await handleCancelRequest(request: request, command: cancelRequest)
         default:
@@ -348,6 +352,108 @@ public actor ControlPlaneService {
                 code: "unimplemented",
                 message: "Ops command is not implemented in the phase-0 control plane."
             )
+        }
+    }
+
+    private func handleRunDoctor(
+        request: Melix_Controlplane_V1_ControlPlaneRequest,
+        command _: Melix_Controlplane_V1_RunDoctor
+    ) async -> Melix_Controlplane_V1_ControlPlaneResponse {
+        let startedAt = Date()
+        guard
+            let workerRegistry,
+            let workerClient = await workerRegistry.client(for: .pythonModelOperations) as? any ModelOperationsWorkerClientProtocol
+        else {
+            return errorResponse(for: request, code: "unavailable", message: "Model operations worker is unavailable.")
+        }
+
+        var workerRequest = Melix_Worker_V1_RunDoctorRequest()
+        workerRequest.modelHandle = await preferredModelOperationsHandle()
+        workerRequest.includeCacheDiagnostics = true
+        workerRequest.includeMemoryReport = true
+
+        do {
+            let workerResponse = try await workerClient.runDoctor(request: workerRequest)
+            guard workerResponse.ok else {
+                return errorResponse(
+                    for: request,
+                    code: workerResponse.error.code.isEmpty ? "unknown" : workerResponse.error.code,
+                    message: workerResponse.error.message.isEmpty ? "Doctor request failed." : workerResponse.error.message
+                )
+            }
+
+            await metricsStore.set(
+                Date().timeIntervalSince(startedAt) * 1000,
+                forKey: "control_plane.ops_doctor_ms"
+            )
+
+            var reply = Melix_Controlplane_V1_OpsReply()
+            reply.reportMarkdown = workerResponse.reportMarkdown
+            return okResponse(for: request, ops: reply)
+        } catch {
+            return errorResponse(for: request, code: "unavailable", message: "Doctor worker request failed: \(error)")
+        }
+    }
+
+    private func handleRunBench(
+        request: Melix_Controlplane_V1_ControlPlaneRequest,
+        command _: Melix_Controlplane_V1_RunBench
+    ) async -> Melix_Controlplane_V1_ControlPlaneResponse {
+        let startedAt = Date()
+        guard
+            let workerRegistry,
+            let workerClient = await workerRegistry.client(for: .pythonModelOperations) as? any ModelOperationsWorkerClientProtocol
+        else {
+            return errorResponse(for: request, code: "unavailable", message: "Model operations worker is unavailable.")
+        }
+
+        var workerRequest = Melix_Worker_V1_RunBenchRequest()
+        workerRequest.modelHandle = await preferredModelOperationsHandle()
+        workerRequest.suites = ["smoke", "latency"]
+
+        do {
+            let stream = try await workerClient.runBench(request: workerRequest)
+            var reply = Melix_Controlplane_V1_OpsReply()
+            var benchJobID = ""
+            var failedError: Melix_Controlplane_V1_ErrorStatus?
+
+            for try await event in stream {
+                switch event.payload {
+                case .started(let started):
+                    benchJobID = started.jobID
+                case .progress(let progress):
+                    await publishBenchProgress(jobID: benchJobID, suite: progress.suite, pct: progress.pct)
+                case .metric(let metric):
+                    reply.metrics.values[metric.name] = metric.value
+                    await metricsStore.set(metric.value, forKey: metric.name)
+                case .completed(let completed):
+                    reply.reportPath = completed.reportPath
+                    if let markdown = try? String(contentsOfFile: completed.reportPath, encoding: .utf8) {
+                        reply.reportMarkdown = markdown
+                    }
+                case .failed(let failed):
+                    failedError = makeErrorStatus(from: failed.error)
+                case nil:
+                    break
+                }
+            }
+
+            await metricsStore.set(
+                Date().timeIntervalSince(startedAt) * 1000,
+                forKey: "control_plane.ops_bench_ms"
+            )
+
+            if let failedError {
+                return errorResponse(
+                    for: request,
+                    code: failedError.code.isEmpty ? "unknown" : failedError.code,
+                    message: failedError.message.isEmpty ? "Bench request failed." : failedError.message
+                )
+            }
+
+            return okResponse(for: request, ops: reply)
+        } catch {
+            return errorResponse(for: request, code: "unavailable", message: "Bench worker request failed: \(error)")
         }
     }
 
@@ -795,6 +901,9 @@ public actor ControlPlaneService {
                     operation.pct = progress.pct
                 case .manifest(let manifest):
                     operation.manifestJson = manifest.manifestJson
+                    if command.operation == "train_lora" {
+                        await recordTrainingMetrics(from: manifest.manifestJson)
+                    }
                 case .completed(let completed):
                     operation.outputPath = completed.outputPath
                 case .failed(let failed):
@@ -860,6 +969,49 @@ public actor ControlPlaneService {
             return true
         default:
             return false
+        }
+    }
+
+    private func preferredModelOperationsHandle() async -> String {
+        let models = await modelCatalog.listModels()
+        for model in models where model.kind == "text" || model.capabilityClass == .modelCapabilityText {
+            if let handle = await modelCatalog.dispatchHandle(for: model.modelID) {
+                return handle
+            }
+        }
+        for model in models {
+            if let handle = await modelCatalog.dispatchHandle(for: model.modelID) {
+                return handle
+            }
+        }
+        return ""
+    }
+
+    private func publishBenchProgress(jobID: String, suite: String, pct: Float) async {
+        var event = Melix_Controlplane_V1_ControlPlaneEvent()
+        event.eventType = "bench.progress"
+        event.source = "control-plane"
+        event.requestID = jobID
+        event.benchProgress = Melix_Controlplane_V1_BenchmarkProgressEvent()
+        event.benchProgress.jobID = jobID
+        event.benchProgress.suite = suite
+        event.benchProgress.pct = Double(pct)
+        await eventHub.publish(event)
+    }
+
+    private func recordTrainingMetrics(from manifestJSON: String) async {
+        guard
+            let data = manifestJSON.data(using: .utf8),
+            let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else {
+            return
+        }
+
+        if let duration = payload["training_duration_ms"] as? Double {
+            await metricsStore.set(duration, forKey: "training.job_duration_ms")
+        }
+        if let publish = payload["adapter_publish_ms"] as? Double {
+            await metricsStore.set(publish, forKey: "training.adapter_publish_ms")
         }
     }
 

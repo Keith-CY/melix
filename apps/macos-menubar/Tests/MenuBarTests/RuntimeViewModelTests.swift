@@ -382,26 +382,37 @@ struct RuntimeViewModelTests {
         #expect(await metrics.snapshot()["menu.model_settings_ms"] != nil)
     }
 
-    @Test("model info and operations dispatch through the client and populate tool state")
+    @Test("model info ops doctor and bench dispatch through the client and populate tool state")
     @MainActor
-    func modelInfoAndOperationsPopulateToolState() async throws {
+    func modelInfoOpsDoctorAndBenchPopulateToolState() async throws {
         let client = FakeControlPlaneXPCClient()
         let metrics = MenuBarMetricsStore()
         let viewModel = RuntimeViewModel(client: client, metrics: metrics)
 
         await viewModel.start()
         await viewModel.inspectPrimaryModel()
+        await viewModel.runDoctor()
+        await viewModel.runBench()
         await viewModel.quantizePrimaryModel()
+        await viewModel.trainPrimaryModel()
         await viewModel.uploadPrimaryModel()
 
         #expect(await client.recordedActions.contains("info:melix-dev-text"))
+        #expect(await client.recordedActions.contains("doctor"))
+        #expect(await client.recordedActions.contains("bench"))
         #expect(await client.recordedActions.contains("operation:quantize:melix-dev-text"))
+        #expect(await client.recordedActions.contains("operation:train_lora:melix-dev-text"))
         #expect(await client.recordedActions.contains("operation:upload:melix-dev-text"))
         #expect(viewModel.selectedModelInfo?.modelKind == "text")
         #expect(viewModel.selectedModelInfo?.supportedParsers == ["text", "json"])
+        #expect(viewModel.lastDoctorReport?.markdown.contains("Melix Doctor") == true)
+        #expect(viewModel.lastBenchReport?.reportPath.contains("bench-report") == true)
+        #expect(viewModel.desktopFoundationState.benchMetrics.contains(where: { $0.name == "bench.smoke.ttft_ms" }))
         #expect(viewModel.lastModelOperation?.operation == "upload")
         #expect(viewModel.lastModelOperation?.outputPath.contains("/tmp/melix-upload") == true)
         #expect(await metrics.snapshot()["menu.model_info_ms"] != nil)
+        #expect(await metrics.snapshot()["menu.ops_doctor_ms"] != nil)
+        #expect(await metrics.snapshot()["menu.ops_bench_ms"] != nil)
         #expect(await metrics.snapshot()["menu.model_operation_ms"] != nil)
     }
 
@@ -416,6 +427,7 @@ struct RuntimeViewModelTests {
         await viewModel.updatePrimaryModelForLatency()
         await viewModel.inspectPrimaryModel()
         await viewModel.quantizePrimaryModel()
+        await viewModel.trainPrimaryModel()
         await viewModel.downloadPrimaryModel()
         await viewModel.uploadPrimaryModel()
 
@@ -437,7 +449,9 @@ struct RuntimeViewModelTests {
         await client.configureErrors(
             modelSettings: MenuBarTestError(description: "settings failed"),
             modelInfo: MenuBarTestError(description: "inspect failed"),
-            modelOperation: MenuBarTestError(description: "operation failed")
+            modelOperation: MenuBarTestError(description: "operation failed"),
+            doctor: MenuBarTestError(description: "doctor failed"),
+            bench: MenuBarTestError(description: "bench failed")
         )
 
         await viewModel.updatePrimaryModelForLatency()
@@ -445,6 +459,12 @@ struct RuntimeViewModelTests {
 
         await viewModel.inspectPrimaryModel()
         #expect(viewModel.lastError?.contains("inspect failed") == true)
+
+        await viewModel.runDoctor()
+        #expect(viewModel.lastError?.contains("doctor failed") == true)
+
+        await viewModel.runBench()
+        #expect(viewModel.lastError?.contains("bench failed") == true)
 
         await viewModel.quantizePrimaryModel()
         #expect(viewModel.lastError?.contains("operation failed") == true)

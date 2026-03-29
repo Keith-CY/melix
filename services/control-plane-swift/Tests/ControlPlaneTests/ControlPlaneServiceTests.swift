@@ -219,6 +219,87 @@ struct ControlPlaneServiceTests {
         #expect(response.model.operation.manifestJson == #"{"operation":"quantize"}"#)
     }
 
+    @Test("execute handles ops.run_doctor through the model-operations worker")
+    func executeHandlesOpsRunDoctorThroughTheModelOperationsWorker() async throws {
+        let modelOpsClient = ScriptedModelOperationsWorkerClient()
+        await modelOpsClient.setDoctorResponse({
+            var response = Melix_Worker_V1_RunDoctorResponse()
+            response.ok = true
+            response.reportMarkdown = "# Melix Doctor\n\n- worker_state: idle\n"
+            return response
+        }())
+        let service = ControlPlaneService(
+            modelCatalog: ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels()),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                modelOperationsClient: modelOpsClient
+            )
+        )
+
+        let response = try await service.execute(makeRunDoctorRequest())
+        let lastRequest = try #require(await modelOpsClient.lastDoctorRequest)
+
+        #expect(response.ok)
+        #expect(lastRequest.includeCacheDiagnostics)
+        #expect(lastRequest.includeMemoryReport)
+        #expect(response.ops.reportMarkdown.contains("Melix Doctor"))
+    }
+
+    @Test("execute handles ops.run_bench through the model-operations worker")
+    func executeHandlesOpsRunBenchThroughTheModelOperationsWorker() async throws {
+        let reportPath = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("melix-bench-report.md").path
+        try "# Melix Bench\n".write(toFile: reportPath, atomically: true, encoding: .utf8)
+
+        let modelOpsClient = ScriptedModelOperationsWorkerClient()
+        await modelOpsClient.setBenchEvents([
+            {
+                var event = Melix_Worker_V1_RunBenchEvent()
+                event.started = Melix_Worker_V1_BenchStarted()
+                event.started.jobID = "bench-123"
+                return event
+            }(),
+            {
+                var event = Melix_Worker_V1_RunBenchEvent()
+                event.progress = Melix_Worker_V1_BenchProgress()
+                event.progress.suite = "smoke"
+                event.progress.pct = 0.5
+                return event
+            }(),
+            {
+                var event = Melix_Worker_V1_RunBenchEvent()
+                event.metric = Melix_Worker_V1_BenchMetric()
+                event.metric.name = "bench.smoke.ttft_ms"
+                event.metric.value = 24.45
+                event.metric.unit = "ms"
+                return event
+            }(),
+            {
+                var event = Melix_Worker_V1_RunBenchEvent()
+                event.completed = Melix_Worker_V1_BenchCompleted()
+                event.completed.reportPath = reportPath
+                return event
+            }(),
+        ])
+        let service = ControlPlaneService(
+            modelCatalog: ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels()),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                modelOperationsClient: modelOpsClient
+            )
+        )
+
+        let response = try await service.execute(makeRunBenchRequest())
+        let lastRequest = try #require(await modelOpsClient.lastBenchRequest)
+        let snapshot = try await service.execute(makeMetricsRequest())
+
+        #expect(response.ok)
+        #expect(lastRequest.suites == ["smoke", "latency"])
+        #expect(response.ops.reportPath == reportPath)
+        #expect(response.ops.reportMarkdown.contains("Melix Bench"))
+        #expect(response.ops.metrics.values["bench.smoke.ttft_ms"] == 24.45)
+        #expect(snapshot.ops.metrics.values["bench.smoke.ttft_ms"] == 24.45)
+    }
+
     @Test("execute handles image.generate through the image worker and records the image job")
     func executeHandlesImageGenerateThroughTheImageWorker() async throws {
         let modelCatalog = ModelCatalog(seedModels: ModelCatalog.phaseSevenContractSeedModels())
@@ -1765,6 +1846,24 @@ struct ControlPlaneServiceTests {
         return request
     }
 
+    private func makeRunDoctorRequest() -> Melix_Controlplane_V1_ControlPlaneRequest {
+        var request = Melix_Controlplane_V1_ControlPlaneRequest()
+        request.requestID = "req-ops-doctor"
+        request.commandType = "ops.run_doctor"
+        request.ops = Melix_Controlplane_V1_OpsCommand()
+        request.ops.runDoctor = Melix_Controlplane_V1_RunDoctor()
+        return request
+    }
+
+    private func makeRunBenchRequest() -> Melix_Controlplane_V1_ControlPlaneRequest {
+        var request = Melix_Controlplane_V1_ControlPlaneRequest()
+        request.requestID = "req-ops-bench"
+        request.commandType = "ops.run_bench"
+        request.ops = Melix_Controlplane_V1_OpsCommand()
+        request.ops.runBench = Melix_Controlplane_V1_RunBench()
+        return request
+    }
+
     private func makeCancelRequest(
         requestID targetRequestID: String
     ) -> Melix_Controlplane_V1_ControlPlaneRequest {
@@ -2535,10 +2634,16 @@ private struct ControlPlaneConditionTimeoutError: Error, CustomStringConvertible
 private actor ScriptedModelOperationsWorkerClient: WorkerRoutingClient, ModelOperationsWorkerClientProtocol {
     private(set) var lastInfoRequest: Melix_Worker_V1_GetModelInfoRequest?
     private(set) var lastConvertRequest: Melix_Worker_V1_ConvertModelRequest?
+    private(set) var lastDoctorRequest: Melix_Worker_V1_RunDoctorRequest?
+    private(set) var lastBenchRequest: Melix_Worker_V1_RunBenchRequest?
     private var infoResponse = Melix_Worker_V1_GetModelInfoResponse()
     private var convertEvents: [Melix_Worker_V1_ConvertModelEvent] = []
+    private var doctorResponse = Melix_Worker_V1_RunDoctorResponse()
+    private var benchEvents: [Melix_Worker_V1_RunBenchEvent] = []
     private var infoError: Error?
     private var convertError: Error?
+    private var doctorError: Error?
+    private var benchError: Error?
 
     func setInfoResponse(_ response: Melix_Worker_V1_GetModelInfoResponse) {
         infoResponse = response
@@ -2548,12 +2653,28 @@ private actor ScriptedModelOperationsWorkerClient: WorkerRoutingClient, ModelOpe
         convertEvents = events
     }
 
+    func setDoctorResponse(_ response: Melix_Worker_V1_RunDoctorResponse) {
+        doctorResponse = response
+    }
+
+    func setBenchEvents(_ events: [Melix_Worker_V1_RunBenchEvent]) {
+        benchEvents = events
+    }
+
     func setInfoError(_ error: Error?) {
         infoError = error
     }
 
     func setConvertError(_ error: Error?) {
         convertError = error
+    }
+
+    func setDoctorError(_ error: Error?) {
+        doctorError = error
+    }
+
+    func setBenchError(_ error: Error?) {
+        benchError = error
     }
 
     func canDispatchRequests() async -> Bool {
@@ -2597,6 +2718,32 @@ private actor ScriptedModelOperationsWorkerClient: WorkerRoutingClient, ModelOpe
             throw convertError
         }
         let events = convertEvents
+        return AsyncThrowingStream { continuation in
+            for event in events {
+                continuation.yield(event)
+            }
+            continuation.finish()
+        }
+    }
+
+    func runDoctor(
+        request: Melix_Worker_V1_RunDoctorRequest
+    ) async throws -> Melix_Worker_V1_RunDoctorResponse {
+        lastDoctorRequest = request
+        if let doctorError {
+            throw doctorError
+        }
+        return doctorResponse
+    }
+
+    func runBench(
+        request: Melix_Worker_V1_RunBenchRequest
+    ) async throws -> AsyncThrowingStream<Melix_Worker_V1_RunBenchEvent, Error> {
+        lastBenchRequest = request
+        if let benchError {
+            throw benchError
+        }
+        let events = benchEvents
         return AsyncThrowingStream { continuation in
             for event in events {
                 continuation.yield(event)

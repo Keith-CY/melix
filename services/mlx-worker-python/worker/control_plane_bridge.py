@@ -35,6 +35,8 @@ def main() -> None:
             "image-edit",
             "get-model-info",
             "convert-model",
+            "run-doctor",
+            "run-bench",
         ],
     )
     parser.add_argument("--socket-path", required=True)
@@ -95,6 +97,15 @@ def main() -> None:
                 stub = maintenance_pb2_grpc.MaintenanceServiceStub(channel)
                 request = maintenance_pb2.ConvertModelRequest.FromString(request_bytes)
                 for event in stub.ConvertModel(request):
+                    emit_message(event.SerializeToString())
+            elif args.command == "run-doctor":
+                stub = maintenance_pb2_grpc.MaintenanceServiceStub(channel)
+                request = maintenance_pb2.RunDoctorRequest.FromString(request_bytes)
+                emit_message(stub.RunDoctor(request).SerializeToString())
+            elif args.command == "run-bench":
+                stub = maintenance_pb2_grpc.MaintenanceServiceStub(channel)
+                request = maintenance_pb2.RunBenchRequest.FromString(request_bytes)
+                for event in stub.RunBench(request):
                     emit_message(event.SerializeToString())
             else:
                 stub = inference_pb2_grpc.InferenceServiceStub(channel)

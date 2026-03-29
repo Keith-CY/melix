@@ -63,6 +63,8 @@ struct DesktopFoundationViewTests {
         let viewModel = RuntimeViewModel(client: client)
         await viewModel.start()
         await viewModel.inspectPrimaryModel()
+        await viewModel.runDoctor()
+        await viewModel.runBench()
         await viewModel.quantizePrimaryModel()
 
         let view = hostView(DesktopToolsTabView(viewModel: viewModel))
@@ -70,7 +72,7 @@ struct DesktopFoundationViewTests {
         #expect(view.subviews.isEmpty == false)
     }
 
-    @Test("tools tab buttons dispatch inspect and model operations")
+    @Test("tools tab buttons dispatch inspect diagnostics bench and model operations")
     @MainActor
     func toolsTabButtonsDispatchActions() async throws {
         let client = FakeControlPlaneXPCClient()
@@ -79,16 +81,24 @@ struct DesktopFoundationViewTests {
 
         let tab = DesktopToolsTabView(viewModel: viewModel)
         await tab.inspectPrimaryModel()
+        await tab.runDoctor()
+        await tab.runBench()
         await tab.quantizePrimaryModel()
+        await tab.trainPrimaryModel()
         await tab.downloadPrimaryModel()
         await tab.uploadPrimaryModel()
 
         let actions = await client.recordedActions
         #expect(actions.contains("info:melix-dev-text"))
+        #expect(actions.contains("doctor"))
+        #expect(actions.contains("bench"))
         #expect(actions.contains("operation:quantize:melix-dev-text"))
+        #expect(actions.contains("operation:train_lora:melix-dev-text"))
         #expect(actions.contains("operation:download:melix-dev-text"))
         #expect(actions.contains("operation:upload:melix-dev-text"))
         #expect(viewModel.selectedModelInfo?.modelID == "melix-dev-text")
+        #expect(viewModel.lastDoctorReport?.markdown.contains("Melix Doctor") == true)
+        #expect(viewModel.lastBenchReport?.markdown.contains("Melix Bench") == true)
         #expect(viewModel.lastModelOperation?.operation == "upload")
     }
 

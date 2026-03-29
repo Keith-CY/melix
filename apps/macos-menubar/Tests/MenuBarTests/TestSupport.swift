@@ -19,6 +19,8 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
     private var modelSettingsError: Error?
     private var modelInfoError: Error?
     private var modelOperationError: Error?
+    private var doctorError: Error?
+    private var benchError: Error?
     private var chatError: Error?
     private var imageGenerateError: Error?
     private var imageEditError: Error?
@@ -28,6 +30,12 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
     private var modelSettings = FakeControlPlaneXPCClient.defaultModelSettings()
     private var modelInfoResponse = FakeControlPlaneXPCClient.defaultModelInfo()
     private var modelOperationResponse = FakeControlPlaneXPCClient.defaultModelOperation()
+    private var doctorResponse = "# Melix Doctor\n\n- worker_state: idle\n"
+    private var benchResponse = ControlPlaneBenchResult(
+        reportPath: "/tmp/melix-fake/bench-report.md",
+        reportMarkdown: "# Melix Bench\n\n- bench.smoke.ttft_ms: 24.45 ms\n",
+        metrics: ["bench.smoke.ttft_ms": 24.45]
+    )
     private var chatEvents = FakeControlPlaneXPCClient.defaultChatEvents()
     private var imageGenerateResponse = makeMenuBarImageJobSummary(
         jobID: "image-generate-1::image-generate",
@@ -52,6 +60,8 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
         modelSettings: Error? = nil,
         modelInfo: Error? = nil,
         modelOperation: Error? = nil,
+        doctor: Error? = nil,
+        bench: Error? = nil,
         chat: Error? = nil,
         imageGenerate: Error? = nil,
         imageEdit: Error? = nil,
@@ -64,6 +74,8 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
         modelSettingsError = modelSettings
         modelInfoError = modelInfo
         modelOperationError = modelOperation
+        doctorError = doctor
+        benchError = bench
         chatError = chat
         imageGenerateError = imageGenerate
         imageEditError = imageEdit
@@ -80,6 +92,14 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
 
     func configureModelOperation(_ operation: Melix_Controlplane_V1_ModelOperationResult) {
         modelOperationResponse = operation
+    }
+
+    func configureDoctorResponse(_ markdown: String) {
+        doctorResponse = markdown
+    }
+
+    func configureBenchResponse(_ result: ControlPlaneBenchResult) {
+        benchResponse = result
     }
 
     func configureChatEvents(_ events: [ControlPlaneChatStreamEvent]) {
@@ -274,6 +294,22 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
             throw cancelError
         }
         return true
+    }
+
+    func runDoctor() async throws -> String {
+        recordedActions.append("doctor")
+        if let doctorError {
+            throw doctorError
+        }
+        return doctorResponse
+    }
+
+    func runBench() async throws -> ControlPlaneBenchResult {
+        recordedActions.append("bench")
+        if let benchError {
+            throw benchError
+        }
+        return benchResponse
     }
 
     func sendModelStateChanged(state: Melix_Controlplane_V1_ModelState) {

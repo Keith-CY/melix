@@ -153,10 +153,10 @@ class WorkerMaintenanceService(maintenance_pb2_grpc.MaintenanceServiceServicer):
         return self._core.get_model_info(request)
 
     def RunDoctor(self, request, context):
-        return self._core.doctor_response()
+        return self._core.doctor_response(request)
 
     def RunBench(self, request, context):
-        yield from self._core.bench_events()
+        yield from self._core.bench_events(request)
 
 
 def build_registry_for_backend(backend_mode: str) -> WorkerRegistry:

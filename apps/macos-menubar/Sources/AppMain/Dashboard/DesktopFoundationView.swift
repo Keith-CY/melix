@@ -192,8 +192,17 @@ struct DesktopToolsTabView: View {
                             Button("Inspect") {
                                 Task { await inspectPrimaryModel() }
                             }
+                            Button("Doctor") {
+                                Task { await runDoctor() }
+                            }
+                            Button("Bench") {
+                                Task { await runBench() }
+                            }
                             Button("Quantize") {
                                 Task { await quantizePrimaryModel() }
+                            }
+                            Button("Train LoRA") {
+                                Task { await trainPrimaryModel() }
                             }
                             Button("Download") {
                                 Task { await downloadPrimaryModel() }
@@ -242,6 +251,45 @@ struct DesktopToolsTabView: View {
                 }
             }
 
+            if let report = viewModel.lastDoctorReport {
+                GroupBox("Doctor Report") {
+                    ScrollView {
+                        Text(report.markdown)
+                            .font(.caption.monospaced())
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+
+            if let report = viewModel.lastBenchReport {
+                GroupBox("Bench Report") {
+                    VStack(alignment: .leading, spacing: 6) {
+                        if !report.reportPath.isEmpty {
+                            Text(report.reportPath)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        ForEach(report.metrics) { metric in
+                            HStack {
+                                Text(metric.name)
+                                Spacer()
+                                Text(metric.value)
+                                    .monospacedDigit()
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        if !report.markdown.isEmpty {
+                            Text(report.markdown)
+                                .font(.caption.monospaced())
+                                .textSelection(.enabled)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+
             Spacer()
         }
         .padding(20)
@@ -255,12 +303,24 @@ struct DesktopToolsTabView: View {
         await viewModel.quantizePrimaryModel()
     }
 
+    func trainPrimaryModel() async {
+        await viewModel.trainPrimaryModel()
+    }
+
     func downloadPrimaryModel() async {
         await viewModel.downloadPrimaryModel()
     }
 
     func uploadPrimaryModel() async {
         await viewModel.uploadPrimaryModel()
+    }
+
+    func runDoctor() async {
+        await viewModel.runDoctor()
+    }
+
+    func runBench() async {
+        await viewModel.runBench()
     }
 }
 

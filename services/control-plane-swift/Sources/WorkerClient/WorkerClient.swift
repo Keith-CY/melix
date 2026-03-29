@@ -72,6 +72,14 @@ public protocol ModelOperationsWorkerClientProtocol: WorkerClient {
     func convertModel(
         request: Melix_Worker_V1_ConvertModelRequest
     ) async throws -> AsyncThrowingStream<Melix_Worker_V1_ConvertModelEvent, Error>
+
+    func runDoctor(
+        request: Melix_Worker_V1_RunDoctorRequest
+    ) async throws -> Melix_Worker_V1_RunDoctorResponse
+
+    func runBench(
+        request: Melix_Worker_V1_RunBenchRequest
+    ) async throws -> AsyncThrowingStream<Melix_Worker_V1_RunBenchEvent, Error>
 }
 
 public struct NullWorkerClient: WorkerRoutingClient {

@@ -68,6 +68,18 @@ public struct ControlPlaneImageEditRequest: Equatable, Sendable {
     }
 }
 
+public struct ControlPlaneBenchResult: Equatable, Sendable {
+    public let reportPath: String
+    public let reportMarkdown: String
+    public let metrics: [String: Double]
+
+    public init(reportPath: String, reportMarkdown: String, metrics: [String: Double]) {
+        self.reportPath = reportPath
+        self.reportMarkdown = reportMarkdown
+        self.metrics = metrics
+    }
+}
+
 public protocol ControlPlaneXPCClient: Sendable {
     func handshake() async throws -> Melix_Controlplane_V1_HandshakeResponse
     func subscribe(lastSeenSeq: UInt64) async -> AsyncStream<Melix_Controlplane_V1_ControlPlaneEvent>
@@ -94,6 +106,8 @@ public protocol ControlPlaneXPCClient: Sendable {
     func editImage(
         _ request: ControlPlaneImageEditRequest
     ) async throws -> Melix_Controlplane_V1_ImageJobSummary
+    func runDoctor() async throws -> String
+    func runBench() async throws -> ControlPlaneBenchResult
     func cancelRequest(requestID: String) async throws -> Bool
 }
 
@@ -115,6 +129,20 @@ public extension ControlPlaneXPCClient {
         throw ControlPlaneXPCClientError.requestFailed(
             code: "unimplemented",
             message: "Image editing is not implemented for this control-plane client."
+        )
+    }
+
+    func runDoctor() async throws -> String {
+        throw ControlPlaneXPCClientError.requestFailed(
+            code: "unimplemented",
+            message: "Doctor is not implemented for this control-plane client."
+        )
+    }
+
+    func runBench() async throws -> ControlPlaneBenchResult {
+        throw ControlPlaneXPCClientError.requestFailed(
+            code: "unimplemented",
+            message: "Bench is not implemented for this control-plane client."
         )
     }
 
@@ -247,6 +275,22 @@ public actor LocalControlPlaneXPCClient: ControlPlaneXPCClient {
     ) async throws -> Melix_Controlplane_V1_ImageJobSummary {
         try await execute(makeImageEditRequest(request)) { response in
             response.image.job
+        }
+    }
+
+    public func runDoctor() async throws -> String {
+        try await execute(makeRunDoctorRequest()) { response in
+            response.ops.reportMarkdown
+        }
+    }
+
+    public func runBench() async throws -> ControlPlaneBenchResult {
+        try await execute(makeRunBenchRequest()) { response in
+            ControlPlaneBenchResult(
+                reportPath: response.ops.reportPath,
+                reportMarkdown: response.ops.reportMarkdown,
+                metrics: response.ops.metrics.values
+            )
         }
     }
 
@@ -394,6 +438,24 @@ public actor LocalControlPlaneXPCClient: ControlPlaneXPCClient {
         request.ops = Melix_Controlplane_V1_OpsCommand()
         request.ops.cancelRequest = Melix_Controlplane_V1_CancelRequest()
         request.ops.cancelRequest.requestID = requestID
+        return request
+    }
+
+    private func makeRunDoctorRequest() -> Melix_Controlplane_V1_ControlPlaneRequest {
+        var request = Melix_Controlplane_V1_ControlPlaneRequest()
+        request.requestID = "menubar-run-doctor"
+        request.commandType = "ops.run_doctor"
+        request.ops = Melix_Controlplane_V1_OpsCommand()
+        request.ops.runDoctor = Melix_Controlplane_V1_RunDoctor()
+        return request
+    }
+
+    private func makeRunBenchRequest() -> Melix_Controlplane_V1_ControlPlaneRequest {
+        var request = Melix_Controlplane_V1_ControlPlaneRequest()
+        request.requestID = "menubar-run-bench"
+        request.commandType = "ops.run_bench"
+        request.ops = Melix_Controlplane_V1_OpsCommand()
+        request.ops.runBench = Melix_Controlplane_V1_RunBench()
         return request
     }
 }

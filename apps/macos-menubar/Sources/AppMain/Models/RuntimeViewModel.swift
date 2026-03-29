@@ -57,6 +57,28 @@ public struct RuntimeModelOperationState: Equatable, Sendable {
     public let manifestJson: String
 }
 
+public struct RuntimeDoctorReportState: Equatable, Sendable {
+    public let markdown: String
+}
+
+public struct RuntimeBenchMetricState: Identifiable, Equatable, Sendable {
+    public let id: String
+    public let name: String
+    public let value: String
+
+    public init(name: String, value: String) {
+        self.id = name
+        self.name = name
+        self.value = value
+    }
+}
+
+public struct RuntimeBenchReportState: Equatable, Sendable {
+    public let reportPath: String
+    public let markdown: String
+    public let metrics: [RuntimeBenchMetricState]
+}
+
 public struct DesktopChatTranscriptEntry: Identifiable, Equatable, Sendable {
     public enum Kind: String, Sendable {
         case user
@@ -104,6 +126,8 @@ public final class RuntimeViewModel {
     public private(set) var features: [String] = []
     public private(set) var selectedModelInfo: RuntimeModelInfoState?
     public private(set) var lastModelOperation: RuntimeModelOperationState?
+    public private(set) var lastDoctorReport: RuntimeDoctorReportState?
+    public private(set) var lastBenchReport: RuntimeBenchReportState?
     public private(set) var chatTranscript: [DesktopChatTranscriptEntry] = []
     public private(set) var chatCapabilities: [DesktopChatCapabilityRow] = []
     public private(set) var chatStatusText = "Idle"
@@ -671,6 +695,60 @@ public final class RuntimeViewModel {
             outputDir: "/tmp/melix-upload",
             ext: ["target_repo": "melix/upload-target"]
         )
+    }
+
+    public func trainPrimaryModel() async {
+        guard let modelID = primaryModel?.modelID else {
+            return
+        }
+        await runModelOperation(
+            modelID: modelID,
+            operation: "train_lora",
+            outputDir: "/tmp/melix-train-lora",
+            ext: [
+                "adapter_name": "melix-dev-adapter",
+                "dataset_uri": "datasets/melix-dev",
+            ]
+        )
+    }
+
+    public func runDoctor() async {
+        let startedAt = Date()
+        do {
+            let report = try await client.runDoctor()
+            await metrics.record(
+                name: "menu.ops_doctor_ms",
+                valueMs: Date().timeIntervalSince(startedAt) * 1_000
+            )
+            lastDoctorReport = RuntimeDoctorReportState(markdown: report)
+        } catch {
+            recordLocalError(String(describing: error))
+        }
+        notifyStateChanged()
+    }
+
+    public func runBench() async {
+        let startedAt = Date()
+        do {
+            let result = try await client.runBench()
+            await metrics.record(
+                name: "menu.ops_bench_ms",
+                valueMs: Date().timeIntervalSince(startedAt) * 1_000
+            )
+            for (name, value) in result.metrics {
+                latestSnapshot.metrics.values[name] = value
+            }
+            lastBenchReport = RuntimeBenchReportState(
+                reportPath: result.reportPath,
+                markdown: result.reportMarkdown,
+                metrics: result.metrics.keys.sorted().map { key in
+                    RuntimeBenchMetricState(name: key, value: String(format: "%.2f", result.metrics[key] ?? 0))
+                }
+            )
+        } catch {
+            recordLocalError(String(describing: error))
+        }
+        notifyStateChanged()
     }
 
     private func consume(event: Melix_Controlplane_V1_ControlPlaneEvent) async {

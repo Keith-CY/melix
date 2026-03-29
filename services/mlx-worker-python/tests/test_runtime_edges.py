@@ -457,19 +457,28 @@ def test_maintenance_service_keeps_doctor_and_bench_structured(tmp_path: Path) -
     service = WorkerMaintenanceService(build_registry(), jobs_root=tmp_path / "ops")
 
     doctor = service.RunDoctor(
-        maintenance_pb2.RunDoctorRequest(model_handle="melix-dev-text::1"),
+        maintenance_pb2.RunDoctorRequest(
+            model_handle="melix-dev-text::1",
+            include_cache_diagnostics=True,
+            include_memory_report=True,
+        ),
         context=None,
     )
     bench_events = list(
         service.RunBench(
-            maintenance_pb2.RunBenchRequest(model_handle="melix-dev-text::1", suites=["smoke"]),
+            maintenance_pb2.RunBenchRequest(model_handle="melix-dev-text::1", suites=["smoke", "latency"]),
             context=None,
         )
     )
 
-    assert doctor.ok is False
-    assert doctor.error.code == "unimplemented"
-    assert bench_events[0].failed.error.code == "unimplemented"
+    assert doctor.ok is True
+    assert "# Melix Doctor" in doctor.report_markdown
+    assert "## Cache" in doctor.report_markdown
+    assert "## Memory" in doctor.report_markdown
+    assert bench_events[0].started.job_id == "model-ops-0001"
+    assert any(event.HasField("metric") and event.metric.name == "bench.smoke.ttft_ms" for event in bench_events)
+    assert any(event.HasField("metric") and event.metric.name == "bench.latency.p50_ms" for event in bench_events)
+    assert bench_events[-1].completed.report_path.endswith("bench-report.md")
 
 
 def test_bootstrap_module_invokes_grpc_main(monkeypatch) -> None:

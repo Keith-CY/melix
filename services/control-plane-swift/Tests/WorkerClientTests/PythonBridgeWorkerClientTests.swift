@@ -246,8 +246,8 @@ struct PythonBridgeWorkerClientTests {
         #expect(edited.images == [Data("edited-image".utf8)])
     }
 
-    @Test("model-ops bridge methods decode info and streamed convert events")
-    func modelOpsBridgeMethodsDecodeInfoAndStreamedConvertEvents() async throws {
+    @Test("model-ops bridge methods decode info doctor and streamed convert or bench events")
+    func modelOpsBridgeMethodsDecodeInfoDoctorAndStreamedBenchEvents() async throws {
         var infoRequest = Melix_Worker_V1_GetModelInfoRequest()
         infoRequest.sourceModel = "melix-dev-text"
 
@@ -262,6 +262,14 @@ struct PythonBridgeWorkerClientTests {
         convertRequest.outputDir = "/tmp/model-ops"
         convertRequest.ext["operation"] = "quantize"
 
+        var doctorRequest = Melix_Worker_V1_RunDoctorRequest()
+        doctorRequest.modelHandle = "melix-dev-text::bridge"
+        doctorRequest.includeCacheDiagnostics = true
+
+        var doctorResponse = Melix_Worker_V1_RunDoctorResponse()
+        doctorResponse.ok = true
+        doctorResponse.reportMarkdown = "# Melix Doctor\n"
+
         var started = Melix_Worker_V1_ConvertModelEvent()
         started.started = Melix_Worker_V1_ConvertStarted()
         started.started.jobID = "job-1"
@@ -270,10 +278,26 @@ struct PythonBridgeWorkerClientTests {
         completed.completed = Melix_Worker_V1_ConvertCompleted()
         completed.completed.outputPath = "/tmp/model-ops/quantize.artifact"
 
+        var benchRequest = Melix_Worker_V1_RunBenchRequest()
+        benchRequest.modelHandle = "melix-dev-text::bridge"
+        benchRequest.suites = ["smoke"]
+
+        var benchStarted = Melix_Worker_V1_RunBenchEvent()
+        benchStarted.started = Melix_Worker_V1_BenchStarted()
+        benchStarted.started.jobID = "bench-1"
+
+        var benchCompleted = Melix_Worker_V1_RunBenchEvent()
+        benchCompleted.completed = Melix_Worker_V1_BenchCompleted()
+        benchCompleted.completed.reportPath = "/tmp/model-ops/bench-report.md"
+
         let runner = ScriptedBridgeRunner()
         await runner.setUnaryResponse(
             .getModelInfo,
             line: bridgeMessageLine(message: try infoResponse.serializedData())
+        )
+        await runner.setUnaryResponse(
+            .runDoctor,
+            line: bridgeMessageLine(message: try doctorResponse.serializedData())
         )
         await runner.setStreamResponse(
             .convertModel,
@@ -282,17 +306,32 @@ struct PythonBridgeWorkerClientTests {
                 bridgeMessageLine(message: try completed.serializedData()),
             ]
         )
+        await runner.setStreamResponse(
+            .runBench,
+            lines: [
+                bridgeMessageLine(message: try benchStarted.serializedData()),
+                bridgeMessageLine(message: try benchCompleted.serializedData()),
+            ]
+        )
 
         let client = PythonBridgeWorkerClient(socketPath: "/tmp/melix-test.sock", runner: runner)
         let info = try await client.getModelInfo(request: infoRequest)
+        let doctor = try await client.runDoctor(request: doctorRequest)
         let convertStream = try await client.convertModel(request: convertRequest)
         let events = try await collect(convertStream)
+        let benchStream = try await client.runBench(request: benchRequest)
+        let benchEvents = try await collect(benchStream)
 
         #expect(info.ok)
         #expect(info.modelKind == "text")
+        #expect(doctor.ok)
+        #expect(doctor.reportMarkdown.contains("Melix Doctor"))
         #expect(events.count == 2)
         #expect(events[0].started.jobID == "job-1")
         #expect(events[1].completed.outputPath == "/tmp/model-ops/quantize.artifact")
+        #expect(benchEvents.count == 2)
+        #expect(benchEvents[0].started.jobID == "bench-1")
+        #expect(benchEvents[1].completed.reportPath == "/tmp/model-ops/bench-report.md")
     }
 
     @Test("phase-five preload writes embedding and rerank handles into the model catalog")

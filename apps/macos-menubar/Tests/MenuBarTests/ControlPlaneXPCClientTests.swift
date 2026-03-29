@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 
 @testable import AppMain
@@ -218,6 +219,58 @@ struct ControlPlaneXPCClientTests {
         #expect(result.manifestJson == #"{"operation":"upload"}"#)
     }
 
+    @Test("local client runs doctor and bench through control-plane execute")
+    func localClientRunsDoctorAndBench() async throws {
+        let reportPath = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("melix-xpc-bench.md").path
+        try "# Melix Bench\n".write(toFile: reportPath, atomically: true, encoding: .utf8)
+
+        let modelOpsClient = XPCScriptedModelOperationsWorkerClient()
+        await modelOpsClient.setDoctorResponse({
+            var response = Melix_Worker_V1_RunDoctorResponse()
+            response.ok = true
+            response.reportMarkdown = "# Melix Doctor\n"
+            return response
+        }())
+        await modelOpsClient.setBenchEvents([
+            {
+                var event = Melix_Worker_V1_RunBenchEvent()
+                event.started = Melix_Worker_V1_BenchStarted()
+                event.started.jobID = "bench-456"
+                return event
+            }(),
+            {
+                var event = Melix_Worker_V1_RunBenchEvent()
+                event.metric = Melix_Worker_V1_BenchMetric()
+                event.metric.name = "bench.smoke.ttft_ms"
+                event.metric.value = 24.45
+                event.metric.unit = "ms"
+                return event
+            }(),
+            {
+                var event = Melix_Worker_V1_RunBenchEvent()
+                event.completed = Melix_Worker_V1_BenchCompleted()
+                event.completed.reportPath = reportPath
+                return event
+            }(),
+        ])
+        let service = ControlPlaneService(
+            modelCatalog: ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels()),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                modelOperationsClient: modelOpsClient
+            )
+        )
+        let client = LocalControlPlaneXPCClient(service: service)
+
+        let doctor = try await client.runDoctor()
+        let bench = try await client.runBench()
+
+        #expect(doctor.contains("Melix Doctor"))
+        #expect(bench.reportPath == reportPath)
+        #expect(bench.reportMarkdown.contains("Melix Bench"))
+        #expect(bench.metrics["bench.smoke.ttft_ms"] == 24.45)
+    }
+
     @Test("local client submits image generation through control-plane execute")
     func localClientSubmitsImageGeneration() async throws {
         let modelCatalog = ModelCatalog(seedModels: ModelCatalog.phaseSevenContractSeedModels())
@@ -343,8 +396,8 @@ struct ControlPlaneXPCClientTests {
         }
     }
 
-    @Test("default image and cancel client methods throw unimplemented errors")
-    func defaultImageAndCancelClientMethodsThrowUnimplementedErrors() async throws {
+    @Test("default image ops doctor bench and cancel client methods throw unimplemented errors")
+    func defaultImageOpsDoctorBenchAndCancelClientMethodsThrowUnimplementedErrors() async throws {
         let client = DefaultImagelessControlPlaneXPCClient()
 
         do {
@@ -385,6 +438,30 @@ struct ControlPlaneXPCClientTests {
                 error == .requestFailed(
                     code: "unimplemented",
                     message: "Request cancellation is not implemented for this control-plane client."
+                )
+            )
+        }
+
+        do {
+            _ = try await client.runDoctor()
+            Issue.record("Expected runDoctor to throw for the default protocol implementation")
+        } catch let error as ControlPlaneXPCClientError {
+            #expect(
+                error == .requestFailed(
+                    code: "unimplemented",
+                    message: "Doctor is not implemented for this control-plane client."
+                )
+            )
+        }
+
+        do {
+            _ = try await client.runBench()
+            Issue.record("Expected runBench to throw for the default protocol implementation")
+        } catch let error as ControlPlaneXPCClientError {
+            #expect(
+                error == .requestFailed(
+                    code: "unimplemented",
+                    message: "Bench is not implemented for this control-plane client."
                 )
             )
         }
@@ -504,6 +581,7 @@ private struct DefaultImagelessControlPlaneXPCClient: ControlPlaneXPCClient {
         _ = ext
         return Melix_Controlplane_V1_ModelOperationResult()
     }
+
 }
 
 private actor FailingExecuteControlPlaneService: ControlPlaneExecuting {
@@ -775,6 +853,8 @@ private func makeCompletedEvent(
 private actor XPCScriptedModelOperationsWorkerClient: WorkerRoutingClient, ModelOperationsWorkerClientProtocol {
     private var infoResponse = Melix_Worker_V1_GetModelInfoResponse()
     private var convertEvents: [Melix_Worker_V1_ConvertModelEvent] = []
+    private var doctorResponse = Melix_Worker_V1_RunDoctorResponse()
+    private var benchEvents: [Melix_Worker_V1_RunBenchEvent] = []
 
     func setInfoResponse(_ response: Melix_Worker_V1_GetModelInfoResponse) {
         infoResponse = response
@@ -782,6 +862,14 @@ private actor XPCScriptedModelOperationsWorkerClient: WorkerRoutingClient, Model
 
     func setConvertEvents(_ events: [Melix_Worker_V1_ConvertModelEvent]) {
         convertEvents = events
+    }
+
+    func setDoctorResponse(_ response: Melix_Worker_V1_RunDoctorResponse) {
+        doctorResponse = response
+    }
+
+    func setBenchEvents(_ events: [Melix_Worker_V1_RunBenchEvent]) {
+        benchEvents = events
     }
 
     func canDispatchRequests() async -> Bool {
@@ -819,6 +907,26 @@ private actor XPCScriptedModelOperationsWorkerClient: WorkerRoutingClient, Model
     ) async throws -> AsyncThrowingStream<Melix_Worker_V1_ConvertModelEvent, Error> {
         _ = request
         let events = convertEvents
+        return AsyncThrowingStream { continuation in
+            for event in events {
+                continuation.yield(event)
+            }
+            continuation.finish()
+        }
+    }
+
+    func runDoctor(
+        request: Melix_Worker_V1_RunDoctorRequest
+    ) async throws -> Melix_Worker_V1_RunDoctorResponse {
+        _ = request
+        return doctorResponse
+    }
+
+    func runBench(
+        request: Melix_Worker_V1_RunBenchRequest
+    ) async throws -> AsyncThrowingStream<Melix_Worker_V1_RunBenchEvent, Error> {
+        _ = request
+        let events = benchEvents
         return AsyncThrowingStream { continuation in
             for event in events {
                 continuation.yield(event)
