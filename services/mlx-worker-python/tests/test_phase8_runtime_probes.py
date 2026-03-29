@@ -23,7 +23,7 @@ def test_wait_for_metrics_returns_requested_values(tmp_path: Path) -> None:
             {
                 "updated_at_unix_ms": 1,
                 "values": {
-                    "control_plane.text_ready_preload_ms": 12.5,
+                    "control_plane.http_ready_ms": 12.5,
                     "control_plane.background_preload_ms": 44.0,
                 },
             }
@@ -34,14 +34,14 @@ def test_wait_for_metrics_returns_requested_values(tmp_path: Path) -> None:
     metrics = phase8_runtime_probes.wait_for_metrics(
         metrics_path,
         [
-            "control_plane.text_ready_preload_ms",
+            "control_plane.http_ready_ms",
             "control_plane.background_preload_ms",
         ],
         timeout_seconds=0.01,
     )
 
     assert metrics == {
-        "control_plane.text_ready_preload_ms": 12.5,
+        "control_plane.http_ready_ms": 12.5,
         "control_plane.background_preload_ms": 44.0,
     }
 
@@ -49,7 +49,7 @@ def test_wait_for_metrics_returns_requested_values(tmp_path: Path) -> None:
 def test_wait_for_metrics_times_out_when_required_keys_never_appear(tmp_path: Path) -> None:
     metrics_path = tmp_path / "control-plane-metrics.json"
     metrics_path.write_text(
-        json.dumps({"updated_at_unix_ms": 1, "values": {"control_plane.text_ready_preload_ms": 12.5}}),
+        json.dumps({"updated_at_unix_ms": 1, "values": {"control_plane.http_ready_ms": 12.5}}),
         encoding="utf-8",
     )
 
@@ -79,27 +79,40 @@ def test_measure_cold_boot_to_ready_reads_bootstrap_metrics_from_the_stack(
                     {
                         "updated_at_unix_ms": 1,
                         "values": {
-                            "control_plane.worker_preload_ms": 22.0,
-                            "control_plane.text_ready_preload_ms": 18.5,
+                            "control_plane.http_ready_ms": 18.5,
                             "control_plane.background_preload_ms": 640.0,
                             "control_plane.background_preload_success": 1.0,
+                            "control_plane.text_first_load_ms": 125.0,
+                            "control_plane.text_first_load_estimated_resident_bytes": 4096.0,
+                            "control_plane.text_first_load_resident_bytes": 8192.0,
                         },
                     }
                 ),
                 encoding="utf-8",
             )
 
+        def chat_url(self) -> str:
+            return "http://127.0.0.1:11434/v1/chat/completions"
+
         def stop(self) -> None:
             self.stopped = True
 
     monkeypatch.setattr(phase8_runtime_probes, "LiveMelixStack", FakeStack)
+    monkeypatch.setattr(
+        phase8_runtime_probes,
+        "stream_chat_completion",
+        lambda stack, payload: {"status": 200, "body": "data: [DONE]"},
+    )
 
     report = phase8_runtime_probes.measure_cold_boot_to_ready(tmp_path)
 
     assert report["cold_boot_to_ready_ms"] >= 0
-    assert report["text_ready_preload_ms"] == 18.5
+    assert report["http_ready_ms"] == 18.5
     assert report["background_preload_ms"] == 640.0
     assert report["background_preload_success"] == 1.0
+    assert report["first_text_model_warm_ms"] == 125.0
+    assert report["text_model_load_estimated_resident_bytes"] == 4096.0
+    assert report["text_model_load_resident_bytes"] == 8192.0
 
 
 def test_collect_restart_recovery_evidence_splits_restart_and_restore_metrics(
@@ -122,7 +135,7 @@ def test_collect_restart_recovery_evidence_splits_restart_and_restore_metrics(
                     {
                         "updated_at_unix_ms": 1,
                         "values": {
-                            "control_plane.text_ready_preload_ms": 19.0,
+                            "control_plane.http_ready_ms": 19.0,
                             "control_plane.background_preload_ms": 680.0,
                             "control_plane.background_preload_success": 1.0,
                         },
@@ -154,7 +167,7 @@ def test_collect_restart_recovery_evidence_splits_restart_and_restore_metrics(
         phase8_runtime_probes,
         "wait_for_metrics",
         lambda metrics_path, keys: {
-            "control_plane.text_ready_preload_ms": 19.0,
+            "control_plane.http_ready_ms": 19.0,
             "control_plane.background_preload_ms": 680.0,
             "control_plane.background_preload_success": 1.0,
         },
@@ -166,7 +179,7 @@ def test_collect_restart_recovery_evidence_splits_restart_and_restore_metrics(
     assert report["snapshot_restore_ms"] == 130.0
     assert report["restart_recovery_ms"] == 580.0
     assert report["restart_recovery_success_rate"] == 100.0
-    assert report["text_ready_preload_ms"] == 19.0
+    assert report["http_ready_ms"] == 19.0
     assert report["background_preload_ms"] == 680.0
     assert report["background_preload_success"] == 1.0
 
@@ -219,7 +232,7 @@ def test_phase8_metrics_report_main_emits_split_bootstrap_metrics(
         "snapshot_restore_ms": 98.4,
         "restart_recovery_ms": 710.7,
         "restart_recovery_success_rate": 100.0,
-        "text_ready_preload_ms": 17.0,
+        "http_ready_ms": 17.0,
         "background_preload_ms": 644.0,
         "background_preload_success": 1.0,
     }
@@ -229,9 +242,12 @@ def test_phase8_metrics_report_main_emits_split_bootstrap_metrics(
         "measure_cold_boot_to_ready",
         lambda repo_root: {
             "cold_boot_to_ready_ms": 801.2,
-            "text_ready_preload_ms": 15.6,
+            "http_ready_ms": 801.2,
             "background_preload_ms": 622.4,
             "background_preload_success": 1.0,
+            "first_text_model_warm_ms": 141.8,
+            "text_model_load_estimated_resident_bytes": 4096.0,
+            "text_model_load_resident_bytes": 8192.0,
         },
     )
     monkeypatch.setattr(
@@ -276,8 +292,11 @@ def test_phase8_metrics_report_main_emits_split_bootstrap_metrics(
     payload = json.loads(capsys.readouterr().out)
     metrics = payload["metrics"]
     assert metrics["desktop.cold_boot_to_ready_ms"] == 801.2
-    assert metrics["desktop.text_ready_preload_ms"] == 15.6
+    assert metrics["desktop.http_ready_ms"] == 801.2
     assert metrics["desktop.background_preload_ms"] == 622.4
+    assert metrics["desktop.first_text_model_warm_ms"] == 141.8
+    assert metrics["desktop.text_model_load_estimated_resident_bytes"] == 4096.0
+    assert metrics["desktop.text_model_load_resident_bytes"] == 8192.0
     assert metrics["desktop.restart_to_ready_ms"] == 612.3
     assert metrics["desktop.snapshot_restore_ms"] == 98.4
     assert metrics["desktop.restart_recovery_ms"] == 710.7
@@ -293,9 +312,12 @@ def test_phase8_metrics_report_main_returns_nonzero_when_release_gate_fails(
         "measure_cold_boot_to_ready",
         lambda repo_root: {
             "cold_boot_to_ready_ms": 801.2,
-            "text_ready_preload_ms": 15.6,
+            "http_ready_ms": 801.2,
             "background_preload_ms": 622.4,
             "background_preload_success": 1.0,
+            "first_text_model_warm_ms": 141.8,
+            "text_model_load_estimated_resident_bytes": 4096.0,
+            "text_model_load_resident_bytes": 8192.0,
         },
     )
     monkeypatch.setattr(

@@ -19,22 +19,48 @@ def measure_cold_boot_to_ready(repo_root: Path) -> dict[str, float]:
         bootstrap_metrics = wait_for_metrics(
             stack.control_plane_metrics_path,
             [
-                "control_plane.worker_preload_ms",
-                "control_plane.text_ready_preload_ms",
+                "control_plane.http_ready_ms",
                 "control_plane.background_preload_ms",
                 "control_plane.background_preload_success",
             ],
         )
+        first_text = stream_chat_completion(
+            stack,
+            {
+                "model": "melix-dev-text",
+                "stream": True,
+                "messages": [{"role": "user", "content": "warm the text model for product acceptance"}],
+            },
+        )
+        if first_text["status"] != 200:
+            raise SystemExit(f"first text warmup smoke failed: {first_text}")
+        first_text_metrics = wait_for_metrics(
+            stack.control_plane_metrics_path,
+            [
+                "control_plane.text_first_load_ms",
+                "control_plane.text_first_load_estimated_resident_bytes",
+                "control_plane.text_first_load_resident_bytes",
+            ],
+        )
         return {
             "cold_boot_to_ready_ms": round(ready_ms, 2),
-            "text_ready_preload_ms": round(
-                float(bootstrap_metrics["control_plane.text_ready_preload_ms"]), 2
+            "http_ready_ms": round(
+                float(bootstrap_metrics["control_plane.http_ready_ms"]), 2
             ),
             "background_preload_ms": round(
                 float(bootstrap_metrics["control_plane.background_preload_ms"]), 2
             ),
             "background_preload_success": float(
                 bootstrap_metrics["control_plane.background_preload_success"]
+            ),
+            "first_text_model_warm_ms": round(
+                float(first_text_metrics["control_plane.text_first_load_ms"]), 2
+            ),
+            "text_model_load_estimated_resident_bytes": round(
+                float(first_text_metrics["control_plane.text_first_load_estimated_resident_bytes"]), 2
+            ),
+            "text_model_load_resident_bytes": round(
+                float(first_text_metrics["control_plane.text_first_load_resident_bytes"]), 2
             ),
         }
     finally:
@@ -88,7 +114,7 @@ def collect_restart_recovery_evidence(repo_root: Path) -> dict[str, float]:
             bootstrap_metrics = wait_for_metrics(
                 second_stack.control_plane_metrics_path,
                 [
-                    "control_plane.text_ready_preload_ms",
+                    "control_plane.http_ready_ms",
                     "control_plane.background_preload_ms",
                     "control_plane.background_preload_success",
                 ],
@@ -98,8 +124,8 @@ def collect_restart_recovery_evidence(repo_root: Path) -> dict[str, float]:
                 "snapshot_restore_ms": round(restore_ms, 2),
                 "restart_recovery_ms": round(recovery_ms, 2),
                 "restart_recovery_success_rate": 100.0 if success else 0.0,
-                "text_ready_preload_ms": round(
-                    float(bootstrap_metrics["control_plane.text_ready_preload_ms"]), 2
+                "http_ready_ms": round(
+                    float(bootstrap_metrics["control_plane.http_ready_ms"]), 2
                 ),
                 "background_preload_ms": round(
                     float(bootstrap_metrics["control_plane.background_preload_ms"]), 2

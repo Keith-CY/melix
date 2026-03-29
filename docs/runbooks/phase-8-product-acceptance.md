@@ -55,8 +55,11 @@ make phase8-metrics PHASE8_METRICS_ARGS="--json"
 The report includes:
 
 - cold boot to ready
-- text-ready preload latency
+- HTTP ready latency
 - background preload latency
+- first text-model warm latency
+- first text-model estimated resident bytes
+- first text-model resident bytes
 - operator action latency
 - install success rate
 - benchmark regression percentage

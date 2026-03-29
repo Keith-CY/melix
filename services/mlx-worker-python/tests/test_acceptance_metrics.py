@@ -129,9 +129,12 @@ def test_build_phase8_metrics_report_includes_required_probe_names() -> None:
     report = build_phase8_metrics_report(
         cold_boot={
             "cold_boot_to_ready_ms": 812.3,
-            "text_ready_preload_ms": 121.4,
+            "http_ready_ms": 812.3,
             "background_preload_ms": 944.8,
             "background_preload_success": 1.0,
+            "first_text_model_warm_ms": 143.2,
+            "text_model_load_estimated_resident_bytes": 4096,
+            "text_model_load_resident_bytes": 8192,
         },
         operator={
             "operator_action_latency_ms": 38.4,
@@ -172,8 +175,11 @@ def test_build_phase8_metrics_report_includes_required_probe_names() -> None:
 
     metrics = report["metrics"]
     assert metrics["desktop.cold_boot_to_ready_ms"] == 812.3
-    assert metrics["desktop.text_ready_preload_ms"] == 121.4
+    assert metrics["desktop.http_ready_ms"] == 812.3
     assert metrics["desktop.background_preload_ms"] == 944.8
+    assert metrics["desktop.first_text_model_warm_ms"] == 143.2
+    assert metrics["desktop.text_model_load_estimated_resident_bytes"] == 4096.0
+    assert metrics["desktop.text_model_load_resident_bytes"] == 8192.0
     assert metrics["desktop.operator_action_latency_ms"] == 38.4
     assert metrics["desktop.restart_to_ready_ms"] == 624.6
     assert metrics["desktop.snapshot_restore_ms"] == 109.7

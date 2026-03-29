@@ -158,7 +158,7 @@ class LiveMelixStack:
             start_new_session=True,
         )
 
-        wait_for_http_models(
+        wait_for_http_ready(
             self.http_port,
             swift_text_worker=self.swift_text_worker,
             swift_text_worker_stdout_path=self.swift_text_worker_stdout_path,
@@ -343,6 +343,35 @@ def wait_for_http_models(
     wait_for_http_model_states(
         port,
         required_states={"melix-dev-text": "warm"},
+        swift_text_worker=swift_text_worker,
+        swift_text_worker_stdout_path=swift_text_worker_stdout_path,
+        swift_text_worker_stderr_path=swift_text_worker_stderr_path,
+        python_worker=python_worker,
+        python_worker_stdout_path=python_worker_stdout_path,
+        python_worker_stderr_path=python_worker_stderr_path,
+        control_plane=control_plane,
+        control_plane_stdout_path=control_plane_stdout_path,
+        control_plane_stderr_path=control_plane_stderr_path,
+        timeout_seconds=timeout_seconds,
+    )
+
+
+def wait_for_http_ready(
+    port: int,
+    swift_text_worker: subprocess.Popen[str] | None = None,
+    swift_text_worker_stdout_path: Path | None = None,
+    swift_text_worker_stderr_path: Path | None = None,
+    python_worker: subprocess.Popen[str] | None = None,
+    python_worker_stdout_path: Path | None = None,
+    python_worker_stderr_path: Path | None = None,
+    control_plane: subprocess.Popen[str] | None = None,
+    control_plane_stdout_path: Path | None = None,
+    control_plane_stderr_path: Path | None = None,
+    timeout_seconds: float = 120,
+) -> None:
+    wait_for_http_model_states(
+        port,
+        required_states={},
         swift_text_worker=swift_text_worker,
         swift_text_worker_stdout_path=swift_text_worker_stdout_path,
         swift_text_worker_stderr_path=swift_text_worker_stderr_path,

@@ -825,8 +825,24 @@ public struct OpenAIHandler: Sendable {
         guard normalized.stream else {
             throw HTTPRequestHandlingError.streamRequired
         }
-        guard let modelHandle = await modelCatalog.dispatchHandle(for: normalized.model) else {
-            throw HTTPRequestHandlingError.modelNotReady
+        let modelHandle: String
+        if let readyHandle = await modelCatalog.dispatchHandle(for: normalized.model) {
+            modelHandle = readyHandle
+        } else {
+            do {
+                modelHandle = try await OnDemandModelLoader.ensureTextModelReady(
+                    modelID: normalized.model,
+                    modelCatalog: modelCatalog,
+                    workerRegistry: workerRegistry,
+                    metricsStore: metricsStore
+                )
+            } catch OnDemandModelLoadError.modelNotReady {
+                throw HTTPRequestHandlingError.modelNotReady
+            } catch OnDemandModelLoadError.workerUnavailable {
+                throw HTTPRequestHandlingError.workerUnavailable
+            } catch {
+                throw HTTPRequestHandlingError.workerUnavailable
+            }
         }
         let shapingStartedAt = Date()
         let translated = try translator.translate(normalized, modelHandle: modelHandle)
@@ -906,6 +922,8 @@ public struct OpenAIHandler: Sendable {
                 statusCode: 409,
                 payload: ["error": ["code": "model_not_ready", "message": "Requested model is not loaded."]]
             )
+        case .workerUnavailable:
+            return workerUnavailableResponse()
         }
     }
 
@@ -1215,6 +1233,7 @@ public struct OpenAIHandler: Sendable {
 private enum HTTPRequestHandlingError: Error {
     case streamRequired
     case modelNotReady
+    case workerUnavailable
 }
 
 private struct HealthResponse: Codable {

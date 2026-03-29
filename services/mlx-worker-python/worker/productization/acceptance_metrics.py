@@ -62,11 +62,20 @@ def build_phase8_metrics_report(
         "desktop.cold_boot_to_ready_ms": round(
             float(cold_boot_evidence["cold_boot_to_ready_ms"]), 2
         ),
-        "desktop.text_ready_preload_ms": round(
-            float(cold_boot_evidence.get("text_ready_preload_ms", 0.0)), 2
+        "desktop.http_ready_ms": round(
+            float(cold_boot_evidence.get("http_ready_ms", cold_boot_evidence["cold_boot_to_ready_ms"])), 2
         ),
         "desktop.background_preload_ms": round(
             float(cold_boot_evidence.get("background_preload_ms", 0.0)), 2
+        ),
+        "desktop.first_text_model_warm_ms": round(
+            float(cold_boot_evidence.get("first_text_model_warm_ms", 0.0)), 2
+        ),
+        "desktop.text_model_load_estimated_resident_bytes": round(
+            float(cold_boot_evidence.get("text_model_load_estimated_resident_bytes", 0.0)), 2
+        ),
+        "desktop.text_model_load_resident_bytes": round(
+            float(cold_boot_evidence.get("text_model_load_resident_bytes", 0.0)), 2
         ),
         "desktop.operator_action_latency_ms": round(
             float(operator["operator_action_latency_ms"]), 2

@@ -7,7 +7,7 @@ import urllib.request
 from tests.integration.helpers import LiveMelixStack
 
 
-def test_models_endpoint_reports_the_warm_dev_model() -> None:
+def test_models_endpoint_reports_the_discovered_dev_model_before_first_text_request() -> None:
     stack = LiveMelixStack(Path(__file__).resolve().parents[2])
     stack.start()
 
@@ -18,6 +18,6 @@ def test_models_endpoint_reports_the_warm_dev_model() -> None:
         assert response.status == 200
         assert payload["object"] == "list"
         model_rows = {item["id"]: item for item in payload["data"]}
-        assert model_rows["melix-dev-text"]["melix_state"] == "warm"
+        assert model_rows["melix-dev-text"]["melix_state"] == "discovered"
     finally:
         stack.stop()

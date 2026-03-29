@@ -289,6 +289,29 @@ public struct PythonBridgeWorkerClient:
 }
 
 public enum BootstrapWorkerPreparation {
+    public static func modelSpec(for modelID: String) -> Melix_Worker_V1_ModelSpec? {
+        switch modelID {
+        case "melix-dev-text":
+            return devTextModel()
+        case "melix-dev-embed":
+            return devEmbeddingModel()
+        case "melix-dev-rerank":
+            return devRerankModel()
+        case "melix-dev-ocr":
+            return devOCRModel()
+        case "melix-dev-vlm":
+            return devVLMModel()
+        case "melix-dev-transcribe":
+            return devTranscriptionModel()
+        case "melix-dev-speech":
+            return devSpeechModel()
+        case "melix-dev-image":
+            return devImageModel()
+        default:
+            return nil
+        }
+    }
+
     public static func preloadDevTextModel(
         workerClient: any WorkerRoutingClient,
         modelCatalog: ModelCatalog,

@@ -139,8 +139,20 @@ public actor ControlPlaneService {
                 maxTokens: request.maxTokens
             )
         )
-        guard let modelHandle = await modelCatalog.dispatchHandle(for: normalized.model) else {
-            throw ControlPlaneChatExecutionError.unavailable
+        let modelHandle: String
+        if let readyHandle = await modelCatalog.dispatchHandle(for: normalized.model) {
+            modelHandle = readyHandle
+        } else {
+            do {
+                modelHandle = try await OnDemandModelLoader.ensureTextModelReady(
+                    modelID: normalized.model,
+                    modelCatalog: modelCatalog,
+                    workerRegistry: workerRegistry,
+                    metricsStore: metricsStore
+                )
+            } catch {
+                throw ControlPlaneChatExecutionError.unavailable
+            }
         }
         let translated = try chatTranslator.translate(normalized, modelHandle: modelHandle)
         let execution = try await requestCoordinator.startChatCompletion(translated)

@@ -5,6 +5,7 @@ import MelixControlPlaneCore
 @main
 enum MelixControlPlaneBootstrap {
     static func main() async throws {
+        let bootstrapStartedAt = Date()
         let modelCatalog = ModelCatalog(seedModels: ModelCatalog.phaseSevenContractSeedModels())
         let bootstrapEnvironment = BootstrapEnvironment(environment: ProcessInfo.processInfo.environment)
         let metricsStore = MetricsStore(exportPath: bootstrapEnvironment.controlPlaneMetricsPath)
@@ -38,12 +39,6 @@ enum MelixControlPlaneBootstrap {
             defaultTextClient: swiftTextWorkerClient,
             pythonCompatibilityClient: pythonCompatibilityClient,
             modelCatalog: modelCatalog
-        )
-
-        await BootstrapPreloadCoordinator.preloadTextReadyModel(
-            workerClient: swiftTextWorkerClient,
-            modelCatalog: modelCatalog,
-            metricsStore: metricsStore
         )
 
         _ = ControlPlaneService(
@@ -81,6 +76,10 @@ enum MelixControlPlaneBootstrap {
             handler: handler
         )
         try await server.start()
+        await metricsStore.set(
+            Date().timeIntervalSince(bootstrapStartedAt) * 1000,
+            forKey: "control_plane.http_ready_ms"
+        )
         let _: Task<Void, Never> = BootstrapPreloadCoordinator.startBackgroundPhaseSevenPythonPreload(
             workerClient: pythonCompatibilityClient,
             modelCatalog: modelCatalog,

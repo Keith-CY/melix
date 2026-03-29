@@ -1327,6 +1327,43 @@ struct ControlPlaneServiceTests {
         }))
     }
 
+    @Test("startChat lazily loads a discovered text model before streaming")
+    func startChatLazilyLoadsDiscoveredTextModel() async throws {
+        let modelCatalog = ModelCatalog()
+        let textClient = ScriptedChatWorkerClient(events: [
+            makeQueuedExecuteEvent(requestID: "chat-lazy"),
+            makeTokenExecuteEvent(requestID: "chat-lazy", text: "assistant"),
+            makeCompletedExecuteEvent(
+                requestID: "chat-lazy",
+                finishReason: "stop",
+                assistant: "assistant",
+                reasoning: ""
+            )
+        ])
+        let service = ControlPlaneService(
+            modelCatalog: modelCatalog,
+            workerRegistry: WorkerRegistry(defaultTextClient: textClient, modelCatalog: modelCatalog),
+            chatTranslator: ChatRequestTranslator(requestIDGenerator: { "chat-lazy" })
+        )
+
+        let execution = try await service.startChat(
+            ControlPlaneChatRequest(
+                modelID: "melix-dev-text",
+                messages: [.init(role: "user", content: "hello")]
+            )
+        )
+        let loadRequest = try #require(await textClient.lastLoadModelRequest)
+        let generated = try #require(await textClient.lastGenerateRequest)
+        let model = await modelCatalog.model(id: "melix-dev-text")
+
+        _ = try await Array(execution.stream)
+
+        #expect(loadRequest.model.modelID == "melix-dev-text")
+        #expect(loadRequest.pinOnLoad == false)
+        #expect(generated.execution.modelHandle == "melix-dev-text")
+        #expect(model?.state == .modelWarm)
+    }
+
     @Test("execute maps fallback model policy values")
     func executeMapsFallbackModelPolicyValues() async throws {
         let service = ControlPlaneService(modelCatalog: ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels()))
@@ -2755,6 +2792,8 @@ private actor ScriptedModelOperationsWorkerClient: WorkerRoutingClient, ModelOpe
 
 private actor ScriptedChatWorkerClient: WorkerRoutingClient {
     private let events: [Melix_Worker_V1_ExecuteEvent]
+    private(set) var lastGenerateRequest: Melix_Worker_V1_GenerateRequest?
+    private(set) var lastLoadModelRequest: Melix_Worker_V1_LoadModelRequest?
 
     init(events: [Melix_Worker_V1_ExecuteEvent]) {
         self.events = events
@@ -2767,7 +2806,7 @@ private actor ScriptedChatWorkerClient: WorkerRoutingClient {
     func generate(
         request: Melix_Worker_V1_GenerateRequest
     ) async throws -> AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error> {
-        _ = request
+        lastGenerateRequest = request
         let events = self.events
         return AsyncThrowingStream { continuation in
             for event in events {
@@ -2785,7 +2824,9 @@ private actor ScriptedChatWorkerClient: WorkerRoutingClient {
     func loadModel(
         request: Melix_Worker_V1_LoadModelRequest
     ) async throws -> Melix_Worker_V1_LoadModelResponse {
+        lastLoadModelRequest = request
         var response = Melix_Worker_V1_LoadModelResponse()
+        response.ok = true
         response.modelHandle = request.model.modelID
         return response
     }

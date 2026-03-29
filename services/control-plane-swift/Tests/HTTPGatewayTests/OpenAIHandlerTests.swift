@@ -74,6 +74,166 @@ struct OpenAIHandlerTests {
         #expect(payload.contains("data: [DONE]"))
     }
 
+    @Test("POST /v1/chat/completions lazily loads a discovered text model before streaming")
+    func postChatCompletionsLazilyLoadsDiscoveredTextModel() async throws {
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel()])
+        let metricsStore = MetricsStore()
+        let workerClient = ScriptedWorkerClient(
+            events: [
+                makeTokenEvent(requestID: "req-lazy", seq: 1, text: "Echo"),
+                makeCompletedEvent(requestID: "req-lazy", seq: 2, finishReason: "stop", assistantText: "Echo"),
+            ],
+            loadModelHandle: "melix-dev-text::swift",
+            loadModelEstimatedResidentBytes: 4_096,
+            runtimeResidentBytes: 8_192
+        )
+        let registry = WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog)
+        let coordinator = RequestCoordinator(
+            workerRegistry: registry,
+            abortRegistry: AbortRegistry(),
+            metricsStore: metricsStore
+        )
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: coordinator,
+            workerRegistry: registry,
+            metricsStore: metricsStore,
+            translator: ChatRequestTranslator(requestIDGenerator: { "req-lazy" }),
+            sseWriter: SSEStreamWriter(now: { Date(timeIntervalSince1970: 123) })
+        )
+
+        let body = try #require(
+            """
+            {
+              "model": "melix-dev-text",
+              "stream": true,
+              "messages": [
+                { "role": "user", "content": "hello lazy load" }
+              ]
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/chat/completions",
+                headers: ["content-type": "application/json"],
+                body: body
+            )
+        )
+
+        let loadRequest = try #require(await workerClient.lastLoadModelRequest)
+        let generateRequest = try #require(await workerClient.lastGenerateRequest)
+        let payload = try await collectBody(response.body)
+        let metrics = await metricsStore.snapshot()
+        let loadedModel = await catalog.model(id: "melix-dev-text")
+
+        #expect(response.statusCode == 200)
+        #expect(loadRequest.model.modelID == "melix-dev-text")
+        #expect(loadRequest.pinOnLoad == false)
+        #expect(generateRequest.execution.modelHandle == "melix-dev-text::swift")
+        #expect(loadedModel?.state == .modelWarm)
+        #expect(metrics.values["control_plane.text_first_load_ms", default: -1] >= 0)
+        #expect(metrics.values["control_plane.text_first_load_estimated_resident_bytes"] == 4_096)
+        #expect(metrics.values["control_plane.text_first_load_resident_bytes"] == 8_192)
+        #expect(payload.contains("data: [DONE]"))
+    }
+
+    @Test("POST /v1/chat/completions falls back to estimated resident bytes when runtime stats are unavailable")
+    func postChatCompletionsFallsBackToEstimatedResidentBytesWhenRuntimeStatsAreUnavailable() async throws {
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel()])
+        let metricsStore = MetricsStore()
+        let workerClient = ScriptedWorkerClient(
+            events: [
+                makeCompletedEvent(requestID: "req-lazy-estimate", seq: 1, finishReason: "stop", assistantText: "done"),
+            ],
+            loadModelHandle: "melix-dev-text::swift",
+            loadModelEstimatedResidentBytes: 12_288,
+            runtimeStatsFailure: WorkerClientError.unavailable
+        )
+        let registry = WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog)
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: registry,
+                abortRegistry: AbortRegistry(),
+                metricsStore: metricsStore
+            ),
+            workerRegistry: registry,
+            metricsStore: metricsStore,
+            translator: ChatRequestTranslator(requestIDGenerator: { "req-lazy-estimate" })
+        )
+
+        let body = try #require(
+            """
+            {
+              "model": "melix-dev-text",
+              "stream": true,
+              "messages": [
+                { "role": "user", "content": "warm with estimated resident bytes" }
+              ]
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/chat/completions",
+                headers: ["content-type": "application/json"],
+                body: body
+            )
+        )
+        let payload = try await collectBody(response.body)
+        let metrics = await metricsStore.snapshot()
+
+        #expect(response.statusCode == 200)
+        #expect(metrics.values["control_plane.text_first_load_estimated_resident_bytes"] == 12_288)
+        #expect(metrics.values["control_plane.text_first_load_resident_bytes"] == 12_288)
+        #expect(payload.contains("data: [DONE]"))
+    }
+
+    @Test("POST /v1/chat/completions returns 503 when lazy text loading cannot reach the worker")
+    func postChatCompletionsReturns503WhenLazyTextLoadingCannotReachWorker() async throws {
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel()])
+        let registry = WorkerRegistry(defaultTextClient: UnavailableWorkerClient(), modelCatalog: catalog)
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: registry,
+                abortRegistry: AbortRegistry()
+            ),
+            workerRegistry: registry,
+            translator: ChatRequestTranslator(requestIDGenerator: { "req-lazy-unavailable" })
+        )
+
+        let body = try #require(
+            """
+            {
+              "model": "melix-dev-text",
+              "stream": true,
+              "messages": [
+                { "role": "user", "content": "hello unavailable lazy load" }
+              ]
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/chat/completions",
+                headers: ["content-type": "application/json"],
+                body: body
+            )
+        )
+        let payload = try await collectBody(response.body)
+
+        #expect(response.statusCode == 503)
+        #expect(payload.contains("\"code\":\"worker_unavailable\""))
+    }
+
     @Test("POST /v1/chat/completions returns invalid argument for malformed multimodal payloads")
     func postChatCompletionsReturnsInvalidArgumentForMalformedMultimodalPayloads() async throws {
         let workerClient = ScriptedWorkerClient(events: [])
@@ -508,7 +668,7 @@ struct OpenAIHandlerTests {
     @Test("responses requests return 409 when the model is not ready")
     func responsesModelNotReadyReturns409() async throws {
         let handler = OpenAIHandler(
-            modelCatalog: ModelCatalog(),
+            modelCatalog: ModelCatalog(seedModels: []),
             requestCoordinator: RequestCoordinator(
                 workerRegistry: WorkerRegistry(defaultTextClient: ScriptedWorkerClient(events: [])),
                 abortRegistry: AbortRegistry()
@@ -2827,7 +2987,7 @@ struct OpenAIHandlerTests {
     @Test("chat requests return 409 when the model is not ready")
     func modelNotReadyReturns409() async throws {
         let handler = OpenAIHandler(
-            modelCatalog: ModelCatalog(),
+            modelCatalog: ModelCatalog(seedModels: []),
             requestCoordinator: RequestCoordinator(
                 workerRegistry: WorkerRegistry(defaultTextClient: ScriptedWorkerClient(events: [])),
                 abortRegistry: AbortRegistry()
@@ -3051,12 +3211,27 @@ struct OpenAIHandlerTests {
     }
 }
 
-private actor ScriptedWorkerClient: WorkerRoutingClient {
+private actor ScriptedWorkerClient: WorkerRoutingClient, RuntimeIntrospectingWorkerClientProtocol {
     private let events: [Melix_Worker_V1_ExecuteEvent]
+    private let loadModelHandle: String
+    private let loadModelEstimatedResidentBytes: UInt64
+    private let runtimeResidentBytes: UInt64
+    private let runtimeStatsFailure: Error?
     private(set) var lastGenerateRequest: Melix_Worker_V1_GenerateRequest?
+    private(set) var lastLoadModelRequest: Melix_Worker_V1_LoadModelRequest?
 
-    init(events: [Melix_Worker_V1_ExecuteEvent]) {
+    init(
+        events: [Melix_Worker_V1_ExecuteEvent],
+        loadModelHandle: String = "melix-dev-text::swift",
+        loadModelEstimatedResidentBytes: UInt64 = 0,
+        runtimeResidentBytes: UInt64 = 0,
+        runtimeStatsFailure: Error? = nil
+    ) {
         self.events = events
+        self.loadModelHandle = loadModelHandle
+        self.loadModelEstimatedResidentBytes = loadModelEstimatedResidentBytes
+        self.runtimeResidentBytes = runtimeResidentBytes
+        self.runtimeStatsFailure = runtimeStatsFailure
     }
 
     func canDispatchRequests() async -> Bool {
@@ -3083,9 +3258,20 @@ private actor ScriptedWorkerClient: WorkerRoutingClient {
     func loadModel(
         request: Melix_Worker_V1_LoadModelRequest
     ) async throws -> Melix_Worker_V1_LoadModelResponse {
+        lastLoadModelRequest = request
         var response = Melix_Worker_V1_LoadModelResponse()
         response.ok = true
-        response.modelHandle = "melix-dev-text::swift"
+        response.modelHandle = loadModelHandle
+        response.estimatedResidentBytes = loadModelEstimatedResidentBytes
+        return response
+    }
+
+    func runtimeStats() async throws -> Melix_Worker_V1_GetRuntimeStatsResponse {
+        if let runtimeStatsFailure {
+            throw runtimeStatsFailure
+        }
+        var response = Melix_Worker_V1_GetRuntimeStatsResponse()
+        response.stats.residentBytes = runtimeResidentBytes
         return response
     }
 }
