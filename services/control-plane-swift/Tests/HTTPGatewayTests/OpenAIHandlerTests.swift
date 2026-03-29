@@ -1573,6 +1573,375 @@ struct OpenAIHandlerTests {
         #expect(unavailablePayload.contains("\"code\":\"worker_unavailable\""))
     }
 
+    @Test("image generation returns resource_exhausted when the background queue is saturated")
+    func postImageGenerationsReturnResourceExhaustedWhenQueueIsSaturated() async throws {
+        let textClient = ScriptedWorkerClient(events: [])
+        let imageClient = BlockingPhaseSevenImageWorkerClient()
+        let metricsStore = MetricsStore()
+        let schedulerReadModel = SchedulerReadModel(metricsStore: metricsStore)
+        let imageJobReadModel = ImageJobReadModel()
+        let admissionController = ImageJobAdmissionController(maxConcurrentJobs: 1, maxQueuedJobs: 0)
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel(), ModelCatalog.devImageModel()])
+        _ = await catalog.loadModel(id: "melix-dev-image", dispatchHandle: "melix-dev-image::python")
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: textClient),
+                abortRegistry: AbortRegistry()
+            ),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: textClient,
+                pythonCompatibilityClient: imageClient,
+                modelCatalog: catalog
+            ),
+            metricsStore: metricsStore,
+            schedulerReadModel: schedulerReadModel,
+            imageJobReadModel: imageJobReadModel,
+            imageJobAdmissionController: admissionController
+        )
+
+        let activeBody = try #require(
+            """
+            {
+              "id": "image-saturated-active",
+              "model": "melix-dev-image",
+              "prompt": "Hold the image worker"
+            }
+            """.data(using: .utf8)
+        )
+        let activeTask = Task {
+            try await handler.handle(
+                HTTPRequest(method: .post, path: "/v1/images/generations", headers: [:], body: activeBody)
+            )
+        }
+        try await waitForOpenAIHandlerCondition("expected first image request to start") {
+            await imageClient.startedRequestIDs == ["image-saturated-active"]
+        }
+
+        let saturatedBody = try #require(
+            """
+            {
+              "id": "image-saturated-rejected",
+              "model": "melix-dev-image",
+              "prompt": "This request should saturate"
+            }
+            """.data(using: .utf8)
+        )
+        let saturatedResponse = try await handler.handle(
+            HTTPRequest(method: .post, path: "/v1/images/generations", headers: [:], body: saturatedBody)
+        )
+        let saturatedPayload = try await collectBody(saturatedResponse.body)
+        let rejectedJob = try #require(await imageJobReadModel.job(requestID: "image-saturated-rejected"))
+
+        await imageClient.finishGenerate(requestID: "image-saturated-active")
+        _ = try await activeTask.value
+
+        #expect(saturatedResponse.statusCode == 503)
+        #expect(saturatedPayload.contains("\"code\":\"resource_exhausted\""))
+        #expect(rejectedJob.state == .imageJobFailed)
+        #expect(rejectedJob.error.code == "resource_exhausted")
+    }
+
+    @Test("image edit returns resource_exhausted when the background queue is saturated")
+    func postImageEditsReturnResourceExhaustedWhenQueueIsSaturated() async throws {
+        let textClient = ScriptedWorkerClient(events: [])
+        let imageClient = BlockingPhaseSevenImageWorkerClient()
+        let imageJobReadModel = ImageJobReadModel()
+        let admissionController = ImageJobAdmissionController(maxConcurrentJobs: 1, maxQueuedJobs: 0)
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devImageModel()])
+        _ = await catalog.loadModel(id: "melix-dev-image", dispatchHandle: "melix-dev-image::python")
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: textClient),
+                abortRegistry: AbortRegistry()
+            ),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: textClient,
+                pythonCompatibilityClient: imageClient,
+                modelCatalog: catalog
+            ),
+            imageJobReadModel: imageJobReadModel,
+            imageJobAdmissionController: admissionController
+        )
+
+        let activeBody = try #require(
+            """
+            {
+              "id": "image-edit-saturated-active",
+              "model": "melix-dev-image",
+              "prompt": "Hold the image worker"
+            }
+            """.data(using: .utf8)
+        )
+        let activeTask = Task {
+            try await handler.handle(
+                HTTPRequest(method: .post, path: "/v1/images/generations", headers: [:], body: activeBody)
+            )
+        }
+        try await waitForOpenAIHandlerCondition("expected first image request to start") {
+            await imageClient.startedRequestIDs == ["image-edit-saturated-active"]
+        }
+
+        let saturatedEditBody = try #require(
+            """
+            {
+              "id": "image-edit-saturated-rejected",
+              "model": "melix-dev-image",
+              "prompt": "This edit should saturate",
+              "image_url": "file:///tmp/source.png"
+            }
+            """.data(using: .utf8)
+        )
+        let saturatedResponse = try await handler.handle(
+            HTTPRequest(method: .post, path: "/v1/images/edits", headers: [:], body: saturatedEditBody)
+        )
+        let saturatedPayload = try await collectBody(saturatedResponse.body)
+        let rejectedJob = try #require(await imageJobReadModel.job(requestID: "image-edit-saturated-rejected"))
+
+        await imageClient.finishGenerate(requestID: "image-edit-saturated-active")
+        _ = try await activeTask.value
+
+        #expect(saturatedResponse.statusCode == 503)
+        #expect(saturatedPayload.contains("\"code\":\"resource_exhausted\""))
+        #expect(rejectedJob.state == .imageJobFailed)
+        #expect(rejectedJob.error.code == "resource_exhausted")
+    }
+
+    @Test("image generation returns worker_unavailable when admission fails generically")
+    func postImageGenerationsReturnWorkerUnavailableWhenAdmissionFailsGenerically() async throws {
+        let textClient = ScriptedWorkerClient(events: [])
+        let imageClient = ScriptedPhaseFiveWorkerClient()
+        let imageJobReadModel = ImageJobReadModel()
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devImageModel()])
+        _ = await catalog.loadModel(id: "melix-dev-image", dispatchHandle: "melix-dev-image::python")
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: textClient),
+                abortRegistry: AbortRegistry()
+            ),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: textClient,
+                pythonCompatibilityClient: imageClient,
+                modelCatalog: catalog
+            ),
+            imageJobReadModel: imageJobReadModel,
+            imageJobAdmissionController: StubImageJobAdmissionController(acquireError: WorkerClientError.unavailable)
+        )
+
+        let body = try #require(
+            """
+            {
+              "id": "image-generate-admission-failed",
+              "model": "melix-dev-image",
+              "prompt": "blocked"
+            }
+            """.data(using: .utf8)
+        )
+        let response = try await handler.handle(
+            HTTPRequest(method: .post, path: "/v1/images/generations", headers: [:], body: body)
+        )
+        let payload = try await collectBody(response.body)
+        let failedJob = try #require(await imageJobReadModel.job(requestID: "image-generate-admission-failed"))
+
+        #expect(response.statusCode == 503)
+        #expect(payload.contains("\"code\":\"worker_unavailable\""))
+        #expect(failedJob.state == .imageJobFailed)
+        #expect(failedJob.error.code == "worker_unavailable")
+    }
+
+    @Test("image edit returns worker_unavailable when admission fails generically")
+    func postImageEditsReturnWorkerUnavailableWhenAdmissionFailsGenerically() async throws {
+        let textClient = ScriptedWorkerClient(events: [])
+        let imageClient = ScriptedPhaseFiveWorkerClient()
+        let imageJobReadModel = ImageJobReadModel()
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devImageModel()])
+        _ = await catalog.loadModel(id: "melix-dev-image", dispatchHandle: "melix-dev-image::python")
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: textClient),
+                abortRegistry: AbortRegistry()
+            ),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: textClient,
+                pythonCompatibilityClient: imageClient,
+                modelCatalog: catalog
+            ),
+            imageJobReadModel: imageJobReadModel,
+            imageJobAdmissionController: StubImageJobAdmissionController(acquireError: WorkerClientError.unavailable)
+        )
+
+        let body = try #require(
+            """
+            {
+              "id": "image-edit-admission-failed",
+              "model": "melix-dev-image",
+              "prompt": "blocked",
+              "image_url": "file:///tmp/source.png"
+            }
+            """.data(using: .utf8)
+        )
+        let response = try await handler.handle(
+            HTTPRequest(method: .post, path: "/v1/images/edits", headers: [:], body: body)
+        )
+        let payload = try await collectBody(response.body)
+        let failedJob = try #require(await imageJobReadModel.job(requestID: "image-edit-admission-failed"))
+
+        #expect(response.statusCode == 503)
+        #expect(payload.contains("\"code\":\"worker_unavailable\""))
+        #expect(failedJob.state == .imageJobFailed)
+        #expect(failedJob.error.code == "worker_unavailable")
+    }
+
+    @Test("queued image generation returns cancelled when admission is aborted before execution")
+    func postImageGenerationsReturnCancelledWhenQueuedAdmissionIsAborted() async throws {
+        let textClient = ScriptedWorkerClient(events: [])
+        let imageClient = BlockingPhaseSevenImageWorkerClient()
+        let imageJobReadModel = ImageJobReadModel()
+        let admissionController = ImageJobAdmissionController(maxConcurrentJobs: 1, maxQueuedJobs: 1)
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devImageModel()])
+        _ = await catalog.loadModel(id: "melix-dev-image", dispatchHandle: "melix-dev-image::python")
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: textClient),
+                abortRegistry: AbortRegistry()
+            ),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: textClient,
+                pythonCompatibilityClient: imageClient,
+                modelCatalog: catalog
+            ),
+            imageJobReadModel: imageJobReadModel,
+            imageJobAdmissionController: admissionController
+        )
+
+        let activeBody = try #require(
+            """
+            {
+              "id": "image-cancel-active",
+              "model": "melix-dev-image",
+              "prompt": "Hold the image worker"
+            }
+            """.data(using: .utf8)
+        )
+        let activeTask = Task {
+            try await handler.handle(
+                HTTPRequest(method: .post, path: "/v1/images/generations", headers: [:], body: activeBody)
+            )
+        }
+        try await waitForOpenAIHandlerCondition("expected first image request to start") {
+            await imageClient.startedRequestIDs == ["image-cancel-active"]
+        }
+
+        let queuedBody = try #require(
+            """
+            {
+              "id": "image-cancel-queued",
+              "model": "melix-dev-image",
+              "prompt": "Queue this image job"
+            }
+            """.data(using: .utf8)
+        )
+        let queuedTask = Task {
+            try await handler.handle(
+                HTTPRequest(method: .post, path: "/v1/images/generations", headers: [:], body: queuedBody)
+            )
+        }
+        try await waitForOpenAIHandlerCondition("expected queued image job to be visible") {
+            await imageJobReadModel.job(requestID: "image-cancel-queued")?.state == .imageJobQueued
+        }
+
+        let disposition = await admissionController.cancel(requestID: "image-cancel-queued")
+        let cancelledResponse = try await queuedTask.value
+        let cancelledPayload = try await collectBody(cancelledResponse.body)
+        let cancelledJob = try #require(await imageJobReadModel.job(requestID: "image-cancel-queued"))
+
+        await imageClient.finishGenerate(requestID: "image-cancel-active")
+        _ = try await activeTask.value
+
+        #expect(disposition == .queued)
+        #expect(cancelledResponse.statusCode == 409)
+        #expect(cancelledPayload.contains("\"code\":\"cancelled\""))
+        #expect(cancelledJob.state == .imageJobCanceled)
+    }
+
+    @Test("queued image edit returns cancelled when admission is aborted before execution")
+    func postImageEditsReturnCancelledWhenQueuedAdmissionIsAborted() async throws {
+        let textClient = ScriptedWorkerClient(events: [])
+        let imageClient = BlockingPhaseSevenImageWorkerClient()
+        let imageJobReadModel = ImageJobReadModel()
+        let admissionController = ImageJobAdmissionController(maxConcurrentJobs: 1, maxQueuedJobs: 1)
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devImageModel()])
+        _ = await catalog.loadModel(id: "melix-dev-image", dispatchHandle: "melix-dev-image::python")
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: textClient),
+                abortRegistry: AbortRegistry()
+            ),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: textClient,
+                pythonCompatibilityClient: imageClient,
+                modelCatalog: catalog
+            ),
+            imageJobReadModel: imageJobReadModel,
+            imageJobAdmissionController: admissionController
+        )
+
+        let activeBody = try #require(
+            """
+            {
+              "id": "image-edit-cancel-active",
+              "model": "melix-dev-image",
+              "prompt": "Hold the image worker"
+            }
+            """.data(using: .utf8)
+        )
+        let activeTask = Task {
+            try await handler.handle(
+                HTTPRequest(method: .post, path: "/v1/images/generations", headers: [:], body: activeBody)
+            )
+        }
+        try await waitForOpenAIHandlerCondition("expected first image request to start") {
+            await imageClient.startedRequestIDs == ["image-edit-cancel-active"]
+        }
+
+        let queuedEditBody = try #require(
+            """
+            {
+              "id": "image-edit-cancel-queued",
+              "model": "melix-dev-image",
+              "prompt": "Queue this image edit",
+              "image_url": "file:///tmp/source.png"
+            }
+            """.data(using: .utf8)
+        )
+        let queuedTask = Task {
+            try await handler.handle(
+                HTTPRequest(method: .post, path: "/v1/images/edits", headers: [:], body: queuedEditBody)
+            )
+        }
+        try await waitForOpenAIHandlerCondition("expected queued image edit to be visible") {
+            await imageJobReadModel.job(requestID: "image-edit-cancel-queued")?.state == .imageJobQueued
+        }
+
+        let disposition = await admissionController.cancel(requestID: "image-edit-cancel-queued")
+        let cancelledResponse = try await queuedTask.value
+        let cancelledPayload = try await collectBody(cancelledResponse.body)
+        let cancelledJob = try #require(await imageJobReadModel.job(requestID: "image-edit-cancel-queued"))
+
+        await imageClient.finishGenerate(requestID: "image-edit-cancel-active")
+        _ = try await activeTask.value
+
+        #expect(disposition == .queued)
+        #expect(cancelledResponse.statusCode == 409)
+        #expect(cancelledPayload.contains("\"code\":\"cancelled\""))
+        #expect(cancelledJob.state == .imageJobCanceled)
+    }
+
     @Test("image endpoints map cancellation thrown failures and non-terminal states into operator-visible responses")
     func imageEndpointsMapCancellationThrownFailuresAndNonTerminalStates() async throws {
         let textClient = ScriptedWorkerClient(events: [])
@@ -1844,6 +2213,50 @@ struct OpenAIHandlerTests {
         #expect(completedResponse.statusCode == 200)
         #expect(completedPayload.contains("\"state\":\"completed\""))
         #expect(completedPayload.contains("\"role\":\"generated\""))
+    }
+
+    @Test("image edit returns worker_unavailable when the worker throws after admission")
+    func imageEditReturnsWorkerUnavailableWhenWorkerThrowsAfterAdmission() async throws {
+        let textClient = ScriptedWorkerClient(events: [])
+        let imageClient = ScriptedPhaseFiveWorkerClient()
+        await imageClient.setThrownFailure(WorkerClientError.unavailable)
+        let imageJobReadModel = ImageJobReadModel()
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devImageModel()])
+        _ = await catalog.loadModel(id: "melix-dev-image", dispatchHandle: "melix-dev-image::python")
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: textClient),
+                abortRegistry: AbortRegistry()
+            ),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: textClient,
+                pythonCompatibilityClient: imageClient,
+                modelCatalog: catalog
+            ),
+            imageJobReadModel: imageJobReadModel
+        )
+
+        let body = try #require(
+            """
+            {
+              "id": "image-edit-worker-threw",
+              "model": "melix-dev-image",
+              "prompt": "throw",
+              "image_base64": "U09VUkNF"
+            }
+            """.data(using: .utf8)
+        )
+        let response = try await handler.handle(
+            HTTPRequest(method: .post, path: "/v1/images/edits", headers: [:], body: body)
+        )
+        let payload = try await collectBody(response.body)
+        let failedJob = try #require(await imageJobReadModel.job(requestID: "image-edit-worker-threw"))
+
+        #expect(response.statusCode == 503)
+        #expect(payload.contains("\"code\":\"worker_unavailable\""))
+        #expect(failedJob.state == .imageJobFailed)
+        #expect(failedJob.error.code == "worker_unavailable")
     }
 
     @Test("GET /health reports route readiness and model counts")
@@ -2795,6 +3208,148 @@ private actor ScriptedPhaseFiveWorkerClient:
     }
 }
 
+private actor BlockingPhaseSevenImageWorkerClient: WorkerRoutingClient, NonTextInferenceWorkerClientProtocol {
+    private var generateRequests: [String: Melix_Worker_V1_ImageGenerateRequest] = [:]
+    private var generateContinuations: [String: CheckedContinuation<Melix_Worker_V1_ImageGenerateResponse, Error>] = [:]
+
+    private(set) var startedRequestIDs: [String] = []
+
+    func canDispatchRequests() async -> Bool {
+        true
+    }
+
+    func generate(
+        request: Melix_Worker_V1_GenerateRequest
+    ) async throws -> AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error> {
+        _ = request
+        return AsyncThrowingStream { continuation in
+            continuation.finish()
+        }
+    }
+
+    func abort(requestID: String) async throws -> Bool {
+        _ = requestID
+        return false
+    }
+
+    func loadModel(
+        request: Melix_Worker_V1_LoadModelRequest
+    ) async throws -> Melix_Worker_V1_LoadModelResponse {
+        var response = Melix_Worker_V1_LoadModelResponse()
+        response.ok = true
+        response.modelHandle = "\(request.model.modelID)::python"
+        return response
+    }
+
+    func embed(
+        request: Melix_Worker_V1_EmbedRequest
+    ) async throws -> Melix_Worker_V1_EmbedResponse {
+        _ = request
+        return Melix_Worker_V1_EmbedResponse()
+    }
+
+    func rerank(
+        request: Melix_Worker_V1_RerankRequest
+    ) async throws -> Melix_Worker_V1_RerankResponse {
+        _ = request
+        return Melix_Worker_V1_RerankResponse()
+    }
+
+    func transcribe(
+        request: Melix_Worker_V1_TranscribeRequest
+    ) async throws -> Melix_Worker_V1_TranscribeResponse {
+        _ = request
+        return Melix_Worker_V1_TranscribeResponse()
+    }
+
+    func speak(
+        request: Melix_Worker_V1_SpeakRequest
+    ) async throws -> Melix_Worker_V1_SpeakResponse {
+        _ = request
+        return Melix_Worker_V1_SpeakResponse()
+    }
+
+    func imageGenerate(
+        request: Melix_Worker_V1_ImageGenerateRequest
+    ) async throws -> Melix_Worker_V1_ImageGenerateResponse {
+        let requestID = request.id.requestID
+        startedRequestIDs.append(requestID)
+        generateRequests[requestID] = request
+        return try await withCheckedThrowingContinuation { continuation in
+            generateContinuations[requestID] = continuation
+        }
+    }
+
+    func imageEdit(
+        request: Melix_Worker_V1_ImageEditRequest
+    ) async throws -> Melix_Worker_V1_ImageEditResponse {
+        _ = request
+        return Melix_Worker_V1_ImageEditResponse()
+    }
+
+    func finishGenerate(requestID: String) {
+        guard let request = generateRequests.removeValue(forKey: requestID),
+              let continuation = generateContinuations.removeValue(forKey: requestID) else {
+            return
+        }
+
+        var response = Melix_Worker_V1_ImageGenerateResponse()
+        response.images = [Data("done".utf8)]
+        response.job.requestID = requestID
+        response.job.jobID = "\(requestID)::image-generate"
+        response.job.modelHandle = request.modelHandle
+        response.job.operation = "image_generate"
+        response.job.state = .imageJobCompleted
+        response.job.progress.stage = "completed"
+        response.job.progress.pct = 1
+        response.job.artifacts = [
+            makeWorkerArtifact(
+                jobID: "\(requestID)::image-generate",
+                role: .imageArtifactGenerated
+            )
+        ]
+        continuation.resume(returning: response)
+    }
+}
+
+private actor StubImageJobAdmissionController: ImageJobAdmissionControlling {
+    private let acquireError: Error?
+
+    init(acquireError: Error? = nil) {
+        self.acquireError = acquireError
+    }
+
+    func acquire(
+        requestID: String,
+        laneHint: String,
+        workerID: String,
+        priority: Int32
+    ) async throws {
+        _ = requestID
+        _ = laneHint
+        _ = workerID
+        _ = priority
+        if let acquireError {
+            throw acquireError
+        }
+    }
+
+    func finish(
+        requestID: String,
+        phase: Melix_Controlplane_V1_RequestPhase,
+        workerID: String?
+    ) async {
+        _ = requestID
+        _ = phase
+        _ = workerID
+    }
+
+    func cancel(requestID: String) async -> ImageJobCancelDisposition {
+        _ = requestID
+        return .notFound
+    }
+}
+
 private func makeWorkerArtifact(
     jobID: String,
     role: Melix_Worker_V1_ImageArtifactRole,
@@ -2813,6 +3368,27 @@ private func makeWorkerArtifact(
     artifact.sha256 = "sha256-\(artifactID)"
     artifact.variantIndex = 0
     return artifact
+}
+
+private func waitForOpenAIHandlerCondition(
+    _ description: String,
+    timeout: Duration = .milliseconds(500),
+    pollInterval: Duration = .milliseconds(10),
+    condition: @escaping @Sendable () async -> Bool
+) async throws {
+    let deadline = ContinuousClock.now + timeout
+    while ContinuousClock.now < deadline {
+        if await condition() {
+            return
+        }
+        try await Task.sleep(for: pollInterval)
+    }
+
+    throw OpenAIHandlerTestError(description: description)
+}
+
+private struct OpenAIHandlerTestError: Error, CustomStringConvertible {
+    let description: String
 }
 
 private actor UnavailableWorkerClient: WorkerRoutingClient {

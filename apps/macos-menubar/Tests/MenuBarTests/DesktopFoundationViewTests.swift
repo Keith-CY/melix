@@ -250,6 +250,111 @@ struct DesktopFoundationViewTests {
         #expect(await client.recordedActions.contains("image.edit:melix-dev-image"))
         #expect(view.subviews.isEmpty == false)
     }
+
+    @Test("image tab dispatches cancel for the selected cancelable job")
+    @MainActor
+    func imageTabDispatchesCancelForSelectedJob() async throws {
+        let client = FakeControlPlaneXPCClient()
+        var snapshot = Melix_Controlplane_V1_ServerSnapshot()
+        snapshot.serverState = .serverReady
+        snapshot.models = [
+            {
+                var model = Melix_Controlplane_V1_ModelSummary()
+                model.modelID = "melix-dev-text"
+                model.kind = "text"
+                model.state = .modelWarm
+                model.features = ["chat"]
+                return model
+            }(),
+            makeMenuBarImageModelSummary(),
+        ]
+        snapshot.imageJobs = [
+            makeMenuBarImageJobSummary(
+                jobID: "job-image-running",
+                requestID: "req-image-running",
+                operation: "image_generate",
+                state: .imageJobRunning
+            ),
+        ]
+        await client.configureSnapshot(snapshot)
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+
+        let tab = DesktopImageTabView(viewModel: viewModel)
+        tab.cancelSelectedJob()
+        try await Task.sleep(for: .milliseconds(20))
+        let view = hostView(tab)
+
+        #expect(await client.recordedActions.contains("cancel:req-image-running"))
+        #expect(view.subviews.isEmpty == false)
+    }
+
+    @Test("image tab renders completed jobs without dispatching cancel")
+    @MainActor
+    func imageTabRendersCompletedJobsWithoutCancelDispatch() async throws {
+        let client = FakeControlPlaneXPCClient()
+        var snapshot = Melix_Controlplane_V1_ServerSnapshot()
+        snapshot.serverState = .serverReady
+        snapshot.models = [
+            {
+                var model = Melix_Controlplane_V1_ModelSummary()
+                model.modelID = "melix-dev-text"
+                model.kind = "text"
+                model.state = .modelWarm
+                model.features = ["chat"]
+                return model
+            }(),
+            makeMenuBarImageModelSummary(),
+        ]
+        snapshot.imageJobs = [
+            makeMenuBarImageJobSummary(
+                jobID: "job-image-complete",
+                requestID: "req-image-complete",
+                operation: "image_generate",
+                state: .imageJobCompleted
+            ),
+        ]
+        await client.configureSnapshot(snapshot)
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+
+        let view = hostView(DesktopImageTabView(viewModel: viewModel))
+        await viewModel.cancelSelectedImageJob()
+
+        #expect(view.subviews.isEmpty == false)
+        #expect(await client.recordedActions.contains("cancel:req-image-complete") == false)
+        #expect(viewModel.imageStatusText != "Canceling")
+        #expect(viewModel.imageStatusText != "Failed")
+    }
+
+    @Test("image tab renders empty-state placeholders when no jobs are available")
+    @MainActor
+    func imageTabRendersEmptyStatePlaceholders() async throws {
+        let client = FakeControlPlaneXPCClient()
+        var snapshot = Melix_Controlplane_V1_ServerSnapshot()
+        snapshot.serverState = .serverReady
+        snapshot.models = [
+            {
+                var model = Melix_Controlplane_V1_ModelSummary()
+                model.modelID = "melix-dev-text"
+                model.kind = "text"
+                model.state = .modelWarm
+                model.features = ["chat"]
+                return model
+            }(),
+            makeMenuBarImageModelSummary(),
+        ]
+        snapshot.imageJobs = []
+        await client.configureSnapshot(snapshot)
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+
+        let view = hostView(DesktopImageTabView(viewModel: viewModel))
+
+        #expect(view.subviews.isEmpty == false)
+        #expect(viewModel.imageJobs.isEmpty)
+        #expect(viewModel.selectedImageJob == nil)
+    }
 }
 
 @MainActor

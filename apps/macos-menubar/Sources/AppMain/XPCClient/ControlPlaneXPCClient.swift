@@ -94,6 +94,7 @@ public protocol ControlPlaneXPCClient: Sendable {
     func editImage(
         _ request: ControlPlaneImageEditRequest
     ) async throws -> Melix_Controlplane_V1_ImageJobSummary
+    func cancelRequest(requestID: String) async throws -> Bool
 }
 
 public extension ControlPlaneXPCClient {
@@ -114,6 +115,14 @@ public extension ControlPlaneXPCClient {
         throw ControlPlaneXPCClientError.requestFailed(
             code: "unimplemented",
             message: "Image editing is not implemented for this control-plane client."
+        )
+    }
+
+    func cancelRequest(requestID: String) async throws -> Bool {
+        _ = requestID
+        throw ControlPlaneXPCClientError.requestFailed(
+            code: "unimplemented",
+            message: "Request cancellation is not implemented for this control-plane client."
         )
     }
 }
@@ -238,6 +247,12 @@ public actor LocalControlPlaneXPCClient: ControlPlaneXPCClient {
     ) async throws -> Melix_Controlplane_V1_ImageJobSummary {
         try await execute(makeImageEditRequest(request)) { response in
             response.image.job
+        }
+    }
+
+    public func cancelRequest(requestID: String) async throws -> Bool {
+        try await execute(makeCancelRequest(requestID: requestID)) { _ in
+            true
         }
     }
 
@@ -367,6 +382,18 @@ public actor LocalControlPlaneXPCClient: ControlPlaneXPCClient {
         request.image.edit.size = edit.size
         request.image.edit.n = edit.n
         request.image.edit.responseFormat = edit.responseFormat
+        return request
+    }
+
+    private func makeCancelRequest(
+        requestID: String
+    ) -> Melix_Controlplane_V1_ControlPlaneRequest {
+        var request = Melix_Controlplane_V1_ControlPlaneRequest()
+        request.requestID = "menubar-cancel-\(requestID)"
+        request.commandType = "ops.cancel_request"
+        request.ops = Melix_Controlplane_V1_OpsCommand()
+        request.ops.cancelRequest = Melix_Controlplane_V1_CancelRequest()
+        request.ops.cancelRequest.requestID = requestID
         return request
     }
 }

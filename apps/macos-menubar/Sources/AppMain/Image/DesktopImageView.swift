@@ -5,6 +5,13 @@ import SwiftUI
 struct DesktopImageTabView: View {
     let viewModel: RuntimeViewModel
 
+    @MainActor
+    func cancelSelectedJob() {
+        Task {
+            await viewModel.cancelSelectedImageJob()
+        }
+    }
+
     var body: some View {
         HSplitView {
             VStack(alignment: .leading, spacing: 16) {
@@ -143,6 +150,11 @@ struct DesktopImageTabView: View {
                             Text("\(job.progress.stage) • \(String(format: "%.0f%%", job.progress.pct * 100))")
                                 .font(.caption.monospacedDigit())
                                 .foregroundStyle(.secondary)
+                            HStack {
+                                Spacer()
+                                Button("Cancel", action: cancelSelectedJob)
+                                .disabled(job.cancelable == false)
+                            }
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
                     } else {

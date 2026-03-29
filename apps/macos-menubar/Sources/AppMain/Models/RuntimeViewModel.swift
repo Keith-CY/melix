@@ -475,6 +475,29 @@ public final class RuntimeViewModel {
         notifyStateChanged()
     }
 
+    public func cancelSelectedImageJob() async {
+        guard let job = selectedImageJob, !job.requestID.isEmpty, job.cancelable else {
+            return
+        }
+
+        let startedAt = Date()
+        imageStatusText = "Canceling"
+        notifyStateChanged()
+
+        do {
+            _ = try await client.cancelRequest(requestID: job.requestID)
+            await metrics.record(
+                name: "desktop.image_cancel_latency_ms",
+                valueMs: Date().timeIntervalSince(startedAt) * 1_000
+            )
+        } catch {
+            imageStatusText = "Failed"
+            recordLocalError(String(describing: error))
+        }
+
+        notifyStateChanged()
+    }
+
     public func loadPrimaryModel() async {
         guard let modelID = primaryModel?.modelID else {
             return

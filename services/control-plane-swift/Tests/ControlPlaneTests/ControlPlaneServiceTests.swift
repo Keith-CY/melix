@@ -441,6 +441,39 @@ struct ControlPlaneServiceTests {
         #expect(recordedJob.error.code == "runtime_error")
     }
 
+    @Test("execute records a failed image generate when the worker throws")
+    func executeRecordsFailedImageGenerateWhenWorkerThrows() async throws {
+        let modelCatalog = ModelCatalog(seedModels: ModelCatalog.phaseSevenContractSeedModels())
+        _ = await modelCatalog.loadModel(id: "melix-dev-image", dispatchHandle: "melix-dev-image::python")
+        let imageClient = ScriptedImageWorkerClient()
+        await imageClient.setImageGenerateError(ImageWorkerFailure.synthetic)
+        let service = ControlPlaneService(
+            modelCatalog: modelCatalog,
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                pythonCompatibilityClient: imageClient,
+                modelCatalog: modelCatalog
+            )
+        )
+
+        let response = try await service.execute(
+            makeImageGenerateRequest(
+                modelID: "melix-dev-image",
+                prompt: "Draw a fox",
+                size: "1024x1024",
+                n: 1
+            )
+        )
+        let snapshot = try await service.execute(makeServerSnapshotRequest())
+        let recordedJob = try #require(snapshot.server.snapshot.imageJobs.first)
+
+        #expect(response.ok == false)
+        #expect(response.error.code == "unavailable")
+        #expect(recordedJob.jobID == "req-image-generate::image-generate")
+        #expect(recordedJob.state == .imageJobFailed)
+        #expect(recordedJob.error.code == "unavailable")
+    }
+
     @Test("execute fills an implicit image job identifier when the worker omits one")
     func executeFillsImplicitImageJobIdentifier() async throws {
         let modelCatalog = ModelCatalog(seedModels: ModelCatalog.phaseSevenContractSeedModels())
@@ -478,6 +511,47 @@ struct ControlPlaneServiceTests {
         #expect(response.image.job.jobID == "req-image-generate::image-generate")
     }
 
+    @Test("execute records failed image phases when the worker reports imageJobFailed without an error payload")
+    func executeRecordsFailedImagePhaseWithoutWorkerErrorPayload() async throws {
+        let modelCatalog = ModelCatalog(seedModels: ModelCatalog.phaseSevenContractSeedModels())
+        _ = await modelCatalog.loadModel(id: "melix-dev-image", dispatchHandle: "melix-dev-image::python")
+        let imageClient = ScriptedImageWorkerClient()
+        await imageClient.setImageGenerateResponse({
+            var response = Melix_Worker_V1_ImageGenerateResponse()
+            response.job.requestID = "req-image-generate-failed-phase"
+            response.job.jobID = "req-image-generate-failed-phase::image-generate"
+            response.job.modelHandle = "melix-dev-image::python"
+            response.job.operation = "image_generate"
+            response.job.state = .imageJobFailed
+            response.job.progress.stage = "failed"
+            return response
+        }())
+        let service = ControlPlaneService(
+            modelCatalog: modelCatalog,
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                pythonCompatibilityClient: imageClient,
+                modelCatalog: modelCatalog
+            )
+        )
+
+        let response = try await service.execute(
+            makeImageGenerateRequest(
+                requestID: "req-image-generate-failed-phase",
+                modelID: "melix-dev-image",
+                prompt: "Draw a fox",
+                size: "1024x1024",
+                n: 1
+            )
+        )
+        let snapshot = try await service.execute(makeServerSnapshotRequest())
+        let recordedJob = try #require(snapshot.server.snapshot.imageJobs.first)
+
+        #expect(response.ok)
+        #expect(response.image.job.state == .imageJobFailed)
+        #expect(recordedJob.state == .imageJobFailed)
+    }
+
     @Test("execute records a failed image edit when the worker throws")
     func executeRecordsFailedImageEditWhenWorkerThrows() async throws {
         let modelCatalog = ModelCatalog(seedModels: ModelCatalog.phaseSevenContractSeedModels())
@@ -508,6 +582,75 @@ struct ControlPlaneServiceTests {
         #expect(response.ok == false)
         #expect(response.error.code == "unavailable")
         #expect(recordedJob.jobID == "req-image-edit::image-edit")
+        #expect(recordedJob.state == .imageJobFailed)
+        #expect(recordedJob.error.code == "unavailable")
+    }
+
+    @Test("execute returns unavailable when image.generate admission fails generically")
+    func executeReturnsUnavailableWhenImageGenerateAdmissionFailsGenerically() async throws {
+        let modelCatalog = ModelCatalog(seedModels: ModelCatalog.phaseSevenContractSeedModels())
+        _ = await modelCatalog.loadModel(id: "melix-dev-image", dispatchHandle: "melix-dev-image::python")
+        let imageJobReadModel = ImageJobReadModel()
+        let service = ControlPlaneService(
+            modelCatalog: modelCatalog,
+            imageJobReadModel: imageJobReadModel,
+            imageJobAdmissionController: StubImageJobAdmissionController(acquireError: ImageWorkerFailure.synthetic),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                pythonCompatibilityClient: ScriptedImageWorkerClient(),
+                modelCatalog: modelCatalog
+            )
+        )
+
+        let response = try await service.execute(
+            makeImageGenerateRequest(
+                requestID: "req-image-generate-admission-failure",
+                modelID: "melix-dev-image",
+                prompt: "Draw a fox",
+                size: "1024x1024",
+                n: 1
+            )
+        )
+        let recordedJob = try #require(await imageJobReadModel.job(requestID: "req-image-generate-admission-failure"))
+
+        #expect(response.ok == false)
+        #expect(response.error.code == "unavailable")
+        #expect(response.error.message.contains("Image admission failed"))
+        #expect(recordedJob.state == .imageJobFailed)
+        #expect(recordedJob.error.code == "unavailable")
+    }
+
+    @Test("execute returns unavailable when image.edit admission fails generically")
+    func executeReturnsUnavailableWhenImageEditAdmissionFailsGenerically() async throws {
+        let modelCatalog = ModelCatalog(seedModels: ModelCatalog.phaseSevenContractSeedModels())
+        _ = await modelCatalog.loadModel(id: "melix-dev-image", dispatchHandle: "melix-dev-image::python")
+        let imageJobReadModel = ImageJobReadModel()
+        let service = ControlPlaneService(
+            modelCatalog: modelCatalog,
+            imageJobReadModel: imageJobReadModel,
+            imageJobAdmissionController: StubImageJobAdmissionController(acquireError: ImageWorkerFailure.synthetic),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                pythonCompatibilityClient: ScriptedImageWorkerClient(),
+                modelCatalog: modelCatalog
+            )
+        )
+
+        let response = try await service.execute(
+            makeImageEditRequest(
+                requestID: "req-image-edit-admission-failure",
+                modelID: "melix-dev-image",
+                prompt: "Replace the sky",
+                imageURI: "file:///tmp/source.png",
+                maskURI: "",
+                strength: 1
+            )
+        )
+        let recordedJob = try #require(await imageJobReadModel.job(requestID: "req-image-edit-admission-failure"))
+
+        #expect(response.ok == false)
+        #expect(response.error.code == "unavailable")
+        #expect(response.error.message.contains("Image admission failed"))
         #expect(recordedJob.state == .imageJobFailed)
         #expect(recordedJob.error.code == "unavailable")
     }
@@ -552,6 +695,510 @@ struct ControlPlaneServiceTests {
         #expect(response.image.job.state == .imageJobRunning)
         #expect(recordedJob.state == .imageJobFailed)
         #expect(recordedJob.error.code == "runtime_error")
+    }
+
+    @Test("ops.cancel_request cancels queued image work before it reaches the worker")
+    func cancelRequestCancelsQueuedImageWorkBeforeWorkerDispatch() async throws {
+        let modelCatalog = ModelCatalog(seedModels: ModelCatalog.phaseSevenContractSeedModels())
+        _ = await modelCatalog.loadModel(id: "melix-dev-image", dispatchHandle: "melix-dev-image::python")
+        let imageClient = BlockingImageWorkerClient()
+        let service = ControlPlaneService(
+            modelCatalog: modelCatalog,
+            imageJobAdmissionController: ImageJobAdmissionController(maxConcurrentJobs: 1, maxQueuedJobs: 1),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                pythonCompatibilityClient: imageClient,
+                modelCatalog: modelCatalog
+            )
+        )
+
+        let firstTask = Task {
+            try await service.execute(
+                makeImageGenerateRequest(
+                    requestID: "req-image-generate-1",
+                    modelID: "melix-dev-image",
+                    prompt: "Draw a fox",
+                    size: "1024x1024",
+                    n: 1
+                )
+            )
+        }
+        try await waitForControlPlaneCondition("expected first image request to start") {
+            await imageClient.startedRequestIDs == ["req-image-generate-1"]
+        }
+
+        let queuedTask = Task {
+            try await service.execute(
+                makeImageGenerateRequest(
+                    requestID: "req-image-generate-2",
+                    modelID: "melix-dev-image",
+                    prompt: "Draw another fox",
+                    size: "1024x1024",
+                    n: 1
+                )
+            )
+        }
+        try await Task.sleep(for: .milliseconds(50))
+
+        let cancelResponse = try await service.execute(
+            makeCancelRequest(requestID: "req-image-generate-2")
+        )
+        let queuedResponse = try await queuedTask.value
+        await imageClient.finishGenerate(requestID: "req-image-generate-1")
+        _ = try await firstTask.value
+        let snapshot = try await service.execute(makeServerSnapshotRequest())
+
+        #expect(cancelResponse.ok)
+        #expect(queuedResponse.ok == false)
+        #expect(queuedResponse.error.code == "cancelled")
+        #expect(await imageClient.startedRequestIDs == ["req-image-generate-1"])
+        #expect(snapshot.server.snapshot.imageJobs.contains {
+            $0.requestID == "req-image-generate-2" && $0.state == .imageJobCanceled
+        })
+    }
+
+    @Test("image.edit returns cancelled when queued admission is aborted before execution")
+    func executeReturnsCancelledWhenQueuedImageEditAdmissionIsAborted() async throws {
+        let modelCatalog = ModelCatalog(seedModels: ModelCatalog.phaseSevenContractSeedModels())
+        _ = await modelCatalog.loadModel(id: "melix-dev-image", dispatchHandle: "melix-dev-image::python")
+        let imageClient = BlockingImageWorkerClient()
+        let imageJobReadModel = ImageJobReadModel()
+        let admissionController = ImageJobAdmissionController(maxConcurrentJobs: 1, maxQueuedJobs: 1)
+        let service = ControlPlaneService(
+            modelCatalog: modelCatalog,
+            imageJobReadModel: imageJobReadModel,
+            imageJobAdmissionController: admissionController,
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                pythonCompatibilityClient: imageClient,
+                modelCatalog: modelCatalog
+            )
+        )
+
+        let firstTask = Task {
+            try await service.execute(
+                makeImageGenerateRequest(
+                    requestID: "req-image-edit-cancel-active",
+                    modelID: "melix-dev-image",
+                    prompt: "Hold the image worker",
+                    size: "1024x1024",
+                    n: 1
+                )
+            )
+        }
+        try await waitForControlPlaneCondition("expected active image request to start") {
+            await imageClient.startedRequestIDs == ["req-image-edit-cancel-active"]
+        }
+
+        let queuedTask = Task {
+            try await service.execute(
+                makeImageEditRequest(
+                    requestID: "req-image-edit-cancel-queued",
+                    modelID: "melix-dev-image",
+                    prompt: "Cancel this edit",
+                    imageURI: "file:///tmp/source.png",
+                    maskURI: "",
+                    strength: 1
+                )
+            )
+        }
+        try await waitForControlPlaneCondition("expected queued image edit") {
+            await imageJobReadModel.job(requestID: "req-image-edit-cancel-queued")?.state == .imageJobQueued
+        }
+
+        let disposition = await admissionController.cancel(requestID: "req-image-edit-cancel-queued")
+        let queuedResponse = try await queuedTask.value
+        let cancelledJob = try #require(await imageJobReadModel.job(requestID: "req-image-edit-cancel-queued"))
+
+        await imageClient.finishGenerate(requestID: "req-image-edit-cancel-active")
+        _ = try await firstTask.value
+
+        #expect(disposition == .queued)
+        #expect(queuedResponse.ok == false)
+        #expect(queuedResponse.error.code == "cancelled")
+        #expect(cancelledJob.state == .imageJobCanceled)
+    }
+
+    @Test("ops.cancel_request aborts running image work through the worker")
+    func cancelRequestAbortsRunningImageWorkThroughWorker() async throws {
+        let modelCatalog = ModelCatalog(seedModels: ModelCatalog.phaseSevenContractSeedModels())
+        _ = await modelCatalog.loadModel(id: "melix-dev-image", dispatchHandle: "melix-dev-image::python")
+        let imageClient = BlockingImageWorkerClient()
+        let service = ControlPlaneService(
+            modelCatalog: modelCatalog,
+            imageJobAdmissionController: ImageJobAdmissionController(maxConcurrentJobs: 1, maxQueuedJobs: 1),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                pythonCompatibilityClient: imageClient,
+                modelCatalog: modelCatalog
+            )
+        )
+
+        let runningTask = Task {
+            try await service.execute(
+                makeImageGenerateRequest(
+                    requestID: "req-image-running",
+                    modelID: "melix-dev-image",
+                    prompt: "Draw a wolf",
+                    size: "1024x1024",
+                    n: 1
+                )
+            )
+        }
+        try await waitForControlPlaneCondition("expected image request to start") {
+            await imageClient.startedRequestIDs == ["req-image-running"]
+        }
+
+        let cancelResponse = try await service.execute(
+            makeCancelRequest(requestID: "req-image-running")
+        )
+        let runningResponse = try await runningTask.value
+        let snapshot = try await service.execute(makeServerSnapshotRequest())
+
+        #expect(cancelResponse.ok)
+        #expect(runningResponse.ok == false)
+        #expect(runningResponse.error.code == "cancelled")
+        #expect(await imageClient.abortedRequestIDs == ["req-image-running"])
+        #expect(snapshot.server.snapshot.imageJobs.contains {
+            $0.requestID == "req-image-running" && $0.state == .imageJobCanceled
+        })
+    }
+
+    @Test("ops.cancel_request returns not_found when the image request is unknown")
+    func cancelRequestReturnsNotFoundForUnknownImageWork() async throws {
+        let modelCatalog = ModelCatalog(seedModels: ModelCatalog.phaseSevenContractSeedModels())
+        _ = await modelCatalog.loadModel(id: "melix-dev-image", dispatchHandle: "melix-dev-image::python")
+        let service = ControlPlaneService(
+            modelCatalog: modelCatalog,
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                pythonCompatibilityClient: ScriptedImageWorkerClient(),
+                modelCatalog: modelCatalog
+            )
+        )
+
+        let response = try await service.execute(
+            makeCancelRequest(requestID: "req-image-missing")
+        )
+
+        #expect(response.ok == false)
+        #expect(response.error.code == "not_found")
+        #expect(response.error.message == "Unknown request ID.")
+    }
+
+    @Test("ops.cancel_request returns unavailable when a running image job loses its worker")
+    func cancelRequestReturnsUnavailableWhenRunningImageWorkHasNoWorker() async throws {
+        let modelCatalog = ModelCatalog(seedModels: ModelCatalog.phaseSevenContractSeedModels())
+        let imageJobReadModel = ImageJobReadModel()
+        let admissionController = ImageJobAdmissionController(maxConcurrentJobs: 1, maxQueuedJobs: 1)
+        await imageJobReadModel.recordQueued(
+            requestID: "req-image-orphaned",
+            jobID: "req-image-orphaned::image-generate",
+            modelID: "melix-dev-image",
+            operation: "image_generate",
+            lane: "image.generate.background"
+        )
+        try await admissionController.acquire(
+            requestID: "req-image-orphaned",
+            laneHint: "image.generate.background",
+            workerID: "image-worker-1"
+        )
+        await imageJobReadModel.recordRunning(
+            jobID: "req-image-orphaned::image-generate",
+            workerID: "image-worker-1",
+            pct: 0.25
+        )
+        let service = ControlPlaneService(
+            modelCatalog: modelCatalog,
+            imageJobReadModel: imageJobReadModel,
+            imageJobAdmissionController: admissionController
+        )
+
+        let response = try await service.execute(
+            makeCancelRequest(requestID: "req-image-orphaned")
+        )
+
+        #expect(response.ok == false)
+        #expect(response.error.code == "unavailable")
+        #expect(response.error.message == "Image worker is unavailable.")
+    }
+
+    @Test("ops.cancel_request returns not_found when the image worker says the request is no longer active")
+    func cancelRequestReturnsNotFoundWhenImageAbortReturnsFalse() async throws {
+        let modelCatalog = ModelCatalog(seedModels: ModelCatalog.phaseSevenContractSeedModels())
+        _ = await modelCatalog.loadModel(id: "melix-dev-image", dispatchHandle: "melix-dev-image::python")
+        let imageJobReadModel = ImageJobReadModel()
+        let admissionController = ImageJobAdmissionController(maxConcurrentJobs: 1, maxQueuedJobs: 1)
+        await imageJobReadModel.recordQueued(
+            requestID: "req-image-stale",
+            jobID: "req-image-stale::image-generate",
+            modelID: "melix-dev-image",
+            operation: "image_generate",
+            lane: "image.generate.background"
+        )
+        try await admissionController.acquire(
+            requestID: "req-image-stale",
+            laneHint: "image.generate.background",
+            workerID: "image-worker-1"
+        )
+        await imageJobReadModel.recordRunning(
+            jobID: "req-image-stale::image-generate",
+            workerID: "image-worker-1",
+            pct: 0.5
+        )
+        let service = ControlPlaneService(
+            modelCatalog: modelCatalog,
+            imageJobReadModel: imageJobReadModel,
+            imageJobAdmissionController: admissionController,
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                pythonCompatibilityClient: AbortFalseImageWorkerClient(),
+                modelCatalog: modelCatalog
+            )
+        )
+
+        let response = try await service.execute(
+            makeCancelRequest(requestID: "req-image-stale")
+        )
+
+        #expect(response.ok == false)
+        #expect(response.error.code == "not_found")
+        #expect(response.error.message == "Image request is no longer active.")
+    }
+
+    @Test("ops.cancel_request returns unavailable when the running image worker abort throws")
+    func cancelRequestReturnsUnavailableWhenImageAbortThrows() async throws {
+        let modelCatalog = ModelCatalog(seedModels: ModelCatalog.phaseSevenContractSeedModels())
+        _ = await modelCatalog.loadModel(id: "melix-dev-image", dispatchHandle: "melix-dev-image::python")
+        let imageJobReadModel = ImageJobReadModel()
+        let admissionController = ImageJobAdmissionController(maxConcurrentJobs: 1, maxQueuedJobs: 1)
+        await imageJobReadModel.recordQueued(
+            requestID: "req-image-running-throws",
+            jobID: "job-image-running-throws",
+            modelID: "melix-dev-image",
+            operation: "image_generate",
+            lane: "image.generate.background"
+        )
+        try await admissionController.acquire(
+            requestID: "req-image-running-throws",
+            laneHint: "image.generate.background",
+            workerID: "image-worker-1"
+        )
+        await imageJobReadModel.recordRunning(
+            jobID: "job-image-running-throws",
+            workerID: "image-worker-1",
+            pct: 0.5
+        )
+        let service = ControlPlaneService(
+            modelCatalog: modelCatalog,
+            imageJobReadModel: imageJobReadModel,
+            imageJobAdmissionController: admissionController,
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                pythonCompatibilityClient: ThrowingAbortImageWorkerClient(),
+                modelCatalog: modelCatalog
+            )
+        )
+
+        let response = try await service.execute(
+            makeCancelRequest(requestID: "req-image-running-throws")
+        )
+
+        #expect(response.ok == false)
+        #expect(response.error.code == "unavailable")
+        #expect(response.error.message.contains("Image cancel failed"))
+    }
+
+    @Test("ops.cancel_request returns not_found when the image admission controller no longer tracks the request")
+    func cancelRequestReturnsNotFoundWhenImageAdmissionControllerNoLongerTracksRequest() async throws {
+        let modelCatalog = ModelCatalog(seedModels: ModelCatalog.phaseSevenContractSeedModels())
+        _ = await modelCatalog.loadModel(id: "melix-dev-image", dispatchHandle: "melix-dev-image::python")
+        let imageJobReadModel = ImageJobReadModel()
+        await imageJobReadModel.recordQueued(
+            requestID: "req-image-lost",
+            jobID: "job-image-lost",
+            modelID: "melix-dev-image",
+            operation: "image_generate",
+            lane: "image.generate.background"
+        )
+        let service = ControlPlaneService(
+            modelCatalog: modelCatalog,
+            imageJobReadModel: imageJobReadModel,
+            imageJobAdmissionController: StubImageJobAdmissionController(cancelDisposition: .notFound),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                pythonCompatibilityClient: ScriptedImageWorkerClient(),
+                modelCatalog: modelCatalog
+            )
+        )
+
+        let response = try await service.execute(
+            makeCancelRequest(requestID: "req-image-lost")
+        )
+
+        #expect(response.ok == false)
+        #expect(response.error.code == "not_found")
+        #expect(response.error.message == "Image request is no longer active.")
+    }
+
+    @Test("ops.cancel_request returns ok when the text request coordinator cancels an active request")
+    func cancelRequestReturnsOkWhenTextCoordinatorCancelsActiveRequest() async throws {
+        let modelCatalog = ModelCatalog()
+        _ = await modelCatalog.loadModel(id: "melix-dev-text")
+        let textClient = BlockingAbortTextWorkerClient()
+        let service = ControlPlaneService(
+            modelCatalog: modelCatalog,
+            workerRegistry: WorkerRegistry(defaultTextClient: textClient, modelCatalog: modelCatalog)
+        )
+
+        let execution = try await service.startChat(
+            ControlPlaneChatRequest(
+                modelID: "melix-dev-text",
+                messages: [.init(role: "user", content: "cancel this")]
+            )
+        )
+        try await waitForControlPlaneCondition("expected text request to start") {
+            await textClient.startedRequestIDs.contains(execution.requestID)
+        }
+
+        let response = try await service.execute(makeCancelRequest(requestID: execution.requestID))
+
+        #expect(response.ok)
+        #expect(response.ops.reportMarkdown == "cancel_requested")
+    }
+
+    @Test("ops.cancel_request returns unavailable when the text request coordinator abort throws")
+    func cancelRequestReturnsUnavailableWhenTextCoordinatorAbortThrows() async throws {
+        let modelCatalog = ModelCatalog()
+        _ = await modelCatalog.loadModel(id: "melix-dev-text")
+        let textClient = BlockingAbortTextWorkerClient(abortError: WorkerClientError.unavailable)
+        let service = ControlPlaneService(
+            modelCatalog: modelCatalog,
+            workerRegistry: WorkerRegistry(defaultTextClient: textClient, modelCatalog: modelCatalog)
+        )
+
+        let execution = try await service.startChat(
+            ControlPlaneChatRequest(
+                modelID: "melix-dev-text",
+                messages: [.init(role: "user", content: "cancel this")]
+            )
+        )
+        try await waitForControlPlaneCondition("expected text request to start") {
+            await textClient.startedRequestIDs.contains(execution.requestID)
+        }
+
+        let response = try await service.execute(makeCancelRequest(requestID: execution.requestID))
+
+        #expect(response.ok == false)
+        #expect(response.error.code == "unavailable")
+        #expect(response.error.message.contains("Cancel request failed"))
+    }
+
+    @Test("image.generate returns resource_exhausted when the background queue is saturated")
+    func executeReturnsResourceExhaustedWhenImageGenerateQueueIsSaturated() async throws {
+        let modelCatalog = ModelCatalog(seedModels: ModelCatalog.phaseSevenContractSeedModels())
+        _ = await modelCatalog.loadModel(id: "melix-dev-image", dispatchHandle: "melix-dev-image::python")
+        let imageClient = BlockingImageWorkerClient()
+        let service = ControlPlaneService(
+            modelCatalog: modelCatalog,
+            imageJobAdmissionController: ImageJobAdmissionController(maxConcurrentJobs: 1, maxQueuedJobs: 0),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                pythonCompatibilityClient: imageClient,
+                modelCatalog: modelCatalog
+            )
+        )
+
+        let firstTask = Task {
+            try await service.execute(
+                makeImageGenerateRequest(
+                    requestID: "req-image-saturated-1",
+                    modelID: "melix-dev-image",
+                    prompt: "Hold the image worker",
+                    size: "1024x1024",
+                    n: 1
+                )
+            )
+        }
+        try await waitForControlPlaneCondition("expected first image request to start") {
+            await imageClient.startedRequestIDs == ["req-image-saturated-1"]
+        }
+
+        let saturatedResponse = try await service.execute(
+            makeImageGenerateRequest(
+                requestID: "req-image-saturated-2",
+                modelID: "melix-dev-image",
+                prompt: "This request should saturate",
+                size: "1024x1024",
+                n: 1
+            )
+        )
+        let snapshot = try await service.execute(makeServerSnapshotRequest())
+
+        await imageClient.finishGenerate(requestID: "req-image-saturated-1")
+        _ = try await firstTask.value
+
+        #expect(saturatedResponse.ok == false)
+        #expect(saturatedResponse.error.code == "resource_exhausted")
+        #expect(snapshot.server.snapshot.imageJobs.contains {
+            $0.requestID == "req-image-saturated-2" &&
+            $0.state == .imageJobFailed &&
+            $0.error.code == "resource_exhausted"
+        })
+    }
+
+    @Test("image.edit returns resource_exhausted when the background queue is saturated")
+    func executeReturnsResourceExhaustedWhenImageEditQueueIsSaturated() async throws {
+        let modelCatalog = ModelCatalog(seedModels: ModelCatalog.phaseSevenContractSeedModels())
+        _ = await modelCatalog.loadModel(id: "melix-dev-image", dispatchHandle: "melix-dev-image::python")
+        let imageClient = BlockingImageWorkerClient()
+        let service = ControlPlaneService(
+            modelCatalog: modelCatalog,
+            imageJobAdmissionController: ImageJobAdmissionController(maxConcurrentJobs: 1, maxQueuedJobs: 0),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                pythonCompatibilityClient: imageClient,
+                modelCatalog: modelCatalog
+            )
+        )
+
+        let firstTask = Task {
+            try await service.execute(
+                makeImageGenerateRequest(
+                    requestID: "req-image-edit-saturated-1",
+                    modelID: "melix-dev-image",
+                    prompt: "Keep the image worker busy",
+                    size: "1024x1024",
+                    n: 1
+                )
+            )
+        }
+        try await waitForControlPlaneCondition("expected first image request to start") {
+            await imageClient.startedRequestIDs == ["req-image-edit-saturated-1"]
+        }
+
+        let saturatedResponse = try await service.execute(
+            makeImageEditRequest(
+                requestID: "req-image-edit-saturated-2",
+                modelID: "melix-dev-image",
+                prompt: "This edit should saturate",
+                imageURI: "file:///tmp/source.png",
+                maskURI: "",
+                strength: 0.7
+            )
+        )
+        let snapshot = try await service.execute(makeServerSnapshotRequest())
+
+        await imageClient.finishGenerate(requestID: "req-image-edit-saturated-1")
+        _ = try await firstTask.value
+
+        #expect(saturatedResponse.ok == false)
+        #expect(saturatedResponse.error.code == "resource_exhausted")
+        #expect(snapshot.server.snapshot.imageJobs.contains {
+            $0.requestID == "req-image-edit-saturated-2" &&
+            $0.state == .imageJobFailed &&
+            $0.error.code == "resource_exhausted"
+        })
     }
 
     @Test("startChat reuses the request coordinator and streams typed chat events")
@@ -1066,13 +1713,14 @@ struct ControlPlaneServiceTests {
     }
 
     private func makeImageGenerateRequest(
+        requestID: String = "req-image-generate",
         modelID: String,
         prompt: String,
         size: String,
         n: UInt32
     ) -> Melix_Controlplane_V1_ControlPlaneRequest {
         var request = Melix_Controlplane_V1_ControlPlaneRequest()
-        request.requestID = "req-image-generate"
+        request.requestID = requestID
         request.commandType = "image.generate"
         request.image = Melix_Controlplane_V1_ImageCommand()
         request.image.generate = Melix_Controlplane_V1_GenerateImage()
@@ -1085,6 +1733,7 @@ struct ControlPlaneServiceTests {
     }
 
     private func makeImageEditRequest(
+        requestID: String = "req-image-edit",
         modelID: String,
         prompt: String,
         imageURI: String,
@@ -1092,7 +1741,7 @@ struct ControlPlaneServiceTests {
         strength: Float
     ) -> Melix_Controlplane_V1_ControlPlaneRequest {
         var request = Melix_Controlplane_V1_ControlPlaneRequest()
-        request.requestID = "req-image-edit"
+        request.requestID = requestID
         request.commandType = "image.edit"
         request.image = Melix_Controlplane_V1_ImageCommand()
         request.image.edit = Melix_Controlplane_V1_EditImage()
@@ -1113,6 +1762,18 @@ struct ControlPlaneServiceTests {
         request.commandType = "ops.get_metrics"
         request.ops = Melix_Controlplane_V1_OpsCommand()
         request.ops.getMetrics = Melix_Controlplane_V1_GetMetricsSnapshot()
+        return request
+    }
+
+    private func makeCancelRequest(
+        requestID targetRequestID: String
+    ) -> Melix_Controlplane_V1_ControlPlaneRequest {
+        var request = Melix_Controlplane_V1_ControlPlaneRequest()
+        request.requestID = "req-cancel-\(targetRequestID)"
+        request.commandType = "ops.cancel_request"
+        request.ops = Melix_Controlplane_V1_OpsCommand()
+        request.ops.cancelRequest = Melix_Controlplane_V1_CancelRequest()
+        request.ops.cancelRequest.requestID = targetRequestID
         return request
     }
 
@@ -1500,6 +2161,337 @@ private enum ImageWorkerFailure: Error {
     case synthetic
 }
 
+private actor BlockingImageWorkerClient: WorkerRoutingClient, NonTextInferenceWorkerClientProtocol {
+    private var generateRequests: [String: Melix_Worker_V1_ImageGenerateRequest] = [:]
+    private var generateContinuations: [String: CheckedContinuation<Melix_Worker_V1_ImageGenerateResponse, Error>] = [:]
+
+    private(set) var startedRequestIDs: [String] = []
+    private(set) var abortedRequestIDs: [String] = []
+
+    func canDispatchRequests() async -> Bool {
+        true
+    }
+
+    func generate(
+        request: Melix_Worker_V1_GenerateRequest
+    ) async throws -> AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error> {
+        AsyncThrowingStream { continuation in
+            continuation.finish()
+        }
+    }
+
+    func abort(requestID: String) async throws -> Bool {
+        abortedRequestIDs.append(requestID)
+        guard let request = generateRequests.removeValue(forKey: requestID),
+              let continuation = generateContinuations.removeValue(forKey: requestID) else {
+            return false
+        }
+
+        var response = Melix_Worker_V1_ImageGenerateResponse()
+        response.job.requestID = requestID
+        response.job.jobID = "\(requestID)::image-generate"
+        response.job.modelHandle = request.modelHandle
+        response.job.operation = "image_generate"
+        response.job.state = .imageJobCanceled
+        response.job.progress.stage = "canceled"
+        response.job.error.code = "cancelled"
+        response.job.error.message = "Image generation was canceled."
+        response.error.code = "cancelled"
+        response.error.message = "Image generation was canceled."
+        continuation.resume(returning: response)
+        return true
+    }
+
+    func loadModel(
+        request: Melix_Worker_V1_LoadModelRequest
+    ) async throws -> Melix_Worker_V1_LoadModelResponse {
+        var response = Melix_Worker_V1_LoadModelResponse()
+        response.ok = true
+        response.modelHandle = "\(request.model.modelID)::python"
+        return response
+    }
+
+    func embed(
+        request: Melix_Worker_V1_EmbedRequest
+    ) async throws -> Melix_Worker_V1_EmbedResponse {
+        Melix_Worker_V1_EmbedResponse()
+    }
+
+    func rerank(
+        request: Melix_Worker_V1_RerankRequest
+    ) async throws -> Melix_Worker_V1_RerankResponse {
+        Melix_Worker_V1_RerankResponse()
+    }
+
+    func transcribe(
+        request: Melix_Worker_V1_TranscribeRequest
+    ) async throws -> Melix_Worker_V1_TranscribeResponse {
+        Melix_Worker_V1_TranscribeResponse()
+    }
+
+    func speak(
+        request: Melix_Worker_V1_SpeakRequest
+    ) async throws -> Melix_Worker_V1_SpeakResponse {
+        Melix_Worker_V1_SpeakResponse()
+    }
+
+    func imageGenerate(
+        request: Melix_Worker_V1_ImageGenerateRequest
+    ) async throws -> Melix_Worker_V1_ImageGenerateResponse {
+        let requestID = request.id.requestID
+        startedRequestIDs.append(requestID)
+        generateRequests[requestID] = request
+        return try await withCheckedThrowingContinuation { continuation in
+            generateContinuations[requestID] = continuation
+        }
+    }
+
+    func imageEdit(
+        request: Melix_Worker_V1_ImageEditRequest
+    ) async throws -> Melix_Worker_V1_ImageEditResponse {
+        Melix_Worker_V1_ImageEditResponse()
+    }
+
+    func finishGenerate(requestID: String) {
+        guard let request = generateRequests.removeValue(forKey: requestID),
+              let continuation = generateContinuations.removeValue(forKey: requestID) else {
+            return
+        }
+
+        var response = Melix_Worker_V1_ImageGenerateResponse()
+        response.job.requestID = requestID
+        response.job.jobID = "\(requestID)::image-generate"
+        response.job.modelHandle = request.modelHandle
+        response.job.operation = "image_generate"
+        response.job.state = .imageJobCompleted
+        response.job.progress.stage = "completed"
+        response.job.progress.pct = 1
+        response.job.artifacts = [makeWorkerArtifact(jobID: "\(requestID)::image-generate")]
+        continuation.resume(returning: response)
+    }
+}
+
+private actor AbortFalseImageWorkerClient: WorkerRoutingClient, NonTextInferenceWorkerClientProtocol {
+    func canDispatchRequests() async -> Bool {
+        true
+    }
+
+    func generate(
+        request: Melix_Worker_V1_GenerateRequest
+    ) async throws -> AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error> {
+        _ = request
+        return AsyncThrowingStream { continuation in
+            continuation.finish()
+        }
+    }
+
+    func abort(requestID: String) async throws -> Bool {
+        _ = requestID
+        return false
+    }
+
+    func loadModel(
+        request: Melix_Worker_V1_LoadModelRequest
+    ) async throws -> Melix_Worker_V1_LoadModelResponse {
+        var response = Melix_Worker_V1_LoadModelResponse()
+        response.ok = true
+        response.modelHandle = "\(request.model.modelID)::python"
+        return response
+    }
+
+    func embed(
+        request: Melix_Worker_V1_EmbedRequest
+    ) async throws -> Melix_Worker_V1_EmbedResponse {
+        _ = request
+        return Melix_Worker_V1_EmbedResponse()
+    }
+
+    func rerank(
+        request: Melix_Worker_V1_RerankRequest
+    ) async throws -> Melix_Worker_V1_RerankResponse {
+        _ = request
+        return Melix_Worker_V1_RerankResponse()
+    }
+
+    func transcribe(
+        request: Melix_Worker_V1_TranscribeRequest
+    ) async throws -> Melix_Worker_V1_TranscribeResponse {
+        _ = request
+        return Melix_Worker_V1_TranscribeResponse()
+    }
+
+    func speak(
+        request: Melix_Worker_V1_SpeakRequest
+    ) async throws -> Melix_Worker_V1_SpeakResponse {
+        _ = request
+        return Melix_Worker_V1_SpeakResponse()
+    }
+
+    func imageGenerate(
+        request: Melix_Worker_V1_ImageGenerateRequest
+    ) async throws -> Melix_Worker_V1_ImageGenerateResponse {
+        _ = request
+        return Melix_Worker_V1_ImageGenerateResponse()
+    }
+
+    func imageEdit(
+        request: Melix_Worker_V1_ImageEditRequest
+    ) async throws -> Melix_Worker_V1_ImageEditResponse {
+        _ = request
+        return Melix_Worker_V1_ImageEditResponse()
+    }
+}
+
+private actor ThrowingAbortImageWorkerClient: WorkerRoutingClient, NonTextInferenceWorkerClientProtocol {
+    func canDispatchRequests() async -> Bool {
+        true
+    }
+
+    func generate(
+        request: Melix_Worker_V1_GenerateRequest
+    ) async throws -> AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error> {
+        _ = request
+        return AsyncThrowingStream { continuation in
+            continuation.finish()
+        }
+    }
+
+    func abort(requestID: String) async throws -> Bool {
+        _ = requestID
+        throw WorkerClientError.unavailable
+    }
+
+    func loadModel(
+        request: Melix_Worker_V1_LoadModelRequest
+    ) async throws -> Melix_Worker_V1_LoadModelResponse {
+        var response = Melix_Worker_V1_LoadModelResponse()
+        response.ok = true
+        response.modelHandle = "\(request.model.modelID)::python"
+        return response
+    }
+
+    func embed(request: Melix_Worker_V1_EmbedRequest) async throws -> Melix_Worker_V1_EmbedResponse {
+        _ = request
+        return Melix_Worker_V1_EmbedResponse()
+    }
+
+    func rerank(request: Melix_Worker_V1_RerankRequest) async throws -> Melix_Worker_V1_RerankResponse {
+        _ = request
+        return Melix_Worker_V1_RerankResponse()
+    }
+
+    func transcribe(request: Melix_Worker_V1_TranscribeRequest) async throws -> Melix_Worker_V1_TranscribeResponse {
+        _ = request
+        return Melix_Worker_V1_TranscribeResponse()
+    }
+
+    func speak(request: Melix_Worker_V1_SpeakRequest) async throws -> Melix_Worker_V1_SpeakResponse {
+        _ = request
+        return Melix_Worker_V1_SpeakResponse()
+    }
+
+    func imageGenerate(
+        request: Melix_Worker_V1_ImageGenerateRequest
+    ) async throws -> Melix_Worker_V1_ImageGenerateResponse {
+        _ = request
+        return Melix_Worker_V1_ImageGenerateResponse()
+    }
+
+    func imageEdit(
+        request: Melix_Worker_V1_ImageEditRequest
+    ) async throws -> Melix_Worker_V1_ImageEditResponse {
+        _ = request
+        return Melix_Worker_V1_ImageEditResponse()
+    }
+}
+
+private actor StubImageJobAdmissionController: ImageJobAdmissionControlling {
+    private let acquireError: Error?
+    private let cancelDisposition: ImageJobCancelDisposition
+
+    init(
+        acquireError: Error? = nil,
+        cancelDisposition: ImageJobCancelDisposition = .running
+    ) {
+        self.acquireError = acquireError
+        self.cancelDisposition = cancelDisposition
+    }
+
+    func acquire(
+        requestID: String,
+        laneHint: String,
+        workerID: String,
+        priority: Int32
+    ) async throws {
+        _ = requestID
+        _ = laneHint
+        _ = workerID
+        _ = priority
+        if let acquireError {
+            throw acquireError
+        }
+    }
+
+    func finish(
+        requestID: String,
+        phase: Melix_Controlplane_V1_RequestPhase,
+        workerID: String?
+    ) async {
+        _ = requestID
+        _ = phase
+        _ = workerID
+    }
+
+    func cancel(requestID: String) async -> ImageJobCancelDisposition {
+        _ = requestID
+        return cancelDisposition
+    }
+}
+
+private actor BlockingAbortTextWorkerClient: WorkerRoutingClient {
+    private let abortError: Error?
+    private var continuations: [String: AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error>.Continuation] = [:]
+
+    private(set) var startedRequestIDs: [String] = []
+
+    init(abortError: Error? = nil) {
+        self.abortError = abortError
+    }
+
+    func canDispatchRequests() async -> Bool {
+        true
+    }
+
+    func generate(
+        request: Melix_Worker_V1_GenerateRequest
+    ) async throws -> AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error> {
+        let requestID = request.execution.id.requestID
+        startedRequestIDs.append(requestID)
+        return AsyncThrowingStream { continuation in
+            continuations[requestID] = continuation
+        }
+    }
+
+    func abort(requestID: String) async throws -> Bool {
+        if let abortError {
+            throw abortError
+        }
+        guard let continuation = continuations.removeValue(forKey: requestID) else {
+            return false
+        }
+        continuation.finish()
+        return true
+    }
+
+    func loadModel(
+        request: Melix_Worker_V1_LoadModelRequest
+    ) async throws -> Melix_Worker_V1_LoadModelResponse {
+        var response = Melix_Worker_V1_LoadModelResponse()
+        response.modelHandle = request.model.modelID
+        return response
+    }
+}
+
 private func makeWorkerArtifact(
     jobID: String,
     role: Melix_Worker_V1_ImageArtifactRole = .imageArtifactGenerated,
@@ -1518,6 +2510,26 @@ private func makeWorkerArtifact(
     artifact.sha256 = "sha256-\(artifactID)"
     artifact.variantIndex = 0
     return artifact
+}
+
+private func waitForControlPlaneCondition(
+    _ description: String,
+    timeout: Duration = .milliseconds(500),
+    pollInterval: Duration = .milliseconds(10),
+    condition: @escaping @Sendable () async -> Bool
+) async throws {
+    let deadline = ContinuousClock.now + timeout
+    while ContinuousClock.now < deadline {
+        if await condition() {
+            return
+        }
+        try await Task.sleep(for: pollInterval)
+    }
+    throw ControlPlaneConditionTimeoutError(description: description)
+}
+
+private struct ControlPlaneConditionTimeoutError: Error, CustomStringConvertible {
+    let description: String
 }
 
 private actor ScriptedModelOperationsWorkerClient: WorkerRoutingClient, ModelOperationsWorkerClientProtocol {

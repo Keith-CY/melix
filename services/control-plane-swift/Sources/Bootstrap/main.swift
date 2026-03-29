@@ -22,6 +22,10 @@ enum MelixControlPlaneBootstrap {
                 await eventHub.publish(event)
             }
         )
+        let imageJobAdmissionController = ImageJobAdmissionController(
+            schedulerReadModel: schedulerReadModel,
+            metricsStore: metricsStore
+        )
         let swiftTextWorkerClient = SwiftTextWorkerClient(
             socketPath: bootstrapEnvironment.swiftTextWorkerSocketPath
         )
@@ -70,7 +74,8 @@ enum MelixControlPlaneBootstrap {
             schedulerReadModel: schedulerReadModel,
             cacheMetadataStore: cacheMetadataStore,
             sessionGraphStore: sessionGraphStore,
-            imageJobReadModel: imageJobReadModel
+            imageJobReadModel: imageJobReadModel,
+            imageJobAdmissionController: imageJobAdmissionController
         )
 
         let handler = OpenAIHandler(
@@ -87,6 +92,7 @@ enum MelixControlPlaneBootstrap {
             metricsStore: metricsStore,
             schedulerReadModel: schedulerReadModel,
             imageJobReadModel: imageJobReadModel,
+            imageJobAdmissionController: imageJobAdmissionController,
             cacheMetadataStore: cacheMetadataStore
         )
 

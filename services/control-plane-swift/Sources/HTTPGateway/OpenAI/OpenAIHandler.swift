@@ -54,6 +54,7 @@ public struct OpenAIHandler: Sendable {
     private let metricsStore: MetricsStore
     private let schedulerReadModel: SchedulerReadModel?
     private let imageJobReadModel: ImageJobReadModel?
+    private let imageJobAdmissionController: any ImageJobAdmissionControlling
     private let cacheMetadataStore: CacheMetadataStore?
     private let translator: ChatRequestTranslator
     private let sseWriter: SSEStreamWriter
@@ -67,6 +68,7 @@ public struct OpenAIHandler: Sendable {
         metricsStore: MetricsStore = MetricsStore(),
         schedulerReadModel: SchedulerReadModel? = nil,
         imageJobReadModel: ImageJobReadModel? = nil,
+        imageJobAdmissionController: (any ImageJobAdmissionControlling)? = nil,
         cacheMetadataStore: CacheMetadataStore? = nil,
         translator: ChatRequestTranslator = ChatRequestTranslator(),
         sseWriter: SSEStreamWriter = SSEStreamWriter()
@@ -77,6 +79,10 @@ public struct OpenAIHandler: Sendable {
         self.metricsStore = metricsStore
         self.schedulerReadModel = schedulerReadModel
         self.imageJobReadModel = imageJobReadModel
+        self.imageJobAdmissionController = imageJobAdmissionController ?? ImageJobAdmissionController(
+            schedulerReadModel: schedulerReadModel,
+            metricsStore: metricsStore
+        )
         self.cacheMetadataStore = cacheMetadataStore
         self.translator = translator
         self.sseWriter = sseWriter
@@ -558,7 +564,39 @@ public struct OpenAIHandler: Sendable {
             operation: "image_generate",
             lane: routeKind.defaultSchedulingLane
         )
-        await beginMultimodalRequest(requestID: requestID, routeKind: routeKind)
+        do {
+            try await imageJobAdmissionController.acquire(
+                requestID: requestID,
+                laneHint: routeKind.defaultSchedulingLane,
+                workerID: routeKind.workerSourceID
+            )
+        } catch ImageJobAdmissionError.cancelled {
+            await imageJobReadModel?.recordCanceled(jobID: jobID)
+            return workerErrorResponse({
+                var error = Melix_Worker_V1_ErrorStatus()
+                error.code = "cancelled"
+                error.message = "Image job was cancelled before execution."
+                return error
+            }())
+        } catch ImageJobAdmissionError.saturated {
+            await imageJobReadModel?.recordFailed(
+                jobID: jobID,
+                error: controlPlaneError(
+                    code: "resource_exhausted",
+                    message: "Image queue is saturated. Wait for the current job to finish."
+                )
+            )
+            return jsonResponse(
+                statusCode: 503,
+                payload: ["error": ["code": "resource_exhausted", "message": "Image queue is saturated. Wait for the current job to finish."]]
+            )
+        } catch {
+            await imageJobReadModel?.recordFailed(
+                jobID: jobID,
+                error: controlPlaneError(code: "worker_unavailable", message: "Image admission failed: \(error)")
+            )
+            return workerUnavailableResponse()
+        }
         await imageJobReadModel?.recordRunning(jobID: jobID, workerID: routeKind.workerSourceID, pct: 0)
 
         let startedAt = Date()
@@ -581,10 +619,14 @@ public struct OpenAIHandler: Sendable {
                 Date().timeIntervalSince(startedAt) * 1000,
                 forKey: "images.request_latency_ms"
             )
-            await metricsStore.set(0, forKey: "images.queue_wait_ms")
             await metricsStore.set(
                 Double(response.images.reduce(0) { $0 + $1.count }),
                 forKey: "images.output_bytes"
+            )
+            await imageJobAdmissionController.finish(
+                requestID: requestID,
+                phase: imageJobPhase(for: response.job, error: response.error),
+                workerID: routeKind.workerSourceID
             )
             if !response.error.code.isEmpty {
                 return workerErrorResponse(response.error)
@@ -612,9 +654,8 @@ public struct OpenAIHandler: Sendable {
                 jobID: jobID,
                 error: controlPlaneError(code: "worker_unavailable", message: "The worker cannot accept requests.")
             )
-            await finishMultimodalRequest(
+            await imageJobAdmissionController.finish(
                 requestID: requestID,
-                routeKind: routeKind,
                 phase: .requestFailed
             )
             return workerUnavailableResponse()
@@ -677,7 +718,39 @@ public struct OpenAIHandler: Sendable {
             operation: "image_edit",
             lane: routeKind.defaultSchedulingLane
         )
-        await beginMultimodalRequest(requestID: requestID, routeKind: routeKind)
+        do {
+            try await imageJobAdmissionController.acquire(
+                requestID: requestID,
+                laneHint: routeKind.defaultSchedulingLane,
+                workerID: routeKind.workerSourceID
+            )
+        } catch ImageJobAdmissionError.cancelled {
+            await imageJobReadModel?.recordCanceled(jobID: jobID)
+            return workerErrorResponse({
+                var error = Melix_Worker_V1_ErrorStatus()
+                error.code = "cancelled"
+                error.message = "Image job was cancelled before execution."
+                return error
+            }())
+        } catch ImageJobAdmissionError.saturated {
+            await imageJobReadModel?.recordFailed(
+                jobID: jobID,
+                error: controlPlaneError(
+                    code: "resource_exhausted",
+                    message: "Image queue is saturated. Wait for the current job to finish."
+                )
+            )
+            return jsonResponse(
+                statusCode: 503,
+                payload: ["error": ["code": "resource_exhausted", "message": "Image queue is saturated. Wait for the current job to finish."]]
+            )
+        } catch {
+            await imageJobReadModel?.recordFailed(
+                jobID: jobID,
+                error: controlPlaneError(code: "worker_unavailable", message: "Image admission failed: \(error)")
+            )
+            return workerUnavailableResponse()
+        }
         await imageJobReadModel?.recordRunning(jobID: jobID, workerID: routeKind.workerSourceID, pct: 0)
 
         let startedAt = Date()
@@ -700,10 +773,14 @@ public struct OpenAIHandler: Sendable {
                 Date().timeIntervalSince(startedAt) * 1000,
                 forKey: "images.request_latency_ms"
             )
-            await metricsStore.set(0, forKey: "images.queue_wait_ms")
             await metricsStore.set(
                 Double(response.images.reduce(0) { $0 + $1.count }),
                 forKey: "images.output_bytes"
+            )
+            await imageJobAdmissionController.finish(
+                requestID: requestID,
+                phase: imageJobPhase(for: response.job, error: response.error),
+                workerID: routeKind.workerSourceID
             )
             if !response.error.code.isEmpty {
                 return workerErrorResponse(response.error)
@@ -732,9 +809,8 @@ public struct OpenAIHandler: Sendable {
                 jobID: jobID,
                 error: controlPlaneError(code: "worker_unavailable", message: "The worker cannot accept requests.")
             )
-            await finishMultimodalRequest(
+            await imageJobAdmissionController.finish(
                 requestID: requestID,
-                routeKind: routeKind,
                 phase: .requestFailed
             )
             return workerUnavailableResponse()

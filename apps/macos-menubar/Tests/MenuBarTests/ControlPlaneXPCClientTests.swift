@@ -308,6 +308,88 @@ struct ControlPlaneXPCClientTests {
         #expect(job.operation == "image_edit")
     }
 
+    @Test("local client cancels requests through control-plane execute")
+    func localClientCancelsRequestsThroughControlPlaneExecute() async throws {
+        let service = RecordingExecuteControlPlaneService()
+        let client = LocalControlPlaneXPCClient(service: service)
+
+        let cancelled = try await client.cancelRequest(requestID: "req-image-running")
+        let request = try #require(await service.lastExecuteRequest)
+
+        #expect(cancelled)
+        #expect(request.requestID == "menubar-cancel-req-image-running")
+        #expect(request.commandType == "ops.cancel_request")
+        #expect(request.ops.cancelRequest.requestID == "req-image-running")
+    }
+
+    @Test("local client surfaces cancel request failures")
+    func localClientSurfacesCancelRequestFailures() async throws {
+        let service = FailingExecuteControlPlaneService(
+            code: "not_found",
+            message: "Unknown request ID."
+        )
+        let client = LocalControlPlaneXPCClient(service: service)
+
+        do {
+            _ = try await client.cancelRequest(requestID: "req-missing")
+            Issue.record("Expected cancelRequest to throw for a failed execute response")
+        } catch let error as ControlPlaneXPCClientError {
+            #expect(
+                error == .requestFailed(
+                    code: "not_found",
+                    message: "Unknown request ID."
+                )
+            )
+        }
+    }
+
+    @Test("default image and cancel client methods throw unimplemented errors")
+    func defaultImageAndCancelClientMethodsThrowUnimplementedErrors() async throws {
+        let client = DefaultImagelessControlPlaneXPCClient()
+
+        do {
+            _ = try await client.generateImage(ControlPlaneImageGenerationRequest(modelID: "melix-dev-image", prompt: "fox"))
+            Issue.record("Expected generateImage to throw for the default protocol implementation")
+        } catch let error as ControlPlaneXPCClientError {
+            #expect(
+                error == .requestFailed(
+                    code: "unimplemented",
+                    message: "Image generation is not implemented for this control-plane client."
+                )
+            )
+        }
+
+        do {
+            _ = try await client.editImage(
+                ControlPlaneImageEditRequest(
+                    modelID: "melix-dev-image",
+                    prompt: "edit",
+                    imageURL: "file:///tmp/source.png"
+                )
+            )
+            Issue.record("Expected editImage to throw for the default protocol implementation")
+        } catch let error as ControlPlaneXPCClientError {
+            #expect(
+                error == .requestFailed(
+                    code: "unimplemented",
+                    message: "Image editing is not implemented for this control-plane client."
+                )
+            )
+        }
+
+        do {
+            _ = try await client.cancelRequest(requestID: "req-default")
+            Issue.record("Expected cancelRequest to throw for the default protocol implementation")
+        } catch let error as ControlPlaneXPCClientError {
+            #expect(
+                error == .requestFailed(
+                    code: "unimplemented",
+                    message: "Request cancellation is not implemented for this control-plane client."
+                )
+            )
+        }
+    }
+
     @Test("local client starts chat through the control plane and streams typed chat events")
     func localClientStartsChatAndStreamsTypedEvents() async throws {
         let modelCatalog = ModelCatalog()
@@ -356,6 +438,74 @@ struct ControlPlaneXPCClientTests {
     }
 }
 
+private struct DefaultImagelessControlPlaneXPCClient: ControlPlaneXPCClient {
+    func handshake() async throws -> Melix_Controlplane_V1_HandshakeResponse {
+        Melix_Controlplane_V1_HandshakeResponse()
+    }
+
+    func subscribe(lastSeenSeq: UInt64) async -> AsyncStream<Melix_Controlplane_V1_ControlPlaneEvent> {
+        _ = lastSeenSeq
+        return AsyncStream { continuation in
+            continuation.finish()
+        }
+    }
+
+    func startChat(_ request: ControlPlaneChatRequest) async throws -> ControlPlaneChatExecution {
+        ControlPlaneChatExecution(
+            requestID: "req-default-chat",
+            modelID: request.modelID,
+            stream: AsyncThrowingStream { continuation in
+                continuation.finish()
+            }
+        )
+    }
+
+    func serverSnapshot() async throws -> Melix_Controlplane_V1_ServerSnapshot {
+        Melix_Controlplane_V1_ServerSnapshot()
+    }
+
+    func loadModel(modelID: String) async throws -> Melix_Controlplane_V1_ModelSummary {
+        _ = modelID
+        return Melix_Controlplane_V1_ModelSummary()
+    }
+
+    func unloadModel(modelID: String) async throws -> Melix_Controlplane_V1_ModelSummary {
+        _ = modelID
+        return Melix_Controlplane_V1_ModelSummary()
+    }
+
+    func updateModelSettings(
+        modelID: String,
+        values: [String: String]
+    ) async throws -> Melix_Controlplane_V1_ModelSummary {
+        _ = modelID
+        _ = values
+        return Melix_Controlplane_V1_ModelSummary()
+    }
+
+    func modelInfo(modelID: String) async throws -> Melix_Controlplane_V1_ModelInfo {
+        _ = modelID
+        return Melix_Controlplane_V1_ModelInfo()
+    }
+
+    func runModelOperation(
+        modelID: String,
+        operation: String,
+        outputDir: String,
+        weightQuant: String,
+        kvQuant: String,
+        ext: [String: String]
+    ) async throws -> Melix_Controlplane_V1_ModelOperationResult {
+        _ = modelID
+        _ = operation
+        _ = outputDir
+        _ = weightQuant
+        _ = kvQuant
+        _ = ext
+        return Melix_Controlplane_V1_ModelOperationResult()
+    }
+}
+
 private actor FailingExecuteControlPlaneService: ControlPlaneExecuting {
     private let code: String
     private let message: String
@@ -395,6 +545,41 @@ private actor FailingExecuteControlPlaneService: ControlPlaneExecuting {
         response.ok = false
         response.error.code = code
         response.error.message = message
+        return response
+    }
+}
+
+private actor RecordingExecuteControlPlaneService: ControlPlaneExecuting {
+    private(set) var lastExecuteRequest: Melix_Controlplane_V1_ControlPlaneRequest?
+
+    func handshake(_ request: Melix_Controlplane_V1_HandshakeRequest) async throws -> Melix_Controlplane_V1_HandshakeResponse {
+        _ = request
+        return Melix_Controlplane_V1_HandshakeResponse()
+    }
+
+    func subscribe(_ request: Melix_Controlplane_V1_SubscribeRequest) async -> ControlPlaneSubscription {
+        _ = request
+        return ControlPlaneSubscription(
+            subscriptionID: "recording",
+            stream: AsyncStream { continuation in
+                continuation.finish()
+            }
+        )
+    }
+
+    func unsubscribe(_ subscriptionID: String) async {
+        _ = subscriptionID
+    }
+
+    func startChat(_ request: ControlPlaneChatRequest) async throws -> ControlPlaneChatExecution {
+        _ = request
+        throw ControlPlaneChatExecutionError.unavailable
+    }
+
+    func execute(_ request: Melix_Controlplane_V1_ControlPlaneRequest) async throws -> Melix_Controlplane_V1_ControlPlaneResponse {
+        lastExecuteRequest = request
+        var response = Melix_Controlplane_V1_ControlPlaneResponse()
+        response.ok = true
         return response
     }
 }

@@ -683,6 +683,102 @@ struct RuntimeViewModelTests {
         #expect(viewModel.selectedImageJob?.artifacts.contains(where: { $0.storageUri == "/tmp/output.png" }) == true)
     }
 
+    @Test("image cancel action dispatches through the client and records cancel latency")
+    @MainActor
+    func imageCancelActionDispatchesThroughClient() async throws {
+        let client = FakeControlPlaneXPCClient()
+        var snapshot = makeSnapshot(
+            serverState: .serverReady,
+            models: [
+                makeModelSummary(modelID: "melix-dev-text", state: .modelWarm),
+                makeMenuBarImageModelSummary(),
+            ]
+        )
+        snapshot.imageJobs = [
+            makeMenuBarImageJobSummary(
+                jobID: "job-image-live",
+                requestID: "req-image-live",
+                operation: "image_generate",
+                state: .imageJobRunning
+            ),
+        ]
+        await client.configureSnapshot(snapshot)
+        let metrics = MenuBarMetricsStore()
+        let viewModel = RuntimeViewModel(client: client, metrics: metrics)
+
+        await viewModel.start()
+        await viewModel.cancelSelectedImageJob()
+
+        #expect(await client.recordedActions.contains("cancel:req-image-live"))
+        #expect(viewModel.imageStatusText == "Canceling")
+        #expect(await metrics.snapshot()["desktop.image_cancel_latency_ms"] != nil)
+    }
+
+    @Test("image cancel action is a no-op for non-cancelable jobs")
+    @MainActor
+    func imageCancelActionNoopsForNonCancelableJobs() async throws {
+        let client = FakeControlPlaneXPCClient()
+        var snapshot = makeSnapshot(
+            serverState: .serverReady,
+            models: [
+                makeModelSummary(modelID: "melix-dev-text", state: .modelWarm),
+                makeMenuBarImageModelSummary(),
+            ]
+        )
+        snapshot.imageJobs = [
+            makeMenuBarImageJobSummary(
+                jobID: "job-image-complete",
+                requestID: "req-image-complete",
+                operation: "image_generate",
+                state: .imageJobCompleted
+            ),
+        ]
+        await client.configureSnapshot(snapshot)
+        let metrics = MenuBarMetricsStore()
+        let viewModel = RuntimeViewModel(client: client, metrics: metrics)
+
+        await viewModel.start()
+        let initialStatus = viewModel.imageStatusText
+        await viewModel.cancelSelectedImageJob()
+
+        #expect(await client.recordedActions.contains("cancel:req-image-complete") == false)
+        #expect(viewModel.imageStatusText == initialStatus)
+        #expect(await metrics.snapshot()["desktop.image_cancel_latency_ms"] == nil)
+    }
+
+    @Test("image cancel action surfaces client failures")
+    @MainActor
+    func imageCancelActionSurfacesClientFailures() async throws {
+        let client = FakeControlPlaneXPCClient()
+        var snapshot = makeSnapshot(
+            serverState: .serverReady,
+            models: [
+                makeModelSummary(modelID: "melix-dev-text", state: .modelWarm),
+                makeMenuBarImageModelSummary(),
+            ]
+        )
+        snapshot.imageJobs = [
+            makeMenuBarImageJobSummary(
+                jobID: "job-image-failing-cancel",
+                requestID: "req-image-failing-cancel",
+                operation: "image_generate",
+                state: .imageJobRunning
+            ),
+        ]
+        await client.configureSnapshot(snapshot)
+        await client.configureErrors(cancel: MenuBarTestError(description: "cancel failed"))
+        let metrics = MenuBarMetricsStore()
+        let viewModel = RuntimeViewModel(client: client, metrics: metrics)
+
+        await viewModel.start()
+        await viewModel.cancelSelectedImageJob()
+
+        #expect(await client.recordedActions.contains("cancel:req-image-failing-cancel"))
+        #expect(viewModel.imageStatusText == "Failed")
+        #expect(viewModel.lastError?.contains("cancel failed") == true)
+        #expect(await metrics.snapshot()["desktop.image_cancel_latency_ms"] == nil)
+    }
+
     @Test("image job events refresh selected job progress and terminal state")
     @MainActor
     func imageJobEventsRefreshSelectedJobProgressAndTerminalState() async throws {
@@ -728,6 +824,75 @@ struct RuntimeViewModelTests {
         }
 
         #expect(viewModel.imageStatusText == "Completed • image_generate")
+    }
+
+    @Test("image edit requires a source URL before dispatch")
+    @MainActor
+    func imageEditRequiresASourceURLBeforeDispatch() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let metrics = MenuBarMetricsStore()
+        let viewModel = RuntimeViewModel(client: client, metrics: metrics)
+
+        await viewModel.start()
+        viewModel.imagePromptText = "Edit the skyline"
+        await viewModel.submitImageEdit()
+
+        #expect(viewModel.imageStatusText == "Failed")
+        #expect(viewModel.lastError == "Image edit source is required.")
+        #expect(await client.recordedActions.contains("image.edit:melix-dev-image") == false)
+        #expect(await metrics.snapshot()["desktop.image_action_latency_ms"] == nil)
+    }
+
+    @Test("image edit surfaces client failures")
+    @MainActor
+    func imageEditSurfacesClientFailures() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureErrors(imageEdit: MenuBarTestError(description: "edit failed"))
+        let metrics = MenuBarMetricsStore()
+        let viewModel = RuntimeViewModel(client: client, metrics: metrics)
+
+        await viewModel.start()
+        viewModel.imagePromptText = "Edit the skyline"
+        viewModel.imageEditSourceURL = "file:///tmp/source.png"
+
+        await viewModel.submitImageEdit()
+
+        #expect(await client.recordedActions.contains("image.edit:melix-dev-image"))
+        #expect(viewModel.imageStatusText == "Failed")
+        #expect(viewModel.lastError?.contains("edit failed") == true)
+        #expect(await metrics.snapshot()["desktop.image_action_latency_ms"] == nil)
+    }
+
+    @Test("desktop foundation refresh records image refresh latency when image jobs are present")
+    @MainActor
+    func desktopFoundationRefreshRecordsImageRefreshLatency() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let metrics = MenuBarMetricsStore()
+        let viewModel = RuntimeViewModel(client: client, metrics: metrics)
+
+        await viewModel.start()
+
+        var refreshedSnapshot = makeSnapshot(
+            serverState: .serverReady,
+            models: [
+                makeModelSummary(modelID: "melix-dev-text", state: .modelWarm),
+                makeMenuBarImageModelSummary(),
+            ]
+        )
+        refreshedSnapshot.imageJobs = [
+            makeMenuBarImageJobSummary(
+                jobID: "job-image-refresh",
+                requestID: "req-image-refresh",
+                operation: "image_generate",
+                state: .imageJobRunning
+            ),
+        ]
+        await client.configureSnapshot(refreshedSnapshot)
+
+        await viewModel.refreshDesktopFoundation()
+
+        #expect(await metrics.snapshot()["menu.foundation_refresh_ms"] != nil)
+        #expect(await metrics.snapshot()["desktop.image_refresh_ms"] != nil)
     }
 }
 

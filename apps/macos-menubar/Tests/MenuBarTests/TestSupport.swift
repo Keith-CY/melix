@@ -21,6 +21,7 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
     private var chatError: Error?
     private var imageGenerateError: Error?
     private var imageEditError: Error?
+    private var cancelError: Error?
     private var snapshotOverride: Melix_Controlplane_V1_ServerSnapshot?
     private var responseFeatures: [String] = ["chat"]
     private var modelSettings = FakeControlPlaneXPCClient.defaultModelSettings()
@@ -58,7 +59,8 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
         modelOperation: Error? = nil,
         chat: Error? = nil,
         imageGenerate: Error? = nil,
-        imageEdit: Error? = nil
+        imageEdit: Error? = nil,
+        cancel: Error? = nil
     ) {
         handshakeError = handshake
         loadError = load
@@ -70,6 +72,7 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
         chatError = chat
         imageGenerateError = imageGenerate
         imageEditError = imageEdit
+        cancelError = cancel
     }
 
     func configureModelResponseFeatures(_ features: [String]) {
@@ -266,6 +269,14 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
             response.requestID = "image-edit-1"
         }
         return response
+    }
+
+    func cancelRequest(requestID: String) async throws -> Bool {
+        recordedActions.append("cancel:\(requestID)")
+        if let cancelError {
+            throw cancelError
+        }
+        return true
     }
 
     func sendModelStateChanged(state: Melix_Controlplane_V1_ModelState) {

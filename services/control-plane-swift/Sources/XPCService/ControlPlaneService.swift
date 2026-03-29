@@ -14,6 +14,7 @@ public actor ControlPlaneService {
     private let cacheMetadataStore: CacheMetadataStore
     private let sessionGraphStore: SessionGraphStore
     private let imageJobReadModel: ImageJobReadModel
+    private let imageJobAdmissionController: any ImageJobAdmissionControlling
     private let workerRegistry: WorkerRegistry?
     private let requestCoordinator: RequestCoordinator?
     private let chatTranslator: ChatRequestTranslator
@@ -30,6 +31,7 @@ public actor ControlPlaneService {
         cacheMetadataStore: CacheMetadataStore = CacheMetadataStore(),
         sessionGraphStore: SessionGraphStore = SessionGraphStore(),
         imageJobReadModel: ImageJobReadModel? = nil,
+        imageJobAdmissionController: (any ImageJobAdmissionControlling)? = nil,
         workerRegistry: WorkerRegistry? = nil,
         requestCoordinator: RequestCoordinator? = nil,
         chatTranslator: ChatRequestTranslator = ChatRequestTranslator()
@@ -45,6 +47,10 @@ public actor ControlPlaneService {
                 await eventHub.publish(event)
             }
         )
+        let resolvedImageJobAdmissionController = imageJobAdmissionController ?? ImageJobAdmissionController(
+            schedulerReadModel: resolvedSchedulerReadModel,
+            metricsStore: metricsStore
+        )
         self.serverVersion = serverVersion
         self.daemonInstanceID = daemonInstanceID
         self.modelCatalog = modelCatalog
@@ -55,6 +61,7 @@ public actor ControlPlaneService {
         self.cacheMetadataStore = cacheMetadataStore
         self.sessionGraphStore = sessionGraphStore
         self.imageJobReadModel = resolvedImageJobReadModel
+        self.imageJobAdmissionController = resolvedImageJobAdmissionController
         self.workerRegistry = workerRegistry
         self.schedulerReadModel = resolvedSchedulerReadModel
         self.requestCoordinator = requestCoordinator ?? workerRegistry.map { registry in
@@ -333,6 +340,8 @@ public actor ControlPlaneService {
             var reply = Melix_Controlplane_V1_OpsReply()
             reply.metrics = await metricsStore.snapshot()
             return okResponse(for: request, ops: reply)
+        case .cancelRequest(let cancelRequest):
+            return await handleCancelRequest(request: request, command: cancelRequest)
         default:
             return errorResponse(
                 for: request,
@@ -411,6 +420,36 @@ public actor ControlPlaneService {
             operation: "image_generate",
             lane: routeKind.defaultSchedulingLane
         )
+        do {
+            try await imageJobAdmissionController.acquire(
+                requestID: request.requestID,
+                laneHint: routeKind.defaultSchedulingLane,
+                workerID: routeKind.workerSourceID
+            )
+        } catch ImageJobAdmissionError.cancelled {
+            await imageJobReadModel.recordCanceled(jobID: jobID)
+            return errorResponse(for: request, code: "cancelled", message: "Image job was cancelled before execution.")
+        } catch ImageJobAdmissionError.saturated {
+            await imageJobReadModel.recordFailed(
+                jobID: jobID,
+                error: controlPlaneError(
+                    code: "resource_exhausted",
+                    message: "Image queue is saturated. Wait for the current job to finish."
+                )
+            )
+            return errorResponse(
+                for: request,
+                code: "resource_exhausted",
+                message: "Image queue is saturated. Wait for the current job to finish."
+            )
+        } catch {
+            await imageJobReadModel.recordFailed(
+                jobID: jobID,
+                error: controlPlaneError(code: "unavailable", message: "Image admission failed: \(error)")
+            )
+            return errorResponse(for: request, code: "unavailable", message: "Image admission failed: \(error)")
+        }
+
         await imageJobReadModel.recordRunning(jobID: jobID, workerID: routeKind.workerSourceID, pct: 0)
 
         do {
@@ -431,6 +470,11 @@ public actor ControlPlaneService {
                 Double(workerResponse.images.reduce(0) { $0 + $1.count }),
                 forKey: "images.output_bytes"
             )
+            await imageJobAdmissionController.finish(
+                requestID: request.requestID,
+                phase: imageJobPhase(for: workerResponse.job, error: workerResponse.error),
+                workerID: routeKind.workerSourceID
+            )
 
             if !workerResponse.error.code.isEmpty {
                 return errorResponse(
@@ -450,6 +494,11 @@ public actor ControlPlaneService {
             await imageJobReadModel.recordFailed(
                 jobID: jobID,
                 error: controlPlaneError(code: "unavailable", message: "Image worker request failed: \(error)")
+            )
+            await imageJobAdmissionController.finish(
+                requestID: request.requestID,
+                phase: .requestFailed,
+                workerID: routeKind.workerSourceID
             )
             return errorResponse(for: request, code: "unavailable", message: "Image worker request failed: \(error)")
         }
@@ -496,6 +545,36 @@ public actor ControlPlaneService {
             operation: "image_edit",
             lane: routeKind.defaultSchedulingLane
         )
+        do {
+            try await imageJobAdmissionController.acquire(
+                requestID: request.requestID,
+                laneHint: routeKind.defaultSchedulingLane,
+                workerID: routeKind.workerSourceID
+            )
+        } catch ImageJobAdmissionError.cancelled {
+            await imageJobReadModel.recordCanceled(jobID: jobID)
+            return errorResponse(for: request, code: "cancelled", message: "Image job was cancelled before execution.")
+        } catch ImageJobAdmissionError.saturated {
+            await imageJobReadModel.recordFailed(
+                jobID: jobID,
+                error: controlPlaneError(
+                    code: "resource_exhausted",
+                    message: "Image queue is saturated. Wait for the current job to finish."
+                )
+            )
+            return errorResponse(
+                for: request,
+                code: "resource_exhausted",
+                message: "Image queue is saturated. Wait for the current job to finish."
+            )
+        } catch {
+            await imageJobReadModel.recordFailed(
+                jobID: jobID,
+                error: controlPlaneError(code: "unavailable", message: "Image admission failed: \(error)")
+            )
+            return errorResponse(for: request, code: "unavailable", message: "Image admission failed: \(error)")
+        }
+
         await imageJobReadModel.recordRunning(jobID: jobID, workerID: routeKind.workerSourceID, pct: 0)
 
         do {
@@ -515,6 +594,11 @@ public actor ControlPlaneService {
             await metricsStore.set(
                 Double(workerResponse.images.reduce(0) { $0 + $1.count }),
                 forKey: "images.output_bytes"
+            )
+            await imageJobAdmissionController.finish(
+                requestID: request.requestID,
+                phase: imageJobPhase(for: workerResponse.job, error: workerResponse.error),
+                workerID: routeKind.workerSourceID
             )
 
             if !workerResponse.error.code.isEmpty {
@@ -536,7 +620,64 @@ public actor ControlPlaneService {
                 jobID: jobID,
                 error: controlPlaneError(code: "unavailable", message: "Image worker request failed: \(error)")
             )
+            await imageJobAdmissionController.finish(
+                requestID: request.requestID,
+                phase: .requestFailed,
+                workerID: routeKind.workerSourceID
+            )
             return errorResponse(for: request, code: "unavailable", message: "Image worker request failed: \(error)")
+        }
+    }
+
+    private func handleCancelRequest(
+        request: Melix_Controlplane_V1_ControlPlaneRequest,
+        command: Melix_Controlplane_V1_CancelRequest
+    ) async -> Melix_Controlplane_V1_ControlPlaneResponse {
+        if let requestCoordinator {
+            do {
+                if try await requestCoordinator.cancel(requestID: command.requestID) {
+                    var reply = Melix_Controlplane_V1_OpsReply()
+                    reply.reportMarkdown = "cancel_requested"
+                    return okResponse(for: request, ops: reply)
+                }
+            } catch {
+                return errorResponse(for: request, code: "unavailable", message: "Cancel request failed: \(error)")
+            }
+        }
+
+        guard let imageJob = await imageJobReadModel.job(requestID: command.requestID) else {
+            return errorResponse(for: request, code: "not_found", message: "Unknown request ID.")
+        }
+
+        await metricsStore.increment("images.cancel_requested_total")
+        switch await imageJobAdmissionController.cancel(requestID: command.requestID) {
+        case .queued:
+            await imageJobReadModel.recordCanceled(jobID: imageJob.jobID)
+            await metricsStore.increment("images.cancel_success_total")
+            var reply = Melix_Controlplane_V1_OpsReply()
+            reply.reportMarkdown = "cancelled"
+            return okResponse(for: request, ops: reply)
+        case .running:
+            guard
+                let workerRegistry,
+                let workerClient = await workerRegistry.client(forModelID: imageJob.modelID)
+            else {
+                return errorResponse(for: request, code: "unavailable", message: "Image worker is unavailable.")
+            }
+
+            do {
+                if try await workerClient.abort(requestID: command.requestID) {
+                    await metricsStore.increment("images.cancel_success_total")
+                    var reply = Melix_Controlplane_V1_OpsReply()
+                    reply.reportMarkdown = "cancel_requested"
+                    return okResponse(for: request, ops: reply)
+                }
+                return errorResponse(for: request, code: "not_found", message: "Image request is no longer active.")
+            } catch {
+                return errorResponse(for: request, code: "unavailable", message: "Image cancel failed: \(error)")
+            }
+        case .notFound:
+            return errorResponse(for: request, code: "not_found", message: "Image request is no longer active.")
         }
     }
 
@@ -813,6 +954,27 @@ public actor ControlPlaneService {
         error.code = code
         error.message = message
         return error
+    }
+
+    private func imageJobPhase(
+        for workerJob: Melix_Worker_V1_ImageJobDescriptor,
+        error: Melix_Worker_V1_ErrorStatus
+    ) -> Melix_Controlplane_V1_RequestPhase {
+        if error.code == "cancelled" || workerJob.state == .imageJobCanceled {
+            return .requestAborted
+        }
+        if !error.code.isEmpty {
+            return .requestFailed
+        }
+
+        switch workerJob.state {
+        case .imageJobCompleted:
+            return .requestCompleted
+        case .imageJobFailed:
+            return .requestFailed
+        default:
+            return .requestFailed
+        }
     }
 
     private func recordImageJobTerminalState(
