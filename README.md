@@ -84,6 +84,30 @@ Use JSON output when automation needs a machine-readable report:
 make phase1-metrics PHASE1_METRICS_ARGS="--json"
 ```
 
+## Local Product Install
+
+Generate a user-scoped local product layout with launch agents, an install manifest, and an
+environment export file:
+
+```bash
+python3 scripts/install_local_product.py --json
+```
+
+Validate the generated install assets without running `launchctl`:
+
+```bash
+make phase8-install-smoke
+```
+
+The installer writes:
+
+- launch agents under `~/Library/LaunchAgents`
+- an install manifest under `~/Library/Application Support/Melix/install-manifest.json`
+- an environment export file under `~/Library/Application Support/Melix/melix-product-env.sh`
+
+The full operator flow, including bootstrap and uninstall commands, is documented in
+`docs/runbooks/phase-8-local-install.md`.
+
 `make proto` currently generates:
 
 - Swift protobuf message types into `packages/protocol/swift`
@@ -104,6 +128,8 @@ The current phase-status and implementation guidance live under:
 - `docs/plans/2026-03-27-phase-1-swift-text-worker.md`
 - `docs/plans/2026-03-28-p1-m6-workflow-integration-metrics.md`
 - `docs/runbooks/phase-1-local-stack.md`
+- `docs/plans/2026-03-29-p8-m4-packaging-startup-automation.md`
+- `docs/runbooks/phase-8-local-install.md`
 
 ## License
 
