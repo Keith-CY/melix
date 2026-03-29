@@ -96,6 +96,8 @@ public actor ControlPlaneService {
             return await handleSession(request: request, command: command)
         case .ops(let command):
             return await handleOps(request: request, command: command)
+        case .image(let command):
+            return await handleImage(request: request, command: command)
         default:
             return errorResponse(
                 for: request,
@@ -340,6 +342,24 @@ public actor ControlPlaneService {
         }
     }
 
+    private func handleImage(
+        request: Melix_Controlplane_V1_ControlPlaneRequest,
+        command: Melix_Controlplane_V1_ImageCommand
+    ) async -> Melix_Controlplane_V1_ControlPlaneResponse {
+        switch command.kind {
+        case .generate(let generate):
+            return await handleGenerateImage(request: request, command: generate)
+        case .edit(let edit):
+            return await handleEditImage(request: request, command: edit)
+        default:
+            return errorResponse(
+                for: request,
+                code: "unimplemented",
+                message: "Image command is not implemented in the current control plane."
+            )
+        }
+    }
+
     private func buildSnapshot() async -> Melix_Controlplane_V1_ServerSnapshot {
         let models = await modelCatalog.listModels()
         let metrics = await metricsStore.snapshot()
@@ -355,6 +375,169 @@ public actor ControlPlaneService {
             sessions: sessions,
             imageJobs: imageJobs
         )
+    }
+
+    private func handleGenerateImage(
+        request: Melix_Controlplane_V1_ControlPlaneRequest,
+        command: Melix_Controlplane_V1_GenerateImage
+    ) async -> Melix_Controlplane_V1_ControlPlaneResponse {
+        let startedAt = Date()
+        guard let modelHandle = await modelCatalog.dispatchHandle(for: command.modelID) else {
+            return errorResponse(for: request, code: "not_ready", message: "Image model is not loaded.")
+        }
+        guard
+            let workerRegistry,
+            let workerClient = await workerRegistry.client(forModelID: command.modelID) as? any NonTextInferenceWorkerClientProtocol
+        else {
+            return errorResponse(for: request, code: "unavailable", message: "Image worker is unavailable.")
+        }
+
+        let routeKind = await workerRegistry.route(forModelID: command.modelID) ?? .pythonImage
+        let jobID = "\(request.requestID)::image-generate"
+
+        var workerRequest = Melix_Worker_V1_ImageGenerateRequest()
+        workerRequest.id.requestID = request.requestID
+        workerRequest.modelHandle = modelHandle
+        workerRequest.prompt = command.prompt
+        workerRequest.size = command.size.isEmpty ? "1024x1024" : command.size
+        workerRequest.n = command.n == 0 ? 1 : command.n
+        workerRequest.responseFormat = command.responseFormat.isEmpty ? "png" : command.responseFormat
+        workerRequest.artifactNamespace = command.artifactNamespace
+
+        await imageJobReadModel.recordQueued(
+            requestID: request.requestID,
+            jobID: jobID,
+            modelID: command.modelID,
+            operation: "image_generate",
+            lane: routeKind.defaultSchedulingLane
+        )
+        await imageJobReadModel.recordRunning(jobID: jobID, workerID: routeKind.workerSourceID, pct: 0)
+
+        do {
+            let workerResponse = try await workerClient.imageGenerate(request: workerRequest)
+            let resolvedJobID = workerResponse.job.jobID.isEmpty ? jobID : workerResponse.job.jobID
+            let artifacts = workerResponse.job.artifacts.map(imageArtifactRef(from:))
+            await recordImageJobTerminalState(
+                jobID: resolvedJobID,
+                workerJob: workerResponse.job,
+                artifacts: artifacts,
+                fallbackError: workerResponse.error
+            )
+            await metricsStore.set(
+                Date().timeIntervalSince(startedAt) * 1000,
+                forKey: "images.request_latency_ms"
+            )
+            await metricsStore.set(
+                Double(workerResponse.images.reduce(0) { $0 + $1.count }),
+                forKey: "images.output_bytes"
+            )
+
+            if !workerResponse.error.code.isEmpty {
+                return errorResponse(
+                    for: request,
+                    code: workerResponse.error.code,
+                    message: workerResponse.error.message
+                )
+            }
+
+            var reply = Melix_Controlplane_V1_ImageReply()
+            reply.job = controlPlaneImageJob(from: workerResponse.job, modelID: command.modelID)
+            if reply.job.jobID.isEmpty {
+                reply.job.jobID = resolvedJobID
+            }
+            return okResponse(for: request, image: reply)
+        } catch {
+            await imageJobReadModel.recordFailed(
+                jobID: jobID,
+                error: controlPlaneError(code: "unavailable", message: "Image worker request failed: \(error)")
+            )
+            return errorResponse(for: request, code: "unavailable", message: "Image worker request failed: \(error)")
+        }
+    }
+
+    private func handleEditImage(
+        request: Melix_Controlplane_V1_ControlPlaneRequest,
+        command: Melix_Controlplane_V1_EditImage
+    ) async -> Melix_Controlplane_V1_ControlPlaneResponse {
+        guard !command.image.isEmpty || !command.imageUri.isEmpty else {
+            return errorResponse(for: request, code: "invalid_argument", message: "Image edit source is required.")
+        }
+        let startedAt = Date()
+        guard let modelHandle = await modelCatalog.dispatchHandle(for: command.modelID) else {
+            return errorResponse(for: request, code: "not_ready", message: "Image model is not loaded.")
+        }
+        guard
+            let workerRegistry,
+            let workerClient = await workerRegistry.client(forModelID: command.modelID) as? any NonTextInferenceWorkerClientProtocol
+        else {
+            return errorResponse(for: request, code: "unavailable", message: "Image worker is unavailable.")
+        }
+
+        let routeKind = await workerRegistry.route(forModelID: command.modelID) ?? .pythonImage
+        let jobID = "\(request.requestID)::image-edit"
+
+        var workerRequest = Melix_Worker_V1_ImageEditRequest()
+        workerRequest.id.requestID = request.requestID
+        workerRequest.modelHandle = modelHandle
+        workerRequest.prompt = command.prompt
+        workerRequest.image = command.image
+        workerRequest.imageUri = command.imageUri
+        workerRequest.mask = command.mask
+        workerRequest.maskUri = command.maskUri
+        workerRequest.strength = command.strength == 0 ? 1 : command.strength
+        workerRequest.size = command.size.isEmpty ? "1024x1024" : command.size
+        workerRequest.n = command.n == 0 ? 1 : command.n
+        workerRequest.responseFormat = command.responseFormat.isEmpty ? "png" : command.responseFormat
+
+        await imageJobReadModel.recordQueued(
+            requestID: request.requestID,
+            jobID: jobID,
+            modelID: command.modelID,
+            operation: "image_edit",
+            lane: routeKind.defaultSchedulingLane
+        )
+        await imageJobReadModel.recordRunning(jobID: jobID, workerID: routeKind.workerSourceID, pct: 0)
+
+        do {
+            let workerResponse = try await workerClient.imageEdit(request: workerRequest)
+            let resolvedJobID = workerResponse.job.jobID.isEmpty ? jobID : workerResponse.job.jobID
+            let artifacts = workerResponse.job.artifacts.map(imageArtifactRef(from:))
+            await recordImageJobTerminalState(
+                jobID: resolvedJobID,
+                workerJob: workerResponse.job,
+                artifacts: artifacts,
+                fallbackError: workerResponse.error
+            )
+            await metricsStore.set(
+                Date().timeIntervalSince(startedAt) * 1000,
+                forKey: "images.request_latency_ms"
+            )
+            await metricsStore.set(
+                Double(workerResponse.images.reduce(0) { $0 + $1.count }),
+                forKey: "images.output_bytes"
+            )
+
+            if !workerResponse.error.code.isEmpty {
+                return errorResponse(
+                    for: request,
+                    code: workerResponse.error.code,
+                    message: workerResponse.error.message
+                )
+            }
+
+            var reply = Melix_Controlplane_V1_ImageReply()
+            reply.job = controlPlaneImageJob(from: workerResponse.job, modelID: command.modelID)
+            if reply.job.jobID.isEmpty {
+                reply.job.jobID = resolvedJobID
+            }
+            return okResponse(for: request, image: reply)
+        } catch {
+            await imageJobReadModel.recordFailed(
+                jobID: jobID,
+                error: controlPlaneError(code: "unavailable", message: "Image worker request failed: \(error)")
+            )
+            return errorResponse(for: request, code: "unavailable", message: "Image worker request failed: \(error)")
+        }
     }
 
     private func handleSetModelPolicy(
@@ -574,13 +757,101 @@ public actor ControlPlaneService {
         return error
     }
 
+    private func imageArtifactRef(
+        from artifact: Melix_Worker_V1_ImageArtifactMetadata
+    ) -> Melix_Controlplane_V1_ImageArtifactRef {
+        var ref = Melix_Controlplane_V1_ImageArtifactRef()
+        ref.artifactID = artifact.artifactID
+        ref.jobID = artifact.jobID
+        ref.role = Melix_Controlplane_V1_ImageArtifactRole(rawValue: artifact.role.rawValue) ?? .unspecified
+        ref.mimeType = artifact.mimeType
+        ref.format = artifact.format
+        ref.width = artifact.width
+        ref.height = artifact.height
+        ref.byteLength = artifact.byteLength
+        ref.storageUri = artifact.storageUri
+        ref.sha256 = artifact.sha256
+        ref.variantIndex = artifact.variantIndex
+        ref.ext = artifact.ext
+        return ref
+    }
+
+    private func controlPlaneImageJob(
+        from workerJob: Melix_Worker_V1_ImageJobDescriptor,
+        modelID: String
+    ) -> Melix_Controlplane_V1_ImageJobSummary {
+        var job = Melix_Controlplane_V1_ImageJobSummary()
+        job.jobID = workerJob.jobID
+        job.requestID = workerJob.requestID
+        job.modelID = modelID
+        job.operation = workerJob.operation
+        job.state = Melix_Controlplane_V1_ImageJobState(rawValue: workerJob.state.rawValue) ?? .unspecified
+        job.workerID = workerJob.modelHandle
+        job.progress.stage = workerJob.progress.stage
+        job.progress.pct = workerJob.progress.pct
+        job.progress.completedSteps = workerJob.progress.completedSteps
+        job.progress.totalSteps = workerJob.progress.totalSteps
+        job.artifacts = workerJob.artifacts.map(imageArtifactRef(from:))
+        job.error = controlPlaneError(from: workerJob.error)
+        job.cancelable = workerJob.cancelable
+        job.createdAtUnixMs = workerJob.createdAtUnixMs
+        job.updatedAtUnixMs = workerJob.updatedAtUnixMs
+        return job
+    }
+
+    private func controlPlaneError(from workerError: Melix_Worker_V1_ErrorStatus) -> Melix_Controlplane_V1_ErrorStatus {
+        var error = Melix_Controlplane_V1_ErrorStatus()
+        error.code = workerError.code
+        error.message = workerError.message
+        error.retriable = workerError.retriable
+        error.details = workerError.details
+        return error
+    }
+
+    private func controlPlaneError(code: String, message: String) -> Melix_Controlplane_V1_ErrorStatus {
+        var error = Melix_Controlplane_V1_ErrorStatus()
+        error.code = code
+        error.message = message
+        return error
+    }
+
+    private func recordImageJobTerminalState(
+        jobID: String,
+        workerJob: Melix_Worker_V1_ImageJobDescriptor,
+        artifacts: [Melix_Controlplane_V1_ImageArtifactRef],
+        fallbackError: Melix_Worker_V1_ErrorStatus
+    ) async {
+        let resolvedError = if !workerJob.error.code.isEmpty {
+            controlPlaneError(from: workerJob.error)
+        } else {
+            controlPlaneError(from: fallbackError)
+        }
+
+        switch workerJob.state {
+        case .imageJobCompleted:
+            await imageJobReadModel.recordCompleted(jobID: jobID, artifacts: artifacts)
+        case .imageJobCanceled:
+            await imageJobReadModel.recordCanceled(jobID: jobID)
+        case .imageJobFailed, .unspecified:
+            await imageJobReadModel.recordFailed(jobID: jobID, error: resolvedError)
+        default:
+            await imageJobReadModel.recordFailed(
+                jobID: jobID,
+                error: resolvedError.code.isEmpty
+                    ? controlPlaneError(code: "runtime_error", message: "Image job finished in an invalid state.")
+                    : resolvedError
+            )
+        }
+    }
+
     private func okResponse(
         for request: Melix_Controlplane_V1_ControlPlaneRequest,
         server: Melix_Controlplane_V1_ServerReply? = nil,
         model: Melix_Controlplane_V1_ModelReply? = nil,
         cache: Melix_Controlplane_V1_CacheReply? = nil,
         session: Melix_Controlplane_V1_SessionReply? = nil,
-        ops: Melix_Controlplane_V1_OpsReply? = nil
+        ops: Melix_Controlplane_V1_OpsReply? = nil,
+        image: Melix_Controlplane_V1_ImageReply? = nil
     ) -> Melix_Controlplane_V1_ControlPlaneResponse {
         var response = baseResponse(for: request)
         response.ok = true
@@ -595,6 +866,8 @@ public actor ControlPlaneService {
             response.session = session
         } else if let ops {
             response.ops = ops
+        } else if let image {
+            response.image = image
         }
 
         return response

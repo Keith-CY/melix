@@ -108,8 +108,17 @@ public final class RuntimeViewModel {
     public private(set) var lastChatUsageText = ""
     public private(set) var isChatStreaming = false
     public private(set) var lastChatRequestID = ""
+    public private(set) var imageJobs: [Melix_Controlplane_V1_ImageJobSummary] = []
+    public private(set) var imageStatusText = "Idle"
+    public private(set) var selectedImageJobID = ""
     public var chatComposerText = ""
     public var selectedChatModelID = "melix-dev-text"
+    public var imagePromptText = ""
+    public var imageEditSourceURL = ""
+    public var imageEditMaskURL = ""
+    public var imageSize = "1024x1024"
+    public var imageVariantCount: UInt32 = 1
+    public var selectedImageModelID = "melix-dev-image"
 
     public var onStateChanged: (@MainActor @Sendable () -> Void)?
 
@@ -134,6 +143,17 @@ public final class RuntimeViewModel {
 
     public var primaryModel: RuntimeModelRow? {
         models.first { $0.modelID == "melix-dev-text" } ?? models.first
+    }
+
+    public var imageModels: [RuntimeModelRow] {
+        models.filter { $0.kind == "image" || $0.kind == "image_generation" }
+    }
+
+    public var selectedImageJob: Melix_Controlplane_V1_ImageJobSummary? {
+        guard !selectedImageJobID.isEmpty else {
+            return imageJobs.first
+        }
+        return imageJobs.first(where: { $0.jobID == selectedImageJobID }) ?? imageJobs.first
     }
 
     public var desktopFoundationState: DesktopFoundationState {
@@ -191,10 +211,14 @@ public final class RuntimeViewModel {
         do {
             let snapshot = try await client.serverSnapshot()
             apply(snapshot: snapshot)
+            let elapsedMs = Date().timeIntervalSince(startedAt) * 1_000
             await metrics.record(
                 name: "menu.foundation_refresh_ms",
-                valueMs: Date().timeIntervalSince(startedAt) * 1_000
+                valueMs: elapsedMs
             )
+            if snapshot.imageJobs.isEmpty == false {
+                await metrics.record(name: "desktop.image_refresh_ms", valueMs: elapsedMs)
+            }
         } catch {
             recordLocalError(String(describing: error))
             notifyStateChanged()
@@ -359,6 +383,95 @@ public final class RuntimeViewModel {
         activeAssistantEntryID = nil
         activeReasoningEntryID = nil
         activeToolEntryIDs.removeAll()
+        notifyStateChanged()
+    }
+
+    public func selectImageJob(jobID: String) {
+        selectedImageJobID = jobID
+        notifyStateChanged()
+    }
+
+    public func submitImageGeneration() async {
+        let prompt = imagePromptText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !prompt.isEmpty else {
+            return
+        }
+
+        let modelID = resolvedImageModelID()
+        if models.contains(where: { $0.modelID == modelID && $0.isLoaded }) == false {
+            await loadModel(modelID: modelID)
+        }
+
+        let startedAt = Date()
+        imageStatusText = "Submitting"
+        notifyStateChanged()
+
+        do {
+            let job = try await client.generateImage(
+                ControlPlaneImageGenerationRequest(
+                    modelID: modelID,
+                    prompt: prompt,
+                    size: imageSize,
+                    n: max(1, imageVariantCount)
+                )
+            )
+            upsert(imageJob: job)
+            imageStatusText = Self.imageStatusText(for: job)
+            imagePromptText = ""
+            await metrics.record(
+                name: "desktop.image_action_latency_ms",
+                valueMs: Date().timeIntervalSince(startedAt) * 1_000
+            )
+        } catch {
+            imageStatusText = "Failed"
+            recordLocalError(String(describing: error))
+        }
+
+        notifyStateChanged()
+    }
+
+    public func submitImageEdit() async {
+        let sourceURL = imageEditSourceURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !sourceURL.isEmpty else {
+            imageStatusText = "Failed"
+            recordLocalError("Image edit source is required.")
+            notifyStateChanged()
+            return
+        }
+
+        let modelID = resolvedImageModelID()
+        if models.contains(where: { $0.modelID == modelID && $0.isLoaded }) == false {
+            await loadModel(modelID: modelID)
+        }
+
+        let startedAt = Date()
+        imageStatusText = "Submitting"
+        notifyStateChanged()
+
+        do {
+            let job = try await client.editImage(
+                ControlPlaneImageEditRequest(
+                    modelID: modelID,
+                    prompt: imagePromptText.trimmingCharacters(in: .whitespacesAndNewlines),
+                    imageURL: sourceURL,
+                    maskURL: imageEditMaskURL.trimmingCharacters(in: .whitespacesAndNewlines),
+                    strength: 1,
+                    size: imageSize,
+                    n: max(1, imageVariantCount)
+                )
+            )
+            upsert(imageJob: job)
+            imageStatusText = Self.imageStatusText(for: job)
+            imagePromptText = ""
+            await metrics.record(
+                name: "desktop.image_action_latency_ms",
+                valueMs: Date().timeIntervalSince(startedAt) * 1_000
+            )
+        } catch {
+            imageStatusText = "Failed"
+            recordLocalError(String(describing: error))
+        }
+
         notifyStateChanged()
     }
 
@@ -565,6 +678,9 @@ public final class RuntimeViewModel {
             if logEvent.level.lowercased() == "error" {
                 lastError = logEvent.message
             }
+        case .imageJob(let imageJobChanged):
+            upsert(imageJob: imageJobChanged.job)
+            imageStatusText = Self.imageStatusText(for: imageJobChanged.job)
         default:
             break
         }
@@ -581,6 +697,7 @@ public final class RuntimeViewModel {
         models = snapshot.models
             .sorted { $0.modelID < $1.modelID }
             .map(makeRuntimeModelRow)
+        refreshImageState()
         refreshChatCapabilities()
         notifyStateChanged()
     }
@@ -603,6 +720,7 @@ public final class RuntimeViewModel {
             models.append(row)
             models.sort { $0.modelID < $1.modelID }
         }
+        refreshImageState()
         refreshChatCapabilities()
     }
 
@@ -646,6 +764,15 @@ public final class RuntimeViewModel {
         return model
     }
 
+    private func upsert(imageJob: Melix_Controlplane_V1_ImageJobSummary) {
+        if let index = latestSnapshot.imageJobs.firstIndex(where: { $0.jobID == imageJob.jobID }) {
+            latestSnapshot.imageJobs[index] = imageJob
+        } else {
+            latestSnapshot.imageJobs.append(imageJob)
+        }
+        refreshImageState(preferredJobID: imageJob.jobID)
+    }
+
     private func recordLocalError(_ message: String) {
         lastError = message
         recentEvents.insert(
@@ -675,6 +802,41 @@ public final class RuntimeViewModel {
             return textModel.modelID
         }
         return selectedChatModelID
+    }
+
+    private func resolvedImageModelID() -> String {
+        if models.contains(where: { $0.modelID == selectedImageModelID && Self.isImageModelKind($0.kind) }) {
+            return selectedImageModelID
+        }
+        if let imageModel = models.first(where: { Self.isImageModelKind($0.kind) }) {
+            selectedImageModelID = imageModel.modelID
+            return imageModel.modelID
+        }
+        return selectedImageModelID
+    }
+
+    private func refreshImageState(preferredJobID: String? = nil) {
+        if models.contains(where: { $0.modelID == selectedImageModelID && Self.isImageModelKind($0.kind) }) == false,
+           let imageModel = models.first(where: { Self.isImageModelKind($0.kind) }) {
+            selectedImageModelID = imageModel.modelID
+        }
+
+        imageJobs = latestSnapshot.imageJobs.sorted { lhs, rhs in
+            if lhs.updatedAtUnixMs == rhs.updatedAtUnixMs {
+                return lhs.jobID > rhs.jobID
+            }
+            return lhs.updatedAtUnixMs > rhs.updatedAtUnixMs
+        }
+
+        if let preferredJobID, imageJobs.contains(where: { $0.jobID == preferredJobID }) {
+            selectedImageJobID = preferredJobID
+        } else if imageJobs.contains(where: { $0.jobID == selectedImageJobID }) == false {
+            selectedImageJobID = imageJobs.first?.jobID ?? ""
+        }
+
+        if imageJobs.isEmpty, imageStatusText != "Failed" {
+            imageStatusText = "Idle"
+        }
     }
 
     private func refreshChatCapabilities() {
@@ -908,11 +1070,34 @@ public final class RuntimeViewModel {
             return logEvent.message
         case .resourcePressure(let resourcePressure):
             return "Resource pressure in \(resourcePressure.scope)"
+        case .imageJob(let imageJobChanged):
+            return "\(imageJobChanged.job.jobID) \(imageJobChanged.job.progress.stage)"
         case .heartbeat:
             return "Heartbeat"
         default:
             return event.eventType
         }
+    }
+
+    private static func imageStatusText(for job: Melix_Controlplane_V1_ImageJobSummary) -> String {
+        switch job.state {
+        case .imageJobQueued:
+            return "Queued • \(job.operation)"
+        case .imageJobRunning:
+            return "Running • \(job.operation)"
+        case .imageJobCompleted:
+            return "Completed • \(job.operation)"
+        case .imageJobCanceled:
+            return "Canceled • \(job.operation)"
+        case .imageJobFailed:
+            return "Failed • \(job.operation)"
+        default:
+            return job.operation.isEmpty ? "Idle" : job.operation
+        }
+    }
+
+    private static func isImageModelKind(_ kind: String) -> Bool {
+        kind == "image" || kind == "image_generation"
     }
 }
 

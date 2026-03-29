@@ -47,6 +47,11 @@ public struct DesktopFoundationRootView: View {
                     Label("Chat", systemImage: "message")
                 }
 
+            DesktopImageTabView(viewModel: viewModel)
+                .tabItem {
+                    Label("Image", systemImage: "photo.on.rectangle")
+                }
+
             DesktopAPIReferenceTabView(foundation: foundation)
                 .tabItem {
                     Label("API", systemImage: "chevron.left.forwardslash.chevron.right")

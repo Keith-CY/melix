@@ -219,6 +219,341 @@ struct ControlPlaneServiceTests {
         #expect(response.model.operation.manifestJson == #"{"operation":"quantize"}"#)
     }
 
+    @Test("execute handles image.generate through the image worker and records the image job")
+    func executeHandlesImageGenerateThroughTheImageWorker() async throws {
+        let modelCatalog = ModelCatalog(seedModels: ModelCatalog.phaseSevenContractSeedModels())
+        _ = await modelCatalog.loadModel(id: "melix-dev-image", dispatchHandle: "melix-dev-image::python")
+        let imageClient = ScriptedImageWorkerClient()
+        await imageClient.setImageGenerateResponse({
+            var response = Melix_Worker_V1_ImageGenerateResponse()
+            response.job.requestID = "req-image-generate"
+            response.job.jobID = "req-image-generate::image-generate"
+            response.job.modelHandle = "melix-dev-image::python"
+            response.job.operation = "image_generate"
+            response.job.state = .imageJobCompleted
+            response.job.progress.stage = "completed"
+            response.job.progress.pct = 1
+            response.job.artifacts = [makeWorkerArtifact(jobID: "req-image-generate::image-generate")]
+            return response
+        }())
+        let service = ControlPlaneService(
+            modelCatalog: modelCatalog,
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                pythonCompatibilityClient: imageClient,
+                modelCatalog: modelCatalog
+            )
+        )
+
+        let response = try await service.execute(
+            makeImageGenerateRequest(
+                modelID: "melix-dev-image",
+                prompt: "Draw a neon fox",
+                size: "512x512",
+                n: 2
+            )
+        )
+        let forwardedRequest = try #require(await imageClient.lastImageGenerateRequest)
+        let snapshot = try await service.execute(makeServerSnapshotRequest())
+
+        #expect(response.ok)
+        #expect(forwardedRequest.modelHandle == "melix-dev-image::python")
+        #expect(forwardedRequest.prompt == "Draw a neon fox")
+        #expect(forwardedRequest.size == "512x512")
+        #expect(forwardedRequest.n == 2)
+        #expect(response.image.job.jobID == "req-image-generate::image-generate")
+        #expect(response.image.job.state == .imageJobCompleted)
+        #expect(snapshot.server.snapshot.imageJobs.contains(where: { $0.jobID == "req-image-generate::image-generate" }))
+    }
+
+    @Test("execute handles image.edit through the image worker and records artifact metadata")
+    func executeHandlesImageEditThroughTheImageWorker() async throws {
+        let modelCatalog = ModelCatalog(seedModels: ModelCatalog.phaseSevenContractSeedModels())
+        _ = await modelCatalog.loadModel(id: "melix-dev-image", dispatchHandle: "melix-dev-image::python")
+        let imageClient = ScriptedImageWorkerClient()
+        await imageClient.setImageEditResponse({
+            var response = Melix_Worker_V1_ImageEditResponse()
+            response.job.requestID = "req-image-edit"
+            response.job.jobID = "req-image-edit::image-edit"
+            response.job.modelHandle = "melix-dev-image::python"
+            response.job.operation = "image_edit"
+            response.job.state = .imageJobCompleted
+            response.job.progress.stage = "completed"
+            response.job.progress.pct = 1
+            response.job.artifacts = [
+                makeWorkerArtifact(jobID: "req-image-edit::image-edit", role: .imageArtifactEditSource, artifactID: "source"),
+                makeWorkerArtifact(jobID: "req-image-edit::image-edit", role: .imageArtifactMask, artifactID: "mask"),
+                makeWorkerArtifact(jobID: "req-image-edit::image-edit", role: .imageArtifactGenerated, artifactID: "output"),
+            ]
+            return response
+        }())
+        let service = ControlPlaneService(
+            modelCatalog: modelCatalog,
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                pythonCompatibilityClient: imageClient,
+                modelCatalog: modelCatalog
+            )
+        )
+
+        let response = try await service.execute(
+            makeImageEditRequest(
+                modelID: "melix-dev-image",
+                prompt: "Replace the sky",
+                imageURI: "file:///tmp/source.png",
+                maskURI: "file:///tmp/mask.png",
+                strength: 0.6
+            )
+        )
+        let forwardedRequest = try #require(await imageClient.lastImageEditRequest)
+
+        #expect(response.ok)
+        #expect(forwardedRequest.modelHandle == "melix-dev-image::python")
+        #expect(forwardedRequest.prompt == "Replace the sky")
+        #expect(forwardedRequest.imageUri == "file:///tmp/source.png")
+        #expect(forwardedRequest.maskUri == "file:///tmp/mask.png")
+        #expect(forwardedRequest.strength == 0.6)
+        #expect(response.image.job.jobID == "req-image-edit::image-edit")
+        #expect(response.image.job.artifacts.count == 3)
+        #expect(response.image.job.artifacts.last?.role == .imageArtifactGenerated)
+    }
+
+    @Test("execute returns unimplemented for image commands without a kind")
+    func executeReturnsUnimplementedForEmptyImageCommands() async throws {
+        let service = ControlPlaneService()
+        var request = Melix_Controlplane_V1_ControlPlaneRequest()
+        request.requestID = "req-image-empty"
+        request.commandType = "image.empty"
+        request.image = Melix_Controlplane_V1_ImageCommand()
+
+        let response = try await service.execute(request)
+
+        #expect(response.ok == false)
+        #expect(response.error.code == "unimplemented")
+    }
+
+    @Test("execute returns not_ready when image generation is requested before the model is loaded")
+    func executeReturnsNotReadyForImageGenerateWithoutLoadedModel() async throws {
+        let service = ControlPlaneService(
+            modelCatalog: ModelCatalog(seedModels: ModelCatalog.phaseSevenContractSeedModels())
+        )
+
+        let response = try await service.execute(
+            makeImageGenerateRequest(
+                modelID: "melix-dev-image",
+                prompt: "Draw a fox",
+                size: "1024x1024",
+                n: 1
+            )
+        )
+
+        #expect(response.ok == false)
+        #expect(response.error.code == "not_ready")
+    }
+
+    @Test("execute returns unavailable when the image worker is missing")
+    func executeReturnsUnavailableForImageGenerateWithoutWorker() async throws {
+        let modelCatalog = ModelCatalog(seedModels: ModelCatalog.phaseSevenContractSeedModels())
+        _ = await modelCatalog.loadModel(id: "melix-dev-image", dispatchHandle: "melix-dev-image::python")
+        let service = ControlPlaneService(modelCatalog: modelCatalog)
+
+        let response = try await service.execute(
+            makeImageGenerateRequest(
+                modelID: "melix-dev-image",
+                prompt: "Draw a fox",
+                size: "1024x1024",
+                n: 1
+            )
+        )
+
+        #expect(response.ok == false)
+        #expect(response.error.code == "unavailable")
+    }
+
+    @Test("execute returns invalid_argument when image edits omit the source image")
+    func executeReturnsInvalidArgumentForImageEditWithoutSource() async throws {
+        let modelCatalog = ModelCatalog(seedModels: ModelCatalog.phaseSevenContractSeedModels())
+        _ = await modelCatalog.loadModel(id: "melix-dev-image", dispatchHandle: "melix-dev-image::python")
+        let service = ControlPlaneService(
+            modelCatalog: modelCatalog,
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                pythonCompatibilityClient: ScriptedImageWorkerClient(),
+                modelCatalog: modelCatalog
+            )
+        )
+
+        let response = try await service.execute(
+            makeImageEditRequest(
+                modelID: "melix-dev-image",
+                prompt: "Replace the sky",
+                imageURI: "",
+                maskURI: "",
+                strength: 1
+            )
+        )
+
+        #expect(response.ok == false)
+        #expect(response.error.code == "invalid_argument")
+    }
+
+    @Test("execute surfaces worker image.generate failures and records the failed job state")
+    func executeSurfacesImageGenerateWorkerFailures() async throws {
+        let modelCatalog = ModelCatalog(seedModels: ModelCatalog.phaseSevenContractSeedModels())
+        _ = await modelCatalog.loadModel(id: "melix-dev-image", dispatchHandle: "melix-dev-image::python")
+        let imageClient = ScriptedImageWorkerClient()
+        await imageClient.setImageGenerateResponse({
+            var response = Melix_Worker_V1_ImageGenerateResponse()
+            response.job.requestID = "req-image-generate"
+            response.job.jobID = "req-image-generate::image-generate"
+            response.job.modelHandle = "melix-dev-image::python"
+            response.job.operation = "image_generate"
+            response.job.state = .imageJobFailed
+            response.job.error.code = "runtime_error"
+            response.job.error.message = "GPU pressure"
+            response.error.code = "runtime_error"
+            response.error.message = "GPU pressure"
+            return response
+        }())
+        let service = ControlPlaneService(
+            modelCatalog: modelCatalog,
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                pythonCompatibilityClient: imageClient,
+                modelCatalog: modelCatalog
+            )
+        )
+
+        let response = try await service.execute(
+            makeImageGenerateRequest(
+                modelID: "melix-dev-image",
+                prompt: "Draw a fox",
+                size: "1024x1024",
+                n: 1
+            )
+        )
+        let snapshot = try await service.execute(makeServerSnapshotRequest())
+        let recordedJob = try #require(snapshot.server.snapshot.imageJobs.first)
+
+        #expect(response.ok == false)
+        #expect(response.error.code == "runtime_error")
+        #expect(recordedJob.state == .imageJobFailed)
+        #expect(recordedJob.error.code == "runtime_error")
+    }
+
+    @Test("execute fills an implicit image job identifier when the worker omits one")
+    func executeFillsImplicitImageJobIdentifier() async throws {
+        let modelCatalog = ModelCatalog(seedModels: ModelCatalog.phaseSevenContractSeedModels())
+        _ = await modelCatalog.loadModel(id: "melix-dev-image", dispatchHandle: "melix-dev-image::python")
+        let imageClient = ScriptedImageWorkerClient()
+        await imageClient.setImageGenerateResponse({
+            var response = Melix_Worker_V1_ImageGenerateResponse()
+            response.job.requestID = "req-image-generate-empty-job"
+            response.job.modelHandle = "melix-dev-image::python"
+            response.job.operation = "image_generate"
+            response.job.state = .imageJobCompleted
+            response.job.progress.stage = "completed"
+            response.job.progress.pct = 1
+            return response
+        }())
+        let service = ControlPlaneService(
+            modelCatalog: modelCatalog,
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                pythonCompatibilityClient: imageClient,
+                modelCatalog: modelCatalog
+            )
+        )
+
+        let response = try await service.execute(
+            makeImageGenerateRequest(
+                modelID: "melix-dev-image",
+                prompt: "Draw a fox",
+                size: "1024x1024",
+                n: 1
+            )
+        )
+
+        #expect(response.ok)
+        #expect(response.image.job.jobID == "req-image-generate::image-generate")
+    }
+
+    @Test("execute records a failed image edit when the worker throws")
+    func executeRecordsFailedImageEditWhenWorkerThrows() async throws {
+        let modelCatalog = ModelCatalog(seedModels: ModelCatalog.phaseSevenContractSeedModels())
+        _ = await modelCatalog.loadModel(id: "melix-dev-image", dispatchHandle: "melix-dev-image::python")
+        let imageClient = ScriptedImageWorkerClient()
+        await imageClient.setImageEditError(ImageWorkerFailure.synthetic)
+        let service = ControlPlaneService(
+            modelCatalog: modelCatalog,
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                pythonCompatibilityClient: imageClient,
+                modelCatalog: modelCatalog
+            )
+        )
+
+        let response = try await service.execute(
+            makeImageEditRequest(
+                modelID: "melix-dev-image",
+                prompt: "Replace the sky",
+                imageURI: "file:///tmp/source.png",
+                maskURI: "file:///tmp/mask.png",
+                strength: 1
+            )
+        )
+        let snapshot = try await service.execute(makeServerSnapshotRequest())
+        let recordedJob = try #require(snapshot.server.snapshot.imageJobs.first)
+
+        #expect(response.ok == false)
+        #expect(response.error.code == "unavailable")
+        #expect(recordedJob.jobID == "req-image-edit::image-edit")
+        #expect(recordedJob.state == .imageJobFailed)
+        #expect(recordedJob.error.code == "unavailable")
+    }
+
+    @Test("execute records runtime_error when the image worker returns a non-terminal generate state")
+    func executeMarksInvalidGenerateTerminalStatesAsRuntimeErrors() async throws {
+        let modelCatalog = ModelCatalog(seedModels: ModelCatalog.phaseSevenContractSeedModels())
+        _ = await modelCatalog.loadModel(id: "melix-dev-image", dispatchHandle: "melix-dev-image::python")
+        let imageClient = ScriptedImageWorkerClient()
+        await imageClient.setImageGenerateResponse({
+            var response = Melix_Worker_V1_ImageGenerateResponse()
+            response.job.requestID = "req-image-generate"
+            response.job.jobID = "req-image-generate::image-generate"
+            response.job.modelHandle = "melix-dev-image::python"
+            response.job.operation = "image_generate"
+            response.job.state = .imageJobRunning
+            response.job.progress.stage = "render"
+            response.job.progress.pct = 0.4
+            return response
+        }())
+        let service = ControlPlaneService(
+            modelCatalog: modelCatalog,
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                pythonCompatibilityClient: imageClient,
+                modelCatalog: modelCatalog
+            )
+        )
+
+        let response = try await service.execute(
+            makeImageGenerateRequest(
+                modelID: "melix-dev-image",
+                prompt: "Draw a fox",
+                size: "1024x1024",
+                n: 1
+            )
+        )
+        let snapshot = try await service.execute(makeServerSnapshotRequest())
+        let recordedJob = try #require(snapshot.server.snapshot.imageJobs.first)
+
+        #expect(response.ok)
+        #expect(response.image.job.state == .imageJobRunning)
+        #expect(recordedJob.state == .imageJobFailed)
+        #expect(recordedJob.error.code == "runtime_error")
+    }
+
     @Test("startChat reuses the request coordinator and streams typed chat events")
     func startChatReusesTheRequestCoordinatorAndStreamsTypedChatEvents() async throws {
         let modelCatalog = ModelCatalog()
@@ -730,6 +1065,48 @@ struct ControlPlaneServiceTests {
         return request
     }
 
+    private func makeImageGenerateRequest(
+        modelID: String,
+        prompt: String,
+        size: String,
+        n: UInt32
+    ) -> Melix_Controlplane_V1_ControlPlaneRequest {
+        var request = Melix_Controlplane_V1_ControlPlaneRequest()
+        request.requestID = "req-image-generate"
+        request.commandType = "image.generate"
+        request.image = Melix_Controlplane_V1_ImageCommand()
+        request.image.generate = Melix_Controlplane_V1_GenerateImage()
+        request.image.generate.modelID = modelID
+        request.image.generate.prompt = prompt
+        request.image.generate.size = size
+        request.image.generate.n = n
+        request.image.generate.responseFormat = "png"
+        return request
+    }
+
+    private func makeImageEditRequest(
+        modelID: String,
+        prompt: String,
+        imageURI: String,
+        maskURI: String,
+        strength: Float
+    ) -> Melix_Controlplane_V1_ControlPlaneRequest {
+        var request = Melix_Controlplane_V1_ControlPlaneRequest()
+        request.requestID = "req-image-edit"
+        request.commandType = "image.edit"
+        request.image = Melix_Controlplane_V1_ImageCommand()
+        request.image.edit = Melix_Controlplane_V1_EditImage()
+        request.image.edit.modelID = modelID
+        request.image.edit.prompt = prompt
+        request.image.edit.imageUri = imageURI
+        request.image.edit.maskUri = maskURI
+        request.image.edit.strength = strength
+        request.image.edit.size = "1024x1024"
+        request.image.edit.n = 1
+        request.image.edit.responseFormat = "png"
+        return request
+    }
+
     private func makeMetricsRequest() -> Melix_Controlplane_V1_ControlPlaneRequest {
         var request = Melix_Controlplane_V1_ControlPlaneRequest()
         request.requestID = "req-ops-metrics"
@@ -1021,6 +1398,126 @@ struct ControlPlaneServiceTests {
         session.availableSnapshots = [snapshot]
         return session
     }
+}
+
+private actor ScriptedImageWorkerClient: WorkerRoutingClient, NonTextInferenceWorkerClientProtocol {
+    private(set) var lastImageGenerateRequest: Melix_Worker_V1_ImageGenerateRequest?
+    private(set) var lastImageEditRequest: Melix_Worker_V1_ImageEditRequest?
+    private var imageGenerateResponse = Melix_Worker_V1_ImageGenerateResponse()
+    private var imageEditResponse = Melix_Worker_V1_ImageEditResponse()
+    private var imageGenerateError: Error?
+    private var imageEditError: Error?
+
+    func setImageGenerateResponse(_ response: Melix_Worker_V1_ImageGenerateResponse) {
+        imageGenerateResponse = response
+        imageGenerateError = nil
+    }
+
+    func setImageEditResponse(_ response: Melix_Worker_V1_ImageEditResponse) {
+        imageEditResponse = response
+        imageEditError = nil
+    }
+
+    func setImageGenerateError(_ error: Error) {
+        imageGenerateError = error
+    }
+
+    func setImageEditError(_ error: Error) {
+        imageEditError = error
+    }
+
+    func canDispatchRequests() async -> Bool {
+        true
+    }
+
+    func generate(
+        request: Melix_Worker_V1_GenerateRequest
+    ) async throws -> AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error> {
+        AsyncThrowingStream { continuation in
+            continuation.finish()
+        }
+    }
+
+    func abort(requestID: String) async throws -> Bool {
+        true
+    }
+
+    func loadModel(
+        request: Melix_Worker_V1_LoadModelRequest
+    ) async throws -> Melix_Worker_V1_LoadModelResponse {
+        var response = Melix_Worker_V1_LoadModelResponse()
+        response.ok = true
+        response.modelHandle = "\(request.model.modelID)::python"
+        return response
+    }
+
+    func embed(
+        request: Melix_Worker_V1_EmbedRequest
+    ) async throws -> Melix_Worker_V1_EmbedResponse {
+        Melix_Worker_V1_EmbedResponse()
+    }
+
+    func rerank(
+        request: Melix_Worker_V1_RerankRequest
+    ) async throws -> Melix_Worker_V1_RerankResponse {
+        Melix_Worker_V1_RerankResponse()
+    }
+
+    func transcribe(
+        request: Melix_Worker_V1_TranscribeRequest
+    ) async throws -> Melix_Worker_V1_TranscribeResponse {
+        Melix_Worker_V1_TranscribeResponse()
+    }
+
+    func speak(
+        request: Melix_Worker_V1_SpeakRequest
+    ) async throws -> Melix_Worker_V1_SpeakResponse {
+        Melix_Worker_V1_SpeakResponse()
+    }
+
+    func imageGenerate(
+        request: Melix_Worker_V1_ImageGenerateRequest
+    ) async throws -> Melix_Worker_V1_ImageGenerateResponse {
+        lastImageGenerateRequest = request
+        if let imageGenerateError {
+            throw imageGenerateError
+        }
+        return imageGenerateResponse
+    }
+
+    func imageEdit(
+        request: Melix_Worker_V1_ImageEditRequest
+    ) async throws -> Melix_Worker_V1_ImageEditResponse {
+        lastImageEditRequest = request
+        if let imageEditError {
+            throw imageEditError
+        }
+        return imageEditResponse
+    }
+}
+
+private enum ImageWorkerFailure: Error {
+    case synthetic
+}
+
+private func makeWorkerArtifact(
+    jobID: String,
+    role: Melix_Worker_V1_ImageArtifactRole = .imageArtifactGenerated,
+    artifactID: String = "artifact-0"
+) -> Melix_Worker_V1_ImageArtifactMetadata {
+    var artifact = Melix_Worker_V1_ImageArtifactMetadata()
+    artifact.artifactID = "\(jobID)::\(artifactID)"
+    artifact.jobID = jobID
+    artifact.role = role
+    artifact.mimeType = "image/png"
+    artifact.format = "png"
+    artifact.width = 512
+    artifact.height = 512
+    artifact.byteLength = 32
+    artifact.storageUri = "/tmp/\(artifactID).png"
+    artifact.sha256 = "sha256-\(artifactID)"
+    artifact.variantIndex = 0
+    return artifact
 }
 
 private actor ScriptedModelOperationsWorkerClient: WorkerRoutingClient, ModelOperationsWorkerClientProtocol {

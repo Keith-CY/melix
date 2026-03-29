@@ -6,6 +6,68 @@ public enum ControlPlaneXPCClientError: Error, Equatable {
     case requestFailed(code: String, message: String)
 }
 
+public struct ControlPlaneImageGenerationRequest: Equatable, Sendable {
+    public let modelID: String
+    public let prompt: String
+    public let size: String
+    public let n: UInt32
+    public let responseFormat: String
+    public let artifactNamespace: String
+
+    public init(
+        modelID: String,
+        prompt: String,
+        size: String = "1024x1024",
+        n: UInt32 = 1,
+        responseFormat: String = "png",
+        artifactNamespace: String = ""
+    ) {
+        self.modelID = modelID
+        self.prompt = prompt
+        self.size = size
+        self.n = n
+        self.responseFormat = responseFormat
+        self.artifactNamespace = artifactNamespace
+    }
+}
+
+public struct ControlPlaneImageEditRequest: Equatable, Sendable {
+    public let modelID: String
+    public let prompt: String
+    public let imageData: Data
+    public let imageURL: String
+    public let maskData: Data
+    public let maskURL: String
+    public let strength: Float
+    public let size: String
+    public let n: UInt32
+    public let responseFormat: String
+
+    public init(
+        modelID: String,
+        prompt: String,
+        imageData: Data = Data(),
+        imageURL: String = "",
+        maskData: Data = Data(),
+        maskURL: String = "",
+        strength: Float = 1,
+        size: String = "1024x1024",
+        n: UInt32 = 1,
+        responseFormat: String = "png"
+    ) {
+        self.modelID = modelID
+        self.prompt = prompt
+        self.imageData = imageData
+        self.imageURL = imageURL
+        self.maskData = maskData
+        self.maskURL = maskURL
+        self.strength = strength
+        self.size = size
+        self.n = n
+        self.responseFormat = responseFormat
+    }
+}
+
 public protocol ControlPlaneXPCClient: Sendable {
     func handshake() async throws -> Melix_Controlplane_V1_HandshakeResponse
     func subscribe(lastSeenSeq: UInt64) async -> AsyncStream<Melix_Controlplane_V1_ControlPlaneEvent>
@@ -26,6 +88,34 @@ public protocol ControlPlaneXPCClient: Sendable {
         kvQuant: String,
         ext: [String: String]
     ) async throws -> Melix_Controlplane_V1_ModelOperationResult
+    func generateImage(
+        _ request: ControlPlaneImageGenerationRequest
+    ) async throws -> Melix_Controlplane_V1_ImageJobSummary
+    func editImage(
+        _ request: ControlPlaneImageEditRequest
+    ) async throws -> Melix_Controlplane_V1_ImageJobSummary
+}
+
+public extension ControlPlaneXPCClient {
+    func generateImage(
+        _ request: ControlPlaneImageGenerationRequest
+    ) async throws -> Melix_Controlplane_V1_ImageJobSummary {
+        _ = request
+        throw ControlPlaneXPCClientError.requestFailed(
+            code: "unimplemented",
+            message: "Image generation is not implemented for this control-plane client."
+        )
+    }
+
+    func editImage(
+        _ request: ControlPlaneImageEditRequest
+    ) async throws -> Melix_Controlplane_V1_ImageJobSummary {
+        _ = request
+        throw ControlPlaneXPCClientError.requestFailed(
+            code: "unimplemented",
+            message: "Image editing is not implemented for this control-plane client."
+        )
+    }
 }
 
 public protocol ControlPlaneExecuting: Sendable {
@@ -135,6 +225,22 @@ public actor LocalControlPlaneXPCClient: ControlPlaneXPCClient {
         }
     }
 
+    public func generateImage(
+        _ request: ControlPlaneImageGenerationRequest
+    ) async throws -> Melix_Controlplane_V1_ImageJobSummary {
+        try await execute(makeImageGenerateRequest(request)) { response in
+            response.image.job
+        }
+    }
+
+    public func editImage(
+        _ request: ControlPlaneImageEditRequest
+    ) async throws -> Melix_Controlplane_V1_ImageJobSummary {
+        try await execute(makeImageEditRequest(request)) { response in
+            response.image.job
+        }
+    }
+
     private func execute<T>(
         _ request: Melix_Controlplane_V1_ControlPlaneRequest,
         transform: (Melix_Controlplane_V1_ControlPlaneResponse) -> T
@@ -223,6 +329,44 @@ public actor LocalControlPlaneXPCClient: ControlPlaneXPCClient {
         request.model.runOperation.generateManifest = true
         request.model.runOperation.runSmokeTest = true
         request.model.runOperation.ext = ext
+        return request
+    }
+
+    private func makeImageGenerateRequest(
+        _ generation: ControlPlaneImageGenerationRequest
+    ) -> Melix_Controlplane_V1_ControlPlaneRequest {
+        var request = Melix_Controlplane_V1_ControlPlaneRequest()
+        request.requestID = "menubar-image-generate-\(UUID().uuidString)"
+        request.commandType = "image.generate"
+        request.image = Melix_Controlplane_V1_ImageCommand()
+        request.image.generate = Melix_Controlplane_V1_GenerateImage()
+        request.image.generate.modelID = generation.modelID
+        request.image.generate.prompt = generation.prompt
+        request.image.generate.size = generation.size
+        request.image.generate.n = generation.n
+        request.image.generate.responseFormat = generation.responseFormat
+        request.image.generate.artifactNamespace = generation.artifactNamespace
+        return request
+    }
+
+    private func makeImageEditRequest(
+        _ edit: ControlPlaneImageEditRequest
+    ) -> Melix_Controlplane_V1_ControlPlaneRequest {
+        var request = Melix_Controlplane_V1_ControlPlaneRequest()
+        request.requestID = "menubar-image-edit-\(UUID().uuidString)"
+        request.commandType = "image.edit"
+        request.image = Melix_Controlplane_V1_ImageCommand()
+        request.image.edit = Melix_Controlplane_V1_EditImage()
+        request.image.edit.modelID = edit.modelID
+        request.image.edit.prompt = edit.prompt
+        request.image.edit.image = edit.imageData
+        request.image.edit.imageUri = edit.imageURL
+        request.image.edit.mask = edit.maskData
+        request.image.edit.maskUri = edit.maskURL
+        request.image.edit.strength = edit.strength
+        request.image.edit.size = edit.size
+        request.image.edit.n = edit.n
+        request.image.edit.responseFormat = edit.responseFormat
         return request
     }
 }

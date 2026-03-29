@@ -218,6 +218,96 @@ struct ControlPlaneXPCClientTests {
         #expect(result.manifestJson == #"{"operation":"upload"}"#)
     }
 
+    @Test("local client submits image generation through control-plane execute")
+    func localClientSubmitsImageGeneration() async throws {
+        let modelCatalog = ModelCatalog(seedModels: ModelCatalog.phaseSevenContractSeedModels())
+        _ = await modelCatalog.loadModel(id: "melix-dev-image", dispatchHandle: "melix-dev-image::python")
+        let imageClient = XPCScriptedImageWorkerClient()
+        await imageClient.setImageGenerateResponse({
+            var response = Melix_Worker_V1_ImageGenerateResponse()
+            response.job.requestID = "menubar-image-generate"
+            response.job.jobID = "menubar-image-generate::image-generate"
+            response.job.modelHandle = "melix-dev-image::python"
+            response.job.operation = "image_generate"
+            response.job.state = .imageJobCompleted
+            response.job.progress.stage = "completed"
+            response.job.progress.pct = 1
+            return response
+        }())
+        let service = ControlPlaneService(
+            modelCatalog: modelCatalog,
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                pythonCompatibilityClient: imageClient,
+                modelCatalog: modelCatalog
+            )
+        )
+        let client = LocalControlPlaneXPCClient(service: service)
+
+        let job = try await client.generateImage(
+            ControlPlaneImageGenerationRequest(
+                modelID: "melix-dev-image",
+                prompt: "Render a sunrise",
+                size: "512x512",
+                n: 2
+            )
+        )
+        let forwardedRequest = try #require(await imageClient.lastImageGenerateRequest)
+
+        #expect(forwardedRequest.modelHandle == "melix-dev-image::python")
+        #expect(forwardedRequest.prompt == "Render a sunrise")
+        #expect(forwardedRequest.size == "512x512")
+        #expect(forwardedRequest.n == 2)
+        #expect(job.jobID == "menubar-image-generate::image-generate")
+        #expect(job.state == .imageJobCompleted)
+    }
+
+    @Test("local client submits image edits through control-plane execute")
+    func localClientSubmitsImageEdit() async throws {
+        let modelCatalog = ModelCatalog(seedModels: ModelCatalog.phaseSevenContractSeedModels())
+        _ = await modelCatalog.loadModel(id: "melix-dev-image", dispatchHandle: "melix-dev-image::python")
+        let imageClient = XPCScriptedImageWorkerClient()
+        await imageClient.setImageEditResponse({
+            var response = Melix_Worker_V1_ImageEditResponse()
+            response.job.requestID = "menubar-image-edit"
+            response.job.jobID = "menubar-image-edit::image-edit"
+            response.job.modelHandle = "melix-dev-image::python"
+            response.job.operation = "image_edit"
+            response.job.state = .imageJobCompleted
+            response.job.progress.stage = "completed"
+            response.job.progress.pct = 1
+            return response
+        }())
+        let service = ControlPlaneService(
+            modelCatalog: modelCatalog,
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                pythonCompatibilityClient: imageClient,
+                modelCatalog: modelCatalog
+            )
+        )
+        let client = LocalControlPlaneXPCClient(service: service)
+
+        let job = try await client.editImage(
+            ControlPlaneImageEditRequest(
+                modelID: "melix-dev-image",
+                prompt: "Change the clouds",
+                imageURL: "file:///tmp/source.png",
+                maskURL: "file:///tmp/mask.png",
+                strength: 0.4
+            )
+        )
+        let forwardedRequest = try #require(await imageClient.lastImageEditRequest)
+
+        #expect(forwardedRequest.modelHandle == "melix-dev-image::python")
+        #expect(forwardedRequest.prompt == "Change the clouds")
+        #expect(forwardedRequest.imageUri == "file:///tmp/source.png")
+        #expect(forwardedRequest.maskUri == "file:///tmp/mask.png")
+        #expect(forwardedRequest.strength == 0.4)
+        #expect(job.jobID == "menubar-image-edit::image-edit")
+        #expect(job.operation == "image_edit")
+    }
+
     @Test("local client starts chat through the control plane and streams typed chat events")
     func localClientStartsChatAndStreamsTypedEvents() async throws {
         let modelCatalog = ModelCatalog()
@@ -344,6 +434,89 @@ private actor XPCScriptedChatWorkerClient: WorkerRoutingClient {
         var response = Melix_Worker_V1_LoadModelResponse()
         response.modelHandle = request.model.modelID
         return response
+    }
+}
+
+private actor XPCScriptedImageWorkerClient: WorkerRoutingClient, NonTextInferenceWorkerClientProtocol {
+    private(set) var lastImageGenerateRequest: Melix_Worker_V1_ImageGenerateRequest?
+    private(set) var lastImageEditRequest: Melix_Worker_V1_ImageEditRequest?
+    private var imageGenerateResponse = Melix_Worker_V1_ImageGenerateResponse()
+    private var imageEditResponse = Melix_Worker_V1_ImageEditResponse()
+
+    func setImageGenerateResponse(_ response: Melix_Worker_V1_ImageGenerateResponse) {
+        imageGenerateResponse = response
+    }
+
+    func setImageEditResponse(_ response: Melix_Worker_V1_ImageEditResponse) {
+        imageEditResponse = response
+    }
+
+    func canDispatchRequests() async -> Bool {
+        true
+    }
+
+    func generate(
+        request: Melix_Worker_V1_GenerateRequest
+    ) async throws -> AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error> {
+        _ = request
+        return AsyncThrowingStream { continuation in
+            continuation.finish()
+        }
+    }
+
+    func abort(requestID: String) async throws -> Bool {
+        _ = requestID
+        return false
+    }
+
+    func loadModel(
+        request: Melix_Worker_V1_LoadModelRequest
+    ) async throws -> Melix_Worker_V1_LoadModelResponse {
+        var response = Melix_Worker_V1_LoadModelResponse()
+        response.modelHandle = "\(request.model.modelID)::python"
+        return response
+    }
+
+    func embed(
+        request: Melix_Worker_V1_EmbedRequest
+    ) async throws -> Melix_Worker_V1_EmbedResponse {
+        _ = request
+        return Melix_Worker_V1_EmbedResponse()
+    }
+
+    func rerank(
+        request: Melix_Worker_V1_RerankRequest
+    ) async throws -> Melix_Worker_V1_RerankResponse {
+        _ = request
+        return Melix_Worker_V1_RerankResponse()
+    }
+
+    func transcribe(
+        request: Melix_Worker_V1_TranscribeRequest
+    ) async throws -> Melix_Worker_V1_TranscribeResponse {
+        _ = request
+        return Melix_Worker_V1_TranscribeResponse()
+    }
+
+    func speak(
+        request: Melix_Worker_V1_SpeakRequest
+    ) async throws -> Melix_Worker_V1_SpeakResponse {
+        _ = request
+        return Melix_Worker_V1_SpeakResponse()
+    }
+
+    func imageGenerate(
+        request: Melix_Worker_V1_ImageGenerateRequest
+    ) async throws -> Melix_Worker_V1_ImageGenerateResponse {
+        lastImageGenerateRequest = request
+        return imageGenerateResponse
+    }
+
+    func imageEdit(
+        request: Melix_Worker_V1_ImageEditRequest
+    ) async throws -> Melix_Worker_V1_ImageEditResponse {
+        lastImageEditRequest = request
+        return imageEditResponse
     }
 }
 

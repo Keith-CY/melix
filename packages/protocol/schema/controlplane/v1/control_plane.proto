@@ -42,6 +42,7 @@ message ControlPlaneRequest {
     SessionCommand session = 23;
     OpsCommand ops = 24;
     PresetCommand preset = 25;
+    ImageCommand image = 26;
   }
 }
 
@@ -60,6 +61,7 @@ message ControlPlaneResponse {
     SessionReply session = 23;
     OpsReply ops = 24;
     PresetReply preset = 25;
+    ImageReply image = 26;
   }
 }
 
@@ -155,6 +157,13 @@ message PresetCommand {
   }
 }
 
+message ImageCommand {
+  oneof kind {
+    GenerateImage generate = 1;
+    EditImage edit = 2;
+  }
+}
+
 message ServerReply {
   ServerSnapshot snapshot = 1;
 }
@@ -183,6 +192,10 @@ message OpsReply {
 
 message PresetReply {
   repeated PresetSummary presets = 1;
+}
+
+message ImageReply {
+  ImageJobSummary job = 1;
 }
 
 message StartServer {}
@@ -225,6 +238,28 @@ message RunModelOperation {
   bool generate_manifest = 6;
   bool run_smoke_test = 7;
   map<string, string> ext = 8;
+}
+
+message GenerateImage {
+  string model_id = 1;
+  string prompt = 2;
+  string size = 3;
+  uint32 n = 4;
+  string response_format = 5;
+  string artifact_namespace = 6;
+}
+
+message EditImage {
+  string model_id = 1;
+  string prompt = 2;
+  bytes image = 3;
+  string image_uri = 4;
+  bytes mask = 5;
+  string mask_uri = 6;
+  float strength = 7;
+  string size = 8;
+  uint32 n = 9;
+  string response_format = 10;
 }
 
 message GetCacheSnapshot {}

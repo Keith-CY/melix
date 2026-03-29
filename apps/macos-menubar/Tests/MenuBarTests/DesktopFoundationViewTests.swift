@@ -3,6 +3,7 @@ import SwiftUI
 import Testing
 
 @testable import AppMain
+import MelixControlPlaneProtocol
 
 @Suite("Desktop Foundation View")
 struct DesktopFoundationViewTests {
@@ -177,6 +178,77 @@ struct DesktopFoundationViewTests {
         #expect(view.subviews.isEmpty == false)
         #expect(renderedErrorEntry)
         #expect(viewModel.chatStatusText == "Failed • runtime_error")
+    }
+
+    @Test("image tab renders image jobs and artifact previews")
+    @MainActor
+    func imageTabRendersImageJobsAndArtifacts() async throws {
+        let client = FakeControlPlaneXPCClient()
+        var snapshot = Melix_Controlplane_V1_ServerSnapshot()
+        snapshot.serverState = .serverReady
+        snapshot.models = [
+            {
+                var model = Melix_Controlplane_V1_ModelSummary()
+                model.modelID = "melix-dev-text"
+                model.kind = "text"
+                model.state = .modelWarm
+                model.features = ["chat"]
+                return model
+            }(),
+            makeMenuBarImageModelSummary(),
+        ]
+        snapshot.imageJobs = [
+            makeMenuBarImageJobSummary(
+                jobID: "job-image-preview",
+                requestID: "req-image-preview",
+                operation: "image_generate",
+                artifacts: [makeMenuBarImageArtifact(jobID: "job-image-preview", storageURI: "/tmp/preview.png")]
+            ),
+        ]
+        await client.configureSnapshot(snapshot)
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+
+        let view = hostView(DesktopImageTabView(viewModel: viewModel))
+
+        #expect(view.subviews.isEmpty == false)
+        #expect(viewModel.imageJobs.count == 1)
+        #expect(viewModel.selectedImageJob?.artifacts.first?.storageUri == "/tmp/preview.png")
+    }
+
+    @Test("image tab dispatches generate and edit actions through the view model")
+    @MainActor
+    func imageTabDispatchesGenerateAndEditActions() async throws {
+        let client = FakeControlPlaneXPCClient()
+        var snapshot = Melix_Controlplane_V1_ServerSnapshot()
+        snapshot.serverState = .serverReady
+        snapshot.models = [
+            {
+                var model = Melix_Controlplane_V1_ModelSummary()
+                model.modelID = "melix-dev-text"
+                model.kind = "text"
+                model.state = .modelWarm
+                model.features = ["chat"]
+                return model
+            }(),
+            makeMenuBarImageModelSummary(),
+        ]
+        await client.configureSnapshot(snapshot)
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+
+        let tab = DesktopImageTabView(viewModel: viewModel)
+        viewModel.imagePromptText = "Generate a cover"
+        await viewModel.submitImageGeneration()
+        viewModel.imagePromptText = "Edit the cover"
+        viewModel.imageEditSourceURL = "file:///tmp/source.png"
+        await viewModel.submitImageEdit()
+
+        let view = hostView(tab)
+
+        #expect(await client.recordedActions.contains("image.generate:melix-dev-image"))
+        #expect(await client.recordedActions.contains("image.edit:melix-dev-image"))
+        #expect(view.subviews.isEmpty == false)
     }
 }
 

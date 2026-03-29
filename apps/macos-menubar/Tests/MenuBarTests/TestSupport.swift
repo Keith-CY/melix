@@ -19,12 +19,26 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
     private var modelInfoError: Error?
     private var modelOperationError: Error?
     private var chatError: Error?
+    private var imageGenerateError: Error?
+    private var imageEditError: Error?
     private var snapshotOverride: Melix_Controlplane_V1_ServerSnapshot?
     private var responseFeatures: [String] = ["chat"]
     private var modelSettings = FakeControlPlaneXPCClient.defaultModelSettings()
     private var modelInfoResponse = FakeControlPlaneXPCClient.defaultModelInfo()
     private var modelOperationResponse = FakeControlPlaneXPCClient.defaultModelOperation()
     private var chatEvents = FakeControlPlaneXPCClient.defaultChatEvents()
+    private var imageGenerateResponse = makeMenuBarImageJobSummary(
+        jobID: "image-generate-1::image-generate",
+        requestID: "image-generate-1",
+        modelID: "melix-dev-image",
+        operation: "image_generate"
+    )
+    private var imageEditResponse = makeMenuBarImageJobSummary(
+        jobID: "image-edit-1::image-edit",
+        requestID: "image-edit-1",
+        modelID: "melix-dev-image",
+        operation: "image_edit"
+    )
 
     init() {
         var capturedContinuation: AsyncStream<Melix_Controlplane_V1_ControlPlaneEvent>.Continuation?
@@ -42,7 +56,9 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
         modelSettings: Error? = nil,
         modelInfo: Error? = nil,
         modelOperation: Error? = nil,
-        chat: Error? = nil
+        chat: Error? = nil,
+        imageGenerate: Error? = nil,
+        imageEdit: Error? = nil
     ) {
         handshakeError = handshake
         loadError = load
@@ -52,6 +68,8 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
         modelInfoError = modelInfo
         modelOperationError = modelOperation
         chatError = chat
+        imageGenerateError = imageGenerate
+        imageEditError = imageEdit
     }
 
     func configureModelResponseFeatures(_ features: [String]) {
@@ -70,6 +88,18 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
         chatEvents = events
     }
 
+    func configureImageResponses(
+        generation: Melix_Controlplane_V1_ImageJobSummary? = nil,
+        edit: Melix_Controlplane_V1_ImageJobSummary? = nil
+    ) {
+        if let generation {
+            imageGenerateResponse = generation
+        }
+        if let edit {
+            imageEditResponse = edit
+        }
+    }
+
     func handshake() async throws -> Melix_Controlplane_V1_HandshakeResponse {
         handshakeCount += 1
         if let handshakeError {
@@ -80,7 +110,7 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
         response.protocolVersion = "melix.controlplane.v1"
         response.serverVersion = "0.1.0"
         response.daemonInstanceID = "daemon-1"
-        response.features = ["xpc", "models", "metrics", "cache-metadata", "session-graph"]
+        response.features = ["xpc", "models", "metrics", "cache-metadata", "session-graph", "image-jobs"]
         response.snapshot = makeSnapshot(state: modelState)
         return response
     }
@@ -208,6 +238,36 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
         return response
     }
 
+    func generateImage(
+        _ request: ControlPlaneImageGenerationRequest
+    ) async throws -> Melix_Controlplane_V1_ImageJobSummary {
+        recordedActions.append("image.generate:\(request.modelID)")
+        if let imageGenerateError {
+            throw imageGenerateError
+        }
+        var response = imageGenerateResponse
+        response.modelID = request.modelID
+        if response.requestID.isEmpty {
+            response.requestID = "image-generate-1"
+        }
+        return response
+    }
+
+    func editImage(
+        _ request: ControlPlaneImageEditRequest
+    ) async throws -> Melix_Controlplane_V1_ImageJobSummary {
+        recordedActions.append("image.edit:\(request.modelID)")
+        if let imageEditError {
+            throw imageEditError
+        }
+        var response = imageEditResponse
+        response.modelID = request.modelID
+        if response.requestID.isEmpty {
+            response.requestID = "image-edit-1"
+        }
+        return response
+    }
+
     func sendModelStateChanged(state: Melix_Controlplane_V1_ModelState) {
         modelState = state
         var event = Melix_Controlplane_V1_ControlPlaneEvent()
@@ -288,6 +348,14 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
         var event = Melix_Controlplane_V1_ControlPlaneEvent()
         event.eventType = "heartbeat"
         event.heartbeat = Melix_Controlplane_V1_Heartbeat()
+        continuation.yield(event)
+    }
+
+    func sendImageJobStateChanged(_ job: Melix_Controlplane_V1_ImageJobSummary) {
+        var event = Melix_Controlplane_V1_ControlPlaneEvent()
+        event.eventType = "image.job.state_changed"
+        event.imageJob = Melix_Controlplane_V1_ImageJobStateChanged()
+        event.imageJob.job = job
         continuation.yield(event)
     }
 
@@ -410,4 +478,63 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
 
 struct MenuBarTestError: Error, CustomStringConvertible {
     let description: String
+}
+
+func makeMenuBarImageModelSummary(
+    modelID: String = "melix-dev-image",
+    state: Melix_Controlplane_V1_ModelState = .modelWarm
+) -> Melix_Controlplane_V1_ModelSummary {
+    var model = Melix_Controlplane_V1_ModelSummary()
+    model.modelID = modelID
+    model.kind = "image"
+    model.state = state
+    model.features = ["image_generate", "image_edit", "artifact_jobs"]
+    model.maxContext = 0
+    model.settings.alias = "Melix Dev Image"
+    return model
+}
+
+func makeMenuBarImageArtifact(
+    jobID: String,
+    role: Melix_Controlplane_V1_ImageArtifactRole = .imageArtifactGenerated,
+    storageURI: String = "/tmp/output.png"
+) -> Melix_Controlplane_V1_ImageArtifactRef {
+    var artifact = Melix_Controlplane_V1_ImageArtifactRef()
+    artifact.artifactID = "\(jobID)::artifact"
+    artifact.jobID = jobID
+    artifact.role = role
+    artifact.mimeType = "image/png"
+    artifact.format = "png"
+    artifact.width = 512
+    artifact.height = 512
+    artifact.byteLength = 128
+    artifact.storageUri = storageURI
+    artifact.sha256 = "sha256-artifact"
+    artifact.variantIndex = 0
+    return artifact
+}
+
+func makeMenuBarImageJobSummary(
+    jobID: String,
+    requestID: String,
+    modelID: String = "melix-dev-image",
+    operation: String,
+    state: Melix_Controlplane_V1_ImageJobState = .imageJobCompleted,
+    artifacts: [Melix_Controlplane_V1_ImageArtifactRef] = []
+) -> Melix_Controlplane_V1_ImageJobSummary {
+    var job = Melix_Controlplane_V1_ImageJobSummary()
+    job.jobID = jobID
+    job.requestID = requestID
+    job.modelID = modelID
+    job.operation = operation
+    job.state = state
+    job.lane = operation == "image_edit" ? "image.edit.background" : "image.generate.background"
+    job.workerID = "python-image-worker"
+    job.progress.stage = state == .imageJobCompleted ? "completed" : "running"
+    job.progress.pct = state == .imageJobCompleted ? 1 : 0.5
+    job.artifacts = artifacts
+    job.cancelable = state == .imageJobRunning || state == .imageJobQueued
+    job.createdAtUnixMs = 1_710_000_000_000
+    job.updatedAtUnixMs = 1_710_000_000_500
+    return job
 }

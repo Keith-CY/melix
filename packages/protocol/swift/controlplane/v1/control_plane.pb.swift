@@ -776,75 +776,110 @@ public struct Melix_Controlplane_V1_HandshakeResponse: Sendable {
   fileprivate var _snapshot: Melix_Controlplane_V1_ServerSnapshot? = nil
 }
 
-public struct Melix_Controlplane_V1_ControlPlaneRequest: Sendable {
+public struct Melix_Controlplane_V1_ControlPlaneRequest: @unchecked Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
-  public var requestID: String = String()
+  public var requestID: String {
+    get {_storage._requestID}
+    set {_uniqueStorage()._requestID = newValue}
+  }
 
-  public var actorID: String = String()
+  public var actorID: String {
+    get {_storage._actorID}
+    set {_uniqueStorage()._actorID = newValue}
+  }
 
-  public var commandType: String = String()
+  public var commandType: String {
+    get {_storage._commandType}
+    set {_uniqueStorage()._commandType = newValue}
+  }
 
-  public var idempotencyKey: String = String()
+  public var idempotencyKey: String {
+    get {_storage._idempotencyKey}
+    set {_uniqueStorage()._idempotencyKey = newValue}
+  }
 
-  public var deadlineUnixMs: Int64 = 0
+  public var deadlineUnixMs: Int64 {
+    get {_storage._deadlineUnixMs}
+    set {_uniqueStorage()._deadlineUnixMs = newValue}
+  }
 
-  public var correlationID: String = String()
+  public var correlationID: String {
+    get {_storage._correlationID}
+    set {_uniqueStorage()._correlationID = newValue}
+  }
 
-  public var causationID: String = String()
+  public var causationID: String {
+    get {_storage._causationID}
+    set {_uniqueStorage()._causationID = newValue}
+  }
 
-  public var targetID: String = String()
+  public var targetID: String {
+    get {_storage._targetID}
+    set {_uniqueStorage()._targetID = newValue}
+  }
 
-  public var command: Melix_Controlplane_V1_ControlPlaneRequest.OneOf_Command? = nil
+  public var command: OneOf_Command? {
+    get {return _storage._command}
+    set {_uniqueStorage()._command = newValue}
+  }
 
   public var server: Melix_Controlplane_V1_ServerCommand {
     get {
-      if case .server(let v)? = command {return v}
+      if case .server(let v)? = _storage._command {return v}
       return Melix_Controlplane_V1_ServerCommand()
     }
-    set {command = .server(newValue)}
+    set {_uniqueStorage()._command = .server(newValue)}
   }
 
   public var model: Melix_Controlplane_V1_ModelCommand {
     get {
-      if case .model(let v)? = command {return v}
+      if case .model(let v)? = _storage._command {return v}
       return Melix_Controlplane_V1_ModelCommand()
     }
-    set {command = .model(newValue)}
+    set {_uniqueStorage()._command = .model(newValue)}
   }
 
   public var cache: Melix_Controlplane_V1_CacheCommand {
     get {
-      if case .cache(let v)? = command {return v}
+      if case .cache(let v)? = _storage._command {return v}
       return Melix_Controlplane_V1_CacheCommand()
     }
-    set {command = .cache(newValue)}
+    set {_uniqueStorage()._command = .cache(newValue)}
   }
 
   public var session: Melix_Controlplane_V1_SessionCommand {
     get {
-      if case .session(let v)? = command {return v}
+      if case .session(let v)? = _storage._command {return v}
       return Melix_Controlplane_V1_SessionCommand()
     }
-    set {command = .session(newValue)}
+    set {_uniqueStorage()._command = .session(newValue)}
   }
 
   public var ops: Melix_Controlplane_V1_OpsCommand {
     get {
-      if case .ops(let v)? = command {return v}
+      if case .ops(let v)? = _storage._command {return v}
       return Melix_Controlplane_V1_OpsCommand()
     }
-    set {command = .ops(newValue)}
+    set {_uniqueStorage()._command = .ops(newValue)}
   }
 
   public var preset: Melix_Controlplane_V1_PresetCommand {
     get {
-      if case .preset(let v)? = command {return v}
+      if case .preset(let v)? = _storage._command {return v}
       return Melix_Controlplane_V1_PresetCommand()
     }
-    set {command = .preset(newValue)}
+    set {_uniqueStorage()._command = .preset(newValue)}
+  }
+
+  public var image: Melix_Controlplane_V1_ImageCommand {
+    get {
+      if case .image(let v)? = _storage._command {return v}
+      return Melix_Controlplane_V1_ImageCommand()
+    }
+    set {_uniqueStorage()._command = .image(newValue)}
   }
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
@@ -856,10 +891,13 @@ public struct Melix_Controlplane_V1_ControlPlaneRequest: Sendable {
     case session(Melix_Controlplane_V1_SessionCommand)
     case ops(Melix_Controlplane_V1_OpsCommand)
     case preset(Melix_Controlplane_V1_PresetCommand)
+    case image(Melix_Controlplane_V1_ImageCommand)
 
   }
 
   public init() {}
+
+  fileprivate var _storage = _StorageClass.defaultInstance
 }
 
 public struct Melix_Controlplane_V1_ControlPlaneResponse: @unchecked Sendable {
@@ -954,6 +992,14 @@ public struct Melix_Controlplane_V1_ControlPlaneResponse: @unchecked Sendable {
     set {_uniqueStorage()._payload = .preset(newValue)}
   }
 
+  public var image: Melix_Controlplane_V1_ImageReply {
+    get {
+      if case .image(let v)? = _storage._payload {return v}
+      return Melix_Controlplane_V1_ImageReply()
+    }
+    set {_uniqueStorage()._payload = .image(newValue)}
+  }
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public enum OneOf_Payload: Equatable, Sendable {
@@ -963,6 +1009,7 @@ public struct Melix_Controlplane_V1_ControlPlaneResponse: @unchecked Sendable {
     case session(Melix_Controlplane_V1_SessionReply)
     case ops(Melix_Controlplane_V1_OpsReply)
     case preset(Melix_Controlplane_V1_PresetReply)
+    case image(Melix_Controlplane_V1_ImageReply)
 
   }
 
@@ -1556,6 +1603,40 @@ public struct Melix_Controlplane_V1_PresetCommand: Sendable {
   public init() {}
 }
 
+public struct Melix_Controlplane_V1_ImageCommand: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var kind: Melix_Controlplane_V1_ImageCommand.OneOf_Kind? = nil
+
+  public var generate: Melix_Controlplane_V1_GenerateImage {
+    get {
+      if case .generate(let v)? = kind {return v}
+      return Melix_Controlplane_V1_GenerateImage()
+    }
+    set {kind = .generate(newValue)}
+  }
+
+  public var edit: Melix_Controlplane_V1_EditImage {
+    get {
+      if case .edit(let v)? = kind {return v}
+      return Melix_Controlplane_V1_EditImage()
+    }
+    set {kind = .edit(newValue)}
+  }
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public enum OneOf_Kind: Equatable, Sendable {
+    case generate(Melix_Controlplane_V1_GenerateImage)
+    case edit(Melix_Controlplane_V1_EditImage)
+
+  }
+
+  public init() {}
+}
+
 public struct Melix_Controlplane_V1_ServerReply: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
@@ -1708,6 +1789,27 @@ public struct Melix_Controlplane_V1_PresetReply: Sendable {
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
+}
+
+public struct Melix_Controlplane_V1_ImageReply: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var job: Melix_Controlplane_V1_ImageJobSummary {
+    get {_job ?? Melix_Controlplane_V1_ImageJobSummary()}
+    set {_job = newValue}
+  }
+  /// Returns true if `job` has been explicitly set.
+  public var hasJob: Bool {self._job != nil}
+  /// Clears the value of `job`. Subsequent reads from it will return its default value.
+  public mutating func clearJob() {self._job = nil}
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+
+  fileprivate var _job: Melix_Controlplane_V1_ImageJobSummary? = nil
 }
 
 public struct Melix_Controlplane_V1_StartServer: Sendable {
@@ -1878,6 +1980,58 @@ public struct Melix_Controlplane_V1_RunModelOperation: Sendable {
   public var runSmokeTest: Bool = false
 
   public var ext: Dictionary<String,String> = [:]
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public struct Melix_Controlplane_V1_GenerateImage: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var modelID: String = String()
+
+  public var prompt: String = String()
+
+  public var size: String = String()
+
+  public var n: UInt32 = 0
+
+  public var responseFormat: String = String()
+
+  public var artifactNamespace: String = String()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public struct Melix_Controlplane_V1_EditImage: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var modelID: String = String()
+
+  public var prompt: String = String()
+
+  public var image: Data = Data()
+
+  public var imageUri: String = String()
+
+  public var mask: Data = Data()
+
+  public var maskUri: String = String()
+
+  public var strength: Float = 0
+
+  public var size: String = String()
+
+  public var n: UInt32 = 0
+
+  public var responseFormat: String = String()
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -3469,174 +3623,243 @@ extension Melix_Controlplane_V1_HandshakeResponse: SwiftProtobuf.Message, SwiftP
 
 extension Melix_Controlplane_V1_ControlPlaneRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ControlPlaneRequest"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}request_id\0\u{3}actor_id\0\u{3}command_type\0\u{3}idempotency_key\0\u{3}deadline_unix_ms\0\u{3}correlation_id\0\u{3}causation_id\0\u{3}target_id\0\u{2}\u{c}server\0\u{1}model\0\u{1}cache\0\u{1}session\0\u{1}ops\0\u{1}preset\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}request_id\0\u{3}actor_id\0\u{3}command_type\0\u{3}idempotency_key\0\u{3}deadline_unix_ms\0\u{3}correlation_id\0\u{3}causation_id\0\u{3}target_id\0\u{2}\u{c}server\0\u{1}model\0\u{1}cache\0\u{1}session\0\u{1}ops\0\u{1}preset\0\u{1}image\0")
+
+  fileprivate class _StorageClass {
+    var _requestID: String = String()
+    var _actorID: String = String()
+    var _commandType: String = String()
+    var _idempotencyKey: String = String()
+    var _deadlineUnixMs: Int64 = 0
+    var _correlationID: String = String()
+    var _causationID: String = String()
+    var _targetID: String = String()
+    var _command: Melix_Controlplane_V1_ControlPlaneRequest.OneOf_Command?
+
+      // This property is used as the initial default value for new instances of the type.
+      // The type itself is protecting the reference to its storage via CoW semantics.
+      // This will force a copy to be made of this reference when the first mutation occurs;
+      // hence, it is safe to mark this as `nonisolated(unsafe)`.
+      static nonisolated(unsafe) let defaultInstance = _StorageClass()
+
+    private init() {}
+
+    init(copying source: _StorageClass) {
+      _requestID = source._requestID
+      _actorID = source._actorID
+      _commandType = source._commandType
+      _idempotencyKey = source._idempotencyKey
+      _deadlineUnixMs = source._deadlineUnixMs
+      _correlationID = source._correlationID
+      _causationID = source._causationID
+      _targetID = source._targetID
+      _command = source._command
+    }
+  }
+
+  fileprivate mutating func _uniqueStorage() -> _StorageClass {
+    if !isKnownUniquelyReferenced(&_storage) {
+      _storage = _StorageClass(copying: _storage)
+    }
+    return _storage
+  }
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
-    while let fieldNumber = try decoder.nextFieldNumber() {
-      // The use of inline closures is to circumvent an issue where the compiler
-      // allocates stack space for every case branch when no optimizations are
-      // enabled. https://github.com/apple/swift-protobuf/issues/1034
-      switch fieldNumber {
-      case 1: try { try decoder.decodeSingularStringField(value: &self.requestID) }()
-      case 2: try { try decoder.decodeSingularStringField(value: &self.actorID) }()
-      case 3: try { try decoder.decodeSingularStringField(value: &self.commandType) }()
-      case 4: try { try decoder.decodeSingularStringField(value: &self.idempotencyKey) }()
-      case 5: try { try decoder.decodeSingularInt64Field(value: &self.deadlineUnixMs) }()
-      case 6: try { try decoder.decodeSingularStringField(value: &self.correlationID) }()
-      case 7: try { try decoder.decodeSingularStringField(value: &self.causationID) }()
-      case 8: try { try decoder.decodeSingularStringField(value: &self.targetID) }()
-      case 20: try {
-        var v: Melix_Controlplane_V1_ServerCommand?
-        var hadOneofValue = false
-        if let current = self.command {
-          hadOneofValue = true
-          if case .server(let m) = current {v = m}
+    _ = _uniqueStorage()
+    try withExtendedLifetime(_storage) { (_storage: _StorageClass) in
+      while let fieldNumber = try decoder.nextFieldNumber() {
+        // The use of inline closures is to circumvent an issue where the compiler
+        // allocates stack space for every case branch when no optimizations are
+        // enabled. https://github.com/apple/swift-protobuf/issues/1034
+        switch fieldNumber {
+        case 1: try { try decoder.decodeSingularStringField(value: &_storage._requestID) }()
+        case 2: try { try decoder.decodeSingularStringField(value: &_storage._actorID) }()
+        case 3: try { try decoder.decodeSingularStringField(value: &_storage._commandType) }()
+        case 4: try { try decoder.decodeSingularStringField(value: &_storage._idempotencyKey) }()
+        case 5: try { try decoder.decodeSingularInt64Field(value: &_storage._deadlineUnixMs) }()
+        case 6: try { try decoder.decodeSingularStringField(value: &_storage._correlationID) }()
+        case 7: try { try decoder.decodeSingularStringField(value: &_storage._causationID) }()
+        case 8: try { try decoder.decodeSingularStringField(value: &_storage._targetID) }()
+        case 20: try {
+          var v: Melix_Controlplane_V1_ServerCommand?
+          var hadOneofValue = false
+          if let current = _storage._command {
+            hadOneofValue = true
+            if case .server(let m) = current {v = m}
+          }
+          try decoder.decodeSingularMessageField(value: &v)
+          if let v = v {
+            if hadOneofValue {try decoder.handleConflictingOneOf()}
+            _storage._command = .server(v)
+          }
+        }()
+        case 21: try {
+          var v: Melix_Controlplane_V1_ModelCommand?
+          var hadOneofValue = false
+          if let current = _storage._command {
+            hadOneofValue = true
+            if case .model(let m) = current {v = m}
+          }
+          try decoder.decodeSingularMessageField(value: &v)
+          if let v = v {
+            if hadOneofValue {try decoder.handleConflictingOneOf()}
+            _storage._command = .model(v)
+          }
+        }()
+        case 22: try {
+          var v: Melix_Controlplane_V1_CacheCommand?
+          var hadOneofValue = false
+          if let current = _storage._command {
+            hadOneofValue = true
+            if case .cache(let m) = current {v = m}
+          }
+          try decoder.decodeSingularMessageField(value: &v)
+          if let v = v {
+            if hadOneofValue {try decoder.handleConflictingOneOf()}
+            _storage._command = .cache(v)
+          }
+        }()
+        case 23: try {
+          var v: Melix_Controlplane_V1_SessionCommand?
+          var hadOneofValue = false
+          if let current = _storage._command {
+            hadOneofValue = true
+            if case .session(let m) = current {v = m}
+          }
+          try decoder.decodeSingularMessageField(value: &v)
+          if let v = v {
+            if hadOneofValue {try decoder.handleConflictingOneOf()}
+            _storage._command = .session(v)
+          }
+        }()
+        case 24: try {
+          var v: Melix_Controlplane_V1_OpsCommand?
+          var hadOneofValue = false
+          if let current = _storage._command {
+            hadOneofValue = true
+            if case .ops(let m) = current {v = m}
+          }
+          try decoder.decodeSingularMessageField(value: &v)
+          if let v = v {
+            if hadOneofValue {try decoder.handleConflictingOneOf()}
+            _storage._command = .ops(v)
+          }
+        }()
+        case 25: try {
+          var v: Melix_Controlplane_V1_PresetCommand?
+          var hadOneofValue = false
+          if let current = _storage._command {
+            hadOneofValue = true
+            if case .preset(let m) = current {v = m}
+          }
+          try decoder.decodeSingularMessageField(value: &v)
+          if let v = v {
+            if hadOneofValue {try decoder.handleConflictingOneOf()}
+            _storage._command = .preset(v)
+          }
+        }()
+        case 26: try {
+          var v: Melix_Controlplane_V1_ImageCommand?
+          var hadOneofValue = false
+          if let current = _storage._command {
+            hadOneofValue = true
+            if case .image(let m) = current {v = m}
+          }
+          try decoder.decodeSingularMessageField(value: &v)
+          if let v = v {
+            if hadOneofValue {try decoder.handleConflictingOneOf()}
+            _storage._command = .image(v)
+          }
+        }()
+        default: break
         }
-        try decoder.decodeSingularMessageField(value: &v)
-        if let v = v {
-          if hadOneofValue {try decoder.handleConflictingOneOf()}
-          self.command = .server(v)
-        }
-      }()
-      case 21: try {
-        var v: Melix_Controlplane_V1_ModelCommand?
-        var hadOneofValue = false
-        if let current = self.command {
-          hadOneofValue = true
-          if case .model(let m) = current {v = m}
-        }
-        try decoder.decodeSingularMessageField(value: &v)
-        if let v = v {
-          if hadOneofValue {try decoder.handleConflictingOneOf()}
-          self.command = .model(v)
-        }
-      }()
-      case 22: try {
-        var v: Melix_Controlplane_V1_CacheCommand?
-        var hadOneofValue = false
-        if let current = self.command {
-          hadOneofValue = true
-          if case .cache(let m) = current {v = m}
-        }
-        try decoder.decodeSingularMessageField(value: &v)
-        if let v = v {
-          if hadOneofValue {try decoder.handleConflictingOneOf()}
-          self.command = .cache(v)
-        }
-      }()
-      case 23: try {
-        var v: Melix_Controlplane_V1_SessionCommand?
-        var hadOneofValue = false
-        if let current = self.command {
-          hadOneofValue = true
-          if case .session(let m) = current {v = m}
-        }
-        try decoder.decodeSingularMessageField(value: &v)
-        if let v = v {
-          if hadOneofValue {try decoder.handleConflictingOneOf()}
-          self.command = .session(v)
-        }
-      }()
-      case 24: try {
-        var v: Melix_Controlplane_V1_OpsCommand?
-        var hadOneofValue = false
-        if let current = self.command {
-          hadOneofValue = true
-          if case .ops(let m) = current {v = m}
-        }
-        try decoder.decodeSingularMessageField(value: &v)
-        if let v = v {
-          if hadOneofValue {try decoder.handleConflictingOneOf()}
-          self.command = .ops(v)
-        }
-      }()
-      case 25: try {
-        var v: Melix_Controlplane_V1_PresetCommand?
-        var hadOneofValue = false
-        if let current = self.command {
-          hadOneofValue = true
-          if case .preset(let m) = current {v = m}
-        }
-        try decoder.decodeSingularMessageField(value: &v)
-        if let v = v {
-          if hadOneofValue {try decoder.handleConflictingOneOf()}
-          self.command = .preset(v)
-        }
-      }()
-      default: break
       }
     }
   }
 
   public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
-    // The use of inline closures is to circumvent an issue where the compiler
-    // allocates stack space for every if/case branch local when no optimizations
-    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
-    // https://github.com/apple/swift-protobuf/issues/1182
-    if !self.requestID.isEmpty {
-      try visitor.visitSingularStringField(value: self.requestID, fieldNumber: 1)
-    }
-    if !self.actorID.isEmpty {
-      try visitor.visitSingularStringField(value: self.actorID, fieldNumber: 2)
-    }
-    if !self.commandType.isEmpty {
-      try visitor.visitSingularStringField(value: self.commandType, fieldNumber: 3)
-    }
-    if !self.idempotencyKey.isEmpty {
-      try visitor.visitSingularStringField(value: self.idempotencyKey, fieldNumber: 4)
-    }
-    if self.deadlineUnixMs != 0 {
-      try visitor.visitSingularInt64Field(value: self.deadlineUnixMs, fieldNumber: 5)
-    }
-    if !self.correlationID.isEmpty {
-      try visitor.visitSingularStringField(value: self.correlationID, fieldNumber: 6)
-    }
-    if !self.causationID.isEmpty {
-      try visitor.visitSingularStringField(value: self.causationID, fieldNumber: 7)
-    }
-    if !self.targetID.isEmpty {
-      try visitor.visitSingularStringField(value: self.targetID, fieldNumber: 8)
-    }
-    switch self.command {
-    case .server?: try {
-      guard case .server(let v)? = self.command else { preconditionFailure() }
-      try visitor.visitSingularMessageField(value: v, fieldNumber: 20)
-    }()
-    case .model?: try {
-      guard case .model(let v)? = self.command else { preconditionFailure() }
-      try visitor.visitSingularMessageField(value: v, fieldNumber: 21)
-    }()
-    case .cache?: try {
-      guard case .cache(let v)? = self.command else { preconditionFailure() }
-      try visitor.visitSingularMessageField(value: v, fieldNumber: 22)
-    }()
-    case .session?: try {
-      guard case .session(let v)? = self.command else { preconditionFailure() }
-      try visitor.visitSingularMessageField(value: v, fieldNumber: 23)
-    }()
-    case .ops?: try {
-      guard case .ops(let v)? = self.command else { preconditionFailure() }
-      try visitor.visitSingularMessageField(value: v, fieldNumber: 24)
-    }()
-    case .preset?: try {
-      guard case .preset(let v)? = self.command else { preconditionFailure() }
-      try visitor.visitSingularMessageField(value: v, fieldNumber: 25)
-    }()
-    case nil: break
+    try withExtendedLifetime(_storage) { (_storage: _StorageClass) in
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every if/case branch local when no optimizations
+      // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+      // https://github.com/apple/swift-protobuf/issues/1182
+      if !_storage._requestID.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._requestID, fieldNumber: 1)
+      }
+      if !_storage._actorID.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._actorID, fieldNumber: 2)
+      }
+      if !_storage._commandType.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._commandType, fieldNumber: 3)
+      }
+      if !_storage._idempotencyKey.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._idempotencyKey, fieldNumber: 4)
+      }
+      if _storage._deadlineUnixMs != 0 {
+        try visitor.visitSingularInt64Field(value: _storage._deadlineUnixMs, fieldNumber: 5)
+      }
+      if !_storage._correlationID.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._correlationID, fieldNumber: 6)
+      }
+      if !_storage._causationID.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._causationID, fieldNumber: 7)
+      }
+      if !_storage._targetID.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._targetID, fieldNumber: 8)
+      }
+      switch _storage._command {
+      case .server?: try {
+        guard case .server(let v)? = _storage._command else { preconditionFailure() }
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 20)
+      }()
+      case .model?: try {
+        guard case .model(let v)? = _storage._command else { preconditionFailure() }
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 21)
+      }()
+      case .cache?: try {
+        guard case .cache(let v)? = _storage._command else { preconditionFailure() }
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 22)
+      }()
+      case .session?: try {
+        guard case .session(let v)? = _storage._command else { preconditionFailure() }
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 23)
+      }()
+      case .ops?: try {
+        guard case .ops(let v)? = _storage._command else { preconditionFailure() }
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 24)
+      }()
+      case .preset?: try {
+        guard case .preset(let v)? = _storage._command else { preconditionFailure() }
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 25)
+      }()
+      case .image?: try {
+        guard case .image(let v)? = _storage._command else { preconditionFailure() }
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 26)
+      }()
+      case nil: break
+      }
     }
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: Melix_Controlplane_V1_ControlPlaneRequest, rhs: Melix_Controlplane_V1_ControlPlaneRequest) -> Bool {
-    if lhs.requestID != rhs.requestID {return false}
-    if lhs.actorID != rhs.actorID {return false}
-    if lhs.commandType != rhs.commandType {return false}
-    if lhs.idempotencyKey != rhs.idempotencyKey {return false}
-    if lhs.deadlineUnixMs != rhs.deadlineUnixMs {return false}
-    if lhs.correlationID != rhs.correlationID {return false}
-    if lhs.causationID != rhs.causationID {return false}
-    if lhs.targetID != rhs.targetID {return false}
-    if lhs.command != rhs.command {return false}
+    if lhs._storage !== rhs._storage {
+      let storagesAreEqual: Bool = withExtendedLifetime((lhs._storage, rhs._storage)) { (_args: (_StorageClass, _StorageClass)) in
+        let _storage = _args.0
+        let rhs_storage = _args.1
+        if _storage._requestID != rhs_storage._requestID {return false}
+        if _storage._actorID != rhs_storage._actorID {return false}
+        if _storage._commandType != rhs_storage._commandType {return false}
+        if _storage._idempotencyKey != rhs_storage._idempotencyKey {return false}
+        if _storage._deadlineUnixMs != rhs_storage._deadlineUnixMs {return false}
+        if _storage._correlationID != rhs_storage._correlationID {return false}
+        if _storage._causationID != rhs_storage._causationID {return false}
+        if _storage._targetID != rhs_storage._targetID {return false}
+        if _storage._command != rhs_storage._command {return false}
+        return true
+      }
+      if !storagesAreEqual {return false}
+    }
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -3644,7 +3867,7 @@ extension Melix_Controlplane_V1_ControlPlaneRequest: SwiftProtobuf.Message, Swif
 
 extension Melix_Controlplane_V1_ControlPlaneResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ControlPlaneResponse"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}request_id\0\u{3}command_type\0\u{1}ok\0\u{1}error\0\u{3}correlation_id\0\u{3}causation_id\0\u{2}\u{e}server\0\u{1}model\0\u{1}cache\0\u{1}session\0\u{1}ops\0\u{1}preset\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}request_id\0\u{3}command_type\0\u{1}ok\0\u{1}error\0\u{3}correlation_id\0\u{3}causation_id\0\u{2}\u{e}server\0\u{1}model\0\u{1}cache\0\u{1}session\0\u{1}ops\0\u{1}preset\0\u{1}image\0")
 
   fileprivate class _StorageClass {
     var _requestID: String = String()
@@ -3773,6 +3996,19 @@ extension Melix_Controlplane_V1_ControlPlaneResponse: SwiftProtobuf.Message, Swi
             _storage._payload = .preset(v)
           }
         }()
+        case 26: try {
+          var v: Melix_Controlplane_V1_ImageReply?
+          var hadOneofValue = false
+          if let current = _storage._payload {
+            hadOneofValue = true
+            if case .image(let m) = current {v = m}
+          }
+          try decoder.decodeSingularMessageField(value: &v)
+          if let v = v {
+            if hadOneofValue {try decoder.handleConflictingOneOf()}
+            _storage._payload = .image(v)
+          }
+        }()
         default: break
         }
       }
@@ -3827,6 +4063,10 @@ extension Melix_Controlplane_V1_ControlPlaneResponse: SwiftProtobuf.Message, Swi
       case .preset?: try {
         guard case .preset(let v)? = _storage._payload else { preconditionFailure() }
         try visitor.visitSingularMessageField(value: v, fieldNumber: 25)
+      }()
+      case .image?: try {
+        guard case .image(let v)? = _storage._payload else { preconditionFailure() }
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 26)
       }()
       case nil: break
       }
@@ -4984,6 +5224,73 @@ extension Melix_Controlplane_V1_PresetCommand: SwiftProtobuf.Message, SwiftProto
   }
 }
 
+extension Melix_Controlplane_V1_ImageCommand: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".ImageCommand"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}generate\0\u{1}edit\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try {
+        var v: Melix_Controlplane_V1_GenerateImage?
+        var hadOneofValue = false
+        if let current = self.kind {
+          hadOneofValue = true
+          if case .generate(let m) = current {v = m}
+        }
+        try decoder.decodeSingularMessageField(value: &v)
+        if let v = v {
+          if hadOneofValue {try decoder.handleConflictingOneOf()}
+          self.kind = .generate(v)
+        }
+      }()
+      case 2: try {
+        var v: Melix_Controlplane_V1_EditImage?
+        var hadOneofValue = false
+        if let current = self.kind {
+          hadOneofValue = true
+          if case .edit(let m) = current {v = m}
+        }
+        try decoder.decodeSingularMessageField(value: &v)
+        if let v = v {
+          if hadOneofValue {try decoder.handleConflictingOneOf()}
+          self.kind = .edit(v)
+        }
+      }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    // The use of inline closures is to circumvent an issue where the compiler
+    // allocates stack space for every if/case branch local when no optimizations
+    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+    // https://github.com/apple/swift-protobuf/issues/1182
+    switch self.kind {
+    case .generate?: try {
+      guard case .generate(let v)? = self.kind else { preconditionFailure() }
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 1)
+    }()
+    case .edit?: try {
+      guard case .edit(let v)? = self.kind else { preconditionFailure() }
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 2)
+    }()
+    case nil: break
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Melix_Controlplane_V1_ImageCommand, rhs: Melix_Controlplane_V1_ImageCommand) -> Bool {
+    if lhs.kind != rhs.kind {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
 extension Melix_Controlplane_V1_ServerReply: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ServerReply"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}snapshot\0")
@@ -5251,6 +5558,40 @@ extension Melix_Controlplane_V1_PresetReply: SwiftProtobuf.Message, SwiftProtobu
 
   public static func ==(lhs: Melix_Controlplane_V1_PresetReply, rhs: Melix_Controlplane_V1_PresetReply) -> Bool {
     if lhs.presets != rhs.presets {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+extension Melix_Controlplane_V1_ImageReply: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".ImageReply"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}job\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularMessageField(value: &self._job) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    // The use of inline closures is to circumvent an issue where the compiler
+    // allocates stack space for every if/case branch local when no optimizations
+    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+    // https://github.com/apple/swift-protobuf/issues/1182
+    try { if let v = self._job {
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 1)
+    } }()
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Melix_Controlplane_V1_ImageReply, rhs: Melix_Controlplane_V1_ImageReply) -> Bool {
+    if lhs._job != rhs._job {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -5656,6 +5997,136 @@ extension Melix_Controlplane_V1_RunModelOperation: SwiftProtobuf.Message, SwiftP
     if lhs.generateManifest != rhs.generateManifest {return false}
     if lhs.runSmokeTest != rhs.runSmokeTest {return false}
     if lhs.ext != rhs.ext {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+extension Melix_Controlplane_V1_GenerateImage: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".GenerateImage"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}model_id\0\u{1}prompt\0\u{1}size\0\u{1}n\0\u{3}response_format\0\u{3}artifact_namespace\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.modelID) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.prompt) }()
+      case 3: try { try decoder.decodeSingularStringField(value: &self.size) }()
+      case 4: try { try decoder.decodeSingularUInt32Field(value: &self.n) }()
+      case 5: try { try decoder.decodeSingularStringField(value: &self.responseFormat) }()
+      case 6: try { try decoder.decodeSingularStringField(value: &self.artifactNamespace) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.modelID.isEmpty {
+      try visitor.visitSingularStringField(value: self.modelID, fieldNumber: 1)
+    }
+    if !self.prompt.isEmpty {
+      try visitor.visitSingularStringField(value: self.prompt, fieldNumber: 2)
+    }
+    if !self.size.isEmpty {
+      try visitor.visitSingularStringField(value: self.size, fieldNumber: 3)
+    }
+    if self.n != 0 {
+      try visitor.visitSingularUInt32Field(value: self.n, fieldNumber: 4)
+    }
+    if !self.responseFormat.isEmpty {
+      try visitor.visitSingularStringField(value: self.responseFormat, fieldNumber: 5)
+    }
+    if !self.artifactNamespace.isEmpty {
+      try visitor.visitSingularStringField(value: self.artifactNamespace, fieldNumber: 6)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Melix_Controlplane_V1_GenerateImage, rhs: Melix_Controlplane_V1_GenerateImage) -> Bool {
+    if lhs.modelID != rhs.modelID {return false}
+    if lhs.prompt != rhs.prompt {return false}
+    if lhs.size != rhs.size {return false}
+    if lhs.n != rhs.n {return false}
+    if lhs.responseFormat != rhs.responseFormat {return false}
+    if lhs.artifactNamespace != rhs.artifactNamespace {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+extension Melix_Controlplane_V1_EditImage: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".EditImage"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}model_id\0\u{1}prompt\0\u{1}image\0\u{3}image_uri\0\u{1}mask\0\u{3}mask_uri\0\u{1}strength\0\u{1}size\0\u{1}n\0\u{3}response_format\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.modelID) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.prompt) }()
+      case 3: try { try decoder.decodeSingularBytesField(value: &self.image) }()
+      case 4: try { try decoder.decodeSingularStringField(value: &self.imageUri) }()
+      case 5: try { try decoder.decodeSingularBytesField(value: &self.mask) }()
+      case 6: try { try decoder.decodeSingularStringField(value: &self.maskUri) }()
+      case 7: try { try decoder.decodeSingularFloatField(value: &self.strength) }()
+      case 8: try { try decoder.decodeSingularStringField(value: &self.size) }()
+      case 9: try { try decoder.decodeSingularUInt32Field(value: &self.n) }()
+      case 10: try { try decoder.decodeSingularStringField(value: &self.responseFormat) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.modelID.isEmpty {
+      try visitor.visitSingularStringField(value: self.modelID, fieldNumber: 1)
+    }
+    if !self.prompt.isEmpty {
+      try visitor.visitSingularStringField(value: self.prompt, fieldNumber: 2)
+    }
+    if !self.image.isEmpty {
+      try visitor.visitSingularBytesField(value: self.image, fieldNumber: 3)
+    }
+    if !self.imageUri.isEmpty {
+      try visitor.visitSingularStringField(value: self.imageUri, fieldNumber: 4)
+    }
+    if !self.mask.isEmpty {
+      try visitor.visitSingularBytesField(value: self.mask, fieldNumber: 5)
+    }
+    if !self.maskUri.isEmpty {
+      try visitor.visitSingularStringField(value: self.maskUri, fieldNumber: 6)
+    }
+    if self.strength.bitPattern != 0 {
+      try visitor.visitSingularFloatField(value: self.strength, fieldNumber: 7)
+    }
+    if !self.size.isEmpty {
+      try visitor.visitSingularStringField(value: self.size, fieldNumber: 8)
+    }
+    if self.n != 0 {
+      try visitor.visitSingularUInt32Field(value: self.n, fieldNumber: 9)
+    }
+    if !self.responseFormat.isEmpty {
+      try visitor.visitSingularStringField(value: self.responseFormat, fieldNumber: 10)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Melix_Controlplane_V1_EditImage, rhs: Melix_Controlplane_V1_EditImage) -> Bool {
+    if lhs.modelID != rhs.modelID {return false}
+    if lhs.prompt != rhs.prompt {return false}
+    if lhs.image != rhs.image {return false}
+    if lhs.imageUri != rhs.imageUri {return false}
+    if lhs.mask != rhs.mask {return false}
+    if lhs.maskUri != rhs.maskUri {return false}
+    if lhs.strength != rhs.strength {return false}
+    if lhs.size != rhs.size {return false}
+    if lhs.n != rhs.n {return false}
+    if lhs.responseFormat != rhs.responseFormat {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

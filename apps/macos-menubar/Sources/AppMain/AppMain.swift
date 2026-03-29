@@ -81,7 +81,7 @@ public final class MelixMenuBarBootstrap {
 
     public static func live() -> MelixMenuBarBootstrap {
         let environment = MenuBarBootstrapEnvironment(environment: ProcessInfo.processInfo.environment)
-        let modelCatalog = ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels())
+        let modelCatalog = ModelCatalog(seedModels: ModelCatalog.phaseSevenContractSeedModels())
         let swiftTextWorkerClient = SwiftTextWorkerClient(
             socketPath: environment.swiftTextWorkerSocketPath
         )

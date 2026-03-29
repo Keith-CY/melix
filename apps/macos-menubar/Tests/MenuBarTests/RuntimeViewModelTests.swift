@@ -598,6 +598,137 @@ struct RuntimeViewModelTests {
         #expect(viewModel.chatCapabilities.contains(where: { $0.id == "transcription" && $0.isReady }))
         #expect(viewModel.chatCapabilities.contains(where: { $0.id == "speech" && $0.isReady == false }))
     }
+
+    @Test("image snapshot hydrates image panel state from control-plane truth")
+    @MainActor
+    func imageSnapshotHydratesImagePanelState() async throws {
+        let artifact = makeMenuBarImageArtifact(
+            jobID: "job-image-1",
+            storageURI: "/tmp/melix-image-preview.png"
+        )
+        let imageJob = makeMenuBarImageJobSummary(
+            jobID: "job-image-1",
+            requestID: "req-image-1",
+            operation: "image_generate",
+            artifacts: [artifact]
+        )
+        var snapshot = makeSnapshot(
+            serverState: .serverReady,
+            models: [
+                makeModelSummary(modelID: "melix-dev-text", state: .modelWarm),
+                makeMenuBarImageModelSummary(),
+            ]
+        )
+        snapshot.imageJobs = [imageJob]
+        let client = SnapshotControlPlaneXPCClient(snapshot: snapshot)
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+
+        #expect(viewModel.selectedImageModelID == "melix-dev-image")
+        #expect(viewModel.imageJobs.count == 1)
+        #expect(viewModel.selectedImageJobID == "job-image-1")
+        #expect(viewModel.selectedImageJob?.operation == "image_generate")
+        #expect(viewModel.selectedImageJob?.artifacts.first?.storageUri == "/tmp/melix-image-preview.png")
+    }
+
+    @Test("image generate and edit actions dispatch through the client and update runtime state")
+    @MainActor
+    func imageActionsDispatchThroughClientAndUpdateRuntimeState() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let snapshot = makeSnapshot(
+            serverState: .serverReady,
+            models: [
+                makeModelSummary(modelID: "melix-dev-text", state: .modelWarm),
+                makeMenuBarImageModelSummary(),
+            ]
+        )
+        await client.configureSnapshot(snapshot)
+        await client.configureImageResponses(
+            generation: makeMenuBarImageJobSummary(
+                jobID: "job-image-generate",
+                requestID: "req-image-generate",
+                operation: "image_generate",
+                artifacts: [makeMenuBarImageArtifact(jobID: "job-image-generate")]
+            ),
+            edit: makeMenuBarImageJobSummary(
+                jobID: "job-image-edit",
+                requestID: "req-image-edit",
+                operation: "image_edit",
+                artifacts: [
+                    makeMenuBarImageArtifact(jobID: "job-image-edit", role: .imageArtifactEditSource, storageURI: "/tmp/source.png"),
+                    makeMenuBarImageArtifact(jobID: "job-image-edit", role: .imageArtifactGenerated, storageURI: "/tmp/output.png"),
+                ]
+            )
+        )
+        let metrics = MenuBarMetricsStore()
+        let viewModel = RuntimeViewModel(client: client, metrics: metrics)
+
+        await viewModel.start()
+        viewModel.imagePromptText = "Generate a poster"
+        await viewModel.submitImageGeneration()
+
+        #expect(await client.recordedActions.contains("image.generate:melix-dev-image"))
+        #expect(viewModel.imageStatusText == "Completed • image_generate")
+        #expect(viewModel.imageJobs.contains(where: { $0.jobID == "job-image-generate" }))
+        #expect(await metrics.snapshot()["desktop.image_action_latency_ms"] != nil)
+
+        viewModel.imagePromptText = "Edit the poster"
+        viewModel.imageEditSourceURL = "file:///tmp/source.png"
+        viewModel.imageEditMaskURL = "file:///tmp/mask.png"
+        await viewModel.submitImageEdit()
+
+        #expect(await client.recordedActions.contains("image.edit:melix-dev-image"))
+        #expect(viewModel.imageJobs.contains(where: { $0.jobID == "job-image-edit" }))
+        #expect(viewModel.selectedImageJob?.artifacts.contains(where: { $0.storageUri == "/tmp/output.png" }) == true)
+    }
+
+    @Test("image job events refresh selected job progress and terminal state")
+    @MainActor
+    func imageJobEventsRefreshSelectedJobProgressAndTerminalState() async throws {
+        let client = FakeControlPlaneXPCClient()
+        var snapshot = makeSnapshot(
+            serverState: .serverReady,
+            models: [
+                makeModelSummary(modelID: "melix-dev-text", state: .modelWarm),
+                makeMenuBarImageModelSummary(),
+            ]
+        )
+        snapshot.imageJobs = []
+        await client.configureSnapshot(snapshot)
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+
+        var runningJob = makeMenuBarImageJobSummary(
+            jobID: "job-image-live",
+            requestID: "req-image-live",
+            operation: "image_generate",
+            state: .imageJobRunning
+        )
+        runningJob.progress.stage = "sampling"
+        runningJob.progress.pct = 0.5
+        await client.sendImageJobStateChanged(runningJob)
+
+        try await waitForRuntimeViewModelCondition("expected running image job to appear") {
+            viewModel.imageJobs.contains(where: { $0.jobID == "job-image-live" })
+        }
+
+        #expect(viewModel.imageStatusText == "Running • image_generate")
+
+        var completedJob = runningJob
+        completedJob.state = .imageJobCompleted
+        completedJob.progress.stage = "completed"
+        completedJob.progress.pct = 1
+        completedJob.artifacts = [makeMenuBarImageArtifact(jobID: "job-image-live", storageURI: "/tmp/live-output.png")]
+        await client.sendImageJobStateChanged(completedJob)
+
+        try await waitForRuntimeViewModelCondition("expected completed image job artifact") {
+            viewModel.selectedImageJob?.artifacts.contains(where: { $0.storageUri == "/tmp/live-output.png" }) == true
+        }
+
+        #expect(viewModel.imageStatusText == "Completed • image_generate")
+    }
 }
 
 @MainActor
