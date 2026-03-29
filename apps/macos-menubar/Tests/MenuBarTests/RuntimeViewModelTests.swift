@@ -388,6 +388,17 @@ struct RuntimeViewModelTests {
         let client = FakeControlPlaneXPCClient()
         let metrics = MenuBarMetricsStore()
         let viewModel = RuntimeViewModel(client: client, metrics: metrics)
+        await client.configureModelOperation(
+            makeNamedModelOperationResult(
+                operation: "registry_snapshot",
+                outputPath: "/tmp/melix-model-ops-registry/registry_snapshot.json",
+                manifestJSON: makeRegistrySnapshotManifest(
+                    publishedRepo: "",
+                    targetRepo: "melix/adapters/melix-dev-adapter"
+                )
+            ),
+            forNamedOperation: "registry_snapshot"
+        )
 
         await viewModel.start()
         await viewModel.inspectPrimaryModel()
@@ -395,7 +406,18 @@ struct RuntimeViewModelTests {
         await viewModel.runBench()
         await viewModel.quantizePrimaryModel()
         await viewModel.trainPrimaryModel()
-        await viewModel.uploadPrimaryModel()
+        await client.configureModelOperation(
+            makeNamedModelOperationResult(
+                operation: "registry_snapshot",
+                outputPath: "/tmp/melix-model-ops-registry/registry_snapshot.json",
+                manifestJSON: makeRegistrySnapshotManifest(
+                    publishedRepo: "melix/adapters/melix-dev-adapter",
+                    targetRepo: "melix/adapters/melix-dev-adapter"
+                )
+            ),
+            forNamedOperation: "registry_snapshot"
+        )
+        await viewModel.publishLatestAdapter()
 
         #expect(await client.recordedActions.contains("info:melix-dev-text"))
         #expect(await client.recordedActions.contains("doctor"))
@@ -403,17 +425,22 @@ struct RuntimeViewModelTests {
         #expect(await client.recordedActions.contains("operation:quantize:melix-dev-text"))
         #expect(await client.recordedActions.contains("operation:train_lora:melix-dev-text"))
         #expect(await client.recordedActions.contains("operation:upload:melix-dev-text"))
+        #expect(await client.recordedActions.contains("operation:registry_snapshot:melix-dev-text"))
         #expect(viewModel.selectedModelInfo?.modelKind == "text")
         #expect(viewModel.selectedModelInfo?.supportedParsers == ["text", "json"])
         #expect(viewModel.lastDoctorReport?.markdown.contains("Melix Doctor") == true)
         #expect(viewModel.lastBenchReport?.reportPath.contains("bench-report") == true)
         #expect(viewModel.desktopFoundationState.benchMetrics.contains(where: { $0.name == "bench.smoke.ttft_ms" }))
         #expect(viewModel.lastModelOperation?.operation == "upload")
-        #expect(viewModel.lastModelOperation?.outputPath.contains("/tmp/melix-upload") == true)
+        #expect(viewModel.lastModelOperation?.outputPath.contains("/tmp/melix-upload-adapter") == true)
+        #expect(viewModel.adapterPackages.first?.adapterName == "melix-dev-adapter")
+        #expect(viewModel.adapterPackages.first?.publishedRepo == "melix/adapters/melix-dev-adapter")
+        #expect(viewModel.trainingHistory.first?.datasetURI == "datasets/melix-dev")
         #expect(await metrics.snapshot()["menu.model_info_ms"] != nil)
         #expect(await metrics.snapshot()["menu.ops_doctor_ms"] != nil)
         #expect(await metrics.snapshot()["menu.ops_bench_ms"] != nil)
         #expect(await metrics.snapshot()["menu.model_operation_ms"] != nil)
+        #expect(await metrics.snapshot()["menu.model_ops_refresh_ms"] != nil)
     }
 
     @Test("model tool actions no-op when there is no primary model")
@@ -428,6 +455,8 @@ struct RuntimeViewModelTests {
         await viewModel.inspectPrimaryModel()
         await viewModel.quantizePrimaryModel()
         await viewModel.trainPrimaryModel()
+        await viewModel.refreshModelOpsProductState()
+        await viewModel.publishLatestAdapter()
         await viewModel.downloadPrimaryModel()
         await viewModel.uploadPrimaryModel()
 
@@ -437,6 +466,7 @@ struct RuntimeViewModelTests {
         #expect(snapshot["menu.model_settings_ms"] == nil)
         #expect(snapshot["menu.model_info_ms"] == nil)
         #expect(snapshot["menu.model_operation_ms"] == nil)
+        #expect(snapshot["menu.model_ops_refresh_ms"] == nil)
     }
 
     @Test("model tool failures surface local errors")
@@ -468,6 +498,70 @@ struct RuntimeViewModelTests {
 
         await viewModel.quantizePrimaryModel()
         #expect(viewModel.lastError?.contains("operation failed") == true)
+
+        await viewModel.refreshModelOpsProductState()
+        #expect(viewModel.lastError?.contains("operation failed") == true)
+    }
+
+    @Test("model tooling refresh surfaces parse failures and publish no-ops without adapters")
+    @MainActor
+    func modelToolingRefreshSurfacesParseFailuresAndPublishNoopsWithoutAdapters() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(client: client)
+        await client.configureModelOperation(
+            makeNamedModelOperationResult(
+                operation: "registry_snapshot",
+                outputPath: "/tmp/melix-model-ops-registry/registry_snapshot.json",
+                manifestJSON: "{not-json"
+            ),
+            forNamedOperation: "registry_snapshot"
+        )
+
+        await viewModel.start()
+        await viewModel.refreshModelOpsProductState()
+        await viewModel.publishLatestAdapter()
+
+        #expect(viewModel.lastError?.contains("registry snapshot") == true)
+        #expect(viewModel.adapterPackages.isEmpty)
+        #expect(viewModel.trainingHistory.isEmpty)
+    }
+
+    @Test("model tooling snapshot normalizes pending adapter payloads and fallback publish flows")
+    @MainActor
+    func modelToolingSnapshotNormalizesPendingAdapterPayloads() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let metrics = MenuBarMetricsStore()
+        let viewModel = RuntimeViewModel(client: client, metrics: metrics)
+        await client.configureModelOperation(
+            makeNamedModelOperationResult(
+                operation: "registry_snapshot",
+                outputPath: "/tmp/melix-model-ops-registry/registry_snapshot.json",
+                manifestJSON: makePendingRegistrySnapshotManifest()
+            ),
+            forNamedOperation: "registry_snapshot"
+        )
+
+        await viewModel.start()
+        await viewModel.refreshModelOpsProductState()
+
+        let adapter = try #require(viewModel.adapterPackages.first)
+        let trainingJob = try #require(viewModel.trainingHistory.first)
+
+        #expect(adapter.adapterName == "pending-adapter")
+        #expect(adapter.statusText == "Queued for publish")
+        #expect(adapter.targetRepo.isEmpty)
+        #expect(adapter.trainingDurationText == "950ms")
+        #expect(adapter.publishDurationText == "n/a")
+        #expect(trainingJob.adapterName == "pending-adapter")
+        #expect(trainingJob.datasetURI == "datasets/pending")
+        #expect(trainingJob.statusText == "Unknown")
+        #expect(trainingJob.stageText == "write_manifest • 42%")
+
+        await viewModel.publishLatestAdapter()
+
+        #expect(await client.recordedActions.contains("operation:upload:melix-dev-text"))
+        #expect(await metrics.snapshot()["menu.model_ops_refresh_ms"] != nil)
+        #expect(await metrics.snapshot()["menu.model_operation_ms"] != nil)
     }
 
     @Test("model settings support ttl and advanced acceleration labels")
@@ -1259,4 +1353,111 @@ private func makeRuntimeModelRow(state: Melix_Controlplane_V1_ModelState) -> Run
         accelerationModeText: "Baseline",
         accelerationProfileID: ""
     )
+}
+
+private func makeNamedModelOperationResult(
+    operation: String,
+    outputPath: String,
+    manifestJSON: String
+) -> Melix_Controlplane_V1_ModelOperationResult {
+    var result = Melix_Controlplane_V1_ModelOperationResult()
+    result.ok = true
+    result.operation = operation
+    result.jobID = "job-\(operation)"
+    result.stage = "completed"
+    result.pct = 1
+    result.outputPath = outputPath
+    result.manifestJson = manifestJSON
+    return result
+}
+
+private func makeRegistrySnapshotManifest(
+    publishedRepo: String,
+    targetRepo: String
+) -> String {
+    #"""
+    {
+      "operation": "registry_snapshot",
+      "jobs": [
+        {
+          "job_id": "model-ops-0001",
+          "operation": "train_lora",
+          "source_model": "melix-dev-text",
+          "status": "completed",
+          "stage": "write_artifact",
+          "pct": 1.0,
+          "output_path": "/tmp/melix-train-lora/train_lora.adapter.json",
+          "manifest": {
+            "adapter_name": "melix-dev-adapter",
+            "dataset_uri": "datasets/melix-dev",
+            "target_repo": "\#(targetRepo)"
+          }
+        }
+      ],
+      "adapters": [
+        {
+          "adapter_id": "melix-dev-adapter@model-ops-0001",
+          "job_id": "model-ops-0001",
+          "adapter_name": "melix-dev-adapter",
+          "source_model": "melix-dev-text",
+          "dataset_uri": "datasets/melix-dev",
+          "output_path": "/tmp/melix-train-lora/train_lora.adapter.json",
+          "target_repo": "\#(targetRepo)",
+          "published_repo": "\#(publishedRepo)",
+          "status": "\#(publishedRepo.isEmpty ? "completed" : "published")",
+          "training_duration_ms": 1420.0,
+          "adapter_publish_ms": 118.0
+        }
+      ]
+    }
+    """#
+}
+
+private func makePendingRegistrySnapshotManifest() -> String {
+    #"""
+    {
+      "operation": "registry_snapshot",
+      "jobs": [
+        {
+          "job_id": "model-ops-0009",
+          "operation": "quantize",
+          "source_model": "melix-dev-text",
+          "status": "completed",
+          "stage": "write_artifact",
+          "pct": 1.0,
+          "output_path": "/tmp/melix-quantize/quantize.artifact",
+          "manifest": {}
+        },
+        {
+          "job_id": "model-ops-0008",
+          "operation": "train_lora",
+          "source_model": "melix-dev-text",
+          "status": "",
+          "stage": "write_manifest",
+          "pct": 0.42,
+          "output_path": "/tmp/melix-train-lora/pending.adapter.json",
+          "manifest": {
+            "adapter_name": "pending-adapter",
+            "dataset_uri": "datasets/pending",
+            "target_repo": ""
+          }
+        }
+      ],
+      "adapters": [
+        {
+          "adapter_id": "pending-adapter@model-ops-0008",
+          "job_id": "model-ops-0008",
+          "adapter_name": "pending-adapter",
+          "source_model": "melix-dev-text",
+          "dataset_uri": "datasets/pending",
+          "output_path": "/tmp/melix-train-lora/pending.adapter.json",
+          "target_repo": "",
+          "published_repo": "",
+          "status": "queued_for_publish",
+          "training_duration_ms": 950,
+          "adapter_publish_ms": 0
+        }
+      ]
+    }
+    """#
 }

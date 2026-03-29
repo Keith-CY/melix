@@ -30,6 +30,7 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
     private var modelSettings = FakeControlPlaneXPCClient.defaultModelSettings()
     private var modelInfoResponse = FakeControlPlaneXPCClient.defaultModelInfo()
     private var modelOperationResponse = FakeControlPlaneXPCClient.defaultModelOperation()
+    private var modelOperationResponsesByName: [String: Melix_Controlplane_V1_ModelOperationResult] = [:]
     private var doctorResponse = "# Melix Doctor\n\n- worker_state: idle\n"
     private var benchResponse = ControlPlaneBenchResult(
         reportPath: "/tmp/melix-fake/bench-report.md",
@@ -92,6 +93,13 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
 
     func configureModelOperation(_ operation: Melix_Controlplane_V1_ModelOperationResult) {
         modelOperationResponse = operation
+    }
+
+    func configureModelOperation(
+        _ operation: Melix_Controlplane_V1_ModelOperationResult,
+        forNamedOperation operationName: String
+    ) {
+        modelOperationResponsesByName[operationName] = operation
     }
 
     func configureDoctorResponse(_ markdown: String) {
@@ -247,9 +255,10 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
         if let modelOperationError {
             throw modelOperationError
         }
-        var response = modelOperationResponse
+        let hasNamedOverride = modelOperationResponsesByName[operation] != nil
+        var response = modelOperationResponsesByName[operation] ?? modelOperationResponse
         response.operation = operation
-        if !outputDir.isEmpty {
+        if !hasNamedOverride, !outputDir.isEmpty {
             response.outputPath = outputDir + "/" + operation + ".artifact"
         }
         if !weightQuant.isEmpty || !kvQuant.isEmpty || !ext.isEmpty {

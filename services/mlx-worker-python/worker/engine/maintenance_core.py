@@ -38,7 +38,7 @@ class MaintenanceCore:
         if not operation:
             operation = "quantize" if request.weight_quant or request.kv_quant else "convert"
 
-        if operation not in {"convert", "quantize", "download", "upload", "train_lora"}:
+        if operation not in {"convert", "quantize", "download", "upload", "train_lora", "registry_snapshot"}:
             yield maintenance_pb2.ConvertModelEvent(
                 failed=maintenance_pb2.ConvertFailed(
                     error=common_pb2.ErrorStatus(
@@ -63,15 +63,27 @@ class MaintenanceCore:
         )
 
         artifact_path = self._artifact_path(operation, output_dir)
-        manifest_payload = {
-            "job_id": job.job_id,
-            "operation": operation,
-            "source_model": request.source_model,
-            "output_dir": str(output_dir),
-            "weight_quant": request.weight_quant,
-            "kv_quant": request.kv_quant,
-            "target_repo": request.ext.get("target_repo", ""),
-        }
+        if operation == "registry_snapshot":
+            manifest_payload = self._job_registry.snapshot(exclude_job_ids={job.job_id})
+            manifest_payload.update(
+                {
+                    "job_id": job.job_id,
+                    "operation": operation,
+                    "source_model": request.source_model,
+                    "output_dir": str(output_dir),
+                }
+            )
+        else:
+            manifest_payload = {
+                "job_id": job.job_id,
+                "operation": operation,
+                "source_model": request.source_model,
+                "output_dir": str(output_dir),
+                "weight_quant": request.weight_quant,
+                "kv_quant": request.kv_quant,
+                "target_repo": request.ext.get("target_repo", ""),
+                "ext": dict(request.ext),
+            }
         if operation == "train_lora":
             manifest_payload.update(
                 {
@@ -224,6 +236,7 @@ class MaintenanceCore:
             "download": "download.artifact",
             "upload": "upload.receipt.json",
             "train_lora": "train_lora.adapter.json",
+            "registry_snapshot": "registry_snapshot.json",
         }[operation]
         return output_dir / filename
 

@@ -61,6 +61,31 @@ public struct RuntimeDoctorReportState: Equatable, Sendable {
     public let markdown: String
 }
 
+public struct RuntimeAdapterPackageState: Identifiable, Equatable, Sendable {
+    public let id: String
+    public let adapterName: String
+    public let sourceModel: String
+    public let datasetURI: String
+    public let statusText: String
+    public let outputPath: String
+    public let targetRepo: String
+    public let publishedRepo: String
+    public let trainingDurationText: String
+    public let publishDurationText: String
+}
+
+public struct RuntimeTrainingHistoryEntryState: Identifiable, Equatable, Sendable {
+    public let id: String
+    public let jobID: String
+    public let modelID: String
+    public let adapterName: String
+    public let datasetURI: String
+    public let statusText: String
+    public let stageText: String
+    public let outputPath: String
+    public let targetRepo: String
+}
+
 public struct RuntimeBenchMetricState: Identifiable, Equatable, Sendable {
     public let id: String
     public let name: String
@@ -128,6 +153,8 @@ public final class RuntimeViewModel {
     public private(set) var lastModelOperation: RuntimeModelOperationState?
     public private(set) var lastDoctorReport: RuntimeDoctorReportState?
     public private(set) var lastBenchReport: RuntimeBenchReportState?
+    public private(set) var adapterPackages: [RuntimeAdapterPackageState] = []
+    public private(set) var trainingHistory: [RuntimeTrainingHistoryEntryState] = []
     public private(set) var chatTranscript: [DesktopChatTranscriptEntry] = []
     public private(set) var chatCapabilities: [DesktopChatCapabilityRow] = []
     public private(set) var chatStatusText = "Idle"
@@ -170,6 +197,10 @@ public final class RuntimeViewModel {
 
     public var primaryModel: RuntimeModelRow? {
         models.first { $0.modelID == "melix-dev-text" } ?? models.first
+    }
+
+    public var latestAdapterPackage: RuntimeAdapterPackageState? {
+        adapterPackages.first
     }
 
     public var imageModels: [RuntimeModelRow] {
@@ -630,7 +661,8 @@ public final class RuntimeViewModel {
         outputDir: String,
         weightQuant: String = "",
         kvQuant: String = "",
-        ext: [String: String] = [:]
+        ext: [String: String] = [:],
+        refreshProductToolingState: Bool = false
     ) async {
         let startedAt = Date()
         do {
@@ -655,6 +687,9 @@ public final class RuntimeViewModel {
                 outputPath: result.outputPath,
                 manifestJson: result.manifestJson
             )
+            if refreshProductToolingState {
+                await refreshModelOpsProductState(modelID: modelID, notify: false)
+            }
         } catch {
             recordLocalError(String(describing: error))
         }
@@ -708,7 +743,35 @@ public final class RuntimeViewModel {
             ext: [
                 "adapter_name": "melix-dev-adapter",
                 "dataset_uri": "datasets/melix-dev",
-            ]
+                "target_repo": "melix/adapters/melix-dev-adapter",
+            ],
+            refreshProductToolingState: true
+        )
+    }
+
+    public func refreshModelOpsProductState() async {
+        guard let modelID = primaryModel?.modelID else {
+            return
+        }
+        await refreshModelOpsProductState(modelID: modelID, notify: true)
+    }
+
+    public func publishLatestAdapter() async {
+        guard let modelID = primaryModel?.modelID, let adapter = latestAdapterPackage else {
+            return
+        }
+
+        await runModelOperation(
+            modelID: modelID,
+            operation: "upload",
+            outputDir: "/tmp/melix-upload-adapter",
+            ext: [
+                "target_repo": adapter.targetRepo.isEmpty ? "melix/adapters/\(adapter.adapterName)" : adapter.targetRepo,
+                "artifact_kind": "adapter",
+                "artifact_path": adapter.outputPath,
+                "adapter_name": adapter.adapterName,
+            ],
+            refreshProductToolingState: true
         )
     }
 
@@ -749,6 +812,47 @@ public final class RuntimeViewModel {
             recordLocalError(String(describing: error))
         }
         notifyStateChanged()
+    }
+
+    private func refreshModelOpsProductState(modelID: String, notify: Bool) async {
+        let startedAt = Date()
+        do {
+            let result = try await client.runModelOperation(
+                modelID: modelID,
+                operation: "registry_snapshot",
+                outputDir: "/tmp/melix-model-ops-registry",
+                weightQuant: "",
+                kvQuant: "",
+                ext: [:]
+            )
+            await metrics.record(
+                name: "menu.model_ops_refresh_ms",
+                valueMs: Date().timeIntervalSince(startedAt) * 1_000
+            )
+            applyModelOpsSnapshot(manifestJSON: result.manifestJson)
+        } catch {
+            recordLocalError(String(describing: error))
+        }
+        if notify {
+            notifyStateChanged()
+        }
+    }
+
+    private func applyModelOpsSnapshot(manifestJSON: String) {
+        guard
+            let data = manifestJSON.data(using: .utf8),
+            let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else {
+            recordLocalError("Model operations registry snapshot could not be decoded.")
+            return
+        }
+
+        let adapters = (payload["adapters"] as? [[String: Any]]) ?? []
+        let jobs = (payload["jobs"] as? [[String: Any]]) ?? []
+        adapterPackages = adapters.map(Self.makeAdapterPackageState)
+        trainingHistory = jobs
+            .filter { Self.stringValue("operation", from: $0) == "train_lora" }
+            .map(Self.makeTrainingHistoryEntryState)
     }
 
     private func consume(event: Melix_Controlplane_V1_ControlPlaneEvent) async {
@@ -1283,6 +1387,70 @@ public final class RuntimeViewModel {
         default:
             return job.operation.isEmpty ? "Idle" : job.operation
         }
+    }
+
+    private static func makeAdapterPackageState(from payload: [String: Any]) -> RuntimeAdapterPackageState {
+        RuntimeAdapterPackageState(
+            id: stringValue("adapter_id", from: payload),
+            adapterName: stringValue("adapter_name", from: payload),
+            sourceModel: stringValue("source_model", from: payload),
+            datasetURI: stringValue("dataset_uri", from: payload),
+            statusText: humanizeStatus(stringValue("status", from: payload)),
+            outputPath: stringValue("output_path", from: payload),
+            targetRepo: stringValue("target_repo", from: payload),
+            publishedRepo: stringValue("published_repo", from: payload),
+            trainingDurationText: formatDuration(milliseconds: doubleValue("training_duration_ms", from: payload)),
+            publishDurationText: formatDuration(milliseconds: doubleValue("adapter_publish_ms", from: payload))
+        )
+    }
+
+    private static func makeTrainingHistoryEntryState(from payload: [String: Any]) -> RuntimeTrainingHistoryEntryState {
+        RuntimeTrainingHistoryEntryState(
+            id: stringValue("job_id", from: payload),
+            jobID: stringValue("job_id", from: payload),
+            modelID: stringValue("source_model", from: payload),
+            adapterName: stringValue("adapter_name", from: payload["manifest"] as? [String: Any] ?? [:]),
+            datasetURI: stringValue("dataset_uri", from: payload["manifest"] as? [String: Any] ?? [:]),
+            statusText: humanizeStatus(stringValue("status", from: payload)),
+            stageText: "\(stringValue("stage", from: payload)) • \(String(format: "%.0f%%", doubleValue("pct", from: payload) * 100))",
+            outputPath: stringValue("output_path", from: payload),
+            targetRepo: stringValue("target_repo", from: payload["manifest"] as? [String: Any] ?? [:])
+        )
+    }
+
+    private static func stringValue(_ key: String, from payload: [String: Any]) -> String {
+        payload[key] as? String ?? ""
+    }
+
+    private static func doubleValue(_ key: String, from payload: [String: Any]) -> Double {
+        if let value = payload[key] as? Double {
+            return value
+        }
+        if let number = payload[key] as? NSNumber {
+            return number.doubleValue
+        }
+        return 0
+    }
+
+    private static func humanizeStatus(_ status: String) -> String {
+        guard status.isEmpty == false else {
+            return "Unknown"
+        }
+        let separatorNormalized = status.replacingOccurrences(of: "_", with: " ")
+        guard let first = separatorNormalized.first else {
+            return "Unknown"
+        }
+        return String(first).uppercased() + separatorNormalized.dropFirst()
+    }
+
+    private static func formatDuration(milliseconds: Double) -> String {
+        guard milliseconds > 0 else {
+            return "n/a"
+        }
+        if milliseconds >= 1_000 {
+            return String(format: "%.2fs", milliseconds / 1_000)
+        }
+        return String(format: "%.0fms", milliseconds)
     }
 
     private static func isImageModelKind(_ kind: String) -> Bool {

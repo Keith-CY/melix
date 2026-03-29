@@ -192,6 +192,9 @@ struct DesktopToolsTabView: View {
                             Button("Inspect") {
                                 Task { await inspectPrimaryModel() }
                             }
+                            Button("Refresh Tooling") {
+                                Task { await refreshModelOpsProductState() }
+                            }
                             Button("Doctor") {
                                 Task { await runDoctor() }
                             }
@@ -204,6 +207,10 @@ struct DesktopToolsTabView: View {
                             Button("Train LoRA") {
                                 Task { await trainPrimaryModel() }
                             }
+                            Button("Publish Adapter") {
+                                Task { await publishLatestAdapter() }
+                            }
+                            .disabled(viewModel.latestAdapterPackage == nil)
                             Button("Download") {
                                 Task { await downloadPrimaryModel() }
                             }
@@ -249,6 +256,64 @@ struct DesktopToolsTabView: View {
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
+            }
+
+            GroupBox("Adapter Registry") {
+                VStack(alignment: .leading, spacing: 8) {
+                    if viewModel.adapterPackages.isEmpty {
+                        Text("No adapter packages discovered yet.")
+                            .foregroundStyle(.secondary)
+                    } else {
+                        ForEach(viewModel.adapterPackages) { adapter in
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("\(adapter.adapterName) • \(adapter.statusText)")
+                                    .font(.headline)
+                                Text("\(adapter.sourceModel) • \(adapter.datasetURI)")
+                                    .foregroundStyle(.secondary)
+                                if !adapter.publishedRepo.isEmpty {
+                                    Text("published to \(adapter.publishedRepo)")
+                                } else if !adapter.targetRepo.isEmpty {
+                                    Text("target repo \(adapter.targetRepo)")
+                                }
+                                Text(adapter.outputPath)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                Text("train \(adapter.trainingDurationText) • publish \(adapter.publishDurationText)")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            GroupBox("Training History") {
+                VStack(alignment: .leading, spacing: 8) {
+                    if viewModel.trainingHistory.isEmpty {
+                        Text("No training jobs recorded yet.")
+                            .foregroundStyle(.secondary)
+                    } else {
+                        ForEach(viewModel.trainingHistory) { job in
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("\(job.adapterName) • \(job.statusText)")
+                                    .font(.headline)
+                                Text("\(job.modelID) • \(job.datasetURI)")
+                                    .foregroundStyle(.secondary)
+                                Text("job \(job.jobID) • \(job.stageText)")
+                                if !job.targetRepo.isEmpty {
+                                    Text("target repo \(job.targetRepo)")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                                Text(job.outputPath)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
 
             if let report = viewModel.lastDoctorReport {
@@ -305,6 +370,14 @@ struct DesktopToolsTabView: View {
 
     func trainPrimaryModel() async {
         await viewModel.trainPrimaryModel()
+    }
+
+    func publishLatestAdapter() async {
+        await viewModel.publishLatestAdapter()
+    }
+
+    func refreshModelOpsProductState() async {
+        await viewModel.refreshModelOpsProductState()
     }
 
     func downloadPrimaryModel() async {

@@ -74,6 +74,7 @@ Current phase-status and planning documents:
 - `plans/2026-03-29-p7-m7-integration-operator-evidence.md`
 - `plans/2026-03-29-p8-m1-native-operator-shell-completion.md`
 - `plans/2026-03-29-p8-m2-diagnostics-bench-training.md`
+- `plans/2026-03-29-p8-m3-adapter-training-tooling.md`
 - `plans/2026-03-28-p1-m2-swift-text-worker-scaffold.md`
 - `plans/2026-03-28-p1-m3-swift-runtime-lifecycle.md`
 - `plans/2026-03-28-p1-m4-swift-generate-abort.md`
