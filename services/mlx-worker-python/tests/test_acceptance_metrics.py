@@ -132,6 +132,17 @@ def test_build_phase8_metrics_report_includes_required_probe_names() -> None:
             "swift_text_worker_ready_ms": 4100.0,
             "python_worker_ready_ms": 5200.0,
             "control_plane_spawn_to_ready_ms": 1100.0,
+            "swift_text_worker_spawn_to_bootstrap_ms": 4900.0,
+            "swift_text_worker_registry_init_ms": 6.0,
+            "swift_text_worker_services_init_ms": 4.0,
+            "swift_text_worker_server_construct_ms": 3.0,
+            "swift_text_worker_bootstrap_ms": 15.0,
+            "python_worker_spawn_to_bootstrap_ms": 5000.0,
+            "python_worker_arg_parse_ms": 1.0,
+            "python_worker_registry_init_ms": 7.0,
+            "python_worker_server_build_ms": 5.0,
+            "python_worker_server_start_ms": 2.0,
+            "python_worker_bootstrap_ms": 16.0,
             "http_ready_ms": 812.3,
             "background_preload_ms": 944.8,
             "background_preload_success": 1.0,
@@ -184,6 +195,17 @@ def test_build_phase8_metrics_report_includes_required_probe_names() -> None:
     assert metrics["desktop.swift_text_worker_ready_ms"] == 4100.0
     assert metrics["desktop.python_worker_ready_ms"] == 5200.0
     assert metrics["desktop.control_plane_spawn_to_ready_ms"] == 1100.0
+    assert metrics["desktop.swift_text_worker_spawn_to_bootstrap_ms"] == 4900.0
+    assert metrics["desktop.swift_text_worker_registry_init_ms"] == 6.0
+    assert metrics["desktop.swift_text_worker_services_init_ms"] == 4.0
+    assert metrics["desktop.swift_text_worker_server_construct_ms"] == 3.0
+    assert metrics["desktop.swift_text_worker_bootstrap_ms"] == 15.0
+    assert metrics["desktop.python_worker_spawn_to_bootstrap_ms"] == 5000.0
+    assert metrics["desktop.python_worker_arg_parse_ms"] == 1.0
+    assert metrics["desktop.python_worker_registry_init_ms"] == 7.0
+    assert metrics["desktop.python_worker_server_build_ms"] == 5.0
+    assert metrics["desktop.python_worker_server_start_ms"] == 2.0
+    assert metrics["desktop.python_worker_bootstrap_ms"] == 16.0
     assert metrics["desktop.http_ready_ms"] == 812.3
     assert metrics["desktop.background_preload_ms"] == 944.8
     assert metrics["desktop.first_text_model_warm_ms"] == 143.2

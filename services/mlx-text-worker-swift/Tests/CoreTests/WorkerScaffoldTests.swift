@@ -81,6 +81,8 @@ final class WorkerScaffoldTests: XCTestCase {
         metrics.recordMilliseconds("swift_text.runtime_stats_ms", value: 12)
 
         let counters = metrics.counters
+        XCTAssertEqual(counters["swift_text.spawn_to_bootstrap_ms"], 0)
+        XCTAssertEqual(counters["swift_text.bootstrap_ms"], 0)
         XCTAssertEqual(counters["swift_text.unimplemented_rpc_count"], 1)
         XCTAssertEqual(counters["swift_text.custom_counter"], 3)
         XCTAssertEqual(counters["swift_text.runtime_stats_ms"], 12)
@@ -3154,6 +3156,19 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(bootstrap.configuration.workerID, configuration.workerID)
         XCTAssertEqual(bootstrap.services.runtime.configuration.workerID, configuration.workerID)
         XCTAssertEqual(bootstrap.services.metrics.counters["swift_text.unimplemented_rpc_count"], 0)
+        XCTAssertNotNil(bootstrap.services.metrics.counters["swift_text.registry_init_ms"])
+        XCTAssertNotNil(bootstrap.services.metrics.counters["swift_text.services_init_ms"])
+        XCTAssertNotNil(bootstrap.services.metrics.counters["swift_text.server_construct_ms"])
+        XCTAssertNotNil(bootstrap.services.metrics.counters["swift_text.bootstrap_ms"])
+    }
+
+    func testBootstrapRecordsSpawnToBootstrapMetricWhenStartupOriginIsProvided() throws {
+        let bootstrap = try WorkerBootstrap.build(
+            configuration: WorkerConfiguration(),
+            environment: ["MELIX_SWIFT_TEXT_WORKER_STARTUP_T0_NS": "0"]
+        )
+
+        XCTAssertGreaterThanOrEqual(bootstrap.services.metrics.counters["swift_text.spawn_to_bootstrap_ms"] ?? -1, 0)
     }
 
     func testDeterministicBackendModeBuildsARepeatableTextRuntime() async throws {

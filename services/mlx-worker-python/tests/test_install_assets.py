@@ -26,6 +26,7 @@ def test_build_local_product_layout_uses_library_conventions(tmp_path: Path) -> 
     assert layout.launch_agents_dir == home_dir / "Library/LaunchAgents"
     assert layout.python_socket_path == layout.runtime_dir / "python-worker.sock"
     assert layout.swift_text_worker_socket_path == layout.runtime_dir / "swift-text-worker.sock"
+    assert layout.python_worker_metrics_path == layout.runtime_dir / "python-worker-metrics.json"
     assert layout.http_port == 18443
 
 
@@ -52,6 +53,7 @@ def test_build_launch_agent_specs_capture_expected_commands_and_environment(tmp_
     assert python_spec.program_arguments[-2:] == ["--backend-mode", "deterministic"]
     assert "PYTHONPATH" in python_spec.environment
     assert python_spec.environment["UV_CACHE_DIR"] == str(repo_root / ".uv-cache")
+    assert python_spec.environment["MELIX_PYTHON_WORKER_METRICS_PATH"] == str(layout.python_worker_metrics_path)
 
     control_spec = specs["io.melix.control-plane"]
     assert control_spec.environment["MELIX_REPO_ROOT"] == str(repo_root)
@@ -108,3 +110,4 @@ def test_write_local_product_artifacts_writes_plists_manifest_and_env(tmp_path: 
     assert (launch_agents_dir / "io.melix.swift-text-worker.plist").exists()
     assert (launch_agents_dir / "io.melix.python-worker.plist").exists()
     assert (launch_agents_dir / "io.melix.control-plane.plist").exists()
+    assert f'MELIX_PYTHON_WORKER_METRICS_PATH="{layout.python_worker_metrics_path}"' in layout.environment_script_path.read_text()

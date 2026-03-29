@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
+import time
 from concurrent import futures
 from pathlib import Path
+from typing import Any
 
 import grpc
 
@@ -30,6 +33,35 @@ from worker.runtime.deterministic_embedding_runtime import DeterministicEmbeddin
 from worker.runtime.deterministic_backend import DeterministicTextBackend
 from worker.runtime.deterministic_rerank_runtime import DeterministicRerankRuntime
 from worker.runtime.mlx_text_runtime import MLXTextRuntime
+
+
+class BootstrapMetricsExporter:
+    def __init__(self, export_path: str | None) -> None:
+        self._export_path = Path(export_path).resolve() if export_path else None
+        self._values: dict[str, int] = {
+            "python_worker.spawn_to_bootstrap_ms": 0,
+            "python_worker.arg_parse_ms": 0,
+            "python_worker.registry_init_ms": 0,
+            "python_worker.server_build_ms": 0,
+            "python_worker.server_start_ms": 0,
+            "python_worker.bootstrap_ms": 0,
+        }
+        self._write()
+
+    def set_milliseconds(self, key: str, value: float) -> None:
+        self._values[key] = max(0, int(round(value)))
+        self._write()
+
+    def _write(self) -> None:
+        if self._export_path is None:
+            return
+
+        self._export_path.parent.mkdir(parents=True, exist_ok=True)
+        payload: dict[str, Any] = {
+            "updated_at_unix_ms": int(time.time() * 1000),
+            "values": self._values,
+        }
+        self._export_path.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
 
 
 class WorkerRuntimeService(runtime_pb2_grpc.RuntimeServiceServicer):
@@ -173,8 +205,17 @@ def build_server(
     socket_path: str,
     registry: WorkerRegistry | None = None,
     backend_mode: str = "auto",
+    metrics_exporter: BootstrapMetricsExporter | None = None,
 ):
+    registry_started_at = time.perf_counter_ns()
     registry = registry or build_registry_for_backend(backend_mode)
+    if metrics_exporter is not None:
+        metrics_exporter.set_milliseconds(
+            "python_worker.registry_init_ms",
+            _elapsed_milliseconds_since(registry_started_at),
+        )
+
+    server_build_started_at = time.perf_counter_ns()
     socket_path = os.fspath(Path(socket_path).resolve())
     if os.path.exists(socket_path):
         os.unlink(socket_path)
@@ -186,15 +227,62 @@ def build_server(
     inference_pb2_grpc.add_InferenceServiceServicer_to_server(inference_service, server)
     maintenance_pb2_grpc.add_MaintenanceServiceServicer_to_server(maintenance_service, server)
     server.add_insecure_port(f"unix://{socket_path}")
+    if metrics_exporter is not None:
+        metrics_exporter.set_milliseconds(
+            "python_worker.server_build_ms",
+            _elapsed_milliseconds_since(server_build_started_at),
+        )
     return server, runtime_service, inference_service
 
 
 def main() -> None:
+    bootstrap_started_at = time.perf_counter_ns()
+    metrics_exporter = BootstrapMetricsExporter(os.environ.get("MELIX_PYTHON_WORKER_METRICS_PATH"))
+    metrics_exporter.set_milliseconds(
+        "python_worker.spawn_to_bootstrap_ms",
+        _elapsed_milliseconds_from_origin(os.environ.get("MELIX_PYTHON_WORKER_STARTUP_T0_NS"), bootstrap_started_at),
+    )
     parser = argparse.ArgumentParser()
     parser.add_argument("--socket-path", default="/var/run/melix/worker-text-001.sock")
     parser.add_argument("--backend-mode", choices=["auto", "deterministic"], default="auto")
     args = parser.parse_args()
+    metrics_exporter.set_milliseconds(
+        "python_worker.arg_parse_ms",
+        _elapsed_milliseconds_since(bootstrap_started_at),
+    )
 
-    server, _, _ = build_server(args.socket_path, backend_mode=getattr(args, "backend_mode", "auto"))
+    server, _, _ = build_server(
+        args.socket_path,
+        backend_mode=getattr(args, "backend_mode", "auto"),
+        metrics_exporter=metrics_exporter,
+    )
+    server_start_started_at = time.perf_counter_ns()
     server.start()
+    metrics_exporter.set_milliseconds(
+        "python_worker.server_start_ms",
+        _elapsed_milliseconds_since(server_start_started_at),
+    )
+    metrics_exporter.set_milliseconds(
+        "python_worker.bootstrap_ms",
+        _elapsed_milliseconds_since(bootstrap_started_at),
+    )
     server.wait_for_termination()
+
+
+def _elapsed_milliseconds_since(started_at_nanoseconds: int, now_nanoseconds: int | None = None) -> float:
+    current = now_nanoseconds if now_nanoseconds is not None else time.perf_counter_ns()
+    if current < started_at_nanoseconds:
+        return 0.0
+    return (current - started_at_nanoseconds) / 1_000_000.0
+
+
+def _elapsed_milliseconds_from_origin(raw_origin_nanoseconds: str | None, now_nanoseconds: int | None = None) -> float:
+    if raw_origin_nanoseconds is None:
+        return 0.0
+    try:
+        origin_nanoseconds = int(raw_origin_nanoseconds)
+    except ValueError:
+        return 0.0
+    if origin_nanoseconds < 0:
+        return 0.0
+    return _elapsed_milliseconds_since(origin_nanoseconds, now_nanoseconds)

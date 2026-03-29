@@ -14,6 +14,7 @@ PYTHON_SOCKET_PATH="${MELIX_WORKER_SOCKET_PATH:-$RUNTIME_DIR/python-worker.sock}
 SWIFT_TEXT_WORKER_SOCKET_PATH="${MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH:-$RUNTIME_DIR/swift-text-worker.sock}"
 CONTROL_PLANE_METRICS_PATH="${MELIX_CONTROL_PLANE_METRICS_PATH:-$RUNTIME_DIR/control-plane-metrics.json}"
 SWIFT_TEXT_WORKER_METRICS_PATH="${MELIX_SWIFT_TEXT_WORKER_METRICS_PATH:-$RUNTIME_DIR/swift-text-worker-metrics.json}"
+PYTHON_WORKER_METRICS_PATH="${MELIX_PYTHON_WORKER_METRICS_PATH:-$RUNTIME_DIR/python-worker-metrics.json}"
 HTTP_PORT="${MELIX_HTTP_PORT:-11434}"
 PYTHON_BACKEND_MODE="${MELIX_BACKEND_MODE:-deterministic}"
 SWIFT_TEXT_WORKER_BACKEND_MODE="${MELIX_SWIFT_TEXT_WORKER_BACKEND_MODE:-deterministic}"
@@ -29,7 +30,9 @@ if [[ -f "$RUNTIME_DIR/swift-text-worker.pid" ]] || [[ -f "$RUNTIME_DIR/python-w
 fi
 
 rm -f "$PYTHON_SOCKET_PATH" "$SWIFT_TEXT_WORKER_SOCKET_PATH"
-rm -f "$CONTROL_PLANE_METRICS_PATH" "$SWIFT_TEXT_WORKER_METRICS_PATH"
+rm -f "$CONTROL_PLANE_METRICS_PATH" "$SWIFT_TEXT_WORKER_METRICS_PATH" "$PYTHON_WORKER_METRICS_PATH"
+
+SWIFT_TEXT_WORKER_STARTUP_T0_NS="$(python3 -c 'import time; print(time.perf_counter_ns())')"
 
 SWIFT_TEXT_WORKER_PID="$(
   python3 "$ROOT/scripts/spawn_background.py" \
@@ -38,6 +41,7 @@ SWIFT_TEXT_WORKER_PID="$(
     --env "MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH=$SWIFT_TEXT_WORKER_SOCKET_PATH" \
     --env "MELIX_SWIFT_TEXT_WORKER_BACKEND_MODE=$SWIFT_TEXT_WORKER_BACKEND_MODE" \
     --env "MELIX_SWIFT_TEXT_WORKER_METRICS_PATH=$SWIFT_TEXT_WORKER_METRICS_PATH" \
+    --env "MELIX_SWIFT_TEXT_WORKER_STARTUP_T0_NS=$SWIFT_TEXT_WORKER_STARTUP_T0_NS" \
     --env "MELIX_DEV_TEXT_MODEL_PATH=${MELIX_DEV_TEXT_MODEL_PATH:-}" \
     --env "HOME=$SWIFT_HOME" \
     --env "CLANG_MODULE_CACHE_PATH=$CLANG_MODULE_CACHE_PATH" \
@@ -53,12 +57,16 @@ python "$ROOT/scripts/wait_for_worker_ready.py" \
   --socket-path "$SWIFT_TEXT_WORKER_SOCKET_PATH" \
   >"$RUNTIME_DIR/swift-text-worker.ready.log" 2>&1
 
+PYTHON_WORKER_STARTUP_T0_NS="$(python3 -c 'import time; print(time.perf_counter_ns())')"
+
 PYTHON_WORKER_PID="$(
   python3 "$ROOT/scripts/spawn_background.py" \
     --cwd "$ROOT" \
     --log-path "$RUNTIME_DIR/python-worker.log" \
     --env "PYTHONPATH=$ROOT:$ROOT/services/mlx-worker-python" \
     --env "UV_CACHE_DIR=$UV_CACHE_DIR" \
+    --env "MELIX_PYTHON_WORKER_METRICS_PATH=$PYTHON_WORKER_METRICS_PATH" \
+    --env "MELIX_PYTHON_WORKER_STARTUP_T0_NS=$PYTHON_WORKER_STARTUP_T0_NS" \
     -- \
     uv run --project "$ROOT/services/mlx-worker-python" \
       python -m worker.bootstrap \
@@ -99,6 +107,7 @@ export MELIX_BACKEND_MODE="$PYTHON_BACKEND_MODE"
 export MELIX_SWIFT_TEXT_WORKER_BACKEND_MODE="$SWIFT_TEXT_WORKER_BACKEND_MODE"
 export MELIX_CONTROL_PLANE_METRICS_PATH="$CONTROL_PLANE_METRICS_PATH"
 export MELIX_SWIFT_TEXT_WORKER_METRICS_PATH="$SWIFT_TEXT_WORKER_METRICS_PATH"
+export MELIX_PYTHON_WORKER_METRICS_PATH="$PYTHON_WORKER_METRICS_PATH"
 EOF
 
 READY=0
@@ -121,4 +130,5 @@ echo "Swift text worker socket: $SWIFT_TEXT_WORKER_SOCKET_PATH"
 echo "Python compatibility worker socket: $PYTHON_SOCKET_PATH"
 echo "Control plane metrics: $CONTROL_PLANE_METRICS_PATH"
 echo "Swift text worker metrics: $SWIFT_TEXT_WORKER_METRICS_PATH"
+echo "Python worker metrics: $PYTHON_WORKER_METRICS_PATH"
 echo "Runtime env file: $RUNTIME_DIR/env.sh"

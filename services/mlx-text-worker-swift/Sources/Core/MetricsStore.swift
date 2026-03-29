@@ -4,7 +4,11 @@ final class MetricsStore: @unchecked Sendable {
     private let lock = NSLock()
     private let exportPath: String?
     private var storage: [String: Int] = [
+        "swift_text.spawn_to_bootstrap_ms": 0,
         "swift_text.bootstrap_ms": 0,
+        "swift_text.registry_init_ms": 0,
+        "swift_text.services_init_ms": 0,
+        "swift_text.server_construct_ms": 0,
         "swift_text.handshake_ms": 0,
         "swift_text.load_model_ms": 0,
         "swift_text.unload_model_ms": 0,

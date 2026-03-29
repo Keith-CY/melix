@@ -23,6 +23,7 @@ class LocalProductLayout:
     swift_text_worker_socket_path: Path
     control_plane_metrics_path: Path
     swift_text_worker_metrics_path: Path
+    python_worker_metrics_path: Path
     python_worker_stdout_path: Path
     python_worker_stderr_path: Path
     swift_text_worker_stdout_path: Path
@@ -80,6 +81,7 @@ def build_local_product_layout(
         swift_text_worker_socket_path=runtime_dir / "swift-text-worker.sock",
         control_plane_metrics_path=runtime_dir / "control-plane-metrics.json",
         swift_text_worker_metrics_path=runtime_dir / "swift-text-worker-metrics.json",
+        python_worker_metrics_path=runtime_dir / "python-worker-metrics.json",
         python_worker_stdout_path=logs_dir / "python-worker.stdout.log",
         python_worker_stderr_path=logs_dir / "python-worker.stderr.log",
         swift_text_worker_stdout_path=logs_dir / "swift-text-worker.stdout.log",
@@ -117,6 +119,7 @@ def build_launch_agent_specs(
     python_environment = {
         "PYTHONPATH": f"{layout.repo_root}:{layout.repo_root / 'services/mlx-worker-python'}",
         "UV_CACHE_DIR": str(layout.uv_cache_dir),
+        "MELIX_PYTHON_WORKER_METRICS_PATH": str(layout.python_worker_metrics_path),
     }
 
     control_plane_environment = {
@@ -268,6 +271,7 @@ def _environment_script(layout: LocalProductLayout) -> str:
         "MELIX_HTTP_PORT": str(layout.http_port),
         "MELIX_CONTROL_PLANE_METRICS_PATH": str(layout.control_plane_metrics_path),
         "MELIX_SWIFT_TEXT_WORKER_METRICS_PATH": str(layout.swift_text_worker_metrics_path),
+        "MELIX_PYTHON_WORKER_METRICS_PATH": str(layout.python_worker_metrics_path),
     }
     lines = ["#!/usr/bin/env bash", "set -euo pipefail", ""]
     lines.extend(f'export {key}="{value}"' for key, value in exports.items())

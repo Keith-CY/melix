@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import runpy
 from argparse import Namespace
 from pathlib import Path
@@ -11,6 +12,7 @@ import pytest
 from packages.protocol.python.worker.v1 import common_pb2, inference_pb2, maintenance_pb2, runtime_pb2
 
 from worker.grpc_server import (
+    BootstrapMetricsExporter,
     WorkerInferenceService,
     WorkerMaintenanceService,
     WorkerRuntimeService,
@@ -366,7 +368,7 @@ def test_inference_service_covers_error_and_unimplemented_paths() -> None:
     assert image_edit.job.operation == "image_edit"
 
 
-def test_build_server_and_main_bootstrap(monkeypatch) -> None:
+def test_build_server_and_main_bootstrap(monkeypatch, tmp_path: Path) -> None:
     registry = build_registry()
     seen_build = {}
 
@@ -386,7 +388,13 @@ def test_build_server_and_main_bootstrap(monkeypatch) -> None:
             seen_build["stopped"] = grace
 
     monkeypatch.setattr("worker.grpc_server.grpc.server", lambda executor: FakeBoundServer())
-    server, runtime_service, inference_service = build_server("/tmp/melix-test.sock", registry=registry)
+    metrics_path = tmp_path / "python-worker-metrics.json"
+    exporter = BootstrapMetricsExporter(str(metrics_path))
+    server, runtime_service, inference_service = build_server(
+        "/tmp/melix-test.sock",
+        registry=registry,
+        metrics_exporter=exporter,
+    )
     server.stop(0)
 
     assert isinstance(runtime_service, WorkerRuntimeService)
@@ -401,6 +409,9 @@ def test_build_server_and_main_bootstrap(monkeypatch) -> None:
         "address": f"unix://{Path('/tmp/melix-test.sock').resolve()}",
         "stopped": 0,
     }
+    build_metrics = json.loads(metrics_path.read_text(encoding="utf-8"))["values"]
+    assert build_metrics["python_worker.registry_init_ms"] >= 0
+    assert build_metrics["python_worker.server_build_ms"] >= 0
 
     seen = {}
 
@@ -411,13 +422,35 @@ def test_build_server_and_main_bootstrap(monkeypatch) -> None:
         def wait_for_termination(self):
             seen["waited"] = True
 
-    def fake_build_server(socket_path: str, backend_mode: str = "auto"):
+    def fake_build_server(
+        socket_path: str,
+        backend_mode: str = "auto",
+        metrics_exporter: BootstrapMetricsExporter | None = None,
+    ):
         seen["socket_path"] = socket_path
         seen["backend_mode"] = backend_mode
+        if metrics_exporter is not None:
+            metrics_exporter.set_milliseconds("python_worker.registry_init_ms", 7.0)
+            metrics_exporter.set_milliseconds("python_worker.server_build_ms", 5.0)
         return FakeServer(), None, None
 
     monkeypatch.setattr("worker.grpc_server.build_server", fake_build_server)
-    monkeypatch.setattr("argparse.ArgumentParser.parse_args", lambda self: Namespace(socket_path="/tmp/from-main.sock"))
+    perf_counter_values = iter(
+        [
+            1_000_000_000,
+            1_030_000_000,
+            1_060_000_000,
+            1_062_000_000,
+            1_080_000_000,
+        ]
+    )
+    monkeypatch.setattr("worker.grpc_server.time.perf_counter_ns", lambda: next(perf_counter_values))
+    monkeypatch.setenv("MELIX_PYTHON_WORKER_METRICS_PATH", str(metrics_path))
+    monkeypatch.setenv("MELIX_PYTHON_WORKER_STARTUP_T0_NS", "900000000")
+    monkeypatch.setattr(
+        "argparse.ArgumentParser.parse_args",
+        lambda self: Namespace(socket_path="/tmp/from-main.sock", backend_mode="auto"),
+    )
     main()
 
     assert seen == {
@@ -426,6 +459,13 @@ def test_build_server_and_main_bootstrap(monkeypatch) -> None:
         "started": True,
         "waited": True,
     }
+    main_metrics = json.loads(metrics_path.read_text(encoding="utf-8"))["values"]
+    assert main_metrics["python_worker.spawn_to_bootstrap_ms"] == 100
+    assert main_metrics["python_worker.arg_parse_ms"] == 30
+    assert main_metrics["python_worker.registry_init_ms"] == 7
+    assert main_metrics["python_worker.server_build_ms"] == 5
+    assert main_metrics["python_worker.server_start_ms"] == 2
+    assert main_metrics["python_worker.bootstrap_ms"] == 80
 
 
 def test_build_server_normalizes_relative_socket_path(monkeypatch, tmp_path: Path) -> None:

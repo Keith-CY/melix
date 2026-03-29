@@ -53,7 +53,7 @@ def test_wait_for_metrics_times_out_when_required_keys_never_appear(tmp_path: Pa
         encoding="utf-8",
     )
 
-    with pytest.raises(RuntimeError, match="Timed out waiting for control plane metrics"):
+    with pytest.raises(RuntimeError, match="Timed out waiting for metrics"):
         phase8_runtime_probes.wait_for_metrics(
             metrics_path,
             ["control_plane.background_preload_ms"],
@@ -69,6 +69,8 @@ def test_measure_cold_boot_to_ready_reads_bootstrap_metrics_from_the_stack(
         def __init__(self, repo_root: Path) -> None:
             self.repo_root = repo_root
             self.control_plane_metrics_path = tmp_path / "control-plane-metrics.json"
+            self.swift_text_worker_metrics_path = tmp_path / "swift-text-worker-metrics.json"
+            self.python_worker_metrics_path = tmp_path / "python-worker-metrics.json"
             self.startup_timings = {
                 "swift_text_worker_ready_ms": 4100.0,
                 "python_worker_ready_ms": 5200.0,
@@ -95,6 +97,37 @@ def test_measure_cold_boot_to_ready_reads_bootstrap_metrics_from_the_stack(
                 ),
                 encoding="utf-8",
             )
+            self.swift_text_worker_metrics_path.write_text(
+                json.dumps(
+                    {
+                        "updated_at_unix_ms": 1,
+                        "values": {
+                            "swift_text.spawn_to_bootstrap_ms": 4900.0,
+                            "swift_text.registry_init_ms": 6.0,
+                            "swift_text.services_init_ms": 4.0,
+                            "swift_text.server_construct_ms": 3.0,
+                            "swift_text.bootstrap_ms": 15.0,
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            self.python_worker_metrics_path.write_text(
+                json.dumps(
+                    {
+                        "updated_at_unix_ms": 1,
+                        "values": {
+                            "python_worker.spawn_to_bootstrap_ms": 5000.0,
+                            "python_worker.arg_parse_ms": 1.0,
+                            "python_worker.registry_init_ms": 7.0,
+                            "python_worker.server_build_ms": 5.0,
+                            "python_worker.server_start_ms": 2.0,
+                            "python_worker.bootstrap_ms": 16.0,
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
 
         def chat_url(self) -> str:
             return "http://127.0.0.1:11434/v1/chat/completions"
@@ -115,6 +148,17 @@ def test_measure_cold_boot_to_ready_reads_bootstrap_metrics_from_the_stack(
     assert report["swift_text_worker_ready_ms"] == 4100.0
     assert report["python_worker_ready_ms"] == 5200.0
     assert report["control_plane_spawn_to_ready_ms"] == 1100.0
+    assert report["swift_text_worker_spawn_to_bootstrap_ms"] == 4900.0
+    assert report["swift_text_worker_registry_init_ms"] == 6.0
+    assert report["swift_text_worker_services_init_ms"] == 4.0
+    assert report["swift_text_worker_server_construct_ms"] == 3.0
+    assert report["swift_text_worker_bootstrap_ms"] == 15.0
+    assert report["python_worker_spawn_to_bootstrap_ms"] == 5000.0
+    assert report["python_worker_arg_parse_ms"] == 1.0
+    assert report["python_worker_registry_init_ms"] == 7.0
+    assert report["python_worker_server_build_ms"] == 5.0
+    assert report["python_worker_server_start_ms"] == 2.0
+    assert report["python_worker_bootstrap_ms"] == 16.0
     assert report["http_ready_ms"] == 18.5
     assert report["background_preload_ms"] == 640.0
     assert report["background_preload_success"] == 1.0
@@ -130,9 +174,42 @@ def test_measure_cold_boot_to_ready_raises_when_first_text_warmup_fails(
     class FakeStack:
         def __init__(self, repo_root: Path) -> None:
             self.control_plane_metrics_path = tmp_path / "control-plane-metrics.json"
+            self.swift_text_worker_metrics_path = tmp_path / "swift-text-worker-metrics.json"
+            self.python_worker_metrics_path = tmp_path / "python-worker-metrics.json"
             self.startup_timings = {}
 
         def start(self) -> None:
+            self.swift_text_worker_metrics_path.write_text(
+                json.dumps(
+                    {
+                        "updated_at_unix_ms": 1,
+                        "values": {
+                            "swift_text.spawn_to_bootstrap_ms": 4900.0,
+                            "swift_text.registry_init_ms": 6.0,
+                            "swift_text.services_init_ms": 4.0,
+                            "swift_text.server_construct_ms": 3.0,
+                            "swift_text.bootstrap_ms": 15.0,
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            self.python_worker_metrics_path.write_text(
+                json.dumps(
+                    {
+                        "updated_at_unix_ms": 1,
+                        "values": {
+                            "python_worker.spawn_to_bootstrap_ms": 5000.0,
+                            "python_worker.arg_parse_ms": 1.0,
+                            "python_worker.registry_init_ms": 7.0,
+                            "python_worker.server_build_ms": 5.0,
+                            "python_worker.server_start_ms": 2.0,
+                            "python_worker.bootstrap_ms": 16.0,
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
             self.control_plane_metrics_path.write_text(
                 json.dumps(
                     {
@@ -404,6 +481,17 @@ def test_phase8_metrics_report_main_emits_split_bootstrap_metrics(
             "swift_text_worker_ready_ms": 4100.0,
             "python_worker_ready_ms": 5200.0,
             "control_plane_spawn_to_ready_ms": 1100.0,
+            "swift_text_worker_spawn_to_bootstrap_ms": 4900.0,
+            "swift_text_worker_registry_init_ms": 6.0,
+            "swift_text_worker_services_init_ms": 4.0,
+            "swift_text_worker_server_construct_ms": 3.0,
+            "swift_text_worker_bootstrap_ms": 15.0,
+            "python_worker_spawn_to_bootstrap_ms": 5000.0,
+            "python_worker_arg_parse_ms": 1.0,
+            "python_worker_registry_init_ms": 7.0,
+            "python_worker_server_build_ms": 5.0,
+            "python_worker_server_start_ms": 2.0,
+            "python_worker_bootstrap_ms": 16.0,
             "http_ready_ms": 801.2,
             "background_preload_ms": 622.4,
             "background_preload_success": 1.0,
@@ -457,6 +545,17 @@ def test_phase8_metrics_report_main_emits_split_bootstrap_metrics(
     assert metrics["desktop.swift_text_worker_ready_ms"] == 4100.0
     assert metrics["desktop.python_worker_ready_ms"] == 5200.0
     assert metrics["desktop.control_plane_spawn_to_ready_ms"] == 1100.0
+    assert metrics["desktop.swift_text_worker_spawn_to_bootstrap_ms"] == 4900.0
+    assert metrics["desktop.swift_text_worker_registry_init_ms"] == 6.0
+    assert metrics["desktop.swift_text_worker_services_init_ms"] == 4.0
+    assert metrics["desktop.swift_text_worker_server_construct_ms"] == 3.0
+    assert metrics["desktop.swift_text_worker_bootstrap_ms"] == 15.0
+    assert metrics["desktop.python_worker_spawn_to_bootstrap_ms"] == 5000.0
+    assert metrics["desktop.python_worker_arg_parse_ms"] == 1.0
+    assert metrics["desktop.python_worker_registry_init_ms"] == 7.0
+    assert metrics["desktop.python_worker_server_build_ms"] == 5.0
+    assert metrics["desktop.python_worker_server_start_ms"] == 2.0
+    assert metrics["desktop.python_worker_bootstrap_ms"] == 16.0
     assert metrics["desktop.http_ready_ms"] == 801.2
     assert metrics["desktop.background_preload_ms"] == 622.4
     assert metrics["desktop.first_text_model_warm_ms"] == 141.8
@@ -483,6 +582,17 @@ def test_phase8_metrics_report_main_returns_nonzero_when_release_gate_fails(
             "swift_text_worker_ready_ms": 4100.0,
             "python_worker_ready_ms": 5200.0,
             "control_plane_spawn_to_ready_ms": 1100.0,
+            "swift_text_worker_spawn_to_bootstrap_ms": 4900.0,
+            "swift_text_worker_registry_init_ms": 6.0,
+            "swift_text_worker_services_init_ms": 4.0,
+            "swift_text_worker_server_construct_ms": 3.0,
+            "swift_text_worker_bootstrap_ms": 15.0,
+            "python_worker_spawn_to_bootstrap_ms": 5000.0,
+            "python_worker_arg_parse_ms": 1.0,
+            "python_worker_registry_init_ms": 7.0,
+            "python_worker_server_build_ms": 5.0,
+            "python_worker_server_start_ms": 2.0,
+            "python_worker_bootstrap_ms": 16.0,
             "http_ready_ms": 801.2,
             "background_preload_ms": 622.4,
             "background_preload_success": 1.0,

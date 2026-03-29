@@ -16,6 +16,27 @@ def measure_cold_boot_to_ready(repo_root: Path) -> dict[str, float]:
     try:
         stack.start()
         ready_ms = (time.perf_counter() - started_at) * 1_000.0
+        swift_startup_metrics = wait_for_metrics(
+            stack.swift_text_worker_metrics_path,
+            [
+                "swift_text.spawn_to_bootstrap_ms",
+                "swift_text.registry_init_ms",
+                "swift_text.services_init_ms",
+                "swift_text.server_construct_ms",
+                "swift_text.bootstrap_ms",
+            ],
+        )
+        python_startup_metrics = wait_for_metrics(
+            stack.python_worker_metrics_path,
+            [
+                "python_worker.spawn_to_bootstrap_ms",
+                "python_worker.arg_parse_ms",
+                "python_worker.registry_init_ms",
+                "python_worker.server_build_ms",
+                "python_worker.server_start_ms",
+                "python_worker.bootstrap_ms",
+            ],
+        )
         bootstrap_metrics = wait_for_metrics(
             stack.control_plane_metrics_path,
             [
@@ -52,6 +73,39 @@ def measure_cold_boot_to_ready(repo_root: Path) -> dict[str, float]:
             ),
             "control_plane_spawn_to_ready_ms": round(
                 float(stack.startup_timings.get("control_plane_spawn_to_ready_ms", 0.0)), 2
+            ),
+            "swift_text_worker_spawn_to_bootstrap_ms": round(
+                float(swift_startup_metrics["swift_text.spawn_to_bootstrap_ms"]), 2
+            ),
+            "swift_text_worker_registry_init_ms": round(
+                float(swift_startup_metrics["swift_text.registry_init_ms"]), 2
+            ),
+            "swift_text_worker_services_init_ms": round(
+                float(swift_startup_metrics["swift_text.services_init_ms"]), 2
+            ),
+            "swift_text_worker_server_construct_ms": round(
+                float(swift_startup_metrics["swift_text.server_construct_ms"]), 2
+            ),
+            "swift_text_worker_bootstrap_ms": round(
+                float(swift_startup_metrics["swift_text.bootstrap_ms"]), 2
+            ),
+            "python_worker_spawn_to_bootstrap_ms": round(
+                float(python_startup_metrics["python_worker.spawn_to_bootstrap_ms"]), 2
+            ),
+            "python_worker_arg_parse_ms": round(
+                float(python_startup_metrics["python_worker.arg_parse_ms"]), 2
+            ),
+            "python_worker_registry_init_ms": round(
+                float(python_startup_metrics["python_worker.registry_init_ms"]), 2
+            ),
+            "python_worker_server_build_ms": round(
+                float(python_startup_metrics["python_worker.server_build_ms"]), 2
+            ),
+            "python_worker_server_start_ms": round(
+                float(python_startup_metrics["python_worker.server_start_ms"]), 2
+            ),
+            "python_worker_bootstrap_ms": round(
+                float(python_startup_metrics["python_worker.bootstrap_ms"]), 2
             ),
             "http_ready_ms": round(
                 float(bootstrap_metrics["control_plane.http_ready_ms"]), 2
@@ -194,5 +248,5 @@ def wait_for_metrics(
         time.sleep(0.05)
 
     raise RuntimeError(
-        f"Timed out waiting for control plane metrics {keys} in {metrics_path}: last={last_values}"
+        f"Timed out waiting for metrics {keys} in {metrics_path}: last={last_values}"
     )

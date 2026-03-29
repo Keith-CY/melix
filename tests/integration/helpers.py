@@ -41,6 +41,7 @@ class LiveMelixStack:
         self.python_socket_path = Path("/tmp") / f"melix-python-{token}.sock"
         self.control_plane_metrics_path = Path("/tmp") / f"melix-control-plane-{token}.json"
         self.swift_text_worker_metrics_path = Path("/tmp") / f"melix-swift-metrics-{token}.json"
+        self.python_worker_metrics_path = Path("/tmp") / f"melix-python-metrics-{token}.json"
         self.http_port = reserve_port()
         self.swift_text_worker_stdout_path = Path("/tmp") / f"melix-swift-worker-{token}.stdout.log"
         self.swift_text_worker_stderr_path = Path("/tmp") / f"melix-swift-worker-{token}.stderr.log"
@@ -89,6 +90,7 @@ class LiveMelixStack:
             swift_env["MELIX_SWIFT_TEXT_WORKER_BACKEND_MODE"] = self.swift_backend_mode
             swift_env["MELIX_SWIFT_TEXT_WORKER_METRICS_PATH"] = os.fspath(self.swift_text_worker_metrics_path)
             swift_env["MELIX_SWIFT_TEXT_WORKER_CACHE_ROOT"] = os.fspath(self.swift_cache_root)
+            swift_env["MELIX_SWIFT_TEXT_WORKER_STARTUP_T0_NS"] = str(time.perf_counter_ns())
             self.swift_text_worker_stdout = self.swift_text_worker_stdout_path.open("w", encoding="utf-8")
             self.swift_text_worker_stderr = self.swift_text_worker_stderr_path.open("w", encoding="utf-8")
             self.swift_text_worker = subprocess.Popen(
@@ -116,6 +118,8 @@ class LiveMelixStack:
             worker_env = os.environ.copy()
             worker_env.update(self.environment_overrides)
             worker_env["PYTHONPATH"] = f"{self.repo_root}:{self.repo_root / 'services/mlx-worker-python'}"
+            worker_env["MELIX_PYTHON_WORKER_METRICS_PATH"] = os.fspath(self.python_worker_metrics_path)
+            worker_env["MELIX_PYTHON_WORKER_STARTUP_T0_NS"] = str(time.perf_counter_ns())
             self.python_worker_stdout = self.python_worker_stdout_path.open("w", encoding="utf-8")
             self.python_worker_stderr = self.python_worker_stderr_path.open("w", encoding="utf-8")
 
@@ -204,6 +208,7 @@ class LiveMelixStack:
         self.python_worker = None
         self._close_logs("python_worker")
         self.python_socket_path.unlink(missing_ok=True)
+        self.python_worker_metrics_path.unlink(missing_ok=True)
 
     def stop_swift_text_worker(self) -> None:
         self._stop_process("swift text worker", self.swift_text_worker)

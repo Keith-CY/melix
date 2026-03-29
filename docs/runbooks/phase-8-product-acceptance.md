@@ -56,7 +56,18 @@ The report includes:
 
 - cold boot to ready
 - Swift text worker spawn-to-ready latency
+- Swift text worker spawn-to-bootstrap latency
+- Swift text worker registry initialization latency
+- Swift text worker service wiring latency
+- Swift text worker server construction latency
+- Swift text worker bootstrap latency
 - Python worker spawn-to-ready latency
+- Python worker spawn-to-bootstrap latency
+- Python worker argument parsing latency
+- Python worker registry initialization latency
+- Python worker server construction latency
+- Python worker server start latency
+- Python worker bootstrap latency
 - control-plane spawn-to-ready latency
 - HTTP ready latency
 - background preload latency

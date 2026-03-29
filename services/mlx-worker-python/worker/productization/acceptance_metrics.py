@@ -71,6 +71,39 @@ def build_phase8_metrics_report(
         "desktop.control_plane_spawn_to_ready_ms": round(
             float(cold_boot_evidence.get("control_plane_spawn_to_ready_ms", 0.0)), 2
         ),
+        "desktop.swift_text_worker_spawn_to_bootstrap_ms": round(
+            float(cold_boot_evidence.get("swift_text_worker_spawn_to_bootstrap_ms", 0.0)), 2
+        ),
+        "desktop.swift_text_worker_registry_init_ms": round(
+            float(cold_boot_evidence.get("swift_text_worker_registry_init_ms", 0.0)), 2
+        ),
+        "desktop.swift_text_worker_services_init_ms": round(
+            float(cold_boot_evidence.get("swift_text_worker_services_init_ms", 0.0)), 2
+        ),
+        "desktop.swift_text_worker_server_construct_ms": round(
+            float(cold_boot_evidence.get("swift_text_worker_server_construct_ms", 0.0)), 2
+        ),
+        "desktop.swift_text_worker_bootstrap_ms": round(
+            float(cold_boot_evidence.get("swift_text_worker_bootstrap_ms", 0.0)), 2
+        ),
+        "desktop.python_worker_spawn_to_bootstrap_ms": round(
+            float(cold_boot_evidence.get("python_worker_spawn_to_bootstrap_ms", 0.0)), 2
+        ),
+        "desktop.python_worker_arg_parse_ms": round(
+            float(cold_boot_evidence.get("python_worker_arg_parse_ms", 0.0)), 2
+        ),
+        "desktop.python_worker_registry_init_ms": round(
+            float(cold_boot_evidence.get("python_worker_registry_init_ms", 0.0)), 2
+        ),
+        "desktop.python_worker_server_build_ms": round(
+            float(cold_boot_evidence.get("python_worker_server_build_ms", 0.0)), 2
+        ),
+        "desktop.python_worker_server_start_ms": round(
+            float(cold_boot_evidence.get("python_worker_server_start_ms", 0.0)), 2
+        ),
+        "desktop.python_worker_bootstrap_ms": round(
+            float(cold_boot_evidence.get("python_worker_bootstrap_ms", 0.0)), 2
+        ),
         "desktop.http_ready_ms": round(
             float(cold_boot_evidence.get("http_ready_ms", cold_boot_evidence["cold_boot_to_ready_ms"])), 2
         ),
