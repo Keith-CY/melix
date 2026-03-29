@@ -2,133 +2,229 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-RUNTIME_DIR="${MELIX_RUNTIME_DIR:-$ROOT/.runtime/phase1}"
-RUNTIME_DIR="$(python3 - "$RUNTIME_DIR" <<'PY'
+PREFER_BUILT=0
+
+usage() {
+  cat <<'EOF'
+Usage: bash scripts/dev_up.sh [--prefer-built]
+
+Options:
+  --prefer-built  Start Swift processes from existing built executables under .build/debug when available.
+                  This keeps the Python worker on uv run and fails fast if the required Swift binaries are missing.
+EOF
+}
+
+parse_dev_up_args() {
+  while (($# > 0)); do
+    case "$1" in
+      --prefer-built)
+        PREFER_BUILT=1
+        ;;
+      -h|--help)
+        usage
+        exit 0
+        ;;
+      *)
+        echo "Unknown argument: $1" >&2
+        usage >&2
+        exit 2
+        ;;
+    esac
+    shift
+  done
+}
+
+resolve_path() {
+  python3 - "$1" <<'PY'
 from pathlib import Path
 import sys
 
 print(Path(sys.argv[1]).resolve())
 PY
-)"
-PYTHON_SOCKET_PATH="${MELIX_WORKER_SOCKET_PATH:-$RUNTIME_DIR/python-worker.sock}"
-SWIFT_TEXT_WORKER_SOCKET_PATH="${MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH:-$RUNTIME_DIR/swift-text-worker.sock}"
-CONTROL_PLANE_METRICS_PATH="${MELIX_CONTROL_PLANE_METRICS_PATH:-$RUNTIME_DIR/control-plane-metrics.json}"
-SWIFT_TEXT_WORKER_METRICS_PATH="${MELIX_SWIFT_TEXT_WORKER_METRICS_PATH:-$RUNTIME_DIR/swift-text-worker-metrics.json}"
-PYTHON_WORKER_METRICS_PATH="${MELIX_PYTHON_WORKER_METRICS_PATH:-$RUNTIME_DIR/python-worker-metrics.json}"
-HTTP_PORT="${MELIX_HTTP_PORT:-11434}"
-PYTHON_BACKEND_MODE="${MELIX_BACKEND_MODE:-deterministic}"
-SWIFT_TEXT_WORKER_BACKEND_MODE="${MELIX_SWIFT_TEXT_WORKER_BACKEND_MODE:-deterministic}"
-UV_CACHE_DIR="${UV_CACHE_DIR:-$ROOT/.uv-cache}"
-SWIFT_HOME="${MELIX_SWIFT_HOME:-$ROOT/.swift-home}"
-CLANG_MODULE_CACHE_PATH="${MELIX_CLANG_MODULE_CACHE_PATH:-$ROOT/.build/ModuleCache.noindex}"
+}
 
-mkdir -p "$RUNTIME_DIR" "$UV_CACHE_DIR" "$SWIFT_HOME" "$CLANG_MODULE_CACHE_PATH"
+resolve_built_swift_product_binary() {
+  local package_path="$1"
+  local product_name="$2"
+  local build_root="$ROOT/$package_path/.build"
+  local candidate="$build_root/debug/$product_name"
 
-if [[ -f "$RUNTIME_DIR/swift-text-worker.pid" ]] || [[ -f "$RUNTIME_DIR/python-worker.pid" ]] || [[ -f "$RUNTIME_DIR/control-plane.pid" ]]; then
-  echo "Melix runtime metadata already exists in $RUNTIME_DIR. Run scripts/dev_down.sh first." >&2
-  exit 1
-fi
+  if [[ -x "$candidate" ]]; then
+    printf '%s\n' "$candidate"
+    return 0
+  fi
 
-rm -f "$PYTHON_SOCKET_PATH" "$SWIFT_TEXT_WORKER_SOCKET_PATH"
-rm -f "$CONTROL_PLANE_METRICS_PATH" "$SWIFT_TEXT_WORKER_METRICS_PATH" "$PYTHON_WORKER_METRICS_PATH"
+  while IFS= read -r candidate; do
+    if [[ -x "$candidate" ]]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done < <(find "$build_root" -path "*/debug/$product_name" -type f 2>/dev/null | sort)
 
-SWIFT_TEXT_WORKER_STARTUP_T0_NS="$(python3 -c 'import time; print(time.perf_counter_ns())')"
+  echo "Built Swift product is missing for '$product_name' under $build_root." >&2
+  echo "Run \`make swift-test\` or \`swift build --package-path $ROOT/$package_path\` before using --prefer-built." >&2
+  return 1
+}
 
-SWIFT_TEXT_WORKER_PID="$(
-  python3 "$ROOT/scripts/spawn_background.py" \
-    --cwd "$ROOT" \
-    --log-path "$RUNTIME_DIR/swift-text-worker.log" \
-    --env "MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH=$SWIFT_TEXT_WORKER_SOCKET_PATH" \
-    --env "MELIX_SWIFT_TEXT_WORKER_BACKEND_MODE=$SWIFT_TEXT_WORKER_BACKEND_MODE" \
-    --env "MELIX_SWIFT_TEXT_WORKER_METRICS_PATH=$SWIFT_TEXT_WORKER_METRICS_PATH" \
-    --env "MELIX_SWIFT_TEXT_WORKER_STARTUP_T0_NS=$SWIFT_TEXT_WORKER_STARTUP_T0_NS" \
-    --env "MELIX_DEV_TEXT_MODEL_PATH=${MELIX_DEV_TEXT_MODEL_PATH:-}" \
-    --env "HOME=$SWIFT_HOME" \
-    --env "CLANG_MODULE_CACHE_PATH=$CLANG_MODULE_CACHE_PATH" \
-    -- \
-    swift run --package-path "$ROOT/services/mlx-text-worker-swift" melix-text-worker-swift
-)"
-echo "$SWIFT_TEXT_WORKER_PID" >"$RUNTIME_DIR/swift-text-worker.pid"
+build_swift_launch_command() {
+  local package_path="$1"
+  local product_name="$2"
 
-PYTHONPATH="$ROOT:$ROOT/services/mlx-worker-python" \
-UV_CACHE_DIR="$UV_CACHE_DIR" \
-uv run --project "$ROOT/services/mlx-worker-python" \
-python "$ROOT/scripts/wait_for_worker_ready.py" \
-  --socket-path "$SWIFT_TEXT_WORKER_SOCKET_PATH" \
-  >"$RUNTIME_DIR/swift-text-worker.ready.log" 2>&1
+  if [[ "$PREFER_BUILT" -eq 1 ]]; then
+    resolve_built_swift_product_binary "$package_path" "$product_name"
+  else
+    printf '%s\n' swift run --package-path "$ROOT/$package_path" "$product_name"
+  fi
+}
 
-PYTHON_WORKER_STARTUP_T0_NS="$(python3 -c 'import time; print(time.perf_counter_ns())')"
+main() {
+  parse_dev_up_args "$@"
 
-PYTHON_WORKER_PID="$(
-  python3 "$ROOT/scripts/spawn_background.py" \
-    --cwd "$ROOT" \
-    --log-path "$RUNTIME_DIR/python-worker.log" \
-    --env "PYTHONPATH=$ROOT:$ROOT/services/mlx-worker-python" \
-    --env "UV_CACHE_DIR=$UV_CACHE_DIR" \
-    --env "MELIX_PYTHON_WORKER_METRICS_PATH=$PYTHON_WORKER_METRICS_PATH" \
-    --env "MELIX_PYTHON_WORKER_STARTUP_T0_NS=$PYTHON_WORKER_STARTUP_T0_NS" \
-    -- \
-    uv run --project "$ROOT/services/mlx-worker-python" \
-      python -m worker.bootstrap \
-      --socket-path "$PYTHON_SOCKET_PATH" \
-      --backend-mode "$PYTHON_BACKEND_MODE"
-)"
-echo "$PYTHON_WORKER_PID" >"$RUNTIME_DIR/python-worker.pid"
+  local runtime_dir="${MELIX_RUNTIME_DIR:-$ROOT/.runtime/phase1}"
+  runtime_dir="$(resolve_path "$runtime_dir")"
+  local python_socket_path="${MELIX_WORKER_SOCKET_PATH:-$runtime_dir/python-worker.sock}"
+  local swift_text_worker_socket_path="${MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH:-$runtime_dir/swift-text-worker.sock}"
+  local control_plane_metrics_path="${MELIX_CONTROL_PLANE_METRICS_PATH:-$runtime_dir/control-plane-metrics.json}"
+  local swift_text_worker_metrics_path="${MELIX_SWIFT_TEXT_WORKER_METRICS_PATH:-$runtime_dir/swift-text-worker-metrics.json}"
+  local python_worker_metrics_path="${MELIX_PYTHON_WORKER_METRICS_PATH:-$runtime_dir/python-worker-metrics.json}"
+  local http_port="${MELIX_HTTP_PORT:-11434}"
+  local python_backend_mode="${MELIX_BACKEND_MODE:-deterministic}"
+  local swift_text_worker_backend_mode="${MELIX_SWIFT_TEXT_WORKER_BACKEND_MODE:-deterministic}"
+  local uv_cache_dir="${UV_CACHE_DIR:-$ROOT/.uv-cache}"
+  local swift_home="${MELIX_SWIFT_HOME:-$ROOT/.swift-home}"
+  local clang_module_cache_path="${MELIX_CLANG_MODULE_CACHE_PATH:-$ROOT/.build/ModuleCache.noindex}"
 
-PYTHONPATH="$ROOT:$ROOT/services/mlx-worker-python" \
-UV_CACHE_DIR="$UV_CACHE_DIR" \
-uv run --project "$ROOT/services/mlx-worker-python" \
-python "$ROOT/scripts/wait_for_worker_ready.py" \
-  --socket-path "$PYTHON_SOCKET_PATH" \
-  >"$RUNTIME_DIR/python-worker.ready.log" 2>&1
+  mkdir -p "$runtime_dir" "$uv_cache_dir" "$swift_home" "$clang_module_cache_path"
 
-CONTROL_PLANE_PID="$(
-  python3 "$ROOT/scripts/spawn_background.py" \
-    --cwd "$ROOT" \
-    --log-path "$RUNTIME_DIR/control-plane.log" \
-    --env "MELIX_HTTP_PORT=$HTTP_PORT" \
-    --env "MELIX_WORKER_SOCKET_PATH=$PYTHON_SOCKET_PATH" \
-    --env "MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH=$SWIFT_TEXT_WORKER_SOCKET_PATH" \
-    --env "MELIX_REPO_ROOT=$ROOT" \
-    --env "MELIX_CONTROL_PLANE_METRICS_PATH=$CONTROL_PLANE_METRICS_PATH" \
-    --env "HOME=$SWIFT_HOME" \
-    --env "CLANG_MODULE_CACHE_PATH=$CLANG_MODULE_CACHE_PATH" \
-    -- \
-    swift run --package-path "$ROOT/services/control-plane-swift" melix-control-plane
-)"
-echo "$CONTROL_PLANE_PID" >"$RUNTIME_DIR/control-plane.pid"
+  if [[ -f "$runtime_dir/swift-text-worker.pid" ]] || [[ -f "$runtime_dir/python-worker.pid" ]] || [[ -f "$runtime_dir/control-plane.pid" ]]; then
+    echo "Melix runtime metadata already exists in $runtime_dir. Run scripts/dev_down.sh first." >&2
+    exit 1
+  fi
 
-cat >"$RUNTIME_DIR/env.sh" <<EOF
-export MELIX_RUNTIME_DIR="$RUNTIME_DIR"
-export MELIX_WORKER_SOCKET_PATH="$PYTHON_SOCKET_PATH"
-export MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH="$SWIFT_TEXT_WORKER_SOCKET_PATH"
-export MELIX_HTTP_PORT="$HTTP_PORT"
-export MELIX_BACKEND_MODE="$PYTHON_BACKEND_MODE"
-export MELIX_SWIFT_TEXT_WORKER_BACKEND_MODE="$SWIFT_TEXT_WORKER_BACKEND_MODE"
-export MELIX_CONTROL_PLANE_METRICS_PATH="$CONTROL_PLANE_METRICS_PATH"
-export MELIX_SWIFT_TEXT_WORKER_METRICS_PATH="$SWIFT_TEXT_WORKER_METRICS_PATH"
-export MELIX_PYTHON_WORKER_METRICS_PATH="$PYTHON_WORKER_METRICS_PATH"
+  rm -f "$python_socket_path" "$swift_text_worker_socket_path"
+  rm -f "$control_plane_metrics_path" "$swift_text_worker_metrics_path" "$python_worker_metrics_path"
+
+  local swift_text_worker_command_output
+  swift_text_worker_command_output="$(build_swift_launch_command "services/mlx-text-worker-swift" "melix-text-worker-swift")"
+  local -a swift_text_worker_command
+  mapfile -t swift_text_worker_command <<<"$swift_text_worker_command_output"
+
+  local swift_text_worker_startup_t0_ns
+  swift_text_worker_startup_t0_ns="$(python3 -c 'import time; print(time.perf_counter_ns())')"
+
+  local swift_text_worker_pid
+  swift_text_worker_pid="$(
+    python3 "$ROOT/scripts/spawn_background.py" \
+      --cwd "$ROOT" \
+      --log-path "$runtime_dir/swift-text-worker.log" \
+      --env "MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH=$swift_text_worker_socket_path" \
+      --env "MELIX_SWIFT_TEXT_WORKER_BACKEND_MODE=$swift_text_worker_backend_mode" \
+      --env "MELIX_SWIFT_TEXT_WORKER_METRICS_PATH=$swift_text_worker_metrics_path" \
+      --env "MELIX_SWIFT_TEXT_WORKER_STARTUP_T0_NS=$swift_text_worker_startup_t0_ns" \
+      --env "MELIX_DEV_TEXT_MODEL_PATH=${MELIX_DEV_TEXT_MODEL_PATH:-}" \
+      --env "HOME=$swift_home" \
+      --env "CLANG_MODULE_CACHE_PATH=$clang_module_cache_path" \
+      -- \
+      "${swift_text_worker_command[@]}"
+  )"
+  echo "$swift_text_worker_pid" >"$runtime_dir/swift-text-worker.pid"
+
+  PYTHONPATH="$ROOT:$ROOT/services/mlx-worker-python" \
+  UV_CACHE_DIR="$uv_cache_dir" \
+  uv run --project "$ROOT/services/mlx-worker-python" \
+  python "$ROOT/scripts/wait_for_worker_ready.py" \
+    --socket-path "$swift_text_worker_socket_path" \
+    >"$runtime_dir/swift-text-worker.ready.log" 2>&1
+
+  local python_worker_startup_t0_ns
+  python_worker_startup_t0_ns="$(python3 -c 'import time; print(time.perf_counter_ns())')"
+
+  local python_worker_pid
+  python_worker_pid="$(
+    python3 "$ROOT/scripts/spawn_background.py" \
+      --cwd "$ROOT" \
+      --log-path "$runtime_dir/python-worker.log" \
+      --env "PYTHONPATH=$ROOT:$ROOT/services/mlx-worker-python" \
+      --env "UV_CACHE_DIR=$uv_cache_dir" \
+      --env "MELIX_PYTHON_WORKER_METRICS_PATH=$python_worker_metrics_path" \
+      --env "MELIX_PYTHON_WORKER_STARTUP_T0_NS=$python_worker_startup_t0_ns" \
+      -- \
+      uv run --project "$ROOT/services/mlx-worker-python" \
+        python -m worker.bootstrap \
+        --socket-path "$python_socket_path" \
+        --backend-mode "$python_backend_mode"
+  )"
+  echo "$python_worker_pid" >"$runtime_dir/python-worker.pid"
+
+  PYTHONPATH="$ROOT:$ROOT/services/mlx-worker-python" \
+  UV_CACHE_DIR="$uv_cache_dir" \
+  uv run --project "$ROOT/services/mlx-worker-python" \
+  python "$ROOT/scripts/wait_for_worker_ready.py" \
+    --socket-path "$python_socket_path" \
+    >"$runtime_dir/python-worker.ready.log" 2>&1
+
+  local control_plane_command_output
+  control_plane_command_output="$(build_swift_launch_command "services/control-plane-swift" "melix-control-plane")"
+  local -a control_plane_command
+  mapfile -t control_plane_command <<<"$control_plane_command_output"
+
+  local control_plane_pid
+  control_plane_pid="$(
+    python3 "$ROOT/scripts/spawn_background.py" \
+      --cwd "$ROOT" \
+      --log-path "$runtime_dir/control-plane.log" \
+      --env "MELIX_HTTP_PORT=$http_port" \
+      --env "MELIX_WORKER_SOCKET_PATH=$python_socket_path" \
+      --env "MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH=$swift_text_worker_socket_path" \
+      --env "MELIX_REPO_ROOT=$ROOT" \
+      --env "MELIX_CONTROL_PLANE_METRICS_PATH=$control_plane_metrics_path" \
+      --env "HOME=$swift_home" \
+      --env "CLANG_MODULE_CACHE_PATH=$clang_module_cache_path" \
+      -- \
+      "${control_plane_command[@]}"
+  )"
+  echo "$control_plane_pid" >"$runtime_dir/control-plane.pid"
+
+  cat >"$runtime_dir/env.sh" <<EOF
+export MELIX_RUNTIME_DIR="$runtime_dir"
+export MELIX_WORKER_SOCKET_PATH="$python_socket_path"
+export MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH="$swift_text_worker_socket_path"
+export MELIX_HTTP_PORT="$http_port"
+export MELIX_BACKEND_MODE="$python_backend_mode"
+export MELIX_SWIFT_TEXT_WORKER_BACKEND_MODE="$swift_text_worker_backend_mode"
+export MELIX_CONTROL_PLANE_METRICS_PATH="$control_plane_metrics_path"
+export MELIX_SWIFT_TEXT_WORKER_METRICS_PATH="$swift_text_worker_metrics_path"
+export MELIX_PYTHON_WORKER_METRICS_PATH="$python_worker_metrics_path"
 EOF
 
-READY=0
-for _ in $(seq 1 240); do
-  if curl -fsS "http://127.0.0.1:$HTTP_PORT/v1/models" >/dev/null 2>&1; then
-    READY=1
-    break
+  local ready=0
+  for _ in $(seq 1 240); do
+    if curl -fsS "http://127.0.0.1:$http_port/v1/models" >/dev/null 2>&1; then
+      ready=1
+      break
+    fi
+    sleep 0.5
+  done
+
+  if [[ "$ready" -ne 1 ]]; then
+    echo "Melix did not become ready. See $runtime_dir/control-plane.log, $runtime_dir/swift-text-worker.log, and $runtime_dir/python-worker.log." >&2
+    exit 1
   fi
-  sleep 0.5
-done
 
-if [[ "$READY" -ne 1 ]]; then
-  echo "Melix did not become ready. See $RUNTIME_DIR/control-plane.log, $RUNTIME_DIR/swift-text-worker.log, and $RUNTIME_DIR/python-worker.log." >&2
-  exit 1
+  echo "Melix local stack is ready."
+  echo "HTTP: http://127.0.0.1:$http_port"
+  echo "Swift text worker socket: $swift_text_worker_socket_path"
+  echo "Python compatibility worker socket: $python_socket_path"
+  echo "Control plane metrics: $control_plane_metrics_path"
+  echo "Swift text worker metrics: $swift_text_worker_metrics_path"
+  echo "Python worker metrics: $python_worker_metrics_path"
+  echo "Runtime env file: $runtime_dir/env.sh"
+
+  if [[ "$PREFER_BUILT" -eq 1 ]]; then
+    echo "Swift launch mode: prefer-built"
+  fi
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
 fi
-
-echo "Melix local stack is ready."
-echo "HTTP: http://127.0.0.1:$HTTP_PORT"
-echo "Swift text worker socket: $SWIFT_TEXT_WORKER_SOCKET_PATH"
-echo "Python compatibility worker socket: $PYTHON_SOCKET_PATH"
-echo "Control plane metrics: $CONTROL_PLANE_METRICS_PATH"
-echo "Swift text worker metrics: $SWIFT_TEXT_WORKER_METRICS_PATH"
-echo "Python worker metrics: $PYTHON_WORKER_METRICS_PATH"
-echo "Runtime env file: $RUNTIME_DIR/env.sh"

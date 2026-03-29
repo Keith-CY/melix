@@ -12,6 +12,7 @@ Reduce Melix cold-boot and restart-recovery readiness time by making HTTP readin
 - add explicit startup metrics for HTTP readiness, first text warmup, and preload memory impact
 - add segmented startup metrics for the Swift text worker, Python worker, and control-plane HTTP readiness path
 - add internal worker bootstrap metrics so phase-eight reports separate process launch delay from in-process bootstrap work
+- add an opt-in `scripts/dev_up.sh --prefer-built` path so local operator loops can skip `swift run` startup overhead when the Swift executables are already built
 - update Phase 8 runtime probes so product metrics distinguish ready-state, first text warmup, and background warmup
 
 ## Files
@@ -24,6 +25,7 @@ Reduce Melix cold-boot and restart-recovery readiness time by making HTTP readin
 - modify `services/mlx-worker-python/worker/productization/acceptance_metrics.py`
 - modify `services/mlx-worker-python/worker/grpc_server.py`
 - modify `services/mlx-text-worker-swift/Sources/Core/WorkerBootstrap.swift`
+- modify `scripts/dev_up.sh`
 - modify affected tests under `services/control-plane-swift/Tests`
 - modify affected worker and productization tests under `services/mlx-worker-python/tests`
 - update relevant docs and runbooks if behavior changes
@@ -74,4 +76,5 @@ Reduce Melix cold-boot and restart-recovery readiness time by making HTTP readin
 - worker bootstrap evidence distinguishes process-spawn delay from in-process bootstrap phases for both worker families
 - the first text request lazily warms the text model and records its latency and resident bytes
 - background preload completion is still measurable
+- local operators can opt into prebuilt Swift executables without changing the default source-based startup path
 - Phase 8 metrics report clearly separates user-facing readiness, first text warmup, and background warmup

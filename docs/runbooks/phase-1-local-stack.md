@@ -31,6 +31,12 @@ make proto
 bash scripts/dev_up.sh
 ```
 
+Use the opt-in fast path only when the Swift binaries are already built and you want to avoid `swift run` launcher overhead during repeated local restarts.
+
+```bash
+bash scripts/dev_up.sh --prefer-built
+```
+
 3. Check model visibility through the control plane.
 
 ```bash
@@ -58,6 +64,7 @@ make phase1-metrics
 - The Swift text worker socket path already exists because shutdown did not complete.
 - `MELIX_DEV_TEXT_MODEL_PATH` is missing while `MELIX_SWIFT_TEXT_WORKER_BACKEND_MODE=swift`.
 - Swift package caches or module caches were not initialized before startup.
+- `--prefer-built` was used before the Swift executables were built under `.build/.../debug`.
 
 ## Recovery
 
