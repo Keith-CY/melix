@@ -12,6 +12,7 @@ from worker.runtime.deterministic_ocr_runtime import DeterministicOCRRuntime
 from worker.runtime.deterministic_speech_runtime import DeterministicSpeechRuntime
 from worker.runtime.deterministic_transcription_runtime import DeterministicTranscriptionRuntime
 from worker.runtime.deterministic_vlm_runtime import DeterministicVLMRuntime
+from worker.runtime.deterministic_image_generation_runtime import DeterministicImageGenerationRuntime
 from worker.runtime.mlx_text_runtime import MLXTextRuntime
 from worker.runtime.deterministic_embedding_runtime import DeterministicEmbeddingRuntime
 from worker.runtime.deterministic_rerank_runtime import DeterministicRerankRuntime
@@ -36,6 +37,7 @@ class WorkerRegistry:
         vlm_runtime: DeterministicVLMRuntime | None = None,
         transcription_runtime: DeterministicTranscriptionRuntime | None = None,
         speech_runtime: DeterministicSpeechRuntime | None = None,
+        image_generation_runtime: DeterministicImageGenerationRuntime | None = None,
         model_catalog: WorkerModelCatalog | None = None,
         worker_id: str = "worker-text-001",
     ) -> None:
@@ -46,6 +48,7 @@ class WorkerRegistry:
         self.vlm_runtime = vlm_runtime or DeterministicVLMRuntime()
         self.transcription_runtime = transcription_runtime or DeterministicTranscriptionRuntime()
         self.speech_runtime = speech_runtime or DeterministicSpeechRuntime()
+        self.image_generation_runtime = image_generation_runtime or DeterministicImageGenerationRuntime()
         self.model_catalog = model_catalog or WorkerModelCatalog()
         self.worker_id = worker_id
         self._lock = Lock()
@@ -86,6 +89,7 @@ class WorkerRegistry:
                 supports_vlm=True,
                 supports_transcription=True,
                 supports_speech=True,
+                supports_image_generation=True,
             ),
         )
 
@@ -146,7 +150,7 @@ class WorkerRegistry:
         with self._lock:
             active_requests = len(self._requests)
             active_multimodal_requests = sum(
-                1 for state in self._requests.values() if state.runtime_kind in {"ocr", "vlm", "transcription", "speech"}
+                1 for state in self._requests.values() if state.runtime_kind in {"ocr", "vlm", "transcription", "speech", "image"}
             )
             resident_bytes = sum(item.estimated_resident_bytes for item in self._loaded_models.values())
             last_probe_kind = self._last_probe_kind
@@ -242,4 +246,6 @@ class WorkerRegistry:
             return "transcription", self.transcription_runtime
         if model_spec.model_kind == "speech":
             return "speech", self.speech_runtime
+        if model_spec.model_kind == "image":
+            return "image", self.image_generation_runtime
         return "text", self.runtime

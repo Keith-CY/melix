@@ -16,6 +16,7 @@ class WorkerModelCatalog:
             "melix-dev-vlm": self.dev_vlm_model(environment=self._environment),
             "melix-dev-transcribe": self.dev_transcription_model(environment=self._environment),
             "melix-dev-speech": self.dev_speech_model(environment=self._environment),
+            "melix-dev-image": self.dev_image_model(environment=self._environment),
         }
 
     def get(self, model_id: str) -> common_pb2.ModelSpec | None:
@@ -120,6 +121,21 @@ class WorkerModelCatalog:
             model_kind="speech",
             revision="dev",
             tokenizer_hash="tok-speech-dev",
+            quant_profile_id="q8",
+            parser_mode="text",
+            reasoning_mode="off",
+            max_context=4096,
+        )
+
+    @staticmethod
+    def dev_image_model(environment: dict[str, str] | None = None) -> common_pb2.ModelSpec:
+        environment = dict(environment or os.environ)
+        return common_pb2.ModelSpec(
+            model_id="melix-dev-image",
+            model_path=environment.get("MELIX_DEV_IMAGE_MODEL_PATH", "models/melix-dev-image"),
+            model_kind="image",
+            revision="dev",
+            tokenizer_hash="tok-image-dev",
             quant_profile_id="q8",
             parser_mode="text",
             reasoning_mode="off",

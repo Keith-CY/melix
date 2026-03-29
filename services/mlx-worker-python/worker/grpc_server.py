@@ -19,6 +19,7 @@ from packages.protocol.python.worker.v1 import (
 
 from worker.engine.embedding_core import EmbeddingCore
 from worker.engine.engine_core import EngineCore
+from worker.engine.image_generation_core import ImageGenerationCore
 from worker.engine.maintenance_core import MaintenanceCore
 from worker.engine.rerank_core import RerankCore
 from worker.engine.speech_core import SpeechCore
@@ -87,13 +88,14 @@ class WorkerRuntimeService(runtime_pb2_grpc.RuntimeServiceServicer):
 
 
 class WorkerInferenceService(inference_pb2_grpc.InferenceServiceServicer):
-    def __init__(self, registry: WorkerRegistry) -> None:
+    def __init__(self, registry: WorkerRegistry, images_root: Path | str | None = None) -> None:
         self._registry = registry
         self._engine = EngineCore(registry)
         self._embedding = EmbeddingCore(registry)
         self._rerank = RerankCore(registry)
         self._transcription = TranscriptionCore(registry)
         self._speech = SpeechCore(registry)
+        self._image_generation = ImageGenerationCore(registry, images_root=Path(images_root or ".runtime/images"))
 
     def Generate(self, request, context):
         yield from self._engine.generate(request)
@@ -131,23 +133,7 @@ class WorkerInferenceService(inference_pb2_grpc.InferenceServiceServicer):
         return self._speech.speak(request)
 
     def ImageGenerate(self, request, context):
-        error = common_pb2.ErrorStatus(
-            code="unimplemented",
-            message="Image generation is deferred in phase 7.",
-        )
-        return inference_pb2.ImageGenerateResponse(
-            error=error,
-            job=inference_pb2.ImageJobDescriptor(
-                request_id=request.id.request_id,
-                job_id=f"{request.id.request_id}::image-generate",
-                model_handle=request.model_handle,
-                operation="image_generate",
-                state=common_pb2.IMAGE_JOB_FAILED,
-                progress=common_pb2.ImageJobProgress(stage="failed", pct=0.0),
-                error=error,
-                cancelable=False,
-            ),
-        )
+        return self._image_generation.generate(request)
 
     def ImageEdit(self, request, context):
         error = common_pb2.ErrorStatus(

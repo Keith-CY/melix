@@ -108,6 +108,9 @@ class MaintenanceCore:
         elif model.model_kind == "speech":
             supported_modalities = ["text", "audio"]
             supported_tasks = ["speak"]
+        elif model.model_kind == "image":
+            supported_modalities = ["text", "image"]
+            supported_tasks = ["image_generate", "image_edit"]
 
         return maintenance_pb2.GetModelInfoResponse(
             ok=True,
