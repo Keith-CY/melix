@@ -1,0 +1,37 @@
+{
+  "benchmarks": {
+    "bench.latency.p95_ms": {
+      "max": 50.0
+    },
+    "bench.smoke.tokens_per_second": {
+      "min": 45.0
+    },
+    "bench.smoke.ttft_ms": {
+      "max": 30.0
+    }
+  },
+  "install": {
+    "bootstrap_command_count": {
+      "min": 3
+    },
+    "generated_asset_count": {
+      "min": 5
+    }
+  },
+  "recovery": {
+    "restart_recovery_ms": {
+      "max": 15000.0
+    },
+    "restart_recovery_success_rate": {
+      "min": 100.0
+    }
+  },
+  "training": {
+    "adapter_publish_ms": {
+      "max": 150.0
+    },
+    "training_duration_ms": {
+      "max": 2000.0
+    }
+  }
+}

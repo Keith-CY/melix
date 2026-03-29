@@ -108,6 +108,18 @@ The installer writes:
 The full operator flow, including bootstrap and uninstall commands, is documented in
 `docs/runbooks/phase-8-local-install.md`.
 
+## Release Gate
+
+Run the deterministic Phase 8 release gate before merge or release tagging:
+
+```bash
+make phase8-release-gate PHASE8_RELEASE_GATE_ARGS="--json"
+```
+
+This checks install asset generation, deterministic benchmark thresholds, restart recovery,
+and training sanity against the checked-in policy under
+`infra/release/phase8-release-gate-policy.json`.
+
 `make proto` currently generates:
 
 - Swift protobuf message types into `packages/protocol/swift`
@@ -129,7 +141,9 @@ The current phase-status and implementation guidance live under:
 - `docs/plans/2026-03-28-p1-m6-workflow-integration-metrics.md`
 - `docs/runbooks/phase-1-local-stack.md`
 - `docs/plans/2026-03-29-p8-m4-packaging-startup-automation.md`
+- `docs/plans/2026-03-29-p8-m5-release-gate-automation.md`
 - `docs/runbooks/phase-8-local-install.md`
+- `docs/runbooks/phase-8-release-gates.md`
 
 ## License
 

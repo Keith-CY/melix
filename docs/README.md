@@ -76,6 +76,7 @@ Current phase-status and planning documents:
 - `plans/2026-03-29-p8-m2-diagnostics-bench-training.md`
 - `plans/2026-03-29-p8-m3-adapter-training-tooling.md`
 - `plans/2026-03-29-p8-m4-packaging-startup-automation.md`
+- `plans/2026-03-29-p8-m5-release-gate-automation.md`
 - `plans/2026-03-28-p1-m2-swift-text-worker-scaffold.md`
 - `plans/2026-03-28-p1-m3-swift-runtime-lifecycle.md`
 - `plans/2026-03-28-p1-m4-swift-generate-abort.md`
@@ -108,6 +109,7 @@ Current runbooks:
 - `runbooks/phase-6-multimodal-ops.md`
 - `runbooks/phase-7-image-ops.md`
 - `runbooks/phase-8-local-install.md`
+- `runbooks/phase-8-release-gates.md`
 
 ## Engineering Standards
 

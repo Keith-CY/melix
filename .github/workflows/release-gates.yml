@@ -1,0 +1,45 @@
+name: release-gates
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/release-gates.yml"
+      - "apps/macos-menubar/**"
+      - "docs/runbooks/phase-8-release-gates.md"
+      - "infra/release/**"
+      - "scripts/phase8_release_gate.py"
+      - "services/control-plane-swift/**"
+      - "services/mlx-text-worker-swift/**"
+      - "services/mlx-worker-python/**"
+      - "tests/integration/**"
+
+jobs:
+  release-gates:
+    runs-on: macos-15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: astral-sh/setup-uv@v5
+
+      - name: Bootstrap
+        run: make bootstrap
+
+      - name: Swift tests
+        run: make swift-test
+
+      - name: Python tests
+        run: make py-test
+
+      - name: Integration tests
+        run: make integration-test
+
+      - name: Phase 8 release gate
+        run: make phase8-release-gate PHASE8_RELEASE_GATE_ARGS="--json"
