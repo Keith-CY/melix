@@ -109,6 +109,8 @@ public struct DesktopFoundationState: Equatable, Sendable {
     public static func build(
         statusTitle: String,
         serverStateText: String,
+        connectionStateText: String,
+        connectionDetailText: String,
         snapshot: Melix_Controlplane_V1_ServerSnapshot,
         protocolVersion: String,
         serverVersion: String,
@@ -132,6 +134,12 @@ public struct DesktopFoundationState: Equatable, Sendable {
                 title: "Server",
                 value: serverStateText,
                 detail: "\(snapshot.queues.activeRequests) active / \(snapshot.queues.queuedRequests) queued"
+            ),
+            DesktopDashboardCard(
+                id: "connection",
+                title: "Connection",
+                value: connectionStateText,
+                detail: connectionDetailText
             ),
             DesktopDashboardCard(
                 id: "models",
@@ -183,6 +191,8 @@ public struct DesktopFoundationState: Equatable, Sendable {
             DesktopKeyValueRow(id: "server-version", key: "Server Version", value: serverVersion),
             DesktopKeyValueRow(id: "daemon-id", key: "Daemon Instance", value: daemonInstanceID.isEmpty ? "unknown" : daemonInstanceID),
             DesktopKeyValueRow(id: "features", key: "Features", value: features.isEmpty ? "none" : features.sorted().joined(separator: ", ")),
+            DesktopKeyValueRow(id: "connection", key: "Connection", value: connectionStateText),
+            DesktopKeyValueRow(id: "stream", key: "Event Stream", value: connectionDetailText),
             DesktopKeyValueRow(id: "socket", key: "Control Plane", value: "local XPC"),
             DesktopKeyValueRow(id: "api-surface", key: "API Surface", value: "text phase-4 foundation"),
         ]

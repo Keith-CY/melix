@@ -194,11 +194,42 @@ struct RuntimeViewModelTests {
         let foundation = viewModel.desktopFoundationState
         #expect(foundation.title == "Melix Ready")
         #expect(foundation.dashboardCards.contains(where: { $0.id == "server" && $0.value == "Ready" }))
+        #expect(foundation.dashboardCards.contains(where: { $0.id == "connection" && $0.value == "Connected" }))
         #expect(foundation.queueLanes.contains(where: { $0.id == "text.decode.interactive" }))
         #expect(foundation.models.contains(where: { $0.modelID == "melix-dev-text" }))
         #expect(foundation.settings.contains(where: { $0.key == "Protocol" && $0.value == "melix.controlplane.v1" }))
+        #expect(foundation.settings.contains(where: { $0.key == "Connection" && $0.value == "Connected" }))
         #expect(foundation.benchMetrics.contains(where: { $0.name == "http.translation_ms" }))
         #expect(foundation.apiReference.contains(where: { $0.path == "/v1/responses" }))
+    }
+
+    @Test("subscription termination triggers bounded reconnect and records recovery metrics")
+    @MainActor
+    func subscriptionTerminationTriggersReconnect() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let metrics = MenuBarMetricsStore()
+        let viewModel = RuntimeViewModel(client: client, metrics: metrics)
+
+        await viewModel.start()
+        await client.sendHeartbeat()
+        await client.finishLatestSubscription()
+
+        try await waitForRuntimeViewModelCondition("subscription termination should reconnect") {
+            let foundation = viewModel.desktopFoundationState
+            return foundation.settings.contains(where: { $0.key == "Connection" && $0.value == "Connected" })
+                && foundation.logs.contains(where: { $0.message.contains("Reconnected event stream") })
+        }
+
+        let foundation = viewModel.desktopFoundationState
+        let requests = await client.subscriptionRequests
+        #expect(requests.count == 2)
+        if requests.count >= 2 {
+            #expect(requests[0] == 0)
+            #expect(requests[1] == 1)
+        }
+        #expect(foundation.settings.contains(where: { $0.key == "Connection" && $0.value == "Connected" }))
+        #expect(foundation.logs.contains(where: { $0.message.contains("Reconnected event stream") }))
+        #expect(await metrics.snapshot()["desktop.reconnect_success_ms"] != nil)
     }
 
     @Test("desktop foundation refresh pulls a fresh server snapshot and records metrics")

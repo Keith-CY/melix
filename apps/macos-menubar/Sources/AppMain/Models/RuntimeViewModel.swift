@@ -94,6 +94,8 @@ public struct DesktopChatCapabilityRow: Identifiable, Equatable, Sendable {
 public final class RuntimeViewModel {
     public private(set) var statusTitle = "Melix Starting"
     public private(set) var serverStateText = "Starting"
+    public private(set) var connectionStateText = "Connecting"
+    public private(set) var connectionDetailText = "Awaiting handshake"
     public private(set) var models: [RuntimeModelRow] = []
     public private(set) var lastError: String?
     public private(set) var protocolVersion = "melix.controlplane.v1"
@@ -128,6 +130,7 @@ public final class RuntimeViewModel {
     private var lastSeenSeq: UInt64 = 0
     private var latestSnapshot = Melix_Controlplane_V1_ServerSnapshot()
     private var recentEvents: [DesktopLogEntry] = []
+    private var connectionStateTransitions = 0.0
     private var chatConversationMessages: [ControlPlaneChatRequest.Message] = []
     private var activeAssistantEntryID: String?
     private var activeReasoningEntryID: String?
@@ -160,6 +163,8 @@ public final class RuntimeViewModel {
         DesktopFoundationState.build(
             statusTitle: statusTitle,
             serverStateText: serverStateText,
+            connectionStateText: connectionStateText,
+            connectionDetailText: connectionDetailText,
             snapshot: latestSnapshot,
             protocolVersion: protocolVersion,
             serverVersion: serverVersion,
@@ -171,6 +176,7 @@ public final class RuntimeViewModel {
     }
 
     public func start() async {
+        await transitionConnectionState(to: "Connecting", detail: "Awaiting handshake")
         let handshakeStartedAt = Date()
 
         do {
@@ -190,15 +196,9 @@ public final class RuntimeViewModel {
                 name: "menu.hydration_ms",
                 valueMs: Date().timeIntervalSince(hydrationStartedAt) * 1_000
             )
-
-            let stream = await client.subscribe(lastSeenSeq: lastSeenSeq)
-            subscriptionTask?.cancel()
-            subscriptionTask = Task { [weak self] in
-                for await event in stream {
-                    await self?.consume(event: event)
-                }
-            }
+            await startSubscription(lastSeenSeq: lastSeenSeq, isReconnect: false)
         } catch {
+            await transitionConnectionState(to: "Degraded", detail: "Handshake failed")
             lastError = String(describing: error)
             statusTitle = "Melix Error"
             notifyStateChanged()
@@ -1013,6 +1013,94 @@ public final class RuntimeViewModel {
         if recentEvents.count > 40 {
             recentEvents.removeSubrange(40...)
         }
+    }
+
+    private func startSubscription(lastSeenSeq: UInt64, isReconnect: Bool) async {
+        let startedAt = Date()
+        let stream = await client.subscribe(lastSeenSeq: lastSeenSeq)
+
+        if isReconnect {
+            recentEvents.insert(
+                DesktopLogEntry(
+                    kind: "reconnect",
+                    message: "Reconnected event stream",
+                    detail: lastSeenSeq == 0 ? "live" : "seq \(lastSeenSeq)",
+                    level: "info"
+                ),
+                at: 0
+            )
+            trimRecentEvents()
+            await metrics.record(
+                name: "desktop.reconnect_success_ms",
+                valueMs: Date().timeIntervalSince(startedAt) * 1_000
+            )
+        }
+
+        await transitionConnectionState(
+            to: "Connected",
+            detail: lastSeenSeq == 0 ? "Live event stream" : "Resumed from seq \(lastSeenSeq)"
+        )
+
+        subscriptionTask = Task { [weak self] in
+            guard let self else {
+                return
+            }
+            for await event in stream {
+                await self.consume(event: event)
+            }
+            if Task.isCancelled {
+                return
+            }
+            await self.handleUnexpectedSubscriptionTermination()
+        }
+    }
+
+    private func handleUnexpectedSubscriptionTermination() async {
+        subscriptionTask = nil
+        recentEvents.insert(
+            DesktopLogEntry(
+                kind: "reconnect",
+                message: "Event stream ended; reconnecting",
+                detail: lastSeenSeq == 0 ? "live" : "seq \(lastSeenSeq)",
+                level: "warning"
+            ),
+            at: 0
+        )
+        trimRecentEvents()
+        await transitionConnectionState(
+            to: "Reconnecting",
+            detail: lastSeenSeq == 0 ? "Retrying event stream" : "Retrying from seq \(lastSeenSeq)"
+        )
+
+        let startedAt = Date()
+        do {
+            let snapshot = try await client.serverSnapshot()
+            apply(snapshot: snapshot)
+            await metrics.record(
+                name: "desktop.reconnect_attempt_ms",
+                valueMs: Date().timeIntervalSince(startedAt) * 1_000
+            )
+            await startSubscription(lastSeenSeq: lastSeenSeq, isReconnect: true)
+        } catch {
+            await metrics.record(name: "desktop.reconnect_failure_count", valueMs: 1)
+            await transitionConnectionState(to: "Degraded", detail: "Reconnect failed")
+            recordLocalError("Reconnect failed: \(error)")
+            notifyStateChanged()
+        }
+    }
+
+    private func transitionConnectionState(to state: String, detail: String) async {
+        guard connectionStateText != state || connectionDetailText != detail else {
+            return
+        }
+        connectionStateText = state
+        connectionDetailText = detail
+        connectionStateTransitions += 1
+        await metrics.record(
+            name: "desktop.connection_state_transitions",
+            valueMs: connectionStateTransitions
+        )
+        notifyStateChanged()
     }
 
     private func notifyStateChanged() {

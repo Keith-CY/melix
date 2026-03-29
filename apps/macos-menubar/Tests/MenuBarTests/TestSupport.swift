@@ -5,11 +5,12 @@ import MelixControlPlaneCore
 import MelixControlPlaneProtocol
 
 actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
-    private let stream: AsyncStream<Melix_Controlplane_V1_ControlPlaneEvent>
-    private let continuation: AsyncStream<Melix_Controlplane_V1_ControlPlaneEvent>.Continuation
+    private var streamContinuations: [AsyncStream<Melix_Controlplane_V1_ControlPlaneEvent>.Continuation] = []
+    private var nextEventSequence: UInt64 = 1
 
     private(set) var recordedActions: [String] = []
     private(set) var handshakeCount = 0
+    private(set) var subscriptionRequests: [UInt64] = []
     private var modelState: Melix_Controlplane_V1_ModelState = .modelDiscovered
     private var handshakeError: Error?
     private var loadError: Error?
@@ -41,13 +42,7 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
         operation: "image_edit"
     )
 
-    init() {
-        var capturedContinuation: AsyncStream<Melix_Controlplane_V1_ControlPlaneEvent>.Continuation?
-        stream = AsyncStream { continuation in
-            capturedContinuation = continuation
-        }
-        continuation = capturedContinuation!
-    }
+    init() {}
 
     func configureErrors(
         handshake: Error? = nil,
@@ -119,8 +114,10 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
     }
 
     func subscribe(lastSeenSeq: UInt64) async -> AsyncStream<Melix_Controlplane_V1_ControlPlaneEvent> {
-        _ = lastSeenSeq
-        return stream
+        subscriptionRequests.append(lastSeenSeq)
+        return AsyncStream { continuation in
+            streamContinuations.append(continuation)
+        }
     }
 
     func startChat(_ request: ControlPlaneChatRequest) async throws -> ControlPlaneChatExecution {
@@ -286,7 +283,7 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
         event.modelState = Melix_Controlplane_V1_ModelStateChanged()
         event.modelState.modelID = "melix-dev-text"
         event.modelState.state = state
-        continuation.yield(event)
+        emit(event)
     }
 
     func sendLog(level: String, message: String) {
@@ -295,7 +292,7 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
         event.log = Melix_Controlplane_V1_LogEvent()
         event.log.level = level
         event.log.message = message
-        continuation.yield(event)
+        emit(event)
     }
 
     func sendServerStateChanged(state: Melix_Controlplane_V1_ServerState) {
@@ -303,7 +300,7 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
         event.eventType = "server.state_changed"
         event.serverState = Melix_Controlplane_V1_ServerStateChanged()
         event.serverState.state = state
-        continuation.yield(event)
+        emit(event)
     }
 
     func sendSessionStateChanged(
@@ -324,7 +321,7 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
             branch.branchID = "branch-\(index)"
             return branch
         }
-        continuation.yield(event)
+        emit(event)
     }
 
     func sendCacheStats(l1Bytes: UInt64, l2Bytes: UInt64) {
@@ -333,7 +330,7 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
         event.cacheStats = Melix_Controlplane_V1_CacheStatsEvent()
         event.cacheStats.summary.l1Bytes = l1Bytes
         event.cacheStats.summary.l2Bytes = l2Bytes
-        continuation.yield(event)
+        emit(event)
     }
 
     func sendResourcePressure(scope: String, usedBytes: UInt64, totalBytes: UInt64) {
@@ -343,7 +340,7 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
         event.resourcePressure.scope = scope
         event.resourcePressure.resources.memoryUsedBytes = usedBytes
         event.resourcePressure.resources.memoryTotalBytes = totalBytes
-        continuation.yield(event)
+        emit(event)
     }
 
     func sendRequestProgress(requestID: String, phase: Melix_Controlplane_V1_RequestPhase) {
@@ -352,14 +349,14 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
         event.requestProgress = Melix_Controlplane_V1_RequestProgressEvent()
         event.requestProgress.requestID = requestID
         event.requestProgress.phase = phase
-        continuation.yield(event)
+        emit(event)
     }
 
     func sendHeartbeat() {
         var event = Melix_Controlplane_V1_ControlPlaneEvent()
         event.eventType = "heartbeat"
         event.heartbeat = Melix_Controlplane_V1_Heartbeat()
-        continuation.yield(event)
+        emit(event)
     }
 
     func sendImageJobStateChanged(_ job: Melix_Controlplane_V1_ImageJobSummary) {
@@ -367,7 +364,15 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
         event.eventType = "image.job.state_changed"
         event.imageJob = Melix_Controlplane_V1_ImageJobStateChanged()
         event.imageJob.job = job
-        continuation.yield(event)
+        emit(event)
+    }
+
+    func finishLatestSubscription() {
+        guard let continuation = streamContinuations.last else {
+            return
+        }
+        continuation.finish()
+        streamContinuations.removeLast()
     }
 
     func configureSnapshot(_ snapshot: Melix_Controlplane_V1_ServerSnapshot?) {
@@ -484,6 +489,16 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
         result.manifestJson = #"{"operation":"quantize"}"#
         result.outputPath = "/tmp/melix-fake/quantize.artifact"
         return result
+    }
+
+    private func emit(_ event: Melix_Controlplane_V1_ControlPlaneEvent) {
+        guard streamContinuations.isEmpty == false else {
+            return
+        }
+        var sequenced = event
+        sequenced.seq = nextEventSequence
+        nextEventSequence += 1
+        streamContinuations[streamContinuations.count - 1].yield(sequenced)
     }
 }
 

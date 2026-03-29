@@ -108,8 +108,16 @@ struct DesktopFoundationViewTests {
         let bench = hostView(DesktopBenchTabView(foundation: foundation))
         let chat = hostView(DesktopChatTabView(viewModel: viewModel))
         let api = hostView(DesktopAPIReferenceTabView(foundation: foundation))
+        let hasConnectionCard = foundation.dashboardCards.contains { row in
+            row.id == "connection" && row.value == "Connected"
+        }
+        let hasConnectionSetting = foundation.settings.contains { row in
+            row.key == "Connection" && row.value == "Connected"
+        }
 
         #expect(dashboard.subviews.isEmpty == false)
+        #expect(hasConnectionCard)
+        #expect(hasConnectionSetting)
         #expect(settings.subviews.isEmpty == false)
         #expect(logs.subviews.isEmpty == false)
         #expect(bench.subviews.isEmpty == false)
