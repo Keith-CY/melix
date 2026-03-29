@@ -30,11 +30,12 @@ def test_text_requests_record_interference_metrics_during_multimodal_load() -> N
         Path(__file__).resolve().parents[2],
         environment_overrides={"MELIX_DETERMINISTIC_TRANSCRIPTION_DELAY_MS": "150"},
     )
-    stack.start()
 
     transcription_response: dict[str, object] = {}
 
     try:
+        stack.start()
+        stack.wait_for_models(["melix-dev-transcribe"])
         def run_transcription() -> None:
             status, payload = _post_json(
                 f"http://127.0.0.1:{stack.http_port}/v1/audio/transcriptions",
@@ -78,9 +79,17 @@ def test_text_requests_record_interference_metrics_during_multimodal_load() -> N
 
 def test_multimodal_operator_smoke_records_phase6_metrics() -> None:
     stack = LiveMelixStack(Path(__file__).resolve().parents[2])
-    stack.start()
 
     try:
+        stack.start()
+        stack.wait_for_models(
+            [
+                "melix-dev-ocr",
+                "melix-dev-vlm",
+                "melix-dev-transcribe",
+                "melix-dev-speech",
+            ]
+        )
         inline_image = base64.b64encode(b"phase6 vision fixture").decode("ascii")
 
         ocr_status, ocr_payload = _post_json(

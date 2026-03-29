@@ -219,6 +219,22 @@ class LiveMelixStack:
     def image_edits_url(self) -> str:
         return f"http://127.0.0.1:{self.http_port}/v1/images/edits"
 
+    def wait_for_models(self, model_ids: list[str], *, timeout_seconds: float = 120) -> None:
+        wait_for_http_model_states(
+            self.http_port,
+            required_states={model_id: "warm" for model_id in model_ids},
+            swift_text_worker=self.swift_text_worker,
+            swift_text_worker_stdout_path=self.swift_text_worker_stdout_path,
+            swift_text_worker_stderr_path=self.swift_text_worker_stderr_path,
+            python_worker=self.python_worker,
+            python_worker_stdout_path=self.python_worker_stdout_path,
+            python_worker_stderr_path=self.python_worker_stderr_path,
+            control_plane=self.control_plane,
+            control_plane_stdout_path=self.control_plane_stdout_path,
+            control_plane_stderr_path=self.control_plane_stderr_path,
+            timeout_seconds=timeout_seconds,
+        )
+
     def _stop_process(self, name: str, process: subprocess.Popen[str] | None) -> None:
         if process is None:
             return
@@ -324,6 +340,37 @@ def wait_for_http_models(
     control_plane_stderr_path: Path | None = None,
     timeout_seconds: float = 120,
 ) -> None:
+    wait_for_http_model_states(
+        port,
+        required_states={"melix-dev-text": "warm"},
+        swift_text_worker=swift_text_worker,
+        swift_text_worker_stdout_path=swift_text_worker_stdout_path,
+        swift_text_worker_stderr_path=swift_text_worker_stderr_path,
+        python_worker=python_worker,
+        python_worker_stdout_path=python_worker_stdout_path,
+        python_worker_stderr_path=python_worker_stderr_path,
+        control_plane=control_plane,
+        control_plane_stdout_path=control_plane_stdout_path,
+        control_plane_stderr_path=control_plane_stderr_path,
+        timeout_seconds=timeout_seconds,
+    )
+
+
+def wait_for_http_model_states(
+    port: int,
+    *,
+    required_states: dict[str, str],
+    swift_text_worker: subprocess.Popen[str] | None = None,
+    swift_text_worker_stdout_path: Path | None = None,
+    swift_text_worker_stderr_path: Path | None = None,
+    python_worker: subprocess.Popen[str] | None = None,
+    python_worker_stdout_path: Path | None = None,
+    python_worker_stderr_path: Path | None = None,
+    control_plane: subprocess.Popen[str] | None = None,
+    control_plane_stdout_path: Path | None = None,
+    control_plane_stderr_path: Path | None = None,
+    timeout_seconds: float = 120,
+) -> None:
     deadline = time.time() + timeout_seconds
     last_error: Exception | None = None
 
@@ -356,14 +403,15 @@ def wait_for_http_models(
             with urllib.request.urlopen(f"http://127.0.0.1:{port}/v1/models", timeout=2) as response:
                 payload = json.loads(response.read().decode("utf-8"))
                 states = {item["id"]: item["melix_state"] for item in payload["data"]}
-                if states.get("melix-dev-text") == "warm":
+                if all(states.get(model_id) == expected for model_id, expected in required_states.items()):
                     return
         except (urllib.error.URLError, TimeoutError, ConnectionError, json.JSONDecodeError) as exc:
             last_error = exc
         time.sleep(0.2)
 
     raise AssertionError(
-        f"Control plane never exposed a warm dev model on port {port} within {timeout_seconds:.1f}s: {last_error}"
+        "Control plane never exposed the required model states "
+        f"{required_states} on port {port} within {timeout_seconds:.1f}s: {last_error}"
     )
 
 

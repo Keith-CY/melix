@@ -46,22 +46,42 @@ def collect_operator_action_evidence(jobs_root: str | Path) -> dict[str, Any]:
 
 def build_phase8_metrics_report(
     *,
-    cold_boot_to_ready_ms: float,
+    cold_boot_to_ready_ms: float | None = None,
+    cold_boot: dict[str, Any] | None = None,
     operator: dict[str, Any],
     release_gate_report: dict[str, Any],
     policy: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     active_policy = policy or load_release_gate_policy()
+    cold_boot_evidence = dict(cold_boot or {})
+    if cold_boot_to_ready_ms is not None:
+        cold_boot_evidence.setdefault("cold_boot_to_ready_ms", cold_boot_to_ready_ms)
+    recovery = release_gate_report["recovery"]
+
     metrics = {
-        "desktop.cold_boot_to_ready_ms": round(float(cold_boot_to_ready_ms), 2),
+        "desktop.cold_boot_to_ready_ms": round(
+            float(cold_boot_evidence["cold_boot_to_ready_ms"]), 2
+        ),
+        "desktop.text_ready_preload_ms": round(
+            float(cold_boot_evidence.get("text_ready_preload_ms", 0.0)), 2
+        ),
+        "desktop.background_preload_ms": round(
+            float(cold_boot_evidence.get("background_preload_ms", 0.0)), 2
+        ),
         "desktop.operator_action_latency_ms": round(
             float(operator["operator_action_latency_ms"]), 2
         ),
+        "desktop.restart_to_ready_ms": round(
+            float(recovery.get("restart_to_ready_ms", recovery["restart_recovery_ms"])), 2
+        ),
+        "desktop.snapshot_restore_ms": round(
+            float(recovery.get("snapshot_restore_ms", 0.0)), 2
+        ),
         "desktop.restart_recovery_ms": round(
-            float(release_gate_report["recovery"]["restart_recovery_ms"]), 2
+            float(recovery["restart_recovery_ms"]), 2
         ),
         "desktop.crash_recovery_success_rate": float(
-            release_gate_report["recovery"]["restart_recovery_success_rate"]
+            recovery["restart_recovery_success_rate"]
         ),
         "release.benchmark_regression_pct": round(
             compute_benchmark_regression_pct(release_gate_report["benchmarks"], active_policy),
@@ -87,7 +107,10 @@ def build_phase8_metrics_report(
 
     return {
         "metrics": metrics,
-        "cold_boot": {"cold_boot_to_ready_ms": round(float(cold_boot_to_ready_ms), 2)},
+        "cold_boot": {
+            key: round(float(value), 2) if isinstance(value, (int, float)) else value
+            for key, value in cold_boot_evidence.items()
+        },
         "operator": operator,
         "release_gate": release_gate_report,
     }

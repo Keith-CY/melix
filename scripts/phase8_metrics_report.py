@@ -43,7 +43,7 @@ def main() -> int:
     )
     operator = collect_operator_action_evidence(repo_root / ".runtime" / "phase8-metrics")
     report = build_phase8_metrics_report(
-        cold_boot_to_ready_ms=cold_boot["cold_boot_to_ready_ms"],
+        cold_boot=cold_boot,
         operator=operator,
         release_gate_report=release_gate_report,
         policy=policy,

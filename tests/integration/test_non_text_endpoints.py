@@ -10,9 +10,10 @@ from tests.integration.helpers import LiveMelixStack
 
 def test_embeddings_endpoint_returns_vectors() -> None:
     stack = LiveMelixStack(Path(__file__).resolve().parents[2])
-    stack.start()
 
     try:
+        stack.start()
+        stack.wait_for_models(["melix-dev-embed"])
         request = urllib.request.Request(
             f"http://127.0.0.1:{stack.http_port}/v1/embeddings",
             data=json.dumps(
@@ -38,9 +39,10 @@ def test_embeddings_endpoint_returns_vectors() -> None:
 
 def test_rerank_endpoint_returns_ranked_items() -> None:
     stack = LiveMelixStack(Path(__file__).resolve().parents[2])
-    stack.start()
 
     try:
+        stack.start()
+        stack.wait_for_models(["melix-dev-rerank"])
         request = urllib.request.Request(
             f"http://127.0.0.1:{stack.http_port}/v1/rerank",
             data=json.dumps(
@@ -66,9 +68,9 @@ def test_rerank_endpoint_returns_ranked_items() -> None:
 
 def test_health_and_cache_endpoints_return_operator_state() -> None:
     stack = LiveMelixStack(Path(__file__).resolve().parents[2])
-    stack.start()
 
     try:
+        stack.start()
         with urllib.request.urlopen(f"http://127.0.0.1:{stack.http_port}/health", timeout=10) as response:
             health_payload = json.loads(response.read().decode("utf-8"))
 
@@ -89,9 +91,10 @@ def test_health_and_cache_endpoints_return_operator_state() -> None:
 
 def test_audio_transcriptions_endpoint_returns_transcript() -> None:
     stack = LiveMelixStack(Path(__file__).resolve().parents[2])
-    stack.start()
 
     try:
+        stack.start()
+        stack.wait_for_models(["melix-dev-transcribe"])
         request = urllib.request.Request(
             f"http://127.0.0.1:{stack.http_port}/v1/audio/transcriptions",
             data=json.dumps(
@@ -119,9 +122,10 @@ def test_audio_transcriptions_endpoint_returns_transcript() -> None:
 
 def test_audio_speech_endpoint_returns_audio_bytes() -> None:
     stack = LiveMelixStack(Path(__file__).resolve().parents[2])
-    stack.start()
 
     try:
+        stack.start()
+        stack.wait_for_models(["melix-dev-speech"])
         request = urllib.request.Request(
             f"http://127.0.0.1:{stack.http_port}/v1/audio/speech",
             data=json.dumps(

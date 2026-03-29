@@ -40,32 +40,11 @@ enum MelixControlPlaneBootstrap {
             modelCatalog: modelCatalog
         )
 
-        let preloadStartedAt = Date()
-        do {
-            _ = try await BootstrapWorkerPreparation.preloadDevTextModel(
-                workerClient: swiftTextWorkerClient,
-                modelCatalog: modelCatalog
-            )
-            await metricsStore.set(
-                Date().timeIntervalSince(preloadStartedAt) * 1000,
-                forKey: "control_plane.worker_preload_ms"
-            )
-        } catch {
-            print("Melix worker preload skipped: \(error)")
-            await metricsStore.set(
-                Date().timeIntervalSince(preloadStartedAt) * 1000,
-                forKey: "control_plane.worker_preload_ms"
-            )
-        }
-
-        do {
-            try await BootstrapWorkerPreparation.preloadPhaseSevenPythonModels(
-                workerClient: pythonCompatibilityClient,
-                modelCatalog: modelCatalog
-            )
-        } catch {
-            print("Melix phase-7 python model preload skipped: \(error)")
-        }
+        await BootstrapPreloadCoordinator.preloadTextReadyModel(
+            workerClient: swiftTextWorkerClient,
+            modelCatalog: modelCatalog,
+            metricsStore: metricsStore
+        )
 
         _ = ControlPlaneService(
             modelCatalog: modelCatalog,
@@ -102,6 +81,11 @@ enum MelixControlPlaneBootstrap {
             handler: handler
         )
         try await server.start()
+        let _: Task<Void, Never> = BootstrapPreloadCoordinator.startBackgroundPhaseSevenPythonPreload(
+            workerClient: pythonCompatibilityClient,
+            modelCatalog: modelCatalog,
+            metricsStore: metricsStore
+        )
         print("Melix control plane ready on http://127.0.0.1:\(Self.httpPort())")
         await server.waitUntilStopped()
     }

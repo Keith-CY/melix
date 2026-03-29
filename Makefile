@@ -44,8 +44,8 @@ swift-coverage:
 
 py-coverage:
 	mkdir -p "$(UV_CACHE_DIR)"
-	PYTHONPATH="$(ROOT):$(ROOT)/services/mlx-worker-python" UV_CACHE_DIR="$(UV_CACHE_DIR)" uv run --project services/mlx-worker-python coverage run --source=services/mlx-worker-python/worker -m pytest services/mlx-worker-python/tests -q
-	PYTHONPATH="$(ROOT):$(ROOT)/services/mlx-worker-python" UV_CACHE_DIR="$(UV_CACHE_DIR)" uv run --project services/mlx-worker-python coverage report --include='services/mlx-worker-python/worker/*'
+	PYTHONPATH="$(ROOT):$(ROOT)/services/mlx-worker-python" UV_CACHE_DIR="$(UV_CACHE_DIR)" uv run --project services/mlx-worker-python coverage run --source=services/mlx-worker-python/worker,phase8_runtime_probes,phase8_metrics_report -m pytest services/mlx-worker-python/tests -q
+	PYTHONPATH="$(ROOT):$(ROOT)/services/mlx-worker-python" UV_CACHE_DIR="$(UV_CACHE_DIR)" uv run --project services/mlx-worker-python coverage report --include='services/mlx-worker-python/worker/*,scripts/phase8_runtime_probes.py,scripts/phase8_metrics_report.py'
 
 coverage: swift-coverage py-coverage
 

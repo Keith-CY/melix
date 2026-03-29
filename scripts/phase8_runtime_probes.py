@@ -4,9 +4,10 @@ import json
 import tempfile
 import time
 import urllib.request
+from typing import Any
 from pathlib import Path
 
-from tests.integration.helpers import LiveMelixStack, get_cache_stats
+from tests.integration.helpers import LiveMelixStack, get_cache_stats, read_metrics_export
 
 
 def measure_cold_boot_to_ready(repo_root: Path) -> dict[str, float]:
@@ -14,8 +15,27 @@ def measure_cold_boot_to_ready(repo_root: Path) -> dict[str, float]:
     started_at = time.perf_counter()
     try:
         stack.start()
+        ready_ms = (time.perf_counter() - started_at) * 1_000.0
+        bootstrap_metrics = wait_for_metrics(
+            stack.control_plane_metrics_path,
+            [
+                "control_plane.worker_preload_ms",
+                "control_plane.text_ready_preload_ms",
+                "control_plane.background_preload_ms",
+                "control_plane.background_preload_success",
+            ],
+        )
         return {
-            "cold_boot_to_ready_ms": round((time.perf_counter() - started_at) * 1_000.0, 2)
+            "cold_boot_to_ready_ms": round(ready_ms, 2),
+            "text_ready_preload_ms": round(
+                float(bootstrap_metrics["control_plane.text_ready_preload_ms"]), 2
+            ),
+            "background_preload_ms": round(
+                float(bootstrap_metrics["control_plane.background_preload_ms"]), 2
+            ),
+            "background_preload_success": float(
+                bootstrap_metrics["control_plane.background_preload_success"]
+            ),
         }
     finally:
         stack.stop()
@@ -51,6 +71,8 @@ def collect_restart_recovery_evidence(repo_root: Path) -> dict[str, float]:
         started_at = time.perf_counter()
         try:
             second_stack.start()
+            restart_to_ready_ms = (time.perf_counter() - started_at) * 1_000.0
+            restore_started_at = time.perf_counter()
             restored = stream_chat_completion(
                 second_stack,
                 {
@@ -60,11 +82,31 @@ def collect_restart_recovery_evidence(repo_root: Path) -> dict[str, float]:
                     "messages": [{"role": "user", "content": "resume after release-gate restart"}],
                 },
             )
+            restore_ms = (time.perf_counter() - restore_started_at) * 1_000.0
             recovery_ms = (time.perf_counter() - started_at) * 1_000.0
             success = restored["status"] == 200 and "data: [DONE]" in restored["body"]
+            bootstrap_metrics = wait_for_metrics(
+                second_stack.control_plane_metrics_path,
+                [
+                    "control_plane.text_ready_preload_ms",
+                    "control_plane.background_preload_ms",
+                    "control_plane.background_preload_success",
+                ],
+            )
             return {
+                "restart_to_ready_ms": round(restart_to_ready_ms, 2),
+                "snapshot_restore_ms": round(restore_ms, 2),
                 "restart_recovery_ms": round(recovery_ms, 2),
                 "restart_recovery_success_rate": 100.0 if success else 0.0,
+                "text_ready_preload_ms": round(
+                    float(bootstrap_metrics["control_plane.text_ready_preload_ms"]), 2
+                ),
+                "background_preload_ms": round(
+                    float(bootstrap_metrics["control_plane.background_preload_ms"]), 2
+                ),
+                "background_preload_success": float(
+                    bootstrap_metrics["control_plane.background_preload_success"]
+                ),
             }
         finally:
             second_stack.stop()
@@ -83,3 +125,30 @@ def stream_chat_completion(stack: LiveMelixStack, payload: dict[str, object]) ->
             "status": response.status,
             "body": body,
         }
+
+
+def wait_for_metrics(
+    metrics_path: Path,
+    keys: list[str],
+    *,
+    timeout_seconds: float = 60.0,
+) -> dict[str, float]:
+    deadline = time.perf_counter() + timeout_seconds
+    last_values: dict[str, Any] = {}
+
+    while time.perf_counter() < deadline:
+        if metrics_path.exists():
+            try:
+                payload = read_metrics_export(metrics_path)
+                values = payload.get("values", {})
+                if isinstance(values, dict):
+                    last_values = values
+                    if all(key in values for key in keys):
+                        return {key: float(values[key]) for key in keys}
+            except (OSError, ValueError, json.JSONDecodeError):
+                pass
+        time.sleep(0.05)
+
+    raise RuntimeError(
+        f"Timed out waiting for control plane metrics {keys} in {metrics_path}: last={last_values}"
+    )

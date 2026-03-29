@@ -127,7 +127,12 @@ def test_compute_release_smoke_pass_rate_uses_all_gate_sections() -> None:
 def test_build_phase8_metrics_report_includes_required_probe_names() -> None:
     policy = load_release_gate_policy()
     report = build_phase8_metrics_report(
-        cold_boot_to_ready_ms=812.3,
+        cold_boot={
+            "cold_boot_to_ready_ms": 812.3,
+            "text_ready_preload_ms": 121.4,
+            "background_preload_ms": 944.8,
+            "background_preload_success": 1.0,
+        },
         operator={
             "operator_action_latency_ms": 38.4,
             "registry_job_count": 2,
@@ -154,6 +159,8 @@ def test_build_phase8_metrics_report_includes_required_probe_names() -> None:
                 "adapter_publish_ms": 118.0,
             },
             "recovery": {
+                "restart_to_ready_ms": 624.6,
+                "snapshot_restore_ms": 109.7,
                 "restart_recovery_ms": 13550.49,
                 "restart_recovery_success_rate": 100.0,
             },
@@ -165,7 +172,11 @@ def test_build_phase8_metrics_report_includes_required_probe_names() -> None:
 
     metrics = report["metrics"]
     assert metrics["desktop.cold_boot_to_ready_ms"] == 812.3
+    assert metrics["desktop.text_ready_preload_ms"] == 121.4
+    assert metrics["desktop.background_preload_ms"] == 944.8
     assert metrics["desktop.operator_action_latency_ms"] == 38.4
+    assert metrics["desktop.restart_to_ready_ms"] == 624.6
+    assert metrics["desktop.snapshot_restore_ms"] == 109.7
     assert metrics["desktop.restart_recovery_ms"] == 13550.49
     assert metrics["desktop.crash_recovery_success_rate"] == 100.0
     assert metrics["release.benchmark_regression_pct"] == 0.0

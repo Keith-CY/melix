@@ -664,6 +664,107 @@ struct PythonBridgeWorkerClientTests {
         #expect(await catalog.dispatchHandle(for: "melix-dev-text") == nil)
     }
 
+    @Test("text-ready preload records both legacy and text-ready bootstrap metrics")
+    func textReadyPreloadRecordsLegacyAndTextReadyBootstrapMetrics() async throws {
+        var response = Melix_Worker_V1_LoadModelResponse()
+        response.ok = true
+        response.modelHandle = "melix-dev-text::bridge"
+
+        let runner = ScriptedBridgeRunner()
+        await runner.setUnaryResponse(
+            .loadModel,
+            line: bridgeMessageLine(message: try response.serializedData())
+        )
+
+        let client = PythonBridgeWorkerClient(socketPath: "/tmp/melix-test.sock", runner: runner)
+        let catalog = ModelCatalog()
+        let metricsStore = MetricsStore()
+
+        await BootstrapPreloadCoordinator.preloadTextReadyModel(
+            workerClient: client,
+            modelCatalog: catalog,
+            metricsStore: metricsStore
+        )
+
+        let metrics = await metricsStore.snapshot().values
+        #expect(await catalog.dispatchHandle(for: "melix-dev-text") == "melix-dev-text::bridge")
+        #expect(metrics["control_plane.worker_preload_ms", default: -1] >= 0)
+        #expect(
+            metrics["control_plane.worker_preload_ms", default: -1]
+            == metrics["control_plane.text_ready_preload_ms", default: -2]
+        )
+    }
+
+    @Test("background python preload warms phase-seven models and records completion metrics")
+    func backgroundPythonPreloadWarmsPhaseSevenModelsAndRecordsCompletionMetrics() async throws {
+        var response = Melix_Worker_V1_LoadModelResponse()
+        response.ok = true
+
+        let runner = ScriptedBridgeRunner()
+        for modelID in [
+            "melix-dev-embed",
+            "melix-dev-rerank",
+            "melix-dev-ocr",
+            "melix-dev-vlm",
+            "melix-dev-transcribe",
+            "melix-dev-speech",
+            "melix-dev-image",
+        ] {
+            response.modelHandle = "\(modelID)::bridge"
+            await runner.enqueueUnaryResponse(
+                .loadModel,
+                line: bridgeMessageLine(message: try response.serializedData())
+            )
+        }
+
+        let client = PythonBridgeWorkerClient(socketPath: "/tmp/melix-test.sock", runner: runner)
+        let catalog = ModelCatalog(seedModels: ModelCatalog.phaseSevenContractSeedModels())
+        let metricsStore = MetricsStore()
+
+        let task = BootstrapPreloadCoordinator.startBackgroundPhaseSevenPythonPreload(
+            workerClient: client,
+            modelCatalog: catalog,
+            metricsStore: metricsStore
+        )
+        await task.value
+
+        let metrics = await metricsStore.snapshot().values
+        #expect(await catalog.dispatchHandle(for: "melix-dev-image") == "melix-dev-image::bridge")
+        #expect(await catalog.dispatchHandle(for: "melix-dev-transcribe") == "melix-dev-transcribe::bridge")
+        #expect(metrics["control_plane.background_preload_ms", default: -1] >= 0)
+        #expect(metrics["control_plane.background_preload_success", default: -1] == 1)
+    }
+
+    @Test("background python preload records a failure metric when preload aborts early")
+    func backgroundPythonPreloadRecordsAFailureMetricWhenPreloadAbortsEarly() async throws {
+        var response = Melix_Worker_V1_LoadModelResponse()
+        response.ok = true
+        response.modelHandle = "melix-dev-embed::bridge"
+
+        let runner = ScriptedBridgeRunner()
+        await runner.setUnaryResponse(
+            .loadModel,
+            line: bridgeMessageLine(message: try response.serializedData())
+        )
+
+        let client = PythonBridgeWorkerClient(socketPath: "/tmp/melix-test.sock", runner: runner)
+        let catalog = ModelCatalog(seedModels: ModelCatalog.phaseSevenContractSeedModels())
+        let metricsStore = MetricsStore()
+
+        let task = BootstrapPreloadCoordinator.startBackgroundPhaseSevenPythonPreload(
+            workerClient: client,
+            modelCatalog: catalog,
+            metricsStore: metricsStore
+        )
+        await task.value
+
+        let metrics = await metricsStore.snapshot().values
+        #expect(await catalog.dispatchHandle(for: "melix-dev-embed") == "melix-dev-embed::bridge")
+        #expect(await catalog.dispatchHandle(for: "melix-dev-image") == nil)
+        #expect(metrics["control_plane.background_preload_ms", default: -1] >= 0)
+        #expect(metrics["control_plane.background_preload_success", default: -1] == 0)
+    }
+
     @Test("repo-root initializer can dispatch with an existing python path")
     func repoRootInitializerCanDispatchWithAnExistingPythonPath() async throws {
         let fixtureRoot = try makeProcessBridgeFixtureRepo()

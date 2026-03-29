@@ -10,9 +10,10 @@ from tests.integration.helpers import LiveMelixStack
 
 def test_image_generation_endpoint_returns_job_and_artifact_metadata() -> None:
     stack = LiveMelixStack(Path(__file__).resolve().parents[2])
-    stack.start()
 
     try:
+        stack.start()
+        stack.wait_for_models(["melix-dev-image"])
         request = urllib.request.Request(
             stack.image_generations_url(),
             data=json.dumps(
@@ -48,9 +49,10 @@ def test_image_generation_endpoint_returns_job_and_artifact_metadata() -> None:
 
 def test_image_edit_endpoint_returns_generated_output_and_lineage() -> None:
     stack = LiveMelixStack(Path(__file__).resolve().parents[2])
-    stack.start()
 
     try:
+        stack.start()
+        stack.wait_for_models(["melix-dev-image"])
         request = urllib.request.Request(
             stack.image_edits_url(),
             data=json.dumps(

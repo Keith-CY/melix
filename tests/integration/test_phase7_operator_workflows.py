@@ -49,6 +49,7 @@ def test_phase7_operator_smoke_records_image_metrics_and_text_interference() -> 
     )
     try:
         stack.start()
+        stack.wait_for_models(["melix-dev-image"])
         leader_result: dict[str, object] = {}
 
         def run_leader_image_job() -> None:
@@ -157,6 +158,7 @@ def test_phase7_image_cancel_smoke_returns_cancelled_conflict() -> None:
     )
     try:
         stack.start()
+        stack.wait_for_models(["melix-dev-image"])
         result: dict[str, object] = {}
 
         def run_cancel_target() -> None:
