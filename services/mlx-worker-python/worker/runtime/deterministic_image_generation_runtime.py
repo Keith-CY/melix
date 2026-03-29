@@ -5,6 +5,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from threading import Event
+from urllib.parse import unquote, urlparse
 
 from packages.protocol.python.worker.v1 import common_pb2
 
@@ -120,6 +121,129 @@ class DeterministicImageGenerationRuntime:
     def last_probe_snapshot(self) -> ImageGenerationProbeSnapshot:
         return self._last_probe
 
+    def edit_image(
+        self,
+        loaded_model,
+        request,
+        *,
+        job_id: str,
+        images_root: Path,
+        cancel_event: Event,
+    ) -> DeterministicImageGenerationResult:
+        started = time.monotonic()
+        width, height = self._parse_size(request.size or "1024x1024")
+        image_count = max(1, int(request.n or 1))
+        image_format = self._normalized_format(request.response_format)
+        mime_type = self._mime_type_for_format(image_format)
+        output_dir = self._output_dir(images_root, "edited", job_id)
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        if cancel_event.is_set():
+            raise ImageGenerationCancelled("Image edit was canceled.")
+
+        source_bytes, source_format = self._resolve_edit_input(
+            inline_bytes=bytes(request.image),
+            uri=request.image_uri,
+            label="image edit source",
+        )
+        mask_bytes, mask_format = self._resolve_optional_edit_input(
+            inline_bytes=bytes(request.mask),
+            uri=request.mask_uri,
+            label="image edit mask",
+        )
+
+        artifacts: list[common_pb2.ImageArtifactMetadata] = []
+        artifact_publish_ms = 0.0
+
+        source_path = output_dir / f"source.{source_format}"
+        artifact_publish_ms += self._write_bytes(source_path, source_bytes)
+        artifacts.append(
+            self._artifact_metadata(
+                job_id=job_id,
+                artifact_id=f"{job_id}::source",
+                role=common_pb2.IMAGE_ARTIFACT_EDIT_SOURCE,
+                mime_type=self._mime_type_for_format(source_format),
+                image_format=source_format,
+                width=width,
+                height=height,
+                payload=source_bytes,
+                storage_path=source_path,
+                variant_index=0,
+            )
+        )
+
+        if mask_bytes is not None:
+            mask_path = output_dir / f"mask.{mask_format}"
+            artifact_publish_ms += self._write_bytes(mask_path, mask_bytes)
+            artifacts.append(
+                self._artifact_metadata(
+                    job_id=job_id,
+                    artifact_id=f"{job_id}::mask",
+                    role=common_pb2.IMAGE_ARTIFACT_MASK,
+                    mime_type=self._mime_type_for_format(mask_format),
+                    image_format=mask_format,
+                    width=width,
+                    height=height,
+                    payload=mask_bytes,
+                    storage_path=mask_path,
+                    variant_index=0,
+                )
+            )
+
+        images: list[bytes] = []
+        for index in range(image_count):
+            if cancel_event.is_set():
+                raise ImageGenerationCancelled("Image edit was canceled.")
+
+            sleep_if_configured("image")
+            payload = self._render_edit_payload(
+                prompt=request.prompt,
+                width=width,
+                height=height,
+                variant=index,
+                model_id=str(loaded_model.get("model_id", "image-model")),
+                strength=float(request.strength or 0.0),
+                source_bytes=source_bytes,
+                mask_bytes=mask_bytes,
+            )
+            artifact_path = output_dir / f"output-{index}.{image_format}"
+            artifact_publish_ms += self._write_bytes(artifact_path, payload)
+            images.append(payload)
+            artifacts.append(
+                self._artifact_metadata(
+                    job_id=job_id,
+                    artifact_id=f"{job_id}::artifact-{index}",
+                    role=common_pb2.IMAGE_ARTIFACT_GENERATED,
+                    mime_type=mime_type,
+                    image_format=image_format,
+                    width=width,
+                    height=height,
+                    payload=payload,
+                    storage_path=artifact_path,
+                    variant_index=index,
+                )
+            )
+
+        total_output_bytes = sum(len(item) for item in images)
+        peak_memory_bytes = max(total_output_bytes + len(source_bytes), width * height)
+        self._last_probe = ImageGenerationProbeSnapshot(
+            job_latency_ms=(time.monotonic() - started) * 1000.0,
+            artifact_publish_ms=artifact_publish_ms,
+            output_bytes=total_output_bytes,
+            peak_memory_bytes=peak_memory_bytes,
+        )
+
+        return DeterministicImageGenerationResult(
+            images=images,
+            artifacts=artifacts,
+            progress=common_pb2.ImageJobProgress(
+                stage="completed",
+                pct=1.0,
+                completed_steps=image_count,
+                total_steps=image_count,
+            ),
+        )
+
     @staticmethod
     def _parse_size(raw_size: str) -> tuple[int, int]:
         width_raw, separator, height_raw = raw_size.lower().partition("x")
@@ -169,5 +293,112 @@ class DeterministicImageGenerationRuntime:
             f"PROMPT={prompt or '<empty>'}\n"
             f"SIZE={width}x{height}\n"
             f"VARIANT={variant}\n"
+        ).encode("utf-8")
+        return b"\x89PNG\r\n\x1a\n" + payload
+
+    @classmethod
+    def _artifact_metadata(
+        cls,
+        *,
+        job_id: str,
+        artifact_id: str,
+        role: int,
+        mime_type: str,
+        image_format: str,
+        width: int,
+        height: int,
+        payload: bytes,
+        storage_path: Path,
+        variant_index: int,
+    ) -> common_pb2.ImageArtifactMetadata:
+        digest = hashlib.sha256(payload).hexdigest()
+        return common_pb2.ImageArtifactMetadata(
+            artifact_id=artifact_id,
+            job_id=job_id,
+            role=role,
+            mime_type=mime_type,
+            format=image_format,
+            width=width,
+            height=height,
+            byte_length=len(payload),
+            storage_uri=str(storage_path),
+            sha256=digest,
+            variant_index=variant_index,
+        )
+
+    @staticmethod
+    def _write_bytes(path: Path, payload: bytes) -> float:
+        started = time.monotonic()
+        path.write_bytes(payload)
+        return (time.monotonic() - started) * 1000.0
+
+    @classmethod
+    def _resolve_edit_input(
+        cls,
+        *,
+        inline_bytes: bytes,
+        uri: str,
+        label: str,
+    ) -> tuple[bytes, str]:
+        if inline_bytes:
+            return inline_bytes, "png"
+        if uri:
+            path = cls._path_from_uri(uri, label=label)
+            return path.read_bytes(), cls._format_from_path(path)
+        raise ValueError(f"No {label} provided.")
+
+    @classmethod
+    def _resolve_optional_edit_input(
+        cls,
+        *,
+        inline_bytes: bytes,
+        uri: str,
+        label: str,
+    ) -> tuple[bytes | None, str]:
+        if inline_bytes:
+            return inline_bytes, "png"
+        if uri:
+            path = cls._path_from_uri(uri, label=label)
+            return path.read_bytes(), cls._format_from_path(path)
+        return None, "png"
+
+    @staticmethod
+    def _path_from_uri(uri: str, *, label: str) -> Path:
+        parsed = urlparse(uri)
+        if parsed.scheme in {"", "file"}:
+            candidate = Path(unquote(parsed.path)) if parsed.scheme == "file" else Path(uri)
+            if not candidate.exists():
+                raise ValueError(f"Missing local {label}: {uri}")
+            return candidate
+        raise ValueError(f"Unsupported {label} URI scheme: {parsed.scheme}")
+
+    @classmethod
+    def _format_from_path(cls, path: Path) -> str:
+        suffix = path.suffix.lstrip(".").lower()
+        return cls._normalized_format(suffix or "png")
+
+    @staticmethod
+    def _render_edit_payload(
+        *,
+        prompt: str,
+        width: int,
+        height: int,
+        variant: int,
+        model_id: str,
+        strength: float,
+        source_bytes: bytes,
+        mask_bytes: bytes | None,
+    ) -> bytes:
+        source_digest = hashlib.sha256(source_bytes).hexdigest()[:12]
+        mask_digest = hashlib.sha256(mask_bytes).hexdigest()[:12] if mask_bytes is not None else "none"
+        payload = (
+            f"MELIX_IMAGE_EDIT\n"
+            f"MODEL={model_id}\n"
+            f"PROMPT={prompt or '<empty>'}\n"
+            f"SIZE={width}x{height}\n"
+            f"VARIANT={variant}\n"
+            f"STRENGTH={strength:.2f}\n"
+            f"SOURCE_SHA={source_digest}\n"
+            f"MASK_SHA={mask_digest}\n"
         ).encode("utf-8")
         return b"\x89PNG\r\n\x1a\n" + payload

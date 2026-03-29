@@ -11,7 +11,10 @@ from worker.engine.maintenance_core import MaintenanceCore
 from worker.grpc_server import WorkerInferenceService, WorkerRuntimeService
 from worker.model_registry.catalog import WorkerModelCatalog
 from worker.registry import WorkerRegistry
-from worker.runtime.deterministic_image_generation_runtime import DeterministicImageGenerationRuntime
+from worker.runtime.deterministic_image_generation_runtime import (
+    DeterministicImageGenerationRuntime,
+    ImageGenerationCancelled,
+)
 from worker.runtime.mlx_text_runtime import MLXTextRuntime
 
 
@@ -110,6 +113,127 @@ def test_image_generate_rejects_non_image_model_handles(tmp_path: Path) -> None:
     assert response.job.operation == "image_generate"
 
 
+def test_image_edit_persists_lineage_and_generated_artifact(tmp_path: Path) -> None:
+    runtime_service, inference_service, _ = build_services(tmp_path)
+    model_handle = load_model(runtime_service, WorkerModelCatalog.dev_image_model())
+    source_path = tmp_path / "edit-source.png"
+    mask_path = tmp_path / "edit-mask.png"
+    source_path.write_bytes(b"SOURCE_IMAGE")
+    mask_path.write_bytes(b"MASK_IMAGE")
+
+    response = inference_service.ImageEdit(
+        inference_pb2.ImageEditRequest(
+            id=common_pb2.RequestIdentity(request_id="image-edit-1"),
+            model_handle=model_handle,
+            prompt="add a comet",
+            image_uri=source_path.as_uri(),
+            mask_uri=mask_path.as_uri(),
+            strength=0.65,
+            size="256x256",
+            response_format="png",
+            n=1,
+        ),
+        context=None,
+    )
+
+    assert response.error.code == ""
+    assert len(response.images) == 1
+    assert response.job.job_id == "image-edit-1::image-edit"
+    assert response.job.state == common_pb2.IMAGE_JOB_COMPLETED
+    assert response.job.progress.stage == "completed"
+    assert len(response.job.artifacts) == 3
+
+    source_artifact, mask_artifact, generated_artifact = response.job.artifacts
+    assert source_artifact.role == common_pb2.IMAGE_ARTIFACT_EDIT_SOURCE
+    assert mask_artifact.role == common_pb2.IMAGE_ARTIFACT_MASK
+    assert generated_artifact.role == common_pb2.IMAGE_ARTIFACT_GENERATED
+    assert Path(source_artifact.storage_uri).read_bytes() == b"SOURCE_IMAGE"
+    assert Path(mask_artifact.storage_uri).read_bytes() == b"MASK_IMAGE"
+    assert Path(generated_artifact.storage_uri).read_bytes() == response.images[0]
+
+
+def test_image_edit_rejects_missing_source_and_invalid_mask_reference(tmp_path: Path) -> None:
+    runtime_service, inference_service, _ = build_services(tmp_path)
+    model_handle = load_model(runtime_service, WorkerModelCatalog.dev_image_model())
+
+    missing_source = inference_service.ImageEdit(
+        inference_pb2.ImageEditRequest(
+            id=common_pb2.RequestIdentity(request_id="image-edit-missing-source"),
+            model_handle=model_handle,
+            prompt="missing source",
+            size="256x256",
+        ),
+        context=None,
+    )
+    missing_mask = inference_service.ImageEdit(
+        inference_pb2.ImageEditRequest(
+            id=common_pb2.RequestIdentity(request_id="image-edit-missing-mask"),
+            model_handle=model_handle,
+            prompt="missing mask",
+            image=b"SOURCE_IMAGE",
+            mask_uri=(tmp_path / "missing-mask.png").as_uri(),
+            size="256x256",
+        ),
+        context=None,
+    )
+
+    assert missing_source.error.code == "invalid_argument"
+    assert missing_source.job.state == common_pb2.IMAGE_JOB_FAILED
+    assert missing_mask.error.code == "invalid_argument"
+    assert missing_mask.job.state == common_pb2.IMAGE_JOB_FAILED
+
+
+def test_image_edit_rejects_non_image_model_handles(tmp_path: Path) -> None:
+    runtime_service, inference_service, _ = build_services(tmp_path)
+    text_model_handle = load_model(runtime_service, WorkerModelCatalog.dev_text_model())
+
+    response = inference_service.ImageEdit(
+        inference_pb2.ImageEditRequest(
+            id=common_pb2.RequestIdentity(request_id="image-edit-wrong-model"),
+            model_handle=text_model_handle,
+            prompt="should fail",
+            image=b"SOURCE_IMAGE",
+            size="256x256",
+        ),
+        context=None,
+    )
+
+    assert response.error.code == "invalid_argument"
+    assert response.job.state == common_pb2.IMAGE_JOB_FAILED
+    assert response.job.operation == "image_edit"
+
+
+def test_image_edit_returns_canceled_job_when_runtime_cancelled(tmp_path: Path) -> None:
+    runtime_service, inference_service, _ = build_services(tmp_path)
+    model_handle = load_model(runtime_service, WorkerModelCatalog.dev_image_model())
+    registry = inference_service._registry
+    original_runtime = registry.image_generation_runtime
+
+    class CancelingImageRuntime:
+        def edit_image(self, *args, **kwargs):
+            raise ImageGenerationCancelled("Image edit was canceled.")
+
+    registry.image_generation_runtime = CancelingImageRuntime()
+    try:
+        response = inference_service.ImageEdit(
+            inference_pb2.ImageEditRequest(
+                id=common_pb2.RequestIdentity(request_id="image-edit-cancelled"),
+                model_handle=model_handle,
+                prompt="cancel this edit",
+                image=b"SOURCE_IMAGE",
+                size="256x256",
+            ),
+            context=None,
+        )
+    finally:
+        registry.image_generation_runtime = original_runtime
+
+    assert response.error.code == "cancelled"
+    assert response.job.state == common_pb2.IMAGE_JOB_CANCELED
+    assert response.job.progress.stage == "canceled"
+    assert response.job.operation == "image_edit"
+
+
 def test_deterministic_image_runtime_reports_probe_snapshot_and_validates_inputs(tmp_path: Path) -> None:
     runtime = DeterministicImageGenerationRuntime()
     loaded_model = runtime.load_model(WorkerModelCatalog.dev_image_model())
@@ -162,4 +286,41 @@ def test_deterministic_image_runtime_reports_probe_snapshot_and_validates_inputs
             job_id="bad-format::image-generate",
             images_root=tmp_path,
             cancel_event=Event(),
+        )
+
+    edit_result = runtime.edit_image(
+        loaded_model,
+        inference_pb2.ImageEditRequest(
+            id=common_pb2.RequestIdentity(request_id="edit-probe"),
+            prompt="mask edit",
+            image=b"SOURCE",
+            mask=b"MASK",
+            size="320x240",
+            response_format="png",
+        ),
+        job_id="edit-probe::image-edit",
+        images_root=tmp_path,
+        cancel_event=Event(),
+    )
+    edit_probe = runtime.last_probe_snapshot()
+
+    assert len(edit_result.images) == 1
+    assert edit_probe.job_latency_ms >= 0.0
+    assert edit_probe.artifact_publish_ms >= 0.0
+
+    cancelled = Event()
+    cancelled.set()
+    with pytest.raises(Exception, match="canceled"):
+        runtime.edit_image(
+            loaded_model,
+            inference_pb2.ImageEditRequest(
+                id=common_pb2.RequestIdentity(request_id="edit-cancelled"),
+                prompt="cancelled",
+                image=b"SOURCE",
+                size="320x240",
+                response_format="png",
+            ),
+            job_id="edit-cancelled::image-edit",
+            images_root=tmp_path,
+            cancel_event=cancelled,
         )

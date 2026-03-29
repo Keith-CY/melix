@@ -18,6 +18,7 @@ from packages.protocol.python.worker.v1 import (
 )
 
 from worker.engine.embedding_core import EmbeddingCore
+from worker.engine.image_edit_core import ImageEditCore
 from worker.engine.engine_core import EngineCore
 from worker.engine.image_generation_core import ImageGenerationCore
 from worker.engine.maintenance_core import MaintenanceCore
@@ -96,6 +97,7 @@ class WorkerInferenceService(inference_pb2_grpc.InferenceServiceServicer):
         self._transcription = TranscriptionCore(registry)
         self._speech = SpeechCore(registry)
         self._image_generation = ImageGenerationCore(registry, images_root=Path(images_root or ".runtime/images"))
+        self._image_edit = ImageEditCore(registry, images_root=Path(images_root or ".runtime/images"))
 
     def Generate(self, request, context):
         yield from self._engine.generate(request)
@@ -136,23 +138,7 @@ class WorkerInferenceService(inference_pb2_grpc.InferenceServiceServicer):
         return self._image_generation.generate(request)
 
     def ImageEdit(self, request, context):
-        error = common_pb2.ErrorStatus(
-            code="unimplemented",
-            message="Image edit is deferred in phase 7.",
-        )
-        return inference_pb2.ImageEditResponse(
-            error=error,
-            job=inference_pb2.ImageJobDescriptor(
-                request_id=request.id.request_id,
-                job_id=f"{request.id.request_id}::image-edit",
-                model_handle=request.model_handle,
-                operation="image_edit",
-                state=common_pb2.IMAGE_JOB_FAILED,
-                progress=common_pb2.ImageJobProgress(stage="failed", pct=0.0),
-                error=error,
-                cancelable=False,
-            ),
-        )
+        return self._image_edit.edit(request)
 
 
 class WorkerMaintenanceService(maintenance_pb2_grpc.MaintenanceServiceServicer):
