@@ -57,6 +57,8 @@ public actor WorkerRegistry {
             return .pythonTranscription
         case .modelCapabilitySpeech:
             return .pythonSpeech
+        case .modelCapabilityImageGeneration:
+            return .pythonImage
         default:
             return model.kind == "text" ? .swiftText : .pythonCompatibility
         }
@@ -81,7 +83,7 @@ public actor WorkerRegistry {
             return rerankClient ?? pythonCompatibilityClient
         case .pythonModelOperations:
             return modelOperationsClient ?? pythonCompatibilityClient
-        case .pythonOCR, .pythonVLM, .pythonTranscription, .pythonSpeech:
+        case .pythonOCR, .pythonVLM, .pythonTranscription, .pythonSpeech, .pythonImage:
             return pythonCompatibilityClient
         }
     }

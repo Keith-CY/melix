@@ -37,6 +37,7 @@ enum ModelCapabilityClass {
   MODEL_CAPABILITY_VLM = 7;
   MODEL_CAPABILITY_TRANSCRIPTION = 8;
   MODEL_CAPABILITY_SPEECH = 9;
+  MODEL_CAPABILITY_IMAGE_GENERATION = 10;
 }
 
 enum WorkerRouteClass {
@@ -50,6 +51,7 @@ enum WorkerRouteClass {
   WORKER_ROUTE_PYTHON_VLM = 7;
   WORKER_ROUTE_PYTHON_TRANSCRIPTION = 8;
   WORKER_ROUTE_PYTHON_SPEECH = 9;
+  WORKER_ROUTE_PYTHON_IMAGE = 10;
 }
 
 enum MemoryResidencyPolicy {
@@ -121,6 +123,46 @@ message MultimodalCapabilities {
   bool supports_vlm = 5;
   bool supports_transcription = 6;
   bool supports_speech = 7;
+}
+
+enum ImageJobState {
+  IMAGE_JOB_STATE_UNSPECIFIED = 0;
+  IMAGE_JOB_QUEUED = 1;
+  IMAGE_JOB_RUNNING = 2;
+  IMAGE_JOB_CANCELED = 3;
+  IMAGE_JOB_FAILED = 4;
+  IMAGE_JOB_COMPLETED = 5;
+}
+
+enum ImageArtifactRole {
+  IMAGE_ARTIFACT_ROLE_UNSPECIFIED = 0;
+  IMAGE_ARTIFACT_INPUT = 1;
+  IMAGE_ARTIFACT_MASK = 2;
+  IMAGE_ARTIFACT_GENERATED = 3;
+  IMAGE_ARTIFACT_EDIT_SOURCE = 4;
+  IMAGE_ARTIFACT_PREVIEW = 5;
+}
+
+message ImageJobProgress {
+  string stage = 1;
+  float pct = 2;
+  uint32 completed_steps = 3;
+  uint32 total_steps = 4;
+}
+
+message ImageArtifactMetadata {
+  string artifact_id = 1;
+  string job_id = 2;
+  ImageArtifactRole role = 3;
+  string mime_type = 4;
+  string format = 5;
+  uint32 width = 6;
+  uint32 height = 7;
+  uint64 byte_length = 8;
+  string storage_uri = 9;
+  string sha256 = 10;
+  uint32 variant_index = 11;
+  map<string, string> ext = 12;
 }
 
 message Capability {

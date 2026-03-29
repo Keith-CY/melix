@@ -8,7 +8,8 @@ public struct ServerSnapshotBuilder {
         metrics: Melix_Controlplane_V1_MetricsSummary,
         queues: Melix_Controlplane_V1_QueueSummary? = nil,
         cache: Melix_Controlplane_V1_CacheSummary? = nil,
-        sessions: [Melix_Controlplane_V1_SessionSummary] = []
+        sessions: [Melix_Controlplane_V1_SessionSummary] = [],
+        imageJobs: [Melix_Controlplane_V1_ImageJobSummary] = []
     ) -> Melix_Controlplane_V1_ServerSnapshot {
         var snapshot = Melix_Controlplane_V1_ServerSnapshot()
         snapshot.serverState = .serverReady
@@ -18,6 +19,7 @@ public struct ServerSnapshotBuilder {
         snapshot.resources = Melix_Controlplane_V1_ResourceSnapshot()
         snapshot.metrics = metrics
         snapshot.sessions = sessions
+        snapshot.imageJobs = imageJobs
         return snapshot
     }
 
@@ -30,6 +32,8 @@ public struct ServerSnapshotBuilder {
             lane(id: "multimodal.vision.background", laneClass: "background-vision"),
             lane(id: "multimodal.audio.transcription.background", laneClass: "background-audio-transcription"),
             lane(id: "multimodal.audio.speech.background", laneClass: "background-audio-speech"),
+            lane(id: "image.generate.background", laneClass: "background-image-generate"),
+            lane(id: "image.edit.background", laneClass: "background-image-edit"),
         ]
         return queue
     }

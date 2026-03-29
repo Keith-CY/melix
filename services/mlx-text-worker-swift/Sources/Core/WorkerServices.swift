@@ -282,6 +282,13 @@ final class InferenceRPCService: Melix_Worker_V1_InferenceService.SimpleServiceP
 
         var response = Melix_Worker_V1_ImageGenerateResponse()
         response.error = makeUnimplementedStatus("ImageGenerate is handled by the Python worker family.")
+        response.job.requestID = request.id.requestID
+        response.job.jobID = "\(request.id.requestID)::image-generate"
+        response.job.modelHandle = request.modelHandle
+        response.job.operation = "image_generate"
+        response.job.state = .imageJobFailed
+        response.job.progress.stage = "failed"
+        response.job.error = response.error
         return response
     }
 
@@ -293,6 +300,13 @@ final class InferenceRPCService: Melix_Worker_V1_InferenceService.SimpleServiceP
 
         var response = Melix_Worker_V1_ImageEditResponse()
         response.error = makeUnimplementedStatus("ImageEdit is handled by the Python worker family.")
+        response.job.requestID = request.id.requestID
+        response.job.jobID = "\(request.id.requestID)::image-edit"
+        response.job.modelHandle = request.modelHandle
+        response.job.operation = "image_edit"
+        response.job.state = .imageJobFailed
+        response.job.progress.stage = "failed"
+        response.job.error = response.error
         return response
     }
 }

@@ -128,9 +128,9 @@ struct WorkerRegistryTests {
         #expect((await registry.client(forModelID: "melix-dev-model-ops") as? RouteTestingWorkerClient) === modelOpsClient)
     }
 
-    @Test("phase six multimodal routes resolve to typed python worker families")
-    func phaseSixMultimodalRoutesResolveToTypedPythonWorkerFamilies() async throws {
-        let catalog = ModelCatalog(seedModels: ModelCatalog.phaseSixContractSeedModels())
+    @Test("phase seven multimodal routes resolve to typed python worker families")
+    func phaseSevenMultimodalRoutesResolveToTypedPythonWorkerFamilies() async throws {
+        let catalog = ModelCatalog(seedModels: ModelCatalog.phaseSevenContractSeedModels())
         let registry = WorkerRegistry(
             defaultTextClient: RouteTestingWorkerClient(),
             pythonCompatibilityClient: RouteTestingWorkerClient(),
@@ -141,6 +141,7 @@ struct WorkerRegistryTests {
         #expect(await registry.route(forModelID: "melix-dev-vlm") == .pythonVLM)
         #expect(await registry.route(forModelID: "melix-dev-transcribe") == .pythonTranscription)
         #expect(await registry.route(forModelID: "melix-dev-speech") == .pythonSpeech)
+        #expect(await registry.route(forModelID: "melix-dev-image") == .pythonImage)
     }
 
     @Test("explicit multimodal route classes override capability inference")
@@ -174,10 +175,17 @@ struct WorkerRegistryTests {
         speechModel.capabilityClass = .modelCapabilityText
         speechModel.routeClass = .workerRoutePythonSpeech
 
+        var imageModel = Melix_Controlplane_V1_ModelSummary()
+        imageModel.modelID = "melix-dev-image"
+        imageModel.kind = "text"
+        imageModel.capabilityClass = .modelCapabilityText
+        imageModel.routeClass = .workerRoutePythonImage
+
         #expect(await registry.route(for: ocrModel) == .pythonOCR)
         #expect(await registry.route(for: vlmModel) == .pythonVLM)
         #expect(await registry.route(for: transcriptionModel) == .pythonTranscription)
         #expect(await registry.route(for: speechModel) == .pythonSpeech)
+        #expect(await registry.route(for: imageModel) == .pythonImage)
     }
 
     @Test("multimodal worker families use the shared compatibility client when present")
@@ -193,6 +201,7 @@ struct WorkerRegistryTests {
         #expect((await registry.client(for: .pythonVLM) as? RouteTestingWorkerClient) === sharedPythonClient)
         #expect((await registry.client(for: .pythonTranscription) as? RouteTestingWorkerClient) === sharedPythonClient)
         #expect((await registry.client(for: .pythonSpeech) as? RouteTestingWorkerClient) === sharedPythonClient)
+        #expect((await registry.client(for: .pythonImage) as? RouteTestingWorkerClient) === sharedPythonClient)
         #expect((await registry.client(for: .swiftText) as? RouteTestingWorkerClient) === defaultTextClient)
     }
 
@@ -204,6 +213,7 @@ struct WorkerRegistryTests {
         #expect(await registry.client(for: .pythonVLM) == nil)
         #expect(await registry.client(for: .pythonTranscription) == nil)
         #expect(await registry.client(for: .pythonSpeech) == nil)
+        #expect(await registry.client(for: .pythonImage) == nil)
     }
 }
 

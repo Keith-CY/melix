@@ -85,6 +85,7 @@ message ControlPlaneEvent {
     LogEvent log = 27;
     Heartbeat heartbeat = 28;
     ResourcePressureEvent resource_pressure = 29;
+    ImageJobStateChanged image_job = 30;
   }
 }
 
@@ -330,6 +331,7 @@ enum ModelCapabilityClass {
   MODEL_CAPABILITY_VLM = 7;
   MODEL_CAPABILITY_TRANSCRIPTION = 8;
   MODEL_CAPABILITY_SPEECH = 9;
+  MODEL_CAPABILITY_IMAGE_GENERATION = 10;
 }
 
 enum WorkerRouteClass {
@@ -343,6 +345,7 @@ enum WorkerRouteClass {
   WORKER_ROUTE_PYTHON_VLM = 7;
   WORKER_ROUTE_PYTHON_TRANSCRIPTION = 8;
   WORKER_ROUTE_PYTHON_SPEECH = 9;
+  WORKER_ROUTE_PYTHON_IMAGE = 10;
 }
 
 enum MemoryResidencyPolicy {
@@ -404,6 +407,64 @@ enum EventTopic {
   EVENT_TOPIC_RESOURCE = 7;
   EVENT_TOPIC_BENCHMARK = 8;
   EVENT_TOPIC_LOG = 9;
+  EVENT_TOPIC_IMAGE = 10;
+}
+
+enum ImageJobState {
+  IMAGE_JOB_STATE_UNSPECIFIED = 0;
+  IMAGE_JOB_QUEUED = 1;
+  IMAGE_JOB_RUNNING = 2;
+  IMAGE_JOB_CANCELED = 3;
+  IMAGE_JOB_FAILED = 4;
+  IMAGE_JOB_COMPLETED = 5;
+}
+
+enum ImageArtifactRole {
+  IMAGE_ARTIFACT_ROLE_UNSPECIFIED = 0;
+  IMAGE_ARTIFACT_INPUT = 1;
+  IMAGE_ARTIFACT_MASK = 2;
+  IMAGE_ARTIFACT_GENERATED = 3;
+  IMAGE_ARTIFACT_EDIT_SOURCE = 4;
+  IMAGE_ARTIFACT_PREVIEW = 5;
+}
+
+message ImageJobProgress {
+  string stage = 1;
+  float pct = 2;
+  uint32 completed_steps = 3;
+  uint32 total_steps = 4;
+}
+
+message ImageArtifactRef {
+  string artifact_id = 1;
+  string job_id = 2;
+  ImageArtifactRole role = 3;
+  string mime_type = 4;
+  string format = 5;
+  uint32 width = 6;
+  uint32 height = 7;
+  uint64 byte_length = 8;
+  string storage_uri = 9;
+  string sha256 = 10;
+  uint32 variant_index = 11;
+  map<string, string> ext = 12;
+}
+
+message ImageJobSummary {
+  string job_id = 1;
+  string request_id = 2;
+  string model_id = 3;
+  string operation = 4;
+  ImageJobState state = 5;
+  string lane = 6;
+  string worker_id = 7;
+  ImageJobProgress progress = 8;
+  repeated ImageArtifactRef artifacts = 9;
+  ErrorStatus error = 10;
+  bool cancelable = 11;
+  int64 created_at_unix_ms = 12;
+  int64 updated_at_unix_ms = 13;
+  string prompt_digest = 14;
 }
 
 message SubscribeRequest {
@@ -423,6 +484,7 @@ message ServerSnapshot {
   MetricsSummary metrics = 7;
   repeated SessionSummary sessions = 8;
   repeated RecentError recent_errors = 9;
+  repeated ImageJobSummary image_jobs = 10;
 }
 
 message WorkerSummary {
@@ -656,6 +718,7 @@ message RequestProgressEvent {
   AccelerationMode acceleration_mode = 11;
   string acceleration_profile_id = 12;
   string draft_model_id = 13;
+  string image_job_id = 14;
 }
 
 message SessionStateChanged {
@@ -685,4 +748,8 @@ message Heartbeat {
 message ResourcePressureEvent {
   string scope = 1;
   ResourceSnapshot resources = 2;
+}
+
+message ImageJobStateChanged {
+  ImageJobSummary job = 1;
 }

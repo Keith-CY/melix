@@ -207,6 +207,7 @@ public enum Melix_Controlplane_V1_ModelCapabilityClass: SwiftProtobuf.Enum, Swif
   case modelCapabilityVlm // = 7
   case modelCapabilityTranscription // = 8
   case modelCapabilitySpeech // = 9
+  case modelCapabilityImageGeneration // = 10
   case UNRECOGNIZED(Int)
 
   public init() {
@@ -225,6 +226,7 @@ public enum Melix_Controlplane_V1_ModelCapabilityClass: SwiftProtobuf.Enum, Swif
     case 7: self = .modelCapabilityVlm
     case 8: self = .modelCapabilityTranscription
     case 9: self = .modelCapabilitySpeech
+    case 10: self = .modelCapabilityImageGeneration
     default: self = .UNRECOGNIZED(rawValue)
     }
   }
@@ -241,6 +243,7 @@ public enum Melix_Controlplane_V1_ModelCapabilityClass: SwiftProtobuf.Enum, Swif
     case .modelCapabilityVlm: return 7
     case .modelCapabilityTranscription: return 8
     case .modelCapabilitySpeech: return 9
+    case .modelCapabilityImageGeneration: return 10
     case .UNRECOGNIZED(let i): return i
     }
   }
@@ -257,6 +260,7 @@ public enum Melix_Controlplane_V1_ModelCapabilityClass: SwiftProtobuf.Enum, Swif
     .modelCapabilityVlm,
     .modelCapabilityTranscription,
     .modelCapabilitySpeech,
+    .modelCapabilityImageGeneration,
   ]
 
 }
@@ -273,6 +277,7 @@ public enum Melix_Controlplane_V1_WorkerRouteClass: SwiftProtobuf.Enum, Swift.Ca
   case workerRoutePythonVlm // = 7
   case workerRoutePythonTranscription // = 8
   case workerRoutePythonSpeech // = 9
+  case workerRoutePythonImage // = 10
   case UNRECOGNIZED(Int)
 
   public init() {
@@ -291,6 +296,7 @@ public enum Melix_Controlplane_V1_WorkerRouteClass: SwiftProtobuf.Enum, Swift.Ca
     case 7: self = .workerRoutePythonVlm
     case 8: self = .workerRoutePythonTranscription
     case 9: self = .workerRoutePythonSpeech
+    case 10: self = .workerRoutePythonImage
     default: self = .UNRECOGNIZED(rawValue)
     }
   }
@@ -307,6 +313,7 @@ public enum Melix_Controlplane_V1_WorkerRouteClass: SwiftProtobuf.Enum, Swift.Ca
     case .workerRoutePythonVlm: return 7
     case .workerRoutePythonTranscription: return 8
     case .workerRoutePythonSpeech: return 9
+    case .workerRoutePythonImage: return 10
     case .UNRECOGNIZED(let i): return i
     }
   }
@@ -323,6 +330,7 @@ public enum Melix_Controlplane_V1_WorkerRouteClass: SwiftProtobuf.Enum, Swift.Ca
     .workerRoutePythonVlm,
     .workerRoutePythonTranscription,
     .workerRoutePythonSpeech,
+    .workerRoutePythonImage,
   ]
 
 }
@@ -543,6 +551,7 @@ public enum Melix_Controlplane_V1_EventTopic: SwiftProtobuf.Enum, Swift.CaseIter
   case resource // = 7
   case benchmark // = 8
   case log // = 9
+  case image // = 10
   case UNRECOGNIZED(Int)
 
   public init() {
@@ -561,6 +570,7 @@ public enum Melix_Controlplane_V1_EventTopic: SwiftProtobuf.Enum, Swift.CaseIter
     case 7: self = .resource
     case 8: self = .benchmark
     case 9: self = .log
+    case 10: self = .image
     default: self = .UNRECOGNIZED(rawValue)
     }
   }
@@ -577,6 +587,7 @@ public enum Melix_Controlplane_V1_EventTopic: SwiftProtobuf.Enum, Swift.CaseIter
     case .resource: return 7
     case .benchmark: return 8
     case .log: return 9
+    case .image: return 10
     case .UNRECOGNIZED(let i): return i
     }
   }
@@ -593,6 +604,107 @@ public enum Melix_Controlplane_V1_EventTopic: SwiftProtobuf.Enum, Swift.CaseIter
     .resource,
     .benchmark,
     .log,
+    .image,
+  ]
+
+}
+
+public enum Melix_Controlplane_V1_ImageJobState: SwiftProtobuf.Enum, Swift.CaseIterable {
+  public typealias RawValue = Int
+  case unspecified // = 0
+  case imageJobQueued // = 1
+  case imageJobRunning // = 2
+  case imageJobCanceled // = 3
+  case imageJobFailed // = 4
+  case imageJobCompleted // = 5
+  case UNRECOGNIZED(Int)
+
+  public init() {
+    self = .unspecified
+  }
+
+  public init?(rawValue: Int) {
+    switch rawValue {
+    case 0: self = .unspecified
+    case 1: self = .imageJobQueued
+    case 2: self = .imageJobRunning
+    case 3: self = .imageJobCanceled
+    case 4: self = .imageJobFailed
+    case 5: self = .imageJobCompleted
+    default: self = .UNRECOGNIZED(rawValue)
+    }
+  }
+
+  public var rawValue: Int {
+    switch self {
+    case .unspecified: return 0
+    case .imageJobQueued: return 1
+    case .imageJobRunning: return 2
+    case .imageJobCanceled: return 3
+    case .imageJobFailed: return 4
+    case .imageJobCompleted: return 5
+    case .UNRECOGNIZED(let i): return i
+    }
+  }
+
+  // The compiler won't synthesize support with the UNRECOGNIZED case.
+  public static let allCases: [Melix_Controlplane_V1_ImageJobState] = [
+    .unspecified,
+    .imageJobQueued,
+    .imageJobRunning,
+    .imageJobCanceled,
+    .imageJobFailed,
+    .imageJobCompleted,
+  ]
+
+}
+
+public enum Melix_Controlplane_V1_ImageArtifactRole: SwiftProtobuf.Enum, Swift.CaseIterable {
+  public typealias RawValue = Int
+  case unspecified // = 0
+  case imageArtifactInput // = 1
+  case imageArtifactMask // = 2
+  case imageArtifactGenerated // = 3
+  case imageArtifactEditSource // = 4
+  case imageArtifactPreview // = 5
+  case UNRECOGNIZED(Int)
+
+  public init() {
+    self = .unspecified
+  }
+
+  public init?(rawValue: Int) {
+    switch rawValue {
+    case 0: self = .unspecified
+    case 1: self = .imageArtifactInput
+    case 2: self = .imageArtifactMask
+    case 3: self = .imageArtifactGenerated
+    case 4: self = .imageArtifactEditSource
+    case 5: self = .imageArtifactPreview
+    default: self = .UNRECOGNIZED(rawValue)
+    }
+  }
+
+  public var rawValue: Int {
+    switch self {
+    case .unspecified: return 0
+    case .imageArtifactInput: return 1
+    case .imageArtifactMask: return 2
+    case .imageArtifactGenerated: return 3
+    case .imageArtifactEditSource: return 4
+    case .imageArtifactPreview: return 5
+    case .UNRECOGNIZED(let i): return i
+    }
+  }
+
+  // The compiler won't synthesize support with the UNRECOGNIZED case.
+  public static let allCases: [Melix_Controlplane_V1_ImageArtifactRole] = [
+    .unspecified,
+    .imageArtifactInput,
+    .imageArtifactMask,
+    .imageArtifactGenerated,
+    .imageArtifactEditSource,
+    .imageArtifactPreview,
   ]
 
 }
@@ -994,6 +1106,14 @@ public struct Melix_Controlplane_V1_ControlPlaneEvent: @unchecked Sendable {
     set {_uniqueStorage()._payload = .resourcePressure(newValue)}
   }
 
+  public var imageJob: Melix_Controlplane_V1_ImageJobStateChanged {
+    get {
+      if case .imageJob(let v)? = _storage._payload {return v}
+      return Melix_Controlplane_V1_ImageJobStateChanged()
+    }
+    set {_uniqueStorage()._payload = .imageJob(newValue)}
+  }
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public enum OneOf_Payload: Equatable, Sendable {
@@ -1007,6 +1127,7 @@ public struct Melix_Controlplane_V1_ControlPlaneEvent: @unchecked Sendable {
     case log(Melix_Controlplane_V1_LogEvent)
     case heartbeat(Melix_Controlplane_V1_Heartbeat)
     case resourcePressure(Melix_Controlplane_V1_ResourcePressureEvent)
+    case imageJob(Melix_Controlplane_V1_ImageJobStateChanged)
 
   }
 
@@ -2051,6 +2172,148 @@ public struct Melix_Controlplane_V1_ModelSettings: Sendable {
   public init() {}
 }
 
+public struct Melix_Controlplane_V1_ImageJobProgress: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var stage: String = String()
+
+  public var pct: Float = 0
+
+  public var completedSteps: UInt32 = 0
+
+  public var totalSteps: UInt32 = 0
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public struct Melix_Controlplane_V1_ImageArtifactRef: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var artifactID: String = String()
+
+  public var jobID: String = String()
+
+  public var role: Melix_Controlplane_V1_ImageArtifactRole = .unspecified
+
+  public var mimeType: String = String()
+
+  public var format: String = String()
+
+  public var width: UInt32 = 0
+
+  public var height: UInt32 = 0
+
+  public var byteLength: UInt64 = 0
+
+  public var storageUri: String = String()
+
+  public var sha256: String = String()
+
+  public var variantIndex: UInt32 = 0
+
+  public var ext: Dictionary<String,String> = [:]
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public struct Melix_Controlplane_V1_ImageJobSummary: @unchecked Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var jobID: String {
+    get {_storage._jobID}
+    set {_uniqueStorage()._jobID = newValue}
+  }
+
+  public var requestID: String {
+    get {_storage._requestID}
+    set {_uniqueStorage()._requestID = newValue}
+  }
+
+  public var modelID: String {
+    get {_storage._modelID}
+    set {_uniqueStorage()._modelID = newValue}
+  }
+
+  public var operation: String {
+    get {_storage._operation}
+    set {_uniqueStorage()._operation = newValue}
+  }
+
+  public var state: Melix_Controlplane_V1_ImageJobState {
+    get {_storage._state}
+    set {_uniqueStorage()._state = newValue}
+  }
+
+  public var lane: String {
+    get {_storage._lane}
+    set {_uniqueStorage()._lane = newValue}
+  }
+
+  public var workerID: String {
+    get {_storage._workerID}
+    set {_uniqueStorage()._workerID = newValue}
+  }
+
+  public var progress: Melix_Controlplane_V1_ImageJobProgress {
+    get {_storage._progress ?? Melix_Controlplane_V1_ImageJobProgress()}
+    set {_uniqueStorage()._progress = newValue}
+  }
+  /// Returns true if `progress` has been explicitly set.
+  public var hasProgress: Bool {_storage._progress != nil}
+  /// Clears the value of `progress`. Subsequent reads from it will return its default value.
+  public mutating func clearProgress() {_uniqueStorage()._progress = nil}
+
+  public var artifacts: [Melix_Controlplane_V1_ImageArtifactRef] {
+    get {_storage._artifacts}
+    set {_uniqueStorage()._artifacts = newValue}
+  }
+
+  public var error: Melix_Controlplane_V1_ErrorStatus {
+    get {_storage._error ?? Melix_Controlplane_V1_ErrorStatus()}
+    set {_uniqueStorage()._error = newValue}
+  }
+  /// Returns true if `error` has been explicitly set.
+  public var hasError: Bool {_storage._error != nil}
+  /// Clears the value of `error`. Subsequent reads from it will return its default value.
+  public mutating func clearError() {_uniqueStorage()._error = nil}
+
+  public var cancelable: Bool {
+    get {_storage._cancelable}
+    set {_uniqueStorage()._cancelable = newValue}
+  }
+
+  public var createdAtUnixMs: Int64 {
+    get {_storage._createdAtUnixMs}
+    set {_uniqueStorage()._createdAtUnixMs = newValue}
+  }
+
+  public var updatedAtUnixMs: Int64 {
+    get {_storage._updatedAtUnixMs}
+    set {_uniqueStorage()._updatedAtUnixMs = newValue}
+  }
+
+  public var promptDigest: String {
+    get {_storage._promptDigest}
+    set {_uniqueStorage()._promptDigest = newValue}
+  }
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+
+  fileprivate var _storage = _StorageClass.defaultInstance
+}
+
 public struct Melix_Controlplane_V1_SubscribeRequest: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
@@ -2133,6 +2396,11 @@ public struct Melix_Controlplane_V1_ServerSnapshot: @unchecked Sendable {
   public var recentErrors: [Melix_Controlplane_V1_RecentError] {
     get {_storage._recentErrors}
     set {_uniqueStorage()._recentErrors = newValue}
+  }
+
+  public var imageJobs: [Melix_Controlplane_V1_ImageJobSummary] {
+    get {_storage._imageJobs}
+    set {_uniqueStorage()._imageJobs = newValue}
   }
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
@@ -2853,6 +3121,8 @@ public struct Melix_Controlplane_V1_RequestProgressEvent: Sendable {
 
   public var draftModelID: String = String()
 
+  public var imageJobID: String = String()
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -2975,6 +3245,27 @@ public struct Melix_Controlplane_V1_ResourcePressureEvent: Sendable {
   fileprivate var _resources: Melix_Controlplane_V1_ResourceSnapshot? = nil
 }
 
+public struct Melix_Controlplane_V1_ImageJobStateChanged: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var job: Melix_Controlplane_V1_ImageJobSummary {
+    get {_job ?? Melix_Controlplane_V1_ImageJobSummary()}
+    set {_job = newValue}
+  }
+  /// Returns true if `job` has been explicitly set.
+  public var hasJob: Bool {self._job != nil}
+  /// Clears the value of `job`. Subsequent reads from it will return its default value.
+  public mutating func clearJob() {self._job = nil}
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+
+  fileprivate var _job: Melix_Controlplane_V1_ImageJobSummary? = nil
+}
+
 // MARK: - Code below here is support for the SwiftProtobuf runtime.
 
 fileprivate let _protobuf_package = "melix.controlplane.v1"
@@ -2992,11 +3283,11 @@ extension Melix_Controlplane_V1_ModelState: SwiftProtobuf._ProtoNameProviding {
 }
 
 extension Melix_Controlplane_V1_ModelCapabilityClass: SwiftProtobuf._ProtoNameProviding {
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0MODEL_CAPABILITY_CLASS_UNSPECIFIED\0\u{1}MODEL_CAPABILITY_TEXT\0\u{1}MODEL_CAPABILITY_EMBEDDING\0\u{1}MODEL_CAPABILITY_RERANK\0\u{1}MODEL_CAPABILITY_MODEL_OPERATIONS\0\u{1}MODEL_CAPABILITY_MULTIMODAL\0\u{1}MODEL_CAPABILITY_OCR\0\u{1}MODEL_CAPABILITY_VLM\0\u{1}MODEL_CAPABILITY_TRANSCRIPTION\0\u{1}MODEL_CAPABILITY_SPEECH\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0MODEL_CAPABILITY_CLASS_UNSPECIFIED\0\u{1}MODEL_CAPABILITY_TEXT\0\u{1}MODEL_CAPABILITY_EMBEDDING\0\u{1}MODEL_CAPABILITY_RERANK\0\u{1}MODEL_CAPABILITY_MODEL_OPERATIONS\0\u{1}MODEL_CAPABILITY_MULTIMODAL\0\u{1}MODEL_CAPABILITY_OCR\0\u{1}MODEL_CAPABILITY_VLM\0\u{1}MODEL_CAPABILITY_TRANSCRIPTION\0\u{1}MODEL_CAPABILITY_SPEECH\0\u{1}MODEL_CAPABILITY_IMAGE_GENERATION\0")
 }
 
 extension Melix_Controlplane_V1_WorkerRouteClass: SwiftProtobuf._ProtoNameProviding {
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0WORKER_ROUTE_CLASS_UNSPECIFIED\0\u{1}WORKER_ROUTE_SWIFT_TEXT\0\u{1}WORKER_ROUTE_PYTHON_TEXT_COMPATIBILITY\0\u{1}WORKER_ROUTE_PYTHON_EMBEDDING\0\u{1}WORKER_ROUTE_PYTHON_RERANK\0\u{1}WORKER_ROUTE_PYTHON_MODEL_OPERATIONS\0\u{1}WORKER_ROUTE_PYTHON_OCR\0\u{1}WORKER_ROUTE_PYTHON_VLM\0\u{1}WORKER_ROUTE_PYTHON_TRANSCRIPTION\0\u{1}WORKER_ROUTE_PYTHON_SPEECH\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0WORKER_ROUTE_CLASS_UNSPECIFIED\0\u{1}WORKER_ROUTE_SWIFT_TEXT\0\u{1}WORKER_ROUTE_PYTHON_TEXT_COMPATIBILITY\0\u{1}WORKER_ROUTE_PYTHON_EMBEDDING\0\u{1}WORKER_ROUTE_PYTHON_RERANK\0\u{1}WORKER_ROUTE_PYTHON_MODEL_OPERATIONS\0\u{1}WORKER_ROUTE_PYTHON_OCR\0\u{1}WORKER_ROUTE_PYTHON_VLM\0\u{1}WORKER_ROUTE_PYTHON_TRANSCRIPTION\0\u{1}WORKER_ROUTE_PYTHON_SPEECH\0\u{1}WORKER_ROUTE_PYTHON_IMAGE\0")
 }
 
 extension Melix_Controlplane_V1_MemoryResidencyPolicy: SwiftProtobuf._ProtoNameProviding {
@@ -3016,7 +3307,15 @@ extension Melix_Controlplane_V1_AccelerationMode: SwiftProtobuf._ProtoNameProvid
 }
 
 extension Melix_Controlplane_V1_EventTopic: SwiftProtobuf._ProtoNameProviding {
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0EVENT_TOPIC_UNSPECIFIED\0\u{1}EVENT_TOPIC_SERVER\0\u{1}EVENT_TOPIC_WORKER\0\u{1}EVENT_TOPIC_MODEL\0\u{1}EVENT_TOPIC_REQUEST\0\u{1}EVENT_TOPIC_SESSION\0\u{1}EVENT_TOPIC_CACHE\0\u{1}EVENT_TOPIC_RESOURCE\0\u{1}EVENT_TOPIC_BENCHMARK\0\u{1}EVENT_TOPIC_LOG\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0EVENT_TOPIC_UNSPECIFIED\0\u{1}EVENT_TOPIC_SERVER\0\u{1}EVENT_TOPIC_WORKER\0\u{1}EVENT_TOPIC_MODEL\0\u{1}EVENT_TOPIC_REQUEST\0\u{1}EVENT_TOPIC_SESSION\0\u{1}EVENT_TOPIC_CACHE\0\u{1}EVENT_TOPIC_RESOURCE\0\u{1}EVENT_TOPIC_BENCHMARK\0\u{1}EVENT_TOPIC_LOG\0\u{1}EVENT_TOPIC_IMAGE\0")
+}
+
+extension Melix_Controlplane_V1_ImageJobState: SwiftProtobuf._ProtoNameProviding {
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0IMAGE_JOB_STATE_UNSPECIFIED\0\u{1}IMAGE_JOB_QUEUED\0\u{1}IMAGE_JOB_RUNNING\0\u{1}IMAGE_JOB_CANCELED\0\u{1}IMAGE_JOB_FAILED\0\u{1}IMAGE_JOB_COMPLETED\0")
+}
+
+extension Melix_Controlplane_V1_ImageArtifactRole: SwiftProtobuf._ProtoNameProviding {
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0IMAGE_ARTIFACT_ROLE_UNSPECIFIED\0\u{1}IMAGE_ARTIFACT_INPUT\0\u{1}IMAGE_ARTIFACT_MASK\0\u{1}IMAGE_ARTIFACT_GENERATED\0\u{1}IMAGE_ARTIFACT_EDIT_SOURCE\0\u{1}IMAGE_ARTIFACT_PREVIEW\0")
 }
 
 extension Melix_Controlplane_V1_ErrorStatus: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
@@ -3558,7 +3857,7 @@ extension Melix_Controlplane_V1_ControlPlaneResponse: SwiftProtobuf.Message, Swi
 
 extension Melix_Controlplane_V1_ControlPlaneEvent: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ControlPlaneEvent"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}event_type\0\u{1}source\0\u{3}correlation_id\0\u{3}causation_id\0\u{3}request_id\0\u{3}actor_id\0\u{3}subscription_id\0\u{1}seq\0\u{3}emitted_at_unix_ms\0\u{4}\u{b}server_state\0\u{3}worker_state\0\u{3}model_state\0\u{3}request_progress\0\u{3}session_state\0\u{3}cache_stats\0\u{3}bench_progress\0\u{1}log\0\u{1}heartbeat\0\u{3}resource_pressure\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}event_type\0\u{1}source\0\u{3}correlation_id\0\u{3}causation_id\0\u{3}request_id\0\u{3}actor_id\0\u{3}subscription_id\0\u{1}seq\0\u{3}emitted_at_unix_ms\0\u{4}\u{b}server_state\0\u{3}worker_state\0\u{3}model_state\0\u{3}request_progress\0\u{3}session_state\0\u{3}cache_stats\0\u{3}bench_progress\0\u{1}log\0\u{1}heartbeat\0\u{3}resource_pressure\0\u{3}image_job\0")
 
   fileprivate class _StorageClass {
     var _eventType: String = String()
@@ -3748,6 +4047,19 @@ extension Melix_Controlplane_V1_ControlPlaneEvent: SwiftProtobuf.Message, SwiftP
             _storage._payload = .resourcePressure(v)
           }
         }()
+        case 30: try {
+          var v: Melix_Controlplane_V1_ImageJobStateChanged?
+          var hadOneofValue = false
+          if let current = _storage._payload {
+            hadOneofValue = true
+            if case .imageJob(let m) = current {v = m}
+          }
+          try decoder.decodeSingularMessageField(value: &v)
+          if let v = v {
+            if hadOneofValue {try decoder.handleConflictingOneOf()}
+            _storage._payload = .imageJob(v)
+          }
+        }()
         default: break
         }
       }
@@ -3827,6 +4139,10 @@ extension Melix_Controlplane_V1_ControlPlaneEvent: SwiftProtobuf.Message, SwiftP
       case .resourcePressure?: try {
         guard case .resourcePressure(let v)? = _storage._payload else { preconditionFailure() }
         try visitor.visitSingularMessageField(value: v, fieldNumber: 29)
+      }()
+      case .imageJob?: try {
+        guard case .imageJob(let v)? = _storage._payload else { preconditionFailure() }
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 30)
       }()
       case nil: break
       }
@@ -6017,6 +6333,297 @@ extension Melix_Controlplane_V1_ModelSettings: SwiftProtobuf.Message, SwiftProto
   }
 }
 
+extension Melix_Controlplane_V1_ImageJobProgress: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".ImageJobProgress"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}stage\0\u{1}pct\0\u{3}completed_steps\0\u{3}total_steps\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.stage) }()
+      case 2: try { try decoder.decodeSingularFloatField(value: &self.pct) }()
+      case 3: try { try decoder.decodeSingularUInt32Field(value: &self.completedSteps) }()
+      case 4: try { try decoder.decodeSingularUInt32Field(value: &self.totalSteps) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.stage.isEmpty {
+      try visitor.visitSingularStringField(value: self.stage, fieldNumber: 1)
+    }
+    if self.pct.bitPattern != 0 {
+      try visitor.visitSingularFloatField(value: self.pct, fieldNumber: 2)
+    }
+    if self.completedSteps != 0 {
+      try visitor.visitSingularUInt32Field(value: self.completedSteps, fieldNumber: 3)
+    }
+    if self.totalSteps != 0 {
+      try visitor.visitSingularUInt32Field(value: self.totalSteps, fieldNumber: 4)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Melix_Controlplane_V1_ImageJobProgress, rhs: Melix_Controlplane_V1_ImageJobProgress) -> Bool {
+    if lhs.stage != rhs.stage {return false}
+    if lhs.pct != rhs.pct {return false}
+    if lhs.completedSteps != rhs.completedSteps {return false}
+    if lhs.totalSteps != rhs.totalSteps {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+extension Melix_Controlplane_V1_ImageArtifactRef: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".ImageArtifactRef"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}artifact_id\0\u{3}job_id\0\u{1}role\0\u{3}mime_type\0\u{1}format\0\u{1}width\0\u{1}height\0\u{3}byte_length\0\u{3}storage_uri\0\u{1}sha256\0\u{3}variant_index\0\u{1}ext\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.artifactID) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.jobID) }()
+      case 3: try { try decoder.decodeSingularEnumField(value: &self.role) }()
+      case 4: try { try decoder.decodeSingularStringField(value: &self.mimeType) }()
+      case 5: try { try decoder.decodeSingularStringField(value: &self.format) }()
+      case 6: try { try decoder.decodeSingularUInt32Field(value: &self.width) }()
+      case 7: try { try decoder.decodeSingularUInt32Field(value: &self.height) }()
+      case 8: try { try decoder.decodeSingularUInt64Field(value: &self.byteLength) }()
+      case 9: try { try decoder.decodeSingularStringField(value: &self.storageUri) }()
+      case 10: try { try decoder.decodeSingularStringField(value: &self.sha256) }()
+      case 11: try { try decoder.decodeSingularUInt32Field(value: &self.variantIndex) }()
+      case 12: try { try decoder.decodeMapField(fieldType: SwiftProtobuf._ProtobufMap<SwiftProtobuf.ProtobufString,SwiftProtobuf.ProtobufString>.self, value: &self.ext) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.artifactID.isEmpty {
+      try visitor.visitSingularStringField(value: self.artifactID, fieldNumber: 1)
+    }
+    if !self.jobID.isEmpty {
+      try visitor.visitSingularStringField(value: self.jobID, fieldNumber: 2)
+    }
+    if self.role != .unspecified {
+      try visitor.visitSingularEnumField(value: self.role, fieldNumber: 3)
+    }
+    if !self.mimeType.isEmpty {
+      try visitor.visitSingularStringField(value: self.mimeType, fieldNumber: 4)
+    }
+    if !self.format.isEmpty {
+      try visitor.visitSingularStringField(value: self.format, fieldNumber: 5)
+    }
+    if self.width != 0 {
+      try visitor.visitSingularUInt32Field(value: self.width, fieldNumber: 6)
+    }
+    if self.height != 0 {
+      try visitor.visitSingularUInt32Field(value: self.height, fieldNumber: 7)
+    }
+    if self.byteLength != 0 {
+      try visitor.visitSingularUInt64Field(value: self.byteLength, fieldNumber: 8)
+    }
+    if !self.storageUri.isEmpty {
+      try visitor.visitSingularStringField(value: self.storageUri, fieldNumber: 9)
+    }
+    if !self.sha256.isEmpty {
+      try visitor.visitSingularStringField(value: self.sha256, fieldNumber: 10)
+    }
+    if self.variantIndex != 0 {
+      try visitor.visitSingularUInt32Field(value: self.variantIndex, fieldNumber: 11)
+    }
+    if !self.ext.isEmpty {
+      try visitor.visitMapField(fieldType: SwiftProtobuf._ProtobufMap<SwiftProtobuf.ProtobufString,SwiftProtobuf.ProtobufString>.self, value: self.ext, fieldNumber: 12)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Melix_Controlplane_V1_ImageArtifactRef, rhs: Melix_Controlplane_V1_ImageArtifactRef) -> Bool {
+    if lhs.artifactID != rhs.artifactID {return false}
+    if lhs.jobID != rhs.jobID {return false}
+    if lhs.role != rhs.role {return false}
+    if lhs.mimeType != rhs.mimeType {return false}
+    if lhs.format != rhs.format {return false}
+    if lhs.width != rhs.width {return false}
+    if lhs.height != rhs.height {return false}
+    if lhs.byteLength != rhs.byteLength {return false}
+    if lhs.storageUri != rhs.storageUri {return false}
+    if lhs.sha256 != rhs.sha256 {return false}
+    if lhs.variantIndex != rhs.variantIndex {return false}
+    if lhs.ext != rhs.ext {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+extension Melix_Controlplane_V1_ImageJobSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".ImageJobSummary"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}job_id\0\u{3}request_id\0\u{3}model_id\0\u{1}operation\0\u{1}state\0\u{1}lane\0\u{3}worker_id\0\u{1}progress\0\u{1}artifacts\0\u{1}error\0\u{1}cancelable\0\u{3}created_at_unix_ms\0\u{3}updated_at_unix_ms\0\u{3}prompt_digest\0")
+
+  fileprivate class _StorageClass {
+    var _jobID: String = String()
+    var _requestID: String = String()
+    var _modelID: String = String()
+    var _operation: String = String()
+    var _state: Melix_Controlplane_V1_ImageJobState = .unspecified
+    var _lane: String = String()
+    var _workerID: String = String()
+    var _progress: Melix_Controlplane_V1_ImageJobProgress? = nil
+    var _artifacts: [Melix_Controlplane_V1_ImageArtifactRef] = []
+    var _error: Melix_Controlplane_V1_ErrorStatus? = nil
+    var _cancelable: Bool = false
+    var _createdAtUnixMs: Int64 = 0
+    var _updatedAtUnixMs: Int64 = 0
+    var _promptDigest: String = String()
+
+      // This property is used as the initial default value for new instances of the type.
+      // The type itself is protecting the reference to its storage via CoW semantics.
+      // This will force a copy to be made of this reference when the first mutation occurs;
+      // hence, it is safe to mark this as `nonisolated(unsafe)`.
+      static nonisolated(unsafe) let defaultInstance = _StorageClass()
+
+    private init() {}
+
+    init(copying source: _StorageClass) {
+      _jobID = source._jobID
+      _requestID = source._requestID
+      _modelID = source._modelID
+      _operation = source._operation
+      _state = source._state
+      _lane = source._lane
+      _workerID = source._workerID
+      _progress = source._progress
+      _artifacts = source._artifacts
+      _error = source._error
+      _cancelable = source._cancelable
+      _createdAtUnixMs = source._createdAtUnixMs
+      _updatedAtUnixMs = source._updatedAtUnixMs
+      _promptDigest = source._promptDigest
+    }
+  }
+
+  fileprivate mutating func _uniqueStorage() -> _StorageClass {
+    if !isKnownUniquelyReferenced(&_storage) {
+      _storage = _StorageClass(copying: _storage)
+    }
+    return _storage
+  }
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    _ = _uniqueStorage()
+    try withExtendedLifetime(_storage) { (_storage: _StorageClass) in
+      while let fieldNumber = try decoder.nextFieldNumber() {
+        // The use of inline closures is to circumvent an issue where the compiler
+        // allocates stack space for every case branch when no optimizations are
+        // enabled. https://github.com/apple/swift-protobuf/issues/1034
+        switch fieldNumber {
+        case 1: try { try decoder.decodeSingularStringField(value: &_storage._jobID) }()
+        case 2: try { try decoder.decodeSingularStringField(value: &_storage._requestID) }()
+        case 3: try { try decoder.decodeSingularStringField(value: &_storage._modelID) }()
+        case 4: try { try decoder.decodeSingularStringField(value: &_storage._operation) }()
+        case 5: try { try decoder.decodeSingularEnumField(value: &_storage._state) }()
+        case 6: try { try decoder.decodeSingularStringField(value: &_storage._lane) }()
+        case 7: try { try decoder.decodeSingularStringField(value: &_storage._workerID) }()
+        case 8: try { try decoder.decodeSingularMessageField(value: &_storage._progress) }()
+        case 9: try { try decoder.decodeRepeatedMessageField(value: &_storage._artifacts) }()
+        case 10: try { try decoder.decodeSingularMessageField(value: &_storage._error) }()
+        case 11: try { try decoder.decodeSingularBoolField(value: &_storage._cancelable) }()
+        case 12: try { try decoder.decodeSingularInt64Field(value: &_storage._createdAtUnixMs) }()
+        case 13: try { try decoder.decodeSingularInt64Field(value: &_storage._updatedAtUnixMs) }()
+        case 14: try { try decoder.decodeSingularStringField(value: &_storage._promptDigest) }()
+        default: break
+        }
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    try withExtendedLifetime(_storage) { (_storage: _StorageClass) in
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every if/case branch local when no optimizations
+      // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+      // https://github.com/apple/swift-protobuf/issues/1182
+      if !_storage._jobID.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._jobID, fieldNumber: 1)
+      }
+      if !_storage._requestID.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._requestID, fieldNumber: 2)
+      }
+      if !_storage._modelID.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._modelID, fieldNumber: 3)
+      }
+      if !_storage._operation.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._operation, fieldNumber: 4)
+      }
+      if _storage._state != .unspecified {
+        try visitor.visitSingularEnumField(value: _storage._state, fieldNumber: 5)
+      }
+      if !_storage._lane.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._lane, fieldNumber: 6)
+      }
+      if !_storage._workerID.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._workerID, fieldNumber: 7)
+      }
+      try { if let v = _storage._progress {
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 8)
+      } }()
+      if !_storage._artifacts.isEmpty {
+        try visitor.visitRepeatedMessageField(value: _storage._artifacts, fieldNumber: 9)
+      }
+      try { if let v = _storage._error {
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 10)
+      } }()
+      if _storage._cancelable != false {
+        try visitor.visitSingularBoolField(value: _storage._cancelable, fieldNumber: 11)
+      }
+      if _storage._createdAtUnixMs != 0 {
+        try visitor.visitSingularInt64Field(value: _storage._createdAtUnixMs, fieldNumber: 12)
+      }
+      if _storage._updatedAtUnixMs != 0 {
+        try visitor.visitSingularInt64Field(value: _storage._updatedAtUnixMs, fieldNumber: 13)
+      }
+      if !_storage._promptDigest.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._promptDigest, fieldNumber: 14)
+      }
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Melix_Controlplane_V1_ImageJobSummary, rhs: Melix_Controlplane_V1_ImageJobSummary) -> Bool {
+    if lhs._storage !== rhs._storage {
+      let storagesAreEqual: Bool = withExtendedLifetime((lhs._storage, rhs._storage)) { (_args: (_StorageClass, _StorageClass)) in
+        let _storage = _args.0
+        let rhs_storage = _args.1
+        if _storage._jobID != rhs_storage._jobID {return false}
+        if _storage._requestID != rhs_storage._requestID {return false}
+        if _storage._modelID != rhs_storage._modelID {return false}
+        if _storage._operation != rhs_storage._operation {return false}
+        if _storage._state != rhs_storage._state {return false}
+        if _storage._lane != rhs_storage._lane {return false}
+        if _storage._workerID != rhs_storage._workerID {return false}
+        if _storage._progress != rhs_storage._progress {return false}
+        if _storage._artifacts != rhs_storage._artifacts {return false}
+        if _storage._error != rhs_storage._error {return false}
+        if _storage._cancelable != rhs_storage._cancelable {return false}
+        if _storage._createdAtUnixMs != rhs_storage._createdAtUnixMs {return false}
+        if _storage._updatedAtUnixMs != rhs_storage._updatedAtUnixMs {return false}
+        if _storage._promptDigest != rhs_storage._promptDigest {return false}
+        return true
+      }
+      if !storagesAreEqual {return false}
+    }
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
 extension Melix_Controlplane_V1_SubscribeRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".SubscribeRequest"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}client_instance_id\0\u{3}last_subscription_id\0\u{3}last_seen_seq\0\u{1}topics\0")
@@ -6064,7 +6671,7 @@ extension Melix_Controlplane_V1_SubscribeRequest: SwiftProtobuf.Message, SwiftPr
 
 extension Melix_Controlplane_V1_ServerSnapshot: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ServerSnapshot"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}server_state\0\u{1}workers\0\u{1}models\0\u{1}queues\0\u{1}cache\0\u{1}resources\0\u{1}metrics\0\u{1}sessions\0\u{3}recent_errors\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}server_state\0\u{1}workers\0\u{1}models\0\u{1}queues\0\u{1}cache\0\u{1}resources\0\u{1}metrics\0\u{1}sessions\0\u{3}recent_errors\0\u{3}image_jobs\0")
 
   fileprivate class _StorageClass {
     var _serverState: Melix_Controlplane_V1_ServerState = .unspecified
@@ -6076,6 +6683,7 @@ extension Melix_Controlplane_V1_ServerSnapshot: SwiftProtobuf.Message, SwiftProt
     var _metrics: Melix_Controlplane_V1_MetricsSummary? = nil
     var _sessions: [Melix_Controlplane_V1_SessionSummary] = []
     var _recentErrors: [Melix_Controlplane_V1_RecentError] = []
+    var _imageJobs: [Melix_Controlplane_V1_ImageJobSummary] = []
 
       // This property is used as the initial default value for new instances of the type.
       // The type itself is protecting the reference to its storage via CoW semantics.
@@ -6095,6 +6703,7 @@ extension Melix_Controlplane_V1_ServerSnapshot: SwiftProtobuf.Message, SwiftProt
       _metrics = source._metrics
       _sessions = source._sessions
       _recentErrors = source._recentErrors
+      _imageJobs = source._imageJobs
     }
   }
 
@@ -6122,6 +6731,7 @@ extension Melix_Controlplane_V1_ServerSnapshot: SwiftProtobuf.Message, SwiftProt
         case 7: try { try decoder.decodeSingularMessageField(value: &_storage._metrics) }()
         case 8: try { try decoder.decodeRepeatedMessageField(value: &_storage._sessions) }()
         case 9: try { try decoder.decodeRepeatedMessageField(value: &_storage._recentErrors) }()
+        case 10: try { try decoder.decodeRepeatedMessageField(value: &_storage._imageJobs) }()
         default: break
         }
       }
@@ -6161,6 +6771,9 @@ extension Melix_Controlplane_V1_ServerSnapshot: SwiftProtobuf.Message, SwiftProt
       if !_storage._recentErrors.isEmpty {
         try visitor.visitRepeatedMessageField(value: _storage._recentErrors, fieldNumber: 9)
       }
+      if !_storage._imageJobs.isEmpty {
+        try visitor.visitRepeatedMessageField(value: _storage._imageJobs, fieldNumber: 10)
+      }
     }
     try unknownFields.traverse(visitor: &visitor)
   }
@@ -6179,6 +6792,7 @@ extension Melix_Controlplane_V1_ServerSnapshot: SwiftProtobuf.Message, SwiftProt
         if _storage._metrics != rhs_storage._metrics {return false}
         if _storage._sessions != rhs_storage._sessions {return false}
         if _storage._recentErrors != rhs_storage._recentErrors {return false}
+        if _storage._imageJobs != rhs_storage._imageJobs {return false}
         return true
       }
       if !storagesAreEqual {return false}
@@ -7707,7 +8321,7 @@ extension Melix_Controlplane_V1_ModelStateChanged: SwiftProtobuf.Message, SwiftP
 
 extension Melix_Controlplane_V1_RequestProgressEvent: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".RequestProgressEvent"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}request_id\0\u{1}phase\0\u{1}lane\0\u{3}queue_delay_ms\0\u{3}priority_score\0\u{1}backpressure\0\u{3}worker_id\0\u{3}admission_state\0\u{3}queue_position\0\u{3}decode_handle\0\u{3}acceleration_mode\0\u{3}acceleration_profile_id\0\u{3}draft_model_id\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}request_id\0\u{1}phase\0\u{1}lane\0\u{3}queue_delay_ms\0\u{3}priority_score\0\u{1}backpressure\0\u{3}worker_id\0\u{3}admission_state\0\u{3}queue_position\0\u{3}decode_handle\0\u{3}acceleration_mode\0\u{3}acceleration_profile_id\0\u{3}draft_model_id\0\u{3}image_job_id\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -7728,6 +8342,7 @@ extension Melix_Controlplane_V1_RequestProgressEvent: SwiftProtobuf.Message, Swi
       case 11: try { try decoder.decodeSingularEnumField(value: &self.accelerationMode) }()
       case 12: try { try decoder.decodeSingularStringField(value: &self.accelerationProfileID) }()
       case 13: try { try decoder.decodeSingularStringField(value: &self.draftModelID) }()
+      case 14: try { try decoder.decodeSingularStringField(value: &self.imageJobID) }()
       default: break
       }
     }
@@ -7773,6 +8388,9 @@ extension Melix_Controlplane_V1_RequestProgressEvent: SwiftProtobuf.Message, Swi
     if !self.draftModelID.isEmpty {
       try visitor.visitSingularStringField(value: self.draftModelID, fieldNumber: 13)
     }
+    if !self.imageJobID.isEmpty {
+      try visitor.visitSingularStringField(value: self.imageJobID, fieldNumber: 14)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -7790,6 +8408,7 @@ extension Melix_Controlplane_V1_RequestProgressEvent: SwiftProtobuf.Message, Swi
     if lhs.accelerationMode != rhs.accelerationMode {return false}
     if lhs.accelerationProfileID != rhs.accelerationProfileID {return false}
     if lhs.draftModelID != rhs.draftModelID {return false}
+    if lhs.imageJobID != rhs.imageJobID {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -8007,6 +8626,40 @@ extension Melix_Controlplane_V1_ResourcePressureEvent: SwiftProtobuf.Message, Sw
   public static func ==(lhs: Melix_Controlplane_V1_ResourcePressureEvent, rhs: Melix_Controlplane_V1_ResourcePressureEvent) -> Bool {
     if lhs.scope != rhs.scope {return false}
     if lhs._resources != rhs._resources {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+extension Melix_Controlplane_V1_ImageJobStateChanged: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".ImageJobStateChanged"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}job\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularMessageField(value: &self._job) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    // The use of inline closures is to circumvent an issue where the compiler
+    // allocates stack space for every if/case branch local when no optimizations
+    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+    // https://github.com/apple/swift-protobuf/issues/1182
+    try { if let v = self._job {
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 1)
+    } }()
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Melix_Controlplane_V1_ImageJobStateChanged, rhs: Melix_Controlplane_V1_ImageJobStateChanged) -> Bool {
+    if lhs._job != rhs._job {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

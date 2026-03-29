@@ -65,6 +65,7 @@ Current phase-status and planning documents:
 - `plans/2026-03-29-p6-m5-native-chat-panel.md`
 - `plans/2026-03-29-p6-m6-isolation-observability.md`
 - `plans/2026-03-29-p6-m7-integration-operator-workflows.md`
+- `plans/2026-03-29-p7-m1-image-job-contracts.md`
 - `plans/2026-03-28-p1-m2-swift-text-worker-scaffold.md`
 - `plans/2026-03-28-p1-m3-swift-runtime-lifecycle.md`
 - `plans/2026-03-28-p1-m4-swift-generate-abort.md`

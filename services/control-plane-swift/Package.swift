@@ -30,6 +30,7 @@ let package = Package(
             sources: [
                 "EnginePool",
                 "HTTPGateway",
+                "ImageJobs",
                 "Metrics",
                 "ModelCatalog",
                 "Requests",

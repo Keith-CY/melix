@@ -25,6 +25,7 @@ struct ControlPlaneServiceTests {
         #expect(response.snapshot.serverState == .serverReady)
         #expect(response.features.contains("cache-metadata"))
         #expect(response.features.contains("session-graph"))
+        #expect(response.features.contains("image-jobs"))
     }
 
     @Test("execute handles server.get_snapshot")

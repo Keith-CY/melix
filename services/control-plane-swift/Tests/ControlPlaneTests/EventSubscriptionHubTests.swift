@@ -306,8 +306,8 @@ struct CoreUtilityTests {
         #expect(model.features == ["chat"])
     }
 
-    @Test("server snapshot builder exposes Phase 2 lane identities")
-    func serverSnapshotBuilderExposesPhaseTwoLaneIdentities() {
+    @Test("server snapshot builder exposes Phase 7 lane identities")
+    func serverSnapshotBuilderExposesPhaseSevenLaneIdentities() {
         let builder = ServerSnapshotBuilder()
         let snapshot = builder.build(
             models: [],
@@ -315,7 +315,7 @@ struct CoreUtilityTests {
         )
 
         let lanes = snapshot.queues.lanes
-        #expect(lanes.count == 6)
+        #expect(lanes.count == 8)
         #expect(lanes.map(\.laneID) == [
             "text.decode.interactive",
             "text.prefill.hot",
@@ -323,6 +323,8 @@ struct CoreUtilityTests {
             "multimodal.vision.background",
             "multimodal.audio.transcription.background",
             "multimodal.audio.speech.background",
+            "image.generate.background",
+            "image.edit.background",
         ])
         #expect(lanes.map(\.laneClass) == [
             "interactive-decode",
@@ -331,6 +333,8 @@ struct CoreUtilityTests {
             "background-vision",
             "background-audio-transcription",
             "background-audio-speech",
+            "background-image-generate",
+            "background-image-edit",
         ])
     }
 }

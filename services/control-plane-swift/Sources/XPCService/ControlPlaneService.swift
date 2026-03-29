@@ -13,6 +13,7 @@ public actor ControlPlaneService {
     private let schedulerReadModel: SchedulerReadModel
     private let cacheMetadataStore: CacheMetadataStore
     private let sessionGraphStore: SessionGraphStore
+    private let imageJobReadModel: ImageJobReadModel
     private let workerRegistry: WorkerRegistry?
     private let requestCoordinator: RequestCoordinator?
     private let chatTranslator: ChatRequestTranslator
@@ -28,12 +29,18 @@ public actor ControlPlaneService {
         schedulerReadModel: SchedulerReadModel? = nil,
         cacheMetadataStore: CacheMetadataStore = CacheMetadataStore(),
         sessionGraphStore: SessionGraphStore = SessionGraphStore(),
+        imageJobReadModel: ImageJobReadModel? = nil,
         workerRegistry: WorkerRegistry? = nil,
         requestCoordinator: RequestCoordinator? = nil,
         chatTranslator: ChatRequestTranslator = ChatRequestTranslator()
     ) {
         let resolvedSchedulerReadModel = schedulerReadModel ?? SchedulerReadModel(
             metricsStore: metricsStore,
+            eventPublisher: { event in
+                await eventHub.publish(event)
+            }
+        )
+        let resolvedImageJobReadModel = imageJobReadModel ?? ImageJobReadModel(
             eventPublisher: { event in
                 await eventHub.publish(event)
             }
@@ -47,6 +54,7 @@ public actor ControlPlaneService {
         self.enginePool = enginePool
         self.cacheMetadataStore = cacheMetadataStore
         self.sessionGraphStore = sessionGraphStore
+        self.imageJobReadModel = resolvedImageJobReadModel
         self.workerRegistry = workerRegistry
         self.schedulerReadModel = resolvedSchedulerReadModel
         self.requestCoordinator = requestCoordinator ?? workerRegistry.map { registry in
@@ -69,7 +77,7 @@ public actor ControlPlaneService {
         response.protocolVersion = request.protocolVersion
         response.serverVersion = serverVersion
         response.daemonInstanceID = daemonInstanceID
-        response.features = ["xpc", "models", "metrics", "cache-metadata", "session-graph"]
+        response.features = ["xpc", "models", "metrics", "cache-metadata", "session-graph", "image-jobs"]
         response.snapshot = await buildSnapshot()
         return response
     }
@@ -338,12 +346,14 @@ public actor ControlPlaneService {
         let queues = await schedulerReadModel.snapshot()
         let cache = await cacheMetadataStore.cacheSummary()
         let sessions = await sessionGraphStore.sessionSummaries()
+        let imageJobs = await imageJobReadModel.snapshot()
         return snapshotBuilder.build(
             models: models,
             metrics: metrics,
             queues: queues,
             cache: cache,
-            sessions: sessions
+            sessions: sessions,
+            imageJobs: imageJobs
         )
     }
 

@@ -10,6 +10,7 @@ public enum WorkerRouteKind: String, Sendable, Equatable {
     case pythonVLM = "python_vlm"
     case pythonTranscription = "python_transcription"
     case pythonSpeech = "python_speech"
+    case pythonImage = "python_image"
 
     public init?(routeClass: Melix_Controlplane_V1_WorkerRouteClass) {
         switch routeClass {
@@ -31,6 +32,8 @@ public enum WorkerRouteKind: String, Sendable, Equatable {
             self = .pythonTranscription
         case .workerRoutePythonSpeech:
             self = .pythonSpeech
+        case .workerRoutePythonImage:
+            self = .pythonImage
         default:
             return nil
         }
@@ -44,6 +47,8 @@ public enum WorkerRouteKind: String, Sendable, Equatable {
             return "multimodal.audio.transcription.background"
         case .pythonSpeech:
             return "multimodal.audio.speech.background"
+        case .pythonImage:
+            return "image.generate.background"
         default:
             return "text.decode.interactive"
         }
@@ -55,6 +60,8 @@ public enum WorkerRouteKind: String, Sendable, Equatable {
             return "swift-text-worker"
         case .pythonOCR, .pythonVLM, .pythonTranscription, .pythonSpeech:
             return "python-multimodal-worker"
+        case .pythonImage:
+            return "python-image-worker"
         default:
             return "python-worker"
         }
@@ -62,7 +69,7 @@ public enum WorkerRouteKind: String, Sendable, Equatable {
 
     public var isMultimodalBackgroundRoute: Bool {
         switch self {
-        case .pythonOCR, .pythonVLM, .pythonTranscription, .pythonSpeech:
+        case .pythonOCR, .pythonVLM, .pythonTranscription, .pythonSpeech, .pythonImage:
             return true
         default:
             return false

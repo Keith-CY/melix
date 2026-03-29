@@ -5,7 +5,7 @@ import MelixControlPlaneCore
 @main
 enum MelixControlPlaneBootstrap {
     static func main() async throws {
-        let modelCatalog = ModelCatalog(seedModels: ModelCatalog.phaseSixContractSeedModels())
+        let modelCatalog = ModelCatalog(seedModels: ModelCatalog.phaseSevenContractSeedModels())
         let bootstrapEnvironment = BootstrapEnvironment(environment: ProcessInfo.processInfo.environment)
         let metricsStore = MetricsStore(exportPath: bootstrapEnvironment.controlPlaneMetricsPath)
         let eventHub = EventSubscriptionHub()

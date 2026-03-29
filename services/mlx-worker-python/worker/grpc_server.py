@@ -131,13 +131,41 @@ class WorkerInferenceService(inference_pb2_grpc.InferenceServiceServicer):
         return self._speech.speak(request)
 
     def ImageGenerate(self, request, context):
+        error = common_pb2.ErrorStatus(
+            code="unimplemented",
+            message="Image generation is deferred in phase 7.",
+        )
         return inference_pb2.ImageGenerateResponse(
-            error=common_pb2.ErrorStatus(code="unimplemented", message="Image generation is deferred in phase 0.")
+            error=error,
+            job=inference_pb2.ImageJobDescriptor(
+                request_id=request.id.request_id,
+                job_id=f"{request.id.request_id}::image-generate",
+                model_handle=request.model_handle,
+                operation="image_generate",
+                state=common_pb2.IMAGE_JOB_FAILED,
+                progress=common_pb2.ImageJobProgress(stage="failed", pct=0.0),
+                error=error,
+                cancelable=False,
+            ),
         )
 
     def ImageEdit(self, request, context):
+        error = common_pb2.ErrorStatus(
+            code="unimplemented",
+            message="Image edit is deferred in phase 7.",
+        )
         return inference_pb2.ImageEditResponse(
-            error=common_pb2.ErrorStatus(code="unimplemented", message="Image edit is deferred in phase 0.")
+            error=error,
+            job=inference_pb2.ImageJobDescriptor(
+                request_id=request.id.request_id,
+                job_id=f"{request.id.request_id}::image-edit",
+                model_handle=request.model_handle,
+                operation="image_edit",
+                state=common_pb2.IMAGE_JOB_FAILED,
+                progress=common_pb2.ImageJobProgress(stage="failed", pct=0.0),
+                error=error,
+                cancelable=False,
+            ),
         )
 
 

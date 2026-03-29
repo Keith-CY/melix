@@ -1247,6 +1247,10 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(speakResponse.error.code, "unimplemented")
         XCTAssertEqual(imageGenerateResponse.error.code, "unimplemented")
         XCTAssertEqual(imageEditResponse.error.code, "unimplemented")
+        XCTAssertEqual(imageGenerateResponse.job.state, .imageJobFailed)
+        XCTAssertEqual(imageGenerateResponse.job.operation, "image_generate")
+        XCTAssertEqual(imageEditResponse.job.state, .imageJobFailed)
+        XCTAssertEqual(imageEditResponse.job.operation, "image_edit")
     }
 
     func testPrefillReturnsDecodeHandleAndMetricsForLoadedModel() async throws {

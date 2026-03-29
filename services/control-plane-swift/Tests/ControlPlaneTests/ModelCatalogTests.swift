@@ -57,4 +57,16 @@ struct ModelCatalogTests {
         #expect(models.first(where: { $0.modelID == "melix-dev-transcribe" })?.supportedTasks == ["transcribe"])
         #expect(models.first(where: { $0.modelID == "melix-dev-speech" })?.supportedModalities == ["text", "audio"])
     }
+
+    @Test("phase seven contract seed models expose image routes and tasks")
+    func phaseSevenContractSeedModelsExposeImageRoutesAndTasks() async throws {
+        let catalog = ModelCatalog(seedModels: ModelCatalog.phaseSevenContractSeedModels())
+        let models = await catalog.listModels()
+
+        let imageModel = try #require(models.first(where: { $0.modelID == "melix-dev-image" }))
+        #expect(imageModel.capabilityClass == .modelCapabilityImageGeneration)
+        #expect(imageModel.routeClass == .workerRoutePythonImage)
+        #expect(imageModel.supportedTasks == ["image_generate", "image_edit"])
+        #expect(imageModel.supportedModalities == ["text", "image"])
+    }
 }

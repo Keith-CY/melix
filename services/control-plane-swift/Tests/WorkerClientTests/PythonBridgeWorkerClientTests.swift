@@ -5,7 +5,7 @@ import Testing
 @testable import MelixControlPlaneCore
 import MelixWorkerProtocol
 
-@Suite("Python Bridge Worker Client")
+@Suite("Python Bridge Worker Client", .serialized)
 struct PythonBridgeWorkerClientTests {
     @Test("handshake responses drive dispatch availability")
     func handshakeResponsesDriveDispatchAvailability() async throws {

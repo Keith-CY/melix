@@ -280,11 +280,14 @@ message ImageGenerateRequest {
   string size = 4;
   uint32 n = 5;
   map<string, string> ext = 6;
+  string response_format = 7;
+  string artifact_namespace = 8;
 }
 
 message ImageGenerateResponse {
   repeated bytes images = 1;
   ErrorStatus error = 2;
+  ImageJobDescriptor job = 3;
 }
 
 message ImageEditRequest {
@@ -294,9 +297,30 @@ message ImageEditRequest {
   bytes image = 4;
   float strength = 5;
   string size = 6;
+  bytes mask = 7;
+  uint32 n = 8;
+  string response_format = 9;
+  string image_uri = 10;
+  string mask_uri = 11;
+  map<string, string> ext = 12;
 }
 
 message ImageEditResponse {
   repeated bytes images = 1;
   ErrorStatus error = 2;
+  ImageJobDescriptor job = 3;
+}
+
+message ImageJobDescriptor {
+  string request_id = 1;
+  string job_id = 2;
+  string model_handle = 3;
+  string operation = 4;
+  ImageJobState state = 5;
+  ImageJobProgress progress = 6;
+  repeated ImageArtifactMetadata artifacts = 7;
+  ErrorStatus error = 8;
+  bool cancelable = 9;
+  int64 created_at_unix_ms = 10;
+  int64 updated_at_unix_ms = 11;
 }

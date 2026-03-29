@@ -37,6 +37,7 @@ public enum Melix_Worker_V1_ModelCapabilityClass: SwiftProtobuf.Enum, Swift.Case
   case modelCapabilityVlm // = 7
   case modelCapabilityTranscription // = 8
   case modelCapabilitySpeech // = 9
+  case modelCapabilityImageGeneration // = 10
   case UNRECOGNIZED(Int)
 
   public init() {
@@ -55,6 +56,7 @@ public enum Melix_Worker_V1_ModelCapabilityClass: SwiftProtobuf.Enum, Swift.Case
     case 7: self = .modelCapabilityVlm
     case 8: self = .modelCapabilityTranscription
     case 9: self = .modelCapabilitySpeech
+    case 10: self = .modelCapabilityImageGeneration
     default: self = .UNRECOGNIZED(rawValue)
     }
   }
@@ -71,6 +73,7 @@ public enum Melix_Worker_V1_ModelCapabilityClass: SwiftProtobuf.Enum, Swift.Case
     case .modelCapabilityVlm: return 7
     case .modelCapabilityTranscription: return 8
     case .modelCapabilitySpeech: return 9
+    case .modelCapabilityImageGeneration: return 10
     case .UNRECOGNIZED(let i): return i
     }
   }
@@ -87,6 +90,7 @@ public enum Melix_Worker_V1_ModelCapabilityClass: SwiftProtobuf.Enum, Swift.Case
     .modelCapabilityVlm,
     .modelCapabilityTranscription,
     .modelCapabilitySpeech,
+    .modelCapabilityImageGeneration,
   ]
 
 }
@@ -103,6 +107,7 @@ public enum Melix_Worker_V1_WorkerRouteClass: SwiftProtobuf.Enum, Swift.CaseIter
   case workerRoutePythonVlm // = 7
   case workerRoutePythonTranscription // = 8
   case workerRoutePythonSpeech // = 9
+  case workerRoutePythonImage // = 10
   case UNRECOGNIZED(Int)
 
   public init() {
@@ -121,6 +126,7 @@ public enum Melix_Worker_V1_WorkerRouteClass: SwiftProtobuf.Enum, Swift.CaseIter
     case 7: self = .workerRoutePythonVlm
     case 8: self = .workerRoutePythonTranscription
     case 9: self = .workerRoutePythonSpeech
+    case 10: self = .workerRoutePythonImage
     default: self = .UNRECOGNIZED(rawValue)
     }
   }
@@ -137,6 +143,7 @@ public enum Melix_Worker_V1_WorkerRouteClass: SwiftProtobuf.Enum, Swift.CaseIter
     case .workerRoutePythonVlm: return 7
     case .workerRoutePythonTranscription: return 8
     case .workerRoutePythonSpeech: return 9
+    case .workerRoutePythonImage: return 10
     case .UNRECOGNIZED(let i): return i
     }
   }
@@ -153,6 +160,7 @@ public enum Melix_Worker_V1_WorkerRouteClass: SwiftProtobuf.Enum, Swift.CaseIter
     .workerRoutePythonVlm,
     .workerRoutePythonTranscription,
     .workerRoutePythonSpeech,
+    .workerRoutePythonImage,
   ]
 
 }
@@ -275,6 +283,106 @@ public enum Melix_Worker_V1_MediaSourceKind: SwiftProtobuf.Enum, Swift.CaseItera
     .unspecified,
     .mediaSourceUri,
     .mediaSourceInlineBytes,
+  ]
+
+}
+
+public enum Melix_Worker_V1_ImageJobState: SwiftProtobuf.Enum, Swift.CaseIterable {
+  public typealias RawValue = Int
+  case unspecified // = 0
+  case imageJobQueued // = 1
+  case imageJobRunning // = 2
+  case imageJobCanceled // = 3
+  case imageJobFailed // = 4
+  case imageJobCompleted // = 5
+  case UNRECOGNIZED(Int)
+
+  public init() {
+    self = .unspecified
+  }
+
+  public init?(rawValue: Int) {
+    switch rawValue {
+    case 0: self = .unspecified
+    case 1: self = .imageJobQueued
+    case 2: self = .imageJobRunning
+    case 3: self = .imageJobCanceled
+    case 4: self = .imageJobFailed
+    case 5: self = .imageJobCompleted
+    default: self = .UNRECOGNIZED(rawValue)
+    }
+  }
+
+  public var rawValue: Int {
+    switch self {
+    case .unspecified: return 0
+    case .imageJobQueued: return 1
+    case .imageJobRunning: return 2
+    case .imageJobCanceled: return 3
+    case .imageJobFailed: return 4
+    case .imageJobCompleted: return 5
+    case .UNRECOGNIZED(let i): return i
+    }
+  }
+
+  // The compiler won't synthesize support with the UNRECOGNIZED case.
+  public static let allCases: [Melix_Worker_V1_ImageJobState] = [
+    .unspecified,
+    .imageJobQueued,
+    .imageJobRunning,
+    .imageJobCanceled,
+    .imageJobFailed,
+    .imageJobCompleted,
+  ]
+
+}
+
+public enum Melix_Worker_V1_ImageArtifactRole: SwiftProtobuf.Enum, Swift.CaseIterable {
+  public typealias RawValue = Int
+  case unspecified // = 0
+  case imageArtifactInput // = 1
+  case imageArtifactMask // = 2
+  case imageArtifactGenerated // = 3
+  case imageArtifactEditSource // = 4
+  case imageArtifactPreview // = 5
+  case UNRECOGNIZED(Int)
+
+  public init() {
+    self = .unspecified
+  }
+
+  public init?(rawValue: Int) {
+    switch rawValue {
+    case 0: self = .unspecified
+    case 1: self = .imageArtifactInput
+    case 2: self = .imageArtifactMask
+    case 3: self = .imageArtifactGenerated
+    case 4: self = .imageArtifactEditSource
+    case 5: self = .imageArtifactPreview
+    default: self = .UNRECOGNIZED(rawValue)
+    }
+  }
+
+  public var rawValue: Int {
+    switch self {
+    case .unspecified: return 0
+    case .imageArtifactInput: return 1
+    case .imageArtifactMask: return 2
+    case .imageArtifactGenerated: return 3
+    case .imageArtifactEditSource: return 4
+    case .imageArtifactPreview: return 5
+    case .UNRECOGNIZED(let i): return i
+    }
+  }
+
+  // The compiler won't synthesize support with the UNRECOGNIZED case.
+  public static let allCases: [Melix_Worker_V1_ImageArtifactRole] = [
+    .unspecified,
+    .imageArtifactInput,
+    .imageArtifactMask,
+    .imageArtifactGenerated,
+    .imageArtifactEditSource,
+    .imageArtifactPreview,
   ]
 
 }
@@ -686,6 +794,58 @@ public struct Melix_Worker_V1_MultimodalCapabilities: Sendable {
   public var supportsTranscription: Bool = false
 
   public var supportsSpeech: Bool = false
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public struct Melix_Worker_V1_ImageJobProgress: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var stage: String = String()
+
+  public var pct: Float = 0
+
+  public var completedSteps: UInt32 = 0
+
+  public var totalSteps: UInt32 = 0
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public struct Melix_Worker_V1_ImageArtifactMetadata: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var artifactID: String = String()
+
+  public var jobID: String = String()
+
+  public var role: Melix_Worker_V1_ImageArtifactRole = .unspecified
+
+  public var mimeType: String = String()
+
+  public var format: String = String()
+
+  public var width: UInt32 = 0
+
+  public var height: UInt32 = 0
+
+  public var byteLength: UInt64 = 0
+
+  public var storageUri: String = String()
+
+  public var sha256: String = String()
+
+  public var variantIndex: UInt32 = 0
+
+  public var ext: Dictionary<String,String> = [:]
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -1160,11 +1320,11 @@ public struct Melix_Worker_V1_BlockRef: Sendable {
 fileprivate let _protobuf_package = "melix.worker.v1"
 
 extension Melix_Worker_V1_ModelCapabilityClass: SwiftProtobuf._ProtoNameProviding {
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0MODEL_CAPABILITY_CLASS_UNSPECIFIED\0\u{1}MODEL_CAPABILITY_TEXT\0\u{1}MODEL_CAPABILITY_EMBEDDING\0\u{1}MODEL_CAPABILITY_RERANK\0\u{1}MODEL_CAPABILITY_MODEL_OPERATIONS\0\u{1}MODEL_CAPABILITY_MULTIMODAL\0\u{1}MODEL_CAPABILITY_OCR\0\u{1}MODEL_CAPABILITY_VLM\0\u{1}MODEL_CAPABILITY_TRANSCRIPTION\0\u{1}MODEL_CAPABILITY_SPEECH\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0MODEL_CAPABILITY_CLASS_UNSPECIFIED\0\u{1}MODEL_CAPABILITY_TEXT\0\u{1}MODEL_CAPABILITY_EMBEDDING\0\u{1}MODEL_CAPABILITY_RERANK\0\u{1}MODEL_CAPABILITY_MODEL_OPERATIONS\0\u{1}MODEL_CAPABILITY_MULTIMODAL\0\u{1}MODEL_CAPABILITY_OCR\0\u{1}MODEL_CAPABILITY_VLM\0\u{1}MODEL_CAPABILITY_TRANSCRIPTION\0\u{1}MODEL_CAPABILITY_SPEECH\0\u{1}MODEL_CAPABILITY_IMAGE_GENERATION\0")
 }
 
 extension Melix_Worker_V1_WorkerRouteClass: SwiftProtobuf._ProtoNameProviding {
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0WORKER_ROUTE_CLASS_UNSPECIFIED\0\u{1}WORKER_ROUTE_SWIFT_TEXT\0\u{1}WORKER_ROUTE_PYTHON_TEXT_COMPATIBILITY\0\u{1}WORKER_ROUTE_PYTHON_EMBEDDING\0\u{1}WORKER_ROUTE_PYTHON_RERANK\0\u{1}WORKER_ROUTE_PYTHON_MODEL_OPERATIONS\0\u{1}WORKER_ROUTE_PYTHON_OCR\0\u{1}WORKER_ROUTE_PYTHON_VLM\0\u{1}WORKER_ROUTE_PYTHON_TRANSCRIPTION\0\u{1}WORKER_ROUTE_PYTHON_SPEECH\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0WORKER_ROUTE_CLASS_UNSPECIFIED\0\u{1}WORKER_ROUTE_SWIFT_TEXT\0\u{1}WORKER_ROUTE_PYTHON_TEXT_COMPATIBILITY\0\u{1}WORKER_ROUTE_PYTHON_EMBEDDING\0\u{1}WORKER_ROUTE_PYTHON_RERANK\0\u{1}WORKER_ROUTE_PYTHON_MODEL_OPERATIONS\0\u{1}WORKER_ROUTE_PYTHON_OCR\0\u{1}WORKER_ROUTE_PYTHON_VLM\0\u{1}WORKER_ROUTE_PYTHON_TRANSCRIPTION\0\u{1}WORKER_ROUTE_PYTHON_SPEECH\0\u{1}WORKER_ROUTE_PYTHON_IMAGE\0")
 }
 
 extension Melix_Worker_V1_MemoryResidencyPolicy: SwiftProtobuf._ProtoNameProviding {
@@ -1177,6 +1337,14 @@ extension Melix_Worker_V1_MediaType: SwiftProtobuf._ProtoNameProviding {
 
 extension Melix_Worker_V1_MediaSourceKind: SwiftProtobuf._ProtoNameProviding {
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0MEDIA_SOURCE_KIND_UNSPECIFIED\0\u{1}MEDIA_SOURCE_URI\0\u{1}MEDIA_SOURCE_INLINE_BYTES\0")
+}
+
+extension Melix_Worker_V1_ImageJobState: SwiftProtobuf._ProtoNameProviding {
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0IMAGE_JOB_STATE_UNSPECIFIED\0\u{1}IMAGE_JOB_QUEUED\0\u{1}IMAGE_JOB_RUNNING\0\u{1}IMAGE_JOB_CANCELED\0\u{1}IMAGE_JOB_FAILED\0\u{1}IMAGE_JOB_COMPLETED\0")
+}
+
+extension Melix_Worker_V1_ImageArtifactRole: SwiftProtobuf._ProtoNameProviding {
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0IMAGE_ARTIFACT_ROLE_UNSPECIFIED\0\u{1}IMAGE_ARTIFACT_INPUT\0\u{1}IMAGE_ARTIFACT_MASK\0\u{1}IMAGE_ARTIFACT_GENERATED\0\u{1}IMAGE_ARTIFACT_EDIT_SOURCE\0\u{1}IMAGE_ARTIFACT_PREVIEW\0")
 }
 
 extension Melix_Worker_V1_AdmissionState: SwiftProtobuf._ProtoNameProviding {
@@ -1755,6 +1923,136 @@ extension Melix_Worker_V1_MultimodalCapabilities: SwiftProtobuf.Message, SwiftPr
     if lhs.supportsVlm != rhs.supportsVlm {return false}
     if lhs.supportsTranscription != rhs.supportsTranscription {return false}
     if lhs.supportsSpeech != rhs.supportsSpeech {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+extension Melix_Worker_V1_ImageJobProgress: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".ImageJobProgress"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}stage\0\u{1}pct\0\u{3}completed_steps\0\u{3}total_steps\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.stage) }()
+      case 2: try { try decoder.decodeSingularFloatField(value: &self.pct) }()
+      case 3: try { try decoder.decodeSingularUInt32Field(value: &self.completedSteps) }()
+      case 4: try { try decoder.decodeSingularUInt32Field(value: &self.totalSteps) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.stage.isEmpty {
+      try visitor.visitSingularStringField(value: self.stage, fieldNumber: 1)
+    }
+    if self.pct.bitPattern != 0 {
+      try visitor.visitSingularFloatField(value: self.pct, fieldNumber: 2)
+    }
+    if self.completedSteps != 0 {
+      try visitor.visitSingularUInt32Field(value: self.completedSteps, fieldNumber: 3)
+    }
+    if self.totalSteps != 0 {
+      try visitor.visitSingularUInt32Field(value: self.totalSteps, fieldNumber: 4)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Melix_Worker_V1_ImageJobProgress, rhs: Melix_Worker_V1_ImageJobProgress) -> Bool {
+    if lhs.stage != rhs.stage {return false}
+    if lhs.pct != rhs.pct {return false}
+    if lhs.completedSteps != rhs.completedSteps {return false}
+    if lhs.totalSteps != rhs.totalSteps {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+extension Melix_Worker_V1_ImageArtifactMetadata: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".ImageArtifactMetadata"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}artifact_id\0\u{3}job_id\0\u{1}role\0\u{3}mime_type\0\u{1}format\0\u{1}width\0\u{1}height\0\u{3}byte_length\0\u{3}storage_uri\0\u{1}sha256\0\u{3}variant_index\0\u{1}ext\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.artifactID) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.jobID) }()
+      case 3: try { try decoder.decodeSingularEnumField(value: &self.role) }()
+      case 4: try { try decoder.decodeSingularStringField(value: &self.mimeType) }()
+      case 5: try { try decoder.decodeSingularStringField(value: &self.format) }()
+      case 6: try { try decoder.decodeSingularUInt32Field(value: &self.width) }()
+      case 7: try { try decoder.decodeSingularUInt32Field(value: &self.height) }()
+      case 8: try { try decoder.decodeSingularUInt64Field(value: &self.byteLength) }()
+      case 9: try { try decoder.decodeSingularStringField(value: &self.storageUri) }()
+      case 10: try { try decoder.decodeSingularStringField(value: &self.sha256) }()
+      case 11: try { try decoder.decodeSingularUInt32Field(value: &self.variantIndex) }()
+      case 12: try { try decoder.decodeMapField(fieldType: SwiftProtobuf._ProtobufMap<SwiftProtobuf.ProtobufString,SwiftProtobuf.ProtobufString>.self, value: &self.ext) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.artifactID.isEmpty {
+      try visitor.visitSingularStringField(value: self.artifactID, fieldNumber: 1)
+    }
+    if !self.jobID.isEmpty {
+      try visitor.visitSingularStringField(value: self.jobID, fieldNumber: 2)
+    }
+    if self.role != .unspecified {
+      try visitor.visitSingularEnumField(value: self.role, fieldNumber: 3)
+    }
+    if !self.mimeType.isEmpty {
+      try visitor.visitSingularStringField(value: self.mimeType, fieldNumber: 4)
+    }
+    if !self.format.isEmpty {
+      try visitor.visitSingularStringField(value: self.format, fieldNumber: 5)
+    }
+    if self.width != 0 {
+      try visitor.visitSingularUInt32Field(value: self.width, fieldNumber: 6)
+    }
+    if self.height != 0 {
+      try visitor.visitSingularUInt32Field(value: self.height, fieldNumber: 7)
+    }
+    if self.byteLength != 0 {
+      try visitor.visitSingularUInt64Field(value: self.byteLength, fieldNumber: 8)
+    }
+    if !self.storageUri.isEmpty {
+      try visitor.visitSingularStringField(value: self.storageUri, fieldNumber: 9)
+    }
+    if !self.sha256.isEmpty {
+      try visitor.visitSingularStringField(value: self.sha256, fieldNumber: 10)
+    }
+    if self.variantIndex != 0 {
+      try visitor.visitSingularUInt32Field(value: self.variantIndex, fieldNumber: 11)
+    }
+    if !self.ext.isEmpty {
+      try visitor.visitMapField(fieldType: SwiftProtobuf._ProtobufMap<SwiftProtobuf.ProtobufString,SwiftProtobuf.ProtobufString>.self, value: self.ext, fieldNumber: 12)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Melix_Worker_V1_ImageArtifactMetadata, rhs: Melix_Worker_V1_ImageArtifactMetadata) -> Bool {
+    if lhs.artifactID != rhs.artifactID {return false}
+    if lhs.jobID != rhs.jobID {return false}
+    if lhs.role != rhs.role {return false}
+    if lhs.mimeType != rhs.mimeType {return false}
+    if lhs.format != rhs.format {return false}
+    if lhs.width != rhs.width {return false}
+    if lhs.height != rhs.height {return false}
+    if lhs.byteLength != rhs.byteLength {return false}
+    if lhs.storageUri != rhs.storageUri {return false}
+    if lhs.sha256 != rhs.sha256 {return false}
+    if lhs.variantIndex != rhs.variantIndex {return false}
+    if lhs.ext != rhs.ext {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

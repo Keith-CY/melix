@@ -344,6 +344,10 @@ def test_inference_service_covers_error_and_unimplemented_paths() -> None:
     assert speak.error.code == "not_found"
     assert image_generate.error.code == "unimplemented"
     assert image_edit.error.code == "unimplemented"
+    assert image_generate.job.state == common_pb2.IMAGE_JOB_FAILED
+    assert image_generate.job.operation == "image_generate"
+    assert image_edit.job.state == common_pb2.IMAGE_JOB_FAILED
+    assert image_edit.job.operation == "image_edit"
 
 
 def test_build_server_and_main_bootstrap(monkeypatch) -> None:

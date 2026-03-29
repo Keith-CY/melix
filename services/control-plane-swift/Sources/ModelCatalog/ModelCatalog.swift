@@ -193,6 +193,21 @@ public actor ModelCatalog {
         return model
     }
 
+    public static func devImageModel() -> Melix_Controlplane_V1_ModelSummary {
+        var model = Melix_Controlplane_V1_ModelSummary()
+        model.modelID = "melix-dev-image"
+        model.kind = "image"
+        model.state = .modelDiscovered
+        model.capabilityClass = .modelCapabilityImageGeneration
+        model.routeClass = .workerRoutePythonImage
+        model.features = ["image_generate", "image_edit", "artifact_jobs"]
+        model.supportedModalities = ["text", "image"]
+        model.supportedTasks = ["image_generate", "image_edit"]
+        model.settings.alias = "Melix Dev Image"
+        model.settings.memoryPolicy = .memoryResidencyEvictable
+        return model
+    }
+
     public static func phaseFiveSeedModels() -> [Melix_Controlplane_V1_ModelSummary] {
         [
             devTextModel(),
@@ -208,6 +223,12 @@ public actor ModelCatalog {
             devVLMModel(),
             devTranscriptionModel(),
             devSpeechModel(),
+        ]
+    }
+
+    public static func phaseSevenContractSeedModels() -> [Melix_Controlplane_V1_ModelSummary] {
+        phaseSixContractSeedModels() + [
+            devImageModel(),
         ]
     }
 
