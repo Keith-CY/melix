@@ -615,6 +615,7 @@ public struct OpenAIHandler: Sendable {
                 routeKind: routeKind,
                 phase: imageJobPhase(for: response.job, error: response.error)
             )
+            await refreshMultimodalRuntimeObservability(using: workerClient, routeKind: routeKind)
             await metricsStore.set(
                 Date().timeIntervalSince(startedAt) * 1000,
                 forKey: "images.request_latency_ms"
@@ -769,6 +770,7 @@ public struct OpenAIHandler: Sendable {
                 routeKind: routeKind,
                 phase: imageJobPhase(for: response.job, error: response.error)
             )
+            await refreshMultimodalRuntimeObservability(using: workerClient, routeKind: routeKind)
             await metricsStore.set(
                 Date().timeIntervalSince(startedAt) * 1000,
                 forKey: "images.request_latency_ms"
@@ -1171,6 +1173,19 @@ public struct OpenAIHandler: Sendable {
             await metricsStore.set(stats.lastSpeechLatencyMs, forKey: "audio.speech_latency_ms")
             if stats.lastAudioOutputBytes > 0 {
                 await metricsStore.set(Double(stats.lastAudioOutputBytes), forKey: "audio.speech_output_bytes")
+            }
+        case .pythonImage:
+            await metricsStore.set(stats.lastImageJobLatencyMs, forKey: "images.job_latency_ms")
+            await metricsStore.set(
+                stats.lastImageArtifactPublishMs,
+                forKey: "images.artifact_publish_ms"
+            )
+            await metricsStore.set(
+                Double(stats.lastImagePeakMemoryBytes),
+                forKey: "images.peak_memory_bytes"
+            )
+            if stats.lastImageOutputBytes > 0 {
+                await metricsStore.set(Double(stats.lastImageOutputBytes), forKey: "images.output_bytes")
             }
         default:
             break

@@ -289,6 +289,7 @@ struct RequestCoordinatorTests {
             workerID: "python-worker",
             admissionLatencyMs: 3
         )
+        await metricsStore.set(1, forKey: "images.active_jobs")
 
         let execution = try await coordinator.startChatCompletion(
             makeTranslatedChatRequest(requestID: "req-text-under-load")
@@ -302,6 +303,7 @@ struct RequestCoordinatorTests {
 
         let metrics = await metricsStore.snapshot()
         #expect(metrics.values["scheduler.text_ttft_under_multimodal_ms", default: -1] >= 0)
+        #expect(metrics.values["scheduler.text_ttft_under_image_load_ms", default: -1] >= 0)
     }
 
     @Test("ocr requests publish vision preprocessing and OCR latency metrics")

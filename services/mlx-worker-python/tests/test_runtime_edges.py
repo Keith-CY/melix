@@ -186,6 +186,22 @@ def test_registry_capabilities_and_request_lifecycle() -> None:
     assert speech_stats.last_probe_kind == "speech"
     assert speech_stats.last_speech_latency_ms == 7.5
     assert speech_stats.last_audio_output_bytes == 128
+    assert speech_stats.last_image_job_latency_ms == 0.0
+
+    registry.record_image_probe(
+        SimpleNamespace(
+            job_latency_ms=42.5,
+            artifact_publish_ms=3.25,
+            output_bytes=512,
+            peak_memory_bytes=40960,
+        )
+    )
+    image_stats = registry.runtime_stats()
+    assert image_stats.last_probe_kind == "image"
+    assert image_stats.last_image_job_latency_ms == 42.5
+    assert image_stats.last_image_artifact_publish_ms == 3.25
+    assert image_stats.last_image_output_bytes == 512
+    assert image_stats.last_image_peak_memory_bytes == 40960
 
     registry.finish_request("req-vision")
     registry.finish_request("req-transcription")

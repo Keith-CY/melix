@@ -84,6 +84,10 @@ message RuntimeStats {
   double last_audio_duration_seconds = 18;
   uint64 last_audio_chunk_count = 19;
   uint64 last_audio_output_bytes = 20;
+  double last_image_job_latency_ms = 21;
+  double last_image_artifact_publish_ms = 22;
+  uint64 last_image_output_bytes = 23;
+  uint64 last_image_peak_memory_bytes = 24;
 }
 
 message GetRuntimeStatsRequest {}

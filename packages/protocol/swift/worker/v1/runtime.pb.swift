@@ -306,6 +306,26 @@ public struct Melix_Worker_V1_RuntimeStats: @unchecked Sendable {
     set {_uniqueStorage()._lastAudioOutputBytes = newValue}
   }
 
+  public var lastImageJobLatencyMs: Double {
+    get {_storage._lastImageJobLatencyMs}
+    set {_uniqueStorage()._lastImageJobLatencyMs = newValue}
+  }
+
+  public var lastImageArtifactPublishMs: Double {
+    get {_storage._lastImageArtifactPublishMs}
+    set {_uniqueStorage()._lastImageArtifactPublishMs = newValue}
+  }
+
+  public var lastImageOutputBytes: UInt64 {
+    get {_storage._lastImageOutputBytes}
+    set {_uniqueStorage()._lastImageOutputBytes = newValue}
+  }
+
+  public var lastImagePeakMemoryBytes: UInt64 {
+    get {_storage._lastImagePeakMemoryBytes}
+    set {_uniqueStorage()._lastImagePeakMemoryBytes = newValue}
+  }
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -760,7 +780,7 @@ extension Melix_Worker_V1_WarmupModelResponse: SwiftProtobuf.Message, SwiftProto
 
 extension Melix_Worker_V1_RuntimeStats: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".RuntimeStats"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}worker_state\0\u{3}resident_bytes\0\u{3}active_requests\0\u{3}active_prefills\0\u{3}active_decodes\0\u{3}l1_cache_bytes\0\u{3}l2_cache_bytes\0\u{3}l1_hit_rate\0\u{3}l2_hit_rate\0\u{3}active_multimodal_requests\0\u{3}last_probe_kind\0\u{3}last_preprocess_latency_ms\0\u{3}last_preprocess_input_bytes\0\u{3}last_preprocess_peak_memory_bytes\0\u{3}last_first_token_latency_ms\0\u{3}last_transcription_latency_ms\0\u{3}last_speech_latency_ms\0\u{3}last_audio_duration_seconds\0\u{3}last_audio_chunk_count\0\u{3}last_audio_output_bytes\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}worker_state\0\u{3}resident_bytes\0\u{3}active_requests\0\u{3}active_prefills\0\u{3}active_decodes\0\u{3}l1_cache_bytes\0\u{3}l2_cache_bytes\0\u{3}l1_hit_rate\0\u{3}l2_hit_rate\0\u{3}active_multimodal_requests\0\u{3}last_probe_kind\0\u{3}last_preprocess_latency_ms\0\u{3}last_preprocess_input_bytes\0\u{3}last_preprocess_peak_memory_bytes\0\u{3}last_first_token_latency_ms\0\u{3}last_transcription_latency_ms\0\u{3}last_speech_latency_ms\0\u{3}last_audio_duration_seconds\0\u{3}last_audio_chunk_count\0\u{3}last_audio_output_bytes\0\u{3}last_image_job_latency_ms\0\u{3}last_image_artifact_publish_ms\0\u{3}last_image_output_bytes\0\u{3}last_image_peak_memory_bytes\0")
 
   fileprivate class _StorageClass {
     var _workerState: String = String()
@@ -783,6 +803,10 @@ extension Melix_Worker_V1_RuntimeStats: SwiftProtobuf.Message, SwiftProtobuf._Me
     var _lastAudioDurationSeconds: Double = 0
     var _lastAudioChunkCount: UInt64 = 0
     var _lastAudioOutputBytes: UInt64 = 0
+    var _lastImageJobLatencyMs: Double = 0
+    var _lastImageArtifactPublishMs: Double = 0
+    var _lastImageOutputBytes: UInt64 = 0
+    var _lastImagePeakMemoryBytes: UInt64 = 0
 
       // This property is used as the initial default value for new instances of the type.
       // The type itself is protecting the reference to its storage via CoW semantics.
@@ -813,6 +837,10 @@ extension Melix_Worker_V1_RuntimeStats: SwiftProtobuf.Message, SwiftProtobuf._Me
       _lastAudioDurationSeconds = source._lastAudioDurationSeconds
       _lastAudioChunkCount = source._lastAudioChunkCount
       _lastAudioOutputBytes = source._lastAudioOutputBytes
+      _lastImageJobLatencyMs = source._lastImageJobLatencyMs
+      _lastImageArtifactPublishMs = source._lastImageArtifactPublishMs
+      _lastImageOutputBytes = source._lastImageOutputBytes
+      _lastImagePeakMemoryBytes = source._lastImagePeakMemoryBytes
     }
   }
 
@@ -851,6 +879,10 @@ extension Melix_Worker_V1_RuntimeStats: SwiftProtobuf.Message, SwiftProtobuf._Me
         case 18: try { try decoder.decodeSingularDoubleField(value: &_storage._lastAudioDurationSeconds) }()
         case 19: try { try decoder.decodeSingularUInt64Field(value: &_storage._lastAudioChunkCount) }()
         case 20: try { try decoder.decodeSingularUInt64Field(value: &_storage._lastAudioOutputBytes) }()
+        case 21: try { try decoder.decodeSingularDoubleField(value: &_storage._lastImageJobLatencyMs) }()
+        case 22: try { try decoder.decodeSingularDoubleField(value: &_storage._lastImageArtifactPublishMs) }()
+        case 23: try { try decoder.decodeSingularUInt64Field(value: &_storage._lastImageOutputBytes) }()
+        case 24: try { try decoder.decodeSingularUInt64Field(value: &_storage._lastImagePeakMemoryBytes) }()
         default: break
         }
       }
@@ -919,6 +951,18 @@ extension Melix_Worker_V1_RuntimeStats: SwiftProtobuf.Message, SwiftProtobuf._Me
       if _storage._lastAudioOutputBytes != 0 {
         try visitor.visitSingularUInt64Field(value: _storage._lastAudioOutputBytes, fieldNumber: 20)
       }
+      if _storage._lastImageJobLatencyMs.bitPattern != 0 {
+        try visitor.visitSingularDoubleField(value: _storage._lastImageJobLatencyMs, fieldNumber: 21)
+      }
+      if _storage._lastImageArtifactPublishMs.bitPattern != 0 {
+        try visitor.visitSingularDoubleField(value: _storage._lastImageArtifactPublishMs, fieldNumber: 22)
+      }
+      if _storage._lastImageOutputBytes != 0 {
+        try visitor.visitSingularUInt64Field(value: _storage._lastImageOutputBytes, fieldNumber: 23)
+      }
+      if _storage._lastImagePeakMemoryBytes != 0 {
+        try visitor.visitSingularUInt64Field(value: _storage._lastImagePeakMemoryBytes, fieldNumber: 24)
+      }
     }
     try unknownFields.traverse(visitor: &visitor)
   }
@@ -948,6 +992,10 @@ extension Melix_Worker_V1_RuntimeStats: SwiftProtobuf.Message, SwiftProtobuf._Me
         if _storage._lastAudioDurationSeconds != rhs_storage._lastAudioDurationSeconds {return false}
         if _storage._lastAudioChunkCount != rhs_storage._lastAudioChunkCount {return false}
         if _storage._lastAudioOutputBytes != rhs_storage._lastAudioOutputBytes {return false}
+        if _storage._lastImageJobLatencyMs != rhs_storage._lastImageJobLatencyMs {return false}
+        if _storage._lastImageArtifactPublishMs != rhs_storage._lastImageArtifactPublishMs {return false}
+        if _storage._lastImageOutputBytes != rhs_storage._lastImageOutputBytes {return false}
+        if _storage._lastImagePeakMemoryBytes != rhs_storage._lastImagePeakMemoryBytes {return false}
         return true
       }
       if !storagesAreEqual {return false}

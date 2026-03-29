@@ -77,6 +77,9 @@ class ImageGenerationCore:
         finally:
             self._registry.finish_request(request_id)
 
+        self._registry.record_image_probe(
+            self._registry.image_generation_runtime.last_probe_snapshot()
+        )
         return self._terminal_response(
             request=request,
             job_id=job_id,

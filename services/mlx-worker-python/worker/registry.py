@@ -66,6 +66,10 @@ class WorkerRegistry:
         self._last_audio_duration_seconds = 0.0
         self._last_audio_chunk_count = 0
         self._last_audio_output_bytes = 0
+        self._last_image_job_latency_ms = 0.0
+        self._last_image_artifact_publish_ms = 0.0
+        self._last_image_output_bytes = 0
+        self._last_image_peak_memory_bytes = 0
 
     def capabilities(self) -> common_pb2.RuntimeCapabilities:
         return common_pb2.RuntimeCapabilities(
@@ -163,6 +167,10 @@ class WorkerRegistry:
             last_audio_duration_seconds = self._last_audio_duration_seconds
             last_audio_chunk_count = self._last_audio_chunk_count
             last_audio_output_bytes = self._last_audio_output_bytes
+            last_image_job_latency_ms = self._last_image_job_latency_ms
+            last_image_artifact_publish_ms = self._last_image_artifact_publish_ms
+            last_image_output_bytes = self._last_image_output_bytes
+            last_image_peak_memory_bytes = self._last_image_peak_memory_bytes
         return runtime_pb2.RuntimeStats(
             worker_state="draining" if self._draining else "idle",
             resident_bytes=resident_bytes,
@@ -184,6 +192,10 @@ class WorkerRegistry:
             last_audio_duration_seconds=last_audio_duration_seconds,
             last_audio_chunk_count=last_audio_chunk_count,
             last_audio_output_bytes=last_audio_output_bytes,
+            last_image_job_latency_ms=last_image_job_latency_ms,
+            last_image_artifact_publish_ms=last_image_artifact_publish_ms,
+            last_image_output_bytes=last_image_output_bytes,
+            last_image_peak_memory_bytes=last_image_peak_memory_bytes,
         )
 
     def set_draining(self, draining: bool) -> None:
@@ -206,6 +218,10 @@ class WorkerRegistry:
             self._last_audio_duration_seconds = 0.0
             self._last_audio_chunk_count = 0
             self._last_audio_output_bytes = 0
+            self._last_image_job_latency_ms = 0.0
+            self._last_image_artifact_publish_ms = 0.0
+            self._last_image_output_bytes = 0
+            self._last_image_peak_memory_bytes = 0
 
     def record_transcription_probe(self, probe: Any) -> None:
         with self._lock:
@@ -219,6 +235,10 @@ class WorkerRegistry:
             self._last_audio_duration_seconds = float(getattr(probe, "estimated_duration_seconds", 0.0))
             self._last_audio_chunk_count = int(getattr(probe, "chunk_count", 0))
             self._last_audio_output_bytes = 0
+            self._last_image_job_latency_ms = 0.0
+            self._last_image_artifact_publish_ms = 0.0
+            self._last_image_output_bytes = 0
+            self._last_image_peak_memory_bytes = 0
 
     def record_speech_probe(self, probe: Any) -> None:
         with self._lock:
@@ -232,6 +252,27 @@ class WorkerRegistry:
             self._last_audio_duration_seconds = 0.0
             self._last_audio_chunk_count = 0
             self._last_audio_output_bytes = int(getattr(probe, "output_bytes", 0))
+            self._last_image_job_latency_ms = 0.0
+            self._last_image_artifact_publish_ms = 0.0
+            self._last_image_output_bytes = 0
+            self._last_image_peak_memory_bytes = 0
+
+    def record_image_probe(self, probe: Any) -> None:
+        with self._lock:
+            self._last_probe_kind = "image"
+            self._last_preprocess_latency_ms = 0.0
+            self._last_preprocess_input_bytes = 0
+            self._last_preprocess_peak_memory_bytes = 0
+            self._last_first_token_latency_ms = 0.0
+            self._last_transcription_latency_ms = 0.0
+            self._last_speech_latency_ms = 0.0
+            self._last_audio_duration_seconds = 0.0
+            self._last_audio_chunk_count = 0
+            self._last_audio_output_bytes = 0
+            self._last_image_job_latency_ms = float(getattr(probe, "job_latency_ms", 0.0))
+            self._last_image_artifact_publish_ms = float(getattr(probe, "artifact_publish_ms", 0.0))
+            self._last_image_output_bytes = int(getattr(probe, "output_bytes", 0))
+            self._last_image_peak_memory_bytes = int(getattr(probe, "peak_memory_bytes", 0))
 
     def _runtime_for_model(self, model_spec: common_pb2.ModelSpec) -> tuple[str, Any]:
         if model_spec.model_kind == "embedding":

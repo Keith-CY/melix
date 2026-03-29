@@ -1356,6 +1356,15 @@ struct OpenAIHandlerTests {
             response.job.artifacts = [makeWorkerArtifact(jobID: "image-generate-1::image-generate", role: .imageArtifactGenerated)]
             return response
         }())
+        await imageClient.setRuntimeStatsResponse({
+            var response = Melix_Worker_V1_GetRuntimeStatsResponse()
+            response.stats.lastProbeKind = "image"
+            response.stats.lastImageJobLatencyMs = 48
+            response.stats.lastImageArtifactPublishMs = 2.5
+            response.stats.lastImageOutputBytes = 15
+            response.stats.lastImagePeakMemoryBytes = 65536
+            return response
+        }())
 
         let metricsStore = MetricsStore()
         let schedulerReadModel = SchedulerReadModel(metricsStore: metricsStore)
@@ -1415,6 +1424,9 @@ struct OpenAIHandlerTests {
         #expect(job.artifacts.count == 1)
         #expect(metrics.values["images.request_latency_ms", default: -1] >= 0)
         #expect(metrics.values["images.output_bytes", default: 0] == 15)
+        #expect(metrics.values["images.job_latency_ms", default: -1] == 48)
+        #expect(metrics.values["images.artifact_publish_ms", default: -1] == 2.5)
+        #expect(metrics.values["images.peak_memory_bytes", default: -1] == 65536)
     }
 
     @Test("POST /v1/images/edits routes to the image worker and returns JSON")
@@ -1438,8 +1450,18 @@ struct OpenAIHandlerTests {
             ]
             return response
         }())
+        await imageClient.setRuntimeStatsResponse({
+            var response = Melix_Worker_V1_GetRuntimeStatsResponse()
+            response.stats.lastProbeKind = "image"
+            response.stats.lastImageJobLatencyMs = 62
+            response.stats.lastImageArtifactPublishMs = 4
+            response.stats.lastImageOutputBytes = 12
+            response.stats.lastImagePeakMemoryBytes = 98304
+            return response
+        }())
 
         let imageJobReadModel = ImageJobReadModel()
+        let metricsStore = MetricsStore()
         let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel(), ModelCatalog.devImageModel()])
         _ = await catalog.loadModel(id: "melix-dev-image", dispatchHandle: "melix-dev-image::python")
         let handler = OpenAIHandler(
@@ -1453,6 +1475,7 @@ struct OpenAIHandlerTests {
                 pythonCompatibilityClient: imageClient,
                 modelCatalog: catalog
             ),
+            metricsStore: metricsStore,
             imageJobReadModel: imageJobReadModel
         )
 
@@ -1478,6 +1501,7 @@ struct OpenAIHandlerTests {
         let payload = try await collectBody(response.body)
         let request = try #require(await imageClient.lastImageEditRequest)
         let job = try #require(await imageJobReadModel.job(requestID: "image-edit-1"))
+        let metrics = await metricsStore.snapshot()
 
         #expect(response.statusCode == 200)
         #expect(request.modelHandle == "melix-dev-image::python")
@@ -1490,6 +1514,9 @@ struct OpenAIHandlerTests {
         #expect(payload.contains("\"b64_json\":\"ZWRpdGVkLWltYWdl\""))
         #expect(job.state == .imageJobCompleted)
         #expect(job.artifacts.count == 3)
+        #expect(metrics.values["images.job_latency_ms", default: -1] == 62)
+        #expect(metrics.values["images.artifact_publish_ms", default: -1] == 4)
+        #expect(metrics.values["images.peak_memory_bytes", default: -1] == 98304)
     }
 
     @Test("image endpoints validate payloads and return 409 and 503 when routing is unavailable")

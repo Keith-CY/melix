@@ -71,6 +71,7 @@ Current phase-status and planning documents:
 - `plans/2026-03-29-p7-m4-control-plane-image-orchestration.md`
 - `plans/2026-03-29-p7-m5-native-image-panel.md`
 - `plans/2026-03-29-p7-m6-isolation-and-cancellation.md`
+- `plans/2026-03-29-p7-m7-integration-operator-evidence.md`
 - `plans/2026-03-28-p1-m2-swift-text-worker-scaffold.md`
 - `plans/2026-03-28-p1-m3-swift-runtime-lifecycle.md`
 - `plans/2026-03-28-p1-m4-swift-generate-abort.md`
@@ -101,6 +102,7 @@ Current runbooks:
 - `runbooks/phase-2-queue-pressure.md`
 - `runbooks/phase-6-chat-panel.md`
 - `runbooks/phase-6-multimodal-ops.md`
+- `runbooks/phase-7-image-ops.md`
 
 ## Engineering Standards
 

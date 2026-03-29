@@ -882,6 +882,10 @@ public actor RequestCoordinator {
            await schedulerReadModel.hasActiveMultimodalRequests(excluding: requestID) {
             await metricsStore.set(ttftMs, forKey: "scheduler.text_ttft_under_multimodal_ms")
         }
+        if plan.routeKind.isPhaseAwareTextRoute,
+           await metricsStore.value(forKey: "images.active_jobs") > 0 {
+            await metricsStore.set(ttftMs, forKey: "scheduler.text_ttft_under_image_load_ms")
+        }
         guard let branchKey = branchMetricKey(for: plan.translatedRequest.workerRequest.execution.id) else {
             return
         }

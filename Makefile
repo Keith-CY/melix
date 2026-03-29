@@ -3,7 +3,7 @@ UV_CACHE_DIR := $(ROOT)/.uv-cache
 SWIFT_HOME := $(ROOT)/.swift-home
 CLANG_MODULE_CACHE_PATH := $(ROOT)/.build/ModuleCache.noindex
 
-.PHONY: bootstrap proto swift-test py-test integration-test swift-coverage py-coverage coverage phase1-metrics phase2-metrics phase5-metrics phase6-metrics
+.PHONY: bootstrap proto swift-test py-test integration-test swift-coverage py-coverage coverage phase1-metrics phase2-metrics phase5-metrics phase6-metrics phase7-metrics
 
 PHASE1_METRICS_ARGS ?=
 PHASE2_METRICS_ARGS ?=
@@ -61,3 +61,7 @@ phase5-metrics:
 phase6-metrics:
 	mkdir -p "$(UV_CACHE_DIR)"
 	PYTHONPATH="$(ROOT):$(ROOT)/services/mlx-worker-python" UV_CACHE_DIR="$(UV_CACHE_DIR)" uv run --project services/mlx-worker-python python scripts/phase6_metrics_report.py
+
+phase7-metrics:
+	mkdir -p "$(UV_CACHE_DIR)"
+	PYTHONPATH="$(ROOT):$(ROOT)/services/mlx-worker-python" UV_CACHE_DIR="$(UV_CACHE_DIR)" uv run --project services/mlx-worker-python python scripts/phase7_metrics_report.py

@@ -39,6 +39,10 @@ public actor MetricsStore {
         writeExportIfNeeded()
     }
 
+    public func value(forKey key: String) -> Double {
+        values[key, default: 0]
+    }
+
     public func decrement(_ key: String, by amount: Double = 1) {
         values[key, default: 0] = max(0, values[key, default: 0] - amount)
         writeExportIfNeeded()
