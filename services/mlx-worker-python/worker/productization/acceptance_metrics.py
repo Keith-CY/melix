@@ -62,6 +62,15 @@ def build_phase8_metrics_report(
         "desktop.cold_boot_to_ready_ms": round(
             float(cold_boot_evidence["cold_boot_to_ready_ms"]), 2
         ),
+        "desktop.swift_text_worker_ready_ms": round(
+            float(cold_boot_evidence.get("swift_text_worker_ready_ms", 0.0)), 2
+        ),
+        "desktop.python_worker_ready_ms": round(
+            float(cold_boot_evidence.get("python_worker_ready_ms", 0.0)), 2
+        ),
+        "desktop.control_plane_spawn_to_ready_ms": round(
+            float(cold_boot_evidence.get("control_plane_spawn_to_ready_ms", 0.0)), 2
+        ),
         "desktop.http_ready_ms": round(
             float(cold_boot_evidence.get("http_ready_ms", cold_boot_evidence["cold_boot_to_ready_ms"])), 2
         ),
@@ -82,6 +91,15 @@ def build_phase8_metrics_report(
         ),
         "desktop.restart_to_ready_ms": round(
             float(recovery.get("restart_to_ready_ms", recovery["restart_recovery_ms"])), 2
+        ),
+        "desktop.restart_swift_text_worker_ready_ms": round(
+            float(recovery.get("restart_swift_text_worker_ready_ms", 0.0)), 2
+        ),
+        "desktop.restart_python_worker_ready_ms": round(
+            float(recovery.get("restart_python_worker_ready_ms", 0.0)), 2
+        ),
+        "desktop.restart_control_plane_spawn_to_ready_ms": round(
+            float(recovery.get("restart_control_plane_spawn_to_ready_ms", 0.0)), 2
         ),
         "desktop.snapshot_restore_ms": round(
             float(recovery.get("snapshot_restore_ms", 0.0)), 2

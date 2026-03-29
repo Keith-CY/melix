@@ -55,6 +55,9 @@ make phase8-metrics PHASE8_METRICS_ARGS="--json"
 The report includes:
 
 - cold boot to ready
+- Swift text worker spawn-to-ready latency
+- Python worker spawn-to-ready latency
+- control-plane spawn-to-ready latency
 - HTTP ready latency
 - background preload latency
 - first text-model warm latency
@@ -67,6 +70,9 @@ The report includes:
 - training duration
 - adapter publish latency
 - restart-to-ready latency
+- restart Swift text worker spawn-to-ready latency
+- restart Python worker spawn-to-ready latency
+- restart control-plane spawn-to-ready latency
 - snapshot restore latency
 - restart recovery latency and success
 

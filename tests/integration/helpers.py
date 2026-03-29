@@ -64,9 +64,20 @@ class LiveMelixStack:
         self.python_worker_stderr = None
         self.control_plane_stdout = None
         self.control_plane_stderr = None
+        self.startup_timings: dict[str, float] = {
+            "swift_text_worker_ready_ms": 0.0,
+            "python_worker_ready_ms": 0.0,
+            "control_plane_spawn_to_ready_ms": 0.0,
+        }
 
     def start(self) -> None:
+        self.startup_timings = {
+            "swift_text_worker_ready_ms": 0.0,
+            "python_worker_ready_ms": 0.0,
+            "control_plane_spawn_to_ready_ms": 0.0,
+        }
         if self.should_start_swift_text_worker:
+            swift_started_at = time.perf_counter()
             swift_text_worker_binary = resolve_swift_product_binary(
                 self.repo_root,
                 package_path=Path("services/mlx-text-worker-swift"),
@@ -96,8 +107,12 @@ class LiveMelixStack:
                 stderr_path=self.swift_text_worker_stderr_path,
                 timeout_seconds=120,
             )
+            self.startup_timings["swift_text_worker_ready_ms"] = (
+                time.perf_counter() - swift_started_at
+            ) * 1_000.0
 
         if self.should_start_python_worker:
+            python_started_at = time.perf_counter()
             worker_env = os.environ.copy()
             worker_env.update(self.environment_overrides)
             worker_env["PYTHONPATH"] = f"{self.repo_root}:{self.repo_root / 'services/mlx-worker-python'}"
@@ -132,7 +147,11 @@ class LiveMelixStack:
                 stderr_path=self.python_worker_stderr_path,
                 timeout_seconds=60,
             )
+            self.startup_timings["python_worker_ready_ms"] = (
+                time.perf_counter() - python_started_at
+            ) * 1_000.0
 
+        control_plane_started_at = time.perf_counter()
         control_plane_binary = resolve_swift_product_binary(
             self.repo_root,
             package_path=Path("services/control-plane-swift"),
@@ -171,6 +190,9 @@ class LiveMelixStack:
             control_plane_stderr_path=self.control_plane_stderr_path,
             timeout_seconds=120,
         )
+        self.startup_timings["control_plane_spawn_to_ready_ms"] = (
+            time.perf_counter() - control_plane_started_at
+        ) * 1_000.0
 
     def stop(self) -> None:
         self.stop_control_plane()

@@ -69,6 +69,11 @@ def test_measure_cold_boot_to_ready_reads_bootstrap_metrics_from_the_stack(
         def __init__(self, repo_root: Path) -> None:
             self.repo_root = repo_root
             self.control_plane_metrics_path = tmp_path / "control-plane-metrics.json"
+            self.startup_timings = {
+                "swift_text_worker_ready_ms": 4100.0,
+                "python_worker_ready_ms": 5200.0,
+                "control_plane_spawn_to_ready_ms": 1100.0,
+            }
             self.started = False
             self.stopped = False
 
@@ -107,12 +112,56 @@ def test_measure_cold_boot_to_ready_reads_bootstrap_metrics_from_the_stack(
     report = phase8_runtime_probes.measure_cold_boot_to_ready(tmp_path)
 
     assert report["cold_boot_to_ready_ms"] >= 0
+    assert report["swift_text_worker_ready_ms"] == 4100.0
+    assert report["python_worker_ready_ms"] == 5200.0
+    assert report["control_plane_spawn_to_ready_ms"] == 1100.0
     assert report["http_ready_ms"] == 18.5
     assert report["background_preload_ms"] == 640.0
     assert report["background_preload_success"] == 1.0
     assert report["first_text_model_warm_ms"] == 125.0
     assert report["text_model_load_estimated_resident_bytes"] == 4096.0
     assert report["text_model_load_resident_bytes"] == 8192.0
+
+
+def test_measure_cold_boot_to_ready_raises_when_first_text_warmup_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeStack:
+        def __init__(self, repo_root: Path) -> None:
+            self.control_plane_metrics_path = tmp_path / "control-plane-metrics.json"
+            self.startup_timings = {}
+
+        def start(self) -> None:
+            self.control_plane_metrics_path.write_text(
+                json.dumps(
+                    {
+                        "updated_at_unix_ms": 1,
+                        "values": {
+                            "control_plane.http_ready_ms": 18.5,
+                            "control_plane.background_preload_ms": 640.0,
+                            "control_plane.background_preload_success": 1.0,
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+        def stop(self) -> None:
+            return None
+
+        def chat_url(self) -> str:
+            return "http://127.0.0.1:11434/v1/chat/completions"
+
+    monkeypatch.setattr(phase8_runtime_probes, "LiveMelixStack", FakeStack)
+    monkeypatch.setattr(
+        phase8_runtime_probes,
+        "stream_chat_completion",
+        lambda stack, payload: {"status": 503, "body": "worker unavailable"},
+    )
+
+    with pytest.raises(SystemExit, match="first text warmup smoke failed"):
+        phase8_runtime_probes.measure_cold_boot_to_ready(tmp_path)
 
 
 def test_collect_restart_recovery_evidence_splits_restart_and_restore_metrics(
@@ -127,6 +176,11 @@ def test_collect_restart_recovery_evidence_splits_restart_and_restore_metrics(
             self.swift_cache_root = swift_cache_root
             self.control_plane_metrics_path = tmp_path / f"control-plane-{FakeStack.start_count}.json"
             self.swift_socket_path = tmp_path / "swift-text-worker.sock"
+            self.startup_timings = {
+                "swift_text_worker_ready_ms": 4200.0,
+                "python_worker_ready_ms": 5100.0,
+                "control_plane_spawn_to_ready_ms": 1292.3,
+            }
 
         def start(self) -> None:
             FakeStack.start_count += 1
@@ -176,12 +230,84 @@ def test_collect_restart_recovery_evidence_splits_restart_and_restore_metrics(
     report = phase8_runtime_probes.collect_restart_recovery_evidence(tmp_path)
 
     assert report["restart_to_ready_ms"] == 450.0
+    assert report["restart_swift_text_worker_ready_ms"] == 4200.0
+    assert report["restart_python_worker_ready_ms"] == 5100.0
+    assert report["restart_control_plane_spawn_to_ready_ms"] == 1292.3
     assert report["snapshot_restore_ms"] == 130.0
     assert report["restart_recovery_ms"] == 580.0
     assert report["restart_recovery_success_rate"] == 100.0
     assert report["http_ready_ms"] == 19.0
     assert report["background_preload_ms"] == 680.0
     assert report["background_preload_success"] == 1.0
+
+
+def test_collect_restart_recovery_evidence_raises_when_initial_smoke_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeStack:
+        def __init__(self, repo_root: Path, swift_cache_root: Path | None = None) -> None:
+            self.control_plane_metrics_path = tmp_path / "control-plane.json"
+            self.swift_socket_path = tmp_path / "swift-text-worker.sock"
+            self.startup_timings = {}
+
+        def start(self) -> None:
+            return None
+
+        def stop(self) -> None:
+            return None
+
+        def chat_url(self) -> str:
+            return "http://127.0.0.1:11434/v1/chat/completions"
+
+    monkeypatch.setattr(phase8_runtime_probes, "LiveMelixStack", FakeStack)
+    monkeypatch.setattr(
+        phase8_runtime_probes,
+        "stream_chat_completion",
+        lambda stack, payload: {"status": 500, "body": "boom"},
+    )
+
+    with pytest.raises(SystemExit, match="initial recovery smoke failed"):
+        phase8_runtime_probes.collect_restart_recovery_evidence(tmp_path)
+
+
+def test_collect_restart_recovery_evidence_raises_when_snapshot_id_is_missing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeStack:
+        start_count = 0
+
+        def __init__(self, repo_root: Path, swift_cache_root: Path | None = None) -> None:
+            self.control_plane_metrics_path = tmp_path / f"control-plane-{FakeStack.start_count}.json"
+            self.swift_socket_path = tmp_path / "swift-text-worker.sock"
+            self.startup_timings = {}
+
+        def start(self) -> None:
+            FakeStack.start_count += 1
+
+        def stop(self) -> None:
+            return None
+
+        def chat_url(self) -> str:
+            return "http://127.0.0.1:11434/v1/chat/completions"
+
+    monkeypatch.setattr(phase8_runtime_probes, "LiveMelixStack", FakeStack)
+    monkeypatch.setattr(
+        phase8_runtime_probes,
+        "stream_chat_completion",
+        lambda stack, payload: {"status": 200, "body": "data: [DONE]"},
+    )
+    monkeypatch.setattr(
+        phase8_runtime_probes,
+        "get_cache_stats",
+        lambda socket_path: SimpleNamespace(
+            snapshot=SimpleNamespace(snapshots=[SimpleNamespace(snapshot_id="")])
+        ),
+    )
+
+    with pytest.raises(SystemExit, match="recovery smoke did not produce a boundary snapshot"):
+        phase8_runtime_probes.collect_restart_recovery_evidence(tmp_path)
 
 
 def test_stream_chat_completion_reads_http_status_and_body(
@@ -213,6 +339,36 @@ def test_stream_chat_completion_reads_http_status_and_body(
     assert result == {"status": 200, "body": "data: [DONE]"}
 
 
+def test_wait_for_metrics_ignores_transient_decode_errors(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    metrics_path = tmp_path / "control-plane-metrics.json"
+    metrics_path.write_text("{}", encoding="utf-8")
+
+    class FlakyReader:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def __call__(self, path: Path) -> dict[str, object]:
+            self.calls += 1
+            if self.calls == 1:
+                raise json.JSONDecodeError("bad", "{}", 0)
+            return {
+                "values": {
+                    "control_plane.http_ready_ms": 12.5,
+                }
+            }
+
+    monkeypatch.setattr(phase8_runtime_probes, "read_metrics_export", FlakyReader())
+
+    assert phase8_runtime_probes.wait_for_metrics(
+        metrics_path,
+        ["control_plane.http_ready_ms"],
+        timeout_seconds=0.1,
+    ) == {"control_plane.http_ready_ms": 12.5}
+
+
 def test_phase8_metrics_report_main_emits_split_bootstrap_metrics(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -229,6 +385,9 @@ def test_phase8_metrics_report_main_emits_split_bootstrap_metrics(
     }
     recovery = {
         "restart_to_ready_ms": 612.3,
+        "restart_swift_text_worker_ready_ms": 4200.0,
+        "restart_python_worker_ready_ms": 5100.0,
+        "restart_control_plane_spawn_to_ready_ms": 1292.3,
         "snapshot_restore_ms": 98.4,
         "restart_recovery_ms": 710.7,
         "restart_recovery_success_rate": 100.0,
@@ -242,6 +401,9 @@ def test_phase8_metrics_report_main_emits_split_bootstrap_metrics(
         "measure_cold_boot_to_ready",
         lambda repo_root: {
             "cold_boot_to_ready_ms": 801.2,
+            "swift_text_worker_ready_ms": 4100.0,
+            "python_worker_ready_ms": 5200.0,
+            "control_plane_spawn_to_ready_ms": 1100.0,
             "http_ready_ms": 801.2,
             "background_preload_ms": 622.4,
             "background_preload_success": 1.0,
@@ -292,12 +454,18 @@ def test_phase8_metrics_report_main_emits_split_bootstrap_metrics(
     payload = json.loads(capsys.readouterr().out)
     metrics = payload["metrics"]
     assert metrics["desktop.cold_boot_to_ready_ms"] == 801.2
+    assert metrics["desktop.swift_text_worker_ready_ms"] == 4100.0
+    assert metrics["desktop.python_worker_ready_ms"] == 5200.0
+    assert metrics["desktop.control_plane_spawn_to_ready_ms"] == 1100.0
     assert metrics["desktop.http_ready_ms"] == 801.2
     assert metrics["desktop.background_preload_ms"] == 622.4
     assert metrics["desktop.first_text_model_warm_ms"] == 141.8
     assert metrics["desktop.text_model_load_estimated_resident_bytes"] == 4096.0
     assert metrics["desktop.text_model_load_resident_bytes"] == 8192.0
     assert metrics["desktop.restart_to_ready_ms"] == 612.3
+    assert metrics["desktop.restart_swift_text_worker_ready_ms"] == 4200.0
+    assert metrics["desktop.restart_python_worker_ready_ms"] == 5100.0
+    assert metrics["desktop.restart_control_plane_spawn_to_ready_ms"] == 1292.3
     assert metrics["desktop.snapshot_restore_ms"] == 98.4
     assert metrics["desktop.restart_recovery_ms"] == 710.7
 
@@ -312,6 +480,9 @@ def test_phase8_metrics_report_main_returns_nonzero_when_release_gate_fails(
         "measure_cold_boot_to_ready",
         lambda repo_root: {
             "cold_boot_to_ready_ms": 801.2,
+            "swift_text_worker_ready_ms": 4100.0,
+            "python_worker_ready_ms": 5200.0,
+            "control_plane_spawn_to_ready_ms": 1100.0,
             "http_ready_ms": 801.2,
             "background_preload_ms": 622.4,
             "background_preload_success": 1.0,
@@ -325,6 +496,9 @@ def test_phase8_metrics_report_main_returns_nonzero_when_release_gate_fails(
         "collect_restart_recovery_evidence",
         lambda repo_root: {
             "restart_to_ready_ms": 612.3,
+            "restart_swift_text_worker_ready_ms": 4200.0,
+            "restart_python_worker_ready_ms": 5100.0,
+            "restart_control_plane_spawn_to_ready_ms": 1292.3,
             "snapshot_restore_ms": 98.4,
             "restart_recovery_ms": 710.7,
             "restart_recovery_success_rate": 100.0,

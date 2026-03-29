@@ -44,6 +44,15 @@ def measure_cold_boot_to_ready(repo_root: Path) -> dict[str, float]:
         )
         return {
             "cold_boot_to_ready_ms": round(ready_ms, 2),
+            "swift_text_worker_ready_ms": round(
+                float(stack.startup_timings.get("swift_text_worker_ready_ms", 0.0)), 2
+            ),
+            "python_worker_ready_ms": round(
+                float(stack.startup_timings.get("python_worker_ready_ms", 0.0)), 2
+            ),
+            "control_plane_spawn_to_ready_ms": round(
+                float(stack.startup_timings.get("control_plane_spawn_to_ready_ms", 0.0)), 2
+            ),
             "http_ready_ms": round(
                 float(bootstrap_metrics["control_plane.http_ready_ms"]), 2
             ),
@@ -121,6 +130,15 @@ def collect_restart_recovery_evidence(repo_root: Path) -> dict[str, float]:
             )
             return {
                 "restart_to_ready_ms": round(restart_to_ready_ms, 2),
+                "restart_swift_text_worker_ready_ms": round(
+                    float(second_stack.startup_timings.get("swift_text_worker_ready_ms", 0.0)), 2
+                ),
+                "restart_python_worker_ready_ms": round(
+                    float(second_stack.startup_timings.get("python_worker_ready_ms", 0.0)), 2
+                ),
+                "restart_control_plane_spawn_to_ready_ms": round(
+                    float(second_stack.startup_timings.get("control_plane_spawn_to_ready_ms", 0.0)), 2
+                ),
                 "snapshot_restore_ms": round(restore_ms, 2),
                 "restart_recovery_ms": round(recovery_ms, 2),
                 "restart_recovery_success_rate": 100.0 if success else 0.0,

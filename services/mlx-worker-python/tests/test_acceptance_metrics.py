@@ -129,6 +129,9 @@ def test_build_phase8_metrics_report_includes_required_probe_names() -> None:
     report = build_phase8_metrics_report(
         cold_boot={
             "cold_boot_to_ready_ms": 812.3,
+            "swift_text_worker_ready_ms": 4100.0,
+            "python_worker_ready_ms": 5200.0,
+            "control_plane_spawn_to_ready_ms": 1100.0,
             "http_ready_ms": 812.3,
             "background_preload_ms": 944.8,
             "background_preload_success": 1.0,
@@ -163,6 +166,9 @@ def test_build_phase8_metrics_report_includes_required_probe_names() -> None:
             },
             "recovery": {
                 "restart_to_ready_ms": 624.6,
+                "restart_swift_text_worker_ready_ms": 4200.0,
+                "restart_python_worker_ready_ms": 5100.0,
+                "restart_control_plane_spawn_to_ready_ms": 1292.3,
                 "snapshot_restore_ms": 109.7,
                 "restart_recovery_ms": 13550.49,
                 "restart_recovery_success_rate": 100.0,
@@ -175,6 +181,9 @@ def test_build_phase8_metrics_report_includes_required_probe_names() -> None:
 
     metrics = report["metrics"]
     assert metrics["desktop.cold_boot_to_ready_ms"] == 812.3
+    assert metrics["desktop.swift_text_worker_ready_ms"] == 4100.0
+    assert metrics["desktop.python_worker_ready_ms"] == 5200.0
+    assert metrics["desktop.control_plane_spawn_to_ready_ms"] == 1100.0
     assert metrics["desktop.http_ready_ms"] == 812.3
     assert metrics["desktop.background_preload_ms"] == 944.8
     assert metrics["desktop.first_text_model_warm_ms"] == 143.2
@@ -182,6 +191,9 @@ def test_build_phase8_metrics_report_includes_required_probe_names() -> None:
     assert metrics["desktop.text_model_load_resident_bytes"] == 8192.0
     assert metrics["desktop.operator_action_latency_ms"] == 38.4
     assert metrics["desktop.restart_to_ready_ms"] == 624.6
+    assert metrics["desktop.restart_swift_text_worker_ready_ms"] == 4200.0
+    assert metrics["desktop.restart_python_worker_ready_ms"] == 5100.0
+    assert metrics["desktop.restart_control_plane_spawn_to_ready_ms"] == 1292.3
     assert metrics["desktop.snapshot_restore_ms"] == 109.7
     assert metrics["desktop.restart_recovery_ms"] == 13550.49
     assert metrics["desktop.crash_recovery_success_rate"] == 100.0
