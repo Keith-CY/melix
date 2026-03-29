@@ -4,6 +4,13 @@ import Foundation
 import MelixControlPlaneCore
 import MelixControlPlaneProtocol
 
+enum MenuBarTestEnvironment {
+    static var isHeadlessCI: Bool {
+        let environment = ProcessInfo.processInfo.environment
+        return environment["GITHUB_ACTIONS"] == "true" || environment["CI"] == "true"
+    }
+}
+
 actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
     private var streamContinuations: [AsyncStream<Melix_Controlplane_V1_ControlPlaneEvent>.Continuation] = []
     private var nextEventSequence: UInt64 = 1

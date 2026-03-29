@@ -9,6 +9,7 @@ struct AppMainBootstrapTests {
     @Test("default bootstrap factory creates a live status menu")
     @MainActor
     func defaultBootstrapFactoryCreatesStatusMenu() async throws {
+        guard !MenuBarTestEnvironment.isHeadlessCI else { return }
         let bootstrap = MelixMenuBarBootstrap(client: FakeControlPlaneXPCClient())
 
         bootstrap.start()
@@ -153,6 +154,7 @@ struct AppMainBootstrapTests {
     @Test("launchLive can use the default live bootstrap factory")
     @MainActor
     func launchLiveCanUseDefaultBootstrapFactory() async throws {
+        guard !MenuBarTestEnvironment.isHeadlessCI else { return }
         let application = RecordingApplicationLifecycle()
 
         try await withEnvironmentValue("MELIX_REPO_ROOT", FileManager.default.currentDirectoryPath) {

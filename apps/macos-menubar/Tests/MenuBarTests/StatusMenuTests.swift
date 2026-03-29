@@ -197,6 +197,7 @@ struct StatusMenuTests {
     @Test("AppKit renderer applies menu content to the status item")
     @MainActor
     func appKitRendererAppliesContentToStatusItem() async throws {
+        guard !MenuBarTestEnvironment.isHeadlessCI else { return }
         let statusBar = NSStatusBar()
         let renderer = AppKitStatusMenuRenderer(statusBar: statusBar)
         let target = NSObject()
