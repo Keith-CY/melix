@@ -18,3 +18,4 @@ Current runbooks:
 - `phase-2-queue-pressure.md`
 - `phase-8-local-install.md`
 - `phase-8-release-gates.md`
+- `phase-8-product-acceptance.md`

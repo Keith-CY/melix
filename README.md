@@ -120,6 +120,12 @@ This checks install asset generation, deterministic benchmark thresholds, restar
 and training sanity against the checked-in policy under
 `infra/release/phase8-release-gate-policy.json`.
 
+Generate the final Phase 8 product metrics report:
+
+```bash
+make phase8-metrics PHASE8_METRICS_ARGS="--json"
+```
+
 `make proto` currently generates:
 
 - Swift protobuf message types into `packages/protocol/swift`
@@ -142,8 +148,10 @@ The current phase-status and implementation guidance live under:
 - `docs/runbooks/phase-1-local-stack.md`
 - `docs/plans/2026-03-29-p8-m4-packaging-startup-automation.md`
 - `docs/plans/2026-03-29-p8-m5-release-gate-automation.md`
+- `docs/plans/2026-03-29-p8-m6-release-runbooks-product-acceptance.md`
 - `docs/runbooks/phase-8-local-install.md`
 - `docs/runbooks/phase-8-release-gates.md`
+- `docs/runbooks/phase-8-product-acceptance.md`
 
 ## License
 

@@ -11,7 +11,11 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "services/mlx-worker-python"))
 
-from phase8_runtime_probes import collect_restart_recovery_evidence
+from phase8_runtime_probes import collect_restart_recovery_evidence, measure_cold_boot_to_ready
+from worker.productization.acceptance_metrics import (
+    build_phase8_metrics_report,
+    collect_operator_action_evidence,
+)
 from worker.productization.release_gates import (
     build_release_gate_report,
     load_release_gate_policy,
@@ -30,15 +34,27 @@ def main() -> int:
 
     repo_root = Path(args.repo_root).resolve()
     policy = load_release_gate_policy(args.policy)
+    cold_boot = measure_cold_boot_to_ready(repo_root)
     recovery = collect_restart_recovery_evidence(repo_root)
-    report = build_release_gate_report(repo_root, policy=policy, recovery=recovery)
+    release_gate_report = build_release_gate_report(
+        repo_root,
+        policy=policy,
+        recovery=recovery,
+    )
+    operator = collect_operator_action_evidence(repo_root / ".runtime" / "phase8-metrics")
+    report = build_phase8_metrics_report(
+        cold_boot_to_ready_ms=cold_boot["cold_boot_to_ready_ms"],
+        operator=operator,
+        release_gate_report=release_gate_report,
+        policy=policy,
+    )
 
     if args.json:
         print(json.dumps(report, indent=2, sort_keys=True))
     else:
         print(json.dumps(report, indent=2, sort_keys=True))
 
-    return 0 if report["passed"] else 1
+    return 0 if release_gate_report["passed"] else 1
 
 
 if __name__ == "__main__":
