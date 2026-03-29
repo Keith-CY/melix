@@ -227,11 +227,11 @@ private final class RecordingNSApplication: NSApplicationControlling {
 }
 
 @MainActor
-private func withEnvironmentValue<T>(
+private func withEnvironmentValue(
     _ key: String,
     _ value: String?,
-    operation: () async throws -> T
-) async rethrows -> T {
+    operation: @MainActor @Sendable () async throws -> Void
+) async rethrows {
     let previousValue = ProcessInfo.processInfo.environment[key]
     if let value {
         setenv(key, value, 1)
@@ -245,5 +245,5 @@ private func withEnvironmentValue<T>(
             unsetenv(key)
         }
     }
-    return try await operation()
+    try await operation()
 }
