@@ -321,7 +321,52 @@ public actor ModelCatalog {
         return withSynchronizedResidency(model)
     }
 
-    public static func devEmbeddingModel() -> Melix_Controlplane_V1_ModelSummary {
+    public static func devEmbeddingModel(
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> Melix_Controlplane_V1_ModelSummary {
+        let modelPath = normalizedEnvironmentValue(
+            "MELIX_DEV_EMBED_MODEL_PATH",
+            environment: environment
+        ) ?? "models/melix-dev-embed"
+        let detected = inferEmbeddingIdentity(from: modelPath)
+        let configuredFamilyID = normalizedEnvironmentValue(
+            "MELIX_DEV_EMBED_FAMILY_ID",
+            environment: environment
+        )
+        let configuredBackendID = normalizedEnvironmentValue(
+            "MELIX_DEV_EMBED_BACKEND_ID",
+            environment: environment
+        )
+        let resolvedFamilyID: String
+        let resolvedBackendID: String
+        if let configuredFamilyID, !configuredFamilyID.isEmpty {
+            resolvedFamilyID = configuredFamilyID
+            resolvedBackendID = configuredBackendID ?? embeddingBackendID(for: resolvedFamilyID)
+        } else {
+            resolvedBackendID = configuredBackendID ?? detected.backendID
+            resolvedFamilyID = defaultEmbeddingFamilyID(
+                for: resolvedBackendID,
+                detectedFamilyID: detected.familyID
+            )
+        }
+        let resolvedArchitecture = embeddingArchitecture(for: resolvedFamilyID)
+        let resolvedPoolingMode = normalizedEnvironmentValue(
+            "MELIX_DEV_EMBED_POOLING_MODE",
+            environment: environment
+        ) ?? embeddingPoolingMode(for: resolvedFamilyID)
+        let resolvedNormalization = normalizedEnvironmentValue(
+            "MELIX_DEV_EMBED_NORMALIZATION",
+            environment: environment
+        ) ?? "l2"
+        let resolvedDimensions = normalizedEnvironmentValue(
+            "MELIX_DEV_EMBED_DIMENSIONS",
+            environment: environment
+        ) ?? embeddingDimensions(for: resolvedFamilyID)
+        let identityOverride = (
+            resolvedArchitecture != detected.architecture
+                || resolvedFamilyID != detected.familyID
+        ) ? "true" : "false"
+
         var model = Melix_Controlplane_V1_ModelSummary()
         model.modelID = "melix-dev-embed"
         model.kind = "embedding"
@@ -333,11 +378,16 @@ public actor ModelCatalog {
         model.features = ["embeddings"]
         model.settings.alias = "Melix Dev Embed"
         model.settings.memoryPolicy = .memoryResidencyEvictable
-        model.settings.ext["embedding_backend_id"] = "bert-v1"
-        model.settings.ext["embedding_family_id"] = "bert"
-        model.settings.ext["embedding_pooling_mode"] = "cls"
-        model.settings.ext["embedding_normalization"] = "l2"
-        model.settings.ext["embedding_dimensions"] = "8"
+        model.settings.ext["embedding_backend_id"] = resolvedBackendID
+        model.settings.ext["embedding_family_id"] = resolvedFamilyID
+        model.settings.ext["embedding_pooling_mode"] = resolvedPoolingMode
+        model.settings.ext["embedding_normalization"] = resolvedNormalization
+        model.settings.ext["embedding_dimensions"] = resolvedDimensions
+        model.settings.ext["model_architecture"] = resolvedArchitecture
+        model.settings.ext["detected_architecture"] = detected.architecture
+        model.settings.ext["detected_family_id"] = detected.familyID
+        model.settings.ext["detected_identity_source"] = detected.source
+        model.settings.ext["identity_override"] = identityOverride
         return withSynchronizedResidency(model)
     }
 
@@ -346,19 +396,20 @@ public actor ModelCatalog {
     ) -> Melix_Controlplane_V1_ModelSummary {
         let backendID = environment["MELIX_DEV_RERANK_BACKEND_ID"]?
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        let familyID = environment["MELIX_DEV_RERANK_FAMILY_ID"]?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let detected = inferRerankIdentity(
+            from: normalizedEnvironmentValue(
+                "MELIX_DEV_RERANK_MODEL_PATH",
+                environment: environment
+            ) ?? "models/melix-dev-rerank"
+        )
+        let familyID = normalizedEnvironmentValue(
+            "MELIX_DEV_RERANK_FAMILY_ID",
+            environment: environment
+        )
         let resolvedBackendID = (backendID?.isEmpty == false) ? backendID! : "token-overlap-v1"
-        let resolvedFamilyID = (familyID?.isEmpty == false) ? familyID! : "jina-v3"
-        let defaultScoringMode: String
-        switch resolvedFamilyID {
-        case "basic":
-            defaultScoringMode = "set-overlap"
-        case "causal-lm":
-            defaultScoringMode = "yes-no-logits"
-        default:
-            defaultScoringMode = "order-aware-overlap"
-        }
+        let resolvedFamilyID = (familyID?.isEmpty == false) ? familyID! : detected.familyID
+        let resolvedArchitecture = rerankArchitecture(for: resolvedFamilyID)
+        let defaultScoringMode = rerankScoringMode(for: resolvedFamilyID)
         let configuredScoringMode = environment["MELIX_DEV_RERANK_SCORING_MODE"]?
             .trimmingCharacters(in: .whitespacesAndNewlines)
         let resolvedScoringMode = (configuredScoringMode?.isEmpty == false) ? configuredScoringMode! : defaultScoringMode
@@ -369,6 +420,10 @@ public actor ModelCatalog {
         } else {
             ""
         }
+        let identityOverride = (
+            resolvedArchitecture != detected.architecture
+                || resolvedFamilyID != detected.familyID
+        ) ? "true" : "false"
 
         var model = Melix_Controlplane_V1_ModelSummary()
         model.modelID = "melix-dev-rerank"
@@ -384,6 +439,11 @@ public actor ModelCatalog {
         model.settings.ext["rerank_backend_id"] = resolvedBackendID
         model.settings.ext["rerank_family_id"] = resolvedFamilyID
         model.settings.ext["rerank_scoring_mode"] = resolvedScoringMode
+        model.settings.ext["model_architecture"] = resolvedArchitecture
+        model.settings.ext["detected_architecture"] = detected.architecture
+        model.settings.ext["detected_family_id"] = detected.familyID
+        model.settings.ext["detected_identity_source"] = detected.source
+        model.settings.ext["identity_override"] = identityOverride
         if !resolvedYesNoLabels.isEmpty {
             model.settings.ext["rerank_yes_no_labels"] = resolvedYesNoLabels
         }
@@ -516,6 +576,106 @@ public actor ModelCatalog {
         phaseSixContractSeedModels() + [
             devImageModel(),
         ]
+    }
+
+    private static func normalizedEnvironmentValue(
+        _ key: String,
+        environment: [String: String]
+    ) -> String? {
+        let value = environment[key]?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let value, !value.isEmpty {
+            return value
+        }
+        return nil
+    }
+
+    private static func inferEmbeddingIdentity(from modelPath: String) -> (
+        architecture: String,
+        familyID: String,
+        backendID: String,
+        source: String
+    ) {
+        let normalizedPath = modelPath.lowercased()
+        if normalizedPath.contains("mxbai") {
+            return ("bert", "mxbai-embed", "bert-v1", "directory_name")
+        }
+        if normalizedPath.contains("bge") {
+            return ("bert", "bge-m3", "bert-v1", "directory_name")
+        }
+        if normalizedPath.contains("xlmr") || normalizedPath.contains("xlm-r") {
+            return ("xlmr", "xlmr", "xlmr-v1", "directory_name")
+        }
+        if normalizedPath.contains("bert") {
+            return ("bert", "bert", "bert-v1", "directory_name")
+        }
+        return ("bert", "bert", "bert-v1", "default")
+    }
+
+    private static func embeddingBackendID(for familyID: String) -> String {
+        familyID == "xlmr" ? "xlmr-v1" : "bert-v1"
+    }
+
+    private static func embeddingArchitecture(for familyID: String) -> String {
+        familyID == "xlmr" ? "xlmr" : "bert"
+    }
+
+    private static func defaultEmbeddingFamilyID(
+        for backendID: String,
+        detectedFamilyID: String
+    ) -> String {
+        if backendID == "xlmr-v1" {
+            return "xlmr"
+        }
+        if ["bert", "bge-m3", "mxbai-embed"].contains(detectedFamilyID) {
+            return detectedFamilyID
+        }
+        return "bert"
+    }
+
+    private static func embeddingPoolingMode(for familyID: String) -> String {
+        switch familyID {
+        case "xlmr", "mxbai-embed":
+            return "mean"
+        default:
+            return "cls"
+        }
+    }
+
+    private static func embeddingDimensions(for familyID: String) -> String {
+        familyID == "mxbai-embed" ? "10" : "8"
+    }
+
+    private static func inferRerankIdentity(from modelPath: String) -> (
+        architecture: String,
+        familyID: String,
+        source: String
+    ) {
+        let normalizedPath = modelPath.lowercased()
+        if normalizedPath.contains("causal-lm") || normalizedPath.contains("causallm") {
+            return ("causal-lm", "causal-lm", "directory_name")
+        }
+        if normalizedPath.contains("basic") {
+            return ("cross-encoder", "basic", "directory_name")
+        }
+        if normalizedPath.contains("jina") {
+            return ("cross-encoder", "jina-v3", "directory_name")
+        }
+        return ("cross-encoder", "jina-v3", "default")
+    }
+
+    private static func rerankArchitecture(for familyID: String) -> String {
+        familyID == "causal-lm" ? "causal-lm" : "cross-encoder"
+    }
+
+    private static func rerankScoringMode(for familyID: String) -> String {
+        switch familyID {
+        case "basic":
+            return "set-overlap"
+        case "causal-lm":
+            return "yes-no-logits"
+        default:
+            return "order-aware-overlap"
+        }
     }
 
     private static func defaultDispatchHandle(for id: String) -> String {

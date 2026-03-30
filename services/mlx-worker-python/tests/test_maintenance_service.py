@@ -344,3 +344,26 @@ def test_doctor_and_bench_return_deterministic_reports(tmp_path: Path) -> None:
     report = Path(bench_events[-1].completed.report_path).read_text(encoding="utf-8")
     assert "# Melix Bench" in report
     assert "bench.smoke.ttft_ms" in report
+
+
+def test_doctor_reports_detected_and_overridden_model_identity(tmp_path: Path) -> None:
+    environment = {
+        "MELIX_DEV_RERANK_MODEL_PATH": "models/jina-v3-reranker",
+        "MELIX_DEV_RERANK_FAMILY_ID": "causal-lm",
+    }
+    registry = WorkerRegistry(model_catalog=WorkerModelCatalog(environment=environment))
+    loaded = registry.load_model(WorkerModelCatalog.dev_rerank_model(environment=environment))
+    service = WorkerMaintenanceService(registry, jobs_root=tmp_path / "model-ops")
+
+    doctor = service.RunDoctor(
+        maintenance_pb2.RunDoctorRequest(model_handle=loaded.handle),
+        context=None,
+    )
+
+    assert doctor.ok is True
+    assert "## Model Identity" in doctor.report_markdown
+    assert "model_handle: melix-dev-rerank::1" in doctor.report_markdown
+    assert "model_architecture: causal-lm" in doctor.report_markdown
+    assert "detected_architecture: cross-encoder" in doctor.report_markdown
+    assert "detected_family_id: jina-v3" in doctor.report_markdown
+    assert "identity_override: true" in doctor.report_markdown

@@ -112,6 +112,38 @@ def test_load_model_exposes_causal_lm_yes_no_metadata() -> None:
     assert loaded["rerank_yes_no_labels"] == "yes,no"
 
 
+def test_rerank_model_infers_identity_from_directory_name() -> None:
+    model = WorkerModelCatalog.dev_rerank_model(
+        environment={"MELIX_DEV_RERANK_MODEL_PATH": "models/causal-lm-reranker"}
+    )
+
+    assert model.ext["rerank_family_id"] == "causal-lm"
+    assert model.ext["rerank_scoring_mode"] == "yes-no-logits"
+    assert model.ext["rerank_yes_no_labels"] == "yes,no"
+    assert model.ext["model_architecture"] == "causal-lm"
+    assert model.ext["detected_architecture"] == "causal-lm"
+    assert model.ext["detected_family_id"] == "causal-lm"
+    assert model.ext["detected_identity_source"] == "directory_name"
+    assert model.ext["identity_override"] == "false"
+
+
+def test_rerank_model_preserves_detected_identity_when_override_is_applied() -> None:
+    model = WorkerModelCatalog.dev_rerank_model(
+        environment={
+            "MELIX_DEV_RERANK_MODEL_PATH": "models/jina-v3-reranker",
+            "MELIX_DEV_RERANK_FAMILY_ID": "causal-lm",
+        }
+    )
+
+    assert model.ext["rerank_family_id"] == "causal-lm"
+    assert model.ext["rerank_scoring_mode"] == "yes-no-logits"
+    assert model.ext["model_architecture"] == "causal-lm"
+    assert model.ext["detected_architecture"] == "cross-encoder"
+    assert model.ext["detected_family_id"] == "jina-v3"
+    assert model.ext["detected_identity_source"] == "directory_name"
+    assert model.ext["identity_override"] == "true"
+
+
 def test_jina_v3_rerank_prefers_exact_query_order() -> None:
     runtime_service, inference_service = build_services()
     model_handle = load_model(runtime_service, WorkerModelCatalog.dev_rerank_model())

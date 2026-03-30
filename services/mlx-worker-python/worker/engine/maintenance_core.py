@@ -168,6 +168,11 @@ class MaintenanceCore:
         ]
         if request.model_handle:
             lines.append(f"- model_handle: {request.model_handle}")
+            loaded_model = self._registry.get_loaded_model(request.model_handle)
+            if loaded_model is not None:
+                identity_lines = self._identity_diagnostic_lines(loaded_model.spec)
+                if identity_lines:
+                    lines.extend(["", "## Model Identity", *identity_lines])
         if request.include_cache_diagnostics:
             lines.extend(
                 [
@@ -192,6 +197,49 @@ class MaintenanceCore:
             ok=True,
             report_markdown="\n".join(lines) + "\n",
         )
+
+    @staticmethod
+    def _identity_diagnostic_lines(model: common_pb2.ModelSpec) -> list[str]:
+        effective_family = (
+            model.ext.get("embedding_family_id")
+            or model.ext.get("rerank_family_id")
+            or model.ext.get("vision_family_id")
+        )
+        model_architecture = model.ext.get("model_architecture", "")
+        detected_architecture = model.ext.get("detected_architecture", "")
+        detected_family_id = model.ext.get("detected_family_id", "")
+        detected_identity_source = model.ext.get("detected_identity_source", "")
+        identity_override = model.ext.get("identity_override", "")
+
+        if not any(
+            [
+                effective_family,
+                model_architecture,
+                detected_architecture,
+                detected_family_id,
+                detected_identity_source,
+                identity_override,
+            ]
+        ):
+            return []
+
+        lines = [
+            f"- model_id: {model.model_id}",
+            f"- model_kind: {model.model_kind}",
+        ]
+        if model_architecture:
+            lines.append(f"- model_architecture: {model_architecture}")
+        if effective_family:
+            lines.append(f"- effective_family_id: {effective_family}")
+        if detected_architecture:
+            lines.append(f"- detected_architecture: {detected_architecture}")
+        if detected_family_id:
+            lines.append(f"- detected_family_id: {detected_family_id}")
+        if detected_identity_source:
+            lines.append(f"- detected_identity_source: {detected_identity_source}")
+        if identity_override:
+            lines.append(f"- identity_override: {identity_override}")
+        return lines
 
     def bench_events(
         self,

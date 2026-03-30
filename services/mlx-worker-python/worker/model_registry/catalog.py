@@ -5,6 +5,116 @@ import os
 from packages.protocol.python.worker.v1 import common_pb2
 
 
+def _normalized(value: str | None) -> str:
+    return (value or "").strip()
+
+
+def _infer_embedding_identity(model_path: str) -> dict[str, str]:
+    normalized_path = model_path.lower()
+    if "mxbai" in normalized_path:
+        return {
+            "architecture": "bert",
+            "family_id": "mxbai-embed",
+            "backend_id": "bert-v1",
+            "source": "directory_name",
+        }
+    if "bge" in normalized_path:
+        return {
+            "architecture": "bert",
+            "family_id": "bge-m3",
+            "backend_id": "bert-v1",
+            "source": "directory_name",
+        }
+    if "xlmr" in normalized_path or "xlm-r" in normalized_path:
+        return {
+            "architecture": "xlmr",
+            "family_id": "xlmr",
+            "backend_id": "xlmr-v1",
+            "source": "directory_name",
+        }
+    if "bert" in normalized_path:
+        return {
+            "architecture": "bert",
+            "family_id": "bert",
+            "backend_id": "bert-v1",
+            "source": "directory_name",
+        }
+    return {
+        "architecture": "bert",
+        "family_id": "bert",
+        "backend_id": "bert-v1",
+        "source": "default",
+    }
+
+
+def _embedding_backend_for_family(family_id: str) -> str:
+    return "xlmr-v1" if family_id == "xlmr" else "bert-v1"
+
+
+def _embedding_architecture_for_family(family_id: str) -> str:
+    return "xlmr" if family_id == "xlmr" else "bert"
+
+
+def _default_embedding_family_for_backend(backend_id: str, detected_family_id: str) -> str:
+    if backend_id == "xlmr-v1":
+        return "xlmr"
+    if detected_family_id in {"bert", "bge-m3", "mxbai-embed"}:
+        return detected_family_id
+    return "bert"
+
+
+def _default_embedding_pooling_mode(family_id: str) -> str:
+    return {
+        "bert": "cls",
+        "xlmr": "mean",
+        "bge-m3": "cls",
+        "mxbai-embed": "mean",
+    }.get(family_id, "cls")
+
+
+def _default_embedding_dimensions(family_id: str) -> str:
+    return {"mxbai-embed": "10"}.get(family_id, "8")
+
+
+def _infer_rerank_identity(model_path: str) -> dict[str, str]:
+    normalized_path = model_path.lower()
+    if "causal-lm" in normalized_path or "causallm" in normalized_path:
+        return {
+            "architecture": "causal-lm",
+            "family_id": "causal-lm",
+            "source": "directory_name",
+        }
+    if "basic" in normalized_path:
+        return {
+            "architecture": "cross-encoder",
+            "family_id": "basic",
+            "source": "directory_name",
+        }
+    if "jina" in normalized_path:
+        return {
+            "architecture": "cross-encoder",
+            "family_id": "jina-v3",
+            "source": "directory_name",
+        }
+    return {
+        "architecture": "cross-encoder",
+        "family_id": "jina-v3",
+        "source": "default",
+    }
+
+
+def _rerank_architecture_for_family(family_id: str) -> str:
+    return "causal-lm" if family_id == "causal-lm" else "cross-encoder"
+
+
+def _default_rerank_scoring_mode(family_id: str) -> str:
+    return {
+        "basic": "set-overlap",
+        "causal-lm": "yes-no-logits",
+        "jina-v3": "order-aware-overlap",
+    }.get(family_id, "order-aware-overlap")
+
+
 class WorkerModelCatalog:
     def __init__(self, environment: dict[str, str] | None = None) -> None:
         self._environment = dict(environment or os.environ)
@@ -40,29 +150,33 @@ class WorkerModelCatalog:
     @staticmethod
     def dev_embedding_model(environment: dict[str, str] | None = None) -> common_pb2.ModelSpec:
         environment = dict(environment or os.environ)
-        backend_id = environment.get("MELIX_DEV_EMBED_BACKEND_ID", "bert-v1").strip() or "bert-v1"
-        family_id = environment.get(
-            "MELIX_DEV_EMBED_FAMILY_ID",
-            "xlmr" if backend_id == "xlmr-v1" else "bert",
-        ).strip() or ("xlmr" if backend_id == "xlmr-v1" else "bert")
-        default_pooling_mode = {
-            "bert": "cls",
-            "xlmr": "mean",
-            "bge-m3": "cls",
-            "mxbai-embed": "mean",
-        }.get(family_id, "cls")
+        model_path = environment.get("MELIX_DEV_EMBED_MODEL_PATH", "models/melix-dev-embed")
+        detected = _infer_embedding_identity(model_path)
+        configured_family_id = _normalized(environment.get("MELIX_DEV_EMBED_FAMILY_ID"))
+        configured_backend_id = _normalized(environment.get("MELIX_DEV_EMBED_BACKEND_ID"))
+
+        if configured_family_id:
+            family_id = configured_family_id
+            backend_id = configured_backend_id or _embedding_backend_for_family(family_id)
+        else:
+            backend_id = configured_backend_id or detected["backend_id"]
+            family_id = _default_embedding_family_for_backend(backend_id, detected["family_id"])
+
+        architecture = _embedding_architecture_for_family(family_id)
+        default_pooling_mode = _default_embedding_pooling_mode(family_id)
         pooling_mode = environment.get(
             "MELIX_DEV_EMBED_POOLING_MODE",
             default_pooling_mode,
         ).strip() or default_pooling_mode
         normalization = environment.get("MELIX_DEV_EMBED_NORMALIZATION", "l2").strip() or "l2"
-        default_dimensions = {
-            "mxbai-embed": "10",
-        }.get(family_id, "8")
+        default_dimensions = _default_embedding_dimensions(family_id)
         dimensions = environment.get("MELIX_DEV_EMBED_DIMENSIONS", default_dimensions).strip() or default_dimensions
+        identity_override = (
+            family_id != detected["family_id"] or architecture != detected["architecture"]
+        )
         return common_pb2.ModelSpec(
             model_id="melix-dev-embed",
-            model_path=environment.get("MELIX_DEV_EMBED_MODEL_PATH", "models/melix-dev-embed"),
+            model_path=model_path,
             model_kind="embedding",
             revision="dev",
             tokenizer_hash="tok-embed-dev",
@@ -76,31 +190,43 @@ class WorkerModelCatalog:
                 "embedding_pooling_mode": pooling_mode,
                 "embedding_normalization": normalization,
                 "embedding_dimensions": dimensions,
+                "model_architecture": architecture,
+                "detected_architecture": detected["architecture"],
+                "detected_family_id": detected["family_id"],
+                "detected_identity_source": detected["source"],
+                "identity_override": "true" if identity_override else "false",
             },
         )
 
     @staticmethod
     def dev_rerank_model(environment: dict[str, str] | None = None) -> common_pb2.ModelSpec:
         environment = dict(environment or os.environ)
+        model_path = environment.get("MELIX_DEV_RERANK_MODEL_PATH", "models/melix-dev-rerank")
+        detected = _infer_rerank_identity(model_path)
         backend_id = environment.get("MELIX_DEV_RERANK_BACKEND_ID", "token-overlap-v1").strip() or "token-overlap-v1"
-        family_id = environment.get("MELIX_DEV_RERANK_FAMILY_ID", "jina-v3").strip() or "jina-v3"
-        default_scoring_mode = {
-            "basic": "set-overlap",
-            "causal-lm": "yes-no-logits",
-            "jina-v3": "order-aware-overlap",
-        }.get(family_id, "order-aware-overlap")
+        family_id = environment.get("MELIX_DEV_RERANK_FAMILY_ID", detected["family_id"]).strip() or detected["family_id"]
+        architecture = _rerank_architecture_for_family(family_id)
+        default_scoring_mode = _default_rerank_scoring_mode(family_id)
         scoring_mode = environment.get("MELIX_DEV_RERANK_SCORING_MODE", default_scoring_mode).strip() or default_scoring_mode
+        identity_override = (
+            family_id != detected["family_id"] or architecture != detected["architecture"]
+        )
         ext = {
             "rerank_backend_id": backend_id,
             "rerank_family_id": family_id,
             "rerank_scoring_mode": scoring_mode,
+            "model_architecture": architecture,
+            "detected_architecture": detected["architecture"],
+            "detected_family_id": detected["family_id"],
+            "detected_identity_source": detected["source"],
+            "identity_override": "true" if identity_override else "false",
         }
         if family_id == "causal-lm":
             yes_no_labels = environment.get("MELIX_DEV_RERANK_YES_NO_LABELS", "yes,no").strip() or "yes,no"
             ext["rerank_yes_no_labels"] = yes_no_labels
         return common_pb2.ModelSpec(
             model_id="melix-dev-rerank",
-            model_path=environment.get("MELIX_DEV_RERANK_MODEL_PATH", "models/melix-dev-rerank"),
+            model_path=model_path,
             model_kind="rerank",
             revision="dev",
             tokenizer_hash="tok-rerank-dev",

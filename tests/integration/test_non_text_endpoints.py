@@ -127,6 +127,24 @@ def test_embeddings_endpoint_supports_bge_and_mxbai_family_overrides() -> None:
     assert bge_payload["data"][0]["embedding"] != mxbai_payload["data"][0]["embedding"]
 
 
+def test_embeddings_endpoint_infers_mxbai_family_from_directory_name() -> None:
+    stack = LiveMelixStack(
+        Path(__file__).resolve().parents[2],
+        environment_overrides={"MELIX_DEV_EMBED_MODEL_PATH": "models/mxbai-embed-large-v1"},
+    )
+
+    try:
+        stack.start()
+        stack.wait_for_models(["melix-dev-embed"])
+        status, payload = _post_embeddings(stack, "melix-dev-embed", ["query text"])
+
+        assert status == 200
+        assert payload["model"] == "melix-dev-embed"
+        assert len(payload["data"][0]["embedding"]) == 10
+    finally:
+        stack.stop()
+
+
 def test_rerank_endpoint_returns_ranked_items() -> None:
     stack = LiveMelixStack(Path(__file__).resolve().parents[2])
 
@@ -182,6 +200,32 @@ def test_rerank_endpoint_supports_causal_lm_yes_no_scoring() -> None:
     stack = LiveMelixStack(
         Path(__file__).resolve().parents[2],
         environment_overrides={"MELIX_DEV_RERANK_FAMILY_ID": "causal-lm"},
+    )
+
+    try:
+        stack.start()
+        stack.wait_for_models(["melix-dev-rerank"])
+        status, payload = _post_rerank(
+            stack,
+            "melix-dev-rerank",
+            "swift runtime",
+            ["swift runtime is available", "python packaging release"],
+            2,
+        )
+
+        assert status == 200
+        assert payload["model"] == "melix-dev-rerank"
+        assert [item["index"] for item in payload["data"]] == [0, 1]
+        assert payload["data"][0]["score"] > 0
+        assert payload["data"][1]["score"] < 0
+    finally:
+        stack.stop()
+
+
+def test_rerank_endpoint_infers_causal_lm_from_directory_name() -> None:
+    stack = LiveMelixStack(
+        Path(__file__).resolve().parents[2],
+        environment_overrides={"MELIX_DEV_RERANK_MODEL_PATH": "models/causal-lm-reranker"},
     )
 
     try:

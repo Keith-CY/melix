@@ -173,6 +173,39 @@ def test_load_model_exposes_embedding_family_metadata_for_bge_and_mxbai() -> Non
     assert mxbai_loaded.runtime_model["dimensions"] == 10
 
 
+def test_embedding_model_infers_identity_from_directory_name() -> None:
+    model = WorkerModelCatalog.dev_embedding_model(
+        environment={"MELIX_DEV_EMBED_MODEL_PATH": "models/mxbai-embed-large-v1"}
+    )
+
+    assert model.ext["embedding_backend_id"] == "bert-v1"
+    assert model.ext["embedding_family_id"] == "mxbai-embed"
+    assert model.ext["embedding_pooling_mode"] == "mean"
+    assert model.ext["embedding_dimensions"] == "10"
+    assert model.ext["model_architecture"] == "bert"
+    assert model.ext["detected_architecture"] == "bert"
+    assert model.ext["detected_family_id"] == "mxbai-embed"
+    assert model.ext["detected_identity_source"] == "directory_name"
+    assert model.ext["identity_override"] == "false"
+
+
+def test_embedding_model_preserves_detected_identity_when_override_is_applied() -> None:
+    model = WorkerModelCatalog.dev_embedding_model(
+        environment={
+            "MELIX_DEV_EMBED_MODEL_PATH": "models/xlmr-base",
+            "MELIX_DEV_EMBED_FAMILY_ID": "bge-m3",
+        }
+    )
+
+    assert model.ext["embedding_backend_id"] == "bert-v1"
+    assert model.ext["embedding_family_id"] == "bge-m3"
+    assert model.ext["model_architecture"] == "bert"
+    assert model.ext["detected_architecture"] == "xlmr"
+    assert model.ext["detected_family_id"] == "xlmr"
+    assert model.ext["detected_identity_source"] == "directory_name"
+    assert model.ext["identity_override"] == "true"
+
+
 def test_embed_returns_family_specific_dimensions_for_mxbai() -> None:
     _, runtime_service, inference_service = build_services()
     bge_model = WorkerModelCatalog.dev_embedding_model(

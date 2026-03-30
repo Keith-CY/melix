@@ -45,6 +45,95 @@ struct ModelCatalogTests {
         #expect(model.settings.ext["rerank_yes_no_labels"] == "yes,no")
     }
 
+    @Test("dev embedding model infers mxbai identity from directory name")
+    func devEmbeddingModelInfersMXBaiIdentityFromDirectoryName() async throws {
+        let model = ModelCatalog.devEmbeddingModel(environment: [
+            "MELIX_DEV_EMBED_MODEL_PATH": "models/mxbai-embed-large-v1",
+        ])
+
+        #expect(model.settings.ext["embedding_backend_id"] == "bert-v1")
+        #expect(model.settings.ext["embedding_family_id"] == "mxbai-embed")
+        #expect(model.settings.ext["embedding_pooling_mode"] == "mean")
+        #expect(model.settings.ext["embedding_dimensions"] == "10")
+        #expect(model.settings.ext["model_architecture"] == "bert")
+        #expect(model.settings.ext["detected_architecture"] == "bert")
+        #expect(model.settings.ext["detected_family_id"] == "mxbai-embed")
+        #expect(model.settings.ext["detected_identity_source"] == "directory_name")
+        #expect(model.settings.ext["identity_override"] == "false")
+    }
+
+    @Test("dev embedding model covers bert bge and xlmr directory inference branches")
+    func devEmbeddingModelCoversDirectoryInferenceBranches() async throws {
+        let bge = ModelCatalog.devEmbeddingModel(environment: [
+            "MELIX_DEV_EMBED_MODEL_PATH": "models/bge-m3-large",
+        ])
+        let xlmr = ModelCatalog.devEmbeddingModel(environment: [
+            "MELIX_DEV_EMBED_MODEL_PATH": "models/xlm-r-base",
+        ])
+        let bert = ModelCatalog.devEmbeddingModel(environment: [
+            "MELIX_DEV_EMBED_MODEL_PATH": "models/bert-base",
+        ])
+
+        #expect(bge.settings.ext["embedding_family_id"] == "bge-m3")
+        #expect(bge.settings.ext["detected_family_id"] == "bge-m3")
+        #expect(xlmr.settings.ext["embedding_backend_id"] == "xlmr-v1")
+        #expect(xlmr.settings.ext["embedding_family_id"] == "xlmr")
+        #expect(xlmr.settings.ext["model_architecture"] == "xlmr")
+        #expect(bert.settings.ext["embedding_family_id"] == "bert")
+        #expect(bert.settings.ext["detected_family_id"] == "bert")
+    }
+
+    @Test("dev embedding model derives backend and family from overrides")
+    func devEmbeddingModelDerivesBackendAndFamilyFromOverrides() async throws {
+        let familyOverride = ModelCatalog.devEmbeddingModel(environment: [
+            "MELIX_DEV_EMBED_FAMILY_ID": "xlmr",
+        ])
+        let backendOverride = ModelCatalog.devEmbeddingModel(environment: [
+            "MELIX_DEV_EMBED_MODEL_PATH": "models/bert-base",
+            "MELIX_DEV_EMBED_BACKEND_ID": "xlmr-v1",
+        ])
+
+        #expect(familyOverride.settings.ext["embedding_backend_id"] == "xlmr-v1")
+        #expect(familyOverride.settings.ext["embedding_family_id"] == "xlmr")
+        #expect(familyOverride.settings.ext["model_architecture"] == "xlmr")
+        #expect(familyOverride.settings.ext["identity_override"] == "true")
+        #expect(backendOverride.settings.ext["embedding_family_id"] == "xlmr")
+        #expect(backendOverride.settings.ext["model_architecture"] == "xlmr")
+    }
+
+    @Test("dev rerank model preserves detected jina identity when override is applied")
+    func devRerankModelPreservesDetectedJinaIdentityWhenOverrideIsApplied() async throws {
+        let model = ModelCatalog.devRerankModel(environment: [
+            "MELIX_DEV_RERANK_MODEL_PATH": "models/jina-v3-reranker",
+            "MELIX_DEV_RERANK_FAMILY_ID": "causal-lm",
+        ])
+
+        #expect(model.settings.ext["rerank_family_id"] == "causal-lm")
+        #expect(model.settings.ext["rerank_scoring_mode"] == "yes-no-logits")
+        #expect(model.settings.ext["model_architecture"] == "causal-lm")
+        #expect(model.settings.ext["detected_architecture"] == "cross-encoder")
+        #expect(model.settings.ext["detected_family_id"] == "jina-v3")
+        #expect(model.settings.ext["detected_identity_source"] == "directory_name")
+        #expect(model.settings.ext["identity_override"] == "true")
+    }
+
+    @Test("dev rerank model covers causal-lm and basic directory inference branches")
+    func devRerankModelCoversDirectoryInferenceBranches() async throws {
+        let causalLM = ModelCatalog.devRerankModel(environment: [
+            "MELIX_DEV_RERANK_MODEL_PATH": "models/causal-lm-reranker",
+        ])
+        let basic = ModelCatalog.devRerankModel(environment: [
+            "MELIX_DEV_RERANK_MODEL_PATH": "models/basic-reranker",
+        ])
+
+        #expect(causalLM.settings.ext["rerank_family_id"] == "causal-lm")
+        #expect(causalLM.settings.ext["rerank_scoring_mode"] == "yes-no-logits")
+        #expect(causalLM.settings.ext["detected_architecture"] == "causal-lm")
+        #expect(basic.settings.ext["rerank_family_id"] == "basic")
+        #expect(basic.settings.ext["rerank_scoring_mode"] == "set-overlap")
+        #expect(basic.settings.ext["detected_architecture"] == "cross-encoder")
+    }
+
     @Test("model settings updates persist alias and requested residency without faking pin state")
     func modelSettingsUpdatesPersistAliasAndRequestedResidencyWithoutFakingPinState() async throws {
         let catalog = ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels())
