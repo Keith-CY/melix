@@ -141,6 +141,101 @@ def test_generate_streams_vlm_response_from_file_image_uri(tmp_path: Path) -> No
     assert model_info.supported_tasks == ["vlm", "generate"]
 
 
+def test_vlm_prefill_and_decode_expose_explicit_runtime_lifecycle() -> None:
+    registry = WorkerRegistry(
+        runtime=MLXTextRuntime(backend=PassiveTextBackend()),
+        model_catalog=WorkerModelCatalog(),
+    )
+    runtime_service = WorkerRuntimeService(registry)
+    inference_service = WorkerInferenceService(registry)
+    model_handle = load_model(runtime_service, WorkerModelCatalog.dev_vlm_model())
+
+    request_id = "vlm-phase-aware-1"
+    messages = [
+        common_pb2.ChatMessage(
+            role="user",
+            parts=[
+                common_pb2.MessagePart(text="Summarize the image."),
+                common_pb2.MessagePart(
+                    image_bytes=b"phase aware image",
+                    media=common_pb2.MediaMetadata(
+                        media_type=common_pb2.MEDIA_TYPE_IMAGE,
+                        source_kind=common_pb2.MEDIA_SOURCE_INLINE_BYTES,
+                        mime_type="image/png",
+                        filename="phase-aware.png",
+                    ),
+                ),
+            ],
+        )
+    ]
+
+    prefill_response = inference_service.Prefill(
+        inference_pb2.PrefillRequest(
+            execution=inference_pb2.ExecutionMetadata(
+                id=common_pb2.RequestIdentity(request_id=request_id),
+                model_handle=model_handle,
+            ),
+            messages=messages,
+            return_decode_handle=True,
+            prefill_step_size=16,
+        ),
+        context=None,
+    )
+
+    assert prefill_response.ok is True
+    assert prefill_response.decode_handle == f"vlm:{request_id}"
+    assert prefill_response.block_table_id.startswith("vlm-block:")
+    assert prefill_response.block_table.total_token_count > 0
+    assert prefill_response.prompt_tokens > 0
+    assert prefill_response.lifecycle_phase == common_pb2.EXECUTION_PREFILLING
+    assert prefill_response.admission_state == common_pb2.ADMISSION_ADMITTED
+    assert prefill_response.applied_acceleration.mode == common_pb2.ACCELERATION_MODE_BASELINE
+
+    prefill_stats = runtime_service.GetRuntimeStats(runtime_pb2.GetRuntimeStatsRequest(), context=None).stats
+    assert prefill_stats.active_prefills == 1
+    assert prefill_stats.active_decodes == 0
+
+    decode_events = inference_service.Decode(
+        inference_pb2.DecodeRequest(
+            execution=inference_pb2.ExecutionMetadata(
+                id=common_pb2.RequestIdentity(request_id=request_id),
+                model_handle=model_handle,
+            ),
+            decode_handle=prefill_response.decode_handle,
+            sampling=common_pb2.SamplingConfig(max_output_tokens=64),
+            max_output_tokens=64,
+            return_usage=True,
+        ),
+        context=None,
+    )
+    first_event = next(decode_events)
+
+    assert first_event.decode_started.decode_handle == prefill_response.decode_handle
+    assert first_event.decode_started.max_output_tokens == 64
+    assert first_event.decode_started.resumed_from_prefill is True
+    assert first_event.phase == common_pb2.EXECUTION_DECODING
+
+    decode_stats = runtime_service.GetRuntimeStats(runtime_pb2.GetRuntimeStatsRequest(), context=None).stats
+    assert decode_stats.active_prefills == 0
+    assert decode_stats.active_decodes == 1
+
+    remaining_events = list(decode_events)
+    token_text = "".join(event.token_delta.text for event in remaining_events if event.HasField("token_delta"))
+    usage = next(event.usage_delta for event in remaining_events if event.HasField("usage_delta"))
+    completed = next(event.completed for event in remaining_events if event.HasField("completed"))
+
+    assert token_text == "Image content: phase aware image\nPrompt: Summarize the image."
+    assert usage.prompt_tokens == prefill_response.prompt_tokens
+    assert usage.completion_tokens > 0
+    assert completed.finish_reason == "stop"
+    assert completed.assistant_text == token_text
+
+    final_stats = runtime_service.GetRuntimeStats(runtime_pb2.GetRuntimeStatsRequest(), context=None).stats
+    assert final_stats.active_prefills == 0
+    assert final_stats.active_decodes == 0
+    assert final_stats.last_probe_kind == "vlm"
+
+
 def test_prepare_vision_request_accepts_plain_local_paths(tmp_path: Path) -> None:
     image_path = tmp_path / "plain-local-path.txt"
     image_path.write_text("diagram text")

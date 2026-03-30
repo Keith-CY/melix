@@ -30,6 +30,8 @@ def main() -> None:
             "get-runtime-stats",
             "get-cache-stats",
             "generate",
+            "prefill",
+            "decode",
             "abort",
             "embed",
             "rerank",
@@ -76,6 +78,15 @@ def main() -> None:
                 stub = inference_pb2_grpc.InferenceServiceStub(channel)
                 request = inference_pb2.GenerateRequest.FromString(request_bytes)
                 for event in stub.Generate(request):
+                    emit_message(event.SerializeToString())
+            elif args.command == "prefill":
+                stub = inference_pb2_grpc.InferenceServiceStub(channel)
+                request = inference_pb2.PrefillRequest.FromString(request_bytes)
+                emit_message(stub.Prefill(request).SerializeToString())
+            elif args.command == "decode":
+                stub = inference_pb2_grpc.InferenceServiceStub(channel)
+                request = inference_pb2.DecodeRequest.FromString(request_bytes)
+                for event in stub.Decode(request):
                     emit_message(event.SerializeToString())
             elif args.command == "embed":
                 stub = inference_pb2_grpc.InferenceServiceStub(channel)

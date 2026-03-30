@@ -198,6 +198,12 @@ class WorkerRegistry:
         with self._lock:
             return self._requests.get(request_id)
 
+    def set_request_phase(self, request_id: str, phase: str) -> None:
+        with self._lock:
+            state = self._requests.get(request_id)
+            if state is not None:
+                state.phase = phase
+
     def finish_request(self, request_id: str) -> None:
         with self._lock:
             self._requests.pop(request_id, None)
@@ -214,6 +220,8 @@ class WorkerRegistry:
         cache_stats = self.cache_stats_response().stats
         with self._lock:
             active_requests = len(self._requests)
+            active_prefills = sum(1 for state in self._requests.values() if state.phase == "prefill")
+            active_decodes = sum(1 for state in self._requests.values() if state.phase == "decode")
             active_multimodal_requests = sum(
                 1 for state in self._requests.values() if state.runtime_kind in {"ocr", "vlm", "transcription", "speech", "image"}
             )
@@ -241,8 +249,8 @@ class WorkerRegistry:
             worker_state="draining" if self._draining else "idle",
             resident_bytes=resident_bytes,
             active_requests=active_requests,
-            active_prefills=0,
-            active_decodes=0,
+            active_prefills=active_prefills,
+            active_decodes=active_decodes,
             l1_cache_bytes=cache_stats.l1_bytes,
             l2_cache_bytes=cache_stats.l2_bytes,
             l1_hit_rate=cache_stats.l1_hit_rate,

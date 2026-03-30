@@ -11,6 +11,8 @@ public enum BridgeCommandKind: String, Sendable {
     case getRuntimeStats = "get-runtime-stats"
     case getCacheStats = "get-cache-stats"
     case generate = "generate"
+    case prefill = "prefill"
+    case decode = "decode"
     case abort = "abort"
     case embed = "embed"
     case rerank = "rerank"
@@ -43,6 +45,7 @@ public protocol WorkerBridgeRunning: Sendable {
 
 public struct PythonBridgeWorkerClient:
     WorkerRoutingClient,
+    PhaseAwareWorkerClientProtocol,
     NonTextInferenceWorkerClientProtocol,
     CacheIntrospectingWorkerClientProtocol,
     RuntimeIntrospectingWorkerClientProtocol,
@@ -104,31 +107,19 @@ public struct PythonBridgeWorkerClient:
     public func generate(
         request: Melix_Worker_V1_GenerateRequest
     ) async throws -> AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error> {
-        let lineStream = try await runner.runStream(
-            command: BridgeCommand(
-                kind: .generate,
-                socketPath: socketPath,
-                requestData: try request.serializedData()
-            )
-        )
+        try await sendStream(kind: .generate, request: request, as: Melix_Worker_V1_ExecuteEvent.self)
+    }
 
-        return AsyncThrowingStream { continuation in
-            let task = Task {
-                do {
-                    for try await line in lineStream {
-                        let event: Melix_Worker_V1_ExecuteEvent = try decodeLine(line)
-                        continuation.yield(event)
-                    }
-                    continuation.finish()
-                } catch {
-                    continuation.finish(throwing: error)
-                }
-            }
+    public func prefill(
+        request: Melix_Worker_V1_PrefillRequest
+    ) async throws -> Melix_Worker_V1_PrefillResponse {
+        try await sendUnary(kind: .prefill, request: request, as: Melix_Worker_V1_PrefillResponse.self)
+    }
 
-            continuation.onTermination = { _ in
-                task.cancel()
-            }
-        }
+    public func decode(
+        request: Melix_Worker_V1_DecodeRequest
+    ) async throws -> AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error> {
+        try await sendStream(kind: .decode, request: request, as: Melix_Worker_V1_ExecuteEvent.self)
     }
 
     public func abort(requestID: String) async throws -> Bool {
@@ -208,31 +199,7 @@ public struct PythonBridgeWorkerClient:
     public func convertModel(
         request: Melix_Worker_V1_ConvertModelRequest
     ) async throws -> AsyncThrowingStream<Melix_Worker_V1_ConvertModelEvent, Error> {
-        let lineStream = try await runner.runStream(
-            command: BridgeCommand(
-                kind: .convertModel,
-                socketPath: socketPath,
-                requestData: try request.serializedData()
-            )
-        )
-
-        return AsyncThrowingStream { continuation in
-            let task = Task {
-                do {
-                    for try await line in lineStream {
-                        let event: Melix_Worker_V1_ConvertModelEvent = try decodeLine(line)
-                        continuation.yield(event)
-                    }
-                    continuation.finish()
-                } catch {
-                    continuation.finish(throwing: error)
-                }
-            }
-
-            continuation.onTermination = { _ in
-                task.cancel()
-            }
-        }
+        try await sendStream(kind: .convertModel, request: request, as: Melix_Worker_V1_ConvertModelEvent.self)
     }
 
     public func runDoctor(
@@ -248,9 +215,17 @@ public struct PythonBridgeWorkerClient:
     public func runBench(
         request: Melix_Worker_V1_RunBenchRequest
     ) async throws -> AsyncThrowingStream<Melix_Worker_V1_RunBenchEvent, Error> {
+        try await sendStream(kind: .runBench, request: request, as: Melix_Worker_V1_RunBenchEvent.self)
+    }
+
+    private func sendStream<Request: SwiftProtobuf.Message, Response: SwiftProtobuf.Message>(
+        kind: BridgeCommandKind,
+        request: Request,
+        as _: Response.Type
+    ) async throws -> AsyncThrowingStream<Response, Error> {
         let lineStream = try await runner.runStream(
             command: BridgeCommand(
-                kind: .runBench,
+                kind: kind,
                 socketPath: socketPath,
                 requestData: try request.serializedData()
             )
@@ -260,7 +235,7 @@ public struct PythonBridgeWorkerClient:
             let task = Task {
                 do {
                     for try await line in lineStream {
-                        let event: Melix_Worker_V1_RunBenchEvent = try decodeLine(line)
+                        let event: Response = try decodeLine(line)
                         continuation.yield(event)
                     }
                     continuation.finish()

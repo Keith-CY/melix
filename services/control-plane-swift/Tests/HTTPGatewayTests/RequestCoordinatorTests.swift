@@ -330,6 +330,87 @@ struct RequestCoordinatorTests {
         _ = await consumer.result
     }
 
+    @Test("vlm routes use phase-aware prefill and decode on background lanes")
+    func vlmRoutesUsePhaseAwarePrefillAndDecodeOnBackgroundLanes() async throws {
+        let workerClient = PhaseAwareWorkerClient()
+        let schedulerReadModel = SchedulerReadModel()
+        let metricsStore = MetricsStore()
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devVLMModel()])
+        _ = await catalog.loadModel(id: "melix-dev-vlm", dispatchHandle: "melix-dev-vlm::python")
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: BlockingWorkerClient(),
+                pythonCompatibilityClient: workerClient,
+                modelCatalog: catalog
+            ),
+            abortRegistry: AbortRegistry(),
+            schedulerReadModel: schedulerReadModel,
+            metricsStore: metricsStore
+        )
+
+        let execution = try await coordinator.startChatCompletion(
+            makeTranslatedChatRequest(
+                requestID: "req-vlm-phase-aware",
+                modelID: "melix-dev-vlm",
+                messages: [makeWorkerVisionMessage(text: "Summarize the image.", imageBytes: Data("vision fixture".utf8))]
+            )
+        )
+        let consumer = Task {
+            var events: [Melix_Worker_V1_ExecuteEvent] = []
+            for try await event in execution.stream {
+                events.append(event)
+            }
+            return events
+        }
+
+        let prefillRequest = await waitForPrefillRequest(workerClient: workerClient)
+        let prefillProgress = await waitForProgress(
+            schedulerReadModel: schedulerReadModel,
+            requestID: "req-vlm-phase-aware",
+            phase: .requestPrefilling,
+            lane: "multimodal.vision.background"
+        )
+        let decodeRequest = await waitForDecodeRequest(workerClient: workerClient)
+
+        #expect(prefillRequest?.execution.id.requestID == "req-vlm-phase-aware")
+        #expect(prefillRequest?.prefillStepSize ?? 0 > 0)
+        #expect(prefillProgress?.lane == "multimodal.vision.background")
+        #expect(decodeRequest?.decodeHandle == "decode-req-vlm-phase-aware")
+        #expect(await workerClient.generatedRequestIDs.isEmpty)
+
+        await workerClient.emitDecodeStarted(
+            requestID: "req-vlm-phase-aware",
+            decodeHandle: "decode-req-vlm-phase-aware"
+        )
+        let decodeProgress = await waitForProgress(
+            schedulerReadModel: schedulerReadModel,
+            requestID: "req-vlm-phase-aware",
+            phase: .requestDecoding,
+            lane: "multimodal.vision.background"
+        )
+        await workerClient.emitToken(requestID: "req-vlm-phase-aware", text: "vision answer")
+        await workerClient.finishDecode(requestID: "req-vlm-phase-aware", assistantText: "vision answer")
+
+        let events = try await consumer.value
+        let metrics = await metricsStore.snapshot()
+
+        #expect(events.contains(where: {
+            if case .decodeStarted = $0.payload {
+                return true
+            }
+            return false
+        }))
+        #expect(events.contains(where: {
+            if case .tokenDelta(let payload) = $0.payload {
+                return payload.text == "vision answer"
+            }
+            return false
+        }))
+        #expect(events.last?.completed.assistantText == "vision answer")
+        #expect(decodeProgress?.lane == "multimodal.vision.background")
+        #expect(metrics.values["scheduler.prefill_chunk_count", default: -1] >= 1)
+    }
+
     @Test("text ttft under multimodal load is recorded separately")
     func textTTFTUnderMultimodalLoadIsRecordedSeparately() async throws {
         let workerClient = PhaseAwareWorkerClient()
@@ -2257,6 +2338,27 @@ private func makeWorkerTextMessage(_ text: String) -> Melix_Worker_V1_ChatMessag
     var part = Melix_Worker_V1_MessagePart()
     part.text = text
     message.parts = [part]
+    return message
+}
+
+private func makeWorkerVisionMessage(
+    text: String,
+    imageBytes: Data
+) -> Melix_Worker_V1_ChatMessage {
+    var message = Melix_Worker_V1_ChatMessage()
+    message.role = "user"
+
+    var textPart = Melix_Worker_V1_MessagePart()
+    textPart.text = text
+
+    var imagePart = Melix_Worker_V1_MessagePart()
+    imagePart.imageBytes = imageBytes
+    imagePart.media.mediaType = .image
+    imagePart.media.sourceKind = .mediaSourceInlineBytes
+    imagePart.media.mimeType = "image/png"
+    imagePart.media.filename = "fixture.png"
+
+    message.parts = [textPart, imagePart]
     return message
 }
 

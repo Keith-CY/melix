@@ -172,20 +172,10 @@ class WorkerInferenceService(inference_pb2_grpc.InferenceServiceServicer):
         yield from self._engine.generate(request)
 
     def Prefill(self, request, context):
-        return inference_pb2.PrefillResponse(
-            ok=False,
-            error=common_pb2.ErrorStatus(code="unimplemented", message="Prefill is deferred in phase 0."),
-        )
+        return self._engine.prefill(request)
 
     def Decode(self, request, context):
-        yield inference_pb2.ExecuteEvent(
-            request_id=request.execution.id.request_id,
-            execution_kind="decode",
-            seq=1,
-            error=inference_pb2.ErrorEvent(
-                error=common_pb2.ErrorStatus(code="unimplemented", message="Decode is deferred in phase 0.")
-            ),
-        )
+        yield from self._engine.decode(request)
 
     def Abort(self, request, context):
         found = self._engine.abort(request.request_id)

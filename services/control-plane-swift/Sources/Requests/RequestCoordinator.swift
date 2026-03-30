@@ -363,7 +363,7 @@ public actor RequestCoordinator {
 
         do {
             let upstream: AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error>
-            if plan.routeKind.isPhaseAwareTextRoute,
+            if plan.routeKind.supportsPhaseAwareExecution,
                let phaseAwareClient = workerClient as? any PhaseAwareWorkerClientProtocol,
                shouldUsePhaseAwareExecution(for: request.workerRequest) {
                 upstream = makePhaseAwareUpstream(
@@ -787,6 +787,8 @@ public actor RequestCoordinator {
         let routeKind = await workerRegistry.route(forModelID: request.modelID) ?? .swiftText
         if routeKind.isMultimodalBackgroundRoute {
             let lane = routeKind.defaultSchedulingLane
+            let usesPhaseAwareExecution = routeKind.supportsPhaseAwareExecution
+                && shouldUsePhaseAwareExecution(for: request.workerRequest)
             return SchedulingPlan(
                 translatedRequest: request,
                 routeKind: routeKind,
@@ -794,7 +796,7 @@ public actor RequestCoordinator {
                 prefillLane: lane,
                 decodeLane: lane,
                 cacheRouteClass: .cold,
-                cacheRouteEligible: false,
+                cacheRouteEligible: usesPhaseAwareExecution,
                 prefixAffinityEligible: false,
                 prefixAffinityHit: false,
                 continuousBatchEligible: false,
@@ -1733,6 +1735,9 @@ private func resolvedPrefillChunkTarget(
         messages: messages,
         chunkTokenTarget: boundarySafePrefillChunkTargetTokens
     )
+    if messagesContainVisionInput(messages) {
+        return chunkBoundaries.isEmpty ? 0 : boundarySafePrefillChunkTargetTokens
+    }
     return chunkBoundaries.count > 1 ? boundarySafePrefillChunkTargetTokens : 0
 }
 
@@ -1842,4 +1847,19 @@ private func tokenFragments(
         .split(whereSeparator: \.isWhitespace)
         .map(String.init)
         .map(kind)
+}
+
+private func messagesContainVisionInput(
+    _ messages: [Melix_Worker_V1_ChatMessage]
+) -> Bool {
+    messages.contains(where: { message in
+        message.parts.contains(where: { part in
+            switch part.part {
+            case .imageUri, .imageBytes:
+                return true
+            default:
+                return false
+            }
+        })
+    })
 }

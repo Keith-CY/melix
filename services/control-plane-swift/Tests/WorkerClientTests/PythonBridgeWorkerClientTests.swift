@@ -100,6 +100,66 @@ struct PythonBridgeWorkerClientTests {
         #expect(events[1].completed.finishReason == "stop")
     }
 
+    @Test("prefill and decode bridge methods expose phase-aware execution payloads")
+    func prefillAndDecodeBridgeMethodsExposePhaseAwareExecutionPayloads() async throws {
+        var prefillRequest = Melix_Worker_V1_PrefillRequest()
+        prefillRequest.execution.id.requestID = "req-vlm-bridge"
+        prefillRequest.execution.modelHandle = "melix-dev-vlm::bridge"
+        prefillRequest.returnDecodeHandle = true
+
+        var prefillResponse = Melix_Worker_V1_PrefillResponse()
+        prefillResponse.ok = true
+        prefillResponse.decodeHandle = "decode-req-vlm-bridge"
+        prefillResponse.blockTableID = "vlm-block:req-vlm-bridge"
+        prefillResponse.promptTokens = 32
+
+        var decodeRequest = Melix_Worker_V1_DecodeRequest()
+        decodeRequest.execution.id.requestID = "req-vlm-bridge"
+        decodeRequest.execution.modelHandle = "melix-dev-vlm::bridge"
+        decodeRequest.decodeHandle = "decode-req-vlm-bridge"
+        decodeRequest.maxOutputTokens = 64
+
+        var decodeStarted = Melix_Worker_V1_ExecuteEvent()
+        decodeStarted.requestID = "req-vlm-bridge"
+        decodeStarted.executionKind = "decode"
+        decodeStarted.seq = 1
+        decodeStarted.phase = .executionDecoding
+        decodeStarted.decodeStarted = {
+            var payload = Melix_Worker_V1_DecodeStarted()
+            payload.decodeHandle = "decode-req-vlm-bridge"
+            payload.maxOutputTokens = 64
+            payload.resumedFromPrefill = true
+            return payload
+        }()
+
+        let runner = ScriptedBridgeRunner()
+        await runner.setUnaryResponse(
+            .prefill,
+            line: bridgeMessageLine(message: try prefillResponse.serializedData())
+        )
+        await runner.setStreamResponse(
+            .decode,
+            lines: [
+                bridgeMessageLine(message: try decodeStarted.serializedData()),
+                bridgeMessageLine(message: try makeTokenEvent(requestID: "req-vlm-bridge", seq: 2, text: "Vision").serializedData()),
+                bridgeMessageLine(message: try makeCompletedEvent(requestID: "req-vlm-bridge", seq: 3, finishReason: "stop", assistantText: "Vision").serializedData()),
+            ]
+        )
+
+        let client = PythonBridgeWorkerClient(socketPath: "/tmp/melix-test.sock", runner: runner)
+        let prefilled = try await client.prefill(request: prefillRequest)
+        let stream = try await client.decode(request: decodeRequest)
+        let events = try await collect(stream)
+
+        #expect(prefilled.ok)
+        #expect(prefilled.decodeHandle == "decode-req-vlm-bridge")
+        #expect(prefilled.promptTokens == 32)
+        #expect(events.count == 3)
+        #expect(events[0].decodeStarted.decodeHandle == "decode-req-vlm-bridge")
+        #expect(events[1].tokenDelta.text == "Vision")
+        #expect(events[2].completed.assistantText == "Vision")
+    }
+
     @Test("abort returns the found bit from the bridge response")
     func abortReturnsFoundBitFromTheBridgeResponse() async throws {
         var response = Melix_Worker_V1_AbortResponse()

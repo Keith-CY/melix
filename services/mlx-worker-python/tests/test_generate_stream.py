@@ -92,7 +92,7 @@ def test_generate_streams_token_and_terminal_completion() -> None:
     assert usage.completion_tokens == 2
 
 
-def test_prefill_returns_structured_unimplemented_error() -> None:
+def test_text_prefill_returns_structured_unimplemented_error() -> None:
     _, inference_service, model_handle = build_services()
 
     response = inference_service.Prefill(

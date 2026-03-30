@@ -75,6 +75,38 @@ class FakeInferenceStub:
             completed=inference_pb2.Completed(finish_reason="stop", assistant_text="Echo hello"),
         )
 
+    def Prefill(self, request):
+        return inference_pb2.PrefillResponse(
+            ok=True,
+            decode_handle=f"decode-{request.execution.id.request_id}",
+            block_table_id="vlm-block:bridge",
+            prompt_tokens=32,
+        )
+
+    def Decode(self, request):
+        yield inference_pb2.ExecuteEvent(
+            request_id=request.execution.id.request_id,
+            execution_kind="decode",
+            seq=1,
+            decode_started=inference_pb2.DecodeStarted(
+                decode_handle=request.decode_handle,
+                max_output_tokens=request.max_output_tokens,
+                resumed_from_prefill=True,
+            ),
+        )
+        yield inference_pb2.ExecuteEvent(
+            request_id=request.execution.id.request_id,
+            execution_kind="decode",
+            seq=2,
+            token_delta=inference_pb2.TokenDelta(text="Vision "),
+        )
+        yield inference_pb2.ExecuteEvent(
+            request_id=request.execution.id.request_id,
+            execution_kind="decode",
+            seq=3,
+            completed=inference_pb2.Completed(finish_reason="stop", assistant_text="Vision answer"),
+        )
+
     def Abort(self, request):
         return inference_pb2.AbortResponse(ok=True, found=True)
 
@@ -254,6 +286,63 @@ def test_bridge_helper_forwards_abort(monkeypatch, capsys) -> None:
     abort_payload = inference_pb2.AbortResponse.FromString(base64.b64decode(abort_line["message_b64"]))
     assert abort_payload.ok is True
     assert abort_payload.found is True
+
+
+def test_bridge_helper_forwards_prefill_and_decode(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(control_plane_bridge.grpc, "insecure_channel", lambda target: FakeChannel())
+    monkeypatch.setattr(control_plane_bridge.inference_pb2_grpc, "InferenceServiceStub", lambda channel: FakeInferenceStub())
+
+    prefill_request = inference_pb2.PrefillRequest(
+        execution=inference_pb2.ExecutionMetadata(
+            id=common_pb2.RequestIdentity(request_id="req-prefill-bridge"),
+            model_handle="melix-dev-vlm::bridge",
+        ),
+        return_decode_handle=True,
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "control_plane_bridge.py",
+            "prefill",
+            "--socket-path",
+            "/tmp/unused.sock",
+            "--request-b64",
+            base64.b64encode(prefill_request.SerializeToString()).decode("ascii"),
+        ],
+    )
+    control_plane_bridge.main()
+    prefill_line = json.loads(capsys.readouterr().out.strip())
+    prefill_payload = inference_pb2.PrefillResponse.FromString(base64.b64decode(prefill_line["message_b64"]))
+    assert prefill_payload.ok is True
+    assert prefill_payload.decode_handle == "decode-req-prefill-bridge"
+
+    decode_request = inference_pb2.DecodeRequest(
+        execution=inference_pb2.ExecutionMetadata(
+            id=common_pb2.RequestIdentity(request_id="req-prefill-bridge"),
+            model_handle="melix-dev-vlm::bridge",
+        ),
+        decode_handle="decode-req-prefill-bridge",
+        max_output_tokens=32,
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "control_plane_bridge.py",
+            "decode",
+            "--socket-path",
+            "/tmp/unused.sock",
+            "--request-b64",
+            base64.b64encode(decode_request.SerializeToString()).decode("ascii"),
+        ],
+    )
+    control_plane_bridge.main()
+    decode_lines = [json.loads(line) for line in capsys.readouterr().out.splitlines() if line.strip()]
+    first_payload = inference_pb2.ExecuteEvent.FromString(base64.b64decode(decode_lines[0]["message_b64"]))
+    last_payload = inference_pb2.ExecuteEvent.FromString(base64.b64decode(decode_lines[-1]["message_b64"]))
+    assert first_payload.decode_started.decode_handle == "decode-req-prefill-bridge"
+    assert last_payload.completed.assistant_text == "Vision answer"
 
 
 def test_bridge_helper_emits_error_payloads_for_rpc_failures(monkeypatch, capsys) -> None:

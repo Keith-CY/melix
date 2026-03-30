@@ -92,6 +92,184 @@ class EngineCore:
                 self._registry.record_vision_probe(loaded_model.runtime_kind, runtime.last_probe_snapshot())
             self._registry.finish_request(request_id)
 
+    def prefill(self, request: inference_pb2.PrefillRequest) -> inference_pb2.PrefillResponse:
+        request_id = request.execution.id.request_id
+        loaded_model = self._registry.get_loaded_model(request.execution.model_handle)
+        if loaded_model is None:
+            return inference_pb2.PrefillResponse(
+                ok=False,
+                error=common_pb2.ErrorStatus(code="not_found", message="Unknown model handle."),
+            )
+
+        runtime = self._registry.runtime_for_loaded_model(loaded_model)
+        if loaded_model.runtime_kind != "vlm" or not hasattr(runtime, "prefill"):
+            return inference_pb2.PrefillResponse(
+                ok=False,
+                error=common_pb2.ErrorStatus(
+                    code="unimplemented",
+                    message="Prefill is only implemented for the native VLM runtime.",
+                ),
+            )
+
+        self._registry.start_request(request_id, runtime_kind=loaded_model.runtime_kind)
+        self._registry.set_request_phase(request_id, "prefill")
+
+        try:
+            session = runtime.prefill(
+                request_id=request_id,
+                loaded_model=loaded_model.runtime_model,
+                messages=request.messages,
+            )
+            response = inference_pb2.PrefillResponse(
+                ok=True,
+                decode_handle=session.decode_handle if request.return_decode_handle else "",
+                block_table_id=session.block_table_id,
+                block_table=session.block_table,
+                prompt_tokens=session.prompt_tokens,
+                lifecycle_phase=common_pb2.EXECUTION_PREFILLING,
+                admission_state=common_pb2.ADMISSION_ADMITTED,
+                applied_acceleration=common_pb2.AccelerationPolicy(
+                    mode=common_pb2.ACCELERATION_MODE_BASELINE
+                ),
+            )
+            self._registry.record_vision_probe(loaded_model.runtime_kind, runtime.last_probe_snapshot())
+            return response
+        except Exception as exc:  # pragma: no cover - defensive branch
+            self._registry.finish_request(request_id)
+            return inference_pb2.PrefillResponse(
+                ok=False,
+                error=common_pb2.ErrorStatus(code="runtime_error", message=str(exc)),
+            )
+
+    def decode(self, request: inference_pb2.DecodeRequest) -> Iterator[inference_pb2.ExecuteEvent]:
+        request_id = request.execution.id.request_id
+        loaded_model = self._registry.get_loaded_model(request.execution.model_handle)
+        if loaded_model is None:
+            yield self._error_event(request_id, 1, "not_found", "Unknown model handle.", execution_kind="decode")
+            return
+
+        runtime = self._registry.runtime_for_loaded_model(loaded_model)
+        if loaded_model.runtime_kind != "vlm" or not hasattr(runtime, "decode_tokens"):
+            yield self._error_event(
+                request_id,
+                1,
+                "unimplemented",
+                "Decode is only implemented for the native VLM runtime.",
+                execution_kind="decode",
+            )
+            return
+        state = self._registry.get_request(request_id)
+        if state is None:
+            yield self._error_event(
+                request_id,
+                1,
+                "invalid_decode_handle",
+                "Decode requires a prior prefill lifecycle.",
+                execution_kind="decode",
+            )
+            return
+        if not hasattr(runtime, "has_decode_session") or not runtime.has_decode_session(request.decode_handle):
+            yield self._error_event(
+                request_id,
+                state.allocate_seq(),
+                "invalid_decode_handle",
+                "Unknown decode handle.",
+                execution_kind="decode",
+            )
+            self._registry.finish_request(request_id)
+            return
+
+        self._registry.set_request_phase(request_id, "decode")
+        last_runtime_event = None
+
+        try:
+            yield inference_pb2.ExecuteEvent(
+                request_id=request_id,
+                execution_kind="decode",
+                seq=state.allocate_seq(),
+                phase=common_pb2.EXECUTION_DECODING,
+                admission_state=common_pb2.ADMISSION_ADMITTED,
+                decode_started=inference_pb2.DecodeStarted(
+                    decode_handle=request.decode_handle,
+                    max_output_tokens=request.max_output_tokens,
+                    resumed_from_prefill=True,
+                ),
+            )
+            for runtime_event in runtime.decode_tokens(
+                loaded_model.runtime_model,
+                request.decode_handle,
+                request.sampling,
+                state.cancel_event,
+            ):
+                last_runtime_event = runtime_event
+                if state.cancel_event.is_set():
+                    break
+                if runtime_event.text:
+                    state.append_token(runtime_event.text)
+                    yield inference_pb2.ExecuteEvent(
+                        request_id=request_id,
+                        execution_kind="decode",
+                        seq=state.allocate_seq(),
+                        phase=common_pb2.EXECUTION_DECODING,
+                        admission_state=common_pb2.ADMISSION_ADMITTED,
+                        token_delta=inference_pb2.TokenDelta(text=runtime_event.text),
+                    )
+
+            if request.return_usage and not state.cancel_event.is_set():
+                yield inference_pb2.ExecuteEvent(
+                    request_id=request_id,
+                    execution_kind="decode",
+                    seq=state.allocate_seq(),
+                    phase=common_pb2.EXECUTION_DECODING,
+                    admission_state=common_pb2.ADMISSION_ADMITTED,
+                    usage_delta=inference_pb2.UsageDelta(
+                        prompt_tokens=int(last_runtime_event.prompt_tokens or 0) if last_runtime_event is not None else 0,
+                        completion_tokens=(
+                            int(last_runtime_event.completion_tokens or len(state.emitted_tokens))
+                            if last_runtime_event is not None
+                            else len(state.emitted_tokens)
+                        ),
+                    ),
+                )
+
+            finish_reason = "stop"
+            if state.cancel_event.is_set():
+                finish_reason = "cancelled"
+            elif last_runtime_event is not None and last_runtime_event.finish_reason:
+                finish_reason = last_runtime_event.finish_reason
+
+            yield inference_pb2.ExecuteEvent(
+                request_id=request_id,
+                execution_kind="decode",
+                seq=state.allocate_seq(),
+                phase=common_pb2.EXECUTION_COMPLETED,
+                admission_state=common_pb2.ADMISSION_ADMITTED,
+                completed=inference_pb2.Completed(
+                    finish_reason=finish_reason,
+                    assistant_text=state.assistant_text,
+                ),
+            )
+        except KeyError:
+            yield self._error_event(
+                request_id,
+                state.allocate_seq(),
+                "invalid_decode_handle",
+                "Unknown decode handle.",
+                execution_kind="decode",
+            )
+        except Exception as exc:  # pragma: no cover - defensive branch
+            yield self._error_event(
+                request_id,
+                state.allocate_seq(),
+                "runtime_error",
+                str(exc),
+                execution_kind="decode",
+            )
+        finally:
+            if loaded_model.runtime_kind in {"ocr", "vlm"} and hasattr(runtime, "last_probe_snapshot"):
+                self._registry.record_vision_probe(loaded_model.runtime_kind, runtime.last_probe_snapshot())
+            self._registry.finish_request(request_id)
+
     def abort(self, request_id: str) -> bool:
         return self._registry.abort_request(request_id)
 
@@ -101,10 +279,11 @@ class EngineCore:
         seq: int,
         code: str,
         message: str,
+        execution_kind: str = "generate",
     ) -> inference_pb2.ExecuteEvent:
         return inference_pb2.ExecuteEvent(
             request_id=request_id,
-            execution_kind="generate",
+            execution_kind=execution_kind,
             seq=seq,
             error=inference_pb2.ErrorEvent(
                 error=common_pb2.ErrorStatus(code=code, message=message)

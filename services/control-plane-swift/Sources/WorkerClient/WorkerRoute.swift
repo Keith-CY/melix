@@ -84,4 +84,13 @@ public enum WorkerRouteKind: String, Sendable, Equatable {
             return false
         }
     }
+
+    public var supportsPhaseAwareExecution: Bool {
+        switch self {
+        case .swiftText, .pythonCompatibility, .pythonVLM:
+            return true
+        default:
+            return false
+        }
+    }
 }

@@ -38,12 +38,27 @@ class VisionCacheEntry:
     token_length: int
 
 
+@dataclass(frozen=True)
+class VisionPrefillSession:
+    decode_handle: str
+    prepared_request: PreparedVisionRequest
+    prompt_tokens: int
+    response_text: str
+    completion_tokens: int
+    cache_identity: str
+    scope_id: str
+    cache_hit: bool
+    block_table_id: str
+    block_table: common_pb2.BlockTable
+
+
 class DeterministicVLMRuntime:
     runtime_name = "deterministic-vlm"
 
     def __init__(self) -> None:
         self._last_probe = VisionProbeSnapshot(0.0, 0, 0, 0.0)
         self._cache_entries: dict[str, VisionCacheEntry] = {}
+        self._decode_sessions: dict[str, VisionPrefillSession] = {}
         self._cache_lookups = 0
         self._cache_hits = 0
 
@@ -81,6 +96,93 @@ class DeterministicVLMRuntime:
         prompt_tokens = len(prepared_request.prompt_text.split())
         image_tokens = sum(max(1, image.byte_length // 8) for image in prepared_request.images)
         return max(1, prompt_tokens + image_tokens)
+
+    def prefill(
+        self,
+        request_id: str,
+        loaded_model,
+        messages,
+    ) -> VisionPrefillSession:
+        prepared_request = self.render_prompt(messages, loaded_model=loaded_model)
+        prompt_tokens = self.prompt_token_count(prepared_request)
+        cache_identity, scope_id = self._cache_identity(prepared_request, loaded_model)
+        self._cache_lookups += 1
+        cache_hit = cache_identity in self._cache_entries
+        if cache_hit:
+            self._cache_hits += 1
+        else:
+            self._cache_entries[cache_identity] = self._cache_entry(
+                loaded_model=loaded_model,
+                prepared_request=prepared_request,
+                cache_identity=cache_identity,
+                scope_id=scope_id,
+            )
+        block_table_id = f"vlm-block:{cache_identity[:16]}"
+        block_table = self._block_table_for(
+            prepared_request=prepared_request,
+            cache_identity=cache_identity,
+            scope_id=scope_id,
+            prompt_tokens=prompt_tokens,
+        )
+        decode_handle = f"vlm:{request_id}"
+        response_text = self._response_text(prepared_request)
+        session = VisionPrefillSession(
+            decode_handle=decode_handle,
+            prepared_request=prepared_request,
+            prompt_tokens=prompt_tokens,
+            response_text=response_text,
+            completion_tokens=max(1, len(response_text.split())),
+            cache_identity=cache_identity,
+            scope_id=scope_id,
+            cache_hit=cache_hit,
+            block_table_id=block_table_id,
+            block_table=block_table,
+        )
+        self._decode_sessions[decode_handle] = session
+        self._last_probe = VisionProbeSnapshot(
+            preprocess_latency_ms=prepared_request.preprocess_latency_ms,
+            preprocess_input_bytes=prepared_request.preprocess_input_bytes,
+            preprocess_peak_memory_bytes=prepared_request.preprocess_peak_memory_bytes,
+            first_token_latency_ms=0.0,
+            cache_identity=cache_identity,
+            cache_scope_id=scope_id,
+            cache_hit=cache_hit,
+        )
+        return session
+
+    def decode_tokens(
+        self,
+        loaded_model,
+        decode_handle: str,
+        sampling,
+        cancel_event: Event,
+    ):
+        _ = sampling
+        session = self._decode_sessions.pop(decode_handle, None)
+        if session is None:
+            raise KeyError(f"Unknown decode handle: {decode_handle}")
+        self._last_probe = VisionProbeSnapshot(
+            preprocess_latency_ms=session.prepared_request.preprocess_latency_ms,
+            preprocess_input_bytes=session.prepared_request.preprocess_input_bytes,
+            preprocess_peak_memory_bytes=session.prepared_request.preprocess_peak_memory_bytes,
+            first_token_latency_ms=(
+                max(0.0, session.prepared_request.preprocess_latency_ms / 4.0)
+                if session.cache_hit
+                else max(0.0, session.prepared_request.preprocess_latency_ms / 2.0)
+            ),
+            cache_identity=session.cache_identity,
+            cache_scope_id=session.scope_id,
+            cache_hit=session.cache_hit,
+        )
+        sleep_if_configured("vlm")
+        if cancel_event.is_set():
+            return
+        yield RuntimeTokenEvent(
+            text=session.response_text,
+            prompt_tokens=session.prompt_tokens,
+            completion_tokens=session.completion_tokens,
+            finish_reason="stop",
+        )
 
     def generate_tokens(
         self,
@@ -188,6 +290,9 @@ class DeterministicVLMRuntime:
         response.snapshot.scopes.extend(scopes.values())
         return response
 
+    def has_decode_session(self, decode_handle: str) -> bool:
+        return decode_handle in self._decode_sessions
+
     def _cache_identity(
         self,
         prepared_request: PreparedVisionRequest,
@@ -209,6 +314,40 @@ class DeterministicVLMRuntime:
             ]
         )
         return identity, f"{model_id}:{prepared_request.multimodal_hash_hex[:16]}"
+
+    def _block_table_for(
+        self,
+        prepared_request: PreparedVisionRequest,
+        cache_identity: str,
+        scope_id: str,
+        prompt_tokens: int,
+    ) -> common_pb2.BlockTable:
+        cache_entry = self._cache_entries[cache_identity]
+        cache_key = common_pb2.CacheKey(
+            prefix_hash=bytes.fromhex(prepared_request.prompt_hash_hex),
+            fingerprint_hash=bytes.fromhex(prepared_request.multimodal_hash_hex),
+            scope_id=scope_id,
+        )
+        block = common_pb2.BlockRef(
+            block_id=cache_identity[:16],
+            token_start=0,
+            token_end=prompt_tokens,
+            bytes=cache_entry.bytes_used,
+        )
+        page = common_pb2.PageRef(
+            page_id=f"page:{cache_identity[:16]}",
+            block_ids=[block.block_id],
+            token_start=0,
+            token_end=prompt_tokens,
+            bytes=cache_entry.bytes_used,
+        )
+        return common_pb2.BlockTable(
+            blocks=[block],
+            cache_key=cache_key,
+            scope_id=scope_id,
+            pages=[page],
+            total_token_count=prompt_tokens,
+        )
 
     def _cache_entry(
         self,
@@ -238,6 +377,12 @@ class DeterministicVLMRuntime:
             bytes_used=bytes_used,
             token_length=token_length,
         )
+
+    @staticmethod
+    def _response_text(prepared_request: PreparedVisionRequest) -> str:
+        image_text = prepared_request.images[0].decoded_text()
+        prompt_text = prepared_request.prompt_text or "Describe the image."
+        return f"Image content: {image_text}\nPrompt: {prompt_text}"
 
     @staticmethod
     def _metadata_value(loaded_model, key: str, default: str) -> str:
