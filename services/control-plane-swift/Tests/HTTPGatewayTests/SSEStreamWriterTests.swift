@@ -446,16 +446,6 @@ struct SSEStreamWriterTests {
     }
 }
 
-private func collectChunks(
-    _ stream: AsyncThrowingStream<Data, Error>
-) async throws -> String {
-    var data = Data()
-    for try await chunk in stream {
-        data.append(chunk)
-    }
-    return try #require(String(data: data, encoding: .utf8))
-}
-
 private func orderedRanges(in payload: String, needles: [String]) -> Bool {
     var searchStart = payload.startIndex
     for needle in needles {

@@ -80,6 +80,7 @@ Current phase-status and planning documents:
 - `plans/2026-03-29-p8-m6-release-runbooks-product-acceptance.md`
 - `plans/2026-03-30-full-capability-roadmap.md`
 - `plans/2026-03-30-full-capability-roadmap-execution-index.md`
+- `plans/2026-03-30-m3-12-protocol-compatibility-test-matrix.md`
 - `plans/2026-03-28-p1-m2-swift-text-worker-scaffold.md`
 - `plans/2026-03-28-p1-m3-swift-runtime-lifecycle.md`
 - `plans/2026-03-28-p1-m4-swift-generate-abort.md`

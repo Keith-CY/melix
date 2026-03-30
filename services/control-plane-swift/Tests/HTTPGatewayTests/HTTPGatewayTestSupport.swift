@@ -1,6 +1,17 @@
 import Foundation
+import Testing
 
 import MelixWorkerProtocol
+
+func collectChunks(
+    _ stream: AsyncThrowingStream<Data, Error>
+) async throws -> String {
+    var data = Data()
+    for try await chunk in stream {
+        data.append(chunk)
+    }
+    return try #require(String(data: data, encoding: .utf8))
+}
 
 func makeTokenEvent(
     requestID: String,

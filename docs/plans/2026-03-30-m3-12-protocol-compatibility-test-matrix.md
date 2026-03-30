@@ -10,6 +10,16 @@ Close the API-compatibility milestone with a repository-owned test matrix that p
 - add live-path integration coverage for protocol families
 - keep the test matrix discoverable from the roadmap and docs index
 
+## Matrix Coverage
+
+- Swift protocol matrix:
+  - `services/control-plane-swift/Tests/HTTPGatewayTests/ProtocolCompatibilityMatrixTests.swift`
+- Live integration matrix:
+  - `tests/integration/test_protocol_compatibility_matrix.py`
+- Existing endpoint-specific contract suites remain authoritative for detailed request-shape behavior:
+  - `services/control-plane-swift/Tests/ControlPlaneTests/TextEndpointContractTests.swift`
+  - `services/control-plane-swift/Tests/HTTPGatewayTests/OpenAIHandlerTests.swift`
+
 ## Files
 
 - update `services/control-plane-swift/Tests/`

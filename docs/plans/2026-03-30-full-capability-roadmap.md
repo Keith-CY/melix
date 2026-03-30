@@ -137,6 +137,9 @@ Melix should expose a unified internal text semantic model while delivering comp
 - `M3.10` Add partial mode, assistant prefill support, and name passthrough.
 - `M3.11` Complete streaming behavior with `include_usage`, disconnect detection, SSE keepalive, and token-by-token tool-call streaming.
 - `M3.12` Add protocol contract tests and SDK-compatibility smoke tests.
+  - Repository-owned matrix location after landing:
+    `services/control-plane-swift/Tests/HTTPGatewayTests/ProtocolCompatibilityMatrixTests.swift`
+    and `tests/integration/test_protocol_compatibility_matrix.py`
 
 ### Exit Criteria
 
