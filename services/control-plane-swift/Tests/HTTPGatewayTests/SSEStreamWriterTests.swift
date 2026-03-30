@@ -234,7 +234,8 @@ struct SSEStreamWriterTests {
         #expect(payload.contains("event: message.delta"))
         #expect(payload.contains("\"type\":\"message.delta\""))
         #expect(payload.contains("\"message_id\":\"msg-1\""))
-        #expect(payload.contains("\"delta\":\"A\""))
+        #expect(payload.contains("\"content_block\":{\"type\":\"text\"}"))
+        #expect(payload.contains("\"delta\":{\"text\":\"A\",\"type\":\"text_delta\"}"))
         #expect(payload.contains("event: message.heartbeat"))
         #expect(payload.contains("\"type\":\"message.heartbeat\""))
         #expect(payload.contains("event: message.event"))
@@ -242,6 +243,7 @@ struct SSEStreamWriterTests {
         #expect(payload.contains("\"event_seq\":3"))
         #expect(payload.contains("event: message.completed"))
         #expect(payload.contains("\"type\":\"message.completed\""))
+        #expect(payload.contains("\"content\":[{\"text\":\"A\",\"type\":\"text\"}]"))
         #expect(payload.contains("data: [DONE]"))
     }
 
@@ -415,6 +417,8 @@ struct SSEStreamWriterTests {
         let messagesPayload = try await payload(for: .messages, requestID: "msg-deltas")
         #expect(messagesPayload.contains("event: message.reasoning.delta"))
         #expect(messagesPayload.contains("\"type\":\"message.reasoning.delta\""))
+        #expect(messagesPayload.contains("\"content_block\":{\"type\":\"thinking\"}"))
+        #expect(messagesPayload.contains("\"delta\":{\"thinking\":\"think\",\"type\":\"thinking_delta\"}"))
         #expect(messagesPayload.contains("event: message.tool_call.delta"))
         #expect(messagesPayload.contains("\"type\":\"message.tool_call.delta\""))
     }

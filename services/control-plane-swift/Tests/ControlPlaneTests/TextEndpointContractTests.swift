@@ -88,6 +88,132 @@ struct TextEndpointContractTests {
         #expect(messages.messages == [.init(role: "user", content: "Explain the queue.")])
     }
 
+    @Test("messages requests decode block content thinking metadata and stop sequences")
+    func messagesRequestsDecodeBlockContentThinkingMetadataAndStopSequences() throws {
+        let decoder = JSONDecoder()
+        let translator = ChatRequestTranslator(requestIDGenerator: { "msg-thinking-contract" })
+
+        let request = try decoder.decode(
+            MelixMessagesRequest.self,
+            from: Data(
+                """
+                {
+                  "model": "melix-dev-text",
+                  "system": [
+                    { "type": "text", "text": "Be terse." }
+                  ],
+                  "stream": true,
+                  "stop_sequences": ["</final>"],
+                  "metadata": { "user_id": "operator-1" },
+                  "thinking": { "type": "enabled", "budget_tokens": 64 },
+                  "messages": [
+                    {
+                      "role": "assistant",
+                      "content": [
+                        { "type": "thinking", "thinking": "trace" },
+                        { "type": "text", "text": "draft" }
+                      ]
+                    },
+                    {
+                      "role": "user",
+                      "content": [
+                        { "type": "text", "text": "Continue." }
+                      ]
+                    }
+                  ]
+                }
+                """.utf8
+            )
+        )
+
+        #expect(request.system == "Be terse.")
+        #expect(request.systemBlocks == [.init(type: .text, text: "Be terse.")] as [MelixMessagesContentBlock]?)
+        #expect(request.messages[0].content == "trace\ndraft")
+        #expect(request.messages[0].contentBlocks == [
+            .init(type: .thinking, thinking: "trace"),
+            .init(type: .text, text: "draft"),
+        ] as [MelixMessagesContentBlock]?)
+        #expect(request.metadata?.userID == "operator-1")
+        #expect(request.stopSequences == ["</final>"])
+        #expect(request.thinking == .init(type: "enabled", budgetTokens: 64))
+
+        let normalized = translator.normalize(request)
+        #expect(normalized.stopSequences == ["</final>"])
+        #expect(normalized.userID == "operator-1")
+        #expect(normalized.thinking == .init(type: "enabled", budgetTokens: 64))
+        #expect(normalized.messages[0].parts.map(\.text) == ["Be terse."])
+        #expect(normalized.messages[1].parts.map(\.text) == ["trace", "draft"])
+
+        let translated = try translator.translate(normalized, modelHandle: "worker-text")
+        #expect(translated.workerRequest.sampling.stop == ["</final>"])
+        #expect(translated.workerRequest.execution.reasoning.enabled == true)
+        #expect(translated.workerRequest.execution.reasoning.separateStream == true)
+        #expect(translated.workerRequest.execution.ext["melix.messages.user_id"] == "operator-1")
+        #expect(translated.workerRequest.execution.ext["melix.messages.thinking.type"] == "enabled")
+        #expect(translated.workerRequest.execution.ext["melix.messages.thinking.budget_tokens"] == "64")
+    }
+
+    @Test("messages request initializers encode block content and skip empty thinking blocks")
+    func messagesRequestInitializersEncodeBlockContentAndSkipEmptyThinkingBlocks() throws {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let decoder = JSONDecoder()
+        let translator = ChatRequestTranslator(requestIDGenerator: { "msg-init-roundtrip" })
+
+        let request = MelixMessagesRequest(
+            model: "melix-dev-text",
+            messages: [
+                .init(
+                    role: "assistant",
+                    contentBlocks: [
+                        .init(type: .thinking, thinking: ""),
+                        .init(type: .text, text: "draft"),
+                    ]
+                ),
+                .init(role: "user", content: "Ship it."),
+            ],
+            systemBlocks: [.init(type: .text, text: "Be terse.")],
+            stream: false,
+            temperature: 0.2,
+            topP: 0.8,
+            maxTokens: 32,
+            stopSequences: ["</final>"],
+            metadata: .init(userID: "operator-2"),
+            thinking: .init(type: "enabled", budgetTokens: 12),
+            sessionID: "session-3",
+            branchID: "branch-2",
+            parentRequestID: "req-3",
+            restoreSnapshotID: "snap-3",
+            saveBoundarySnapshot: true,
+            presetID: "preset-1",
+            workflow: .toolFollowup,
+            workflowRunID: "run-1",
+            workflowNodeID: "node-1"
+        )
+
+        let encoded = try encoder.encode(request)
+        let encodedJSON = String(decoding: encoded, as: UTF8.self)
+        #expect(encodedJSON.contains("\"system\":["))
+        #expect(encodedJSON.contains("\"content\":["))
+        #expect(encodedJSON.contains("\"user_id\":\"operator-2\""))
+        #expect(encodedJSON.contains("\"workflow\":\"tool_followup\""))
+        #expect(encodedJSON.contains("\"workflow_node_id\":\"node-1\""))
+
+        let decoded = try decoder.decode(MelixMessagesRequest.self, from: encoded)
+        #expect(decoded.systemBlocks == [.init(type: .text, text: "Be terse.")] as [MelixMessagesContentBlock]?)
+        #expect(decoded.metadata == .init(userID: "operator-2"))
+        #expect(decoded.messages[0].contentBlocks == [
+            .init(type: .thinking, thinking: ""),
+            .init(type: .text, text: "draft"),
+        ] as [MelixMessagesContentBlock]?)
+        #expect(decoded.messages[1] == .init(role: "user", content: "Ship it."))
+
+        let normalized = translator.normalize(decoded)
+        #expect(normalized.messages[0].parts.map(\.text) == ["Be terse."])
+        #expect(normalized.messages[1].parts.map(\.text) == ["draft"])
+        #expect(normalized.messages[2].parts.map(\.text) == ["Ship it."])
+    }
+
     @Test("responses input supports both text and message-array codable forms")
     func responsesInputSupportsTextAndMessageArrays() throws {
         let decoder = JSONDecoder()

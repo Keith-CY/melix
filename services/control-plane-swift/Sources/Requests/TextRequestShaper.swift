@@ -125,7 +125,10 @@ public struct TextRequestShaper: Sendable {
             priority: workflow.priority,
             latencySensitive: workflow.latencySensitive,
             admissionPolicy: workflow.admissionPolicy,
-            cachePolicy: cachePolicy
+            cachePolicy: cachePolicy,
+            stopSequences: request.stopSequences,
+            userID: request.userID?.nilIfEmpty,
+            thinking: request.thinking
         )
     }
 }

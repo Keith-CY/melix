@@ -406,7 +406,13 @@ public struct SSEStreamWriter: Sendable {
                     "type": "message.delta",
                     "message_id": requestID,
                     "model": modelID,
-                    "delta": delta.text,
+                    "content_block": [
+                        "type": "text",
+                    ],
+                    "delta": [
+                        "type": "text_delta",
+                        "text": delta.text,
+                    ],
                 ]
             )
         case .reasoningDelta(let reasoning):
@@ -416,7 +422,13 @@ public struct SSEStreamWriter: Sendable {
                     "type": "message.reasoning.delta",
                     "message_id": requestID,
                     "model": modelID,
-                    "delta": reasoning.text,
+                    "content_block": [
+                        "type": "thinking",
+                    ],
+                    "delta": [
+                        "type": "thinking_delta",
+                        "thinking": reasoning.text,
+                    ],
                 ]
             )
         case .toolCallDelta(let toolCall):
@@ -453,6 +465,19 @@ public struct SSEStreamWriter: Sendable {
                 ]
             )
         case .completed(let completed):
+            var content: [[String: Any]] = []
+            if !completed.reasoningText.isEmpty {
+                content.append([
+                    "type": "thinking",
+                    "thinking": completed.reasoningText,
+                ])
+            }
+            if !completed.assistantText.isEmpty {
+                content.append([
+                    "type": "text",
+                    "text": completed.assistantText,
+                ])
+            }
             return frame(
                 event: "message.completed",
                 json: [
@@ -460,12 +485,8 @@ public struct SSEStreamWriter: Sendable {
                     "message_id": requestID,
                     "model": modelID,
                     "finish_reason": completed.finishReason,
-                    "content": [
-                        [
-                            "type": "output_text",
-                            "text": completed.assistantText,
-                        ],
-                    ],
+                    "stop_reason": completed.finishReason,
+                    "content": content,
                 ]
             )
         case .error(let error):

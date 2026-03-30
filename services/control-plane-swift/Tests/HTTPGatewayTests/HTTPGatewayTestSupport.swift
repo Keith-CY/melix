@@ -68,7 +68,8 @@ func makeCompletedEvent(
     requestID: String,
     seq: UInt64,
     finishReason: String,
-    assistantText: String
+    assistantText: String,
+    reasoningText: String = ""
 ) -> Melix_Worker_V1_ExecuteEvent {
     var event = Melix_Worker_V1_ExecuteEvent()
     event.requestID = requestID
@@ -77,6 +78,7 @@ func makeCompletedEvent(
     event.completed = Melix_Worker_V1_Completed()
     event.completed.finishReason = finishReason
     event.completed.assistantText = assistantText
+    event.completed.reasoningText = reasoningText
     return event
 }
 

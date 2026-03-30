@@ -543,9 +543,98 @@ struct OpenAIHandlerTests {
         #expect(request.messages[1].parts.first?.text == "hello messages")
         #expect(payload.contains("event: message.delta"))
         #expect(payload.contains("\"type\":\"message.delta\""))
+        #expect(payload.contains("\"content_block\":{\"type\":\"text\"}"))
+        #expect(payload.contains("\"delta\":{\"text\":\"Hello\",\"type\":\"text_delta\"}"))
         #expect(payload.contains("\"message_id\":\"msg-fixed\""))
         #expect(payload.contains("event: message.completed"))
+        #expect(payload.contains("\"content\":[{\"text\":\"Hello\",\"type\":\"text\"}]"))
         #expect(payload.contains("data: [DONE]"))
+    }
+
+    @Test("POST /v1/messages accepts block fields thinking metadata and x-api-key headers")
+    func postMessagesAcceptsBlocksThinkingMetadataAndAPIKeyHeaders() async throws {
+        let catalog = ModelCatalog(seedModels: [warmModel()])
+        let workerClient = ScriptedWorkerClient(events: [
+            makeReasoningEvent(requestID: "msg-thinking", seq: 1, text: "trace"),
+            makeTokenEvent(requestID: "msg-thinking", seq: 2, text: "done"),
+            makeCompletedEvent(
+                requestID: "msg-thinking",
+                seq: 3,
+                finishReason: "end_turn",
+                assistantText: "done",
+                reasoningText: "trace"
+            ),
+        ])
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: workerClient),
+                abortRegistry: AbortRegistry()
+            ),
+            translator: ChatRequestTranslator(requestIDGenerator: { "msg-thinking" }),
+            sseWriter: SSEStreamWriter(now: { Date(timeIntervalSince1970: 456) })
+        )
+
+        let body = try #require(
+            """
+            {
+              "model": "melix-dev-text",
+              "stream": true,
+              "system": [
+                { "type": "text", "text": "Be terse." }
+              ],
+              "stop_sequences": ["</final>"],
+              "metadata": { "user_id": "operator-1" },
+              "thinking": { "type": "enabled", "budget_tokens": 64 },
+              "messages": [
+                {
+                  "role": "assistant",
+                  "content": [
+                    { "type": "thinking", "thinking": "trace" },
+                    { "type": "text", "text": "draft" }
+                  ]
+                },
+                {
+                  "role": "user",
+                  "content": [
+                    { "type": "text", "text": "Continue." }
+                  ]
+                }
+              ]
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/messages",
+                headers: [
+                    "content-type": "application/json",
+                    "x-api-key": "anthropic-local-key",
+                ],
+                body: body
+            )
+        )
+        let payload = try await collectBody(response.body)
+        let request = try #require(await workerClient.lastGenerateRequest)
+
+        #expect(response.statusCode == 200)
+        #expect(request.messages.count == 3)
+        #expect(request.messages[0].parts.map { $0.text } == ["Be terse."])
+        #expect(request.messages[1].parts.map { $0.text } == ["trace", "draft"])
+        #expect(request.execution.reasoning.enabled == true)
+        #expect(request.execution.reasoning.separateStream == true)
+        #expect(request.execution.ext["melix.messages.user_id"] == "operator-1")
+        #expect(request.execution.ext["melix.messages.thinking.type"] == "enabled")
+        #expect(request.execution.ext["melix.messages.thinking.budget_tokens"] == "64")
+        #expect(request.execution.ext["melix.messages.x_api_key_present"] == "true")
+        #expect(request.sampling.stop == ["</final>"])
+        #expect(payload.contains("event: message.reasoning.delta"))
+        #expect(payload.contains("\"content_block\":{\"type\":\"thinking\"}"))
+        #expect(payload.contains("\"delta\":{\"thinking\":\"trace\",\"type\":\"thinking_delta\"}"))
+        #expect(payload.contains("\"stop_reason\":\"end_turn\""))
+        #expect(payload.contains("\"content\":[{\"thinking\":\"trace\",\"type\":\"thinking\"},{\"text\":\"done\",\"type\":\"text\"}]"))
     }
 
     @Test("POST /v1/responses forwards reasoning and tool delta events")

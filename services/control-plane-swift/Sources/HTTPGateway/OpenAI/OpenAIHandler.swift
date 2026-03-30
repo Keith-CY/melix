@@ -236,15 +236,30 @@ public struct OpenAIHandler: Sendable {
     private func handleMessages(_ request: HTTPRequest) async throws -> HTTPResponse {
         let messagesRequest = try decoder.decode(MelixMessagesRequest.self, from: request.body)
         let normalized = translator.normalize(messagesRequest)
-        return try await streamNormalizedTextRequest(normalized, shape: .messages)
+        return try await streamNormalizedTextRequest(
+            normalized,
+            shape: .messages,
+            headers: request.headers
+        )
     }
 
     private func streamNormalizedTextRequest(
         _ normalized: NormalizedTextRequest,
-        shape: SSEStreamWriter.StreamShape
+        shape: SSEStreamWriter.StreamShape,
+        headers: [String: String] = [:]
     ) async throws -> HTTPResponse {
         do {
-            let translated = try await translatedRequest(normalized)
+            var translated = try await translatedRequest(normalized)
+            if shape == .messages, hasNonEmptyHeader(named: "x-api-key", in: headers) {
+                var workerRequest = translated.workerRequest
+                workerRequest.execution.ext["melix.messages.x_api_key_present"] = "true"
+                translated = TranslatedChatRequest(
+                    requestID: translated.requestID,
+                    modelID: translated.modelID,
+                    workerRequest: workerRequest,
+                    stream: translated.stream
+                )
+            }
             return try await streamResponse(translated: translated, shape: shape)
         } catch let error as HTTPRequestHandlingError {
             return httpErrorResponse(for: error)
@@ -943,6 +958,15 @@ public struct OpenAIHandler: Sendable {
             statusCode: statusCode,
             payload: ["error": ["code": error.code, "message": error.message]]
         )
+    }
+
+    private func hasNonEmptyHeader(
+        named expectedName: String,
+        in headers: [String: String]
+    ) -> Bool {
+        headers.contains { key, value in
+            key.caseInsensitiveCompare(expectedName) == .orderedSame && !value.isEmpty
+        }
     }
 
     private func imageArtifactRef(
