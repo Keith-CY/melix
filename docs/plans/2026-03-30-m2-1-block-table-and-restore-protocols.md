@@ -14,20 +14,24 @@ Define the protocol shapes needed for paged cache ownership, block-aware restore
 
 - update `packages/protocol/schema/worker/v1/`
 - update `packages/protocol/schema/controlplane/v1/`
+- update generated outputs under `packages/protocol/swift/` and `packages/protocol/python/`
 - update `services/control-plane-swift/Sources/Snapshots/`
 - update `services/mlx-text-worker-swift/Sources/Core/`
+- update protocol and cache specifications under `docs/`
 
 ## Implementation Notes
 
 - the protocol must support partial restore and future VLM reuse without text-only assumptions
 - restore metadata should be structured rather than opaque strings
 - preserve a clean bridge from legacy snapshot records into the new protocol
+- keep this slice additive so legacy snapshot ids and block-table ids remain valid during migration
 
 ## Verification
 
 - `make proto`
 - `make swift-test`
 - `make integration-test`
+- changed-line Swift coverage for the new metadata helper paths
 
 ## Acceptance
 

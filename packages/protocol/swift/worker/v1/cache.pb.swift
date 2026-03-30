@@ -260,39 +260,53 @@ public struct Melix_Worker_V1_SaveBoundarySnapshotRequest: Sendable {
   public init() {}
 }
 
-public struct Melix_Worker_V1_SaveBoundarySnapshotResponse: Sendable {
+public struct Melix_Worker_V1_SaveBoundarySnapshotResponse: @unchecked Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
-  public var ok: Bool = false
+  public var ok: Bool {
+    get {_storage._ok}
+    set {_uniqueStorage()._ok = newValue}
+  }
 
   public var error: Melix_Worker_V1_ErrorStatus {
-    get {_error ?? Melix_Worker_V1_ErrorStatus()}
-    set {_error = newValue}
+    get {_storage._error ?? Melix_Worker_V1_ErrorStatus()}
+    set {_uniqueStorage()._error = newValue}
   }
   /// Returns true if `error` has been explicitly set.
-  public var hasError: Bool {self._error != nil}
+  public var hasError: Bool {_storage._error != nil}
   /// Clears the value of `error`. Subsequent reads from it will return its default value.
-  public mutating func clearError() {self._error = nil}
+  public mutating func clearError() {_uniqueStorage()._error = nil}
 
-  public var snapshotID: String = String()
+  public var snapshotID: String {
+    get {_storage._snapshotID}
+    set {_uniqueStorage()._snapshotID = newValue}
+  }
 
   public var snapshot: Melix_Worker_V1_SnapshotRef {
-    get {_snapshot ?? Melix_Worker_V1_SnapshotRef()}
-    set {_snapshot = newValue}
+    get {_storage._snapshot ?? Melix_Worker_V1_SnapshotRef()}
+    set {_uniqueStorage()._snapshot = newValue}
   }
   /// Returns true if `snapshot` has been explicitly set.
-  public var hasSnapshot: Bool {self._snapshot != nil}
+  public var hasSnapshot: Bool {_storage._snapshot != nil}
   /// Clears the value of `snapshot`. Subsequent reads from it will return its default value.
-  public mutating func clearSnapshot() {self._snapshot = nil}
+  public mutating func clearSnapshot() {_uniqueStorage()._snapshot = nil}
+
+  public var restoreBoundary: Melix_Worker_V1_RestoreBoundaryRef {
+    get {_storage._restoreBoundary ?? Melix_Worker_V1_RestoreBoundaryRef()}
+    set {_uniqueStorage()._restoreBoundary = newValue}
+  }
+  /// Returns true if `restoreBoundary` has been explicitly set.
+  public var hasRestoreBoundary: Bool {_storage._restoreBoundary != nil}
+  /// Clears the value of `restoreBoundary`. Subsequent reads from it will return its default value.
+  public mutating func clearRestoreBoundary() {_uniqueStorage()._restoreBoundary = nil}
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
 
-  fileprivate var _error: Melix_Worker_V1_ErrorStatus? = nil
-  fileprivate var _snapshot: Melix_Worker_V1_SnapshotRef? = nil
+  fileprivate var _storage = _StorageClass.defaultInstance
 }
 
 public struct Melix_Worker_V1_RestoreBoundarySnapshotRequest: Sendable {
@@ -302,9 +316,20 @@ public struct Melix_Worker_V1_RestoreBoundarySnapshotRequest: Sendable {
 
   public var snapshotID: String = String()
 
+  public var restoreBoundary: Melix_Worker_V1_RestoreBoundaryRef {
+    get {_restoreBoundary ?? Melix_Worker_V1_RestoreBoundaryRef()}
+    set {_restoreBoundary = newValue}
+  }
+  /// Returns true if `restoreBoundary` has been explicitly set.
+  public var hasRestoreBoundary: Bool {self._restoreBoundary != nil}
+  /// Clears the value of `restoreBoundary`. Subsequent reads from it will return its default value.
+  public mutating func clearRestoreBoundary() {self._restoreBoundary = nil}
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
+
+  fileprivate var _restoreBoundary: Melix_Worker_V1_RestoreBoundaryRef? = nil
 }
 
 public struct Melix_Worker_V1_RestoreBoundarySnapshotResponse: @unchecked Sendable {
@@ -353,6 +378,24 @@ public struct Melix_Worker_V1_RestoreBoundarySnapshotResponse: @unchecked Sendab
   public var hasSnapshot: Bool {_storage._snapshot != nil}
   /// Clears the value of `snapshot`. Subsequent reads from it will return its default value.
   public mutating func clearSnapshot() {_uniqueStorage()._snapshot = nil}
+
+  public var restoreBoundary: Melix_Worker_V1_RestoreBoundaryRef {
+    get {_storage._restoreBoundary ?? Melix_Worker_V1_RestoreBoundaryRef()}
+    set {_uniqueStorage()._restoreBoundary = newValue}
+  }
+  /// Returns true if `restoreBoundary` has been explicitly set.
+  public var hasRestoreBoundary: Bool {_storage._restoreBoundary != nil}
+  /// Clears the value of `restoreBoundary`. Subsequent reads from it will return its default value.
+  public mutating func clearRestoreBoundary() {_uniqueStorage()._restoreBoundary = nil}
+
+  public var restorePlan: Melix_Worker_V1_CacheRestorePlan {
+    get {_storage._restorePlan ?? Melix_Worker_V1_CacheRestorePlan()}
+    set {_uniqueStorage()._restorePlan = newValue}
+  }
+  /// Returns true if `restorePlan` has been explicitly set.
+  public var hasRestorePlan: Bool {_storage._restorePlan != nil}
+  /// Clears the value of `restorePlan`. Subsequent reads from it will return its default value.
+  public mutating func clearRestorePlan() {_uniqueStorage()._restorePlan = nil}
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -912,7 +955,105 @@ extension Melix_Worker_V1_SaveBoundarySnapshotRequest: SwiftProtobuf.Message, Sw
 
 extension Melix_Worker_V1_SaveBoundarySnapshotResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".SaveBoundarySnapshotResponse"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}ok\0\u{1}error\0\u{3}snapshot_id\0\u{1}snapshot\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}ok\0\u{1}error\0\u{3}snapshot_id\0\u{1}snapshot\0\u{3}restore_boundary\0")
+
+  fileprivate class _StorageClass {
+    var _ok: Bool = false
+    var _error: Melix_Worker_V1_ErrorStatus? = nil
+    var _snapshotID: String = String()
+    var _snapshot: Melix_Worker_V1_SnapshotRef? = nil
+    var _restoreBoundary: Melix_Worker_V1_RestoreBoundaryRef? = nil
+
+      // This property is used as the initial default value for new instances of the type.
+      // The type itself is protecting the reference to its storage via CoW semantics.
+      // This will force a copy to be made of this reference when the first mutation occurs;
+      // hence, it is safe to mark this as `nonisolated(unsafe)`.
+      static nonisolated(unsafe) let defaultInstance = _StorageClass()
+
+    private init() {}
+
+    init(copying source: _StorageClass) {
+      _ok = source._ok
+      _error = source._error
+      _snapshotID = source._snapshotID
+      _snapshot = source._snapshot
+      _restoreBoundary = source._restoreBoundary
+    }
+  }
+
+  fileprivate mutating func _uniqueStorage() -> _StorageClass {
+    if !isKnownUniquelyReferenced(&_storage) {
+      _storage = _StorageClass(copying: _storage)
+    }
+    return _storage
+  }
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    _ = _uniqueStorage()
+    try withExtendedLifetime(_storage) { (_storage: _StorageClass) in
+      while let fieldNumber = try decoder.nextFieldNumber() {
+        // The use of inline closures is to circumvent an issue where the compiler
+        // allocates stack space for every case branch when no optimizations are
+        // enabled. https://github.com/apple/swift-protobuf/issues/1034
+        switch fieldNumber {
+        case 1: try { try decoder.decodeSingularBoolField(value: &_storage._ok) }()
+        case 2: try { try decoder.decodeSingularMessageField(value: &_storage._error) }()
+        case 3: try { try decoder.decodeSingularStringField(value: &_storage._snapshotID) }()
+        case 4: try { try decoder.decodeSingularMessageField(value: &_storage._snapshot) }()
+        case 5: try { try decoder.decodeSingularMessageField(value: &_storage._restoreBoundary) }()
+        default: break
+        }
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    try withExtendedLifetime(_storage) { (_storage: _StorageClass) in
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every if/case branch local when no optimizations
+      // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+      // https://github.com/apple/swift-protobuf/issues/1182
+      if _storage._ok != false {
+        try visitor.visitSingularBoolField(value: _storage._ok, fieldNumber: 1)
+      }
+      try { if let v = _storage._error {
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 2)
+      } }()
+      if !_storage._snapshotID.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._snapshotID, fieldNumber: 3)
+      }
+      try { if let v = _storage._snapshot {
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 4)
+      } }()
+      try { if let v = _storage._restoreBoundary {
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 5)
+      } }()
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Melix_Worker_V1_SaveBoundarySnapshotResponse, rhs: Melix_Worker_V1_SaveBoundarySnapshotResponse) -> Bool {
+    if lhs._storage !== rhs._storage {
+      let storagesAreEqual: Bool = withExtendedLifetime((lhs._storage, rhs._storage)) { (_args: (_StorageClass, _StorageClass)) in
+        let _storage = _args.0
+        let rhs_storage = _args.1
+        if _storage._ok != rhs_storage._ok {return false}
+        if _storage._error != rhs_storage._error {return false}
+        if _storage._snapshotID != rhs_storage._snapshotID {return false}
+        if _storage._snapshot != rhs_storage._snapshot {return false}
+        if _storage._restoreBoundary != rhs_storage._restoreBoundary {return false}
+        return true
+      }
+      if !storagesAreEqual {return false}
+    }
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+extension Melix_Worker_V1_RestoreBoundarySnapshotRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".RestoreBoundarySnapshotRequest"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}snapshot_id\0\u{3}restore_boundary\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -920,10 +1061,8 @@ extension Melix_Worker_V1_SaveBoundarySnapshotResponse: SwiftProtobuf.Message, S
       // allocates stack space for every case branch when no optimizations are
       // enabled. https://github.com/apple/swift-protobuf/issues/1034
       switch fieldNumber {
-      case 1: try { try decoder.decodeSingularBoolField(value: &self.ok) }()
-      case 2: try { try decoder.decodeSingularMessageField(value: &self._error) }()
-      case 3: try { try decoder.decodeSingularStringField(value: &self.snapshotID) }()
-      case 4: try { try decoder.decodeSingularMessageField(value: &self._snapshot) }()
+      case 1: try { try decoder.decodeSingularStringField(value: &self.snapshotID) }()
+      case 2: try { try decoder.decodeSingularMessageField(value: &self._restoreBoundary) }()
       default: break
       }
     }
@@ -934,56 +1073,18 @@ extension Melix_Worker_V1_SaveBoundarySnapshotResponse: SwiftProtobuf.Message, S
     // allocates stack space for every if/case branch local when no optimizations
     // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
     // https://github.com/apple/swift-protobuf/issues/1182
-    if self.ok != false {
-      try visitor.visitSingularBoolField(value: self.ok, fieldNumber: 1)
-    }
-    try { if let v = self._error {
-      try visitor.visitSingularMessageField(value: v, fieldNumber: 2)
-    } }()
-    if !self.snapshotID.isEmpty {
-      try visitor.visitSingularStringField(value: self.snapshotID, fieldNumber: 3)
-    }
-    try { if let v = self._snapshot {
-      try visitor.visitSingularMessageField(value: v, fieldNumber: 4)
-    } }()
-    try unknownFields.traverse(visitor: &visitor)
-  }
-
-  public static func ==(lhs: Melix_Worker_V1_SaveBoundarySnapshotResponse, rhs: Melix_Worker_V1_SaveBoundarySnapshotResponse) -> Bool {
-    if lhs.ok != rhs.ok {return false}
-    if lhs._error != rhs._error {return false}
-    if lhs.snapshotID != rhs.snapshotID {return false}
-    if lhs._snapshot != rhs._snapshot {return false}
-    if lhs.unknownFields != rhs.unknownFields {return false}
-    return true
-  }
-}
-
-extension Melix_Worker_V1_RestoreBoundarySnapshotRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
-  public static let protoMessageName: String = _protobuf_package + ".RestoreBoundarySnapshotRequest"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}snapshot_id\0")
-
-  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
-    while let fieldNumber = try decoder.nextFieldNumber() {
-      // The use of inline closures is to circumvent an issue where the compiler
-      // allocates stack space for every case branch when no optimizations are
-      // enabled. https://github.com/apple/swift-protobuf/issues/1034
-      switch fieldNumber {
-      case 1: try { try decoder.decodeSingularStringField(value: &self.snapshotID) }()
-      default: break
-      }
-    }
-  }
-
-  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
     if !self.snapshotID.isEmpty {
       try visitor.visitSingularStringField(value: self.snapshotID, fieldNumber: 1)
     }
+    try { if let v = self._restoreBoundary {
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 2)
+    } }()
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: Melix_Worker_V1_RestoreBoundarySnapshotRequest, rhs: Melix_Worker_V1_RestoreBoundarySnapshotRequest) -> Bool {
     if lhs.snapshotID != rhs.snapshotID {return false}
+    if lhs._restoreBoundary != rhs._restoreBoundary {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -991,7 +1092,7 @@ extension Melix_Worker_V1_RestoreBoundarySnapshotRequest: SwiftProtobuf.Message,
 
 extension Melix_Worker_V1_RestoreBoundarySnapshotResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".RestoreBoundarySnapshotResponse"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}ok\0\u{1}error\0\u{3}decode_handle\0\u{3}block_table_id\0\u{3}block_table\0\u{1}snapshot\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}ok\0\u{1}error\0\u{3}decode_handle\0\u{3}block_table_id\0\u{3}block_table\0\u{1}snapshot\0\u{3}restore_boundary\0\u{3}restore_plan\0")
 
   fileprivate class _StorageClass {
     var _ok: Bool = false
@@ -1000,6 +1101,8 @@ extension Melix_Worker_V1_RestoreBoundarySnapshotResponse: SwiftProtobuf.Message
     var _blockTableID: String = String()
     var _blockTable: Melix_Worker_V1_BlockTable? = nil
     var _snapshot: Melix_Worker_V1_SnapshotRef? = nil
+    var _restoreBoundary: Melix_Worker_V1_RestoreBoundaryRef? = nil
+    var _restorePlan: Melix_Worker_V1_CacheRestorePlan? = nil
 
       // This property is used as the initial default value for new instances of the type.
       // The type itself is protecting the reference to its storage via CoW semantics.
@@ -1016,6 +1119,8 @@ extension Melix_Worker_V1_RestoreBoundarySnapshotResponse: SwiftProtobuf.Message
       _blockTableID = source._blockTableID
       _blockTable = source._blockTable
       _snapshot = source._snapshot
+      _restoreBoundary = source._restoreBoundary
+      _restorePlan = source._restorePlan
     }
   }
 
@@ -1040,6 +1145,8 @@ extension Melix_Worker_V1_RestoreBoundarySnapshotResponse: SwiftProtobuf.Message
         case 4: try { try decoder.decodeSingularStringField(value: &_storage._blockTableID) }()
         case 5: try { try decoder.decodeSingularMessageField(value: &_storage._blockTable) }()
         case 6: try { try decoder.decodeSingularMessageField(value: &_storage._snapshot) }()
+        case 7: try { try decoder.decodeSingularMessageField(value: &_storage._restoreBoundary) }()
+        case 8: try { try decoder.decodeSingularMessageField(value: &_storage._restorePlan) }()
         default: break
         }
       }
@@ -1070,6 +1177,12 @@ extension Melix_Worker_V1_RestoreBoundarySnapshotResponse: SwiftProtobuf.Message
       try { if let v = _storage._snapshot {
         try visitor.visitSingularMessageField(value: v, fieldNumber: 6)
       } }()
+      try { if let v = _storage._restoreBoundary {
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 7)
+      } }()
+      try { if let v = _storage._restorePlan {
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 8)
+      } }()
     }
     try unknownFields.traverse(visitor: &visitor)
   }
@@ -1085,6 +1198,8 @@ extension Melix_Worker_V1_RestoreBoundarySnapshotResponse: SwiftProtobuf.Message
         if _storage._blockTableID != rhs_storage._blockTableID {return false}
         if _storage._blockTable != rhs_storage._blockTable {return false}
         if _storage._snapshot != rhs_storage._snapshot {return false}
+        if _storage._restoreBoundary != rhs_storage._restoreBoundary {return false}
+        if _storage._restorePlan != rhs_storage._restorePlan {return false}
         return true
       }
       if !storagesAreEqual {return false}

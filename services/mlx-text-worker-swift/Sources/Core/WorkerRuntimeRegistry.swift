@@ -530,6 +530,10 @@ actor WorkerRuntimeRegistry {
         response.ok = true
         response.snapshotID = snapshot.snapshotID
         response.snapshot = snapshot
+        response.restoreBoundary = makeRestoreBoundaryRef(
+            snapshot: snapshot,
+            blockTable: stored.blockTable
+        )
         return response
     }
 
@@ -551,6 +555,10 @@ actor WorkerRuntimeRegistry {
         response.ok = true
         response.snapshotID = snapshot.snapshotID
         response.snapshot = snapshot
+        response.restoreBoundary = makeRestoreBoundaryRef(
+            snapshot: snapshot,
+            blockTable: session.prefill.blockTable
+        )
         return response
     }
 
@@ -563,8 +571,19 @@ actor WorkerRuntimeRegistry {
         response.ok = true
         response.decodeHandle = restored.decodeHandle
         response.blockTableID = restored.blockTableID
-        response.blockTable = restored.blockTable
+        response.blockTable = normalizedBlockTable(restored.blockTable)
         response.snapshot = restored.snapshot
+        response.restoreBoundary = makeRestoreBoundaryRef(
+            snapshot: restored.snapshot,
+            blockTable: restored.blockTable
+        )
+        response.restorePlan = makeCacheRestorePlan(
+            snapshot: restored.snapshot,
+            blockTableID: restored.blockTableID,
+            blockTable: restored.blockTable,
+            tier: "l2",
+            partial: false
+        )
         return response
     }
 

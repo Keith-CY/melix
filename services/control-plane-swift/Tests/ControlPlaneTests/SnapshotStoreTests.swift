@@ -1,7 +1,9 @@
+import Foundation
 import Testing
 
 @testable import MelixControlPlaneCore
 import MelixControlPlaneProtocol
+import MelixWorkerProtocol
 
 @Suite("Snapshot Stores")
 struct SnapshotStoreTests {
@@ -236,6 +238,69 @@ struct SnapshotStoreTests {
         #expect(hydrated.availableSnapshots.first?.requestID == "req-refresh")
         #expect(hydrated.branches.first?.headCacheKey.scope.tokenizerHash == "tok-v2")
         #expect(hydrated.latestCheckpointID == "ckpt-refresh")
+    }
+
+    @Test("control-plane restore metadata bridges worker restore plans")
+    func controlPlaneRestoreMetadataBridgesWorkerPlans() throws {
+        var cacheKey = Melix_Worker_V1_CacheKey()
+        cacheKey.prefixHash = Data([0xAA, 0xBB])
+        cacheKey.scopeID = "scope-worker"
+
+        var block = Melix_Worker_V1_BlockRef()
+        block.blockID = "blk-0"
+        block.tokenStart = 0
+        block.tokenEnd = 16
+        block.bytes = 1024
+
+        var page = Melix_Worker_V1_PageRef()
+        page.pageID = "page-0"
+        page.blockIds = ["blk-0"]
+        page.tokenStart = 0
+        page.tokenEnd = 16
+        page.bytes = 1024
+
+        var table = Melix_Worker_V1_BlockTable()
+        table.blocks = [block]
+        table.cacheKey = cacheKey
+        table.scopeID = "scope-worker"
+        table.pages = [page]
+        table.totalTokenCount = 16
+
+        var snapshot = Melix_Worker_V1_SnapshotRef()
+        snapshot.snapshotID = "snap-1"
+        snapshot.requestID = "req-1"
+        snapshot.sessionID = "session-1"
+        snapshot.branchID = "branch-main"
+        snapshot.tokenBoundary = 16
+
+        var boundary = Melix_Worker_V1_RestoreBoundaryRef()
+        boundary.snapshot = snapshot
+        boundary.cacheKey = cacheKey
+        boundary.scopeID = "scope-worker"
+        boundary.boundaryKind = "boundary_snapshot"
+
+        var workerPlan = Melix_Worker_V1_CacheRestorePlan()
+        workerPlan.planID = "restore-bt-1"
+        workerPlan.boundary = boundary
+        workerPlan.blockTableID = "bt-1"
+        workerPlan.blockTable = table
+        workerPlan.pages = [page]
+        workerPlan.restoredTokenCount = 16
+        workerPlan.partial = false
+        workerPlan.tier = "l2"
+
+        let controlPlan = makeControlPlaneRestorePlan(from: workerPlan)
+        let decoded = try Melix_Controlplane_V1_CacheRestorePlan(
+            serializedBytes: controlPlan.serializedData()
+        )
+
+        #expect(decoded.planID == "restore-bt-1")
+        #expect(decoded.boundary.snapshot.snapshotID == "snap-1")
+        #expect(decoded.boundary.scopeID == "scope-worker")
+        #expect(decoded.blockTable.blockTableID == "bt-1")
+        #expect(decoded.blockTable.pages.first?.pageID == "page-0")
+        #expect(decoded.blockTable.totalTokenCount == 16)
+        #expect(decoded.tier == "l2")
     }
 
     private func makeSessionState(id: String) -> Melix_Controlplane_V1_SessionState {

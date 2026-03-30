@@ -82,10 +82,12 @@ message SaveBoundarySnapshotResponse {
   ErrorStatus error = 2;
   string snapshot_id = 3;
   SnapshotRef snapshot = 4;
+  RestoreBoundaryRef restore_boundary = 5;
 }
 
 message RestoreBoundarySnapshotRequest {
   string snapshot_id = 1;
+  RestoreBoundaryRef restore_boundary = 2;
 }
 
 message RestoreBoundarySnapshotResponse {
@@ -95,6 +97,8 @@ message RestoreBoundarySnapshotResponse {
   string block_table_id = 4;
   BlockTable block_table = 5;
   SnapshotRef snapshot = 6;
+  RestoreBoundaryRef restore_boundary = 7;
+  CacheRestorePlan restore_plan = 8;
 }
 
 message PurgeCacheRequest {

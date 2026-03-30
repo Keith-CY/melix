@@ -574,6 +574,32 @@ private struct WorkerBridgeLine: Decodable {
     }
 }
 
+private actor ProcessTerminationState {
+    private var status: Int32?
+    private var waiters: [CheckedContinuation<Int32, Never>] = []
+
+    func markTerminated(status: Int32) {
+        guard self.status == nil else {
+            return
+        }
+        self.status = status
+        let waiters = self.waiters
+        self.waiters.removeAll(keepingCapacity: false)
+        for waiter in waiters {
+            waiter.resume(returning: status)
+        }
+    }
+
+    func waitForExit() async -> Int32 {
+        if let status {
+            return status
+        }
+        return await withCheckedContinuation { continuation in
+            waiters.append(continuation)
+        }
+    }
+}
+
 public struct ProcessWorkerBridgeRunner: WorkerBridgeRunning, Sendable {
     private let repoRoot: String
     private let environment: [String: String]
@@ -584,19 +610,22 @@ public struct ProcessWorkerBridgeRunner: WorkerBridgeRunning, Sendable {
     }
 
     public func runUnary(command: BridgeCommand) async throws -> String {
-        let process = configuredProcess(for: command)
+        let (process, terminationState) = configuredProcess(for: command)
         let stdout = Pipe()
         let stderr = Pipe()
         process.standardOutput = stdout
         process.standardError = stderr
 
         try process.run()
-        process.waitUntilExit()
+        let terminationStatus = await waitForTermination(
+            of: process,
+            state: terminationState
+        )
 
         let output = String(decoding: try stdout.fileHandleForReading.readToEnd() ?? Data(), as: UTF8.self)
         _ = String(decoding: try stderr.fileHandleForReading.readToEnd() ?? Data(), as: UTF8.self)
 
-        guard process.terminationStatus == 0,
+        guard terminationStatus == 0,
               let line = output.split(separator: "\n").last.map(String.init),
               !line.isEmpty
         else {
@@ -606,7 +635,7 @@ public struct ProcessWorkerBridgeRunner: WorkerBridgeRunning, Sendable {
     }
 
     public func runStream(command: BridgeCommand) async throws -> AsyncThrowingStream<String, Error> {
-        let process = configuredProcess(for: command)
+        let (process, terminationState) = configuredProcess(for: command)
         let stdout = Pipe()
         let stderr = Pipe()
         process.standardOutput = stdout
@@ -620,8 +649,11 @@ public struct ProcessWorkerBridgeRunner: WorkerBridgeRunning, Sendable {
                     for try await line in stdout.fileHandleForReading.bytes.lines {
                         continuation.yield(String(line))
                     }
-                    process.waitUntilExit()
-                    if process.terminationStatus == 0 {
+                    let terminationStatus = await waitForTermination(
+                        of: process,
+                        state: terminationState
+                    )
+                    if terminationStatus == 0 {
                         continuation.finish()
                     } else {
                         _ = try stderr.fileHandleForReading.readToEnd()
@@ -641,8 +673,9 @@ public struct ProcessWorkerBridgeRunner: WorkerBridgeRunning, Sendable {
         }
     }
 
-    private func configuredProcess(for command: BridgeCommand) -> Process {
+    private func configuredProcess(for command: BridgeCommand) -> (Process, ProcessTerminationState) {
         let process = Process()
+        let terminationState = ProcessTerminationState()
         process.currentDirectoryURL = URL(fileURLWithPath: repoRoot, isDirectory: true)
         process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
         process.arguments = [
@@ -659,7 +692,12 @@ public struct ProcessWorkerBridgeRunner: WorkerBridgeRunning, Sendable {
             command.requestData.base64EncodedString(),
         ]
         process.environment = mergedEnvironment()
-        return process
+        process.terminationHandler = { terminatedProcess in
+            Task {
+                await terminationState.markTerminated(status: terminatedProcess.terminationStatus)
+            }
+        }
+        return (process, terminationState)
     }
 
     private func mergedEnvironment() -> [String: String] {
@@ -673,5 +711,15 @@ public struct ProcessWorkerBridgeRunner: WorkerBridgeRunning, Sendable {
         merged["UV_CACHE_DIR"] = merged["UV_CACHE_DIR"] ?? "\(repoRoot)/.uv-cache"
         merged["PYTHONUNBUFFERED"] = "1"
         return merged
+    }
+
+    private func waitForTermination(
+        of process: Process,
+        state: ProcessTerminationState
+    ) async -> Int32 {
+        if !process.isRunning {
+            return process.terminationStatus
+        }
+        return await state.waitForExit()
     }
 }

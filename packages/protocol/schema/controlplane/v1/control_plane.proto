@@ -652,6 +652,23 @@ message CacheBlockRef {
   uint64 bytes = 3;
 }
 
+message PageRef {
+  string page_id = 1;
+  repeated string block_ids = 2;
+  uint32 token_start = 3;
+  uint32 token_end = 4;
+  uint64 bytes = 5;
+}
+
+message BlockTable {
+  string block_table_id = 1;
+  repeated CacheBlockRef blocks = 2;
+  repeated PageRef pages = 3;
+  bytes prefix_hash = 4;
+  string scope_id = 5;
+  uint32 total_token_count = 6;
+}
+
 message PrefixRef {
   string prefix_id = 1;
   CacheKey cache_key = 2;
@@ -667,6 +684,22 @@ message SnapshotRef {
   string session_id = 4;
   string branch_id = 5;
   string checkpoint_id = 6;
+}
+
+message CacheRestoreBoundary {
+  SnapshotRef snapshot = 1;
+  bytes prefix_hash = 2;
+  string scope_id = 3;
+  string boundary_kind = 4;
+}
+
+message CacheRestorePlan {
+  string plan_id = 1;
+  CacheRestoreBoundary boundary = 2;
+  BlockTable block_table = 3;
+  uint32 restored_token_count = 4;
+  bool partial = 5;
+  string tier = 6;
 }
 
 message CacheScopeSummary {
@@ -687,6 +720,7 @@ message CacheSnapshot {
   repeated PrefixRef pinned_prefixes = 3;
   repeated PrefixRef hot_prefixes = 4;
   repeated SnapshotRef snapshots = 5;
+  repeated CacheRestorePlan recent_restore_plans = 6;
 }
 
 message SessionSummary {

@@ -286,6 +286,7 @@ message CacheHints {
   repeated string pin_prefix_ids = 7;
   string cache_policy = 8;
   uint32 preferred_block_size = 9;
+  CacheRestorePlan restore_plan = 10;
 }
 
 message RequestIdentity {
@@ -358,6 +359,8 @@ message BlockTable {
   repeated BlockRef blocks = 1;
   CacheKey cache_key = 2;
   string scope_id = 3;
+  repeated PageRef pages = 4;
+  uint32 total_token_count = 5;
 }
 
 message BlockRef {
@@ -365,4 +368,30 @@ message BlockRef {
   int32 token_start = 2;
   int32 token_end = 3;
   uint64 bytes = 4;
+}
+
+message PageRef {
+  string page_id = 1;
+  repeated string block_ids = 2;
+  uint32 token_start = 3;
+  uint32 token_end = 4;
+  uint64 bytes = 5;
+}
+
+message RestoreBoundaryRef {
+  SnapshotRef snapshot = 1;
+  CacheKey cache_key = 2;
+  string scope_id = 3;
+  string boundary_kind = 4;
+}
+
+message CacheRestorePlan {
+  string plan_id = 1;
+  RestoreBoundaryRef boundary = 2;
+  string block_table_id = 3;
+  BlockTable block_table = 4;
+  repeated PageRef pages = 5;
+  uint32 restored_token_count = 6;
+  bool partial = 7;
+  string tier = 8;
 }

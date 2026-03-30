@@ -435,6 +435,8 @@ private func makeBlockTable(
     table.blocks = blocks
     table.cacheKey = cacheKey
     table.scopeID = scopeID
+    table.pages = makePageRefs(from: blocks)
+    table.totalTokenCount = UInt32(tokenCount)
     return table
 }
 

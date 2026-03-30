@@ -255,11 +255,21 @@ public struct Melix_Worker_V1_PrefillRequest: Sendable {
 
   public var resumeHint: String = String()
 
+  public var restorePlan: Melix_Worker_V1_CacheRestorePlan {
+    get {_restorePlan ?? Melix_Worker_V1_CacheRestorePlan()}
+    set {_restorePlan = newValue}
+  }
+  /// Returns true if `restorePlan` has been explicitly set.
+  public var hasRestorePlan: Bool {self._restorePlan != nil}
+  /// Clears the value of `restorePlan`. Subsequent reads from it will return its default value.
+  public mutating func clearRestorePlan() {self._restorePlan = nil}
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
 
   fileprivate var _execution: Melix_Worker_V1_ExecutionMetadata? = nil
+  fileprivate var _restorePlan: Melix_Worker_V1_CacheRestorePlan? = nil
 }
 
 public struct Melix_Worker_V1_PrefillResponse: @unchecked Sendable {
@@ -328,6 +338,15 @@ public struct Melix_Worker_V1_PrefillResponse: @unchecked Sendable {
   public var hasAppliedAcceleration: Bool {_storage._appliedAcceleration != nil}
   /// Clears the value of `appliedAcceleration`. Subsequent reads from it will return its default value.
   public mutating func clearAppliedAcceleration() {_uniqueStorage()._appliedAcceleration = nil}
+
+  public var restorePlan: Melix_Worker_V1_CacheRestorePlan {
+    get {_storage._restorePlan ?? Melix_Worker_V1_CacheRestorePlan()}
+    set {_uniqueStorage()._restorePlan = newValue}
+  }
+  /// Returns true if `restorePlan` has been explicitly set.
+  public var hasRestorePlan: Bool {_storage._restorePlan != nil}
+  /// Clears the value of `restorePlan`. Subsequent reads from it will return its default value.
+  public mutating func clearRestorePlan() {_uniqueStorage()._restorePlan = nil}
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -1712,7 +1731,7 @@ extension Melix_Worker_V1_GenerateRequest: SwiftProtobuf.Message, SwiftProtobuf.
 
 extension Melix_Worker_V1_PrefillRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".PrefillRequest"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}execution\0\u{1}messages\0\u{3}prefill_step_size\0\u{3}return_decode_handle\0\u{3}resume_hint\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}execution\0\u{1}messages\0\u{3}prefill_step_size\0\u{3}return_decode_handle\0\u{3}resume_hint\0\u{3}restore_plan\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -1725,6 +1744,7 @@ extension Melix_Worker_V1_PrefillRequest: SwiftProtobuf.Message, SwiftProtobuf._
       case 3: try { try decoder.decodeSingularUInt32Field(value: &self.prefillStepSize) }()
       case 4: try { try decoder.decodeSingularBoolField(value: &self.returnDecodeHandle) }()
       case 5: try { try decoder.decodeSingularStringField(value: &self.resumeHint) }()
+      case 6: try { try decoder.decodeSingularMessageField(value: &self._restorePlan) }()
       default: break
       }
     }
@@ -1750,6 +1770,9 @@ extension Melix_Worker_V1_PrefillRequest: SwiftProtobuf.Message, SwiftProtobuf._
     if !self.resumeHint.isEmpty {
       try visitor.visitSingularStringField(value: self.resumeHint, fieldNumber: 5)
     }
+    try { if let v = self._restorePlan {
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 6)
+    } }()
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -1759,6 +1782,7 @@ extension Melix_Worker_V1_PrefillRequest: SwiftProtobuf.Message, SwiftProtobuf._
     if lhs.prefillStepSize != rhs.prefillStepSize {return false}
     if lhs.returnDecodeHandle != rhs.returnDecodeHandle {return false}
     if lhs.resumeHint != rhs.resumeHint {return false}
+    if lhs._restorePlan != rhs._restorePlan {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -1766,7 +1790,7 @@ extension Melix_Worker_V1_PrefillRequest: SwiftProtobuf.Message, SwiftProtobuf._
 
 extension Melix_Worker_V1_PrefillResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".PrefillResponse"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}ok\0\u{1}error\0\u{3}decode_handle\0\u{3}block_table_id\0\u{3}block_table\0\u{3}restored_snapshot_id\0\u{3}prompt_tokens\0\u{3}lifecycle_phase\0\u{3}admission_state\0\u{3}applied_acceleration\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}ok\0\u{1}error\0\u{3}decode_handle\0\u{3}block_table_id\0\u{3}block_table\0\u{3}restored_snapshot_id\0\u{3}prompt_tokens\0\u{3}lifecycle_phase\0\u{3}admission_state\0\u{3}applied_acceleration\0\u{3}restore_plan\0")
 
   fileprivate class _StorageClass {
     var _ok: Bool = false
@@ -1779,6 +1803,7 @@ extension Melix_Worker_V1_PrefillResponse: SwiftProtobuf.Message, SwiftProtobuf.
     var _lifecyclePhase: Melix_Worker_V1_ExecutionPhase = .unspecified
     var _admissionState: Melix_Worker_V1_AdmissionState = .unspecified
     var _appliedAcceleration: Melix_Worker_V1_AccelerationPolicy? = nil
+    var _restorePlan: Melix_Worker_V1_CacheRestorePlan? = nil
 
       // This property is used as the initial default value for new instances of the type.
       // The type itself is protecting the reference to its storage via CoW semantics.
@@ -1799,6 +1824,7 @@ extension Melix_Worker_V1_PrefillResponse: SwiftProtobuf.Message, SwiftProtobuf.
       _lifecyclePhase = source._lifecyclePhase
       _admissionState = source._admissionState
       _appliedAcceleration = source._appliedAcceleration
+      _restorePlan = source._restorePlan
     }
   }
 
@@ -1827,6 +1853,7 @@ extension Melix_Worker_V1_PrefillResponse: SwiftProtobuf.Message, SwiftProtobuf.
         case 8: try { try decoder.decodeSingularEnumField(value: &_storage._lifecyclePhase) }()
         case 9: try { try decoder.decodeSingularEnumField(value: &_storage._admissionState) }()
         case 10: try { try decoder.decodeSingularMessageField(value: &_storage._appliedAcceleration) }()
+        case 11: try { try decoder.decodeSingularMessageField(value: &_storage._restorePlan) }()
         default: break
         }
       }
@@ -1869,6 +1896,9 @@ extension Melix_Worker_V1_PrefillResponse: SwiftProtobuf.Message, SwiftProtobuf.
       try { if let v = _storage._appliedAcceleration {
         try visitor.visitSingularMessageField(value: v, fieldNumber: 10)
       } }()
+      try { if let v = _storage._restorePlan {
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 11)
+      } }()
     }
     try unknownFields.traverse(visitor: &visitor)
   }
@@ -1888,6 +1918,7 @@ extension Melix_Worker_V1_PrefillResponse: SwiftProtobuf.Message, SwiftProtobuf.
         if _storage._lifecyclePhase != rhs_storage._lifecyclePhase {return false}
         if _storage._admissionState != rhs_storage._admissionState {return false}
         if _storage._appliedAcceleration != rhs_storage._appliedAcceleration {return false}
+        if _storage._restorePlan != rhs_storage._restorePlan {return false}
         return true
       }
       if !storagesAreEqual {return false}

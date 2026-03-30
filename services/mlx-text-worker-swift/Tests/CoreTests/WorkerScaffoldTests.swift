@@ -139,6 +139,82 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(values["swift_text.decode_ttft_ms"], 24)
     }
 
+    func testCacheRestoreMetadataNormalizesLegacyBlockTables() throws {
+        var cacheKey = Melix_Worker_V1_CacheKey()
+        cacheKey.scopeID = "scope-worker"
+
+        var block = Melix_Worker_V1_BlockRef()
+        block.blockID = "blk-0"
+        block.tokenStart = 0
+        block.tokenEnd = 16
+        block.bytes = 1024
+
+        var table = Melix_Worker_V1_BlockTable()
+        table.blocks = [block]
+        table.cacheKey = cacheKey
+
+        let normalized = normalizedBlockTable(table)
+        let decoded = try Melix_Worker_V1_BlockTable(serializedBytes: normalized.serializedData())
+
+        XCTAssertEqual(decoded.scopeID, "scope-worker")
+        XCTAssertEqual(decoded.totalTokenCount, 16)
+        XCTAssertEqual(decoded.pages.count, 1)
+        XCTAssertEqual(decoded.pages.first?.pageID, "page-blk-0")
+        XCTAssertEqual(decoded.pages.first?.blockIds, ["blk-0"])
+    }
+
+    func testCacheRestoreMetadataBuildsStructuredRestorePlans() throws {
+        var cacheKey = Melix_Worker_V1_CacheKey()
+        cacheKey.scopeID = "scope-worker"
+
+        var block = Melix_Worker_V1_BlockRef()
+        block.blockID = "blk-0"
+        block.tokenStart = 0
+        block.tokenEnd = 16
+        block.bytes = 1024
+
+        var table = Melix_Worker_V1_BlockTable()
+        table.blocks = [block]
+        table.cacheKey = cacheKey
+        table = normalizedBlockTable(table)
+
+        var snapshot = Melix_Worker_V1_SnapshotRef()
+        snapshot.snapshotID = "snap-1"
+        snapshot.requestID = "req-1"
+        snapshot.sessionID = "session-1"
+        snapshot.branchID = "branch-main"
+        snapshot.tokenBoundary = 16
+
+        let boundary = makeRestoreBoundaryRef(snapshot: snapshot, blockTable: table)
+        let plan = makeCacheRestorePlan(
+            snapshot: snapshot,
+            blockTableID: "bt-1",
+            blockTable: table,
+            tier: "l2",
+            partial: false
+        )
+        let decoded = try Melix_Worker_V1_CacheRestorePlan(serializedBytes: plan.serializedData())
+
+        XCTAssertEqual(boundary.snapshot.snapshotID, "snap-1")
+        XCTAssertEqual(boundary.scopeID, "scope-worker")
+        XCTAssertEqual(decoded.planID, "restore-bt-1")
+        XCTAssertEqual(decoded.boundary.snapshot.snapshotID, "snap-1")
+        XCTAssertEqual(decoded.blockTableID, "bt-1")
+        XCTAssertEqual(decoded.pages.count, 1)
+        XCTAssertEqual(decoded.restoredTokenCount, 16)
+        XCTAssertEqual(decoded.tier, "l2")
+    }
+
+    func testRestoreBoundarySnapshotRequestResolvesStructuredBoundaryFallback() {
+        var request = Melix_Worker_V1_RestoreBoundarySnapshotRequest()
+        request.restoreBoundary.snapshot.snapshotID = "snap-boundary"
+
+        XCTAssertEqual(
+            resolvedRestoreSnapshotID(from: request),
+            "snap-boundary"
+        )
+    }
+
     func testHandshakeReturnsExpectedRuntimeMetadata() async throws {
         let services = makeServices()
         var request = Melix_Worker_V1_HandshakeRequest()

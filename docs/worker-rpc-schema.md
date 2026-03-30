@@ -526,6 +526,10 @@ Recommended cache structures:
 ```proto
 message BlockTable {
   repeated BlockRef blocks = 1;
+  repeated PageRef pages = 2;
+  bytes prefix_hash = 3;
+  string scope_id = 4;
+  uint32 total_token_count = 5;
 }
 
 message BlockRef {
@@ -534,9 +538,35 @@ message BlockRef {
   int32 token_end = 3;
   uint64 bytes = 4;
 }
+
+message PageRef {
+  string page_id = 1;
+  repeated string block_ids = 2;
+  uint32 token_start = 3;
+  uint32 token_end = 4;
+  uint64 bytes = 5;
+}
+
+message RestoreBoundaryRef {
+  SnapshotRef snapshot = 1;
+  bytes prefix_hash = 2;
+  string scope_id = 3;
+  string boundary_kind = 4;
+}
+
+message CacheRestorePlan {
+  string plan_id = 1;
+  RestoreBoundaryRef boundary = 2;
+  string block_table_id = 3;
+  BlockTable block_table = 4;
+  repeated PageRef pages = 5;
+  uint32 restored_token_count = 6;
+  bool partial = 7;
+  string tier = 8;
+}
 ```
 
-`block_table_id` is not enough on its own. The worker schema should define the structure that the identifier refers to.
+`block_table_id` is not enough on its own. The worker schema should define the structure that the identifier refers to, and restore metadata should carry typed boundary and page information rather than only opaque snapshot identifiers.
 
 ## Maintenance Service
 

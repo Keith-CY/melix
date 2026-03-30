@@ -446,7 +446,9 @@ final class CacheRPCService: Melix_Worker_V1_CacheService.SimpleServiceProtocol,
     ) async throws -> Melix_Worker_V1_RestoreBoundarySnapshotResponse {
         let startedAt = Date()
         do {
-            let response = try await registry.restoreBoundarySnapshot(snapshotID: request.snapshotID)
+            let response = try await registry.restoreBoundarySnapshot(
+                snapshotID: resolvedRestoreSnapshotID(from: request)
+            )
             metrics.recordMilliseconds(
                 "swift_text.cache_snapshot_restore_ms",
                 value: elapsedMilliseconds(since: startedAt)
