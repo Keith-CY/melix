@@ -191,9 +191,7 @@ class DeterministicVLMRuntime:
         sampling,
         cancel_event: Event,
     ):
-        image_text = prepared_request.images[0].decoded_text()
-        prompt_text = prepared_request.prompt_text or "Describe the image."
-        response = f"Image content: {image_text}\nPrompt: {prompt_text}"
+        response = self._response_text(prepared_request)
         cache_identity, scope_id = self._cache_identity(prepared_request, loaded_model)
         self._cache_lookups += 1
         cache_hit = cache_identity in self._cache_entries
@@ -380,9 +378,16 @@ class DeterministicVLMRuntime:
 
     @staticmethod
     def _response_text(prepared_request: PreparedVisionRequest) -> str:
-        image_text = prepared_request.images[0].decoded_text()
         prompt_text = prepared_request.prompt_text or "Describe the image."
-        return f"Image content: {image_text}\nPrompt: {prompt_text}"
+        if len(prepared_request.images) == 1:
+            return f"Image content: {prepared_request.images[0].decoded_text()}\nPrompt: {prompt_text}"
+
+        image_lines = [
+            f"Image {index + 1} content: {image.decoded_text()}"
+            for index, image in enumerate(prepared_request.images)
+        ]
+        image_lines.append(f"Prompt: {prompt_text}")
+        return "\n".join(image_lines)
 
     @staticmethod
     def _metadata_value(loaded_model, key: str, default: str) -> str:

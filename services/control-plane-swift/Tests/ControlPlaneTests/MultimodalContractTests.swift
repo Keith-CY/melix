@@ -131,6 +131,50 @@ struct MultimodalContractTests {
         #expect(remote.media.preprocessingHints["detail"] == "high")
     }
 
+    @Test("multimodal request normalizer preserves multi-image ordering")
+    func multiImageOrderingIsPreserved() throws {
+        let decoder = JSONDecoder()
+        let messages = try decoder.decode(
+            [OpenAIMultimodalMessage].self,
+            from: Data(
+                """
+                [
+                  {
+                    "role": "user",
+                    "content": [
+                      { "type": "text", "text": "Compare the images." },
+                      {
+                        "type": "input_image",
+                        "input_image": {
+                          "url": "/tmp/first-image.png",
+                          "filename": "first-image.png"
+                        }
+                      },
+                      {
+                        "type": "image_url",
+                        "image_url": {
+                          "url": "https://example.com/second-image.png",
+                          "filename": "second-image.png"
+                        }
+                      }
+                    ]
+                  }
+                ]
+                """.utf8
+            )
+        )
+
+        let normalized = try MultimodalRequestNormalizer().normalize(messages)
+
+        #expect(normalized.count == 1)
+        #expect(normalized[0].parts.count == 3)
+        #expect(normalized[0].parts[0].text == "Compare the images.")
+        #expect(normalized[0].parts[1].imageUri == "/tmp/first-image.png")
+        #expect(normalized[0].parts[2].imageUri == "https://example.com/second-image.png")
+        #expect(normalized[0].parts[1].media.filename == "first-image.png")
+        #expect(normalized[0].parts[2].media.filename == "second-image.png")
+    }
+
     @Test("multimodal request normalizer rejects invalid inline base64 payloads")
     func invalidInlineBase64PayloadsAreRejected() {
         let part = OpenAIMultimodalContentPart(

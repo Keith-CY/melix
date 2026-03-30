@@ -301,3 +301,54 @@ def test_multimodal_chat_accepts_local_and_remote_image_urls(tmp_path: Path) -> 
         remote_server.shutdown()
         remote_server.server_close()
         stack.stop()
+
+
+def test_multimodal_chat_preserves_multi_image_order(tmp_path: Path) -> None:
+    stack = LiveMelixStack(Path(__file__).resolve().parents[2])
+    first_image = tmp_path / "first-image.txt"
+    second_image = tmp_path / "second-image.txt"
+    first_image.write_text("phase6 first image")
+    second_image.write_text("phase6 second image")
+
+    try:
+        stack.start()
+        stack.wait_for_models(["melix-dev-vlm"])
+
+        status, payload = _post_json(
+            stack.chat_url(),
+            {
+                "model": "melix-dev-vlm",
+                "stream": True,
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": "Compare the images."},
+                            {
+                                "type": "input_image",
+                                "input_image": {
+                                    "url": str(first_image),
+                                    "mime_type": "image/png",
+                                    "filename": first_image.name,
+                                },
+                            },
+                            {
+                                "type": "input_image",
+                                "input_image": {
+                                    "url": str(second_image),
+                                    "mime_type": "image/png",
+                                    "filename": second_image.name,
+                                },
+                            },
+                        ],
+                    }
+                ],
+            },
+        )
+
+        assert status == 200
+        assert b"Image 1 content: phase6 first image" in payload
+        assert b"Image 2 content: phase6 second image" in payload
+        assert b"Prompt: Compare the images." in payload
+    finally:
+        stack.stop()

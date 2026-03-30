@@ -143,6 +143,60 @@ def test_generate_streams_vlm_response_from_file_image_uri(tmp_path: Path) -> No
     assert model_info.supported_tasks == ["vlm", "generate"]
 
 
+def test_generate_streams_vlm_response_from_multi_image_prompt(tmp_path: Path) -> None:
+    runtime_service, inference_service, _ = build_services()
+    model_handle = load_model(runtime_service, WorkerModelCatalog.dev_vlm_model())
+    first_image = tmp_path / "image-1.txt"
+    second_image = tmp_path / "image-2.txt"
+    first_image.write_text("cat on mat")
+    second_image.write_text("dog on rug")
+
+    request = inference_pb2.GenerateRequest(
+        execution=inference_pb2.ExecutionMetadata(
+            id=common_pb2.RequestIdentity(request_id="vlm-multi-1"),
+            model_handle=model_handle,
+        ),
+        messages=[
+            common_pb2.ChatMessage(
+                role="user",
+                parts=[
+                    common_pb2.MessagePart(text="Compare the two images."),
+                    common_pb2.MessagePart(
+                        image_uri=first_image.as_uri(),
+                        media=common_pb2.MediaMetadata(
+                            media_type=common_pb2.MEDIA_TYPE_IMAGE,
+                            source_kind=common_pb2.MEDIA_SOURCE_URI,
+                            filename=first_image.name,
+                        ),
+                    ),
+                    common_pb2.MessagePart(
+                        image_uri=second_image.as_uri(),
+                        media=common_pb2.MediaMetadata(
+                            media_type=common_pb2.MEDIA_TYPE_IMAGE,
+                            source_kind=common_pb2.MEDIA_SOURCE_URI,
+                            filename=second_image.name,
+                        ),
+                    ),
+                ],
+            )
+        ],
+        sampling=common_pb2.SamplingConfig(max_output_tokens=64),
+        stream=True,
+        return_usage=True,
+    )
+
+    events = list(inference_service.Generate(request, context=None))
+    token_text = "".join(event.token_delta.text for event in events if event.HasField("token_delta"))
+    completed = next(event.completed for event in events if event.HasField("completed"))
+
+    assert token_text == (
+        "Image 1 content: cat on mat\n"
+        "Image 2 content: dog on rug\n"
+        "Prompt: Compare the two images."
+    )
+    assert completed.assistant_text == token_text
+
+
 def test_vlm_prefill_and_decode_expose_explicit_runtime_lifecycle() -> None:
     registry = WorkerRegistry(
         runtime=MLXTextRuntime(backend=PassiveTextBackend()),
@@ -358,6 +412,43 @@ def test_prepare_vision_request_hash_changes_when_prompt_or_image_changes(tmp_pa
     assert request_a.multimodal_hash_hex != request_d.multimodal_hash_hex
 
 
+def test_prepare_vision_request_preserves_multi_image_order_in_payload_and_hash(tmp_path: Path) -> None:
+    image_a = tmp_path / "image-a.txt"
+    image_b = tmp_path / "image-b.txt"
+    image_a.write_text("first image")
+    image_b.write_text("second image")
+
+    def build_request(images: list[Path]):
+        return prepare_vision_request(
+            [
+                common_pb2.ChatMessage(
+                    role="user",
+                    parts=[
+                        common_pb2.MessagePart(text="Compare the images."),
+                        *[
+                            common_pb2.MessagePart(
+                                image_uri=str(path),
+                                media=common_pb2.MediaMetadata(
+                                    media_type=common_pb2.MEDIA_TYPE_IMAGE,
+                                    source_kind=common_pb2.MEDIA_SOURCE_URI,
+                                    filename=path.name,
+                                ),
+                            )
+                            for path in images
+                        ],
+                    ],
+                )
+            ]
+        )
+
+    request_a = build_request([image_a, image_b])
+    request_b = build_request([image_b, image_a])
+
+    assert [image.filename for image in request_a.images] == [image_a.name, image_b.name]
+    assert [image.filename for image in request_b.images] == [image_b.name, image_a.name]
+    assert request_a.multimodal_hash_hex != request_b.multimodal_hash_hex
+
+
 def test_prepare_vision_request_rejects_missing_remote_and_unsupported_inputs(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -461,6 +552,36 @@ def test_ocr_runtime_render_prompt_accepts_chat_template_kwargs() -> None:
 
     assert prepared.prompt_text == "Inspect the image."
     assert prepared.images[0].decoded_text() == "ocr template kwargs"
+
+
+def test_ocr_runtime_rejects_multi_image_prompts() -> None:
+    runtime = DeterministicOCRRuntime()
+
+    with pytest.raises(MultimodalPreprocessError, match="OCR only supports single-image requests"):
+        runtime.render_prompt(
+            [
+                common_pb2.ChatMessage(
+                    role="user",
+                    parts=[
+                        common_pb2.MessagePart(text="Read both images."),
+                        common_pb2.MessagePart(
+                            image_bytes=b"first image",
+                            media=common_pb2.MediaMetadata(
+                                media_type=common_pb2.MEDIA_TYPE_IMAGE,
+                                source_kind=common_pb2.MEDIA_SOURCE_INLINE_BYTES,
+                            ),
+                        ),
+                        common_pb2.MessagePart(
+                            image_bytes=b"second image",
+                            media=common_pb2.MediaMetadata(
+                                media_type=common_pb2.MEDIA_TYPE_IMAGE,
+                                source_kind=common_pb2.MEDIA_SOURCE_INLINE_BYTES,
+                            ),
+                        ),
+                    ],
+                )
+            ]
+        )
 
 
 def test_vlm_runtime_render_prompt_accepts_chat_template_kwargs() -> None:

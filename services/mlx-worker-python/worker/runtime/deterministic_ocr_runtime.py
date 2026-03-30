@@ -5,7 +5,11 @@ from threading import Event
 
 from worker.runtime.deterministic_delay import sleep_if_configured
 from worker.runtime.mlx_text_runtime import RuntimeTokenEvent
-from worker.runtime.multimodal_preprocessing import PreparedVisionRequest, prepare_vision_request
+from worker.runtime.multimodal_preprocessing import (
+    MultimodalPreprocessError,
+    PreparedVisionRequest,
+    prepare_vision_request,
+)
 
 
 @dataclass(frozen=True)
@@ -31,6 +35,8 @@ class DeterministicOCRRuntime:
     def render_prompt(self, messages, loaded_model=None, template_kwargs=None) -> PreparedVisionRequest:
         _ = template_kwargs
         prepared = prepare_vision_request(messages)
+        if len(prepared.images) != 1:
+            raise MultimodalPreprocessError("OCR only supports single-image requests.")
         self._last_probe = VisionProbeSnapshot(
             preprocess_latency_ms=prepared.preprocess_latency_ms,
             preprocess_input_bytes=prepared.preprocess_input_bytes,
