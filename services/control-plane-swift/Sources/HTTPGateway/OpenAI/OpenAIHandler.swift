@@ -955,7 +955,11 @@ public struct OpenAIHandler: Sendable {
             requestID: execution.requestID,
             modelID: execution.modelID,
             shape: shape,
-            toolParser: ToolParserSelection(executionExt: translated.workerRequest.execution.ext)
+            toolParser: ToolParserSelection(executionExt: translated.workerRequest.execution.ext),
+            options: SSEStreamWriter.StreamOptions(
+                includeUsage: translated.workerRequest.execution.ext["melix.stream.include_usage"] == "true"
+            ),
+            onDisconnect: execution.onStreamDisconnect
         )
 
         return HTTPResponse(

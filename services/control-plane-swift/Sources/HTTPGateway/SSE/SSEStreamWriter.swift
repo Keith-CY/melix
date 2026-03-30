@@ -9,10 +9,23 @@ public struct SSEStreamWriter: Sendable {
         case messages
     }
 
-    private let now: @Sendable () -> Date
+    public struct StreamOptions: Sendable, Equatable {
+        public let includeUsage: Bool
 
-    public init(now: @escaping @Sendable () -> Date = Date.init) {
+        public init(includeUsage: Bool = true) {
+            self.includeUsage = includeUsage
+        }
+    }
+
+    private let now: @Sendable () -> Date
+    private let keepaliveInterval: TimeInterval?
+
+    public init(
+        now: @escaping @Sendable () -> Date = Date.init,
+        keepaliveInterval: TimeInterval? = 15
+    ) {
         self.now = now
+        self.keepaliveInterval = keepaliveInterval
     }
 
     public func encode(
@@ -20,12 +33,18 @@ public struct SSEStreamWriter: Sendable {
         requestID: String,
         modelID: String,
         shape: StreamShape = .chatCompletions,
-        toolParser: ToolParserSelection? = nil
+        toolParser: ToolParserSelection? = nil,
+        options: StreamOptions = StreamOptions(),
+        onDisconnect: (@Sendable () async -> Void)? = nil
     ) -> AsyncThrowingStream<Data, Error> {
         AsyncThrowingStream { continuation in
+            let keepaliveTask = keepaliveTask(continuation: continuation)
             let task = Task {
                 do {
                     for try await event in stream {
+                        if !options.includeUsage, case .usageDelta = event.payload {
+                            continue
+                        }
                         continuation.yield(
                             encode(
                                 event: event,
@@ -40,12 +59,42 @@ public struct SSEStreamWriter: Sendable {
                     continuation.yield(errorFrame(requestID: requestID, code: "transport_error", message: error.localizedDescription))
                 }
 
+                keepaliveTask?.cancel()
                 continuation.yield(doneFrame())
                 continuation.finish()
             }
 
-            continuation.onTermination = { _ in
+            continuation.onTermination = { termination in
+                keepaliveTask?.cancel()
                 task.cancel()
+                guard case .cancelled = termination else {
+                    return
+                }
+                guard let onDisconnect else {
+                    return
+                }
+                Task {
+                    await onDisconnect()
+                }
+            }
+        }
+    }
+
+    private func keepaliveTask(
+        continuation: AsyncThrowingStream<Data, Error>.Continuation
+    ) -> Task<Void, Never>? {
+        guard let keepaliveInterval, keepaliveInterval > 0 else {
+            return nil
+        }
+
+        let sleepNanoseconds = UInt64(keepaliveInterval * 1_000_000_000)
+        return Task {
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: sleepNanoseconds)
+                guard !Task.isCancelled else {
+                    break
+                }
+                continuation.yield(keepaliveFrame())
             }
         }
     }
@@ -547,6 +596,10 @@ public struct SSEStreamWriter: Sendable {
 
     private func doneFrame() -> Data {
         Data("data: [DONE]\n\n".utf8)
+    }
+
+    private func keepaliveFrame() -> Data {
+        Data(": keepalive \(Int(now().timeIntervalSince1970 * 1000))\n\n".utf8)
     }
 
     private func mergeToolParserMetadata(

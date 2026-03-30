@@ -34,6 +34,21 @@ struct TextEndpointContractTests {
         #expect(message.content == "alpha\nbeta")
     }
 
+    @Test("stream options encode include_usage across public contracts")
+    func streamOptionsEncodeIncludeUsageAcrossPublicContracts() throws {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let decoder = JSONDecoder()
+
+        let streamOptions = OpenAIStreamOptions(includeUsage: true)
+        let encoded = try encoder.encode(streamOptions)
+        let encodedJSON = String(decoding: encoded, as: UTF8.self)
+        #expect(encodedJSON.contains("\"include_usage\":true"))
+
+        let decoded = try decoder.decode(OpenAIStreamOptions.self, from: encoded)
+        #expect(decoded.includeUsage == true)
+    }
+
     @Test("request contracts preserve message names across text endpoints")
     func requestContractsPreserveMessageNamesAcrossTextEndpoints() throws {
         let decoder = JSONDecoder()

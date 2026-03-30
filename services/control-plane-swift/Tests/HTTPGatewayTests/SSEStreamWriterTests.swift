@@ -39,6 +39,108 @@ struct SSEStreamWriterTests {
         ]))
     }
 
+    @Test("SSE suppresses usage frames when includeUsage is disabled")
+    func suppressesUsageFramesWhenIncludeUsageIsDisabled() async throws {
+        let writer = SSEStreamWriter(now: { Date(timeIntervalSince1970: 456) }, keepaliveInterval: nil)
+
+        let stream = AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error> { continuation in
+            continuation.yield(makeUsageEvent(requestID: "req-usage-off", seq: 1, promptTokens: 3, completionTokens: 1))
+            continuation.yield(makeCompletedEvent(requestID: "req-usage-off", seq: 2, finishReason: "stop", assistantText: "A"))
+            continuation.finish()
+        }
+
+        let payload = try await collectChunks(
+            writer.encode(
+                stream: stream,
+                requestID: "req-usage-off",
+                modelID: "melix-dev-text",
+                options: .init(includeUsage: false)
+            )
+        )
+
+        #expect(payload.contains("\"prompt_tokens\":3") == false)
+        #expect(payload.contains("\"finish_reason\":\"stop\""))
+        #expect(payload.contains("data: [DONE]"))
+    }
+
+    @Test("SSE emits keepalive comments while upstream is idle")
+    func emitsKeepaliveCommentsWhileUpstreamIsIdle() async throws {
+        let writer = SSEStreamWriter(
+            now: { Date(timeIntervalSince1970: 456) },
+            keepaliveInterval: 0.01
+        )
+
+        let stream = AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error> { continuation in
+            Task {
+                try? await Task.sleep(nanoseconds: 30_000_000)
+                continuation.yield(makeTokenEvent(requestID: "req-keepalive", seq: 1, text: "A"))
+                continuation.yield(makeCompletedEvent(requestID: "req-keepalive", seq: 2, finishReason: "stop", assistantText: "A"))
+                continuation.finish()
+            }
+        }
+
+        let payload = try await collectChunks(
+            writer.encode(
+                stream: stream,
+                requestID: "req-keepalive",
+                modelID: "melix-dev-text"
+            )
+        )
+
+        #expect(payload.contains(": keepalive "))
+        #expect(orderedRanges(in: payload, needles: [
+            ": keepalive ",
+            "\"content\":\"A\"",
+            "data: [DONE]",
+        ]))
+    }
+
+    @Test("SSE invokes disconnect handler when the client stream is cancelled")
+    func invokesDisconnectHandlerWhenClientStreamIsCancelled() async throws {
+        let writer = SSEStreamWriter(
+            now: { Date(timeIntervalSince1970: 456) },
+            keepaliveInterval: nil
+        )
+        let probe = DisconnectProbe()
+
+        let stream = AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error> { continuation in
+            Task {
+                try? await Task.sleep(nanoseconds: 100_000_000)
+                continuation.yield(makeTokenEvent(requestID: "req-disconnect", seq: 1, text: "A"))
+                continuation.finish()
+            }
+        }
+
+        let dataStream = writer.encode(
+            stream: stream,
+            requestID: "req-disconnect",
+            modelID: "melix-dev-text",
+            onDisconnect: {
+                await probe.markTriggered()
+            }
+        )
+
+        let consumer = Task {
+            do {
+                for try await _ in dataStream {
+                }
+            } catch {
+            }
+        }
+        await Task.yield()
+        consumer.cancel()
+        _ = await consumer.result
+
+        for _ in 0..<100 {
+            if await probe.triggered {
+                break
+            }
+            try? await Task.sleep(nanoseconds: 10_000_000)
+        }
+
+        #expect(await probe.triggered)
+    }
+
     @Test("SSE emits error frames and terminates with done marker")
     func emitsErrorFrames() async throws {
         let writer = SSEStreamWriter(now: { Date(timeIntervalSince1970: 456) })
@@ -443,6 +545,14 @@ struct SSEStreamWriterTests {
         #expect(messagesPayload.contains("\"type\":\"message.tool_call.delta\""))
         #expect(messagesPayload.contains("\"parser_mode\":\"mistral\""))
         #expect(messagesPayload.contains("\"parser_namespaces\":[\"tools.math\"]"))
+    }
+}
+
+private actor DisconnectProbe {
+    private(set) var triggered = false
+
+    func markTriggered() {
+        triggered = true
     }
 }
 

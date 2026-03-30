@@ -48,6 +48,44 @@ struct RequestCoordinatorTests {
         #expect(await workerClient.abortedRequestIDs == ["req-cancel"])
     }
 
+    @Test("stream disconnect handler triggers worker abort and records disconnect metrics")
+    func streamDisconnectHandlerTriggersWorkerAbortAndRecordsDisconnectMetrics() async throws {
+        let workerClient = BlockingWorkerClient()
+        let schedulerReadModel = SchedulerReadModel()
+        let metricsStore = MetricsStore()
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(defaultTextClient: workerClient),
+            abortRegistry: AbortRegistry(),
+            schedulerReadModel: schedulerReadModel,
+            metricsStore: metricsStore
+        )
+
+        let execution = try await coordinator.startChatCompletion(
+            makeTranslatedChatRequest(requestID: "req-disconnect")
+        )
+        let onStreamDisconnect = try #require(execution.onStreamDisconnect)
+        await onStreamDisconnect()
+
+        for _ in 0..<100 {
+            if await workerClient.abortedRequestIDs == ["req-disconnect"] {
+                break
+            }
+            try? await Task.sleep(nanoseconds: 10_000_000)
+        }
+
+        let metrics = await metricsStore.snapshot()
+        let terminalProgress = await waitForProgress(
+            schedulerReadModel: schedulerReadModel,
+            requestID: "req-disconnect",
+            phase: .requestAborted
+        )
+
+        #expect(await workerClient.abortedRequestIDs == ["req-disconnect"])
+        #expect(metrics.values["http.stream_disconnect_count", default: 0] == 1)
+        #expect(metrics.values["http.stream_disconnect_ms", default: -1] >= 0)
+        #expect(terminalProgress?.phase == .requestAborted)
+    }
+
     @Test("queued request cancellation succeeds before a worker is bound")
     func queuedRequestCancellationSucceedsBeforeAWorkerIsBound() async throws {
         let workerClient = SlowDispatchWorkerClient()

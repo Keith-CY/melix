@@ -32,3 +32,10 @@ Complete streaming behavior so usage, keepalive, disconnect, and token-by-token 
 
 - stream responses can emit usage and keepalive signals where requested
 - disconnect behavior is explicit, safe, and integration-tested
+
+## Coverage
+
+- `services/control-plane-swift/Tests/HTTPGatewayTests/OpenAIHandlerTests.swift`
+- `services/control-plane-swift/Tests/HTTPGatewayTests/RequestCoordinatorTests.swift`
+- `services/control-plane-swift/Tests/HTTPGatewayTests/SSEStreamWriterTests.swift`
+- `tests/integration/test_stream_usage_opt_in.py`

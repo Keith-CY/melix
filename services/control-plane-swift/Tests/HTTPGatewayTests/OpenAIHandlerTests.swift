@@ -33,6 +33,7 @@ struct OpenAIHandlerTests {
             {
               "model": "melix-dev-text",
               "stream": true,
+              "stream_options": { "include_usage": true },
               "messages": [
                 { "role": "user", "content": "Hello" }
               ],
@@ -67,11 +68,60 @@ struct OpenAIHandlerTests {
         #expect(request.messages[0].parts[0].text == "Hello")
         #expect(request.sampling.temperature == 0.2)
         #expect(request.sampling.maxOutputTokens == 16)
+        #expect(request.returnUsage)
         #expect(payload.contains("\"content\":\"Hel\""))
         #expect(payload.contains("\"content\":\"lo\""))
         #expect(payload.contains("\"finish_reason\":\"stop\""))
         #expect(payload.contains("\"prompt_tokens\":1"))
         #expect(payload.contains("data: [DONE]"))
+    }
+
+    @Test("POST /v1/chat/completions omits usage frames unless stream options opt in")
+    func postChatCompletionsOmitUsageFramesUnlessRequested() async throws {
+        let catalog = ModelCatalog(seedModels: [warmModel()])
+        let workerClient = ScriptedWorkerClient(events: [
+            makeUsageEvent(requestID: "req-chat-usage", seq: 1, promptTokens: 2, completionTokens: 1),
+            makeCompletedEvent(requestID: "req-chat-usage", seq: 2, finishReason: "stop", assistantText: "done"),
+        ])
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(defaultTextClient: workerClient),
+            abortRegistry: AbortRegistry()
+        )
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: coordinator,
+            translator: ChatRequestTranslator(requestIDGenerator: { "req-chat-usage" }),
+            sseWriter: SSEStreamWriter(now: { Date(timeIntervalSince1970: 123) })
+        )
+
+        let body = try #require(
+            """
+            {
+              "model": "melix-dev-text",
+              "stream": true,
+              "messages": [
+                { "role": "user", "content": "usage off by default" }
+              ]
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/chat/completions",
+                headers: ["content-type": "application/json"],
+                body: body
+            )
+        )
+
+        let payload = try await collectBody(response.body)
+        let request = try #require(await workerClient.lastGenerateRequest)
+
+        #expect(response.statusCode == 200)
+        #expect(request.returnUsage == false)
+        #expect(payload.contains("\"finish_reason\":\"stop\""))
+        #expect(payload.contains("\"prompt_tokens\":2") == false)
     }
 
     @Test("POST /v1/chat/completions lazily loads a discovered text model before streaming")

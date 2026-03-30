@@ -162,6 +162,7 @@ public struct TextRequestShaper: Sendable {
             model: request.model,
             messages: request.messages,
             stream: request.stream,
+            includeUsage: request.includeUsage,
             temperature: temperature,
             topP: topP,
             maxTokens: maxTokens,

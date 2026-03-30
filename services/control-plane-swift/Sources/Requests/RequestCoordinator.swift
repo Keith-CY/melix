@@ -11,15 +11,18 @@ public struct CoordinatedChatExecution: Sendable {
     public let requestID: String
     public let modelID: String
     public let stream: AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error>
+    public let onStreamDisconnect: (@Sendable () async -> Void)?
 
     public init(
         requestID: String,
         modelID: String,
-        stream: AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error>
+        stream: AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error>,
+        onStreamDisconnect: (@Sendable () async -> Void)? = nil
     ) {
         self.requestID = requestID
         self.modelID = modelID
         self.stream = stream
+        self.onStreamDisconnect = onStreamDisconnect
     }
 }
 
@@ -388,6 +391,14 @@ public actor RequestCoordinator {
             )
             let structuredOutputValidator = StructuredOutputValidator()
             let initialReasoningBudget = ReasoningBudgetState(execution: request.workerRequest.execution)
+            let disconnectHandler: @Sendable () async -> Void = {
+                await metricsStore.increment("http.stream_disconnect_count")
+                await metricsStore.set(
+                    now().timeIntervalSince(dispatchStartedAt) * 1000,
+                    forKey: "http.stream_disconnect_ms"
+                )
+                _ = try? await self.cancel(requestID: requestID)
+            }
 
             let stream = AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error> { continuation in
                 let task = Task {
@@ -493,16 +504,23 @@ public actor RequestCoordinator {
                     }
                 }
 
-                continuation.onTermination = { _ in
+                continuation.onTermination = { termination in
                     task.cancel()
+                    guard case .cancelled = termination else {
+                        return
+                    }
                     Task {
-                        await metricsStore.decrement("requests.inflight")
-                        await self.finishRequestTracking(requestID: requestID)
+                        _ = try? await self.cancel(requestID: requestID)
                     }
                 }
             }
 
-            return CoordinatedChatExecution(requestID: requestID, modelID: modelID, stream: stream)
+            return CoordinatedChatExecution(
+                requestID: requestID,
+                modelID: modelID,
+                stream: stream,
+                onStreamDisconnect: disconnectHandler
+            )
         } catch let error as WorkerClientError where error == .unavailable {
             await metricsStore.decrement("requests.inflight")
             await finishRequestTracking(requestID: request.requestID, phase: .requestFailed)

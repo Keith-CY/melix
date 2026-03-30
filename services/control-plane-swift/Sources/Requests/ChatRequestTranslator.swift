@@ -99,6 +99,7 @@ public struct NormalizedTextRequest: Sendable, Equatable {
     public let model: String
     public let messages: [NormalizedTextMessage]
     public let stream: Bool
+    public let includeUsage: Bool
     public let temperature: Double?
     public let topP: Double?
     public let maxTokens: UInt32?
@@ -123,6 +124,7 @@ public struct NormalizedTextRequest: Sendable, Equatable {
         model: String,
         messages: [NormalizedTextMessage],
         stream: Bool,
+        includeUsage: Bool = false,
         temperature: Double?,
         topP: Double?,
         maxTokens: UInt32?,
@@ -146,6 +148,7 @@ public struct NormalizedTextRequest: Sendable, Equatable {
         self.model = model
         self.messages = messages
         self.stream = stream
+        self.includeUsage = includeUsage
         self.temperature = temperature
         self.topP = topP
         self.maxTokens = maxTokens
@@ -172,6 +175,7 @@ public struct ShapedTextRequest: Sendable, Equatable {
     public let model: String
     public let messages: [NormalizedTextMessage]
     public let stream: Bool
+    public let includeUsage: Bool
     public let temperature: Double
     public let topP: Double
     public let maxTokens: UInt32
@@ -228,6 +232,18 @@ public struct TranslatedChatRequest: Sendable {
         self.modelID = modelID
         self.workerRequest = workerRequest
         self.stream = stream
+    }
+}
+
+public struct OpenAIStreamOptions: Codable, Sendable, Equatable {
+    public let includeUsage: Bool?
+
+    enum CodingKeys: String, CodingKey {
+        case includeUsage = "include_usage"
+    }
+
+    public init(includeUsage: Bool? = nil) {
+        self.includeUsage = includeUsage
     }
 }
 
@@ -291,6 +307,7 @@ public struct OpenAIChatCompletionsRequest: Codable, Sendable {
     public let model: String
     public let messages: [Message]
     public let stream: Bool?
+    public let streamOptions: OpenAIStreamOptions?
     public let temperature: Double?
     public let topP: Double?
     public let maxTokens: UInt32?
@@ -311,6 +328,7 @@ public struct OpenAIChatCompletionsRequest: Codable, Sendable {
         case model
         case messages
         case stream
+        case streamOptions = "stream_options"
         case temperature
         case topP = "top_p"
         case maxTokens = "max_tokens"
@@ -332,6 +350,7 @@ public struct OpenAIChatCompletionsRequest: Codable, Sendable {
         model: String,
         messages: [Message],
         stream: Bool? = nil,
+        streamOptions: OpenAIStreamOptions? = nil,
         temperature: Double? = nil,
         topP: Double? = nil,
         maxTokens: UInt32? = nil,
@@ -351,6 +370,7 @@ public struct OpenAIChatCompletionsRequest: Codable, Sendable {
         self.model = model
         self.messages = messages
         self.stream = stream
+        self.streamOptions = streamOptions
         self.temperature = temperature
         self.topP = topP
         self.maxTokens = maxTokens
@@ -389,6 +409,7 @@ public struct OpenAICompletionsRequest: Codable, Sendable {
     public let model: String
     public let prompt: String
     public let stream: Bool?
+    public let streamOptions: OpenAIStreamOptions?
     public let temperature: Double?
     public let topP: Double?
     public let maxTokens: UInt32?
@@ -409,6 +430,7 @@ public struct OpenAICompletionsRequest: Codable, Sendable {
         case model
         case prompt
         case stream
+        case streamOptions = "stream_options"
         case temperature
         case topP = "top_p"
         case maxTokens = "max_tokens"
@@ -430,6 +452,7 @@ public struct OpenAICompletionsRequest: Codable, Sendable {
         model: String,
         prompt: String,
         stream: Bool? = nil,
+        streamOptions: OpenAIStreamOptions? = nil,
         temperature: Double? = nil,
         topP: Double? = nil,
         maxTokens: UInt32? = nil,
@@ -449,6 +472,7 @@ public struct OpenAICompletionsRequest: Codable, Sendable {
         self.model = model
         self.prompt = prompt
         self.stream = stream
+        self.streamOptions = streamOptions
         self.temperature = temperature
         self.topP = topP
         self.maxTokens = maxTokens
@@ -563,6 +587,7 @@ public struct OpenAIResponsesRequest: Codable, Sendable {
     public let input: Input
     public let instructions: String?
     public let stream: Bool?
+    public let streamOptions: OpenAIStreamOptions?
     public let temperature: Double?
     public let topP: Double?
     public let maxTokens: UInt32?
@@ -584,6 +609,7 @@ public struct OpenAIResponsesRequest: Codable, Sendable {
         case input
         case instructions
         case stream
+        case streamOptions = "stream_options"
         case temperature
         case topP = "top_p"
         case maxTokens = "max_tokens"
@@ -606,6 +632,7 @@ public struct OpenAIResponsesRequest: Codable, Sendable {
         input: Input,
         instructions: String? = nil,
         stream: Bool? = nil,
+        streamOptions: OpenAIStreamOptions? = nil,
         temperature: Double? = nil,
         topP: Double? = nil,
         maxTokens: UInt32? = nil,
@@ -626,6 +653,7 @@ public struct OpenAIResponsesRequest: Codable, Sendable {
         self.input = input
         self.instructions = instructions
         self.stream = stream
+        self.streamOptions = streamOptions
         self.temperature = temperature
         self.topP = topP
         self.maxTokens = maxTokens
@@ -838,6 +866,7 @@ public struct MelixMessagesRequest: Codable, Sendable {
     public let messages: [Message]
     private let rawSystem: MelixMessagesContentValue?
     public let stream: Bool?
+    public let streamOptions: OpenAIStreamOptions?
     public let temperature: Double?
     public let topP: Double?
     public let maxTokens: UInt32?
@@ -862,6 +891,7 @@ public struct MelixMessagesRequest: Codable, Sendable {
         case messages
         case system
         case stream
+        case streamOptions = "stream_options"
         case temperature
         case topP = "top_p"
         case maxTokens = "max_tokens"
@@ -888,6 +918,7 @@ public struct MelixMessagesRequest: Codable, Sendable {
         system: String? = nil,
         systemBlocks: [MelixMessagesContentBlock]? = nil,
         stream: Bool? = nil,
+        streamOptions: OpenAIStreamOptions? = nil,
         temperature: Double? = nil,
         topP: Double? = nil,
         maxTokens: UInt32? = nil,
@@ -917,6 +948,7 @@ public struct MelixMessagesRequest: Codable, Sendable {
             self.rawSystem = nil
         }
         self.stream = stream
+        self.streamOptions = streamOptions
         self.temperature = temperature
         self.topP = topP
         self.maxTokens = maxTokens
@@ -943,6 +975,7 @@ public struct MelixMessagesRequest: Codable, Sendable {
         self.messages = try container.decode([Message].self, forKey: .messages)
         self.rawSystem = try container.decodeIfPresent(MelixMessagesContentValue.self, forKey: .system)
         self.stream = try container.decodeIfPresent(Bool.self, forKey: .stream)
+        self.streamOptions = try container.decodeIfPresent(OpenAIStreamOptions.self, forKey: .streamOptions)
         self.temperature = try container.decodeIfPresent(Double.self, forKey: .temperature)
         self.topP = try container.decodeIfPresent(Double.self, forKey: .topP)
         self.maxTokens = try container.decodeIfPresent(UInt32.self, forKey: .maxTokens)
@@ -969,6 +1002,7 @@ public struct MelixMessagesRequest: Codable, Sendable {
         try container.encode(messages, forKey: .messages)
         try container.encodeIfPresent(rawSystem, forKey: .system)
         try container.encodeIfPresent(stream, forKey: .stream)
+        try container.encodeIfPresent(streamOptions, forKey: .streamOptions)
         try container.encodeIfPresent(temperature, forKey: .temperature)
         try container.encodeIfPresent(topP, forKey: .topP)
         try container.encodeIfPresent(maxTokens, forKey: .maxTokens)
@@ -1078,6 +1112,7 @@ public struct ChatRequestTranslator: Sendable {
                 NormalizedTextMessage(role: $0.role, name: $0.name, content: $0.content)
             },
             stream: request.stream,
+            includeUsage: request.streamOptions?.includeUsage,
             temperature: request.temperature,
             topP: request.topP,
             maxTokens: request.maxTokens,
@@ -1115,6 +1150,7 @@ public struct ChatRequestTranslator: Sendable {
             model: request.model,
             messages: messages,
             stream: request.stream,
+            includeUsage: request.streamOptions?.includeUsage,
             temperature: request.temperature,
             topP: request.topP,
             maxTokens: request.maxTokens,
@@ -1143,6 +1179,7 @@ public struct ChatRequestTranslator: Sendable {
                 NormalizedTextMessage(role: "user", content: request.prompt),
             ],
             stream: request.stream,
+            includeUsage: request.streamOptions?.includeUsage,
             temperature: request.temperature,
             topP: request.topP,
             maxTokens: request.maxTokens,
@@ -1189,6 +1226,7 @@ public struct ChatRequestTranslator: Sendable {
             model: request.model,
             messages: messages,
             stream: request.stream,
+            includeUsage: request.streamOptions?.includeUsage,
             temperature: request.temperature,
             topP: request.topP,
             maxTokens: request.maxTokens,
@@ -1233,6 +1271,7 @@ public struct ChatRequestTranslator: Sendable {
             model: request.model,
             messages: messages,
             stream: request.stream,
+            includeUsage: request.streamOptions?.includeUsage,
             temperature: request.temperature,
             topP: request.topP,
             maxTokens: request.maxTokens,
@@ -1259,6 +1298,7 @@ public struct ChatRequestTranslator: Sendable {
         model: String,
         messages: [NormalizedTextMessage],
         stream: Bool?,
+        includeUsage: Bool? = nil,
         temperature: Double?,
         topP: Double?,
         maxTokens: UInt32?,
@@ -1283,6 +1323,7 @@ public struct ChatRequestTranslator: Sendable {
             model: model,
             messages: messages,
             stream: stream ?? true,
+            includeUsage: includeUsage ?? false,
             temperature: temperature,
             topP: topP,
             maxTokens: maxTokens,
@@ -1489,7 +1530,8 @@ public struct ChatRequestTranslator: Sendable {
         generateRequest.sampling.maxOutputTokens = shapedRequest.maxTokens
         generateRequest.sampling.stop = shapedRequest.stopSequences
         generateRequest.stream = shapedRequest.stream
-        generateRequest.returnUsage = true
+        generateRequest.returnUsage = shapedRequest.includeUsage
+        generateRequest.execution.ext["melix.stream.include_usage"] = shapedRequest.includeUsage ? "true" : "false"
         generateRequest.messages = shapedRequest.messages.map { message in
             var chatMessage = Melix_Worker_V1_ChatMessage()
             chatMessage.role = message.role
