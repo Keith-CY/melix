@@ -7,6 +7,7 @@ from worker.productization.install_assets import (
     write_local_product_artifacts,
 )
 from worker.productization.acceptance_metrics import (
+    build_phase6_vision_metrics_report,
     build_phase8_metrics_report,
     collect_operator_action_evidence,
     compute_benchmark_regression_pct,
@@ -27,6 +28,7 @@ __all__ = [
     "DEFAULT_RELEASE_GATE_POLICY",
     "LaunchAgentSpec",
     "LocalProductLayout",
+    "build_phase6_vision_metrics_report",
     "build_phase8_metrics_report",
     "build_release_gate_report",
     "build_launch_agent_specs",

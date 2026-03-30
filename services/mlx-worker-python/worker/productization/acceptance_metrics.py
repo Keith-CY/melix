@@ -44,6 +44,67 @@ def collect_operator_action_evidence(jobs_root: str | Path) -> dict[str, Any]:
     }
 
 
+def build_phase6_vision_metrics_report(
+    *,
+    ingress: dict[str, Any],
+    ocr: dict[str, Any],
+    vlm: dict[str, Any],
+    metrics_snapshot: dict[str, Any],
+) -> dict[str, Any]:
+    checks = {
+        "vision.ingress.local_image_success": bool(ingress.get("local_image_success")),
+        "vision.ingress.remote_image_success": bool(ingress.get("remote_image_success")),
+        "vision.ingress.multi_image_success": bool(ingress.get("multi_image_success")),
+        "vision.ocr.default_stop_success": bool(ocr.get("default_stop_success")),
+        "vision.vlm.tool_call_success": bool(vlm.get("tool_call_success")),
+    }
+    passed_checks = sum(1 for value in checks.values() if value)
+    total_checks = len(checks)
+
+    metrics = {
+        "vision.integration_success_rate": _success_rate(passed_checks, total_checks),
+        "vision.ingress.local_image_success_rate": _success_rate(
+            int(checks["vision.ingress.local_image_success"]), 1
+        ),
+        "vision.ingress.remote_image_success_rate": _success_rate(
+            int(checks["vision.ingress.remote_image_success"]), 1
+        ),
+        "vision.ingress.multi_image_success_rate": _success_rate(
+            int(checks["vision.ingress.multi_image_success"]), 1
+        ),
+        "vision.ocr.default_stop_success_rate": _success_rate(
+            int(checks["vision.ocr.default_stop_success"]), 1
+        ),
+        "vision.vlm.tool_call_success_rate": _success_rate(
+            int(checks["vision.vlm.tool_call_success"]), 1
+        ),
+        "vision.ocr.request_latency_ms": _rounded_float(ocr.get("request_latency_ms")),
+        "vision.vlm.request_latency_ms": _rounded_float(vlm.get("request_latency_ms")),
+        "vision.ocr_latency_ms": _metric_value(metrics_snapshot, "vision.ocr_latency_ms"),
+        "vision.vlm_first_token_ms": _metric_value(
+            metrics_snapshot, "vision.vlm_first_token_ms"
+        ),
+        "vision.preprocess_latency_ms": _metric_value(
+            metrics_snapshot, "vision.preprocess_latency_ms"
+        ),
+        "vision.preprocess_peak_memory_bytes": _metric_value(
+            metrics_snapshot, "vision.preprocess_peak_memory_bytes"
+        ),
+        "vision.cache_memory_bytes": _metric_value(
+            metrics_snapshot, "vision.cache_memory_bytes"
+        ),
+        "vision.cache_hit_rate": _metric_value(metrics_snapshot, "vision.cache_hit_rate"),
+    }
+
+    return {
+        "checks": checks,
+        "metrics": metrics,
+        "ingress": ingress,
+        "ocr": ocr,
+        "vlm": vlm,
+    }
+
+
 def build_phase8_metrics_report(
     *,
     cold_boot_to_ready_ms: float | None = None,
@@ -252,6 +313,25 @@ def compute_release_smoke_pass_rate(report: dict[str, Any], policy: dict[str, An
     ]
     passed = sum(1 for section in sections if section)
     return (passed / len(sections)) * 100.0
+
+
+def _metric_value(snapshot: dict[str, Any], key: str) -> float:
+    values = snapshot.get("values", {})
+    if not isinstance(values, dict):
+        return 0.0
+    return _rounded_float(values.get(key))
+
+
+def _rounded_float(value: Any) -> float:
+    if not isinstance(value, (int, float)):
+        return 0.0
+    return round(float(value), 2)
+
+
+def _success_rate(successes: int, total: int) -> float:
+    if total <= 0:
+        return 0.0
+    return round((successes / total) * 100.0, 2)
 
 
 def _build_maintenance_core(jobs_root: Path) -> MaintenanceCore:

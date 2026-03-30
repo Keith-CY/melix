@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from worker.productization import (
+    build_phase6_vision_metrics_report as exported_build_phase6_vision_metrics_report,
+)
 from worker.productization.acceptance_metrics import (
     build_phase8_metrics_report,
     collect_operator_action_evidence,
@@ -18,6 +21,91 @@ def test_collect_operator_action_evidence_reports_registry_counts(tmp_path: Path
     assert evidence["operator_action_latency_ms"] >= 0
     assert evidence["registry_job_count"] >= 2
     assert evidence["registry_adapter_count"] >= 1
+
+
+def test_build_phase6_vision_metrics_report_includes_machine_readable_checks() -> None:
+    report = exported_build_phase6_vision_metrics_report(
+        ingress={
+            "local_image_success": True,
+            "remote_image_success": True,
+            "multi_image_success": True,
+        },
+        ocr={
+            "request_latency_ms": 18.4,
+            "default_stop_success": True,
+        },
+        vlm={
+            "request_latency_ms": 24.1,
+            "tool_call_success": True,
+        },
+        metrics_snapshot={
+            "values": {
+                "vision.ocr_latency_ms": 4.2,
+                "vision.vlm_first_token_ms": 7.6,
+                "vision.preprocess_latency_ms": 2.5,
+                "vision.preprocess_peak_memory_bytes": 4096,
+                "vision.cache_memory_bytes": 8192,
+                "vision.cache_hit_rate": 75.0,
+            }
+        },
+    )
+
+    metrics = report["metrics"]
+    checks = report["checks"]
+    assert checks["vision.ingress.local_image_success"] is True
+    assert checks["vision.ingress.remote_image_success"] is True
+    assert checks["vision.ingress.multi_image_success"] is True
+    assert checks["vision.ocr.default_stop_success"] is True
+    assert checks["vision.vlm.tool_call_success"] is True
+    assert metrics["vision.integration_success_rate"] == 100.0
+    assert metrics["vision.ingress.local_image_success_rate"] == 100.0
+    assert metrics["vision.ingress.remote_image_success_rate"] == 100.0
+    assert metrics["vision.ingress.multi_image_success_rate"] == 100.0
+    assert metrics["vision.ocr.default_stop_success_rate"] == 100.0
+    assert metrics["vision.vlm.tool_call_success_rate"] == 100.0
+    assert metrics["vision.ocr.request_latency_ms"] == 18.4
+    assert metrics["vision.vlm.request_latency_ms"] == 24.1
+    assert metrics["vision.ocr_latency_ms"] == 4.2
+    assert metrics["vision.vlm_first_token_ms"] == 7.6
+    assert metrics["vision.preprocess_latency_ms"] == 2.5
+    assert metrics["vision.preprocess_peak_memory_bytes"] == 4096.0
+    assert metrics["vision.cache_memory_bytes"] == 8192.0
+    assert metrics["vision.cache_hit_rate"] == 75.0
+
+
+def test_build_phase6_vision_metrics_report_defaults_missing_values() -> None:
+    report = exported_build_phase6_vision_metrics_report(
+        ingress={
+            "local_image_success": False,
+            "remote_image_success": False,
+            "multi_image_success": False,
+        },
+        ocr={
+            "request_latency_ms": "slow",
+            "default_stop_success": False,
+        },
+        vlm={
+            "request_latency_ms": None,
+            "tool_call_success": False,
+        },
+        metrics_snapshot={"values": []},
+    )
+
+    metrics = report["metrics"]
+    assert metrics["vision.integration_success_rate"] == 0.0
+    assert metrics["vision.ingress.local_image_success_rate"] == 0.0
+    assert metrics["vision.ingress.remote_image_success_rate"] == 0.0
+    assert metrics["vision.ingress.multi_image_success_rate"] == 0.0
+    assert metrics["vision.ocr.default_stop_success_rate"] == 0.0
+    assert metrics["vision.vlm.tool_call_success_rate"] == 0.0
+    assert metrics["vision.ocr.request_latency_ms"] == 0.0
+    assert metrics["vision.vlm.request_latency_ms"] == 0.0
+    assert metrics["vision.ocr_latency_ms"] == 0.0
+    assert metrics["vision.vlm_first_token_ms"] == 0.0
+    assert metrics["vision.preprocess_latency_ms"] == 0.0
+    assert metrics["vision.preprocess_peak_memory_bytes"] == 0.0
+    assert metrics["vision.cache_memory_bytes"] == 0.0
+    assert metrics["vision.cache_hit_rate"] == 0.0
 
 
 def test_compute_install_success_rate_returns_percentage() -> None:

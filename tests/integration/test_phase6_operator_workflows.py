@@ -9,6 +9,7 @@ import time
 import urllib.request
 
 from tests.integration.helpers import LiveMelixStack, read_metrics_export
+from worker.productization.acceptance_metrics import build_phase6_vision_metrics_report
 
 
 def _post_json(url: str, payload: dict[str, object], *, timeout: float = 10.0) -> tuple[int, object]:
@@ -24,6 +25,18 @@ def _post_json(url: str, payload: dict[str, object], *, timeout: float = 10.0) -
         if "application/json" in content_type:
             return response.status, json.loads(body.decode("utf-8"))
         return response.status, body
+
+
+def _timed_post_json(
+    url: str,
+    payload: dict[str, object],
+    *,
+    timeout: float = 10.0,
+) -> tuple[int, object, float]:
+    started_at = time.perf_counter()
+    status, body = _post_json(url, payload, timeout=timeout)
+    elapsed_ms = (time.perf_counter() - started_at) * 1000.0
+    return status, body, elapsed_ms
 
 
 def _start_image_fixture_server(payload: bytes, *, content_type: str = "image/png") -> tuple[ThreadingHTTPServer, str]:
@@ -530,4 +543,215 @@ def test_multimodal_chat_streams_tool_calls_with_shared_parser_selection(tmp_pat
         assert b"Image content: phase6 tool image" in payload
         assert b"Prompt: Call the tool for this image." in payload
     finally:
+        stack.stop()
+
+
+def test_phase6_vision_evidence_report_is_machine_readable(tmp_path: Path) -> None:
+    stack = LiveMelixStack(Path(__file__).resolve().parents[2])
+    local_image = tmp_path / "vision-local.txt"
+    local_image.write_text("phase6 local evidence image")
+    multi_first = tmp_path / "vision-multi-1.txt"
+    multi_second = tmp_path / "vision-multi-2.txt"
+    multi_first.write_text("phase6 multi first")
+    multi_second.write_text("phase6 multi second")
+    tool_image = tmp_path / "vision-tool.txt"
+    tool_image.write_text("phase6 tool evidence image")
+    remote_server, remote_url = _start_image_fixture_server(b"phase6 remote evidence image")
+    ocr_image = base64.b64encode(b"title<ocr:end>body").decode("ascii")
+
+    try:
+        stack.start()
+        stack.wait_for_models(["melix-dev-ocr", "melix-dev-vlm"])
+
+        local_status, local_payload, _ = _timed_post_json(
+            stack.chat_url(),
+            {
+                "model": "melix-dev-vlm",
+                "stream": True,
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": "Summarize the local evidence image."},
+                            {
+                                "type": "input_image",
+                                "input_image": {
+                                    "url": str(local_image),
+                                    "mime_type": "image/png",
+                                    "filename": local_image.name,
+                                },
+                            },
+                        ],
+                    }
+                ],
+            },
+        )
+
+        remote_status, remote_payload, _ = _timed_post_json(
+            stack.chat_url(),
+            {
+                "model": "melix-dev-vlm",
+                "stream": True,
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": "Summarize the remote evidence image."},
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": remote_url,
+                                    "mime_type": "image/png",
+                                    "filename": "remote-evidence.png",
+                                },
+                            },
+                        ],
+                    }
+                ],
+            },
+        )
+
+        multi_status, multi_payload, _ = _timed_post_json(
+            stack.chat_url(),
+            {
+                "model": "melix-dev-vlm",
+                "stream": True,
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": "Compare the evidence images."},
+                            {
+                                "type": "input_image",
+                                "input_image": {
+                                    "url": str(multi_first),
+                                    "mime_type": "image/png",
+                                    "filename": multi_first.name,
+                                },
+                            },
+                            {
+                                "type": "input_image",
+                                "input_image": {
+                                    "url": str(multi_second),
+                                    "mime_type": "image/png",
+                                    "filename": multi_second.name,
+                                },
+                            },
+                        ],
+                    }
+                ],
+            },
+        )
+
+        ocr_status, ocr_payload, ocr_elapsed_ms = _timed_post_json(
+            stack.chat_url(),
+            {
+                "model": "melix-dev-ocr",
+                "stream": True,
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "input_image",
+                                "input_image": {
+                                    "data": ocr_image,
+                                    "mime_type": "image/png",
+                                    "format": "png",
+                                    "filename": "ocr-evidence.png",
+                                },
+                            }
+                        ],
+                    }
+                ],
+            },
+        )
+
+        tool_status, tool_payload, tool_elapsed_ms = _timed_post_json(
+            stack.chat_url(),
+            {
+                "model": "melix-dev-vlm",
+                "stream": True,
+                "tool_parser": {
+                    "mode": "qwen",
+                    "namespaces": ["tools.vision"],
+                    "xml_fallback": True,
+                },
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": "Call the tool for this image."},
+                            {
+                                "type": "input_image",
+                                "input_image": {
+                                    "url": str(tool_image),
+                                    "mime_type": "image/png",
+                                    "filename": tool_image.name,
+                                },
+                            },
+                        ],
+                    }
+                ],
+            },
+        )
+
+        report = build_phase6_vision_metrics_report(
+            ingress={
+                "local_image_success": (
+                    local_status == 200
+                    and b"Image content: phase6 local evidence image" in local_payload
+                ),
+                "remote_image_success": (
+                    remote_status == 200
+                    and b"Image content: phase6 remote evidence image" in remote_payload
+                ),
+                "multi_image_success": (
+                    multi_status == 200
+                    and b"Image 1 content: phase6 multi first" in multi_payload
+                    and b"Image 2 content: phase6 multi second" in multi_payload
+                ),
+            },
+            ocr={
+                "request_latency_ms": ocr_elapsed_ms,
+                "default_stop_success": (
+                    ocr_status == 200
+                    and b"title" in ocr_payload
+                    and b"<ocr:end>" not in ocr_payload
+                    and b"body" not in ocr_payload
+                ),
+            },
+            vlm={
+                "request_latency_ms": tool_elapsed_ms,
+                "tool_call_success": (
+                    tool_status == 200
+                    and b"event: tool_call" in tool_payload
+                    and b"\"name\":\"tools.vision\"" in tool_payload
+                ),
+            },
+            metrics_snapshot=read_metrics_export(stack.control_plane_metrics_path),
+        )
+
+        metrics = report["metrics"]
+        checks = report["checks"]
+        assert checks["vision.ingress.local_image_success"] is True
+        assert checks["vision.ingress.remote_image_success"] is True
+        assert checks["vision.ingress.multi_image_success"] is True
+        assert checks["vision.ocr.default_stop_success"] is True
+        assert checks["vision.vlm.tool_call_success"] is True
+        assert metrics["vision.integration_success_rate"] == 100.0
+        assert metrics["vision.ingress.local_image_success_rate"] == 100.0
+        assert metrics["vision.ingress.remote_image_success_rate"] == 100.0
+        assert metrics["vision.ingress.multi_image_success_rate"] == 100.0
+        assert metrics["vision.ocr.default_stop_success_rate"] == 100.0
+        assert metrics["vision.vlm.tool_call_success_rate"] == 100.0
+        assert metrics["vision.ocr.request_latency_ms"] >= 0
+        assert metrics["vision.vlm.request_latency_ms"] >= 0
+        assert metrics["vision.ocr_latency_ms"] >= 0
+        assert metrics["vision.vlm_first_token_ms"] >= 0
+        assert metrics["vision.preprocess_peak_memory_bytes"] > 0
+        assert metrics["vision.cache_memory_bytes"] > 0
+    finally:
+        remote_server.shutdown()
+        remote_server.server_close()
         stack.stop()

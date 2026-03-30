@@ -6,29 +6,40 @@ Close the vision milestone with live integration evidence for multimodal ingress
 
 ## Scope
 
-- add end-to-end vision-path integration coverage
-- add machine-readable metrics for vision execution and ingress
-- keep evidence discoverable from the roadmap and operator docs
+- productize repository-owned vision evidence into a machine-readable report builder
+- add end-to-end coverage for local image, remote image, multi-image, OCR default stop, and VLM tool calls
+- keep human-readable operator probes and machine-readable evidence discoverable from the runbook
 
 ## Files
 
-- update `tests/integration/`
-- update `services/mlx-worker-python/worker/productization/`
-- update `docs/runbooks/`
+- update `services/mlx-worker-python/worker/productization/acceptance_metrics.py`
+- update `services/mlx-worker-python/worker/productization/__init__.py`
+- update `services/mlx-worker-python/tests/test_acceptance_metrics.py`
+- update `tests/integration/test_phase6_operator_workflows.py`
+- update `docs/runbooks/phase-6-multimodal-ops.md`
 
 ## Implementation Notes
 
-- evidence should cover local images, remote images, multi-image requests, OCR defaults, and VLM tool calls
-- metrics should distinguish preprocess, fetch, prefill, and generation costs
-- avoid deterministic-only evidence as the sole proof of completion
+- reuse the existing Phase 6 stack and exported control-plane metrics instead of adding new runtime probes
+- publish the vision evidence through `build_phase6_vision_metrics_report`, with stable `checks` and `metrics` sections
+- keep the report keyed to repository-owned integration evidence rather than a one-off operator-only script
+- preserve the existing `make phase6-metrics` text report for human inspection
 
 ## Verification
 
-- `make py-test`
-- `make integration-test`
-- touched-scope metrics report command for the vision slice
+- `PYTHONPATH=.:services/mlx-worker-python uv run --project services/mlx-worker-python pytest services/mlx-worker-python/tests/test_acceptance_metrics.py -q`
+- `PYTHONPATH=.:services/mlx-worker-python uv run --project services/mlx-worker-python pytest tests/integration/test_phase6_operator_workflows.py -q`
+- changed-line coverage for touched Python files
+- `git diff --check`
 
 ## Acceptance
 
-- the completed vision slice has repository-owned integration evidence and metrics
-- operators can inspect the key vision-path measurements without ad hoc scripts
+- the completed vision slice has repository-owned machine-readable evidence for ingress, OCR defaults, and VLM tool-calling
+- operators can inspect Phase 6 latencies through `make phase6-metrics` and locate the matching machine-readable evidence path from the runbook
+
+## Metrics Report
+
+- Python verification: `services/mlx-worker-python/tests/test_acceptance_metrics.py` -> `10 passed`
+- Python verification: `tests/integration/test_phase6_operator_workflows.py` -> `8 passed`
+- Targeted machine-readable evidence path: `tests/integration/test_phase6_operator_workflows.py -k machine_readable` -> `1 passed`
+- Python changed-line coverage: `98.53% (67/68)`

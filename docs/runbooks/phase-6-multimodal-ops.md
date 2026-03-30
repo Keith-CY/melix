@@ -6,6 +6,7 @@ Use this runbook when you need to:
 
 - boot the Phase 6 stack and exercise OCR, VLM, transcription, and speech end to end
 - capture the reproducible Phase 6 latency and preprocessing report
+- inspect the repository-owned machine-readable vision evidence report
 - verify that multimodal work stays observable while text remains responsive
 
 ## Preconditions
@@ -44,7 +45,15 @@ curl -sS http://127.0.0.1:11434/v1/models
 make phase6-metrics
 ```
 
-5. Inspect the runtime directory and logs if any multimodal path fails.
+5. Run the repository-owned machine-readable vision evidence test when you need the stable `checks` and `metrics` payload.
+
+```bash
+PYTHONPATH=.:services/mlx-worker-python \
+uv run --project services/mlx-worker-python \
+pytest tests/integration/test_phase6_operator_workflows.py -k machine_readable -q
+```
+
+6. Inspect the runtime directory and logs if any multimodal path fails.
 
 ```bash
 ls -la .runtime/phase6-ops
@@ -60,6 +69,30 @@ tail -n 50 .runtime/phase6-ops/swift-text-worker.log
 - `transcription` line reports request latency, preprocessing memory, duration, and chunk count
 - `speech` line reports request latency and output bytes
 - `text_under_multimodal` line reports a non-`N/A` text TTFT measurement recorded while transcription load is active
+
+## Machine-Readable Evidence
+
+The repository-owned report builder is `worker.productization.build_phase6_vision_metrics_report`.
+
+The integration evidence path validates these `checks` keys:
+
+- `vision.ingress.local_image_success`
+- `vision.ingress.remote_image_success`
+- `vision.ingress.multi_image_success`
+- `vision.ocr.default_stop_success`
+- `vision.vlm.tool_call_success`
+
+The matching `metrics` payload includes:
+
+- `vision.integration_success_rate`
+- `vision.ocr.request_latency_ms`
+- `vision.vlm.request_latency_ms`
+- `vision.ocr_latency_ms`
+- `vision.vlm_first_token_ms`
+- `vision.preprocess_latency_ms`
+- `vision.preprocess_peak_memory_bytes`
+- `vision.cache_memory_bytes`
+- `vision.cache_hit_rate`
 
 ## Recovery
 
@@ -92,5 +125,6 @@ make py-test
 make integration-test
 make coverage
 make phase6-metrics
+PYTHONPATH=.:services/mlx-worker-python uv run --project services/mlx-worker-python pytest tests/integration/test_phase6_operator_workflows.py -k machine_readable -q
 MELIX_RUNTIME_DIR=.runtime/phase6-ops bash scripts/dev_down.sh
 ```
