@@ -22,6 +22,9 @@ Replace TTL-only unloading behavior with a unified eviction policy that respects
 - eviction reasons should be explicit and operator-visible
 - LRU state should refresh on load, inference admission, and explicit operator actions
 - pin-aware behavior must remain deterministic even under concurrent load decisions
+- opportunistic eviction should run before manual loads and on-demand text loads
+- TTL-expired models should be evicted before ordinary LRU candidates
+- ordinary LRU eviction should only target non-pinned models in the same capability family as the incoming load
 
 ## Verification
 

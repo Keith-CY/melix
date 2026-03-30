@@ -157,6 +157,36 @@ struct ControlPlaneServiceTests {
         #expect(await catalog.dispatchHandle(for: "melix-dev-text") == nil)
     }
 
+    @Test("execute returns unavailable when worker-backed model.load returns a non-ready response")
+    func executeReturnsUnavailableWhenWorkerBackedModelLoadReturnsNonReadyResponse() async throws {
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel()])
+        let workerClient = ModelLifecycleWorkerClient()
+        var loadResponse = Melix_Worker_V1_LoadModelResponse()
+        loadResponse.ok = false
+        await workerClient.setLoadResponse(loadResponse)
+
+        let registry = WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog)
+        let service = ControlPlaneService(modelCatalog: catalog, workerRegistry: registry)
+        let subscription = await service.subscribe()
+
+        let eventTask = Task {
+            var iterator = subscription.stream.makeAsyncIterator()
+            return [
+                try #require(await iterator.next()),
+                try #require(await iterator.next()),
+            ]
+        }
+
+        let response = try await service.execute(makeLoadModelRequest(modelID: "melix-dev-text"))
+        let events = try await eventTask.value
+        let model = try #require(await catalog.model(id: "melix-dev-text"))
+
+        #expect(!response.ok)
+        #expect(response.error.code == "unavailable")
+        #expect(events.map(\.modelState.state) == [.modelLoading, .modelFailed])
+        #expect(model.state == .modelFailed)
+    }
+
     @Test("execute handles worker-backed model.unload with evicting and unloaded transitions")
     func executeHandlesWorkerBackedModelUnloadWithIntermediateTransitions() async throws {
         let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel()])
@@ -216,6 +246,219 @@ struct ControlPlaneServiceTests {
         #expect(events.map(\.modelState.state) == [.modelEvicting, .modelFailed])
         #expect(model.state == .modelFailed)
         #expect(await catalog.dispatchHandle(for: "melix-dev-text") == nil)
+    }
+
+    @Test("execute falls back to local success when a worker-backed unload loses its registry")
+    func executeFallsBackToLocalSuccessWhenWorkerBackedUnloadLosesItsRegistry() async throws {
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devEmbeddingModel()])
+        _ = await catalog.recordLoadSucceeded(id: "melix-dev-embed", dispatchHandle: "melix-dev-embed::python")
+        let service = ControlPlaneService(modelCatalog: catalog)
+
+        let response = try await service.execute(makeUnloadModelRequest(modelID: "melix-dev-embed"))
+        let model = try #require(await catalog.model(id: "melix-dev-embed"))
+
+        #expect(response.ok)
+        #expect(model.state == .modelUnloaded)
+        #expect(model.residency.transitionReason == "operator_unload")
+    }
+
+    @Test("execute returns unavailable when worker-backed model.unload returns a non-ok response")
+    func executeReturnsUnavailableWhenWorkerBackedModelUnloadReturnsNonOkResponse() async throws {
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel()])
+        _ = await catalog.recordLoadSucceeded(id: "melix-dev-text", dispatchHandle: "melix-dev-text::swift")
+
+        let workerClient = ModelLifecycleWorkerClient()
+        var unloadResponse = Melix_Worker_V1_UnloadModelResponse()
+        unloadResponse.ok = false
+        await workerClient.setUnloadResponse(unloadResponse)
+
+        let registry = WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog)
+        let service = ControlPlaneService(modelCatalog: catalog, workerRegistry: registry)
+        let subscription = await service.subscribe()
+
+        let eventTask = Task {
+            var iterator = subscription.stream.makeAsyncIterator()
+            return [
+                try #require(await iterator.next()),
+                try #require(await iterator.next()),
+            ]
+        }
+
+        let response = try await service.execute(makeUnloadModelRequest(modelID: "melix-dev-text"))
+        let events = try await eventTask.value
+        let model = try #require(await catalog.model(id: "melix-dev-text"))
+
+        #expect(!response.ok)
+        #expect(response.error.code == "unavailable")
+        #expect(events.map(\.modelState.state) == [.modelEvicting, .modelFailed])
+        #expect(model.state == .modelFailed)
+    }
+
+    @Test("execute model.load opportunistically evicts ttl-expired residents before operator loads")
+    func executeModelLoadEvictsTTLExpiredResidentsBeforeOperatorLoads() async throws {
+        final class ClockBox: @unchecked Sendable {
+            var nowUnixMs: Int64
+
+            init(nowUnixMs: Int64) {
+                self.nowUnixMs = nowUnixMs
+            }
+        }
+
+        let clock = ClockBox(nowUnixMs: 100_000)
+        let catalog = ModelCatalog(
+            seedModels: [
+                makeTextCatalogModel(
+                    id: "melix-old-text",
+                    state: .modelWarm,
+                    ttlSeconds: 60
+                ),
+                ModelCatalog.devTextModel(),
+            ],
+            nowUnixMs: { clock.nowUnixMs }
+        )
+        clock.nowUnixMs += 61_000
+
+        let workerClient = ModelLifecycleWorkerClient()
+        var loadResponse = Melix_Worker_V1_LoadModelResponse()
+        loadResponse.ok = true
+        loadResponse.modelHandle = "melix-dev-text::swift"
+        loadResponse.residency.state = .warm
+        await workerClient.setLoadResponse(loadResponse)
+
+        var unloadResponse = Melix_Worker_V1_UnloadModelResponse()
+        unloadResponse.ok = true
+        await workerClient.setUnloadResponse(unloadResponse)
+
+        let registry = WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog)
+        let service = ControlPlaneService(modelCatalog: catalog, workerRegistry: registry)
+
+        let response = try await service.execute(makeLoadModelRequest(modelID: "melix-dev-text"))
+        let metrics = try await service.execute(makeMetricsRequest())
+        let operations = await workerClient.recordedOperations
+        let evicted = try #require(await catalog.model(id: "melix-old-text"))
+        let loaded = try #require(await catalog.model(id: "melix-dev-text"))
+
+        #expect(response.ok)
+        #expect(operations == [
+            "unload:melix-old-text::local",
+            "load:melix-dev-text",
+        ])
+        #expect(evicted.state == .modelUnloaded)
+        #expect(evicted.residency.transitionReason == "ttl_expired")
+        #expect(loaded.state == .modelWarm)
+        #expect(loaded.residency.transitionReason == "operator_load")
+        #expect(metrics.ops.metrics.values["control_plane.model_eviction_ttl_count"] == 1)
+        #expect(metrics.ops.metrics.values["control_plane.model_eviction_success_count"] == 1)
+    }
+
+    @Test("startChat evicts ttl-expired residents before reusing a ready text model")
+    func startChatEvictsTTLExpiredResidentsBeforeReusingReadyTextModel() async throws {
+        final class ClockBox: @unchecked Sendable {
+            var nowUnixMs: Int64
+
+            init(nowUnixMs: Int64) {
+                self.nowUnixMs = nowUnixMs
+            }
+        }
+
+        let clock = ClockBox(nowUnixMs: 200_000)
+        let readyText = makeTextCatalogModel(id: "melix-dev-text", state: .modelWarm)
+        let expiredText = makeTextCatalogModel(
+            id: "melix-old-text",
+            state: .modelWarm,
+            ttlSeconds: 60
+        )
+        let catalog = ModelCatalog(
+            seedModels: [expiredText, readyText],
+            nowUnixMs: { clock.nowUnixMs }
+        )
+        clock.nowUnixMs += 61_000
+
+        let textClient = ScriptedChatWorkerClient(events: [
+            makeQueuedExecuteEvent(requestID: "chat-ready-eviction"),
+            makeTokenExecuteEvent(requestID: "chat-ready-eviction", text: "assistant"),
+            makeCompletedExecuteEvent(
+                requestID: "chat-ready-eviction",
+                finishReason: "stop",
+                assistant: "assistant",
+                reasoning: ""
+            ),
+        ])
+        let service = ControlPlaneService(
+            modelCatalog: catalog,
+            workerRegistry: WorkerRegistry(defaultTextClient: textClient, modelCatalog: catalog),
+            chatTranslator: ChatRequestTranslator(requestIDGenerator: { "chat-ready-eviction" })
+        )
+
+        let execution = try await service.startChat(
+            ControlPlaneChatRequest(
+                modelID: "melix-dev-text",
+                messages: [.init(role: "user", content: "hello")]
+            )
+        )
+        _ = try await Array(execution.stream)
+
+        let unloadRequests = await textClient.unloadRequests
+        let generated = try #require(await textClient.lastGenerateRequest)
+        let evicted = try #require(await catalog.model(id: "melix-old-text"))
+        let ready = try #require(await catalog.model(id: "melix-dev-text"))
+
+        #expect(unloadRequests.map(\.modelHandle) == ["melix-old-text::local"])
+        #expect(generated.execution.modelHandle == "melix-dev-text::local")
+        #expect(evicted.state == .modelUnloaded)
+        #expect(evicted.residency.transitionReason == "ttl_expired")
+        #expect(ready.state == .modelWarm)
+    }
+
+    @Test("execute model.load records pinned protection and lru eviction metrics")
+    func executeModelLoadRecordsPinnedProtectionAndLruEvictionMetrics() async throws {
+        let catalog = ModelCatalog(
+            seedModels: [
+                makeTextCatalogModel(id: "melix-lru-text", state: .modelWarm),
+                makeTextCatalogModel(id: "melix-pinned-text", state: .modelPinned, pinOnLoad: true),
+                ModelCatalog.devTextModel(),
+            ]
+        )
+        let workerClient = ModelLifecycleWorkerClient()
+        var loadResponse = Melix_Worker_V1_LoadModelResponse()
+        loadResponse.ok = true
+        loadResponse.modelHandle = "melix-dev-text::swift"
+        loadResponse.residency.state = .warm
+        await workerClient.setLoadResponse(loadResponse)
+
+        var unloadResponse = Melix_Worker_V1_UnloadModelResponse()
+        unloadResponse.ok = true
+        await workerClient.setUnloadResponse(unloadResponse)
+
+        let registry = WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog)
+        let service = ControlPlaneService(modelCatalog: catalog, workerRegistry: registry)
+
+        let response = try await service.execute(makeLoadModelRequest(modelID: "melix-dev-text"))
+        let metrics = try await service.execute(makeMetricsRequest())
+        let pinned = try #require(await catalog.model(id: "melix-pinned-text"))
+        let evicted = try #require(await catalog.model(id: "melix-lru-text"))
+
+        #expect(response.ok)
+        #expect(pinned.state == .modelPinned)
+        #expect(evicted.state == .modelUnloaded)
+        #expect(metrics.ops.metrics.values["control_plane.model_eviction_lru_same_capability_count"] == 1)
+        #expect(metrics.ops.metrics.values["control_plane.model_eviction_pinned_protected_count"] == 1)
+        #expect(await service.evictionMetricKey(for: "custom_reason") == "control_plane.model_eviction_other_count")
+    }
+
+    @Test("startChat returns unavailable when lazy text loading cannot prepare the model")
+    func startChatReturnsUnavailableWhenLazyTextLoadingCannotPrepareTheModel() async throws {
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel()])
+        let service = ControlPlaneService(modelCatalog: catalog)
+
+        await #expect(throws: ControlPlaneChatExecutionError.unavailable) {
+            try await service.startChat(
+                ControlPlaneChatRequest(
+                    modelID: "melix-dev-text",
+                    messages: [.init(role: "user", content: "hello")]
+                )
+            )
+        }
     }
 
     @Test("execute handles model.set_policy and updates typed model settings")
@@ -2793,6 +3036,9 @@ private actor ModelLifecycleWorkerClient: WorkerRoutingClient {
     private var unloadResponse = Melix_Worker_V1_UnloadModelResponse()
     private var loadError: Error?
     private var unloadError: Error?
+    private(set) var loadRequests: [Melix_Worker_V1_LoadModelRequest] = []
+    private(set) var unloadRequests: [Melix_Worker_V1_UnloadModelRequest] = []
+    private(set) var recordedOperations: [String] = []
 
     func setLoadResponse(_ response: Melix_Worker_V1_LoadModelResponse) {
         loadResponse = response
@@ -2829,7 +3075,8 @@ private actor ModelLifecycleWorkerClient: WorkerRoutingClient {
     func loadModel(
         request: Melix_Worker_V1_LoadModelRequest
     ) async throws -> Melix_Worker_V1_LoadModelResponse {
-        _ = request
+        loadRequests.append(request)
+        recordedOperations.append("load:\(request.model.modelID)")
         if let loadError {
             throw loadError
         }
@@ -2839,7 +3086,8 @@ private actor ModelLifecycleWorkerClient: WorkerRoutingClient {
     func unloadModel(
         request: Melix_Worker_V1_UnloadModelRequest
     ) async throws -> Melix_Worker_V1_UnloadModelResponse {
-        _ = request
+        unloadRequests.append(request)
+        recordedOperations.append("unload:\(request.modelHandle)")
         if let unloadError {
             throw unloadError
         }
@@ -2973,6 +3221,7 @@ private actor ScriptedChatWorkerClient: WorkerRoutingClient {
     private let events: [Melix_Worker_V1_ExecuteEvent]
     private(set) var lastGenerateRequest: Melix_Worker_V1_GenerateRequest?
     private(set) var lastLoadModelRequest: Melix_Worker_V1_LoadModelRequest?
+    private(set) var unloadRequests: [Melix_Worker_V1_UnloadModelRequest] = []
 
     init(events: [Melix_Worker_V1_ExecuteEvent]) {
         self.events = events
@@ -3009,6 +3258,36 @@ private actor ScriptedChatWorkerClient: WorkerRoutingClient {
         response.modelHandle = request.model.modelID
         return response
     }
+
+    func unloadModel(
+        request: Melix_Worker_V1_UnloadModelRequest
+    ) async throws -> Melix_Worker_V1_UnloadModelResponse {
+        unloadRequests.append(request)
+        var response = Melix_Worker_V1_UnloadModelResponse()
+        response.ok = true
+        return response
+    }
+}
+
+private func makeTextCatalogModel(
+    id: String,
+    state: Melix_Controlplane_V1_ModelState,
+    ttlSeconds: UInt32 = 0,
+    pinOnLoad: Bool = false
+) -> Melix_Controlplane_V1_ModelSummary {
+    var model = ModelCatalog.devTextModel()
+    model.modelID = id
+    model.state = state
+    if ttlSeconds > 0 {
+        model.settings.ttlSeconds = ttlSeconds
+        model.settings.memoryPolicy = .memoryResidencyTtl
+    }
+    if pinOnLoad {
+        model.settings.pinOnLoad = true
+        model.settings.memoryPolicy = .memoryResidencyPinned
+        model.pinned = true
+    }
+    return model
 }
 
 private func makeQueuedExecuteEvent(requestID: String) -> Melix_Worker_V1_ExecuteEvent {

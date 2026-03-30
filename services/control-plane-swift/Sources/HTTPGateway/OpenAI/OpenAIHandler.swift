@@ -826,23 +826,19 @@ public struct OpenAIHandler: Sendable {
             throw HTTPRequestHandlingError.streamRequired
         }
         let modelHandle: String
-        if let readyHandle = await modelCatalog.dispatchHandle(for: normalized.model) {
-            modelHandle = readyHandle
-        } else {
-            do {
-                modelHandle = try await OnDemandModelLoader.ensureTextModelReady(
-                    modelID: normalized.model,
-                    modelCatalog: modelCatalog,
-                    workerRegistry: workerRegistry,
-                    metricsStore: metricsStore
-                )
-            } catch OnDemandModelLoadError.modelNotReady {
-                throw HTTPRequestHandlingError.modelNotReady
-            } catch OnDemandModelLoadError.workerUnavailable {
-                throw HTTPRequestHandlingError.workerUnavailable
-            } catch {
-                throw HTTPRequestHandlingError.workerUnavailable
-            }
+        do {
+            modelHandle = try await OnDemandModelLoader.ensureTextModelReady(
+                modelID: normalized.model,
+                modelCatalog: modelCatalog,
+                workerRegistry: workerRegistry,
+                metricsStore: metricsStore
+            )
+        } catch OnDemandModelLoadError.modelNotReady {
+            throw HTTPRequestHandlingError.modelNotReady
+        } catch OnDemandModelLoadError.workerUnavailable {
+            throw HTTPRequestHandlingError.workerUnavailable
+        } catch {
+            throw HTTPRequestHandlingError.workerUnavailable
         }
         let shapingStartedAt = Date()
         let translated = try translator.translate(normalized, modelHandle: modelHandle)

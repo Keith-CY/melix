@@ -47,6 +47,7 @@ public actor RequestCoordinator {
     private let admissionGate: AdmissionGate
     private let schedulerReadModel: SchedulerReadModel
     private let metricsStore: MetricsStore
+    private let modelCatalog: ModelCatalog?
     private let sessionGraphStore: SessionGraphStore?
     private let cacheMetadataStore: CacheMetadataStore?
     private let now: @Sendable () -> Date
@@ -66,6 +67,7 @@ public actor RequestCoordinator {
         admissionGate: AdmissionGate = AdmissionGate(),
         schedulerReadModel: SchedulerReadModel = SchedulerReadModel(),
         metricsStore: MetricsStore = MetricsStore(),
+        modelCatalog: ModelCatalog? = nil,
         sessionGraphStore: SessionGraphStore? = nil,
         cacheMetadataStore: CacheMetadataStore? = nil,
         now: @escaping @Sendable () -> Date = Date.init
@@ -75,6 +77,7 @@ public actor RequestCoordinator {
         self.admissionGate = admissionGate
         self.schedulerReadModel = schedulerReadModel
         self.metricsStore = metricsStore
+        self.modelCatalog = modelCatalog
         self.sessionGraphStore = sessionGraphStore
         self.cacheMetadataStore = cacheMetadataStore
         self.now = now
@@ -175,6 +178,7 @@ public actor RequestCoordinator {
             priority: priority,
             admissionLatencyMs: now().timeIntervalSince(routeStartedAt) * 1000
         )
+        _ = await modelCatalog?.markModelUsed(id: request.modelID)
         if !(await abortRegistry.contains(request.requestID)) {
             await finishRequestTracking(requestID: request.requestID, phase: .requestAborted)
             return await makeCancelledExecution(requestID: request.requestID, modelID: request.modelID)

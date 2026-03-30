@@ -448,6 +448,7 @@ message ResidencySummary {
   bool pin_requested = 3;
   bool pinned = 4;
   uint32 ttl_seconds = 5;
+  string transition_reason = 6;
 }
 
 enum EventTopic {

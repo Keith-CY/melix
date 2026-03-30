@@ -217,6 +217,118 @@ struct ModelCatalogTests {
         #expect(await catalog.storedDispatchHandle(for: "melix-dev-text") == nil)
     }
 
+    @Test("transition reasons fall back through worker residency unload defaults and missing usage lookups")
+    func transitionReasonsFallBackThroughWorkerResidencyUnloadDefaultsAndMissingUsageLookups() async throws {
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel()])
+        #expect(await catalog.markModelUsed(id: "missing-model") == nil)
+
+        var workerResidency = Melix_Worker_V1_ResidencyInfo()
+        workerResidency.state = .warm
+        workerResidency.transitionReason = "worker_seed_reason"
+
+        let loaded = try #require(await catalog.recordLoadSucceeded(
+            id: "melix-dev-text",
+            dispatchHandle: "melix-dev-text::swift",
+            workerResidency: workerResidency
+        ))
+        #expect(loaded.residency.transitionReason == "worker_seed_reason")
+
+        let preservedUnload = try #require(await catalog.recordUnloadSucceeded(id: "melix-dev-text"))
+        #expect(preservedUnload.residency.transitionReason == "worker_seed_reason")
+
+        let fallbackCatalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel()])
+        let unloaded = try #require(await fallbackCatalog.recordUnloadSucceeded(id: "melix-dev-text"))
+        #expect(unloaded.residency.transitionReason == "operator_unload")
+
+        let failed = try #require(await catalog.recordUnloadFailed(
+            id: "melix-dev-text",
+            reason: "ttl_expired_failed"
+        ))
+        #expect(failed.residency.transitionReason == "ttl_expired_failed")
+    }
+
+    @Test("eviction plan prioritizes ttl expiry before lru and reports pin protection")
+    func evictionPlanPrioritizesTtlExpiryBeforeLruAndReportsPinProtection() async throws {
+        final class ClockBox: @unchecked Sendable {
+            var nowUnixMs: Int64
+
+            init(nowUnixMs: Int64) {
+                self.nowUnixMs = nowUnixMs
+            }
+        }
+
+        func makeTextSeed(
+            id: String,
+            state: Melix_Controlplane_V1_ModelState,
+            ttlSeconds: UInt32 = 0,
+            pinOnLoad: Bool = false
+        ) -> Melix_Controlplane_V1_ModelSummary {
+            var model = ModelCatalog.devTextModel()
+            model.modelID = id
+            model.state = state
+            if ttlSeconds > 0 {
+                model.settings.ttlSeconds = ttlSeconds
+                model.settings.memoryPolicy = .memoryResidencyTtl
+            }
+            if pinOnLoad {
+                model.settings.pinOnLoad = true
+                model.settings.memoryPolicy = .memoryResidencyPinned
+            }
+            return model
+        }
+
+        let clock = ClockBox(nowUnixMs: 10_000)
+        let catalog = ModelCatalog(
+            seedModels: [
+                makeTextSeed(id: "text-ttl", state: .modelWarm, ttlSeconds: 60),
+                makeTextSeed(id: "text-lru", state: .modelWarm),
+                makeTextSeed(id: "text-pinned", state: .modelPinned, pinOnLoad: true),
+                makeTextSeed(id: "text-incoming", state: .modelDiscovered),
+            ],
+            nowUnixMs: { clock.nowUnixMs }
+        )
+
+        clock.nowUnixMs += 61_000
+        let plan = await catalog.evictionPlanForLoad(id: "text-incoming")
+
+        #expect(plan.decisions == [
+            .init(modelID: "text-ttl", reason: "ttl_expired"),
+            .init(modelID: "text-lru", reason: "lru_same_capability"),
+        ])
+        #expect(plan.pinnedProtectedModelIDs == ["text-pinned"])
+    }
+
+    @Test("eviction family falls back through route classes and kinds when capabilities are unspecified")
+    func evictionFamilyFallsBackThroughRouteClassesAndKindsWhenCapabilitiesAreUnspecified() async throws {
+        var routeResident = Melix_Controlplane_V1_ModelSummary()
+        routeResident.modelID = "route-resident"
+        routeResident.state = .modelWarm
+        routeResident.routeClass = .workerRoutePythonEmbedding
+
+        var routeTarget = Melix_Controlplane_V1_ModelSummary()
+        routeTarget.modelID = "route-target"
+        routeTarget.state = .modelDiscovered
+        routeTarget.routeClass = .workerRoutePythonEmbedding
+
+        let routeCatalog = ModelCatalog(seedModels: [routeResident, routeTarget])
+        let routePlan = await routeCatalog.evictionPlanForLoad(id: "route-target")
+        #expect(routePlan.decisions == [.init(modelID: "route-resident", reason: "lru_same_capability")])
+
+        var kindResident = Melix_Controlplane_V1_ModelSummary()
+        kindResident.modelID = "kind-resident"
+        kindResident.state = .modelWarm
+        kindResident.kind = "rerank"
+
+        var kindTarget = Melix_Controlplane_V1_ModelSummary()
+        kindTarget.modelID = "kind-target"
+        kindTarget.state = .modelDiscovered
+        kindTarget.kind = "rerank"
+
+        let kindCatalog = ModelCatalog(seedModels: [kindResident, kindTarget])
+        let kindPlan = await kindCatalog.evictionPlanForLoad(id: "kind-target")
+        #expect(kindPlan.decisions == [.init(modelID: "kind-resident", reason: "lru_same_capability")])
+    }
+
     @Test("phase six contract seed models expose multimodal routes and task visibility")
     func phaseSixContractSeedModelsExposeMultimodalRoutesAndTasks() async throws {
         let catalog = ModelCatalog(seedModels: ModelCatalog.phaseSixContractSeedModels())

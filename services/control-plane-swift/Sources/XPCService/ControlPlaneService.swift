@@ -70,6 +70,7 @@ public actor ControlPlaneService {
                 abortRegistry: AbortRegistry(),
                 schedulerReadModel: resolvedSchedulerReadModel,
                 metricsStore: metricsStore,
+                modelCatalog: modelCatalog,
                 sessionGraphStore: sessionGraphStore,
                 cacheMetadataStore: cacheMetadataStore
             )
@@ -140,19 +141,15 @@ public actor ControlPlaneService {
             )
         )
         let modelHandle: String
-        if let readyHandle = await modelCatalog.dispatchHandle(for: normalized.model) {
-            modelHandle = readyHandle
-        } else {
-            do {
-                modelHandle = try await OnDemandModelLoader.ensureTextModelReady(
-                    modelID: normalized.model,
-                    modelCatalog: modelCatalog,
-                    workerRegistry: workerRegistry,
-                    metricsStore: metricsStore
-                )
-            } catch {
-                throw ControlPlaneChatExecutionError.unavailable
-            }
+        do {
+            modelHandle = try await OnDemandModelLoader.ensureTextModelReady(
+                modelID: normalized.model,
+                modelCatalog: modelCatalog,
+                workerRegistry: workerRegistry,
+                metricsStore: metricsStore
+            )
+        } catch {
+            throw ControlPlaneChatExecutionError.unavailable
         }
         let translated = try chatTranslator.translate(normalized, modelHandle: modelHandle)
         let execution = try await requestCoordinator.startChatCompletion(translated)
@@ -219,11 +216,12 @@ public actor ControlPlaneService {
             guard await modelCatalog.model(id: load.modelID) != nil else {
                 return errorResponse(for: request, code: "not_found", message: "Unknown model ID.")
             }
-            if let loading = await modelCatalog.beginLoad(id: load.modelID),
+            await performEvictionsForLoad(targetModelID: load.modelID)
+            if let loading = await modelCatalog.beginLoad(id: load.modelID, reason: "operator_load"),
                workerRegistry != nil {
                 await publishModelStateChanged(loading)
             }
-            let model = await handleModelLoad(modelID: load.modelID)
+            let model = await handleModelLoad(modelID: load.modelID, reason: "operator_load")
             if workerRegistry != nil {
                 await publishModelStateChanged(model)
             }
@@ -242,11 +240,11 @@ public actor ControlPlaneService {
             guard await modelCatalog.model(id: unload.modelID) != nil else {
                 return errorResponse(for: request, code: "not_found", message: "Unknown model ID.")
             }
-            if let evicting = await modelCatalog.beginUnload(id: unload.modelID),
+            if let evicting = await modelCatalog.beginUnload(id: unload.modelID, reason: "operator_unload"),
                workerRegistry != nil {
                 await publishModelStateChanged(evicting)
             }
-            let model = await handleModelUnload(modelID: unload.modelID)
+            let model = await handleModelUnload(modelID: unload.modelID, reason: "operator_unload")
             if workerRegistry != nil {
                 await publishModelStateChanged(model)
             }
@@ -1262,14 +1260,16 @@ public actor ControlPlaneService {
     }
 
     private func handleModelLoad(
-        modelID: String
+        modelID: String,
+        reason: String
     ) async -> Melix_Controlplane_V1_ModelSummary {
         guard let workerRegistry,
               let modelSpec = BootstrapWorkerPreparation.modelSpec(for: modelID),
               let workerClient = await workerRegistry.client(forModelID: modelID) else {
             return await modelCatalog.recordLoadSucceeded(
                 id: modelID,
-                dispatchHandle: "\(modelID)::local"
+                dispatchHandle: "\(modelID)::local",
+                reason: reason
             ) ?? Melix_Controlplane_V1_ModelSummary()
         }
 
@@ -1282,26 +1282,37 @@ public actor ControlPlaneService {
         do {
             let response = try await workerClient.loadModel(request: workerRequest)
             guard response.ok, !response.modelHandle.isEmpty else {
-                return await modelCatalog.recordLoadFailed(id: modelID) ?? Melix_Controlplane_V1_ModelSummary()
+                return await modelCatalog.recordLoadFailed(
+                    id: modelID,
+                    reason: "\(reason)_failed"
+                ) ?? Melix_Controlplane_V1_ModelSummary()
             }
             return await modelCatalog.recordLoadSucceeded(
                 id: modelID,
                 dispatchHandle: response.modelHandle,
                 pinRequested: workerRequest.pinOnLoad,
-                workerResidency: response.hasResidency ? response.residency : nil
+                workerResidency: response.hasResidency ? response.residency : nil,
+                reason: reason
             ) ?? Melix_Controlplane_V1_ModelSummary()
         } catch {
-            return await modelCatalog.recordLoadFailed(id: modelID) ?? Melix_Controlplane_V1_ModelSummary()
+            return await modelCatalog.recordLoadFailed(
+                id: modelID,
+                reason: "\(reason)_failed"
+            ) ?? Melix_Controlplane_V1_ModelSummary()
         }
     }
 
     private func handleModelUnload(
-        modelID: String
+        modelID: String,
+        reason: String
     ) async -> Melix_Controlplane_V1_ModelSummary {
         guard let workerRegistry,
               let handle = await modelCatalog.storedDispatchHandle(for: modelID),
               let workerClient = await workerRegistry.client(forModelID: modelID) else {
-            return await modelCatalog.recordUnloadSucceeded(id: modelID) ?? Melix_Controlplane_V1_ModelSummary()
+            return await modelCatalog.recordUnloadSucceeded(
+                id: modelID,
+                reason: reason
+            ) ?? Melix_Controlplane_V1_ModelSummary()
         }
 
         var workerRequest = Melix_Worker_V1_UnloadModelRequest()
@@ -1310,11 +1321,82 @@ public actor ControlPlaneService {
         do {
             let response = try await workerClient.unloadModel(request: workerRequest)
             guard response.ok else {
-                return await modelCatalog.recordUnloadFailed(id: modelID) ?? Melix_Controlplane_V1_ModelSummary()
+                return await modelCatalog.recordUnloadFailed(
+                    id: modelID,
+                    reason: reason
+                ) ?? Melix_Controlplane_V1_ModelSummary()
             }
-            return await modelCatalog.recordUnloadSucceeded(id: modelID) ?? Melix_Controlplane_V1_ModelSummary()
+            return await modelCatalog.recordUnloadSucceeded(
+                id: modelID,
+                reason: reason
+            ) ?? Melix_Controlplane_V1_ModelSummary()
         } catch {
-            return await modelCatalog.recordUnloadFailed(id: modelID) ?? Melix_Controlplane_V1_ModelSummary()
+            return await modelCatalog.recordUnloadFailed(
+                id: modelID,
+                reason: reason
+            ) ?? Melix_Controlplane_V1_ModelSummary()
+        }
+    }
+
+    private func performEvictionsForLoad(targetModelID: String) async {
+        let plan = await modelCatalog.evictionPlanForLoad(id: targetModelID)
+        await recordEvictionPlanMetrics(plan)
+
+        for decision in plan.decisions {
+            await metricsStore.increment("control_plane.model_eviction_decision_count")
+            await metricsStore.increment(evictionMetricKey(for: decision.reason))
+
+            guard let evicting = await modelCatalog.beginUnload(id: decision.modelID, reason: decision.reason) else {
+                await metricsStore.increment("control_plane.model_eviction_failure_count")
+                continue
+            }
+            if workerRegistry != nil {
+                await publishModelStateChanged(evicting)
+            }
+
+            let unloaded = await handleModelUnload(modelID: decision.modelID, reason: decision.reason)
+            if workerRegistry != nil {
+                await publishModelStateChanged(unloaded)
+            }
+
+            if unloaded.state == .modelUnloaded {
+                await metricsStore.increment("control_plane.model_eviction_success_count")
+            } else {
+                await metricsStore.increment("control_plane.model_eviction_failure_count")
+            }
+        }
+    }
+
+    private func recordEvictionPlanMetrics(
+        _ plan: ModelCatalog.EvictionPlan
+    ) async {
+        await metricsStore.set(
+            Double(plan.decisions.count),
+            forKey: "control_plane.model_eviction_last_plan_size"
+        )
+        await metricsStore.set(
+            Double(plan.pinnedProtectedModelIDs.count),
+            forKey: "control_plane.model_eviction_last_pinned_protected_count"
+        )
+        if !plan.decisions.isEmpty || !plan.pinnedProtectedModelIDs.isEmpty {
+            await metricsStore.increment("control_plane.model_eviction_plan_count")
+        }
+        if !plan.pinnedProtectedModelIDs.isEmpty {
+            await metricsStore.increment(
+                "control_plane.model_eviction_pinned_protected_count",
+                by: Double(plan.pinnedProtectedModelIDs.count)
+            )
+        }
+    }
+
+    func evictionMetricKey(for reason: String) -> String {
+        switch reason {
+        case "ttl_expired":
+            return "control_plane.model_eviction_ttl_count"
+        case "lru_same_capability":
+            return "control_plane.model_eviction_lru_same_capability_count"
+        default:
+            return "control_plane.model_eviction_other_count"
         }
     }
 

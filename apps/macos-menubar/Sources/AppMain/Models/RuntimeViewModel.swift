@@ -1465,7 +1465,10 @@ func makeRuntimeModelRow(_ model: Melix_Controlplane_V1_ModelSummary) -> Runtime
         modelID: model.modelID,
         kind: model.kind,
         state: model.state,
-        stateText: runtimeModelStateText(model.state),
+        stateText: runtimeModelStateText(
+            model.state,
+            transitionReason: model.residency.transitionReason
+        ),
         actionTitle: runtimeActionTitle(for: model.state),
         maxContext: model.maxContext,
         alias: model.settings.alias,
@@ -1475,25 +1478,46 @@ func makeRuntimeModelRow(_ model: Melix_Controlplane_V1_ModelSummary) -> Runtime
     )
 }
 
-private func runtimeModelStateText(_ state: Melix_Controlplane_V1_ModelState) -> String {
-    switch state {
+private func runtimeModelStateText(
+    _ state: Melix_Controlplane_V1_ModelState,
+    transitionReason: String = ""
+) -> String {
+    let base = switch state {
     case .modelDiscovered:
-        return "Discovered"
+        "Discovered"
     case .modelWarm:
-        return "Warm"
+        "Warm"
     case .modelPinned:
-        return "Pinned"
+        "Pinned"
     case .modelUnloaded:
-        return "Unloaded"
+        "Unloaded"
     case .modelLoading:
-        return "Loading"
+        "Loading"
     case .modelEvicting:
-        return "Evicting"
+        "Evicting"
     case .modelFailed:
-        return "Failed"
+        "Failed"
     default:
+        "Unknown"
+    }
+
+    guard !transitionReason.isEmpty else {
+        return base
+    }
+    switch state {
+    case .modelEvicting, .modelUnloaded, .modelFailed:
+        return "\(base) • \(runtimeTransitionReasonText(transitionReason))"
+    default:
+        return base
+    }
+}
+
+private func runtimeTransitionReasonText(_ reason: String) -> String {
+    let separatorNormalized = reason.replacingOccurrences(of: "_", with: " ")
+    guard let first = separatorNormalized.first else {
         return "Unknown"
     }
+    return String(first).uppercased() + separatorNormalized.dropFirst()
 }
 
 private func runtimeActionTitle(for state: Melix_Controlplane_V1_ModelState) -> String {

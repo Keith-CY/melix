@@ -216,6 +216,34 @@ struct RequestCoordinatorTests {
         _ = await consumer.result
     }
 
+    @Test("admitted text requests refresh model recency for same-family eviction planning")
+    func admittedTextRequestsRefreshModelRecencyForSameFamilyEvictionPlanning() async throws {
+        let workerClient = PhaseAwareWorkerClient()
+        let catalog = ModelCatalog(seedModels: [
+            makeCoordinatorTextModel(id: "melix-text-a", state: .modelWarm),
+            makeCoordinatorTextModel(id: "melix-text-b", state: .modelWarm),
+            makeCoordinatorTextModel(id: "melix-text-incoming", state: .modelDiscovered),
+        ])
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog),
+            abortRegistry: AbortRegistry(),
+            modelCatalog: catalog
+        )
+
+        let execution = try await coordinator.startChatCompletion(
+            makeTranslatedChatRequest(requestID: "req-recency", modelID: "melix-text-a")
+        )
+        let consumer = Task {
+            for try await _ in execution.stream {}
+        }
+        await workerClient.emitToken(requestID: "req-recency", text: "assistant")
+        await workerClient.finish(requestID: "req-recency")
+        _ = try await consumer.value
+
+        let plan = await catalog.evictionPlanForLoad(id: "melix-text-incoming")
+        #expect(plan.decisions.first == .init(modelID: "melix-text-b", reason: "lru_same_capability"))
+    }
+
     @Test("multimodal vision requests use background lanes instead of interactive text lanes")
     func multimodalVisionRequestsUseBackgroundLanes() async throws {
         let visionClient = BlockingWorkerClient()
@@ -1730,6 +1758,16 @@ private func makeTranslatedChatRequest(
         workerRequest: workerRequest,
         stream: true
     )
+}
+
+private func makeCoordinatorTextModel(
+    id: String,
+    state: Melix_Controlplane_V1_ModelState
+) -> Melix_Controlplane_V1_ModelSummary {
+    var model = ModelCatalog.devTextModel()
+    model.modelID = id
+    model.state = state
+    return model
 }
 
 private func waitForProgress(

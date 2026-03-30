@@ -193,6 +193,26 @@ struct RuntimeViewModelTests {
         #expect(makeRuntimeModelRow(state: .modelDiscovered).isLoaded == false)
     }
 
+    @Test("runtime model row surfaces eviction transition reasons for operator visibility")
+    func runtimeModelRowSurfacesEvictionTransitionReasons() {
+        let evicting = makeModelSummary(
+            state: .modelEvicting,
+            transitionReason: "ttl_expired"
+        )
+        let unloaded = makeModelSummary(
+            state: .modelUnloaded,
+            transitionReason: "lru_same_capability"
+        )
+        let failed = makeModelSummary(
+            state: .modelFailed,
+            transitionReason: "operator_unload_failed"
+        )
+
+        #expect(makeRuntimeModelRow(evicting).stateText == "Evicting • Ttl expired")
+        #expect(makeRuntimeModelRow(unloaded).stateText == "Unloaded • Lru same capability")
+        #expect(makeRuntimeModelRow(failed).stateText == "Failed • Operator unload failed")
+    }
+
     @Test("desktop foundation derives dashboard settings bench and api state from control-plane truth")
     @MainActor
     func desktopFoundationDerivesOperatorPanelsFromSnapshotTruth() async throws {
@@ -1324,7 +1344,8 @@ private func makeSnapshot(
 
 private func makeModelSummary(
     modelID: String = "melix-dev-text",
-    state: Melix_Controlplane_V1_ModelState
+    state: Melix_Controlplane_V1_ModelState,
+    transitionReason: String = ""
 ) -> Melix_Controlplane_V1_ModelSummary {
     var model = Melix_Controlplane_V1_ModelSummary()
     model.modelID = modelID
@@ -1332,6 +1353,7 @@ private func makeModelSummary(
     model.state = state
     model.features = ["chat"]
     model.maxContext = 8192
+    model.residency.transitionReason = transitionReason
     return model
 }
 

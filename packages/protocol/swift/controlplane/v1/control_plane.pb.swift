@@ -2399,6 +2399,8 @@ public struct Melix_Controlplane_V1_ResidencySummary: Sendable {
 
   public var ttlSeconds: UInt32 = 0
 
+  public var transitionReason: String = String()
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -6897,7 +6899,7 @@ extension Melix_Controlplane_V1_ModelSettings: SwiftProtobuf.Message, SwiftProto
 
 extension Melix_Controlplane_V1_ResidencySummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ResidencySummary"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}state\0\u{1}policy\0\u{3}pin_requested\0\u{1}pinned\0\u{3}ttl_seconds\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}state\0\u{1}policy\0\u{3}pin_requested\0\u{1}pinned\0\u{3}ttl_seconds\0\u{3}transition_reason\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -6910,6 +6912,7 @@ extension Melix_Controlplane_V1_ResidencySummary: SwiftProtobuf.Message, SwiftPr
       case 3: try { try decoder.decodeSingularBoolField(value: &self.pinRequested) }()
       case 4: try { try decoder.decodeSingularBoolField(value: &self.pinned) }()
       case 5: try { try decoder.decodeSingularUInt32Field(value: &self.ttlSeconds) }()
+      case 6: try { try decoder.decodeSingularStringField(value: &self.transitionReason) }()
       default: break
       }
     }
@@ -6931,6 +6934,9 @@ extension Melix_Controlplane_V1_ResidencySummary: SwiftProtobuf.Message, SwiftPr
     if self.ttlSeconds != 0 {
       try visitor.visitSingularUInt32Field(value: self.ttlSeconds, fieldNumber: 5)
     }
+    if !self.transitionReason.isEmpty {
+      try visitor.visitSingularStringField(value: self.transitionReason, fieldNumber: 6)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -6940,6 +6946,7 @@ extension Melix_Controlplane_V1_ResidencySummary: SwiftProtobuf.Message, SwiftPr
     if lhs.pinRequested != rhs.pinRequested {return false}
     if lhs.pinned != rhs.pinned {return false}
     if lhs.ttlSeconds != rhs.ttlSeconds {return false}
+    if lhs.transitionReason != rhs.transitionReason {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

@@ -1,12 +1,61 @@
+import Foundation
 import MelixControlPlaneProtocol
 import MelixWorkerProtocol
 
 public actor ModelCatalog {
+    public struct EvictionDecision: Equatable, Sendable {
+        public let modelID: String
+        public let reason: String
+
+        public init(modelID: String, reason: String) {
+            self.modelID = modelID
+            self.reason = reason
+        }
+    }
+
+    public struct EvictionPlan: Equatable, Sendable {
+        public let decisions: [EvictionDecision]
+        public let pinnedProtectedModelIDs: [String]
+
+        public init(
+            decisions: [EvictionDecision] = [],
+            pinnedProtectedModelIDs: [String] = []
+        ) {
+            self.decisions = decisions
+            self.pinnedProtectedModelIDs = pinnedProtectedModelIDs
+        }
+    }
+
+    private struct ResidencyLedger: Sendable {
+        var lastAccessOrdinal: UInt64
+        var lastAccessUnixMs: Int64
+        var transitionReason: String
+    }
+
     private var models: [String: Melix_Controlplane_V1_ModelSummary]
     private var dispatchHandles: [String: String]
+    private var residencyLedger: [String: ResidencyLedger]
+    private var nextAccessOrdinal: UInt64
+    private let nowUnixMs: @Sendable () -> Int64
 
-    public init(seedModels: [Melix_Controlplane_V1_ModelSummary] = [ModelCatalog.devTextModel()]) {
+    public init(
+        seedModels: [Melix_Controlplane_V1_ModelSummary] = [ModelCatalog.devTextModel()],
+        nowUnixMs: @escaping @Sendable () -> Int64 = {
+            Int64(Date().timeIntervalSince1970 * 1_000)
+        }
+    ) {
         let normalizedSeedModels = seedModels.map { ModelCatalog.withSynchronizedResidency($0) }
+        let seededNow = nowUnixMs()
+        var ledger: [String: ResidencyLedger] = [:]
+        var accessOrdinal: UInt64 = 0
+        for model in normalizedSeedModels {
+            accessOrdinal += 1
+            ledger[model.modelID] = ResidencyLedger(
+                lastAccessOrdinal: accessOrdinal,
+                lastAccessUnixMs: seededNow,
+                transitionReason: ""
+            )
+        }
         self.models = Dictionary(uniqueKeysWithValues: normalizedSeedModels.map { ($0.modelID, $0) })
         self.dispatchHandles = Dictionary(
             uniqueKeysWithValues: normalizedSeedModels.compactMap { model in
@@ -16,6 +65,9 @@ public actor ModelCatalog {
                 return (model.modelID, ModelCatalog.defaultDispatchHandle(for: model.modelID))
             }
         )
+        self.residencyLedger = ledger
+        self.nextAccessOrdinal = accessOrdinal
+        self.nowUnixMs = nowUnixMs
     }
 
     public func listModels() -> [Melix_Controlplane_V1_ModelSummary] {
@@ -26,13 +78,17 @@ public actor ModelCatalog {
         models[id]
     }
 
-    public func beginLoad(id: String) -> Melix_Controlplane_V1_ModelSummary? {
+    public func beginLoad(
+        id: String,
+        reason: String = "load_requested"
+    ) -> Melix_Controlplane_V1_ModelSummary? {
         guard var model = models[id] else {
             return nil
         }
+        touchModel(id: id, transitionReason: reason)
         model.state = .modelLoading
         model.pinned = false
-        model = ModelCatalog.withSynchronizedResidency(model)
+        model = synchronized(model)
         models[id] = model
         return model
     }
@@ -41,7 +97,8 @@ public actor ModelCatalog {
         id: String,
         dispatchHandle: String,
         pinRequested: Bool = false,
-        workerResidency: Melix_Worker_V1_ResidencyInfo? = nil
+        workerResidency: Melix_Worker_V1_ResidencyInfo? = nil,
+        reason: String? = nil
     ) -> Melix_Controlplane_V1_ModelSummary? {
         guard var model = models[id] else {
             return nil
@@ -54,7 +111,14 @@ public actor ModelCatalog {
         )
         model.state = loadedState
         model.pinned = loadedState == .modelPinned || workerResidency?.pinned == true
-        model = ModelCatalog.withSynchronizedResidency(model)
+        touchModel(
+            id: id,
+            transitionReason: resolvedLoadTransitionReason(
+                explicitReason: reason,
+                workerResidency: workerResidency
+            )
+        )
+        model = synchronized(model)
         models[id] = model
 
         if loadedState == .modelWarm || loadedState == .modelPinned {
@@ -66,69 +130,86 @@ public actor ModelCatalog {
         return model
     }
 
-    public func recordLoadFailed(id: String) -> Melix_Controlplane_V1_ModelSummary? {
+    public func recordLoadFailed(
+        id: String,
+        reason: String = "load_failed"
+    ) -> Melix_Controlplane_V1_ModelSummary? {
         guard var model = models[id] else {
             return nil
         }
+        touchModel(id: id, transitionReason: reason)
         model.state = .modelFailed
         model.pinned = false
-        model = ModelCatalog.withSynchronizedResidency(model)
+        model = synchronized(model)
         models[id] = model
         dispatchHandles.removeValue(forKey: id)
         return model
     }
 
-    public func beginUnload(id: String) -> Melix_Controlplane_V1_ModelSummary? {
+    public func beginUnload(
+        id: String,
+        reason: String = "operator_unload"
+    ) -> Melix_Controlplane_V1_ModelSummary? {
         guard var model = models[id] else {
             return nil
         }
+        touchModel(id: id, transitionReason: reason)
         model.state = .modelEvicting
         model.pinned = false
-        model = ModelCatalog.withSynchronizedResidency(model)
+        model = synchronized(model)
         models[id] = model
         return model
     }
 
-    public func recordUnloadSucceeded(id: String) -> Melix_Controlplane_V1_ModelSummary? {
+    public func recordUnloadSucceeded(
+        id: String,
+        reason: String? = nil
+    ) -> Melix_Controlplane_V1_ModelSummary? {
         guard var model = models[id] else {
             return nil
         }
+        touchModel(id: id, transitionReason: resolvedUnloadTransitionReason(for: id, fallback: reason))
         model.state = .modelUnloaded
         model.pinned = false
-        model = ModelCatalog.withSynchronizedResidency(model)
+        model = synchronized(model)
         models[id] = model
         dispatchHandles.removeValue(forKey: id)
         return model
     }
 
-    public func recordUnloadFailed(id: String) -> Melix_Controlplane_V1_ModelSummary? {
+    public func recordUnloadFailed(
+        id: String,
+        reason: String? = nil
+    ) -> Melix_Controlplane_V1_ModelSummary? {
         guard var model = models[id] else {
             return nil
         }
+        touchModel(id: id, transitionReason: failedUnloadTransitionReason(for: id, fallback: reason))
         model.state = .modelFailed
         model.pinned = false
-        model = ModelCatalog.withSynchronizedResidency(model)
+        model = synchronized(model)
         models[id] = model
         dispatchHandles.removeValue(forKey: id)
         return model
     }
 
     public func loadModel(id: String) -> Melix_Controlplane_V1_ModelSummary? {
-        _ = beginLoad(id: id)
+        _ = beginLoad(id: id, reason: "operator_load")
         return recordLoadSucceeded(
             id: id,
-            dispatchHandle: ModelCatalog.defaultDispatchHandle(for: id)
+            dispatchHandle: ModelCatalog.defaultDispatchHandle(for: id),
+            reason: "operator_load"
         )
     }
 
     public func loadModel(id: String, dispatchHandle: String) -> Melix_Controlplane_V1_ModelSummary? {
-        _ = beginLoad(id: id)
-        return recordLoadSucceeded(id: id, dispatchHandle: dispatchHandle)
+        _ = beginLoad(id: id, reason: "operator_load")
+        return recordLoadSucceeded(id: id, dispatchHandle: dispatchHandle, reason: "operator_load")
     }
 
     public func unloadModel(id: String) -> Melix_Controlplane_V1_ModelSummary? {
-        _ = beginUnload(id: id)
-        return recordUnloadSucceeded(id: id)
+        _ = beginUnload(id: id, reason: "operator_unload")
+        return recordUnloadSucceeded(id: id, reason: "operator_unload")
     }
 
     public func updateSettings(
@@ -139,9 +220,72 @@ public actor ModelCatalog {
             return nil
         }
         model.settings = settings
-        model = ModelCatalog.withSynchronizedResidency(model)
+        touchModel(id: id, transitionReason: "settings_updated")
+        model = synchronized(model)
         models[id] = model
         return model
+    }
+
+    public func markModelUsed(id: String) -> Melix_Controlplane_V1_ModelSummary? {
+        guard var model = models[id] else {
+            return nil
+        }
+        touchModel(id: id)
+        model = synchronized(model)
+        models[id] = model
+        return model
+    }
+
+    public func evictionPlanForLoad(id targetID: String) -> EvictionPlan {
+        guard let targetModel = models[targetID] else {
+            return EvictionPlan()
+        }
+
+        let loadedModels = models.values.filter { model in
+            model.modelID != targetID && ModelCatalog.isResident(model)
+        }
+        let currentNowUnixMs = nowUnixMs()
+
+        let ttlExpiredModels = loadedModels
+            .filter { model in
+                ModelCatalog.isAutomaticallyEvictable(model)
+                    && ModelCatalog.isTTLExpired(
+                        model,
+                        lastAccessUnixMs: lastAccessUnixMs(for: model.modelID),
+                        nowUnixMs: currentNowUnixMs
+                    )
+            }
+            .sorted(by: compareRecency)
+
+        let ttlExpiredIDs = Set(ttlExpiredModels.map(\.modelID))
+        var decisions = ttlExpiredModels.map { EvictionDecision(modelID: $0.modelID, reason: "ttl_expired") }
+
+        let pinnedProtectedModelIDs = loadedModels
+            .filter { model in
+                !ttlExpiredIDs.contains(model.modelID)
+                    && ModelCatalog.sameEvictionFamily(model, targetModel)
+                    && ModelCatalog.isPinProtected(model)
+            }
+            .map(\.modelID)
+            .sorted()
+
+        let lruCandidate = loadedModels
+            .filter { model in
+                !ttlExpiredIDs.contains(model.modelID)
+                    && ModelCatalog.sameEvictionFamily(model, targetModel)
+                    && ModelCatalog.isAutomaticallyEvictable(model)
+            }
+            .sorted(by: compareRecency)
+            .first
+        if !ModelCatalog.isResident(targetModel),
+           let lruCandidate {
+            decisions.append(EvictionDecision(modelID: lruCandidate.modelID, reason: "lru_same_capability"))
+        }
+
+        return EvictionPlan(
+            decisions: decisions,
+            pinnedProtectedModelIDs: pinnedProtectedModelIDs
+        )
     }
 
     public func dispatchHandle(for id: String) -> String? {
@@ -323,17 +467,28 @@ public actor ModelCatalog {
         "\(id)::local"
     }
 
-    private static func withSynchronizedResidency(
+    private func synchronized(
         _ source: Melix_Controlplane_V1_ModelSummary
+    ) -> Melix_Controlplane_V1_ModelSummary {
+        ModelCatalog.withSynchronizedResidency(
+            source,
+            transitionReason: residencyLedger[source.modelID]?.transitionReason ?? ""
+        )
+    }
+
+    private static func withSynchronizedResidency(
+        _ source: Melix_Controlplane_V1_ModelSummary,
+        transitionReason: String = ""
     ) -> Melix_Controlplane_V1_ModelSummary {
         var model = source
         model.pinned = effectivePinnedFlag(for: model)
-        model.residency = residencySummary(for: model)
+        model.residency = residencySummary(for: model, transitionReason: transitionReason)
         return model
     }
 
     private static func residencySummary(
-        for model: Melix_Controlplane_V1_ModelSummary
+        for model: Melix_Controlplane_V1_ModelSummary,
+        transitionReason: String
     ) -> Melix_Controlplane_V1_ResidencySummary {
         var residency = Melix_Controlplane_V1_ResidencySummary()
         residency.state = residencyState(for: model.state)
@@ -341,6 +496,7 @@ public actor ModelCatalog {
         residency.pinRequested = model.settings.pinOnLoad
         residency.pinned = model.state == .modelPinned || model.pinned
         residency.ttlSeconds = model.settings.ttlSeconds
+        residency.transitionReason = transitionReason
         return residency
     }
 
@@ -429,5 +585,130 @@ public actor ModelCatalog {
         default:
             return .unspecified
         }
+    }
+
+    private func touchModel(
+        id: String,
+        transitionReason: String? = nil
+    ) {
+        nextAccessOrdinal += 1
+        var ledger = residencyLedger[id] ?? ResidencyLedger(
+            lastAccessOrdinal: 0,
+            lastAccessUnixMs: nowUnixMs(),
+            transitionReason: ""
+        )
+        ledger.lastAccessOrdinal = nextAccessOrdinal
+        ledger.lastAccessUnixMs = nowUnixMs()
+        if let transitionReason, !transitionReason.isEmpty {
+            ledger.transitionReason = transitionReason
+        }
+        residencyLedger[id] = ledger
+    }
+
+    private func lastAccessUnixMs(for modelID: String) -> Int64 {
+        residencyLedger[modelID]?.lastAccessUnixMs ?? 0
+    }
+
+    private func compareRecency(
+        _ lhs: Melix_Controlplane_V1_ModelSummary,
+        _ rhs: Melix_Controlplane_V1_ModelSummary
+    ) -> Bool {
+        let lhsOrdinal = residencyLedger[lhs.modelID]?.lastAccessOrdinal ?? 0
+        let rhsOrdinal = residencyLedger[rhs.modelID]?.lastAccessOrdinal ?? 0
+        if lhsOrdinal != rhsOrdinal {
+            return lhsOrdinal < rhsOrdinal
+        }
+        return lhs.modelID < rhs.modelID
+    }
+
+    private func resolvedLoadTransitionReason(
+        explicitReason: String?,
+        workerResidency: Melix_Worker_V1_ResidencyInfo?
+    ) -> String {
+        if let explicitReason, !explicitReason.isEmpty {
+            return explicitReason
+        }
+        if let workerResidency, !workerResidency.transitionReason.isEmpty {
+            return workerResidency.transitionReason
+        }
+        return "load_succeeded"
+    }
+
+    private func resolvedUnloadTransitionReason(
+        for modelID: String,
+        fallback: String?
+    ) -> String {
+        if let fallback, !fallback.isEmpty {
+            return fallback
+        }
+        if let existing = residencyLedger[modelID]?.transitionReason, !existing.isEmpty {
+            return existing
+        }
+        return "operator_unload"
+    }
+
+    private func failedUnloadTransitionReason(
+        for modelID: String,
+        fallback: String?
+    ) -> String {
+        let baseReason = resolvedUnloadTransitionReason(for: modelID, fallback: fallback)
+        if baseReason.hasSuffix("_failed") {
+            return baseReason
+        }
+        return "\(baseReason)_failed"
+    }
+
+    private static func isResident(
+        _ model: Melix_Controlplane_V1_ModelSummary
+    ) -> Bool {
+        switch model.state {
+        case .modelWarm, .modelPinned:
+            return true
+        default:
+            return false
+        }
+    }
+
+    private static func isPinProtected(
+        _ model: Melix_Controlplane_V1_ModelSummary
+    ) -> Bool {
+        if model.state == .modelPinned || model.pinned || model.settings.pinOnLoad {
+            return true
+        }
+        return effectivePolicy(for: model.settings) == .memoryResidencyPinned
+    }
+
+    private static func isAutomaticallyEvictable(
+        _ model: Melix_Controlplane_V1_ModelSummary
+    ) -> Bool {
+        isResident(model) && !isPinProtected(model)
+    }
+
+    private static func isTTLExpired(
+        _ model: Melix_Controlplane_V1_ModelSummary,
+        lastAccessUnixMs: Int64,
+        nowUnixMs: Int64
+    ) -> Bool {
+        guard effectivePolicy(for: model.settings) == .memoryResidencyTtl,
+              model.settings.ttlSeconds > 0 else {
+            return false
+        }
+        let ttlMilliseconds = Int64(model.settings.ttlSeconds) * 1_000
+        return lastAccessUnixMs + ttlMilliseconds <= nowUnixMs
+    }
+
+    private static func sameEvictionFamily(
+        _ lhs: Melix_Controlplane_V1_ModelSummary,
+        _ rhs: Melix_Controlplane_V1_ModelSummary
+    ) -> Bool {
+        if lhs.capabilityClass != .unspecified,
+           rhs.capabilityClass != .unspecified {
+            return lhs.capabilityClass == rhs.capabilityClass
+        }
+        if lhs.routeClass != .unspecified,
+           rhs.routeClass != .unspecified {
+            return lhs.routeClass == rhs.routeClass
+        }
+        return !lhs.kind.isEmpty && lhs.kind == rhs.kind
     }
 }

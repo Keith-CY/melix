@@ -59,6 +59,7 @@ enum MelixControlPlaneBootstrap {
                 abortRegistry: AbortRegistry(),
                 schedulerReadModel: schedulerReadModel,
                 metricsStore: metricsStore,
+                modelCatalog: modelCatalog,
                 sessionGraphStore: sessionGraphStore,
                 cacheMetadataStore: cacheMetadataStore
             ),
