@@ -8,6 +8,8 @@ Melix has completed the initial runtime, cache, multimodal, image, desktop, and 
 
 This roadmap is intentionally runtime-first. Each milestone should be delivered as a sequence of small `Mx.y` slices that are independently testable, independently reviewable, and independently measurable. Deterministic contract paths remain valid integration harnesses, but they do not count as completion for runtime-depth milestones that require real execution behavior.
 
+The roadmap now also includes milestone-level product-completion extensions in `M10-M15`. These extension milestones stay aligned with the same control-plane-first architecture, but they are tracked as integrated execution-plan documents until they need finer-grained decomposition.
+
 Execution-plan index: `docs/plans/2026-03-30-full-capability-roadmap-execution-index.md`
 
 ## Roadmap Principles
@@ -18,6 +20,23 @@ Execution-plan index: `docs/plans/2026-03-30-full-capability-roadmap-execution-i
 - Require restart and recovery evidence, not only single-request happy-path evidence.
 - Require metrics and integration evidence for every milestone before it is considered complete.
 - Keep experimental acceleration features behind explicit feature flags until benchmark evidence is stable.
+
+## M10-M15 Coverage Map
+
+The roadmap extension from `M10` through `M15` covers the following operator-visible and runtime-visible capability groups:
+
+- Sessionized local serving and power-state management:
+  explicit `loading`, `ready`, `paused`, `sleeping`, and `stopped` states; start, pause, resume, stop, and auto-sleep flows; light-sleep and deep-sleep thresholds; status banners in chat and admin surfaces.
+- Disk streaming, memory budgeting, and cache policy:
+  session-level disk streaming mode; virtual-memory budgeting; cache-compatibility policy under disk streaming; observable prefix-cache, paged-KV-cache, and persistent-disk-cache behavior; cache-memory limits, cache-memory percentage, block size, cache directories, and KV-cache quantization policy for large-model paths.
+- Model registry, family coverage, and model tools:
+  multiple model roots; ordered root scanning; structured identity; expanded text, MoE, and image-family coverage including `Mistral Small 4 (119B)`, `model_type: mistral4`, MLA attention, `128-expert MoE`, `YaRN interleaved RoPE`, `Nemotron-H`, MoE gate dequant, `Klein 4B/9B`, `Kontext`, `Fill`, `QwenImage`, and `FIBO`; model inspection; health checks; artifact conversion and quantized packaging workflows.
+- Gateway configuration, defaults, and API onboarding:
+  gateway config viewing and editing; served-model identity; host, port, API key, rate limit, timeout, log, and CORS settings; concurrent-processing, max-concurrent-sequence, prefill-batch-size, and completion-batch-size controls; batching and generation defaults; speculative-decoding controls; embedding-model selection; MCP and tool-parser settings; OpenAI, Anthropic, and Ollama onboarding material.
+- Image iteration and persisted creative workflows:
+  image variations; iterate and redo flows; explicit generate-versus-edit model roles; `30-minute` timeout policy; persisted image parameters for `steps`, `size`, `guidance`, `strength`, and `negative prompt`; picker coverage for `Kontext`, `Fill`, `QwenImage`, `FIBO`, and `Klein`.
+- Desktop signals, download recovery, and streaming polish:
+  smoother token rendering with typewriter presentation; update-availability banners; paused-download restoration after reopening the window; download-queue status improvements; status-bar clarity; product-shell placeholders that still remain grounded in real control-plane navigation.
 
 ## M1: Runtime Core
 
@@ -405,16 +424,292 @@ Melix should become a stable local runtime that external agentic tools can consu
 - disconnect recovery latency
 - sanitized-output enforcement count
 
+## M10: Session Lifecycle And Power Management
+
+### Scope
+
+- explicit server-session lifecycle
+- power-state policy
+- auto-sleep thresholds
+- operator-visible session state
+- lifecycle-safe resume and wake flows
+
+### Target Outcome
+
+Melix should treat local serving as an explicit session lifecycle rather than a binary process-up or process-down state, with clear pause, sleep, stop, and wake semantics across the control plane, APIs, and desktop shell.
+
+### Execution Slices
+
+- `M10.1` Define session-state protocol, snapshot, and event-model changes.
+- `M10.2` Implement power policy, idle timers, and lifecycle controls in the control plane.
+- `M10.3` Surface status banners and power-state controls in desktop operator flows.
+- `M10.4` Add lifecycle integration coverage, smoke paths, and metrics evidence.
+
+### Coverage
+
+- explicit `loading`, `ready`, `paused`, `sleeping`, and `stopped` session states
+- `start`, `pause`, `resume`, and `stop` controls
+- configurable `auto_sleep`, `light_sleep_after`, and `deep_sleep_after` policy
+- power-management state in chat, settings, and operator surfaces
+- session-state banners for `loading`, `sleeping`, and `stopped`
+- wake reasons, idle timers, and safe recovery from sleeping state
+
+### Exit Criteria
+
+- Session lifecycle transitions are explicit, measurable, and test-covered.
+- Sleeping, paused, and stopped states are not conflated in UI or control-plane state.
+- The desktop shell and API surfaces agree on current session and power state.
+- Idle-to-sleep and wake flows preserve cache and model-state integrity.
+
+### Key Probes
+
+- session start latency
+- pause transition latency
+- sleep transition latency
+- wake-to-ready latency
+- session-state mismatch count
+- auto-sleep trigger count
+
+## M11: Disk Streaming, Memory Budgeting, And Cache Policy
+
+### Scope
+
+- disk streaming mode
+- virtual-memory budgeting
+- large-model safety policy
+- cache compatibility under streaming
+- observable SSD-backed execution costs
+
+### Target Outcome
+
+Melix should support controlled disk-backed execution for models that exceed practical RAM residency, while making memory budgets, cache tradeoffs, and operator-visible safety policy explicit.
+
+### Execution Slices
+
+- `M11.1` Add disk-streaming mode semantics and runtime-facing configuration.
+- `M11.2` Add memory-budget admission, headroom checks, and safety guards.
+- `M11.3` Expose streaming-compatible cache policy and settings surfaces.
+- `M11.4` Add large-model streaming benchmarks, operator smoke paths, and runbooks.
+
+### Coverage
+
+- session-level disk streaming mode
+- adjustable virtual-memory budget
+- large-model load admission using memory and SSD budgets
+- cache-disable or cache-limiting policy for incompatible streaming paths
+- unified configuration for prefix cache, paged KV cache, persistent disk cache, cache memory limit, cache memory percentage, block size, block-cache directory, cache directory, max cache size, and cache quantization under this mode
+- metrics for RAM pressure, SSD footprint, restore cost, and degraded-path latency
+
+### Exit Criteria
+
+- Disk-streaming mode can be enabled and observed without hidden side effects.
+- Virtual-memory budgets gate unsafe loads before runtime instability.
+- Cache policy under disk streaming is explicit and operator-visible.
+- Recovery, warmup, and steady-state metrics distinguish RAM-resident and SSD-backed paths.
+
+### Key Probes
+
+- streamed-model load latency
+- virtual-memory budget rejection count
+- SSD-backed restore latency
+- disk-streaming throughput delta
+- cache-disable enforcement count
+- SSD footprint by session
+
+## M12: Model Registry, Family Coverage, And Model Tools
+
+### Scope
+
+- expanded model-family coverage
+- ordered multi-root registry completion
+- model inspection and health tooling
+- artifact conversion and quantized packaging
+- independent embedding-model selection
+
+### Target Outcome
+
+Melix should provide broad family-aware model support and a complete local model-operations surface, so operators can discover, validate, convert, and serve diverse text, MoE, embedding, and image models through one registry and tooling model.
+
+### Execution Slices
+
+- `M12.1` Complete multi-root registry management and operator-visible rescan behavior.
+- `M12.2` Add text and MoE family adapters for expanded serving coverage.
+- `M12.3` Add image-family dispatch and picker completion for supported creative families.
+- `M12.4` Add inspect, health-check, and conversion tooling through stable model-ops paths.
+
+### Coverage
+
+- default plus user-added model roots with ordered scanning and reload
+- structured provider, organization, model, and variant identity
+- expanded text-family support for `Mistral Small 4 (119B)`, `model_type: mistral4`, MLA attention, `128-expert MoE`, `YaRN interleaved RoPE`, `Nemotron-H`, and MoE gate-dequant paths
+- expanded image-family dispatch for `Klein 4B/9B`, `Kontext`, `Fill`, `QwenImage`, and `FIBO`, with correct class-based routing instead of pattern-only dispatch
+- model inspection metadata, model health checks, and explicit failure reports
+- HuggingFace-to-quantized-artifact workflow and independent embedding-model preload
+
+### Exit Criteria
+
+- Multi-root discovery and rescan are stable and operator-visible.
+- Expanded family adapters can be loaded, routed, and verified through integration coverage.
+- Model inspection and health tooling return coherent results through supported operator surfaces.
+- Conversion and quantized packaging workflows are test-covered and tied to model metadata.
+
+### Key Probes
+
+- model scan latency by root
+- family dispatch success rate
+- health-check pass rate
+- inspection request latency
+- conversion job duration
+- embedding-preload success rate
+
+## M13: Gateway Configuration, Defaults, And API Onboarding
+
+### Scope
+
+- gateway configuration viewing and editing
+- generation and batching defaults
+- speculative-decoding and embedding-model controls
+- API compatibility onboarding
+- tool and MCP configuration visibility
+
+### Target Outcome
+
+Melix should expose a complete and inspectable local server configuration surface, with enough operator guidance that supported API consumers can connect without reading source code or guessing hidden defaults.
+
+### Execution Slices
+
+- `M13.1` Add a typed gateway-config state model and persistence flow.
+- `M13.2` Add batching, generation-default, and speculative-decoding settings.
+- `M13.3` Add embedding, tool-parser, MCP, config-file, and additional-arguments settings.
+- `M13.4` Add API reference projection and quick-start onboarding material.
+
+### Coverage
+
+- host, port, API key, served-model name, rate-limit, timeout, log-level, and CORS settings
+- concurrent-processing, max-concurrent-sequence, prefill-batch-size, and completion-batch-size controls
+- default max tokens, default temperature, default top-p, and stream-interval defaults
+- speculative-decoding controls, including draft-model selection and `num-draft-tokens` policy
+- embedding-model selection, built-in tool-parser settings, MCP configuration, config-file path, and additional arguments
+- OpenAI, Anthropic, and Ollama endpoint reference plus curl, Python, and JavaScript quick-start snippets
+
+### Exit Criteria
+
+- Gateway configuration is complete, operator-visible, and backed by control-plane truth.
+- Default precedence between packaged defaults, config files, and operator overrides is explicit.
+- API onboarding material matches live supported endpoints and payload expectations.
+- Tool and MCP settings are visible without requiring direct file inspection.
+
+### Key Probes
+
+- gateway-config round-trip latency
+- config-precedence conflict count
+- onboarding example success rate
+- endpoint reference generation latency
+- speculative-config apply latency
+- settings drift detection count
+
+## M14: Image Iteration And Persisted Creative Workflows
+
+### Scope
+
+- image variations and iterate flows
+- persisted image-generation defaults
+- model-role separation for generation versus editing
+- longer-running creative job policy
+- image-family picker completion
+
+### Target Outcome
+
+Melix should turn image generation and editing into an iterative local workflow rather than a single-shot job API, while keeping long-running execution, timeout policy, and artifact lineage explicit.
+
+### Execution Slices
+
+- `M14.1` Add image-variation and iterate request semantics.
+- `M14.2` Add persisted image defaults and role-aware model picking.
+- `M14.3` Add redo actions and longer-running timeout policy.
+- `M14.4` Add image-iteration integration coverage and artifact-lineage evidence.
+
+### Coverage
+
+- source-image variations with explicit strength control
+- iterate-from-previous-artifact flow
+- always-visible redo and reiteration actions
+- explicit generate-model and edit-model role separation in the picker
+- persisted defaults for steps, size, guidance, strength, and negative prompt
+- longer `30-minute` timeout policy for generation and edit workflows, with operator-visible timeout state
+
+### Exit Criteria
+
+- Image iteration flows can reuse prior artifacts without bypassing image-job truth.
+- Persisted image defaults survive restart and remain inspectable.
+- Model-role distinctions are visible and validated in the picker and request paths.
+- Longer-running image jobs have explicit timeout, cancel, and retry behavior.
+
+### Key Probes
+
+- variation request latency
+- iterate action latency
+- persisted-image-settings restore success rate
+- timeout-trigger count
+- image-role mismatch rejection count
+- redo action usage count
+
+## M15: Desktop Signals, Download Recovery, And Streaming Polish
+
+### Scope
+
+- smoother token rendering
+- update and status messaging
+- paused-download restoration
+- queue and status-bar clarity
+- grounded product-shell placeholders
+
+### Target Outcome
+
+Melix should finish the operator-facing desktop shell with clearer state signals, more polished streaming presentation, and stronger recovery behavior for long-running and interrupted product workflows.
+
+### Execution Slices
+
+- `M15.1` Add smooth token-stream presentation in the desktop shell.
+- `M15.2` Unify update banners and runtime-signal messaging.
+- `M15.3` Persist download queues and restore paused downloads after restart.
+- `M15.4` Add desktop-polish integration coverage and navigation-grounding evidence.
+
+### Coverage
+
+- typewriter-style token rendering using a smooth UI-side presentation layer
+- dismissible update-availability banner
+- paused-download recovery after reopening the window
+- richer download-queue and status-bar messaging
+- session and runtime banners grounded in live control-plane state
+- product-shell placeholders, including future-facing tabs, that remain attached to real navigation and control-plane truth
+
+### Exit Criteria
+
+- Token rendering polish does not distort or reorder streamed output.
+- Paused downloads can be resumed after the desktop shell restarts.
+- Update and runtime banners are dismissible, accurate, and test-covered.
+- Queue and status messaging reduce operator ambiguity during long-running workflows.
+
+### Key Probes
+
+- token-render lag
+- paused-download restore success rate
+- banner dismissal persistence rate
+- queue-status refresh latency
+- desktop-state hydration mismatch count
+
 ## Execution Order
 
 Execute in strict order:
 
-`M1 -> M2 -> M3 -> M4 -> M5 -> M6 -> M7 -> M8 -> M9`
+`M1 -> M2 -> M3 -> M4 -> M5 -> M6 -> M7 -> M8 -> M9 -> M10 -> M11 -> M12 -> M13 -> M14 -> M15`
 
 The only allowed forward exceptions are:
 
 - urgent compatibility fixes from `M3`
 - install or startup blockers from `M8`
+- session-lifecycle or memory-safety blockers from `M10` and `M11`
 
 Each milestone should later become its own dedicated execution-plan document before implementation begins.
 
@@ -448,4 +743,5 @@ Repository-wide verification baseline remains:
 - Experimental features such as advanced quantization and experimental acceleration may ship behind feature flags first, but they still require metrics, rollback paths, and release-gate awareness.
 - The model-directory strategy is locked as `ordered multi-root + provider/org/model/variant + sidecar manifest`.
 - Cache identity must include `adapter_set`, `parser_mode`, and `reasoning_profile` to prevent invalid reuse.
+- `M10-M15` are product-completion milestones that intentionally combine operator-visible behavior with the runtime and control-plane hooks needed to support it.
 - This document is the master roadmap. Each milestone must later be expanded into a separate execution plan with concrete implementation tasks.
