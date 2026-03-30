@@ -72,6 +72,8 @@ struct DesktopDashboardTabView: View {
     let foundation: DesktopFoundationState
 
     var body: some View {
+        let modelRows: [RuntimeModelRow] = foundation.models
+
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 Text(foundation.title)
@@ -119,6 +121,11 @@ struct DesktopDashboardTabView: View {
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
+
+                GroupBox("Residency And Memory") {
+                    DesktopResidencyRowsSection(models: modelRows)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
             }
             .padding(20)
         }
@@ -138,6 +145,17 @@ struct DesktopModelsTabView: View {
                     Text(model.alias.isEmpty ? "\(model.kind) • \(model.stateText) • \(model.maxContext) ctx" : "\(model.alias) • \(model.stateText) • \(model.maxContext) ctx")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                    Text(model.residencyText)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                    Text(model.memoryText)
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                    if !model.memoryAlertText.isEmpty {
+                        Text(model.memoryAlertText)
+                            .font(.caption2)
+                            .foregroundStyle(.red)
+                    }
                     Text("\(model.memoryPolicyText) • \(model.accelerationModeText) • \(model.accelerationProfileID.isEmpty ? "no-profile" : model.accelerationProfileID)")
                         .font(.caption2)
                         .foregroundStyle(.tertiary)
@@ -172,6 +190,44 @@ struct DesktopModelsTabView: View {
             await viewModel.unloadModel(modelID: model.modelID)
         } else {
             await viewModel.loadModel(modelID: model.modelID)
+        }
+    }
+}
+
+private struct DesktopResidencyRowsSection: View {
+    let models: [RuntimeModelRow]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            if models.isEmpty {
+                Text("No models discovered.")
+                    .foregroundStyle(.secondary)
+            } else {
+                ForEach(models, id: \RuntimeModelRow.id) { (model: RuntimeModelRow) in
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(alignment: .firstTextBaseline) {
+                            Text(model.modelID)
+                                .font(.headline)
+                            Spacer()
+                            Text(model.stateText)
+                                .font(.caption)
+                                .foregroundStyle(model.memoryAlertText.isEmpty ? Color.secondary : Color.orange)
+                        }
+                        Text(model.residencyText)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Text(model.memoryText)
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                        if !model.memoryAlertText.isEmpty {
+                            Text(model.memoryAlertText)
+                                .font(.caption2)
+                                .foregroundStyle(.red)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
         }
     }
 }

@@ -127,6 +127,37 @@ public struct DesktopFoundationState: Equatable, Sendable {
                 return false
             }
         }
+        let pinnedModels = snapshot.models.filter { model in
+            model.residency.pinned || model.pinned || model.state == .modelPinned
+        }
+        let pinRequestedModels = snapshot.models.filter { model in
+            model.residency.pinRequested || model.settings.pinOnLoad
+        }
+        let ttlManagedModels = snapshot.models.filter { model in
+            let ttl = max(model.residency.ttlSeconds, model.settings.ttlSeconds)
+            return ttl > 0
+        }
+        let evictionTTLCount = metricValue(snapshot.metrics, key: "control_plane.model_eviction_ttl_count")
+        let evictionLRUCount = metricValue(snapshot.metrics, key: "control_plane.model_eviction_lru_same_capability_count")
+        let evictionOtherCount = metricValue(snapshot.metrics, key: "control_plane.model_eviction_other_count")
+        let evictionProtectedCount = metricValue(snapshot.metrics, key: "control_plane.model_eviction_last_pinned_protected_count")
+        let evictionFallbackCount = Double(snapshot.models.filter { model in
+            isEvictionReason(model.residency.transitionReason)
+        }.count)
+        let evictionCount = max(
+            evictionTTLCount + evictionLRUCount + evictionOtherCount,
+            evictionFallbackCount
+        )
+        let modelGuardAlerts = snapshot.models.filter { model in
+            isMemoryProtectionReason(model.residency.transitionReason)
+        }
+        let recentGuardAlerts = snapshot.recentErrors.filter { error in
+            isMemoryProtectionReason(error.code) || isMemoryProtectionReason(error.message)
+        }
+        let guardCount = max(Double(modelGuardAlerts.count), Double(recentGuardAlerts.count))
+        let guardDetail = recentGuardAlerts.first?.message
+            ?? modelGuardAlerts.first.map { formatTransitionReason($0.residency.transitionReason) }
+            ?? "No active memory guard failures"
 
         let dashboardCards = [
             DesktopDashboardCard(
@@ -148,6 +179,12 @@ public struct DesktopFoundationState: Equatable, Sendable {
                 detail: "loaded / discovered"
             ),
             DesktopDashboardCard(
+                id: "residency",
+                title: "Residency",
+                value: "\(pinnedModels.count) pinned",
+                detail: "\(loadedModels.count) loaded • \(pinRequestedModels.count) requested • \(ttlManagedModels.count) ttl"
+            ),
+            DesktopDashboardCard(
                 id: "sessions",
                 title: "Sessions",
                 value: "\(snapshot.sessions.count)",
@@ -166,10 +203,22 @@ public struct DesktopFoundationState: Equatable, Sendable {
                 detail: "scheduler pressure"
             ),
             DesktopDashboardCard(
+                id: "evictions",
+                title: "Evictions",
+                value: String(Int(evictionCount)),
+                detail: "ttl \(Int(evictionTTLCount)) • lru \(Int(evictionLRUCount)) • protected \(Int(evictionProtectedCount))"
+            ),
+            DesktopDashboardCard(
                 id: "memory",
                 title: "Memory",
                 value: formatBytes(snapshot.resources.memoryUsedBytes),
                 detail: "of \(formatBytes(snapshot.resources.memoryTotalBytes))"
+            ),
+            DesktopDashboardCard(
+                id: "guards",
+                title: "Memory Guards",
+                value: String(Int(guardCount)),
+                detail: guardDetail
             ),
         ]
 
@@ -235,6 +284,41 @@ public struct DesktopFoundationState: Equatable, Sendable {
             apiReference: APIReferenceCatalog.phaseFourFoundation
         )
     }
+}
+
+private func metricValue(
+    _ metrics: Melix_Controlplane_V1_MetricsSummary,
+    key: String
+) -> Double {
+    metrics.values[key] ?? 0
+}
+
+private func isEvictionReason(_ reason: String) -> Bool {
+    let normalized = reason.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    guard !normalized.isEmpty else {
+        return false
+    }
+    return normalized.contains("ttl_expired")
+        || normalized.contains("lru_same_capability")
+        || normalized.contains("operator_unload")
+}
+
+private func isMemoryProtectionReason(_ reason: String) -> Bool {
+    let normalized = reason.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    guard !normalized.isEmpty else {
+        return false
+    }
+    return normalized.contains("memory_budget")
+        || normalized.contains("prefill_memory_guard")
+        || normalized.contains("quadratic_prefill_guard")
+}
+
+private func formatTransitionReason(_ reason: String) -> String {
+    let separatorNormalized = reason.replacingOccurrences(of: "_", with: " ")
+    guard let first = separatorNormalized.first else {
+        return "Unknown"
+    }
+    return String(first).uppercased() + separatorNormalized.dropFirst()
 }
 
 enum APIReferenceCatalog {

@@ -213,6 +213,68 @@ struct RuntimeViewModelTests {
         #expect(makeRuntimeModelRow(failed).stateText == "Failed • Operator unload failed")
     }
 
+    @Test("runtime model row surfaces residency memory and guard descriptors")
+    func runtimeModelRowSurfacesResidencyMemoryAndGuardDescriptors() {
+        let guarded = makeModelSummary(
+            state: .modelFailed,
+            transitionReason: "memory_budget_exceeded",
+            pinRequested: true,
+            pinned: false,
+            ttlSeconds: 600,
+            estimatedBytes: 512 * 1024 * 1024,
+            inflightRequests: 3,
+            memoryPolicy: .memoryResidencyPinned
+        )
+
+        let row = makeRuntimeModelRow(guarded)
+
+        #expect(row.residencyText.contains("Failed"))
+        #expect(row.residencyText.contains("Pinned"))
+        #expect(row.residencyText.contains("TTL 600s"))
+        #expect(row.residencyText.contains("Pin requested"))
+        #expect(row.memoryText.contains("estimated"))
+        #expect(row.memoryText.contains("3 inflight"))
+        #expect(row.memoryAlertText == "Memory protection • Memory budget exceeded")
+    }
+
+    @Test("runtime model row falls back across residency states policies and ttl descriptors")
+    func runtimeModelRowFallsBackAcrossResidencyStateBranches() {
+        var explicitResidency = makeModelSummary(
+            state: .modelDiscovered,
+            memoryPolicy: .unspecified
+        )
+        explicitResidency.residency.state = .loading
+
+        let loadingFallback = makeModelSummary(
+            state: .modelLoading,
+            memoryPolicy: .unspecified
+        )
+        let evictingFallback = makeModelSummary(
+            state: .modelEvicting,
+            memoryPolicy: .unspecified
+        )
+        let unloadedFallback = makeModelSummary(
+            state: .modelUnloaded,
+            memoryPolicy: .unspecified
+        )
+        let ttlFallback = makeModelSummary(
+            state: .modelDiscovered,
+            ttlSeconds: 30,
+            memoryPolicy: .unspecified
+        )
+        let unknownFallback = makeModelSummary(
+            state: .UNRECOGNIZED(-1),
+            memoryPolicy: .unspecified
+        )
+
+        #expect(makeRuntimeModelRow(explicitResidency).residencyText.contains("Loading"))
+        #expect(makeRuntimeModelRow(loadingFallback).residencyText.contains("Loading"))
+        #expect(makeRuntimeModelRow(evictingFallback).residencyText.contains("Evicting"))
+        #expect(makeRuntimeModelRow(unloadedFallback).residencyText.contains("Unloaded"))
+        #expect(makeRuntimeModelRow(ttlFallback).residencyText.contains("TTL 30s"))
+        #expect(makeRuntimeModelRow(unknownFallback).residencyText.contains("Unknown"))
+    }
+
     @Test("desktop foundation derives dashboard settings bench and api state from control-plane truth")
     @MainActor
     func desktopFoundationDerivesOperatorPanelsFromSnapshotTruth() async throws {
@@ -231,6 +293,106 @@ struct RuntimeViewModelTests {
         #expect(foundation.settings.contains(where: { $0.key == "Connection" && $0.value == "Connected" }))
         #expect(foundation.benchMetrics.contains(where: { $0.name == "http.translation_ms" }))
         #expect(foundation.apiReference.contains(where: { $0.path == "/v1/responses" }))
+    }
+
+    @Test("desktop foundation surfaces residency eviction and memory guard summaries")
+    @MainActor
+    func desktopFoundationSurfacesResidencyEvictionAndMemoryGuardSummaries() async throws {
+        var snapshot = makeSnapshot(
+            serverState: .serverReady,
+            models: [
+                makeModelSummary(
+                    modelID: "melix-dev-text",
+                    state: .modelPinned,
+                    pinRequested: true,
+                    pinned: true,
+                    ttlSeconds: 900,
+                    estimatedBytes: 768 * 1024 * 1024,
+                    memoryPolicy: .memoryResidencyPinned
+                ),
+                makeModelSummary(
+                    modelID: "melix-dev-evicting",
+                    state: .modelEvicting,
+                    transitionReason: "ttl_expired",
+                    ttlSeconds: 120,
+                    estimatedBytes: 256 * 1024 * 1024,
+                    memoryPolicy: .memoryResidencyTtl
+                ),
+                makeModelSummary(
+                    modelID: "melix-dev-guarded",
+                    state: .modelFailed,
+                    transitionReason: "prefill_memory_guard_exceeded",
+                    estimatedBytes: 512 * 1024 * 1024,
+                    inflightRequests: 1
+                ),
+            ]
+        )
+        snapshot.metrics.values = [
+            "control_plane.model_eviction_ttl_count": 2,
+            "control_plane.model_eviction_lru_same_capability_count": 1,
+            "control_plane.model_eviction_last_pinned_protected_count": 1,
+        ]
+        snapshot.recentErrors = [
+            {
+                var error = Melix_Controlplane_V1_RecentError()
+                error.code = "prefill_memory_guard_exceeded"
+                error.message = "Prefill memory guard exceeded for melix-dev-guarded"
+                return error
+            }(),
+        ]
+        let client = SnapshotControlPlaneXPCClient(snapshot: snapshot)
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+
+        let foundation = viewModel.desktopFoundationState
+        let hasResidencyCard = foundation.dashboardCards.contains { row in
+            row.id == "residency" && row.value == "1 pinned"
+        }
+        let hasEvictionsCard = foundation.dashboardCards.contains { row in
+            row.id == "evictions" && row.value == "3"
+        }
+        let hasGuardCard = foundation.dashboardCards.contains { row in
+            row.id == "guards" && row.value == "1"
+        }
+        let hasGuardedModel = foundation.models.contains { row in
+            row.modelID == "melix-dev-guarded" && row.memoryAlertText.contains("Memory protection")
+        }
+        let hasEvictingModel = foundation.models.contains { row in
+            row.modelID == "melix-dev-evicting" && row.stateText == "Evicting • Ttl expired"
+        }
+
+        #expect(hasResidencyCard)
+        #expect(hasEvictionsCard)
+        #expect(hasGuardCard)
+        #expect(hasGuardedModel)
+        #expect(hasEvictingModel)
+    }
+
+    @Test("desktop foundation formats guard details from model transitions when recent errors are absent")
+    @MainActor
+    func desktopFoundationFormatsGuardDetailFromModelTransitionFallback() async throws {
+        let snapshot = makeSnapshot(
+            serverState: .serverReady,
+            models: [
+                makeModelSummary(
+                    modelID: "melix-dev-guarded",
+                    state: .modelFailed,
+                    transitionReason: "quadratic_prefill_guard_exceeded",
+                    estimatedBytes: 128 * 1024 * 1024
+                ),
+            ]
+        )
+        let client = SnapshotControlPlaneXPCClient(snapshot: snapshot)
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+
+        let foundation = viewModel.desktopFoundationState
+        let guardCard = try #require(foundation.dashboardCards.first(where: { $0.id == "guards" }))
+
+        #expect(guardCard.value == "1")
+        #expect(guardCard.detail == "Quadratic prefill guard exceeded")
     }
 
     @Test("subscription termination triggers bounded reconnect and records recovery metrics")
@@ -1345,7 +1507,13 @@ private func makeSnapshot(
 private func makeModelSummary(
     modelID: String = "melix-dev-text",
     state: Melix_Controlplane_V1_ModelState,
-    transitionReason: String = ""
+    transitionReason: String = "",
+    pinRequested: Bool = false,
+    pinned: Bool = false,
+    ttlSeconds: UInt32 = 0,
+    estimatedBytes: UInt64 = 0,
+    inflightRequests: UInt64 = 0,
+    memoryPolicy: Melix_Controlplane_V1_MemoryResidencyPolicy = .memoryResidencyEvictable
 ) -> Melix_Controlplane_V1_ModelSummary {
     var model = Melix_Controlplane_V1_ModelSummary()
     model.modelID = modelID
@@ -1353,6 +1521,16 @@ private func makeModelSummary(
     model.state = state
     model.features = ["chat"]
     model.maxContext = 8192
+    model.pinned = pinned
+    model.inflightRequests = inflightRequests
+    model.estimatedBytes = estimatedBytes
+    model.settings.pinOnLoad = pinRequested
+    model.settings.ttlSeconds = ttlSeconds
+    model.settings.memoryPolicy = memoryPolicy
+    model.residency.pinRequested = pinRequested
+    model.residency.pinned = pinned
+    model.residency.ttlSeconds = ttlSeconds
+    model.residency.policy = memoryPolicy
     model.residency.transitionReason = transitionReason
     return model
 }
@@ -1383,7 +1561,10 @@ private func makeRuntimeModelRow(state: Melix_Controlplane_V1_ModelState) -> Run
         alias: "Melix Dev Text",
         memoryPolicyText: "Evictable",
         accelerationModeText: "Baseline",
-        accelerationProfileID: ""
+        accelerationProfileID: "",
+        residencyText: "Warm • Evictable",
+        memoryText: "No live footprint reported",
+        memoryAlertText: ""
     )
 }
 

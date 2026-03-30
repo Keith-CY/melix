@@ -37,6 +37,39 @@ struct DesktopFoundationViewTests {
         #expect(view.subviews.isEmpty == false)
     }
 
+    @Test("models tab renders residency memory alerts when a model is guard-blocked")
+    @MainActor
+    func modelsTabRendersResidencyMemoryAlerts() async throws {
+        let client = FakeControlPlaneXPCClient()
+        var snapshot = Melix_Controlplane_V1_ServerSnapshot()
+        snapshot.serverState = .serverReady
+        snapshot.models = [
+            makeMenuBarModelSummary(
+                modelID: "melix-dev-guarded",
+                state: .modelFailed,
+                transitionReason: "memory_budget_exceeded",
+                estimatedBytes: 512 * 1024 * 1024,
+                inflightRequests: 2
+            ),
+        ]
+        await client.configureSnapshot(snapshot)
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+
+        let foundation = viewModel.desktopFoundationState
+        let guardedModel = try #require(foundation.models.first)
+        let view = hostView(
+            DesktopModelsTabView(
+                foundation: foundation,
+                viewModel: viewModel
+            )
+        )
+
+        #expect(view.subviews.isEmpty == false)
+        #expect(guardedModel.memoryAlertText == "Memory protection • Memory budget exceeded")
+        #expect(guardedModel.memoryText.contains("2 inflight"))
+    }
+
     @Test("models tab buttons dispatch latency profile and load actions")
     @MainActor
     func modelsTabButtonsDispatchActions() async throws {
@@ -189,12 +222,24 @@ struct DesktopFoundationViewTests {
         let hasConnectionCard = foundation.dashboardCards.contains { row in
             row.id == "connection" && row.value == "Connected"
         }
+        let hasResidencyCard = foundation.dashboardCards.contains { row in
+            row.id == "residency"
+        }
+        let hasEvictionsCard = foundation.dashboardCards.contains { row in
+            row.id == "evictions"
+        }
+        let hasGuardCard = foundation.dashboardCards.contains { row in
+            row.id == "guards"
+        }
         let hasConnectionSetting = foundation.settings.contains { row in
             row.key == "Connection" && row.value == "Connected"
         }
 
         #expect(dashboard.subviews.isEmpty == false)
         #expect(hasConnectionCard)
+        #expect(hasResidencyCard)
+        #expect(hasEvictionsCard)
+        #expect(hasGuardCard)
         #expect(hasConnectionSetting)
         #expect(settings.subviews.isEmpty == false)
         #expect(logs.subviews.isEmpty == false)
@@ -441,6 +486,94 @@ struct DesktopFoundationViewTests {
         #expect(viewModel.imageJobs.isEmpty)
         #expect(viewModel.selectedImageJob == nil)
     }
+
+    @Test("dashboard renders residency and memory protection summaries from control-plane truth")
+    @MainActor
+    func dashboardRendersResidencyAndMemoryProtectionSummaries() async throws {
+        let client = FakeControlPlaneXPCClient()
+        var snapshot = Melix_Controlplane_V1_ServerSnapshot()
+        snapshot.serverState = .serverReady
+        snapshot.models = [
+            makeMenuBarModelSummary(
+                modelID: "melix-dev-text",
+                state: .modelPinned,
+                pinRequested: true,
+                pinned: true,
+                ttlSeconds: 900,
+                estimatedBytes: 768 * 1024 * 1024,
+                memoryPolicy: .memoryResidencyPinned
+            ),
+            makeMenuBarModelSummary(
+                modelID: "melix-dev-guarded",
+                state: .modelFailed,
+                transitionReason: "memory_budget_exceeded",
+                estimatedBytes: 512 * 1024 * 1024,
+                inflightRequests: 1
+            ),
+        ]
+        snapshot.metrics.values = [
+            "control_plane.model_eviction_ttl_count": 1,
+            "control_plane.model_eviction_lru_same_capability_count": 1,
+            "control_plane.model_eviction_last_pinned_protected_count": 1,
+        ]
+        snapshot.recentErrors = [
+            {
+                var error = Melix_Controlplane_V1_RecentError()
+                error.code = "memory_budget_exceeded"
+                error.message = "Model load rejected by memory budget headroom."
+                return error
+            }(),
+        ]
+        await client.configureSnapshot(snapshot)
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+
+        let foundation = viewModel.desktopFoundationState
+        let view = hostView(DesktopDashboardTabView(foundation: foundation))
+        let hasResidencyCard = foundation.dashboardCards.contains { row in
+            row.id == "residency" && row.value == "1 pinned"
+        }
+        let hasGuardCard = foundation.dashboardCards.contains { row in
+            row.id == "guards" && row.value == "1"
+        }
+        let hasGuardedModel = foundation.models.contains { row in
+            row.modelID == "melix-dev-guarded" && row.memoryAlertText.contains("Memory protection")
+        }
+
+        #expect(view.subviews.isEmpty == false)
+        #expect(hasResidencyCard)
+        #expect(hasGuardCard)
+        #expect(hasGuardedModel)
+    }
+
+    @Test("dashboard renders an empty residency section when no models are discovered")
+    @MainActor
+    func dashboardRendersEmptyResidencySection() async throws {
+        var snapshot = Melix_Controlplane_V1_ServerSnapshot()
+        snapshot.serverState = .serverReady
+        snapshot.models = []
+        let foundation = DesktopFoundationState.build(
+            statusTitle: "Melix Ready",
+            serverStateText: "Ready",
+            connectionStateText: "Connected",
+            connectionDetailText: "Empty snapshot",
+            snapshot: snapshot,
+            protocolVersion: "melix.controlplane.v1",
+            serverVersion: "0.1.0",
+            daemonInstanceID: "daemon-empty",
+            features: ["xpc", "models"],
+            lastError: nil,
+            recentEvents: []
+        )
+        let view = hostView(DesktopDashboardTabView(foundation: foundation))
+        let hasResidencyCard = foundation.dashboardCards.contains { row in
+            row.id == "residency" && row.value == "0 pinned"
+        }
+
+        #expect(view.subviews.isEmpty == false)
+        #expect(foundation.models.isEmpty)
+        #expect(hasResidencyCard)
+    }
 }
 
 @MainActor
@@ -466,6 +599,39 @@ private func makeNamedModelOperationResult(
     result.outputPath = outputPath
     result.manifestJson = manifestJSON
     return result
+}
+
+private func makeMenuBarModelSummary(
+    modelID: String,
+    state: Melix_Controlplane_V1_ModelState,
+    transitionReason: String = "",
+    pinRequested: Bool = false,
+    pinned: Bool = false,
+    ttlSeconds: UInt32 = 0,
+    estimatedBytes: UInt64 = 0,
+    inflightRequests: UInt64 = 0,
+    memoryPolicy: Melix_Controlplane_V1_MemoryResidencyPolicy = .memoryResidencyEvictable
+) -> Melix_Controlplane_V1_ModelSummary {
+    var model = Melix_Controlplane_V1_ModelSummary()
+    model.modelID = modelID
+    model.kind = "text"
+    model.state = state
+    model.features = ["chat"]
+    model.maxContext = 8192
+    model.pinned = pinned
+    model.inflightRequests = inflightRequests
+    model.estimatedBytes = estimatedBytes
+    model.settings.alias = "Melix \(modelID)"
+    model.settings.pinOnLoad = pinRequested
+    model.settings.ttlSeconds = ttlSeconds
+    model.settings.memoryPolicy = memoryPolicy
+    model.settings.defaultAccelerationMode = .baseline
+    model.residency.pinRequested = pinRequested
+    model.residency.pinned = pinned
+    model.residency.ttlSeconds = ttlSeconds
+    model.residency.policy = memoryPolicy
+    model.residency.transitionReason = transitionReason
+    return model
 }
 
 private func makeRegistrySnapshotManifest(

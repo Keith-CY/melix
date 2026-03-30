@@ -17,7 +17,7 @@ public actor MenuBarMetricsStore {
     }
 }
 
-public struct RuntimeModelRow: Equatable, Sendable {
+public struct RuntimeModelRow: Identifiable, Equatable, Sendable {
     public let modelID: String
     public let kind: String
     public let state: Melix_Controlplane_V1_ModelState
@@ -28,6 +28,13 @@ public struct RuntimeModelRow: Equatable, Sendable {
     public let memoryPolicyText: String
     public let accelerationModeText: String
     public let accelerationProfileID: String
+    public let residencyText: String
+    public let memoryText: String
+    public let memoryAlertText: String
+
+    public var id: String {
+        modelID
+    }
 
     public var isLoaded: Bool {
         switch state {
@@ -1474,7 +1481,10 @@ func makeRuntimeModelRow(_ model: Melix_Controlplane_V1_ModelSummary) -> Runtime
         alias: model.settings.alias,
         memoryPolicyText: runtimeMemoryPolicyText(model.settings.memoryPolicy),
         accelerationModeText: runtimeAccelerationModeText(model.settings.defaultAccelerationMode),
-        accelerationProfileID: model.settings.accelerationProfileID
+        accelerationProfileID: model.settings.accelerationProfileID,
+        residencyText: runtimeResidencyText(for: model),
+        memoryText: runtimeMemoryText(for: model),
+        memoryAlertText: runtimeMemoryAlertText(for: model)
     )
 }
 
@@ -1555,4 +1565,142 @@ private func runtimeAccelerationModeText(_ mode: Melix_Controlplane_V1_Accelerat
     default:
         return "Unspecified"
     }
+}
+
+private func runtimeResidencyText(for model: Melix_Controlplane_V1_ModelSummary) -> String {
+    let residencyState = resolvedResidencyState(for: model)
+    let policy = resolvedResidencyPolicy(for: model)
+    let pinRequested = resolvedPinRequested(for: model)
+    let pinned = resolvedPinned(for: model)
+    let ttlSeconds = resolvedTTLSeconds(for: model)
+
+    var parts = [
+        runtimeResidencyStateText(residencyState),
+        runtimeMemoryPolicyText(policy),
+    ]
+    if pinRequested && !pinned {
+        parts.append("Pin requested")
+    }
+    if ttlSeconds > 0 {
+        parts.append("TTL \(ttlSeconds)s")
+    }
+    return parts.joined(separator: " • ")
+}
+
+private func runtimeMemoryText(for model: Melix_Controlplane_V1_ModelSummary) -> String {
+    var parts: [String] = []
+    if model.estimatedBytes > 0 {
+        parts.append("\(runtimeFormatBytes(model.estimatedBytes)) estimated")
+    }
+    if model.inflightRequests > 0 {
+        parts.append("\(model.inflightRequests) inflight")
+    }
+    if parts.isEmpty {
+        return "No live footprint reported"
+    }
+    return parts.joined(separator: " • ")
+}
+
+private func runtimeMemoryAlertText(for model: Melix_Controlplane_V1_ModelSummary) -> String {
+    let reason = model.residency.transitionReason.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard runtimeIsMemoryProtectionReason(reason) else {
+        return ""
+    }
+    return "Memory protection • \(runtimeTransitionReasonText(reason))"
+}
+
+private func resolvedResidencyState(
+    for model: Melix_Controlplane_V1_ModelSummary
+) -> Melix_Controlplane_V1_ResidencyState {
+    if model.residency.state != .unspecified {
+        return model.residency.state
+    }
+    switch model.state {
+    case .modelDiscovered:
+        return .discovered
+    case .modelLoading:
+        return .loading
+    case .modelWarm:
+        return .warm
+    case .modelPinned:
+        return .pinned
+    case .modelEvicting:
+        return .evicting
+    case .modelUnloaded:
+        return .unloaded
+    case .modelFailed:
+        return .failed
+    default:
+        return .unspecified
+    }
+}
+
+private func resolvedResidencyPolicy(
+    for model: Melix_Controlplane_V1_ModelSummary
+) -> Melix_Controlplane_V1_MemoryResidencyPolicy {
+    if model.residency.policy != .unspecified {
+        return model.residency.policy
+    }
+    if model.settings.pinOnLoad {
+        return .memoryResidencyPinned
+    }
+    if model.settings.memoryPolicy != .unspecified {
+        return model.settings.memoryPolicy
+    }
+    if model.settings.ttlSeconds > 0 {
+        return .memoryResidencyTtl
+    }
+    return .memoryResidencyEvictable
+}
+
+private func resolvedPinRequested(for model: Melix_Controlplane_V1_ModelSummary) -> Bool {
+    model.residency.pinRequested || model.settings.pinOnLoad
+}
+
+private func resolvedPinned(for model: Melix_Controlplane_V1_ModelSummary) -> Bool {
+    model.residency.pinned || model.pinned || model.state == .modelPinned
+}
+
+private func resolvedTTLSeconds(for model: Melix_Controlplane_V1_ModelSummary) -> UInt32 {
+    max(model.residency.ttlSeconds, model.settings.ttlSeconds)
+}
+
+private func runtimeResidencyStateText(_ state: Melix_Controlplane_V1_ResidencyState) -> String {
+    switch state {
+    case .discovered:
+        return "Discovered"
+    case .loading:
+        return "Loading"
+    case .warm:
+        return "Warm"
+    case .pinned:
+        return "Pinned"
+    case .evicting:
+        return "Evicting"
+    case .unloaded:
+        return "Unloaded"
+    case .failed:
+        return "Failed"
+    default:
+        return "Unknown"
+    }
+}
+
+private func runtimeIsMemoryProtectionReason(_ reason: String) -> Bool {
+    let normalized = reason.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    guard !normalized.isEmpty else {
+        return false
+    }
+    return normalized.contains("memory_budget")
+        || normalized.contains("prefill_memory_guard")
+        || normalized.contains("quadratic_prefill_guard")
+}
+
+private func runtimeFormatBytes(_ bytes: UInt64) -> String {
+    let formatter = ByteCountFormatter()
+    formatter.countStyle = .binary
+    formatter.allowedUnits = [.useKB, .useMB, .useGB]
+    formatter.includesUnit = true
+    formatter.includesCount = true
+    return formatter.string(fromByteCount: Int64(bytes))
 }
