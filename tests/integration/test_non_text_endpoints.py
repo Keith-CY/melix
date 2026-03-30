@@ -20,6 +20,31 @@ def _post_embeddings(stack: LiveMelixStack, model: str, inputs: list[str]) -> tu
         return response.status, payload
 
 
+def _post_rerank(
+    stack: LiveMelixStack,
+    model: str,
+    query: str,
+    documents: list[str],
+    top_k: int,
+) -> tuple[int, dict[str, object]]:
+    request = urllib.request.Request(
+        f"http://127.0.0.1:{stack.http_port}/v1/rerank",
+        data=json.dumps(
+            {
+                "model": model,
+                "query": query,
+                "documents": documents,
+                "top_k": top_k,
+            }
+        ).encode("utf-8"),
+        headers={"content-type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(request, timeout=10) as response:
+        payload = json.loads(response.read().decode("utf-8"))
+        return response.status, payload
+
+
 def test_embeddings_endpoint_returns_vectors() -> None:
     stack = LiveMelixStack(Path(__file__).resolve().parents[2])
 
@@ -127,6 +152,28 @@ def test_rerank_endpoint_returns_ranked_items() -> None:
         assert response.status == 200
         assert payload["model"] == "melix-dev-rerank"
         assert [item["index"] for item in payload["data"]] == [1, 0]
+    finally:
+        stack.stop()
+
+
+def test_rerank_endpoint_prefers_exact_order_for_jina_v3_family() -> None:
+    stack = LiveMelixStack(Path(__file__).resolve().parents[2])
+
+    try:
+        stack.start()
+        stack.wait_for_models(["melix-dev-rerank"])
+        status, payload = _post_rerank(
+            stack,
+            "melix-dev-rerank",
+            "swift runtime",
+            ["runtime swift", "swift runtime"],
+            2,
+        )
+
+        assert status == 200
+        assert payload["model"] == "melix-dev-rerank"
+        assert [item["index"] for item in payload["data"]] == [1, 0]
+        assert payload["data"][0]["score"] > payload["data"][1]["score"]
     finally:
         stack.stop()
 

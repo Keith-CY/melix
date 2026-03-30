@@ -805,6 +805,21 @@ struct PythonBridgeWorkerClientTests {
         #expect(spec.ext["embedding_dimensions"] == "10")
     }
 
+    @Test("bootstrap worker preparation carries rerank family metadata into worker model specs")
+    func bootstrapWorkerPreparationCarriesRerankFamilyMetadataIntoWorkerModelSpecs() throws {
+        var summary = ModelCatalog.devRerankModel()
+        summary.settings.ext["rerank_backend_id"] = "token-overlap-v1"
+        summary.settings.ext["rerank_family_id"] = "jina-v3"
+        summary.settings.ext["rerank_scoring_mode"] = "order-aware-overlap"
+
+        let spec = try #require(BootstrapWorkerPreparation.modelSpec(for: summary))
+
+        #expect(spec.modelID == "melix-dev-rerank")
+        #expect(spec.ext["rerank_backend_id"] == "token-overlap-v1")
+        #expect(spec.ext["rerank_family_id"] == "jina-v3")
+        #expect(spec.ext["rerank_scoring_mode"] == "order-aware-overlap")
+    }
+
     @Test("bridge client treats helper errors as unavailable")
     func bridgeClientTreatsHelperErrorsAsUnavailable() async throws {
         let runner = ScriptedBridgeRunner()

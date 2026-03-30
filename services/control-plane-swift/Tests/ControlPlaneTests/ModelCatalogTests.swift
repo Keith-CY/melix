@@ -27,6 +27,9 @@ struct ModelCatalogTests {
         #expect(models.first(where: { $0.modelID == "melix-dev-embed" })?.settings.ext["embedding_pooling_mode"] == "cls")
         #expect(models.first(where: { $0.modelID == "melix-dev-embed" })?.settings.ext["embedding_dimensions"] == "8")
         #expect(models.first(where: { $0.modelID == "melix-dev-rerank" })?.routeClass == .workerRoutePythonRerank)
+        #expect(models.first(where: { $0.modelID == "melix-dev-rerank" })?.settings.ext["rerank_backend_id"] == "token-overlap-v1")
+        #expect(models.first(where: { $0.modelID == "melix-dev-rerank" })?.settings.ext["rerank_family_id"] == "jina-v3")
+        #expect(models.first(where: { $0.modelID == "melix-dev-rerank" })?.settings.ext["rerank_scoring_mode"] == "order-aware-overlap")
         #expect(models.first(where: { $0.modelID == "melix-dev-model-ops" })?.routeClass == .workerRoutePythonModelOperations)
     }
 

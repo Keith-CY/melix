@@ -353,6 +353,9 @@ public actor ModelCatalog {
         model.features = ["rerank"]
         model.settings.alias = "Melix Dev Rerank"
         model.settings.memoryPolicy = .memoryResidencyEvictable
+        model.settings.ext["rerank_backend_id"] = "token-overlap-v1"
+        model.settings.ext["rerank_family_id"] = "jina-v3"
+        model.settings.ext["rerank_scoring_mode"] = "order-aware-overlap"
         return withSynchronizedResidency(model)
     }
 

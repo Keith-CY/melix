@@ -82,6 +82,13 @@ class WorkerModelCatalog:
     @staticmethod
     def dev_rerank_model(environment: dict[str, str] | None = None) -> common_pb2.ModelSpec:
         environment = dict(environment or os.environ)
+        backend_id = environment.get("MELIX_DEV_RERANK_BACKEND_ID", "token-overlap-v1").strip() or "token-overlap-v1"
+        family_id = environment.get("MELIX_DEV_RERANK_FAMILY_ID", "jina-v3").strip() or "jina-v3"
+        default_scoring_mode = {
+            "basic": "set-overlap",
+            "jina-v3": "order-aware-overlap",
+        }.get(family_id, "order-aware-overlap")
+        scoring_mode = environment.get("MELIX_DEV_RERANK_SCORING_MODE", default_scoring_mode).strip() or default_scoring_mode
         return common_pb2.ModelSpec(
             model_id="melix-dev-rerank",
             model_path=environment.get("MELIX_DEV_RERANK_MODEL_PATH", "models/melix-dev-rerank"),
@@ -92,6 +99,11 @@ class WorkerModelCatalog:
             parser_mode="text",
             reasoning_mode="off",
             max_context=8192,
+            ext={
+                "rerank_backend_id": backend_id,
+                "rerank_family_id": family_id,
+                "rerank_scoring_mode": scoring_mode,
+            },
         )
 
     @staticmethod

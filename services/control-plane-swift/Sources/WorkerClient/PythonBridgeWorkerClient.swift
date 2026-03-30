@@ -308,6 +308,11 @@ public enum BootstrapWorkerPreparation {
         "embedding_normalization",
         "embedding_dimensions",
     ]
+    private static let rerankExtKeys = [
+        "rerank_backend_id",
+        "rerank_family_id",
+        "rerank_scoring_mode",
+    ]
 
     public static func modelSpec(for modelID: String) -> Melix_Worker_V1_ModelSpec? {
         switch modelID {
@@ -350,6 +355,11 @@ public enum BootstrapWorkerPreparation {
             }
         }
         for key in embeddingExtKeys {
+            if let value = summary.settings.ext[key], !value.isEmpty {
+                spec.ext[key] = value
+            }
+        }
+        for key in rerankExtKeys {
             if let value = summary.settings.ext[key], !value.isEmpty {
                 spec.ext[key] = value
             }
@@ -525,6 +535,9 @@ public enum BootstrapWorkerPreparation {
         model.parserMode = "text"
         model.reasoningMode = "off"
         model.maxContext = 8192
+        model.ext["rerank_backend_id"] = "token-overlap-v1"
+        model.ext["rerank_family_id"] = "jina-v3"
+        model.ext["rerank_scoring_mode"] = "order-aware-overlap"
         return model
     }
 
