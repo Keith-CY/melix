@@ -534,7 +534,7 @@ struct OpenAIHandlerTests {
 
         #expect(response.statusCode == 400)
         #expect(payload.contains("\"code\":\"invalid_argument\""))
-        #expect(payload.contains("\"message\":\"input_image.data is required.\""))
+        #expect(payload.contains("\"message\":\"input_image.url or input_image.data is required.\""))
         #expect(await workerClient.lastGenerateRequest == nil)
     }
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 from pathlib import Path
 import threading
@@ -23,6 +24,25 @@ def _post_json(url: str, payload: dict[str, object], *, timeout: float = 10.0) -
         if "application/json" in content_type:
             return response.status, json.loads(body.decode("utf-8"))
         return response.status, body
+
+
+def _start_image_fixture_server(payload: bytes, *, content_type: str = "image/png") -> tuple[ThreadingHTTPServer, str]:
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:  # noqa: N802
+            self.send_response(200)
+            self.send_header("content-type", content_type)
+            self.send_header("content-length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+        def log_message(self, format: str, *args) -> None:  # noqa: A003
+            return
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    url = f"http://127.0.0.1:{server.server_port}/fixture.png"
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    return server, url
 
 
 def test_text_requests_record_interference_metrics_during_multimodal_load() -> None:
@@ -211,4 +231,73 @@ def test_multimodal_operator_smoke_records_phase6_metrics() -> None:
         assert values["audio.speech_latency_ms"] >= 0
         assert values["audio.speech_output_bytes"] > 0
     finally:
+        stack.stop()
+
+
+def test_multimodal_chat_accepts_local_and_remote_image_urls(tmp_path: Path) -> None:
+    stack = LiveMelixStack(Path(__file__).resolve().parents[2])
+    local_image = tmp_path / "local-image.txt"
+    local_image.write_text("phase6 local image fixture")
+    remote_server, remote_url = _start_image_fixture_server(b"phase6 remote image fixture")
+
+    try:
+        stack.start()
+        stack.wait_for_models(["melix-dev-vlm"])
+
+        local_status, local_payload = _post_json(
+            stack.chat_url(),
+            {
+                "model": "melix-dev-vlm",
+                "stream": True,
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": "Summarize the local image."},
+                            {
+                                "type": "input_image",
+                                "input_image": {
+                                    "url": str(local_image),
+                                    "mime_type": "image/png",
+                                    "filename": local_image.name,
+                                },
+                            },
+                        ],
+                    }
+                ],
+            },
+        )
+        assert local_status == 200
+        assert b"Image content: phase6 local image fixture" in local_payload
+        assert b"Prompt: Summarize the local image." in local_payload
+
+        remote_status, remote_payload = _post_json(
+            stack.chat_url(),
+            {
+                "model": "melix-dev-vlm",
+                "stream": True,
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": "Summarize the remote image."},
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": remote_url,
+                                    "mime_type": "image/png",
+                                    "filename": "fixture.png",
+                                },
+                            },
+                        ],
+                    }
+                ],
+            },
+        )
+        assert remote_status == 200
+        assert b"Image content: phase6 remote image fixture" in remote_payload
+        assert b"Prompt: Summarize the remote image." in remote_payload
+    finally:
+        remote_server.shutdown()
+        remote_server.server_close()
         stack.stop()

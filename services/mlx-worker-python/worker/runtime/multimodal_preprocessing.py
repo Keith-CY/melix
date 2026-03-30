@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import hashlib
+import mimetypes
 from dataclasses import dataclass
 from pathlib import Path
 from time import perf_counter
+from urllib.error import HTTPError, URLError
 from urllib.parse import unquote, urlparse
+from urllib.request import urlopen
 
 
 class MultimodalPreprocessError(ValueError):
@@ -94,15 +97,14 @@ def _prepare_image_part(part) -> PreparedImageInput:
         )
 
     if part.image_uri:
-        path = _path_from_uri(part.image_uri)
-        bytes_data = path.read_bytes()
+        bytes_data, reference, detected_mime_type, detected_format, detected_filename = _bytes_from_image_uri(part.image_uri)
         return PreparedImageInput(
             bytes_data=bytes_data,
             source_kind="uri",
-            reference=part.image_uri,
-            mime_type=mime_type,
-            format=format_name or path.suffix.lstrip("."),
-            filename=filename or path.name,
+            reference=reference,
+            mime_type=mime_type or detected_mime_type,
+            format=format_name or detected_format,
+            filename=filename or detected_filename,
             sha256_hex=_sha256_hex(bytes_data),
         )
 
@@ -120,6 +122,40 @@ def _path_from_uri(uri: str) -> Path:
             raise MultimodalPreprocessError(f"Missing local image input: {uri}")
         return candidate
     raise MultimodalPreprocessError(f"Unsupported image URI scheme: {parsed.scheme}")
+
+
+def _bytes_from_image_uri(uri: str) -> tuple[bytes, str, str, str, str]:
+    parsed = urlparse(uri)
+    if parsed.scheme in {"", "file"}:
+        path = _path_from_uri(uri)
+        return (
+            path.read_bytes(),
+            uri,
+            "",
+            path.suffix.lstrip("."),
+            path.name,
+        )
+    if parsed.scheme in {"http", "https"}:
+        return _fetch_remote_image(uri)
+    raise MultimodalPreprocessError(f"Unsupported image URI scheme: {parsed.scheme}")
+
+
+def _fetch_remote_image(uri: str) -> tuple[bytes, str, str, str, str]:
+    parsed = urlparse(uri)
+    try:
+        with urlopen(uri, timeout=5.0) as response:
+            bytes_data = response.read()
+            mime_type = response.headers.get_content_type()
+    except (HTTPError, URLError, TimeoutError, OSError) as exc:
+        raise MultimodalPreprocessError(f"Remote image fetch failed: {uri}") from exc
+
+    path = Path(unquote(parsed.path))
+    format_name = path.suffix.lstrip(".")
+    if not format_name and mime_type:
+        guessed = mimetypes.guess_extension(mime_type)
+        format_name = guessed.lstrip(".") if guessed else ""
+    filename = path.name or "remote-image"
+    return bytes_data, uri, mime_type or "", format_name, filename
 
 
 def _sha256_hex(payload: bytes) -> str:

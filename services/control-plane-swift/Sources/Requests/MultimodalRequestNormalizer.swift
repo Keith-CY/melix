@@ -314,8 +314,16 @@ public struct MultimodalRequestNormalizer: Sendable {
             return normalized
         }
 
+        if inlineOnly, let url = reference.url, !url.isEmpty {
+            normalized.imageUri = url
+            normalized.media.sourceKind = .mediaSourceUri
+            return normalized
+        }
+
         guard let data = reference.data, !data.isEmpty else {
-            throw MultimodalRequestNormalizationError.missingValue(inlineOnly ? "input_image.data" : "image_url.url or image_url.data")
+            throw MultimodalRequestNormalizationError.missingValue(
+                inlineOnly ? "input_image.url or input_image.data" : "image_url.url or image_url.data"
+            )
         }
         guard let decoded = Data(base64Encoded: data) else {
             throw MultimodalRequestNormalizationError.invalidBase64("image")

@@ -98,6 +98,39 @@ struct MultimodalContractTests {
         #expect(part.media.byteLength == 5)
     }
 
+    @Test("multimodal request normalizer accepts input-image urls for local and remote ingress")
+    func inputImageURLsNormalizeToImageURIs() throws {
+        let normalizer = MultimodalRequestNormalizer()
+
+        let local = try normalizer.normalize(
+            OpenAIMultimodalContentPart(
+                type: .inputImage,
+                inputImage: OpenAIMultimodalImageReference(
+                    url: "/tmp/local-image.png",
+                    mimeType: "image/png",
+                    filename: "local-image.png"
+                )
+            )
+        )
+        let remote = try normalizer.normalize(
+            OpenAIMultimodalContentPart(
+                type: .inputImage,
+                inputImage: OpenAIMultimodalImageReference(
+                    url: "https://example.com/remote-image.png",
+                    detail: "high",
+                    mimeType: "image/png"
+                )
+            )
+        )
+
+        #expect(local.imageUri == "/tmp/local-image.png")
+        #expect(local.media.sourceKind == .mediaSourceUri)
+        #expect(local.media.filename == "local-image.png")
+        #expect(remote.imageUri == "https://example.com/remote-image.png")
+        #expect(remote.media.sourceKind == .mediaSourceUri)
+        #expect(remote.media.preprocessingHints["detail"] == "high")
+    }
+
     @Test("multimodal request normalizer rejects invalid inline base64 payloads")
     func invalidInlineBase64PayloadsAreRejected() {
         let part = OpenAIMultimodalContentPart(
@@ -201,6 +234,14 @@ struct MultimodalContractTests {
         }
         #expect(throws: MultimodalRequestNormalizationError.missingValue("input_audio")) {
             _ = try normalizer.normalize(OpenAIMultimodalContentPart(type: .inputAudio))
+        }
+        #expect(throws: MultimodalRequestNormalizationError.missingValue("input_image.url or input_image.data")) {
+            _ = try normalizer.normalize(
+                OpenAIMultimodalContentPart(
+                    type: .inputImage,
+                    inputImage: OpenAIMultimodalImageReference()
+                )
+            )
         }
         #expect(throws: MultimodalRequestNormalizationError.missingValue("image_url.url or image_url.data")) {
             _ = try normalizer.normalize(

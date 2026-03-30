@@ -511,6 +511,49 @@ struct TextEndpointContractTests {
         #expect(message.parts[1].media.mimeType == "image/png")
     }
 
+    @Test("chat request contracts preserve input-image urls in multimodal content arrays")
+    func chatRequestContractsDecodeMultimodalImageURLs() throws {
+        let decoder = JSONDecoder()
+        let translator = ChatRequestTranslator()
+
+        let request = try decoder.decode(
+            OpenAIChatCompletionsRequest.self,
+            from: Data(
+                """
+                {
+                  "model": "melix-dev-vlm",
+                  "stream": true,
+                  "messages": [
+                    {
+                      "role": "user",
+                      "content": [
+                        { "type": "text", "text": "Describe the image." },
+                        {
+                          "type": "input_image",
+                          "input_image": {
+                            "url": "https://example.com/fixture.png",
+                            "mime_type": "image/png",
+                            "filename": "fixture.png"
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+                """.utf8
+            )
+        )
+
+        let normalized = try translator.normalizeMultimodalChat(request)
+        let message = try #require(normalized.messages.first)
+
+        #expect(message.parts.count == 2)
+        #expect(message.parts[1].imageUri == "https://example.com/fixture.png")
+        #expect(message.parts[1].media.sourceKind == .mediaSourceUri)
+        #expect(message.parts[1].media.mimeType == "image/png")
+        #expect(message.parts[1].media.filename == "fixture.png")
+    }
+
     @Test("chat request messages round-trip text and multimodal content payloads")
     func chatRequestMessagesRoundTripTextAndMultimodalContentPayloads() throws {
         let encoder = JSONEncoder()

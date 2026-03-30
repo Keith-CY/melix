@@ -1,5 +1,6 @@
 from pathlib import Path
 from threading import Event
+from urllib.error import URLError
 
 import pytest
 
@@ -12,6 +13,7 @@ from worker.registry import WorkerRegistry
 from worker.runtime.deterministic_ocr_runtime import DeterministicOCRRuntime
 from worker.runtime.deterministic_vlm_runtime import DeterministicVLMRuntime
 from worker.runtime.mlx_text_runtime import MLXTextRuntime
+from worker.runtime import multimodal_preprocessing
 from worker.runtime.multimodal_preprocessing import (
     MultimodalPreprocessError,
     _prepare_image_part,
@@ -270,6 +272,54 @@ def test_prepare_vision_request_accepts_plain_local_paths(tmp_path: Path) -> Non
     assert request.preprocess_peak_memory_bytes == len(b"diagram text")
 
 
+def test_prepare_vision_request_accepts_remote_http_inputs(monkeypatch: pytest.MonkeyPatch) -> None:
+    class FakeHeaders:
+        def get_content_type(self) -> str:
+            return "image/png"
+
+    class FakeResponse:
+        headers = FakeHeaders()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        def read(self) -> bytes:
+            return b"remote diagram text"
+
+    monkeypatch.setattr(multimodal_preprocessing, "urlopen", lambda url, timeout=5.0: FakeResponse())
+
+    request = prepare_vision_request(
+        [
+            common_pb2.ChatMessage(
+                role="user",
+                parts=[
+                    common_pb2.MessagePart(text="Read this remote image."),
+                    common_pb2.MessagePart(
+                        image_uri="https://example.com/fixtures/diagram.png",
+                        media=common_pb2.MediaMetadata(
+                            media_type=common_pb2.MEDIA_TYPE_IMAGE,
+                            source_kind=common_pb2.MEDIA_SOURCE_URI,
+                            mime_type="image/png",
+                        ),
+                    ),
+                ],
+            )
+        ]
+    )
+
+    assert request.prompt_text == "Read this remote image."
+    assert len(request.images) == 1
+    assert request.images[0].source_kind == "uri"
+    assert request.images[0].reference == "https://example.com/fixtures/diagram.png"
+    assert request.images[0].filename == "diagram.png"
+    assert request.images[0].format == "png"
+    assert request.images[0].decoded_text() == "remote diagram text"
+    assert request.preprocess_input_bytes == len(b"remote diagram text")
+
+
 def test_prepare_vision_request_hash_changes_when_prompt_or_image_changes(tmp_path: Path) -> None:
     image_a = tmp_path / "image-a.txt"
     image_b = tmp_path / "image-b.txt"
@@ -308,7 +358,9 @@ def test_prepare_vision_request_hash_changes_when_prompt_or_image_changes(tmp_pa
     assert request_a.multimodal_hash_hex != request_d.multimodal_hash_hex
 
 
-def test_prepare_vision_request_rejects_missing_and_non_file_inputs(tmp_path: Path) -> None:
+def test_prepare_vision_request_rejects_missing_remote_and_unsupported_inputs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     missing_path = tmp_path / "missing-image.txt"
 
     with pytest.raises(MultimodalPreprocessError, match="Missing local image input"):
@@ -321,12 +373,27 @@ def test_prepare_vision_request_rejects_missing_and_non_file_inputs(tmp_path: Pa
             ]
         )
 
-    with pytest.raises(MultimodalPreprocessError, match="Unsupported image URI scheme"):
+    def failing_urlopen(url: str, timeout: float = 5.0):
+        raise URLError("unreachable")
+
+    monkeypatch.setattr(multimodal_preprocessing, "urlopen", failing_urlopen)
+
+    with pytest.raises(MultimodalPreprocessError, match="Remote image fetch failed"):
         prepare_vision_request(
             [
                 common_pb2.ChatMessage(
                     role="user",
                     parts=[common_pb2.MessagePart(image_uri="https://example.com/cat.png")],
+                )
+            ]
+        )
+
+    with pytest.raises(MultimodalPreprocessError, match="Unsupported image URI scheme"):
+        prepare_vision_request(
+            [
+                common_pb2.ChatMessage(
+                    role="user",
+                    parts=[common_pb2.MessagePart(image_uri="ftp://example.com/cat.png")],
                 )
             ]
         )
