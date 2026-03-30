@@ -709,14 +709,326 @@ def test_collect_restart_recovery_evidence_raises_when_snapshot_id_is_missing(
         phase8_runtime_probes.collect_restart_recovery_evidence(tmp_path)
 
 
-def test_stream_chat_completion_reads_http_status_and_body(
+def test_collect_cache_recovery_benchmark_evidence_combines_restart_hot_cold_and_partial_metrics(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        phase8_runtime_probes,
+        "collect_restart_recovery_evidence",
+        lambda repo_root: {
+            "restart_to_ready_ms": 450.0,
+            "snapshot_restore_ms": 130.0,
+            "restart_recovery_ms": 580.0,
+            "restart_recovery_success_rate": 100.0,
+        },
+    )
+    monkeypatch.setattr(
+        phase8_runtime_probes,
+        "_collect_hot_tier_recovery_evidence",
+        lambda repo_root: {
+            "followup_ttft_delta_ms": 12.5,
+            "prefix_affinity_hit_rate": 100.0,
+            "warm_route_preference_rate": 66.67,
+            "restored_route_rate": 66.67,
+        },
+    )
+    monkeypatch.setattr(
+        phase8_runtime_probes,
+        "_collect_cold_tier_recovery_evidence",
+        lambda repo_root: {"l2_hit_rate": 100.0},
+    )
+    monkeypatch.setattr(
+        phase8_runtime_probes,
+        "_collect_partial_restore_recovery_evidence",
+        lambda repo_root: {
+            "walk_back_count": 1.0,
+            "restored_tokens": 18.0,
+            "total_tokens": 22.0,
+            "restore_ratio_pct": 81.82,
+        },
+    )
+
+    report = phase8_runtime_probes.collect_cache_recovery_benchmark_evidence(tmp_path)
+
+    assert report["restart"]["restart_recovery_ms"] == 580.0
+    assert report["hot_tier"]["followup_ttft_delta_ms"] == 12.5
+    assert report["cold_tier"]["l2_hit_rate"] == 100.0
+    assert report["partial_restore"]["restore_ratio_pct"] == 81.82
+    assert report["metrics"]["bench.recovery.restart_to_ready_ms"] == 450.0
+    assert report["metrics"]["bench.recovery.hot_followup_ttft_delta_ms"] == 12.5
+    assert report["metrics"]["bench.recovery.cold_l2_hit_rate"] == 100.0
+    assert report["metrics"]["bench.recovery.partial_restore_ratio_pct"] == 81.82
+
+
+def test_collect_hot_tier_recovery_evidence_reports_followup_metrics(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeStack:
+        def __init__(self, repo_root: Path) -> None:
+            self.control_plane_metrics_path = tmp_path / "control-plane.json"
+
+        def start(self) -> None:
+            self.control_plane_metrics_path.write_text(
+                json.dumps(
+                    {
+                        "updated_at_unix_ms": 1,
+                        "values": {
+                            "session.followup_ttft_delta_ms": 15.0,
+                            "scheduler.prefix_affinity_hit_rate": 100.0,
+                            "scheduler.warm_route_preference_rate": 66.67,
+                            "scheduler.restored_route_rate": 66.67,
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+        def stop(self) -> None:
+            return None
+
+    calls = iter(
+        [
+            {"status": 200, "request_id": "req-cold", "ttft_ms": 27.5},
+            {"status": 200, "request_id": "req-warm", "ttft_ms": 12.5},
+        ]
+    )
+    monkeypatch.setattr(phase8_runtime_probes, "LiveMelixStack", FakeStack)
+    monkeypatch.setattr(
+        phase8_runtime_probes,
+        "stream_chat_completion",
+        lambda stack, payload: next(calls),
+    )
+
+    report = phase8_runtime_probes._collect_hot_tier_recovery_evidence(tmp_path)
+
+    assert report == {
+        "cold_ttft_ms": 27.5,
+        "warm_ttft_ms": 12.5,
+        "followup_ttft_delta_ms": 15.0,
+        "prefix_affinity_hit_rate": 100.0,
+        "warm_route_preference_rate": 66.67,
+        "restored_route_rate": 66.67,
+    }
+
+
+def test_collect_hot_tier_recovery_evidence_raises_when_cold_baseline_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeStack:
+        def __init__(self, repo_root: Path) -> None:
+            self.control_plane_metrics_path = tmp_path / "control-plane.json"
+
+        def start(self) -> None:
+            self.control_plane_metrics_path.write_text(
+                json.dumps({"updated_at_unix_ms": 1, "values": {}}),
+                encoding="utf-8",
+            )
+
+        def stop(self) -> None:
+            return None
+
+    monkeypatch.setattr(phase8_runtime_probes, "LiveMelixStack", FakeStack)
+    monkeypatch.setattr(
+        phase8_runtime_probes,
+        "stream_chat_completion",
+        lambda stack, payload: {"status": 503, "body": "worker unavailable"},
+    )
+
+    with pytest.raises(SystemExit, match="hot-tier cold baseline failed"):
+        phase8_runtime_probes._collect_hot_tier_recovery_evidence(tmp_path)
+
+
+def test_collect_cold_tier_recovery_evidence_reports_l2_metrics(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeStack:
+        def __init__(self, repo_root: Path, swift_cache_root: Path | None = None) -> None:
+            self.swift_cache_root = swift_cache_root
+            self.swift_socket_path = tmp_path / "swift.sock"
+            self.swift_text_worker_metrics_path = tmp_path / "swift-metrics.json"
+
+        def start(self) -> None:
+            return None
+
+        def stop(self) -> None:
+            return None
+
+    calls = iter(
+        [
+            {"status": 200, "body": "data: [DONE]"},
+            {"status": 200, "body": "data: [DONE]"},
+        ]
+    )
+    monkeypatch.setattr(phase8_runtime_probes, "LiveMelixStack", FakeStack)
+    monkeypatch.setattr(
+        phase8_runtime_probes,
+        "stream_chat_completion",
+        lambda stack, payload: next(calls),
+    )
+    monkeypatch.setattr(
+        phase8_runtime_probes,
+        "get_cache_stats",
+        lambda socket_path: SimpleNamespace(stats=SimpleNamespace(l2_hit_rate=1.0)),
+    )
+    monkeypatch.setattr(
+        phase8_runtime_probes,
+        "read_metrics_export",
+        lambda path: {
+            "values": {
+                "swift_text.cache_l2_hit_rate": 100.0,
+                "swift_text.cache_l2_writeback_queue_depth": 0.0,
+                "swift_text.cache_l2_restore_queue_depth": 0.0,
+            }
+        },
+    )
+
+    report = phase8_runtime_probes._collect_cold_tier_recovery_evidence(tmp_path)
+
+    assert report == {
+        "l2_hit_rate": 100.0,
+        "l2_writeback_queue_depth": 0.0,
+        "l2_restore_queue_depth": 0.0,
+    }
+
+
+def test_collect_cold_tier_recovery_evidence_raises_when_restore_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeStack:
+        def __init__(self, repo_root: Path, swift_cache_root: Path | None = None) -> None:
+            self.swift_cache_root = swift_cache_root
+            self.swift_socket_path = tmp_path / "swift.sock"
+            self.swift_text_worker_metrics_path = tmp_path / "swift-metrics.json"
+
+        def start(self) -> None:
+            return None
+
+        def stop(self) -> None:
+            return None
+
+    calls = iter(
+        [
+            {"status": 200, "body": "data: [DONE]"},
+            {"status": 500, "body": "restore failed"},
+        ]
+    )
+    monkeypatch.setattr(phase8_runtime_probes, "LiveMelixStack", FakeStack)
+    monkeypatch.setattr(
+        phase8_runtime_probes,
+        "stream_chat_completion",
+        lambda stack, payload: next(calls),
+    )
+
+    with pytest.raises(SystemExit, match="cold-tier restore failed"):
+        phase8_runtime_probes._collect_cold_tier_recovery_evidence(tmp_path)
+
+
+def test_collect_partial_restore_recovery_evidence_reports_restore_ratio(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeStack:
+        def __init__(self, repo_root: Path) -> None:
+            self.control_plane_metrics_path = tmp_path / "control-plane.json"
+
+        def start(self) -> None:
+            self.control_plane_metrics_path.write_text(
+                json.dumps(
+                    {
+                        "updated_at_unix_ms": 1,
+                        "values": {
+                            "scheduler.partial_restore_walk_back_count": 1.0,
+                            "scheduler.restore_plan_restored_tokens": 18.0,
+                            "scheduler.restore_plan_total_tokens": 22.0,
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+        def stop(self) -> None:
+            return None
+
+    calls = iter(
+        [
+            {"status": 200, "request_id": "req-base", "body": "data: [DONE]"},
+            {"status": 200, "request_id": "req-follow", "body": "data: [DONE]"},
+        ]
+    )
+    monkeypatch.setattr(phase8_runtime_probes, "LiveMelixStack", FakeStack)
+    monkeypatch.setattr(
+        phase8_runtime_probes,
+        "stream_chat_completion",
+        lambda stack, payload: next(calls),
+    )
+
+    report = phase8_runtime_probes._collect_partial_restore_recovery_evidence(tmp_path)
+
+    assert report == {
+        "walk_back_count": 1.0,
+        "restored_tokens": 18.0,
+        "total_tokens": 22.0,
+        "restore_ratio_pct": 81.82,
+    }
+
+
+def test_collect_partial_restore_recovery_evidence_raises_when_followup_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeStack:
+        def __init__(self, repo_root: Path) -> None:
+            self.control_plane_metrics_path = tmp_path / "control-plane.json"
+
+        def start(self) -> None:
+            self.control_plane_metrics_path.write_text(
+                json.dumps({"updated_at_unix_ms": 1, "values": {}}),
+                encoding="utf-8",
+            )
+
+        def stop(self) -> None:
+            return None
+
+    calls = iter(
+        [
+            {"status": 200, "request_id": "req-base", "body": "data: [DONE]"},
+            {"status": 500, "body": "restore failed"},
+        ]
+    )
+    monkeypatch.setattr(phase8_runtime_probes, "LiveMelixStack", FakeStack)
+    monkeypatch.setattr(
+        phase8_runtime_probes,
+        "stream_chat_completion",
+        lambda stack, payload: next(calls),
+    )
+
+    with pytest.raises(SystemExit, match="partial-restore follow-up failed"):
+        phase8_runtime_probes._collect_partial_restore_recovery_evidence(tmp_path)
+
+
+def test_stream_chat_completion_reads_http_status_body_request_id_and_ttft(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     class FakeResponse:
         status = 200
 
-        def read(self) -> bytes:
-            return b"data: [DONE]"
+        def __init__(self) -> None:
+            self._lines = iter(
+                [
+                    b'data: {"request_id":"req-123"}\n',
+                    b'data: {"id":"req-123","choices":[{"delta":{"content":"hello"},"index":0}]}\n',
+                    b"data: [DONE]\n",
+                    b"",
+                ]
+            )
+
+        def readline(self) -> bytes:
+            return next(self._lines)
 
         def __enter__(self) -> "FakeResponse":
             return self
@@ -724,18 +1036,25 @@ def test_stream_chat_completion_reads_http_status_and_body(
         def __exit__(self, exc_type, exc, tb) -> None:
             return None
 
+    ticks = iter([100.0, 100.025, 100.05])
+
     monkeypatch.setattr(
         phase8_runtime_probes.urllib.request,
         "urlopen",
         lambda request, timeout: FakeResponse(),
     )
+    monkeypatch.setattr(phase8_runtime_probes.time, "perf_counter", lambda: next(ticks))
 
     result = phase8_runtime_probes.stream_chat_completion(
         SimpleNamespace(chat_url=lambda: "http://127.0.0.1:11434/v1/chat/completions"),
         {"model": "melix-dev-text"},
     )
 
-    assert result == {"status": 200, "body": "data: [DONE]"}
+    assert result["status"] == 200
+    assert result["request_id"] == "req-123"
+    assert "data: [DONE]" in result["body"]
+    assert result["ttft_ms"] == pytest.approx(25.0)
+    assert result["total_ms"] == pytest.approx(50.0)
 
 
 def test_post_json_returns_decoded_payload_on_success(

@@ -221,6 +221,55 @@ def collect_restart_recovery_evidence(repo_root: Path) -> dict[str, float]:
             second_stack.stop()
 
 
+def collect_cache_recovery_benchmark_evidence(repo_root: Path) -> dict[str, Any]:
+    restart = collect_restart_recovery_evidence(repo_root)
+    hot_tier = _collect_hot_tier_recovery_evidence(repo_root)
+    cold_tier = _collect_cold_tier_recovery_evidence(repo_root)
+    partial_restore = _collect_partial_restore_recovery_evidence(repo_root)
+
+    metrics = {
+        "bench.recovery.restart_to_ready_ms": round(float(restart["restart_to_ready_ms"]), 2),
+        "bench.recovery.snapshot_restore_ms": round(float(restart["snapshot_restore_ms"]), 2),
+        "bench.recovery.restart_recovery_ms": round(float(restart["restart_recovery_ms"]), 2),
+        "bench.recovery.restart_recovery_success_rate": round(
+            float(restart["restart_recovery_success_rate"]), 2
+        ),
+        "bench.recovery.hot_followup_ttft_delta_ms": round(
+            float(hot_tier["followup_ttft_delta_ms"]), 2
+        ),
+        "bench.recovery.hot_prefix_affinity_hit_rate": round(
+            float(hot_tier["prefix_affinity_hit_rate"]), 2
+        ),
+        "bench.recovery.hot_warm_route_preference_rate": round(
+            float(hot_tier["warm_route_preference_rate"]), 2
+        ),
+        "bench.recovery.hot_restored_route_rate": round(
+            float(hot_tier["restored_route_rate"]), 2
+        ),
+        "bench.recovery.cold_l2_hit_rate": round(float(cold_tier["l2_hit_rate"]), 2),
+        "bench.recovery.partial_restore_ratio_pct": round(
+            float(partial_restore["restore_ratio_pct"]), 2
+        ),
+        "bench.recovery.partial_restore_walk_back_count": round(
+            float(partial_restore["walk_back_count"]), 2
+        ),
+        "bench.recovery.partial_restore_restored_tokens": round(
+            float(partial_restore["restored_tokens"]), 2
+        ),
+        "bench.recovery.partial_restore_total_tokens": round(
+            float(partial_restore["total_tokens"]), 2
+        ),
+    }
+
+    return {
+        "metrics": metrics,
+        "restart": restart,
+        "hot_tier": hot_tier,
+        "cold_tier": cold_tier,
+        "partial_restore": partial_restore,
+    }
+
+
 def collect_runtime_core_evidence(repo_root: Path) -> dict[str, Any]:
     multi_model = _collect_multi_model_coexistence_evidence(repo_root)
     memory_guard = _collect_prefill_memory_guard_evidence(repo_root)
@@ -237,12 +286,224 @@ def stream_chat_completion(stack: LiveMelixStack, payload: dict[str, object]) ->
         headers={"content-type": "application/json"},
         method="POST",
     )
+
+    started_at = time.perf_counter()
+
     with urllib.request.urlopen(request, timeout=30) as response:
-        body = response.read().decode("utf-8")
+        chunks: list[str] = []
+        request_id = ""
+        ttft_ms: float | None = None
+
+        while True:
+            line = response.readline()
+            if not line:
+                break
+            decoded = line.decode("utf-8")
+            chunks.append(decoded)
+
+            if not decoded.startswith("data: "):
+                continue
+
+            body = decoded.removeprefix("data: ").strip()
+            if not body or body == "[DONE]":
+                continue
+
+            event = json.loads(body)
+            maybe_request_id = event.get("id") or event.get("request_id")
+            if isinstance(maybe_request_id, str):
+                request_id = maybe_request_id
+            choices = event.get("choices")
+            if not isinstance(choices, list) or not choices:
+                continue
+            delta = choices[0].get("delta", {})
+            content = delta.get("content", "")
+            if isinstance(content, str) and content and ttft_ms is None:
+                ttft_ms = (time.perf_counter() - started_at) * 1000
+
+        total_ms = (time.perf_counter() - started_at) * 1000
         return {
             "status": response.status,
-            "body": body,
+            "request_id": request_id,
+            "body": "".join(chunks),
+            "ttft_ms": ttft_ms,
+            "total_ms": total_ms,
         }
+
+
+def _collect_hot_tier_recovery_evidence(repo_root: Path) -> dict[str, float]:
+    stack = LiveMelixStack(repo_root)
+    stack.start()
+
+    try:
+        session_id = "phase8-hot-tier-bench"
+        cold = stream_chat_completion(
+            stack,
+            {
+                "model": "melix-dev-text",
+                "stream": True,
+                "session_id": session_id,
+                "messages": [{"role": "user", "content": "capture a cold baseline before the warm follow-up"}],
+            },
+        )
+        if cold["status"] != 200 or not isinstance(cold.get("ttft_ms"), float):
+            raise SystemExit(f"hot-tier cold baseline failed: {cold}")
+
+        warm = stream_chat_completion(
+            stack,
+            {
+                "model": "melix-dev-text",
+                "stream": True,
+                "session_id": session_id,
+                "parent_request_id": cold["request_id"],
+                "messages": [{"role": "user", "content": "route this follow-up through the warm path"}],
+            },
+        )
+        if warm["status"] != 200 or not isinstance(warm.get("ttft_ms"), float):
+            raise SystemExit(f"hot-tier warm follow-up failed: {warm}")
+
+        all_values = read_metrics_export(stack.control_plane_metrics_path).get("values", {})
+        followup_delta = all_values.get("session.followup_ttft_delta_ms")
+        if not isinstance(followup_delta, (int, float)):
+            followup_delta = float(cold["ttft_ms"]) - float(warm["ttft_ms"])
+
+        return {
+            "cold_ttft_ms": round(float(cold["ttft_ms"]), 2),
+            "warm_ttft_ms": round(float(warm["ttft_ms"]), 2),
+            "followup_ttft_delta_ms": round(float(followup_delta), 2),
+            "prefix_affinity_hit_rate": round(
+                float(all_values.get("scheduler.prefix_affinity_hit_rate", 0.0)),
+                2,
+            ),
+            "warm_route_preference_rate": round(
+                float(all_values.get("scheduler.warm_route_preference_rate", 0.0)),
+                2,
+            ),
+            "restored_route_rate": round(
+                float(all_values.get("scheduler.restored_route_rate", 0.0)),
+                2,
+            ),
+        }
+    finally:
+        stack.stop()
+
+
+def _collect_cold_tier_recovery_evidence(repo_root: Path) -> dict[str, float]:
+    with tempfile.TemporaryDirectory(prefix="melix-cache-recovery-bench-") as cache_root_str:
+        cache_root = Path(cache_root_str)
+        session_id = "phase8-cold-tier-bench"
+        source_prompt = "reuse this prompt through the cold tier"
+
+        first_stack = LiveMelixStack(repo_root, swift_cache_root=cache_root)
+        first_stack.start()
+        try:
+            initial = stream_chat_completion(
+                first_stack,
+                {
+                    "model": "melix-dev-text",
+                    "stream": True,
+                    "session_id": session_id,
+                    "messages": [{"role": "user", "content": source_prompt}],
+                },
+            )
+            if initial["status"] != 200:
+                raise SystemExit(f"cold-tier warmup failed: {initial}")
+        finally:
+            first_stack.stop()
+
+        second_stack = LiveMelixStack(repo_root, swift_cache_root=cache_root)
+        second_stack.start()
+        try:
+            restored = stream_chat_completion(
+                second_stack,
+                {
+                    "model": "melix-dev-text",
+                    "stream": True,
+                    "session_id": session_id,
+                    "messages": [{"role": "user", "content": source_prompt}],
+                },
+            )
+            if restored["status"] != 200:
+                raise SystemExit(f"cold-tier restore failed: {restored}")
+
+            cache_response = get_cache_stats(second_stack.swift_socket_path)
+            metrics = read_metrics_export(second_stack.swift_text_worker_metrics_path).get("values", {})
+
+            return {
+                "l2_hit_rate": round(
+                    float(metrics.get("swift_text.cache_l2_hit_rate", cache_response.stats.l2_hit_rate * 100.0)),
+                    2,
+                ),
+                "l2_writeback_queue_depth": round(
+                    float(metrics.get("swift_text.cache_l2_writeback_queue_depth", 0.0)),
+                    2,
+                ),
+                "l2_restore_queue_depth": round(
+                    float(metrics.get("swift_text.cache_l2_restore_queue_depth", 0.0)),
+                    2,
+                ),
+            }
+        finally:
+            second_stack.stop()
+
+
+def _collect_partial_restore_recovery_evidence(repo_root: Path) -> dict[str, float]:
+    stack = LiveMelixStack(repo_root)
+    stack.start()
+
+    try:
+        session_id = "phase8-partial-restore-bench"
+        source_prompt = " ".join(f"token{i}" for i in range(1, 25))
+        diverged_prompt = " ".join(f"token{i}" for i in range(1, 21)) + " tail-x tail-y"
+
+        initial = stream_chat_completion(
+            stack,
+            {
+                "model": "melix-dev-text",
+                "stream": True,
+                "session_id": session_id,
+                "messages": [{"role": "user", "content": source_prompt}],
+            },
+        )
+        if initial["status"] != 200 or not initial.get("request_id"):
+            raise SystemExit(f"partial-restore baseline failed: {initial}")
+
+        follow_up = stream_chat_completion(
+            stack,
+            {
+                "model": "melix-dev-text",
+                "stream": True,
+                "session_id": session_id,
+                "parent_request_id": initial["request_id"],
+                "messages": [{"role": "user", "content": diverged_prompt}],
+            },
+        )
+        if follow_up["status"] != 200:
+            raise SystemExit(f"partial-restore follow-up failed: {follow_up}")
+
+        control_values = wait_for_metrics(
+            stack.control_plane_metrics_path,
+            [
+                "scheduler.partial_restore_walk_back_count",
+                "scheduler.restore_plan_restored_tokens",
+                "scheduler.restore_plan_total_tokens",
+            ],
+        )
+
+        restored_tokens = float(control_values["scheduler.restore_plan_restored_tokens"])
+        total_tokens = float(control_values["scheduler.restore_plan_total_tokens"])
+        ratio_pct = 0.0 if total_tokens <= 0 else (restored_tokens / total_tokens) * 100.0
+
+        return {
+            "walk_back_count": round(
+                float(control_values["scheduler.partial_restore_walk_back_count"]),
+                2,
+            ),
+            "restored_tokens": round(restored_tokens, 2),
+            "total_tokens": round(total_tokens, 2),
+            "restore_ratio_pct": round(ratio_pct, 2),
+        }
+    finally:
+        stack.stop()
 
 
 def wait_for_metric_minimum(

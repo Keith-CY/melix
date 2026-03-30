@@ -24,6 +24,7 @@ The release gate checks:
 
 - install asset generation
 - benchmark thresholds
+- cache recovery benchmark evidence
 - restart recovery
 - training sanity
 
@@ -32,6 +33,23 @@ The command exits non-zero when:
 - required evidence is missing
 - a numeric threshold regresses past the checked-in policy
 - restart recovery cannot restore a persisted snapshot
+
+## Cache Recovery Benchmark Bundle
+
+The benchmark section also emits a machine-readable cache recovery report alongside the bench markdown report.
+
+See:
+
+```bash
+docs/runbooks/phase-8-cache-recovery-benchmarks.md
+```
+
+Use that report when you need to inspect:
+
+- hot-tier follow-up TTFT improvement
+- cold-tier L2 reuse
+- partial-prefix walk-back reuse
+- restart plus restore timing splits
 
 ## Policy
 

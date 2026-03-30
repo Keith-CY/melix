@@ -75,7 +75,11 @@ def collect_install_evidence(repo_root: str | Path) -> dict[str, Any]:
     }
 
 
-def collect_benchmark_evidence(jobs_root: str | Path) -> dict[str, Any]:
+def collect_benchmark_evidence(
+    jobs_root: str | Path,
+    *,
+    repo_root: str | Path | None = None,
+) -> dict[str, Any]:
     core = _build_maintenance_core(jobs_root)
     events = list(
         core.bench_events(
@@ -95,11 +99,22 @@ def collect_benchmark_evidence(jobs_root: str | Path) -> dict[str, Any]:
         for event in events
         if event.HasField("completed")
     )
-    return {
+    report = {
         "metrics": metrics,
         "report_path": report_path,
         "report_exists": Path(report_path).exists(),
     }
+    if repo_root is not None:
+        recovery_report = collect_cache_recovery_benchmark_evidence(repo_root)
+        recovery_report_path = Path(report_path).with_name("cache-recovery-report.json")
+        recovery_report_path.write_text(
+            json.dumps(recovery_report, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        report["recovery_metrics"] = dict(recovery_report.get("metrics", {}))
+        report["recovery_report_path"] = str(recovery_report_path)
+        report["recovery_report_exists"] = recovery_report_path.exists()
+    return report
 
 
 def collect_training_evidence(jobs_root: str | Path) -> dict[str, Any]:
@@ -155,7 +170,7 @@ def build_release_gate_report(
 
     report = {
         "install": collect_install_evidence(repo_root),
-        "benchmarks": collect_benchmark_evidence(jobs_root),
+        "benchmarks": collect_benchmark_evidence(jobs_root, repo_root=repo_root),
         "training": collect_training_evidence(jobs_root),
     }
     if recovery is not None:
@@ -206,6 +221,14 @@ def evaluate_release_gate(report: dict[str, Any], policy: dict[str, Any]) -> lis
 def _build_maintenance_core(jobs_root: str | Path) -> MaintenanceCore:
     registry = WorkerRegistry(model_catalog=WorkerModelCatalog())
     return MaintenanceCore(registry, Path(jobs_root))
+
+
+def collect_cache_recovery_benchmark_evidence(repo_root: str | Path) -> dict[str, Any]:
+    from phase8_runtime_probes import (
+        collect_cache_recovery_benchmark_evidence as collect_runtime_probe_evidence,
+    )
+
+    return collect_runtime_probe_evidence(Path(repo_root).resolve())
 
 
 def _evaluate_section_metrics(values: dict[str, Any], rules: dict[str, Any]) -> list[str]:

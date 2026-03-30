@@ -59,6 +59,9 @@ def build_phase8_metrics_report(
         cold_boot_evidence.setdefault("cold_boot_to_ready_ms", cold_boot_to_ready_ms)
     recovery = release_gate_report["recovery"]
     runtime_core_evidence = dict(runtime_core or release_gate_report.get("runtime_core", {}))
+    cache_recovery_metrics = dict(
+        release_gate_report.get("benchmarks", {}).get("recovery_metrics", {})
+    )
 
     metrics = {
         "desktop.cold_boot_to_ready_ms": round(
@@ -179,6 +182,22 @@ def build_phase8_metrics_report(
         ),
         "training.adapter_publish_ms": round(
             float(release_gate_report["training"]["adapter_publish_ms"]),
+            2,
+        ),
+        "cache_recovery.hot_followup_ttft_delta_ms": round(
+            float(cache_recovery_metrics.get("bench.recovery.hot_followup_ttft_delta_ms", 0.0)),
+            2,
+        ),
+        "cache_recovery.hot_prefix_affinity_hit_rate": round(
+            float(cache_recovery_metrics.get("bench.recovery.hot_prefix_affinity_hit_rate", 0.0)),
+            2,
+        ),
+        "cache_recovery.cold_l2_hit_rate": round(
+            float(cache_recovery_metrics.get("bench.recovery.cold_l2_hit_rate", 0.0)),
+            2,
+        ),
+        "cache_recovery.partial_restore_ratio_pct": round(
+            float(cache_recovery_metrics.get("bench.recovery.partial_restore_ratio_pct", 0.0)),
             2,
         ),
     }

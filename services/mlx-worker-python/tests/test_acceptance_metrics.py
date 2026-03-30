@@ -280,6 +280,71 @@ def test_build_phase8_metrics_report_includes_required_probe_names() -> None:
     assert metrics["training.adapter_publish_ms"] == 118.0
 
 
+def test_build_phase8_metrics_report_surfaces_cache_recovery_benchmark_metrics() -> None:
+    policy = load_release_gate_policy()
+
+    report = build_phase8_metrics_report(
+        cold_boot={"cold_boot_to_ready_ms": 700.0, "http_ready_ms": 700.0},
+        operator={
+            "operator_action_latency_ms": 1.0,
+            "registry_job_count": 2,
+            "registry_adapter_count": 1,
+        },
+        release_gate_report={
+            "install": {
+                "checks": {
+                    "manifest_exists": True,
+                    "environment_script_exists": True,
+                    "all_plists_exist": True,
+                }
+            },
+            "benchmarks": {
+                "report_exists": True,
+                "metrics": {
+                    "bench.smoke.ttft_ms": 24.45,
+                    "bench.smoke.tokens_per_second": 47.08,
+                    "bench.latency.p95_ms": 44.72,
+                },
+                "recovery_metrics": {
+                    "bench.recovery.hot_followup_ttft_delta_ms": 14.2,
+                    "bench.recovery.hot_prefix_affinity_hit_rate": 100.0,
+                    "bench.recovery.cold_l2_hit_rate": 100.0,
+                    "bench.recovery.partial_restore_ratio_pct": 81.82,
+                },
+            },
+            "training": {
+                "training_duration_ms": 1420.0,
+                "adapter_publish_ms": 118.0,
+            },
+            "recovery": {
+                "restart_recovery_ms": 600.0,
+                "restart_recovery_success_rate": 100.0,
+            },
+            "runtime_core": {
+                "multi_model_ready_count": 3.0,
+                "multi_model_request_success_rate": 100.0,
+                "prefill_memory_guard_rejection_count": 1.0,
+                "prefill_memory_guard_success_rate": 100.0,
+            },
+            "passed": True,
+            "failures": [],
+        },
+        runtime_core={
+            "multi_model_ready_count": 3.0,
+            "multi_model_request_success_rate": 100.0,
+            "prefill_memory_guard_rejection_count": 1.0,
+            "prefill_memory_guard_success_rate": 100.0,
+        },
+        policy=policy,
+    )
+
+    metrics = report["metrics"]
+    assert metrics["cache_recovery.hot_followup_ttft_delta_ms"] == 14.2
+    assert metrics["cache_recovery.hot_prefix_affinity_hit_rate"] == 100.0
+    assert metrics["cache_recovery.cold_l2_hit_rate"] == 100.0
+    assert metrics["cache_recovery.partial_restore_ratio_pct"] == 81.82
+
+
 def test_build_phase8_metrics_report_accepts_cold_boot_metric_parameter() -> None:
     policy = load_release_gate_policy()
 
