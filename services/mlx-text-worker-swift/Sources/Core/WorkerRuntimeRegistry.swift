@@ -503,6 +503,10 @@ actor WorkerRuntimeRegistry {
         return response
     }
 
+    func cacheTierMetrics() async -> HotCacheTierMetrics {
+        await cacheStore.tierMetrics()
+    }
+
     func pinPrefix(_ prefix: Melix_Worker_V1_PrefixRef) async -> Bool {
         await cacheStore.pinPrefix(prefix)
     }

@@ -29,6 +29,14 @@ struct SavedBoundarySnapshot: Sendable {
     let copyOnWriteForked: Bool
 }
 
+struct HotCacheTierMetrics: Sendable {
+    let l2HitRate: Double
+    let l2RestoreHitRate: Double
+    let l2WriteBackQueueDepth: UInt64
+    let l2RestoreQueueDepth: UInt64
+    let l2WriteBackCount: UInt64
+}
+
 private struct StoredHotPrefix: Sendable {
     var prefix: Melix_Worker_V1_PrefixRef
     let blockTableID: String
@@ -105,6 +113,35 @@ actor HotCacheStore {
                 prefix: existing.prefix,
                 blockTableID: existing.blockTableID,
                 blockTable: existing.blockTable,
+                cacheHit: true
+            )
+        }
+
+        if execution.cacheHints.allowL2 || execution.cacheHints.persistL2,
+           let restored = await diskStore.restorePrefix(cacheKey: resolvedKey) {
+            var restoredPrefix = restored.prefix
+            restoredPrefix.tier = "l1"
+            if shouldPinPrefix(restoredPrefix.prefixID, hints: execution.cacheHints) {
+                restoredPrefix.pinned = true
+            }
+
+            let stored = StoredHotPrefix(
+                prefix: restoredPrefix,
+                blockTableID: restored.blockTableID,
+                blockTable: restored.blockTable,
+                pageIDs: restored.blockTable.pages.map(\.pageID),
+                blockIDs: restored.blockTable.blocks.map(\.blockID),
+                quantizedBytes: restored.quantizedBytes,
+                accessCount: 1
+            )
+
+            prefixesByID[restoredPrefix.prefixID] = stored
+            prefixIDByKey[keyID] = restoredPrefix.prefixID
+            registerOwnership(for: stored)
+            return HotCacheRegistration(
+                prefix: restoredPrefix,
+                blockTableID: restored.blockTableID,
+                blockTable: restored.blockTable,
                 cacheHit: true
             )
         }
@@ -256,6 +293,17 @@ actor HotCacheStore {
 
     func restoreBoundarySnapshot(snapshotID: String) async -> RestoredBoundarySnapshot? {
         await diskStore.restoreSnapshot(snapshotID: snapshotID)
+    }
+
+    func tierMetrics() async -> HotCacheTierMetrics {
+        let metrics = await diskStore.tierMetrics()
+        return HotCacheTierMetrics(
+            l2HitRate: metrics.l2HitRate,
+            l2RestoreHitRate: metrics.l2RestoreHitRate,
+            l2WriteBackQueueDepth: metrics.writeBackQueueDepth,
+            l2RestoreQueueDepth: metrics.restoreQueueDepth,
+            l2WriteBackCount: metrics.writeBackCount
+        )
     }
 
     private func buildSnapshot() async -> Melix_Worker_V1_CacheSnapshot {

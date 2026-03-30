@@ -3554,6 +3554,126 @@ final class WorkerScaffoldTests: XCTestCase {
         }
     }
 
+    func testCacheManagementRpcsPublishColdTierHitRateAndQueueMetricsAfterRestart() async throws {
+        try await withTemporaryCacheRoot { cacheRoot in
+            let environment = [
+                "MELIX_DEV_TEXT_MODEL_PATH": "mlx-community/melix-dev-text-4bit",
+                "MELIX_SWIFT_TEXT_WORKER_CACHE_ROOT": cacheRoot.path,
+            ]
+
+            let initialServices = makeServices(
+                environment: environment,
+                backend: DeterministicTextBackend(tokenDelayNanos: 0)
+            )
+
+            let initialLoad = try await withTestServerContextRPCCancellationHandle { handle in
+                var request = Melix_Worker_V1_LoadModelRequest()
+                request.model.modelID = "melix-dev-text"
+                return try await initialServices.runtime.loadModel(
+                    request: request,
+                    context: ServerContext(
+                        descriptor: Melix_Worker_V1_RuntimeService.Method.LoadModel.descriptor,
+                        remotePeer: "in-process:test",
+                        localPeer: "in-process:test",
+                        cancellation: handle
+                    )
+                )
+            }
+
+            let initialPrefill = try await withTestServerContextRPCCancellationHandle { handle in
+                var request = Melix_Worker_V1_PrefillRequest()
+                request.execution.id.requestID = "req-cold-tier-seed"
+                request.execution.modelHandle = initialLoad.modelHandle
+                request.execution.cacheHints.allowL2 = true
+                request.execution.cacheHints.persistL2 = true
+                request.returnDecodeHandle = true
+                request.prefillStepSize = 8
+                request.messages = [makeUserMessage("seed a cold-tier prefix")]
+                return try await initialServices.inference.prefill(
+                    request: request,
+                    context: ServerContext(
+                        descriptor: Melix_Worker_V1_InferenceService.Method.Prefill.descriptor,
+                        remotePeer: "in-process:test",
+                        localPeer: "in-process:test",
+                        cancellation: handle
+                    )
+                )
+            }
+
+            _ = try await withTestServerContextRPCCancellationHandle { handle in
+                try await initialServices.cache.getCacheStats(
+                    request: Melix_Worker_V1_GetCacheStatsRequest(),
+                    context: ServerContext(
+                        descriptor: Melix_Worker_V1_CacheService.Method.GetCacheStats.descriptor,
+                        remotePeer: "in-process:test",
+                        localPeer: "in-process:test",
+                        cancellation: handle
+                    )
+                )
+            }
+
+            let restartedServices = makeServices(
+                environment: environment,
+                backend: DeterministicTextBackend(tokenDelayNanos: 0)
+            )
+
+            let restartedLoad = try await withTestServerContextRPCCancellationHandle { handle in
+                var request = Melix_Worker_V1_LoadModelRequest()
+                request.model.modelID = "melix-dev-text"
+                return try await restartedServices.runtime.loadModel(
+                    request: request,
+                    context: ServerContext(
+                        descriptor: Melix_Worker_V1_RuntimeService.Method.LoadModel.descriptor,
+                        remotePeer: "in-process:test",
+                        localPeer: "in-process:test",
+                        cancellation: handle
+                    )
+                )
+            }
+
+            let restartedPrefill = try await withTestServerContextRPCCancellationHandle { handle in
+                var request = Melix_Worker_V1_PrefillRequest()
+                request.execution.id.requestID = "req-cold-tier-reuse"
+                request.execution.modelHandle = restartedLoad.modelHandle
+                request.execution.cacheHints.allowL2 = true
+                request.execution.cacheHints.persistL2 = true
+                request.returnDecodeHandle = true
+                request.prefillStepSize = 8
+                request.messages = [makeUserMessage("seed a cold-tier prefix")]
+                return try await restartedServices.inference.prefill(
+                    request: request,
+                    context: ServerContext(
+                        descriptor: Melix_Worker_V1_InferenceService.Method.Prefill.descriptor,
+                        remotePeer: "in-process:test",
+                        localPeer: "in-process:test",
+                        cancellation: handle
+                    )
+                )
+            }
+
+            let cacheResponse = try await withTestServerContextRPCCancellationHandle { handle in
+                try await restartedServices.cache.getCacheStats(
+                    request: Melix_Worker_V1_GetCacheStatsRequest(),
+                    context: ServerContext(
+                        descriptor: Melix_Worker_V1_CacheService.Method.GetCacheStats.descriptor,
+                        remotePeer: "in-process:test",
+                        localPeer: "in-process:test",
+                        cancellation: handle
+                    )
+                )
+            }
+
+            XCTAssertEqual(restartedPrefill.blockTableID, initialPrefill.blockTableID)
+            XCTAssertEqual(cacheResponse.stats.l1HitRate, 0, accuracy: 0.0001)
+            XCTAssertEqual(cacheResponse.stats.l2HitRate, 1, accuracy: 0.0001)
+            XCTAssertEqual(initialServices.metrics.counters["swift_text.cache_l2_writeback_count"], 1)
+            XCTAssertEqual(restartedServices.metrics.counters["swift_text.cache_l2_hit_rate"], 100)
+            XCTAssertEqual(restartedServices.metrics.counters["swift_text.cache_l2_writeback_queue_depth"], 0)
+            XCTAssertEqual(restartedServices.metrics.counters["swift_text.cache_l2_restore_queue_depth"], 0)
+            XCTAssertEqual(restartedServices.metrics.counters["swift_text.cache_l2_writeback_count"], 0)
+        }
+    }
+
     func testBoundarySnapshotRestoreSurvivesRegistryRestartOnDeterministicBackend() async throws {
         try await withTemporaryCacheRoot { cacheRoot in
             let environment = ["MELIX_SWIFT_TEXT_WORKER_CACHE_ROOT": cacheRoot.path]
@@ -4888,6 +5008,61 @@ final class WorkerScaffoldTests: XCTestCase {
             XCTAssertEqual(scopeSummary.l1Bytes, 0)
             XCTAssertEqual(scopeSummary.l2Bytes, 64)
             XCTAssertEqual(scopeSummary.prefixCount, 0)
+        }
+    }
+
+    func testHotCacheStorePromotesColdTierPrefixesBackIntoL1() async throws {
+        try await withTemporaryCacheRoot { cacheRoot in
+            let diskStore = DiskCacheStore(rootPath: cacheRoot.path)
+            let store = HotCacheStore(diskStore: diskStore, initialCacheBlocks: 0)
+            let scope = makeCacheScope(scopeID: "scope-cold-promote", modelID: "model-cold-promote")
+            let cacheKey = makeCacheKey(
+                scopeID: scope.scopeID,
+                prefixSeed: "cold-promote-prefix",
+                fingerprintSeed: "cold-promote-fingerprint"
+            )
+            let prefix = makePrefixRef(prefixID: "prefix-cold-promote", scope: scope, cacheKey: cacheKey)
+            let blockTable = makeBlockTable(
+                scopeID: scope.scopeID,
+                cacheKey: cacheKey,
+                blockIDs: ["cold-b0", "cold-b1"],
+                bytes: [128, 128]
+            )
+
+            await diskStore.persistPrefix(
+                prefix: prefix,
+                blockTableID: "table-cold-promote",
+                blockTable: blockTable,
+                quantizedBytes: 96
+            )
+
+            var execution = Melix_Worker_V1_ExecutionMetadata()
+            execution.scope = scope
+            execution.cacheKey = cacheKey
+            execution.cacheHints.allowL2 = true
+            execution.cacheHints.persistL2 = true
+            execution.cacheHints.preferredBlockSize = 16
+
+            let registration = try await store.registerPrefill(
+                execution: execution,
+                model: makeModelSpec(modelID: "model-cold-promote"),
+                messages: [makeUserMessage("cold tier promotion")],
+                promptTokens: 32,
+                decodeHandle: "decode-cold-promote",
+                activeKVQuantizationRatio: 50
+            )
+            let stats = await store.stats()
+            let snapshot = await store.snapshot()
+
+            XCTAssertTrue(registration.cacheHit)
+            XCTAssertEqual(registration.blockTableID, "table-cold-promote")
+            XCTAssertEqual(registration.prefix.prefixID, "prefix-cold-promote")
+            XCTAssertEqual(registration.prefix.tier, "l1")
+            XCTAssertEqual(stats.l1HitRate, 0, accuracy: 0.0001)
+            XCTAssertEqual(stats.l2HitRate, 1, accuracy: 0.0001)
+            XCTAssertEqual(snapshot.hotPrefixes.count, 1)
+            XCTAssertEqual(snapshot.hotPrefixes.first?.prefixID, "prefix-cold-promote")
+            XCTAssertEqual(snapshot.hotPrefixes.first?.tier, "l1")
         }
     }
 

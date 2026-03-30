@@ -354,6 +354,7 @@ final class CacheRPCService: Melix_Worker_V1_CacheService.SimpleServiceProtocol,
         context: GRPCCore.ServerContext
     ) async throws -> Melix_Worker_V1_GetCacheStatsResponse {
         let response = await registry.cacheStatsResponse()
+        let tierMetrics = await registry.cacheTierMetrics()
         metrics.set("swift_text.cache_l1_bytes", value: Int(clamping: response.stats.l1Bytes))
         metrics.set("swift_text.cache_l2_bytes", value: Int(clamping: response.stats.l2Bytes))
         metrics.set("swift_text.cache_block_count", value: Int(clamping: response.stats.blockCount))
@@ -366,6 +367,10 @@ final class CacheRPCService: Melix_Worker_V1_CacheService.SimpleServiceProtocol,
         metrics.set(
             "swift_text.cache_l1_hit_rate",
             value: Int((response.stats.l1HitRate * 100.0).rounded())
+        )
+        metrics.set(
+            "swift_text.cache_l2_hit_rate",
+            value: Int((response.stats.l2HitRate * 100.0).rounded())
         )
         metrics.set(
             "swift_text.cache_block_reuse_ratio",
@@ -382,6 +387,18 @@ final class CacheRPCService: Melix_Worker_V1_CacheService.SimpleServiceProtocol,
         metrics.set(
             "swift_text.cache_l2_restore_hit_rate",
             value: Int((response.stats.l2RestoreHitRate * 100.0).rounded())
+        )
+        metrics.set(
+            "swift_text.cache_l2_writeback_queue_depth",
+            value: Int(clamping: tierMetrics.l2WriteBackQueueDepth)
+        )
+        metrics.set(
+            "swift_text.cache_l2_restore_queue_depth",
+            value: Int(clamping: tierMetrics.l2RestoreQueueDepth)
+        )
+        metrics.set(
+            "swift_text.cache_l2_writeback_count",
+            value: Int(clamping: tierMetrics.l2WriteBackCount)
         )
         return response
     }

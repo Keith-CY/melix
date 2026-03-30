@@ -14,8 +14,19 @@ struct DiskCacheSummary: Sendable {
     let snapshotCount: UInt64
     let l2HitRate: Double
     let l2RestoreHitRate: Double
+    let writeBackQueueDepth: UInt64
+    let restoreQueueDepth: UInt64
+    let writeBackCount: UInt64
     let snapshots: [Melix_Worker_V1_SnapshotRef]
     let scopes: [DiskCacheScopeSummary]
+}
+
+struct DiskCacheTierMetrics: Sendable {
+    let l2HitRate: Double
+    let l2RestoreHitRate: Double
+    let writeBackQueueDepth: UInt64
+    let restoreQueueDepth: UInt64
+    let writeBackCount: UInt64
 }
 
 struct RestoredBoundarySnapshot: Sendable {
@@ -83,9 +94,15 @@ actor DiskCacheStore {
     private let snapshotsURL: URL
 
     private var prefixesByID: [String: StoredL2PrefixRecord]
+    private var prefixIDByKey: [String: String]
     private var snapshotsByID: [String: StoredBoundarySnapshotRecord]
-    private var restoreLookups: UInt64
-    private var restoreHits: UInt64
+    private var prefixRestoreLookups: UInt64
+    private var prefixRestoreHits: UInt64
+    private var snapshotRestoreLookups: UInt64
+    private var snapshotRestoreHits: UInt64
+    private var pendingWriteBackOperations: UInt64
+    private var pendingRestoreOperations: UInt64
+    private var completedWriteBackCount: UInt64
 
     init(
         rootPath: String,
@@ -102,9 +119,19 @@ actor DiskCacheStore {
             snapshotsURL: snapshotsURL
         )
         self.prefixesByID = loaded.prefixes
+        self.prefixIDByKey = Dictionary(
+            uniqueKeysWithValues: loaded.prefixes.values.map { record in
+                (diskCacheKeyIdentifier(record.prefix.cacheKey), record.prefix.prefixID)
+            }
+        )
         self.snapshotsByID = loaded.snapshots
-        self.restoreLookups = 0
-        self.restoreHits = 0
+        self.prefixRestoreLookups = 0
+        self.prefixRestoreHits = 0
+        self.snapshotRestoreLookups = 0
+        self.snapshotRestoreHits = 0
+        self.pendingWriteBackOperations = 0
+        self.pendingRestoreOperations = 0
+        self.completedWriteBackCount = 0
 
         Self.ensureDirectory(fileManager: fileManager, url: prefixesURL)
         Self.ensureDirectory(fileManager: fileManager, url: snapshotsURL)
@@ -116,16 +143,23 @@ actor DiskCacheStore {
         blockTable: Melix_Worker_V1_BlockTable,
         quantizedBytes: UInt64
     ) {
+        var persistedPrefix = prefix
+        persistedPrefix.tier = "l2"
         let normalizedTable = normalizedBlockTable(blockTable)
         let record = StoredL2PrefixRecord(
-            prefix: prefix,
+            prefix: persistedPrefix,
             blockTableID: blockTableID,
             blockTable: normalizedTable,
             quantizedBytes: quantizedBytes,
             unquantizedBytes: normalizedTable.blocks.reduce(UInt64(0)) { $0 + $1.bytes }
         )
-        prefixesByID[prefix.prefixID] = record
+        prefixesByID[persistedPrefix.prefixID] = record
+        prefixIDByKey[diskCacheKeyIdentifier(persistedPrefix.cacheKey)] = persistedPrefix.prefixID
+
+        pendingWriteBackOperations += 1
         writePrefixRecord(record)
+        pendingWriteBackOperations -= 1
+        completedWriteBackCount += 1
     }
 
     func saveSnapshot(
@@ -180,12 +214,14 @@ actor DiskCacheStore {
     }
 
     func restoreSnapshot(snapshotID: String) -> RestoredBoundarySnapshot? {
-        restoreLookups += 1
+        pendingRestoreOperations += 1
+        snapshotRestoreLookups += 1
+        defer { pendingRestoreOperations -= 1 }
         guard let record = snapshotsByID[snapshotID] else {
             return nil
         }
 
-        restoreHits += 1
+        snapshotRestoreHits += 1
         return RestoredBoundarySnapshot(
             snapshot: record.snapshot,
             model: record.model,
@@ -195,6 +231,47 @@ actor DiskCacheStore {
             promptTokens: record.promptTokens,
             blockTableID: record.blockTableID,
             blockTable: record.blockTable
+        )
+    }
+
+    func restorePrefix(cacheKey: Melix_Worker_V1_CacheKey) -> (
+        prefix: Melix_Worker_V1_PrefixRef,
+        blockTableID: String,
+        blockTable: Melix_Worker_V1_BlockTable,
+        quantizedBytes: UInt64
+    )? {
+        pendingRestoreOperations += 1
+        prefixRestoreLookups += 1
+        defer { pendingRestoreOperations -= 1 }
+
+        guard let prefixID = prefixIDByKey[diskCacheKeyIdentifier(cacheKey)],
+              let record = prefixesByID[prefixID] else {
+            return nil
+        }
+
+        prefixRestoreHits += 1
+        return (
+            prefix: record.prefix,
+            blockTableID: record.blockTableID,
+            blockTable: record.blockTable,
+            quantizedBytes: record.quantizedBytes
+        )
+    }
+
+    func tierMetrics() -> DiskCacheTierMetrics {
+        let prefixHitRate = prefixRestoreLookups > 0
+            ? Double(prefixRestoreHits) / Double(prefixRestoreLookups)
+            : 0
+        let snapshotHitRate = snapshotRestoreLookups > 0
+            ? Double(snapshotRestoreHits) / Double(snapshotRestoreLookups)
+            : 0
+
+        return DiskCacheTierMetrics(
+            l2HitRate: prefixHitRate,
+            l2RestoreHitRate: snapshotHitRate,
+            writeBackQueueDepth: pendingWriteBackOperations,
+            restoreQueueDepth: pendingRestoreOperations,
+            writeBackCount: completedWriteBackCount
         )
     }
 
@@ -224,14 +301,17 @@ actor DiskCacheStore {
             )
         }
 
-        let restoreHitRate = restoreLookups > 0 ? Double(restoreHits) / Double(restoreLookups) : 0
+        let tierMetrics = tierMetrics()
         return DiskCacheSummary(
             l2Bytes: l2Bytes,
             quantizedBytes: quantizedBytes,
             unquantizedBytes: unquantizedBytes,
             snapshotCount: UInt64(snapshotsByID.count),
-            l2HitRate: restoreHitRate,
-            l2RestoreHitRate: restoreHitRate,
+            l2HitRate: tierMetrics.l2HitRate,
+            l2RestoreHitRate: tierMetrics.l2RestoreHitRate,
+            writeBackQueueDepth: tierMetrics.writeBackQueueDepth,
+            restoreQueueDepth: tierMetrics.restoreQueueDepth,
+            writeBackCount: tierMetrics.writeBackCount,
             snapshots: snapshotsByID.values.map(\.snapshot).sorted { $0.snapshotID < $1.snapshotID },
             scopes: scopeSummaries
         )
@@ -258,6 +338,7 @@ actor DiskCacheStore {
             guard let removed = prefixesByID.removeValue(forKey: prefixID) else {
                 continue
             }
+            prefixIDByKey.removeValue(forKey: diskCacheKeyIdentifier(removed.prefix.cacheKey))
             purgedBlocks += UInt64(removed.blockTable.blocks.count)
             try? fileManager.removeItem(at: prefixFileURL(prefixID: prefixID))
         }
@@ -289,7 +370,9 @@ actor DiskCacheStore {
             .filter { $0.prefix.scope.modelID == modelID }
             .map { $0.prefix.prefixID }
         for prefixID in prefixIDs {
-            prefixesByID.removeValue(forKey: prefixID)
+            if let removed = prefixesByID.removeValue(forKey: prefixID) {
+                prefixIDByKey.removeValue(forKey: diskCacheKeyIdentifier(removed.prefix.cacheKey))
+            }
             try? fileManager.removeItem(at: prefixFileURL(prefixID: prefixID))
         }
 
@@ -307,7 +390,9 @@ actor DiskCacheStore {
             .filter { diskMatches(scope: scope, prefix: $0.prefix) }
             .map { $0.prefix.prefixID }
         for prefixID in prefixIDs {
-            prefixesByID.removeValue(forKey: prefixID)
+            if let removed = prefixesByID.removeValue(forKey: prefixID) {
+                prefixIDByKey.removeValue(forKey: diskCacheKeyIdentifier(removed.prefix.cacheKey))
+            }
             try? fileManager.removeItem(at: prefixFileURL(prefixID: prefixID))
         }
 

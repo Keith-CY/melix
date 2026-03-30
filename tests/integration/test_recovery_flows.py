@@ -125,6 +125,57 @@ def test_boundary_snapshots_restore_after_swift_worker_restart_with_persisted_ca
             second_stack.stop()
 
 
+def test_restart_prefill_promotes_cold_tier_prefixes_and_publishes_tier_metrics() -> None:
+    repo_root = Path(__file__).resolve().parents[2]
+    with tempfile.TemporaryDirectory(prefix="melix-cold-tier-cache-") as cache_root_str:
+        cache_root = Path(cache_root_str)
+        source_prompt = "reuse this prompt through the cold tier"
+        session_id = f"session-{uuid.uuid4().hex[:8]}"
+
+        first_stack = LiveMelixStack(repo_root, swift_cache_root=cache_root)
+        first_stack.start()
+        try:
+            initial = stream_chat_completion(
+                first_stack,
+                {
+                    "model": "melix-dev-text",
+                    "stream": True,
+                    "session_id": session_id,
+                    "messages": [{"role": "user", "content": source_prompt}],
+                },
+            )
+            assert initial["status"] == 200
+            get_cache_stats(first_stack.swift_socket_path)
+
+            first_metrics = read_metrics_export(first_stack.swift_text_worker_metrics_path)
+            assert first_metrics["values"]["swift_text.cache_l2_writeback_count"] >= 1
+        finally:
+            first_stack.stop()
+
+        second_stack = LiveMelixStack(repo_root, swift_cache_root=cache_root)
+        second_stack.start()
+        try:
+            restored = stream_chat_completion(
+                second_stack,
+                {
+                    "model": "melix-dev-text",
+                    "stream": True,
+                    "session_id": session_id,
+                    "messages": [{"role": "user", "content": source_prompt}],
+                },
+            )
+            assert restored["status"] == 200
+            cache_response = get_cache_stats(second_stack.swift_socket_path)
+            metrics = read_metrics_export(second_stack.swift_text_worker_metrics_path)
+
+            assert cache_response.stats.l2_hit_rate >= 1.0
+            assert metrics["values"]["swift_text.cache_l2_hit_rate"] >= 100
+            assert metrics["values"]["swift_text.cache_l2_writeback_queue_depth"] == 0
+            assert metrics["values"]["swift_text.cache_l2_restore_queue_depth"] == 0
+        finally:
+            second_stack.stop()
+
+
 def test_partial_prefix_followup_walks_back_to_safe_boundary_and_reports_metrics() -> None:
     stack = LiveMelixStack(Path(__file__).resolve().parents[2])
     stack.start()
