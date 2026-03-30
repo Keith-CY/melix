@@ -110,6 +110,7 @@ Current phase-status and planning documents:
 - `plans/2026-03-31-m15-2-update-banners-and-runtime-signal-unification.md`
 - `plans/2026-03-31-m15-3-download-queue-persistence-and-paused-recovery.md`
 - `plans/2026-03-31-m15-4-desktop-polish-integration-evidence.md`
+- `plans/2026-03-31-m10-m15-executable-goals.md`
 - `plans/2026-03-30-m3-12-protocol-compatibility-test-matrix.md`
 - `plans/2026-03-28-p1-m2-swift-text-worker-scaffold.md`
 - `plans/2026-03-28-p1-m3-swift-runtime-lifecycle.md`
