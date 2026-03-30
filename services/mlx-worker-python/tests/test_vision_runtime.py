@@ -19,6 +19,7 @@ from worker.runtime.multimodal_preprocessing import (
     _prepare_image_part,
     prepare_vision_request,
 )
+from worker.runtime.vision_family_adapters import resolve_vision_family_config
 
 
 class PassiveTextBackend:
@@ -49,6 +50,19 @@ def load_model(runtime_service: WorkerRuntimeService, model: common_pb2.ModelSpe
     )
     assert response.ok is True
     return response.model_handle
+
+
+def paligemma_vlm_model() -> common_pb2.ModelSpec:
+    model = WorkerModelCatalog.dev_vlm_model()
+    model.model_id = "melix-test-paligemma-vlm"
+    model.model_path = "models/melix-test-paligemma-vlm"
+    model.ext["vision_family_id"] = "paligemma-v1"
+    model.ext["vision_prompt_profile_id"] = "paligemma-caption-v1"
+    model.ext["vision_tokenization_mode"] = "prefix"
+    model.ext["vision_max_images_per_prompt"] = "1"
+    model.ext["vision_supports_tool_calls"] = "false"
+    model.ext["melix.multimodal_adapter_hash"] = "vision-family-paligemma-v1"
+    return model
 
 
 def test_generate_streams_ocr_text_from_inline_image_bytes() -> None:
@@ -180,6 +194,156 @@ def test_generate_streams_vlm_response_from_image_only_prompt(tmp_path: Path) ->
 
     assert token_text == "Image content: standalone image\nPrompt: Describe the image."
     assert completed.assistant_text == token_text
+
+
+def test_vlm_runtime_load_model_exposes_family_capabilities() -> None:
+    runtime = DeterministicVLMRuntime()
+
+    loaded_model = runtime.load_model(paligemma_vlm_model())
+
+    assert loaded_model["vision_family_id"] == "paligemma-v1"
+    assert loaded_model["vision_prompt_profile_id"] == "paligemma-caption-v1"
+    assert loaded_model["vision_tokenization_mode"] == "prefix"
+    assert loaded_model["vision_max_images_per_prompt"] == "1"
+    assert loaded_model["vision_supports_tool_calls"] == "false"
+    assert loaded_model["multimodal_adapter_hash"] == "vision-family-paligemma-v1"
+
+
+def test_resolve_vision_family_config_handles_invalid_family_overrides() -> None:
+    with pytest.raises(ValueError, match="Unsupported vision family adapter"):
+        resolve_vision_family_config({"vision_family_id": "unknown-family"})
+
+    family_config = resolve_vision_family_config(
+        {
+            "vision_family_id": "paligemma-v1",
+            "vision_max_images_per_prompt": "invalid",
+            "vision_supports_tool_calls": "maybe",
+        }
+    )
+
+    assert family_config.max_images_per_prompt == 1
+    assert family_config.supports_tool_calls is False
+
+
+def test_generate_streams_vlm_response_uses_family_specific_image_only_prompt_default() -> None:
+    runtime_service, inference_service, _ = build_services()
+    model_handle = load_model(runtime_service, paligemma_vlm_model())
+
+    request = inference_pb2.GenerateRequest(
+        execution=inference_pb2.ExecutionMetadata(
+            id=common_pb2.RequestIdentity(request_id="paligemma-image-only"),
+            model_handle=model_handle,
+        ),
+        messages=[
+            common_pb2.ChatMessage(
+                role="user",
+                parts=[
+                    common_pb2.MessagePart(
+                        image_bytes=b"paligemma image",
+                        media=common_pb2.MediaMetadata(
+                            media_type=common_pb2.MEDIA_TYPE_IMAGE,
+                            source_kind=common_pb2.MEDIA_SOURCE_INLINE_BYTES,
+                            filename="paligemma.png",
+                        ),
+                    )
+                ],
+            )
+        ],
+        sampling=common_pb2.SamplingConfig(max_output_tokens=64),
+        stream=True,
+        return_usage=True,
+    )
+
+    events = list(inference_service.Generate(request, context=None))
+    token_text = "".join(event.token_delta.text for event in events if event.HasField("token_delta"))
+    completed = next(event.completed for event in events if event.HasField("completed"))
+
+    assert token_text == "Image content: paligemma image\nPrompt: Caption the image."
+    assert completed.assistant_text == token_text
+
+
+def test_generate_streams_vlm_family_disables_tool_call_delta() -> None:
+    runtime_service, inference_service, _ = build_services()
+    model_handle = load_model(runtime_service, paligemma_vlm_model())
+
+    request = inference_pb2.GenerateRequest(
+        execution=inference_pb2.ExecutionMetadata(
+            id=common_pb2.RequestIdentity(request_id="paligemma-tool-call"),
+            model_handle=model_handle,
+            ext={
+                "melix.tool_parser.mode": "qwen",
+                "melix.tool_parser.namespaces": "tools.vision",
+            },
+        ),
+        messages=[
+            common_pb2.ChatMessage(
+                role="user",
+                parts=[
+                    common_pb2.MessagePart(text="Call the tool for this image."),
+                    common_pb2.MessagePart(
+                        image_bytes=b"tool disabled image",
+                        media=common_pb2.MediaMetadata(
+                            media_type=common_pb2.MEDIA_TYPE_IMAGE,
+                            source_kind=common_pb2.MEDIA_SOURCE_INLINE_BYTES,
+                            filename="tool-disabled.png",
+                        ),
+                    ),
+                ],
+            )
+        ],
+        sampling=common_pb2.SamplingConfig(max_output_tokens=64),
+        stream=True,
+        return_usage=True,
+    )
+
+    events = list(inference_service.Generate(request, context=None))
+
+    assert not any(event.HasField("tool_call_delta") for event in events)
+
+
+def test_prefill_rejects_multi_image_for_single_image_family() -> None:
+    runtime_service, inference_service, _ = build_services()
+    model_handle = load_model(runtime_service, paligemma_vlm_model())
+
+    response = inference_service.Prefill(
+        inference_pb2.PrefillRequest(
+            execution=inference_pb2.ExecutionMetadata(
+                id=common_pb2.RequestIdentity(request_id="paligemma-multi-image"),
+                model_handle=model_handle,
+            ),
+            messages=[
+                common_pb2.ChatMessage(
+                    role="user",
+                    parts=[
+                        common_pb2.MessagePart(text="Compare both images."),
+                        common_pb2.MessagePart(
+                            image_bytes=b"first image",
+                            media=common_pb2.MediaMetadata(
+                                media_type=common_pb2.MEDIA_TYPE_IMAGE,
+                                source_kind=common_pb2.MEDIA_SOURCE_INLINE_BYTES,
+                                filename="first.png",
+                            ),
+                        ),
+                        common_pb2.MessagePart(
+                            image_bytes=b"second image",
+                            media=common_pb2.MediaMetadata(
+                                media_type=common_pb2.MEDIA_TYPE_IMAGE,
+                                source_kind=common_pb2.MEDIA_SOURCE_INLINE_BYTES,
+                                filename="second.png",
+                            ),
+                        ),
+                    ],
+                )
+            ],
+            return_decode_handle=True,
+            prefill_step_size=16,
+        ),
+        context=None,
+    )
+
+    assert response.ok is False
+    assert response.error.code == "runtime_error"
+    assert "supports at most 1 image" in response.error.message
 
 
 def test_generate_streams_vlm_response_from_multi_image_prompt(tmp_path: Path) -> None:

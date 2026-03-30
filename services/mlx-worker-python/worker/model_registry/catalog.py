@@ -105,6 +105,14 @@ class WorkerModelCatalog:
             parser_mode="text",
             reasoning_mode="off",
             max_context=4096,
+            ext={
+                "vision_family_id": "llava-v1",
+                "vision_prompt_profile_id": "llava-chatml-v1",
+                "vision_tokenization_mode": "interleaved",
+                "vision_max_images_per_prompt": "8",
+                "vision_supports_tool_calls": "true",
+                "melix.multimodal_adapter_hash": "vision-family-llava-v1",
+            },
         )
 
     @staticmethod

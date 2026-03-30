@@ -9,6 +9,7 @@ from packages.protocol.python.worker.v1 import cache_pb2, common_pb2
 from worker.runtime.deterministic_delay import sleep_if_configured
 from worker.runtime.mlx_text_runtime import RuntimeTokenEvent, RuntimeToolCallEvent
 from worker.runtime.multimodal_preprocessing import PreparedVisionRequest, prepare_vision_request
+from worker.runtime.vision_family_adapters import resolve_vision_family_config
 
 
 @dataclass(frozen=True)
@@ -65,6 +66,7 @@ class DeterministicVLMRuntime:
         self._cache_hits = 0
 
     def load_model(self, model_spec):
+        family_config = resolve_vision_family_config(dict(model_spec.ext))
         return {
             "model_id": model_spec.model_id,
             "model_kind": model_spec.model_kind,
@@ -73,7 +75,7 @@ class DeterministicVLMRuntime:
             "quant_profile_id": model_spec.quant_profile_id,
             "parser_mode": model_spec.parser_mode,
             "reasoning_mode": model_spec.reasoning_mode,
-            "multimodal_adapter_hash": model_spec.ext.get("melix.multimodal_adapter_hash", ""),
+            **family_config.capability_metadata(),
         }
 
     def estimate_resident_bytes(self, model_spec):
@@ -87,7 +89,7 @@ class DeterministicVLMRuntime:
         execution_ext: dict[str, str] | None = None,
     ) -> PreparedVisionRequest:
         _ = template_kwargs
-        prepared = prepare_vision_request(messages)
+        prepared = self._family_config(loaded_model).shape_request(prepare_vision_request(messages))
         cache_identity, scope_id = self._cache_identity(
             prepared,
             loaded_model,
@@ -104,10 +106,12 @@ class DeterministicVLMRuntime:
         )
         return prepared
 
-    def prompt_token_count(self, prepared_request: PreparedVisionRequest) -> int:
-        prompt_tokens = len(prepared_request.prompt_text.split())
-        image_tokens = sum(max(1, image.byte_length // 8) for image in prepared_request.images)
-        return max(1, prompt_tokens + image_tokens)
+    def prompt_token_count(
+        self,
+        prepared_request: PreparedVisionRequest,
+        loaded_model=None,
+    ) -> int:
+        return self._family_config(loaded_model).prompt_token_count(prepared_request)
 
     def prefill(
         self,
@@ -121,7 +125,7 @@ class DeterministicVLMRuntime:
             loaded_model=loaded_model,
             execution_ext=execution_ext,
         )
-        prompt_tokens = self.prompt_token_count(prepared_request)
+        prompt_tokens = self.prompt_token_count(prepared_request, loaded_model=loaded_model)
         cache_identity, scope_id = self._cache_identity(
             prepared_request,
             loaded_model,
@@ -148,7 +152,11 @@ class DeterministicVLMRuntime:
         )
         decode_handle = f"vlm:{request_id}"
         response_text = self._response_text(prepared_request)
-        tool_call_event = self._tool_call_event(prepared_request, execution_ext)
+        tool_call_event = self._tool_call_event(
+            prepared_request,
+            loaded_model,
+            execution_ext,
+        )
         session = VisionPrefillSession(
             decode_handle=decode_handle,
             prepared_request=prepared_request,
@@ -257,14 +265,18 @@ class DeterministicVLMRuntime:
         sleep_if_configured("vlm")
         if cancel_event.is_set():
             return
-        tool_call_event = self._tool_call_event(prepared_request, execution_ext)
+        tool_call_event = self._tool_call_event(
+            prepared_request,
+            loaded_model,
+            execution_ext,
+        )
         if tool_call_event is not None:
             yield tool_call_event
             if cancel_event.is_set():
                 return
         yield RuntimeTokenEvent(
             text=response,
-            prompt_tokens=self.prompt_token_count(prepared_request),
+            prompt_tokens=self.prompt_token_count(prepared_request, loaded_model=loaded_model),
             completion_tokens=max(1, len(response.split())),
             finish_reason="stop",
         )
@@ -435,8 +447,11 @@ class DeterministicVLMRuntime:
     def _tool_call_event(
         self,
         prepared_request: PreparedVisionRequest,
+        loaded_model,
         execution_ext: dict[str, str] | None,
     ) -> RuntimeToolCallEvent | None:
+        if not self._family_config(loaded_model).supports_tool_calls:
+            return None
         parser_mode = (execution_ext or {}).get("melix.tool_parser.mode", "").strip()
         if not parser_mode:
             return None
@@ -482,3 +497,13 @@ class DeterministicVLMRuntime:
             if isinstance(value, str) and value:
                 return value
         return default
+
+    def _family_config(self, loaded_model) -> object:
+        metadata: dict[str, str] = {}
+        if isinstance(loaded_model, dict):
+            metadata = {
+                key: value
+                for key, value in loaded_model.items()
+                if isinstance(value, str) and value
+            }
+        return resolve_vision_family_config(metadata)

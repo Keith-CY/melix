@@ -765,6 +765,27 @@ struct PythonBridgeWorkerClientTests {
         #expect(spec.ext["ocr_sampling_profile_id"] == "ocr-deterministic")
     }
 
+    @Test("bootstrap worker preparation carries VLM family metadata into worker model specs")
+    func bootstrapWorkerPreparationCarriesVLMFamilyMetadataIntoWorkerModelSpecs() throws {
+        var summary = ModelCatalog.devVLMModel()
+        summary.settings.ext["vision_family_id"] = "paligemma-v1"
+        summary.settings.ext["vision_prompt_profile_id"] = "paligemma-caption-v1"
+        summary.settings.ext["vision_tokenization_mode"] = "prefix"
+        summary.settings.ext["vision_max_images_per_prompt"] = "1"
+        summary.settings.ext["vision_supports_tool_calls"] = "false"
+        summary.settings.ext["melix.multimodal_adapter_hash"] = "vision-family-paligemma-v1"
+
+        let spec = try #require(BootstrapWorkerPreparation.modelSpec(for: summary))
+
+        #expect(spec.modelID == "melix-dev-vlm")
+        #expect(spec.ext["vision_family_id"] == "paligemma-v1")
+        #expect(spec.ext["vision_prompt_profile_id"] == "paligemma-caption-v1")
+        #expect(spec.ext["vision_tokenization_mode"] == "prefix")
+        #expect(spec.ext["vision_max_images_per_prompt"] == "1")
+        #expect(spec.ext["vision_supports_tool_calls"] == "false")
+        #expect(spec.ext["melix.multimodal_adapter_hash"] == "vision-family-paligemma-v1")
+    }
+
     @Test("bridge client treats helper errors as unavailable")
     func bridgeClientTreatsHelperErrorsAsUnavailable() async throws {
         let runner = ScriptedBridgeRunner()

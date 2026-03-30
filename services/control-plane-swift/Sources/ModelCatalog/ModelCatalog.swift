@@ -401,6 +401,12 @@ public actor ModelCatalog {
         model.supportedTasks = ["vlm"]
         model.settings.alias = "Melix Dev VLM"
         model.settings.memoryPolicy = .memoryResidencyEvictable
+        model.settings.ext["vision_family_id"] = "llava-v1"
+        model.settings.ext["vision_prompt_profile_id"] = "llava-chatml-v1"
+        model.settings.ext["vision_tokenization_mode"] = "interleaved"
+        model.settings.ext["vision_max_images_per_prompt"] = "8"
+        model.settings.ext["vision_supports_tool_calls"] = "true"
+        model.settings.ext["melix.multimodal_adapter_hash"] = "vision-family-llava-v1"
         return withSynchronizedResidency(model)
     }
 

@@ -293,6 +293,14 @@ public enum BootstrapWorkerPreparation {
         "ocr_default_top_p",
         "ocr_default_max_tokens",
     ]
+    private static let vlmExtKeys = [
+        "vision_family_id",
+        "vision_prompt_profile_id",
+        "vision_tokenization_mode",
+        "vision_max_images_per_prompt",
+        "vision_supports_tool_calls",
+        "melix.multimodal_adapter_hash",
+    ]
 
     public static func modelSpec(for modelID: String) -> Melix_Worker_V1_ModelSpec? {
         switch modelID {
@@ -325,6 +333,11 @@ public enum BootstrapWorkerPreparation {
             spec.ext[adapterSetHashExtKey] = adapterSetHash
         }
         for key in ocrExtKeys {
+            if let value = summary.settings.ext[key], !value.isEmpty {
+                spec.ext[key] = value
+            }
+        }
+        for key in vlmExtKeys {
             if let value = summary.settings.ext[key], !value.isEmpty {
                 spec.ext[key] = value
             }
@@ -531,6 +544,12 @@ public enum BootstrapWorkerPreparation {
         model.parserMode = "text"
         model.reasoningMode = "off"
         model.maxContext = 4096
+        model.ext["vision_family_id"] = "llava-v1"
+        model.ext["vision_prompt_profile_id"] = "llava-chatml-v1"
+        model.ext["vision_tokenization_mode"] = "interleaved"
+        model.ext["vision_max_images_per_prompt"] = "8"
+        model.ext["vision_supports_tool_calls"] = "true"
+        model.ext["melix.multimodal_adapter_hash"] = "vision-family-llava-v1"
         return model
     }
 
