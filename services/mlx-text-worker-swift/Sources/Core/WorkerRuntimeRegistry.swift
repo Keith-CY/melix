@@ -114,12 +114,38 @@ actor WorkerRuntimeRegistry {
         return capabilities
     }
 
-    func loadModel(_ requested: Melix_Worker_V1_ModelSpec) async throws -> LoadedModelRecord {
+    func loadModel(
+        _ requested: Melix_Worker_V1_ModelSpec,
+        memoryBudgetBytes: UInt64 = 0
+    ) async throws -> LoadedModelRecord {
         let resolved = modelCatalog.get(requested.modelID).map { catalogModel in
             mergeModelSpec(requested, fallback: catalogModel)
         } ?? requested
 
         let loaded = try await runtime.loadModel(spec: resolved)
+        let existingResidentBytes = loadedModels.values.reduce(0) { $0 + $1.estimatedResidentBytes }
+        let projectedResidentBytes = existingResidentBytes &+ loaded.estimatedResidentBytes
+        let requiredProcessBytes = projectedResidentBytes &+ configuration.modelLoadHeadroomBytes
+        if configuration.processMemoryBudgetBytes > 0, requiredProcessBytes > configuration.processMemoryBudgetBytes {
+            await runtime.unloadModel(loaded.model)
+            throw WorkerRuntimeRegistryError.memoryBudgetExceeded(
+                budgetBytes: configuration.processMemoryBudgetBytes,
+                headroomBytes: configuration.modelLoadHeadroomBytes,
+                projectedResidentBytes: projectedResidentBytes,
+                requiredBytes: requiredProcessBytes
+            )
+        }
+
+        let requiredRequestBytes = loaded.estimatedResidentBytes &+ configuration.modelLoadHeadroomBytes
+        if memoryBudgetBytes > 0, requiredRequestBytes > memoryBudgetBytes {
+            await runtime.unloadModel(loaded.model)
+            throw WorkerRuntimeRegistryError.memoryBudgetExceeded(
+                budgetBytes: memoryBudgetBytes,
+                headroomBytes: configuration.modelLoadHeadroomBytes,
+                projectedResidentBytes: loaded.estimatedResidentBytes,
+                requiredBytes: requiredRequestBytes
+            )
+        }
         let handle = "\(resolved.modelID)::\(nextModelHandle)"
         nextModelHandle += 1
 
@@ -425,7 +451,7 @@ actor WorkerRuntimeRegistry {
         stats.cacheResidentBytes = cacheResidentBytes
         stats.kvCacheBytes = kvCacheBytes
         stats.peakAllocationBytes = 0
-        stats.memoryHeadroomBytes = 0
+        stats.memoryHeadroomBytes = configuration.modelLoadHeadroomBytes
         stats.residentBytes = modelResidentBytes &+ cacheResidentBytes &+ kvCacheBytes
         stats.activeRequests = activeRequests
         stats.activePrefills = activePrefills
@@ -591,11 +617,17 @@ actor WorkerRuntimeRegistry {
     }
 }
 
-enum WorkerRuntimeRegistryError: Error, LocalizedError {
+enum WorkerRuntimeRegistryError: Error, LocalizedError, Equatable {
     case unknownModelHandle
     case unknownDecodeHandle
     case unknownSnapshotID
     case snapshotModelNotLoaded
+    case memoryBudgetExceeded(
+        budgetBytes: UInt64,
+        headroomBytes: UInt64,
+        projectedResidentBytes: UInt64,
+        requiredBytes: UInt64
+    )
 
     var errorDescription: String? {
         switch self {
@@ -607,6 +639,38 @@ enum WorkerRuntimeRegistryError: Error, LocalizedError {
             return "Unknown snapshot ID."
         case .snapshotModelNotLoaded:
             return "The model required for this snapshot is not currently loaded."
+        case .memoryBudgetExceeded:
+            return "Projected resident memory would exceed the process budget."
+        }
+    }
+
+    static func == (lhs: WorkerRuntimeRegistryError, rhs: WorkerRuntimeRegistryError) -> Bool {
+        switch (lhs, rhs) {
+        case (.unknownModelHandle, .unknownModelHandle),
+             (.unknownDecodeHandle, .unknownDecodeHandle),
+             (.unknownSnapshotID, .unknownSnapshotID),
+             (.snapshotModelNotLoaded, .snapshotModelNotLoaded):
+            return true
+        case let (
+            .memoryBudgetExceeded(
+                budgetBytes: lhsBudgetBytes,
+                headroomBytes: lhsHeadroomBytes,
+                projectedResidentBytes: lhsProjectedResidentBytes,
+                requiredBytes: lhsRequiredBytes
+            ),
+            .memoryBudgetExceeded(
+                budgetBytes: rhsBudgetBytes,
+                headroomBytes: rhsHeadroomBytes,
+                projectedResidentBytes: rhsProjectedResidentBytes,
+                requiredBytes: rhsRequiredBytes
+            )
+        ):
+            return lhsBudgetBytes == rhsBudgetBytes &&
+                lhsHeadroomBytes == rhsHeadroomBytes &&
+                lhsProjectedResidentBytes == rhsProjectedResidentBytes &&
+                lhsRequiredBytes == rhsRequiredBytes
+        default:
+            return false
         }
     }
 }

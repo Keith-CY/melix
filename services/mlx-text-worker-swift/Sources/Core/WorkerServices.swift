@@ -74,7 +74,10 @@ final class RuntimeRPCService: Melix_Worker_V1_RuntimeService.SimpleServiceProto
         let startedAt = Date()
 
         do {
-            let loaded = try await registry.loadModel(request.model)
+            let loaded = try await registry.loadModel(
+                request.model,
+                memoryBudgetBytes: request.memoryBudgetBytes
+            )
             metrics.recordMilliseconds("swift_text.load_model_ms", value: elapsedMilliseconds(since: startedAt))
             metrics.set("swift_text.peak_resident_bytes", value: Int(clamping: loaded.estimatedResidentBytes))
             metrics.set("swift_text.loaded_model_count", value: await registry.loadedModelCount())
@@ -83,6 +86,30 @@ final class RuntimeRPCService: Melix_Worker_V1_RuntimeService.SimpleServiceProto
             response.ok = true
             response.modelHandle = loaded.handle
             response.estimatedResidentBytes = loaded.estimatedResidentBytes
+            response.resolvedCapabilities = await registry.capabilities()
+            return response
+        } catch let WorkerRuntimeRegistryError.memoryBudgetExceeded(
+            budgetBytes,
+            headroomBytes,
+            projectedResidentBytes,
+            requiredBytes
+        ) {
+            metrics.increment("swift_text.rpc_error_count")
+            metrics.recordMilliseconds("swift_text.load_model_ms", value: elapsedMilliseconds(since: startedAt))
+            metrics.set("swift_text.loaded_model_count", value: await registry.loadedModelCount())
+
+            var response = Melix_Worker_V1_LoadModelResponse()
+            response.ok = false
+            response.error = makeErrorStatus(
+                code: "memory_budget_exceeded",
+                message: "Projected resident memory would exceed the process budget.",
+                details: [
+                    "budget_bytes": String(budgetBytes),
+                    "headroom_bytes": String(headroomBytes),
+                    "projected_resident_bytes": String(projectedResidentBytes),
+                    "required_bytes": String(requiredBytes),
+                ]
+            )
             response.resolvedCapabilities = await registry.capabilities()
             return response
         } catch {
@@ -518,6 +545,8 @@ private func saveRestoreErrorCode(for error: WorkerRuntimeRegistryError) -> Stri
         return "not_found"
     case .snapshotModelNotLoaded:
         return "failed_precondition"
+    case .memoryBudgetExceeded:
+        return "resource_exhausted"
     }
 }
 
@@ -527,12 +556,14 @@ private func makeUnimplementedStatus(_ message: String) -> Melix_Worker_V1_Error
 
 private func makeErrorStatus(
     code: String,
-    message: String
+    message: String,
+    details: [String: String] = [:]
 ) -> Melix_Worker_V1_ErrorStatus {
     var status = Melix_Worker_V1_ErrorStatus()
     status.code = code
     status.message = message
     status.retriable = false
+    status.details = details
     return status
 }
 

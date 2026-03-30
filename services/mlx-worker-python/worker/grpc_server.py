@@ -29,7 +29,7 @@ from worker.engine.maintenance_core import MaintenanceCore
 from worker.engine.rerank_core import RerankCore
 from worker.engine.speech_core import SpeechCore
 from worker.engine.transcription_core import TranscriptionCore
-from worker.registry import WorkerRegistry
+from worker.registry import MemoryBudgetExceeded, WorkerRegistry
 from worker.runtime.deterministic_embedding_runtime import DeterministicEmbeddingRuntime
 from worker.runtime.deterministic_backend import DeterministicTextBackend
 from worker.runtime.deterministic_rerank_runtime import DeterministicRerankRuntime
@@ -97,7 +97,20 @@ class WorkerRuntimeService(runtime_pb2_grpc.RuntimeServiceServicer):
 
     def LoadModel(self, request, context):
         try:
-            loaded = self._registry.load_model(request.model, pin_on_load=request.pin_on_load)
+            loaded = self._registry.load_model(
+                request.model,
+                pin_on_load=request.pin_on_load,
+                memory_budget_bytes=request.memory_budget_bytes,
+            )
+        except MemoryBudgetExceeded as exc:
+            return runtime_pb2.LoadModelResponse(
+                ok=False,
+                error=common_pb2.ErrorStatus(
+                    code="memory_budget_exceeded",
+                    message=str(exc),
+                    details=exc.details,
+                ),
+            )
         except Exception as exc:
             return runtime_pb2.LoadModelResponse(
                 ok=False,
@@ -214,13 +227,20 @@ class WorkerMaintenanceService(maintenance_pb2_grpc.MaintenanceServiceServicer):
 
 
 def build_registry_for_backend(backend_mode: str) -> WorkerRegistry:
+    process_memory_budget_bytes = max(0, int(os.environ.get("MELIX_PYTHON_WORKER_PROCESS_MEMORY_BUDGET_BYTES", "0")))
+    memory_headroom_bytes = max(0, int(os.environ.get("MELIX_PYTHON_WORKER_MODEL_LOAD_HEADROOM_BYTES", "0")))
     if backend_mode == "deterministic":
         return WorkerRegistry(
             runtime=MLXTextRuntime(backend=DeterministicTextBackend()),
             embedding_runtime=DeterministicEmbeddingRuntime(),
             rerank_runtime=DeterministicRerankRuntime(),
+            process_memory_budget_bytes=process_memory_budget_bytes,
+            memory_headroom_bytes=memory_headroom_bytes,
         )
-    return WorkerRegistry()
+    return WorkerRegistry(
+        process_memory_budget_bytes=process_memory_budget_bytes,
+        memory_headroom_bytes=memory_headroom_bytes,
+    )
 
 
 def build_server(

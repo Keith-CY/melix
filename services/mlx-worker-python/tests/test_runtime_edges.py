@@ -52,10 +52,16 @@ class FailingBackend(FakeBackend):
         raise RuntimeError("cannot load model")
 
 
-def build_registry(backend=None) -> WorkerRegistry:
+def build_registry(
+    backend=None,
+    process_memory_budget_bytes: int = 0,
+    memory_headroom_bytes: int = 0,
+) -> WorkerRegistry:
     return WorkerRegistry(
         runtime=MLXTextRuntime(backend=backend or FakeBackend()),
         model_catalog=WorkerModelCatalog(),
+        process_memory_budget_bytes=process_memory_budget_bytes,
+        memory_headroom_bytes=memory_headroom_bytes,
     )
 
 
@@ -128,6 +134,34 @@ def test_runtime_service_handles_failures_and_state_transitions() -> None:
     assert warmup.error.code == "unimplemented"
     assert shutdown.ok is True
     assert registry.list_loaded_models() == []
+
+
+def test_runtime_service_rejects_model_loads_that_exceed_process_budget_and_reports_headroom() -> None:
+    registry = build_registry(
+        process_memory_budget_bytes=4_500,
+        memory_headroom_bytes=1_024,
+    )
+    runtime_service = WorkerRuntimeService(registry)
+
+    rejected = runtime_service.LoadModel(
+        runtime_pb2.LoadModelRequest(model=WorkerModelCatalog.dev_text_model()),
+        context=None,
+    )
+
+    assert rejected.ok is False
+    assert rejected.error.code == "memory_budget_exceeded"
+    assert rejected.error.message == "Projected resident memory would exceed the process budget."
+    assert rejected.error.details == {
+        "budget_bytes": "4500",
+        "headroom_bytes": "1024",
+        "projected_resident_bytes": "4096",
+        "required_bytes": "5120",
+    }
+    assert registry.list_loaded_models() == []
+
+    stats = runtime_service.GetRuntimeStats(runtime_pb2.GetRuntimeStatsRequest(), context=None)
+    assert stats.stats.memory_headroom_bytes == 1024
+    assert stats.stats.resident_bytes == 0
 
 
 def test_registry_capabilities_and_request_lifecycle() -> None:
@@ -511,6 +545,16 @@ def test_build_registry_for_backend_uses_deterministic_runtime() -> None:
     assert registry.runtime.runtime_name == "deterministic-text"
     assert registry.embedding_runtime.runtime_name == "deterministic-embed"
     assert registry.rerank_runtime.runtime_name == "deterministic-rerank"
+
+
+def test_build_registry_for_backend_reads_process_memory_budget_env(monkeypatch) -> None:
+    monkeypatch.setenv("MELIX_PYTHON_WORKER_PROCESS_MEMORY_BUDGET_BYTES", "8192")
+    monkeypatch.setenv("MELIX_PYTHON_WORKER_MODEL_LOAD_HEADROOM_BYTES", "512")
+
+    registry = build_registry_for_backend("deterministic")
+    stats = registry.runtime_stats()
+
+    assert stats.memory_headroom_bytes == 512
 
 
 def test_build_server_normalizes_relative_socket_path(monkeypatch, tmp_path: Path) -> None:

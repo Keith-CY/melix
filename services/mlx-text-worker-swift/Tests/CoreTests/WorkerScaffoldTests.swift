@@ -25,6 +25,8 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(configuration.backendMode, "swift")
         XCTAssertEqual(configuration.runtimeVersion, "melix-swift-text-worker/dev")
         XCTAssertEqual(configuration.cacheRootPath, ".runtime/swift-text-worker-cache")
+        XCTAssertEqual(configuration.processMemoryBudgetBytes, 0)
+        XCTAssertEqual(configuration.modelLoadHeadroomBytes, 0)
     }
 
     func testConfigurationReadsEnvironmentOverrides() {
@@ -35,6 +37,8 @@ final class WorkerScaffoldTests: XCTestCase {
             "MELIX_SWIFT_TEXT_WORKER_RUNTIME_VERSION": "melix-swift-text-worker/test",
             "MELIX_SWIFT_TEXT_WORKER_METRICS_PATH": "/tmp/melix-swift-text-worker-metrics.json",
             "MELIX_SWIFT_TEXT_WORKER_CACHE_ROOT": "/tmp/melix-swift-text-worker-cache",
+            "MELIX_SWIFT_TEXT_WORKER_PROCESS_MEMORY_BUDGET_BYTES": "65536",
+            "MELIX_SWIFT_TEXT_WORKER_MODEL_LOAD_HEADROOM_BYTES": "2048",
         ])
 
         XCTAssertEqual(configuration.workerID, "swift-text-worker-dev")
@@ -43,6 +47,8 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(configuration.runtimeVersion, "melix-swift-text-worker/test")
         XCTAssertEqual(configuration.metricsExportPath, "/tmp/melix-swift-text-worker-metrics.json")
         XCTAssertEqual(configuration.cacheRootPath, "/tmp/melix-swift-text-worker-cache")
+        XCTAssertEqual(configuration.processMemoryBudgetBytes, 65_536)
+        XCTAssertEqual(configuration.modelLoadHeadroomBytes, 2_048)
     }
 
     func testConfigurationFallsBackToDefaultsForEmptyEnvironment() {
@@ -1139,6 +1145,118 @@ final class WorkerScaffoldTests: XCTestCase {
 
         let loadedSpecs = await backend.loadedSpecs()
         XCTAssertEqual(loadedSpecs.map(\.modelPath), ["mlx-community/melix-dev-text-4bit"])
+    }
+
+    func testRuntimeLifecycleRejectsModelLoadsThatExceedProcessBudgetAndReportsHeadroom() async throws {
+        let services = makeServices(
+            environment: [
+                "MELIX_SWIFT_TEXT_WORKER_PROCESS_MEMORY_BUDGET_BYTES": "4500",
+                "MELIX_SWIFT_TEXT_WORKER_MODEL_LOAD_HEADROOM_BYTES": "1024",
+            ],
+            backend: FakeRuntimeBackend(),
+            residentMemorySamples: [1_000, 5_096]
+        )
+
+        let loadResponse = try await withTestServerContextRPCCancellationHandle { handle in
+            var request = Melix_Worker_V1_LoadModelRequest()
+            request.model.modelID = "melix-dev-text"
+            return try await services.runtime.loadModel(
+                request: request,
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_RuntimeService.Method.LoadModel.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
+        let runtimeStats = try await withTestServerContextRPCCancellationHandle { handle in
+            try await services.runtime.getRuntimeStats(
+                request: Melix_Worker_V1_GetRuntimeStatsRequest(),
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_RuntimeService.Method.GetRuntimeStats.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
+        XCTAssertFalse(loadResponse.ok)
+        XCTAssertEqual(loadResponse.error.code, "memory_budget_exceeded")
+        XCTAssertEqual(loadResponse.error.message, "Projected resident memory would exceed the process budget.")
+        XCTAssertEqual(loadResponse.error.details["budget_bytes"], "4500")
+        XCTAssertEqual(loadResponse.error.details["headroom_bytes"], "1024")
+        XCTAssertEqual(loadResponse.error.details["projected_resident_bytes"], "4096")
+        XCTAssertEqual(loadResponse.error.details["required_bytes"], "5120")
+        XCTAssertEqual(runtimeStats.stats.memoryHeadroomBytes, 1_024)
+        XCTAssertEqual(runtimeStats.stats.residentBytes, 0)
+        let loadedModelCount = await services.registry.loadedModelCount()
+        XCTAssertEqual(loadedModelCount, 0)
+    }
+
+    func testRuntimeLifecycleRejectsModelLoadsThatExceedExplicitRequestBudget() async throws {
+        let services = makeServices(
+            environment: [
+                "MELIX_SWIFT_TEXT_WORKER_MODEL_LOAD_HEADROOM_BYTES": "1024",
+            ],
+            backend: FakeRuntimeBackend(),
+            residentMemorySamples: [1_000, 5_096]
+        )
+
+        let loadResponse = try await withTestServerContextRPCCancellationHandle { handle in
+            var request = Melix_Worker_V1_LoadModelRequest()
+            request.model.modelID = "melix-dev-text"
+            request.memoryBudgetBytes = 4_500
+            return try await services.runtime.loadModel(
+                request: request,
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_RuntimeService.Method.LoadModel.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
+        XCTAssertFalse(loadResponse.ok)
+        XCTAssertEqual(loadResponse.error.code, "memory_budget_exceeded")
+        XCTAssertEqual(loadResponse.error.details["budget_bytes"], "4500")
+        XCTAssertEqual(loadResponse.error.details["headroom_bytes"], "1024")
+        XCTAssertEqual(loadResponse.error.details["projected_resident_bytes"], "4096")
+        XCTAssertEqual(loadResponse.error.details["required_bytes"], "5120")
+        let loadedModelCount = await services.registry.loadedModelCount()
+        XCTAssertEqual(loadedModelCount, 0)
+    }
+
+    func testWorkerRuntimeRegistryErrorSupportsMemoryBudgetDescriptionsAndEquality() {
+        let budgetError = WorkerRuntimeRegistryError.memoryBudgetExceeded(
+            budgetBytes: 4_500,
+            headroomBytes: 1_024,
+            projectedResidentBytes: 4_096,
+            requiredBytes: 5_120
+        )
+        let sameBudgetError = WorkerRuntimeRegistryError.memoryBudgetExceeded(
+            budgetBytes: 4_500,
+            headroomBytes: 1_024,
+            projectedResidentBytes: 4_096,
+            requiredBytes: 5_120
+        )
+        let differentBudgetError = WorkerRuntimeRegistryError.memoryBudgetExceeded(
+            budgetBytes: 4_096,
+            headroomBytes: 0,
+            projectedResidentBytes: 4_096,
+            requiredBytes: 4_096
+        )
+
+        XCTAssertEqual(
+            budgetError.errorDescription,
+            "Projected resident memory would exceed the process budget."
+        )
+        XCTAssertEqual(budgetError, sameBudgetError)
+        XCTAssertNotEqual(budgetError, differentBudgetError)
+        XCTAssertNotEqual(budgetError, .unknownModelHandle)
     }
 
     func testRuntimeLifecycleReportsLoadFailuresAndMissingHandles() async throws {

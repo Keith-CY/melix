@@ -56,7 +56,12 @@ enum OnDemandModelLoader {
             throw OnDemandModelLoadError.workerUnavailable
         }
         guard response.ok, !response.modelHandle.isEmpty else {
-            _ = await modelCatalog.recordLoadFailed(id: modelID, reason: "lazy_text_load_failed")
+            let failureReason = if response.error.code.isEmpty {
+                "lazy_text_load_failed"
+            } else {
+                "lazy_text_load_\(sanitizeTransitionReasonComponent(response.error.code))"
+            }
+            _ = await modelCatalog.recordLoadFailed(id: modelID, reason: failureReason)
             throw OnDemandModelLoadError.workerUnavailable
         }
 
@@ -188,5 +193,17 @@ enum OnDemandModelLoader {
         default:
             return "control_plane.model_eviction_other_count"
         }
+    }
+
+    private static func sanitizeTransitionReasonComponent(_ rawCode: String) -> String {
+        let lowered = rawCode.lowercased()
+        return String(lowered.map { character in
+            switch character {
+            case "a"..."z", "0"..."9", "_":
+                return character
+            default:
+                return "_"
+            }
+        })
     }
 }

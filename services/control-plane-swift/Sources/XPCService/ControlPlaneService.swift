@@ -2,6 +2,11 @@ import Foundation
 import MelixControlPlaneProtocol
 import MelixWorkerProtocol
 
+private struct ModelLoadOutcome {
+    let model: Melix_Controlplane_V1_ModelSummary
+    let error: Melix_Controlplane_V1_ErrorStatus?
+}
+
 public actor ControlPlaneService {
     public let serverVersion: String
     private let daemonInstanceID: String
@@ -221,11 +226,15 @@ public actor ControlPlaneService {
                workerRegistry != nil {
                 await publishModelStateChanged(loading)
             }
-            let model = await handleModelLoad(modelID: load.modelID, reason: "operator_load")
+            let outcome = await handleModelLoad(modelID: load.modelID, reason: "operator_load")
+            let model = outcome.model
             if workerRegistry != nil {
                 await publishModelStateChanged(model)
             }
             guard model.state != .modelFailed else {
+                if let error = outcome.error {
+                    return errorResponse(for: request, error: error)
+                }
                 return errorResponse(
                     for: request,
                     code: "unavailable",
@@ -1238,6 +1247,16 @@ public actor ControlPlaneService {
         return response
     }
 
+    private func errorResponse(
+        for request: Melix_Controlplane_V1_ControlPlaneRequest,
+        error: Melix_Controlplane_V1_ErrorStatus
+    ) -> Melix_Controlplane_V1_ControlPlaneResponse {
+        var response = baseResponse(for: request)
+        response.ok = false
+        response.error = error
+        return response
+    }
+
     private func baseResponse(
         for request: Melix_Controlplane_V1_ControlPlaneRequest
     ) -> Melix_Controlplane_V1_ControlPlaneResponse {
@@ -1262,15 +1281,16 @@ public actor ControlPlaneService {
     private func handleModelLoad(
         modelID: String,
         reason: String
-    ) async -> Melix_Controlplane_V1_ModelSummary {
+    ) async -> ModelLoadOutcome {
         guard let workerRegistry,
               let modelSpec = BootstrapWorkerPreparation.modelSpec(for: modelID),
               let workerClient = await workerRegistry.client(forModelID: modelID) else {
-            return await modelCatalog.recordLoadSucceeded(
+            let model = await modelCatalog.recordLoadSucceeded(
                 id: modelID,
                 dispatchHandle: "\(modelID)::local",
                 reason: reason
             ) ?? Melix_Controlplane_V1_ModelSummary()
+            return ModelLoadOutcome(model: model, error: nil)
         }
 
         var workerRequest = Melix_Worker_V1_LoadModelRequest()
@@ -1282,24 +1302,41 @@ public actor ControlPlaneService {
         do {
             let response = try await workerClient.loadModel(request: workerRequest)
             guard response.ok, !response.modelHandle.isEmpty else {
-                return await modelCatalog.recordLoadFailed(
+                let explicitError = response.error.code.isEmpty ? nil : makeErrorStatus(from: response.error)
+                let failureReason = explicitError.map { "\(reason)_\(sanitizeTransitionReasonComponent($0.code))" } ?? "\(reason)_failed"
+                let model = await modelCatalog.recordLoadFailed(
                     id: modelID,
-                    reason: "\(reason)_failed"
+                    reason: failureReason
                 ) ?? Melix_Controlplane_V1_ModelSummary()
+                return ModelLoadOutcome(model: model, error: explicitError)
             }
-            return await modelCatalog.recordLoadSucceeded(
+            let model = await modelCatalog.recordLoadSucceeded(
                 id: modelID,
                 dispatchHandle: response.modelHandle,
                 pinRequested: workerRequest.pinOnLoad,
                 workerResidency: response.hasResidency ? response.residency : nil,
                 reason: reason
             ) ?? Melix_Controlplane_V1_ModelSummary()
+            return ModelLoadOutcome(model: model, error: nil)
         } catch {
-            return await modelCatalog.recordLoadFailed(
+            let model = await modelCatalog.recordLoadFailed(
                 id: modelID,
                 reason: "\(reason)_failed"
             ) ?? Melix_Controlplane_V1_ModelSummary()
+            return ModelLoadOutcome(model: model, error: nil)
         }
+    }
+
+    private func sanitizeTransitionReasonComponent(_ rawCode: String) -> String {
+        let lowered = rawCode.lowercased()
+        return String(lowered.map { character in
+            switch character {
+            case "a"..."z", "0"..."9", "_":
+                return character
+            default:
+                return "_"
+            }
+        })
     }
 
     private func handleModelUnload(

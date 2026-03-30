@@ -28,6 +28,26 @@ class LoadedModel:
     residency: common_pb2.ResidencyInfo
 
 
+@dataclass
+class MemoryBudgetExceeded(Exception):
+    budget_bytes: int
+    headroom_bytes: int
+    projected_resident_bytes: int
+    required_bytes: int
+
+    def __str__(self) -> str:
+        return "Projected resident memory would exceed the process budget."
+
+    @property
+    def details(self) -> dict[str, str]:
+        return {
+            "budget_bytes": str(self.budget_bytes),
+            "headroom_bytes": str(self.headroom_bytes),
+            "projected_resident_bytes": str(self.projected_resident_bytes),
+            "required_bytes": str(self.required_bytes),
+        }
+
+
 class WorkerRegistry:
     def __init__(
         self,
@@ -41,6 +61,8 @@ class WorkerRegistry:
         image_generation_runtime: DeterministicImageGenerationRuntime | None = None,
         model_catalog: WorkerModelCatalog | None = None,
         worker_id: str = "worker-text-001",
+        process_memory_budget_bytes: int = 0,
+        memory_headroom_bytes: int = 0,
     ) -> None:
         self.runtime = runtime or MLXTextRuntime()
         self.embedding_runtime = embedding_runtime or DeterministicEmbeddingRuntime()
@@ -52,6 +74,8 @@ class WorkerRegistry:
         self.image_generation_runtime = image_generation_runtime or DeterministicImageGenerationRuntime()
         self.model_catalog = model_catalog or WorkerModelCatalog()
         self.worker_id = worker_id
+        self._process_memory_budget_bytes = max(0, process_memory_budget_bytes)
+        self._memory_headroom_bytes = max(0, memory_headroom_bytes)
         self._lock = Lock()
         self._next_model_handle = 1
         self._loaded_models: dict[str, LoadedModel] = {}
@@ -98,11 +122,39 @@ class WorkerRegistry:
             ),
         )
 
-    def load_model(self, model_spec: common_pb2.ModelSpec, pin_on_load: bool = False) -> LoadedModel:
+    def load_model(
+        self,
+        model_spec: common_pb2.ModelSpec,
+        pin_on_load: bool = False,
+        memory_budget_bytes: int = 0,
+    ) -> LoadedModel:
         resolved = self.model_catalog.get(model_spec.model_id) or model_spec
         runtime_kind, runtime = self._runtime_for_model(resolved)
-        runtime_model = runtime.load_model(resolved)
         estimated = runtime.estimate_resident_bytes(resolved)
+        with self._lock:
+            existing_resident_bytes = sum(item.estimated_resident_bytes for item in self._loaded_models.values())
+
+        projected_resident_bytes = existing_resident_bytes + estimated
+        required_process_bytes = projected_resident_bytes + self._memory_headroom_bytes
+        if self._process_memory_budget_bytes > 0 and required_process_bytes > self._process_memory_budget_bytes:
+            raise MemoryBudgetExceeded(
+                budget_bytes=self._process_memory_budget_bytes,
+                headroom_bytes=self._memory_headroom_bytes,
+                projected_resident_bytes=projected_resident_bytes,
+                required_bytes=required_process_bytes,
+            )
+
+        effective_request_budget_bytes = max(0, memory_budget_bytes)
+        required_request_bytes = estimated + self._memory_headroom_bytes
+        if effective_request_budget_bytes > 0 and required_request_bytes > effective_request_budget_bytes:
+            raise MemoryBudgetExceeded(
+                budget_bytes=effective_request_budget_bytes,
+                headroom_bytes=self._memory_headroom_bytes,
+                projected_resident_bytes=estimated,
+                required_bytes=required_request_bytes,
+            )
+
+        runtime_model = runtime.load_model(resolved)
         residency = self._loaded_residency(resolved, pin_on_load=pin_on_load)
 
         with self._lock:
@@ -168,7 +220,7 @@ class WorkerRegistry:
             cache_resident_bytes = 0
             kv_cache_bytes = 0
             peak_allocation_bytes = 0
-            memory_headroom_bytes = 0
+            memory_headroom_bytes = self._memory_headroom_bytes
             resident_bytes = model_resident_bytes + cache_resident_bytes + kv_cache_bytes
             last_probe_kind = self._last_probe_kind
             last_preprocess_latency_ms = self._last_preprocess_latency_ms

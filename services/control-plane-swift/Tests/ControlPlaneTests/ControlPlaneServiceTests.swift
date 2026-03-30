@@ -76,6 +76,20 @@ struct ControlPlaneServiceTests {
         #expect(event.modelState.state == .modelWarm)
     }
 
+    @Test("execute workerless model.load falls back to local catalog success")
+    func executeWorkerlessModelLoadFallsBackToLocalCatalogSuccess() async throws {
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel()])
+        let service = ControlPlaneService(modelCatalog: catalog)
+
+        let response = try await service.execute(makeLoadModelRequest(modelID: "melix-dev-text"))
+        let model = try #require(await catalog.model(id: "melix-dev-text"))
+
+        #expect(response.ok)
+        #expect(model.state == .modelWarm)
+        #expect(model.residency.transitionReason == "operator_load")
+        #expect(await catalog.dispatchHandle(for: "melix-dev-text") == "melix-dev-text::local")
+    }
+
     @Test("execute handles model.unload and emits a state change event")
     func executeHandlesModelUnload() async throws {
         let service = ControlPlaneService()
@@ -128,6 +142,28 @@ struct ControlPlaneServiceTests {
         #expect(await catalog.dispatchHandle(for: "melix-dev-text") == "melix-dev-text::swift")
     }
 
+    @Test("execute worker-backed model.load succeeds without explicit error mapping")
+    func executeWorkerBackedModelLoadSucceedsWithoutExplicitErrorMapping() async throws {
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel()])
+        let workerClient = ModelLifecycleWorkerClient()
+        var loadResponse = Melix_Worker_V1_LoadModelResponse()
+        loadResponse.ok = true
+        loadResponse.modelHandle = "melix-dev-text::swift"
+        loadResponse.residency.state = .warm
+        await workerClient.setLoadResponse(loadResponse)
+
+        let registry = WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog)
+        let service = ControlPlaneService(modelCatalog: catalog, workerRegistry: registry)
+
+        let response = try await service.execute(makeLoadModelRequest(modelID: "melix-dev-text"))
+        let model = try #require(await catalog.model(id: "melix-dev-text"))
+
+        #expect(response.ok)
+        #expect(model.state == .modelWarm)
+        #expect(model.residency.transitionReason == "operator_load")
+        #expect(await catalog.dispatchHandle(for: "melix-dev-text") == "melix-dev-text::swift")
+    }
+
     @Test("execute returns unavailable and records failed state when worker-backed model.load fails")
     func executeReturnsUnavailableAndRecordsFailedStateWhenWorkerBackedModelLoadFails() async throws {
         let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel()])
@@ -154,6 +190,25 @@ struct ControlPlaneServiceTests {
         #expect(response.error.code == "unavailable")
         #expect(events.map(\.modelState.state) == [.modelLoading, .modelFailed])
         #expect(model.state == .modelFailed)
+        #expect(await catalog.dispatchHandle(for: "melix-dev-text") == nil)
+    }
+
+    @Test("execute worker-backed model.load maps thrown worker failures to failed state")
+    func executeWorkerBackedModelLoadMapsThrownWorkerFailuresToFailedState() async throws {
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel()])
+        let workerClient = ModelLifecycleWorkerClient()
+        await workerClient.setLoadError(WorkerClientError.unavailable)
+
+        let registry = WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog)
+        let service = ControlPlaneService(modelCatalog: catalog, workerRegistry: registry)
+
+        let response = try await service.execute(makeLoadModelRequest(modelID: "melix-dev-text"))
+        let model = try #require(await catalog.model(id: "melix-dev-text"))
+
+        #expect(!response.ok)
+        #expect(response.error.code == "unavailable")
+        #expect(model.state == .modelFailed)
+        #expect(model.residency.transitionReason == "operator_load_failed")
         #expect(await catalog.dispatchHandle(for: "melix-dev-text") == nil)
     }
 
@@ -185,6 +240,68 @@ struct ControlPlaneServiceTests {
         #expect(response.error.code == "unavailable")
         #expect(events.map(\.modelState.state) == [.modelLoading, .modelFailed])
         #expect(model.state == .modelFailed)
+    }
+
+    @Test("execute surfaces explicit memory budget rejections from worker-backed model.load")
+    func executeSurfacesExplicitMemoryBudgetRejectionsFromWorkerBackedModelLoad() async throws {
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel()])
+        let workerClient = ModelLifecycleWorkerClient()
+        var loadResponse = Melix_Worker_V1_LoadModelResponse()
+        loadResponse.ok = false
+        loadResponse.error.code = "memory_budget_exceeded"
+        loadResponse.error.message = "Projected resident memory would exceed the process budget."
+        loadResponse.error.details = [
+            "budget_bytes": "4500",
+            "headroom_bytes": "1024",
+            "required_bytes": "5120",
+        ]
+        await workerClient.setLoadResponse(loadResponse)
+
+        let registry = WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog)
+        let service = ControlPlaneService(modelCatalog: catalog, workerRegistry: registry)
+        let subscription = await service.subscribe()
+
+        let eventTask = Task {
+            var iterator = subscription.stream.makeAsyncIterator()
+            return [
+                try #require(await iterator.next()),
+                try #require(await iterator.next()),
+            ]
+        }
+
+        let response = try await service.execute(makeLoadModelRequest(modelID: "melix-dev-text"))
+        let events = try await eventTask.value
+        let model = try #require(await catalog.model(id: "melix-dev-text"))
+
+        #expect(!response.ok)
+        #expect(response.error.code == "memory_budget_exceeded")
+        #expect(response.error.message == "Projected resident memory would exceed the process budget.")
+        #expect(response.error.details["budget_bytes"] == "4500")
+        #expect(events.map(\.modelState.state) == [.modelLoading, .modelFailed])
+        #expect(model.state == .modelFailed)
+        #expect(model.residency.transitionReason == "operator_load_memory_budget_exceeded")
+    }
+
+    @Test("execute sanitizes explicit worker error codes before recording failure transitions")
+    func executeSanitizesExplicitWorkerErrorCodesBeforeRecordingFailureTransitions() async throws {
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel()])
+        let workerClient = ModelLifecycleWorkerClient()
+        var loadResponse = Melix_Worker_V1_LoadModelResponse()
+        loadResponse.ok = false
+        loadResponse.error.code = "memory-budget.exceeded"
+        loadResponse.error.message = "Projected resident memory would exceed the process budget."
+        await workerClient.setLoadResponse(loadResponse)
+
+        let registry = WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog)
+        let service = ControlPlaneService(modelCatalog: catalog, workerRegistry: registry)
+
+        let response = try await service.execute(makeLoadModelRequest(modelID: "melix-dev-text"))
+        let model = try #require(await catalog.model(id: "melix-dev-text"))
+
+        #expect(!response.ok)
+        #expect(response.error.code == "memory-budget.exceeded")
+        #expect(model.state == .modelFailed)
+        #expect(model.residency.transitionReason == "operator_load_memory_budget_exceeded")
     }
 
     @Test("execute handles worker-backed model.unload with evicting and unloaded transitions")

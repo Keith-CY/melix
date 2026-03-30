@@ -193,6 +193,60 @@ struct OnDemandModelLoaderTests {
         #expect(model.residency.transitionReason == "lazy_text_load_failed")
     }
 
+    @Test("failed lazy loads preserve explicit worker error codes in transition reasons")
+    func failedLazyLoadsPreserveExplicitWorkerErrorCodesInTransitionReasons() async throws {
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel()])
+        let workerClient = LoaderTestingWorkerClient()
+        await workerClient.setLoadResponse(
+            ok: false,
+            handle: "",
+            estimatedResidentBytes: 0,
+            errorCode: "memory_budget_exceeded",
+            errorMessage: "Projected resident memory would exceed the process budget."
+        )
+        let registry = WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog)
+
+        await #expect(throws: OnDemandModelLoadError.workerUnavailable) {
+            try await OnDemandModelLoader.ensureTextModelReady(
+                modelID: "melix-dev-text",
+                modelCatalog: catalog,
+                workerRegistry: registry,
+                metricsStore: MetricsStore()
+            )
+        }
+
+        let model = try #require(await catalog.model(id: "melix-dev-text"))
+        #expect(model.state == .modelFailed)
+        #expect(model.residency.transitionReason == "lazy_text_load_memory_budget_exceeded")
+    }
+
+    @Test("failed lazy loads sanitize non-identifier worker error codes in transition reasons")
+    func failedLazyLoadsSanitizeNonIdentifierWorkerErrorCodesInTransitionReasons() async throws {
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel()])
+        let workerClient = LoaderTestingWorkerClient()
+        await workerClient.setLoadResponse(
+            ok: false,
+            handle: "",
+            estimatedResidentBytes: 0,
+            errorCode: "memory-budget.exceeded",
+            errorMessage: "Projected resident memory would exceed the process budget."
+        )
+        let registry = WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog)
+
+        await #expect(throws: OnDemandModelLoadError.workerUnavailable) {
+            try await OnDemandModelLoader.ensureTextModelReady(
+                modelID: "melix-dev-text",
+                modelCatalog: catalog,
+                workerRegistry: registry,
+                metricsStore: MetricsStore()
+            )
+        }
+
+        let model = try #require(await catalog.model(id: "melix-dev-text"))
+        #expect(model.state == .modelFailed)
+        #expect(model.residency.transitionReason == "lazy_text_load_memory_budget_exceeded")
+    }
+
     @Test("eviction falls back to local unloads and records pinned protection when no routing client is available")
     func evictionFallsBackToLocalUnloadsAndRecordsPinnedProtectionWhenNoRoutingClientIsAvailable() async throws {
         final class ClockBox: @unchecked Sendable {
@@ -370,13 +424,17 @@ private actor LoaderTestingWorkerClient: WorkerRoutingClient, RuntimeIntrospecti
     func setLoadResponse(
         ok: Bool,
         handle: String,
-        estimatedResidentBytes: UInt64
+        estimatedResidentBytes: UInt64,
+        errorCode: String = "",
+        errorMessage: String = ""
     ) {
         loadResponse = Melix_Worker_V1_LoadModelResponse()
         loadResponse.ok = ok
         loadResponse.modelHandle = handle
         loadResponse.estimatedResidentBytes = estimatedResidentBytes
         loadResponse.residency.state = ok ? .warm : .failed
+        loadResponse.error.code = errorCode
+        loadResponse.error.message = errorMessage
     }
 
     func setUnloadResponse(ok: Bool) {
