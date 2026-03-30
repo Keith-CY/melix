@@ -110,6 +110,44 @@ func makeWalkedBackCacheRestorePlan(
     )
 }
 
+func makeBoundarySafePrefillChunkBoundaries(
+    messages: [Melix_Worker_V1_ChatMessage],
+    chunkTokenTarget: UInt32,
+    restoredTokenCount: UInt32 = 0
+) -> [UInt32] {
+    guard chunkTokenTarget > 0 else {
+        return []
+    }
+
+    let fragments = promptReuseFragments(from: messages)
+    guard !fragments.isEmpty else {
+        return []
+    }
+
+    var boundaries: [UInt32] = []
+    var processedTokens: UInt32 = 0
+    var nextBoundary = max(chunkTokenTarget, restoredTokenCount &+ chunkTokenTarget)
+
+    for fragment in fragments {
+        processedTokens += fragment.tokenCount
+        guard processedTokens > restoredTokenCount else {
+            continue
+        }
+
+        if processedTokens >= nextBoundary {
+            boundaries.append(processedTokens)
+            nextBoundary = processedTokens &+ chunkTokenTarget
+        }
+    }
+
+    if processedTokens > restoredTokenCount,
+       boundaries.last != processedTokens {
+        boundaries.append(processedTokens)
+    }
+
+    return boundaries
+}
+
 func normalizedBlockTable(
     _ blockTable: Melix_Worker_V1_BlockTable
 ) -> Melix_Worker_V1_BlockTable {

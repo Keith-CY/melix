@@ -753,6 +753,61 @@ struct RequestCoordinatorTests {
         #expect(cacheSnapshot.recentRestorePlans[0].restoredTokenCount == 2)
     }
 
+    @Test("chunked prefills emit progress events and scheduler metrics for long prompts")
+    func chunkedPrefillsEmitProgressEventsAndSchedulerMetricsForLongPrompts() async throws {
+        let workerClient = PhaseAwareWorkerClient()
+        let schedulerReadModel = SchedulerReadModel()
+        let metricsStore = MetricsStore()
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(defaultTextClient: workerClient),
+            abortRegistry: AbortRegistry(),
+            schedulerReadModel: schedulerReadModel,
+            metricsStore: metricsStore
+        )
+
+        let longPrompt = (1...24).map { "token\($0)" }.joined(separator: " ")
+        let execution = try await coordinator.startChatCompletion(
+            makeTranslatedChatRequest(
+                requestID: "req-chunked-prefill",
+                messages: [makeWorkerTextMessage(longPrompt)]
+            )
+        )
+        let consumer = Task {
+            var events: [Melix_Worker_V1_ExecuteEvent] = []
+            do {
+                for try await event in execution.stream {
+                    events.append(event)
+                }
+            } catch {
+            }
+            return events
+        }
+        defer { consumer.cancel() }
+
+        let prefillRequest = try #require(await waitForPrefillRequest(workerClient: workerClient))
+        #expect(prefillRequest.prefillStepSize == 16)
+
+        _ = try #require(await waitForDecodeRequest(workerClient: workerClient))
+        await workerClient.emitDecodeStarted(requestID: "req-chunked-prefill", decodeHandle: "decode-req-chunked-prefill")
+        await workerClient.emitToken(requestID: "req-chunked-prefill", text: "chunked")
+        await workerClient.finishDecode(requestID: "req-chunked-prefill")
+
+        let events = await consumer.value
+        let progressEvents = events.compactMap { event -> Melix_Worker_V1_PrefillProgress? in
+            guard case .prefillProgress(let progress) = event.payload else {
+                return nil
+            }
+            return progress
+        }
+        let metrics = await metricsStore.snapshot()
+
+        #expect(progressEvents.map(\.processedTokens) == [16, 24])
+        #expect(progressEvents.allSatisfy { $0.totalTokens == 24 })
+        #expect(metrics.values["scheduler.prefill_chunk_count"] == 2)
+        #expect(metrics.values["scheduler.prefill_chunk_target_tokens"] == 16)
+        #expect(metrics.values["scheduler.prefill_last_chunk_tokens"] == 24)
+    }
+
     @Test("cold session requests prefer background prefill lanes before reuse exists")
     func coldSessionRequestsPreferBackgroundPrefillLanesBeforeReuseExists() async throws {
         let workerClient = PhaseAwareWorkerClient()
@@ -1840,6 +1895,7 @@ private enum TestWorkerFailure: Error, Equatable {
 private func makeTranslatedChatRequest(
     requestID: String,
     modelID: String = "melix-dev-text",
+    messages: [Melix_Worker_V1_ChatMessage] = [],
     sessionID: String = "",
     branchID: String = "",
     parentRequestID: String = "",
@@ -1863,6 +1919,7 @@ private func makeTranslatedChatRequest(
     workerRequest.execution.cacheHints.restoreSnapshotID = restoreSnapshotID
     workerRequest.execution.cacheHints.saveBoundarySnapshot = saveBoundarySnapshot
     workerRequest.execution.cacheHints.preferHotPrefix = preferHotPrefix
+    workerRequest.messages = messages
 
     return TranslatedChatRequest(
         requestID: requestID,
@@ -1870,6 +1927,15 @@ private func makeTranslatedChatRequest(
         workerRequest: workerRequest,
         stream: true
     )
+}
+
+private func makeWorkerTextMessage(_ text: String) -> Melix_Worker_V1_ChatMessage {
+    var message = Melix_Worker_V1_ChatMessage()
+    message.role = "user"
+    var part = Melix_Worker_V1_MessagePart()
+    part.text = text
+    message.parts = [part]
+    return message
 }
 
 private func makeCoordinatorTextModel(

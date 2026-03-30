@@ -270,7 +270,7 @@ actor WorkerRuntimeRegistry {
                 let runtimePrefill = try await runtime.prefill(
                     model: loaded.runtimeModel,
                     messages: requestMessages,
-                    prefillStepSize: 0,
+                    prefillStepSize: prefillStepSize,
                     resumeHint: restoreResumeHint,
                     acceleration: normalizedAccelerationPolicy(restored.acceleration),
                     shouldAbort: shouldAbort

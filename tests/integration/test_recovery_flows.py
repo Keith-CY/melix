@@ -180,6 +180,42 @@ def test_partial_prefix_followup_walks_back_to_safe_boundary_and_reports_metrics
         stack.stop()
 
 
+def test_long_prefill_requests_publish_chunked_prefill_metrics() -> None:
+    stack = LiveMelixStack(Path(__file__).resolve().parents[2])
+    stack.start()
+
+    try:
+        long_prompt = " ".join(f"token{i}" for i in range(1, 25))
+        response = stream_chat_completion(
+            stack,
+            {
+                "model": "melix-dev-text",
+                "stream": True,
+                "messages": [{"role": "user", "content": long_prompt}],
+            },
+        )
+        assert response["status"] == 200
+        assert response["request_id"]
+
+        control_values = wait_for_metric(
+            stack.control_plane_metrics_path,
+            "scheduler.prefill_chunk_count",
+            minimum=2,
+        )
+        swift_values = wait_for_metric(
+            stack.swift_text_worker_metrics_path,
+            "swift_text.prefill_chunk_count",
+            minimum=2,
+        )
+
+        assert control_values["scheduler.prefill_chunk_count"] >= 2
+        assert control_values["scheduler.prefill_chunk_target_tokens"] == 16
+        assert swift_values["swift_text.prefill_chunk_count"] >= 2
+        assert swift_values["swift_text.prefill_chunk_target_tokens"] == 16
+    finally:
+        stack.stop()
+
+
 def test_warm_followup_prefers_hot_route_and_reduces_ttft_against_cold_baseline() -> None:
     stack = LiveMelixStack(Path(__file__).resolve().parents[2])
     stack.start()

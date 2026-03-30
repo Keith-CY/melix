@@ -29,6 +29,8 @@ private enum CacheRouteClass: String, Sendable {
     case restored
 }
 
+private let boundarySafePrefillChunkTargetTokens: UInt32 = 16
+
 private struct SchedulingPlan: Sendable {
     let translatedRequest: TranslatedChatRequest
     let routeKind: WorkerRouteKind
@@ -499,7 +501,9 @@ public actor RequestCoordinator {
     private func shouldUsePhaseAwareExecution(
         for request: Melix_Worker_V1_GenerateRequest
     ) -> Bool {
-        !request.execution.cacheHints.restoreSnapshotID.isEmpty || request.execution.cacheHints.saveBoundarySnapshot
+        !request.execution.cacheHints.restoreSnapshotID.isEmpty
+            || request.execution.cacheHints.saveBoundarySnapshot
+            || resolvedPrefillChunkTarget(for: request.messages) > 0
     }
 
     private func resolvedRecoveryRequest(
@@ -657,6 +661,10 @@ public actor RequestCoordinator {
                     let effectiveRestorePlan = prefillResponse.hasRestorePlan
                         ? prefillResponse.restorePlan
                         : nil
+                    let effectivePromptTokens = max(
+                        prefillResponse.promptTokens,
+                        estimatedPromptTokens(for: request.messages)
+                    )
                     let effectiveBlockTableID = effectiveRestorePlan?.blockTableID.isEmpty == false
                         ? effectiveRestorePlan?.blockTableID ?? prefillResponse.blockTableID
                         : prefillResponse.blockTableID
@@ -670,7 +678,7 @@ public actor RequestCoordinator {
                     if let effectiveRestorePlan {
                         await self.recordRestorePlanMetrics(
                             effectiveRestorePlan,
-                            promptTokens: prefillResponse.promptTokens
+                            promptTokens: effectivePromptTokens
                         )
                         if let cacheMetadataStore = self.cacheMetadataStore {
                             await cacheMetadataStore.appendRecentRestorePlan(
@@ -684,9 +692,34 @@ public actor RequestCoordinator {
                         response: prefillResponse,
                         lane: prefillLane
                     )
+                    if case .prefillStarted(var payload) = prefillEvent.payload {
+                        payload.inputTokens = effectivePromptTokens
+                        prefillEvent.prefillStarted = payload
+                    }
                     prefillEvent.seq = nextSeq
                     nextSeq += 1
                     continuation.yield(prefillEvent)
+                    let prefillChunkBoundaries = makeBoundarySafePrefillChunkBoundaries(
+                        messages: request.messages,
+                        chunkTokenTarget: prefillRequest.prefillStepSize,
+                        restoredTokenCount: effectiveRestorePlan?.restoredTokenCount ?? 0
+                    )
+                    await self.recordPrefillChunkMetrics(
+                        boundaries: prefillChunkBoundaries,
+                        chunkTokenTarget: prefillRequest.prefillStepSize
+                    )
+                    for boundary in prefillChunkBoundaries {
+                        var progressEvent = makePrefillProgressEvent(
+                            requestID: request.execution.id.requestID,
+                            lane: prefillLane,
+                            accelerationMode: prefillResponse.appliedAcceleration.mode,
+                            processedTokens: boundary,
+                            totalTokens: effectivePromptTokens
+                        )
+                        progressEvent.seq = nextSeq
+                        nextSeq += 1
+                        continuation.yield(progressEvent)
+                    }
                     if !prefillResponse.restoredSnapshotID.isEmpty {
                         var cacheDecisionEvent = makeCacheDecisionEvent(
                             requestID: request.execution.id.requestID,
@@ -730,7 +763,7 @@ public actor RequestCoordinator {
         prefill.execution = request.execution
         prefill.messages = request.messages
         prefill.returnDecodeHandle = true
-        prefill.prefillStepSize = 0
+        prefill.prefillStepSize = resolvedPrefillChunkTarget(for: request.messages)
         prefill.resumeHint = request.execution.cacheHints.restoreSnapshotID.isEmpty
             ? request.execution.id.parentRequestID
             : "snapshot-restore:\(request.execution.cacheHints.restoreSnapshotID)"
@@ -767,6 +800,28 @@ public actor RequestCoordinator {
         var payload = Melix_Worker_V1_PrefillStarted()
         payload.inputTokens = response.promptTokens
         event.prefillStarted = payload
+        return event
+    }
+
+    private func makePrefillProgressEvent(
+        requestID: String,
+        lane: String,
+        accelerationMode: Melix_Worker_V1_AccelerationMode,
+        processedTokens: UInt32,
+        totalTokens: UInt32
+    ) -> Melix_Worker_V1_ExecuteEvent {
+        var event = Melix_Worker_V1_ExecuteEvent()
+        event.requestID = requestID
+        event.executionKind = "prefill"
+        event.phase = .executionPrefilling
+        event.admissionState = .admissionAdmitted
+        event.lane = lane
+        event.accelerationMode = accelerationMode
+
+        var payload = Melix_Worker_V1_PrefillProgress()
+        payload.processedTokens = processedTokens
+        payload.totalTokens = totalTokens
+        event.prefillProgress = payload
         return event
     }
 
@@ -923,6 +978,24 @@ public actor RequestCoordinator {
                 forKey: "scheduler.partial_restore_last_ratio_pct"
             )
         }
+    }
+
+    private func recordPrefillChunkMetrics(
+        boundaries: [UInt32],
+        chunkTokenTarget: UInt32
+    ) async {
+        await metricsStore.set(
+            Double(boundaries.count),
+            forKey: "scheduler.prefill_chunk_count"
+        )
+        await metricsStore.set(
+            Double(chunkTokenTarget),
+            forKey: "scheduler.prefill_chunk_target_tokens"
+        )
+        await metricsStore.set(
+            Double(boundaries.last ?? 0),
+            forKey: "scheduler.prefill_last_chunk_tokens"
+        )
     }
 
     private func recordTTFTMetrics(requestID: String, ttftMs: Double) async {
@@ -1232,4 +1305,122 @@ private func controlPlaneAccelerationMode(
     case .UNRECOGNIZED:
         return nil
     }
+}
+
+private func resolvedPrefillChunkTarget(
+    for messages: [Melix_Worker_V1_ChatMessage]
+) -> UInt32 {
+    let chunkBoundaries = makeBoundarySafePrefillChunkBoundaries(
+        messages: messages,
+        chunkTokenTarget: boundarySafePrefillChunkTargetTokens
+    )
+    return chunkBoundaries.count > 1 ? boundarySafePrefillChunkTargetTokens : 0
+}
+
+private func makeBoundarySafePrefillChunkBoundaries(
+    messages: [Melix_Worker_V1_ChatMessage],
+    chunkTokenTarget: UInt32,
+    restoredTokenCount: UInt32 = 0
+) -> [UInt32] {
+    guard chunkTokenTarget > 0 else {
+        return []
+    }
+
+    let fragments = promptReuseFragments(from: messages)
+    guard !fragments.isEmpty else {
+        return []
+    }
+
+    var boundaries: [UInt32] = []
+    var processedTokens: UInt32 = 0
+    var nextBoundary = max(chunkTokenTarget, restoredTokenCount &+ chunkTokenTarget)
+
+    for fragment in fragments {
+        processedTokens += fragment.tokenCount
+        guard processedTokens > restoredTokenCount else {
+            continue
+        }
+
+        if processedTokens >= nextBoundary {
+            boundaries.append(processedTokens)
+            nextBoundary = processedTokens &+ chunkTokenTarget
+        }
+    }
+
+    if processedTokens > restoredTokenCount,
+       boundaries.last != processedTokens {
+        boundaries.append(processedTokens)
+    }
+
+    return boundaries
+}
+
+private func estimatedPromptTokens(
+    for messages: [Melix_Worker_V1_ChatMessage]
+) -> UInt32 {
+    let total = promptReuseFragments(from: messages).reduce(0) { partial, fragment in
+        partial + fragment.tokenCount
+    }
+    if total > 0 {
+        return total
+    }
+    return messages.isEmpty ? 0 : 1
+}
+
+private enum PromptReuseFragment: Equatable {
+    case role(String)
+    case nameToken(String)
+    case textToken(String)
+    case imageURI(String)
+    case imageBytes(Data)
+    case audioURI(String)
+    case audioBytes(Data)
+
+    var tokenCount: UInt32 {
+        switch self {
+        case .role:
+            return 0
+        case .nameToken, .textToken:
+            return 1
+        case .imageURI, .imageBytes, .audioURI, .audioBytes:
+            return 256
+        }
+    }
+}
+
+private func promptReuseFragments(
+    from messages: [Melix_Worker_V1_ChatMessage]
+) -> [PromptReuseFragment] {
+    messages.flatMap { message in
+        var fragments: [PromptReuseFragment] = [.role(message.role)]
+        fragments += tokenFragments(from: message.name, kind: PromptReuseFragment.nameToken)
+        for part in message.parts {
+            switch part.part {
+            case .text(let text):
+                fragments += tokenFragments(from: text, kind: PromptReuseFragment.textToken)
+            case .imageUri(let uri):
+                fragments.append(.imageURI(uri))
+            case .imageBytes(let bytes):
+                fragments.append(.imageBytes(Data(bytes)))
+            case .audioUri(let uri):
+                fragments.append(.audioURI(uri))
+            case .audioBytes(let bytes):
+                fragments.append(.audioBytes(Data(bytes)))
+            case nil:
+                continue
+            }
+        }
+        return fragments
+    }
+}
+
+private func tokenFragments(
+    from text: String,
+    kind: (String) -> PromptReuseFragment
+) -> [PromptReuseFragment] {
+    text
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+        .split(whereSeparator: \.isWhitespace)
+        .map(String.init)
+        .map(kind)
 }

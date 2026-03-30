@@ -352,6 +352,27 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertNil(unsafePlan)
     }
 
+    func testCacheRestoreMetadataBuildsBoundarySafePrefillChunkBoundaries() {
+        let prompt = (1...24).map { "token\($0)" }.joined(separator: " ")
+        let messages = [makeUserMessage(prompt)]
+
+        XCTAssertEqual(
+            makeBoundarySafePrefillChunkBoundaries(
+                messages: messages,
+                chunkTokenTarget: 16
+            ),
+            [16, 24]
+        )
+        XCTAssertEqual(
+            makeBoundarySafePrefillChunkBoundaries(
+                messages: messages,
+                chunkTokenTarget: 16,
+                restoredTokenCount: 16
+            ),
+            [24]
+        )
+    }
+
     func testRestoreBoundarySnapshotRequestResolvesStructuredBoundaryFallback() {
         var request = Melix_Worker_V1_RestoreBoundarySnapshotRequest()
         request.restoreBoundary.snapshot.snapshotID = "snap-boundary"
@@ -3818,6 +3839,7 @@ final class WorkerScaffoldTests: XCTestCase {
             restorePrefill.execution.id.requestID = "req-partial-target"
             restorePrefill.execution.modelHandle = loadResponse.modelHandle
             restorePrefill.execution.cacheHints.restoreSnapshotID = savedSnapshot.snapshotID
+            restorePrefill.prefillStepSize = 16
             restorePrefill.returnDecodeHandle = true
             restorePrefill.messages = [makeUserMessage(divergedPrompt)]
             let restoreResponse = try await withTestServerContextRPCCancellationHandle { handle in
@@ -3844,6 +3866,8 @@ final class WorkerScaffoldTests: XCTestCase {
             let restoredContext = await services.registry.prefillContext(for: restoreResponse.decodeHandle)
             XCTAssertEqual(restoredContext?.restoredSnapshotID, savedSnapshot.snapshotID)
             XCTAssertEqual(restoredContext?.blockTable.totalTokenCount, 16)
+            let restoredStorage = restoredContext?.context.storage as? [String: String]
+            XCTAssertEqual(restoredStorage?["prefill_step_size"], "16")
         }
     }
 
@@ -5242,6 +5266,51 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertFalse(warmupResponse.ok)
         XCTAssertEqual(warmupResponse.error.code, "unimplemented")
         XCTAssertTrue(shutdownResponse.ok)
+    }
+
+    func testPrefillRecordsBoundarySafeChunkMetricsForLongPrompts() async throws {
+        let services = makeServices(
+            backend: DeterministicTextBackend(tokenDelayNanos: 0)
+        )
+
+        let loadResponse = try await withTestServerContextRPCCancellationHandle { handle in
+            var request = Melix_Worker_V1_LoadModelRequest()
+            request.model.modelID = "melix-dev-text"
+            return try await services.runtime.loadModel(
+                request: request,
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_RuntimeService.Method.LoadModel.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
+        let prompt = (1...24).map { "token\($0)" }.joined(separator: " ")
+        var prefill = Melix_Worker_V1_PrefillRequest()
+        prefill.execution.id.requestID = "req-chunked-prefill"
+        prefill.execution.modelHandle = loadResponse.modelHandle
+        prefill.prefillStepSize = 16
+        prefill.returnDecodeHandle = true
+        prefill.messages = [makeUserMessage(prompt)]
+
+        _ = try await withTestServerContextRPCCancellationHandle { handle in
+            try await services.inference.prefill(
+                request: prefill,
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_InferenceService.Method.Prefill.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
+        let metrics = services.metrics.counters
+        XCTAssertEqual(metrics["swift_text.prefill_chunk_count"], 2)
+        XCTAssertEqual(metrics["swift_text.prefill_chunk_target_tokens"], 16)
+        XCTAssertEqual(metrics["swift_text.prefill_last_chunk_tokens"], 24)
     }
 }
 

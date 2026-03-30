@@ -39,6 +39,20 @@ struct TextPrefillEngine: Sendable {
 
             metrics.recordMilliseconds("swift_text.prefill_ms", value: elapsedMilliseconds(since: startedAt))
             metrics.set("swift_text.prefill_prompt_tokens", value: Int(clamping: result.promptTokens))
+            let prefillChunkBoundaries = makeBoundarySafePrefillChunkBoundaries(
+                messages: request.messages,
+                chunkTokenTarget: request.prefillStepSize,
+                restoredTokenCount: result.restorePlan?.restoredTokenCount ?? 0
+            )
+            metrics.set("swift_text.prefill_chunk_count", value: prefillChunkBoundaries.count)
+            metrics.set(
+                "swift_text.prefill_chunk_target_tokens",
+                value: Int(clamping: request.prefillStepSize)
+            )
+            metrics.set(
+                "swift_text.prefill_last_chunk_tokens",
+                value: Int(clamping: prefillChunkBoundaries.last ?? 0)
+            )
             metrics.set("swift_text.prefill_context_count", value: await registry.prefillContextCount())
             metrics.set("swift_text.accelerated_prefill_gain_pct", value: result.acceleratedPrefillGainPct)
             metrics.set("swift_text.active_kv_quantization_ratio", value: result.activeKVQuantizationRatio)
