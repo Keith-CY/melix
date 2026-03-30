@@ -314,6 +314,16 @@ public enum BootstrapWorkerPreparation {
         "rerank_scoring_mode",
         "rerank_yes_no_labels",
     ]
+    private static let capabilityExtKeys = [
+        "melix.capability.route_kind",
+        "melix.capability.class",
+        "melix.capability.supported_modalities",
+        "melix.capability.supported_tasks",
+        "melix.capability.supported_parsers",
+        "tool_parser_mode",
+        "tool_parser_namespaces",
+        "tool_parser_xml_fallback",
+    ]
 
     public static func modelSpec(for modelID: String) -> Melix_Worker_V1_ModelSpec? {
         switch modelID {
@@ -342,28 +352,21 @@ public enum BootstrapWorkerPreparation {
         for summary: Melix_Controlplane_V1_ModelSummary
     ) -> Melix_Worker_V1_ModelSpec? {
         guard var spec = modelSpec(for: summary.modelID) else { return nil }
-        if let adapterSetHash = summary.settings.ext[adapterSetHashExtKey], !adapterSetHash.isEmpty {
-            spec.ext[adapterSetHashExtKey] = adapterSetHash
-        }
+        applyExtOverride(for: adapterSetHashExtKey, from: summary, to: &spec)
         for key in ocrExtKeys {
-            if let value = summary.settings.ext[key], !value.isEmpty {
-                spec.ext[key] = value
-            }
+            applyExtOverride(for: key, from: summary, to: &spec)
         }
         for key in vlmExtKeys {
-            if let value = summary.settings.ext[key], !value.isEmpty {
-                spec.ext[key] = value
-            }
+            applyExtOverride(for: key, from: summary, to: &spec)
         }
         for key in embeddingExtKeys {
-            if let value = summary.settings.ext[key], !value.isEmpty {
-                spec.ext[key] = value
-            }
+            applyExtOverride(for: key, from: summary, to: &spec)
         }
         for key in rerankExtKeys {
-            if let value = summary.settings.ext[key], !value.isEmpty {
-                spec.ext[key] = value
-            }
+            applyExtOverride(for: key, from: summary, to: &spec)
+        }
+        for key in capabilityExtKeys {
+            applyExtOverride(for: key, from: summary, to: &spec)
         }
         let adaptiveThinkingMode = summary.settings.adaptiveThinking.mode
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -375,6 +378,21 @@ public enum BootstrapWorkerPreparation {
             spec.ext["melix.adaptive_thinking.budget_tokens"] = String(summary.settings.adaptiveThinking.budgetTokens)
         }
         return spec
+    }
+
+    private static func applyExtOverride(
+        for key: String,
+        from summary: Melix_Controlplane_V1_ModelSummary,
+        to spec: inout Melix_Worker_V1_ModelSpec
+    ) {
+        guard let value = summary.settings.ext[key] else {
+            return
+        }
+        if value.isEmpty {
+            spec.ext.removeValue(forKey: key)
+        } else {
+            spec.ext[key] = value
+        }
     }
 
     public static func preloadDevTextModel(
@@ -544,6 +562,12 @@ public enum BootstrapWorkerPreparation {
         model.ext["embedding_pooling_mode"] = "cls"
         model.ext["embedding_normalization"] = "l2"
         model.ext["embedding_dimensions"] = "8"
+        model.ext["melix.adapter_set_hash"] = "embedding-family-bert"
+        model.ext["melix.capability.route_kind"] = "python_embedding"
+        model.ext["melix.capability.class"] = "embedding"
+        model.ext["melix.capability.supported_modalities"] = "text"
+        model.ext["melix.capability.supported_tasks"] = "embed"
+        model.ext["melix.capability.supported_parsers"] = "text"
         return model
     }
 
@@ -561,6 +585,12 @@ public enum BootstrapWorkerPreparation {
         model.ext["rerank_backend_id"] = "token-overlap-v1"
         model.ext["rerank_family_id"] = "jina-v3"
         model.ext["rerank_scoring_mode"] = "order-aware-overlap"
+        model.ext["melix.adapter_set_hash"] = "rerank-family-jina-v3"
+        model.ext["melix.capability.route_kind"] = "python_rerank"
+        model.ext["melix.capability.class"] = "rerank"
+        model.ext["melix.capability.supported_modalities"] = "text"
+        model.ext["melix.capability.supported_tasks"] = "rerank"
+        model.ext["melix.capability.supported_parsers"] = "text"
         return model
     }
 
@@ -603,6 +633,15 @@ public enum BootstrapWorkerPreparation {
         model.ext["vision_max_images_per_prompt"] = "8"
         model.ext["vision_supports_tool_calls"] = "true"
         model.ext["melix.multimodal_adapter_hash"] = "vision-family-llava-v1"
+        model.ext["melix.adapter_set_hash"] = "vision-family-llava-v1"
+        model.ext["melix.capability.route_kind"] = "python_vlm"
+        model.ext["melix.capability.class"] = "vlm"
+        model.ext["melix.capability.supported_modalities"] = "text,image"
+        model.ext["melix.capability.supported_tasks"] = "vlm,generate"
+        model.ext["melix.capability.supported_parsers"] = "text,qwen"
+        model.ext["tool_parser_mode"] = "qwen"
+        model.ext["tool_parser_namespaces"] = "tools.vision"
+        model.ext["tool_parser_xml_fallback"] = "true"
         return model
     }
 

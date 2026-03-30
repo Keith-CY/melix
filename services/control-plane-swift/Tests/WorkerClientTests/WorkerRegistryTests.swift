@@ -94,6 +94,24 @@ struct WorkerRegistryTests {
         #expect(await registry.route(for: compatibilityModel) == .pythonCompatibility)
     }
 
+    @Test("route inference falls back to adapter metadata when typed fields are absent")
+    func routeInferenceFallsBackToAdapterMetadataWhenTypedFieldsAreAbsent() async {
+        let registry = WorkerRegistry(defaultTextClient: RouteTestingWorkerClient())
+
+        var embeddingModel = Melix_Controlplane_V1_ModelSummary()
+        embeddingModel.modelID = "melix-dev-embed"
+        embeddingModel.kind = "embedding"
+        embeddingModel.settings.ext["melix.capability.route_kind"] = "python_embedding"
+
+        var rerankModel = Melix_Controlplane_V1_ModelSummary()
+        rerankModel.modelID = "melix-dev-rerank"
+        rerankModel.kind = "rerank"
+        rerankModel.settings.ext["melix.capability.class"] = "rerank"
+
+        #expect(await registry.route(for: embeddingModel) == .pythonEmbedding)
+        #expect(await registry.route(for: rerankModel) == .pythonRerank)
+    }
+
     @Test("empty model identifiers and missing compatibility clients return nil")
     func emptyModelIdentifiersAndMissingCompatibilityClientsReturnNil() async {
         let registry = WorkerRegistry(defaultTextClient: RouteTestingWorkerClient())

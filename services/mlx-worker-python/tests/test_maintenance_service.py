@@ -304,10 +304,66 @@ def test_get_model_info_returns_known_dev_model_metadata(tmp_path: Path) -> None
 
     assert embed.ok is True
     assert embed.model_kind == "embedding"
+    assert embed.supported_modalities == ["text"]
+    assert embed.supported_tasks == ["embed"]
+    assert embed.supported_parsers == ["text"]
     assert rerank.ok is True
     assert rerank.model_kind == "rerank"
+    assert rerank.supported_modalities == ["text"]
+    assert rerank.supported_tasks == ["rerank"]
+    assert rerank.supported_parsers == ["text"]
     assert missing.ok is False
     assert missing.error.code == "not_found"
+
+
+def test_get_model_info_uses_kind_fallbacks_for_audio_and_image_models(tmp_path: Path) -> None:
+    service = build_service(tmp_path)
+
+    transcription = service.GetModelInfo(
+        maintenance_pb2.GetModelInfoRequest(source_model="melix-dev-transcribe"),
+        context=None,
+    )
+    speech = service.GetModelInfo(
+        maintenance_pb2.GetModelInfoRequest(source_model="melix-dev-speech"),
+        context=None,
+    )
+    image = service.GetModelInfo(
+        maintenance_pb2.GetModelInfoRequest(source_model="melix-dev-image"),
+        context=None,
+    )
+
+    assert transcription.ok is True
+    assert transcription.supported_modalities == ["audio", "text"]
+    assert transcription.supported_tasks == ["transcribe"]
+    assert transcription.supported_parsers == ["text"]
+
+    assert speech.ok is True
+    assert speech.supported_modalities == ["text", "audio"]
+    assert speech.supported_tasks == ["speak"]
+    assert speech.supported_parsers == ["text"]
+
+    assert image.ok is True
+    assert image.supported_modalities == ["text", "image"]
+    assert image.supported_tasks == ["image_generate", "image_edit"]
+    assert image.supported_parsers == ["text"]
+
+
+def test_get_model_info_appends_tool_parser_when_capability_parser_metadata_is_absent(
+    tmp_path: Path,
+) -> None:
+    service = build_service(tmp_path)
+    vlm = service._core._registry.model_catalog.get("melix-dev-vlm")
+    assert vlm is not None
+
+    del vlm.ext["melix.capability.supported_parsers"]
+
+    response = service.GetModelInfo(
+        maintenance_pb2.GetModelInfoRequest(source_model="melix-dev-vlm"),
+        context=None,
+    )
+
+    assert response.ok is True
+    assert response.supported_parsers == ["text", "qwen"]
 
 
 def test_doctor_and_bench_return_deterministic_reports(tmp_path: Path) -> None:

@@ -774,6 +774,15 @@ struct PythonBridgeWorkerClientTests {
         summary.settings.ext["vision_max_images_per_prompt"] = "1"
         summary.settings.ext["vision_supports_tool_calls"] = "false"
         summary.settings.ext["melix.multimodal_adapter_hash"] = "vision-family-paligemma-v1"
+        summary.settings.ext["melix.adapter_set_hash"] = "vision-family-paligemma-v1"
+        summary.settings.ext["melix.capability.route_kind"] = "python_vlm"
+        summary.settings.ext["melix.capability.class"] = "vlm"
+        summary.settings.ext["melix.capability.supported_modalities"] = "text,image"
+        summary.settings.ext["melix.capability.supported_tasks"] = "vlm,generate"
+        summary.settings.ext["melix.capability.supported_parsers"] = "text"
+        summary.settings.ext["tool_parser_mode"] = ""
+        summary.settings.ext["tool_parser_namespaces"] = ""
+        summary.settings.ext["tool_parser_xml_fallback"] = ""
 
         let spec = try #require(BootstrapWorkerPreparation.modelSpec(for: summary))
 
@@ -784,6 +793,10 @@ struct PythonBridgeWorkerClientTests {
         #expect(spec.ext["vision_max_images_per_prompt"] == "1")
         #expect(spec.ext["vision_supports_tool_calls"] == "false")
         #expect(spec.ext["melix.multimodal_adapter_hash"] == "vision-family-paligemma-v1")
+        #expect(spec.ext["melix.adapter_set_hash"] == "vision-family-paligemma-v1")
+        #expect(spec.ext["melix.capability.route_kind"] == "python_vlm")
+        #expect(spec.ext["melix.capability.class"] == "vlm")
+        #expect(spec.ext["tool_parser_mode"] == nil)
     }
 
     @Test("bootstrap worker preparation carries embedding family metadata into worker model specs")
@@ -794,6 +807,12 @@ struct PythonBridgeWorkerClientTests {
         summary.settings.ext["embedding_pooling_mode"] = "mean"
         summary.settings.ext["embedding_normalization"] = "l2"
         summary.settings.ext["embedding_dimensions"] = "10"
+        summary.settings.ext["melix.adapter_set_hash"] = "embedding-family-mxbai-embed"
+        summary.settings.ext["melix.capability.route_kind"] = "python_embedding"
+        summary.settings.ext["melix.capability.class"] = "embedding"
+        summary.settings.ext["melix.capability.supported_modalities"] = "text"
+        summary.settings.ext["melix.capability.supported_tasks"] = "embed"
+        summary.settings.ext["melix.capability.supported_parsers"] = "text"
 
         let spec = try #require(BootstrapWorkerPreparation.modelSpec(for: summary))
 
@@ -803,6 +822,9 @@ struct PythonBridgeWorkerClientTests {
         #expect(spec.ext["embedding_pooling_mode"] == "mean")
         #expect(spec.ext["embedding_normalization"] == "l2")
         #expect(spec.ext["embedding_dimensions"] == "10")
+        #expect(spec.ext["melix.adapter_set_hash"] == "embedding-family-mxbai-embed")
+        #expect(spec.ext["melix.capability.route_kind"] == "python_embedding")
+        #expect(spec.ext["melix.capability.class"] == "embedding")
     }
 
     @Test("bootstrap worker preparation carries causal-lm rerank metadata into worker model specs")
@@ -822,6 +844,9 @@ struct PythonBridgeWorkerClientTests {
         #expect(spec.ext["rerank_family_id"] == "causal-lm")
         #expect(spec.ext["rerank_scoring_mode"] == "yes-no-logits")
         #expect(spec.ext["rerank_yes_no_labels"] == "yes,no")
+        #expect(spec.ext["melix.adapter_set_hash"] == "rerank-family-causal-lm")
+        #expect(spec.ext["melix.capability.route_kind"] == "python_rerank")
+        #expect(spec.ext["melix.capability.class"] == "rerank")
     }
 
     @Test("bridge client treats helper errors as unavailable")

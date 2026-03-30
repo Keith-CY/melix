@@ -4,9 +4,56 @@ import os
 
 from packages.protocol.python.worker.v1 import common_pb2
 
+_ADAPTER_SET_HASH_KEY = "melix.adapter_set_hash"
+_CAPABILITY_ROUTE_KIND_KEY = "melix.capability.route_kind"
+_CAPABILITY_CLASS_KEY = "melix.capability.class"
+_CAPABILITY_SUPPORTED_MODALITIES_KEY = "melix.capability.supported_modalities"
+_CAPABILITY_SUPPORTED_TASKS_KEY = "melix.capability.supported_tasks"
+_CAPABILITY_SUPPORTED_PARSERS_KEY = "melix.capability.supported_parsers"
+
 
 def _normalized(value: str | None) -> str:
     return (value or "").strip()
+
+
+def _capability_metadata(
+    *,
+    adapter_set_hash: str,
+    route_kind: str,
+    capability_class: str,
+    supported_modalities: tuple[str, ...],
+    supported_tasks: tuple[str, ...],
+    supported_parsers: tuple[str, ...],
+    tool_parser_mode: str = "",
+    tool_parser_namespaces: tuple[str, ...] = (),
+    tool_parser_xml_fallback: bool = False,
+) -> dict[str, str]:
+    metadata = {
+        _ADAPTER_SET_HASH_KEY: adapter_set_hash,
+        _CAPABILITY_ROUTE_KIND_KEY: route_kind,
+        _CAPABILITY_CLASS_KEY: capability_class,
+        _CAPABILITY_SUPPORTED_MODALITIES_KEY: ",".join(supported_modalities),
+        _CAPABILITY_SUPPORTED_TASKS_KEY: ",".join(supported_tasks),
+        _CAPABILITY_SUPPORTED_PARSERS_KEY: ",".join(supported_parsers),
+    }
+    if tool_parser_mode:
+        metadata["tool_parser_mode"] = tool_parser_mode
+    if tool_parser_namespaces:
+        metadata["tool_parser_namespaces"] = ",".join(tool_parser_namespaces)
+    if tool_parser_xml_fallback:
+        metadata["tool_parser_xml_fallback"] = "true"
+    return metadata
+
+
+def _embedding_capability_metadata(family_id: str) -> dict[str, str]:
+    return _capability_metadata(
+        adapter_set_hash=f"embedding-family-{family_id}",
+        route_kind="python_embedding",
+        capability_class="embedding",
+        supported_modalities=("text",),
+        supported_tasks=("embed",),
+        supported_parsers=("text",),
+    )
 
 
 def _infer_embedding_identity(model_path: str) -> dict[str, str]:
@@ -76,6 +123,17 @@ def _default_embedding_dimensions(family_id: str) -> str:
     return {"mxbai-embed": "10"}.get(family_id, "8")
 
 
+def _rerank_capability_metadata(family_id: str) -> dict[str, str]:
+    return _capability_metadata(
+        adapter_set_hash=f"rerank-family-{family_id}",
+        route_kind="python_rerank",
+        capability_class="rerank",
+        supported_modalities=("text",),
+        supported_tasks=("rerank",),
+        supported_parsers=("text",),
+    )
+
+
 def _infer_rerank_identity(model_path: str) -> dict[str, str]:
     normalized_path = model_path.lower()
     if "causal-lm" in normalized_path or "causallm" in normalized_path:
@@ -113,6 +171,29 @@ def _default_rerank_scoring_mode(family_id: str) -> str:
         "causal-lm": "yes-no-logits",
         "jina-v3": "order-aware-overlap",
     }.get(family_id, "order-aware-overlap")
+
+
+def _vision_capability_metadata(family_id: str) -> dict[str, str]:
+    if family_id == "paligemma-v1":
+        return _capability_metadata(
+            adapter_set_hash="vision-family-paligemma-v1",
+            route_kind="python_vlm",
+            capability_class="vlm",
+            supported_modalities=("text", "image"),
+            supported_tasks=("vlm", "generate"),
+            supported_parsers=("text",),
+        )
+    return _capability_metadata(
+        adapter_set_hash="vision-family-llava-v1",
+        route_kind="python_vlm",
+        capability_class="vlm",
+        supported_modalities=("text", "image"),
+        supported_tasks=("vlm", "generate"),
+        supported_parsers=("text", "qwen"),
+        tool_parser_mode="qwen",
+        tool_parser_namespaces=("tools.vision",),
+        tool_parser_xml_fallback=True,
+    )
 
 
 class WorkerModelCatalog:
@@ -185,6 +266,7 @@ class WorkerModelCatalog:
             reasoning_mode="off",
             max_context=8192,
             ext={
+                **_embedding_capability_metadata(family_id),
                 "embedding_backend_id": backend_id,
                 "embedding_family_id": family_id,
                 "embedding_pooling_mode": pooling_mode,
@@ -212,6 +294,7 @@ class WorkerModelCatalog:
             family_id != detected["family_id"] or architecture != detected["architecture"]
         )
         ext = {
+            **_rerank_capability_metadata(family_id),
             "rerank_backend_id": backend_id,
             "rerank_family_id": family_id,
             "rerank_scoring_mode": scoring_mode,
@@ -265,6 +348,7 @@ class WorkerModelCatalog:
     @staticmethod
     def dev_vlm_model(environment: dict[str, str] | None = None) -> common_pb2.ModelSpec:
         environment = dict(environment or os.environ)
+        family_id = environment.get("MELIX_DEV_VLM_FAMILY_ID", "llava-v1").strip() or "llava-v1"
         return common_pb2.ModelSpec(
             model_id="melix-dev-vlm",
             model_path=environment.get("MELIX_DEV_VLM_MODEL_PATH", "models/melix-dev-vlm"),
@@ -276,12 +360,17 @@ class WorkerModelCatalog:
             reasoning_mode="off",
             max_context=4096,
             ext={
-                "vision_family_id": "llava-v1",
-                "vision_prompt_profile_id": "llava-chatml-v1",
-                "vision_tokenization_mode": "interleaved",
-                "vision_max_images_per_prompt": "8",
-                "vision_supports_tool_calls": "true",
-                "melix.multimodal_adapter_hash": "vision-family-llava-v1",
+                **_vision_capability_metadata(family_id),
+                "vision_family_id": family_id,
+                "vision_prompt_profile_id": (
+                    "paligemma-caption-v1" if family_id == "paligemma-v1" else "llava-chatml-v1"
+                ),
+                "vision_tokenization_mode": (
+                    "prefix" if family_id == "paligemma-v1" else "interleaved"
+                ),
+                "vision_max_images_per_prompt": "1" if family_id == "paligemma-v1" else "8",
+                "vision_supports_tool_calls": "false" if family_id == "paligemma-v1" else "true",
+                "melix.multimodal_adapter_hash": f"vision-family-{family_id}",
             },
         )
 

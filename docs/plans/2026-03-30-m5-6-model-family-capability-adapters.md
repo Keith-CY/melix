@@ -23,6 +23,21 @@ Add capability adapters for the requested model families so routing, parser sele
 - the control plane should consume family capability metadata, not hardcode family names
 - keep family support incremental and testable
 
+## Implementation Slice
+
+- introduce shared capability metadata keys under `melix.capability.*` plus `melix.adapter_set_hash`
+- emit embedding-family, rerank-family, and vision-family adapter metadata from the seeded model catalogs
+- let the Swift catalog derive `routeClass`, `capabilityClass`, `supportedModalities`, and `supportedTasks` from adapter metadata
+- let `WorkerRegistry` fall back to adapter metadata when explicit typed route metadata is absent
+- let the Python maintenance path derive `supported_modalities`, `supported_tasks`, and `supported_parsers` from adapter metadata
+- expose the default VLM family parser capability through model metadata so model-default parser selection is family-aware
+
+## Measurement Points
+
+- route resolution for summaries that carry only adapter metadata
+- model-info capability reports for embedding, rerank, and VLM models
+- model-default parser selection for the seeded VLM family
+
 ## Verification
 
 - `make py-test`

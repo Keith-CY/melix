@@ -302,6 +302,182 @@ public actor ModelCatalog {
         dispatchHandles[id]
     }
 
+    private struct CapabilityAdapterMetadata: Sendable {
+        let adapterSetHash: String
+        let routeKind: WorkerRouteKind
+        let capabilityIdentifier: String
+        let supportedModalities: [String]
+        let supportedTasks: [String]
+        let supportedParsers: [String]
+        let toolParserMode: ToolParserMode?
+        let toolParserNamespaces: [String]
+        let toolParserXMLFallback: Bool
+
+        init(
+            adapterSetHash: String,
+            routeKind: WorkerRouteKind,
+            capabilityIdentifier: String,
+            supportedModalities: [String],
+            supportedTasks: [String],
+            supportedParsers: [String],
+            toolParserMode: ToolParserMode? = nil,
+            toolParserNamespaces: [String] = [],
+            toolParserXMLFallback: Bool = false
+        ) {
+            self.adapterSetHash = adapterSetHash
+            self.routeKind = routeKind
+            self.capabilityIdentifier = capabilityIdentifier
+            self.supportedModalities = supportedModalities
+            self.supportedTasks = supportedTasks
+            self.supportedParsers = supportedParsers
+            self.toolParserMode = toolParserMode
+            self.toolParserNamespaces = toolParserNamespaces
+            self.toolParserXMLFallback = toolParserXMLFallback
+        }
+
+        var ext: [String: String] {
+            var ext = [
+                "melix.adapter_set_hash": adapterSetHash,
+                "melix.capability.route_kind": routeKind.rawValue,
+                "melix.capability.class": capabilityIdentifier,
+                "melix.capability.supported_modalities": supportedModalities.joined(separator: ","),
+                "melix.capability.supported_tasks": supportedTasks.joined(separator: ","),
+                "melix.capability.supported_parsers": supportedParsers.joined(separator: ","),
+            ]
+            if let toolParserMode {
+                ext["tool_parser_mode"] = toolParserMode.rawValue
+            }
+            if !toolParserNamespaces.isEmpty {
+                ext["tool_parser_namespaces"] = toolParserNamespaces.joined(separator: ",")
+            }
+            if toolParserXMLFallback {
+                ext["tool_parser_xml_fallback"] = "true"
+            }
+            return ext
+        }
+    }
+
+    private static func embeddingCapabilityAdapter(
+        familyID: String
+    ) -> CapabilityAdapterMetadata {
+        CapabilityAdapterMetadata(
+            adapterSetHash: "embedding-family-\(familyID)",
+            routeKind: .pythonEmbedding,
+            capabilityIdentifier: "embedding",
+            supportedModalities: ["text"],
+            supportedTasks: ["embed"],
+            supportedParsers: ["text"]
+        )
+    }
+
+    private static func rerankCapabilityAdapter(
+        familyID: String
+    ) -> CapabilityAdapterMetadata {
+        CapabilityAdapterMetadata(
+            adapterSetHash: "rerank-family-\(familyID)",
+            routeKind: .pythonRerank,
+            capabilityIdentifier: "rerank",
+            supportedModalities: ["text"],
+            supportedTasks: ["rerank"],
+            supportedParsers: ["text"]
+        )
+    }
+
+    private static func visionCapabilityAdapter(
+        familyID: String
+    ) -> CapabilityAdapterMetadata {
+        switch familyID {
+        case "paligemma-v1":
+            return CapabilityAdapterMetadata(
+                adapterSetHash: "vision-family-paligemma-v1",
+                routeKind: .pythonVLM,
+                capabilityIdentifier: "vlm",
+                supportedModalities: ["text", "image"],
+                supportedTasks: ["vlm", "generate"],
+                supportedParsers: ["text"]
+            )
+        default:
+            return CapabilityAdapterMetadata(
+                adapterSetHash: "vision-family-llava-v1",
+                routeKind: .pythonVLM,
+                capabilityIdentifier: "vlm",
+                supportedModalities: ["text", "image"],
+                supportedTasks: ["vlm", "generate"],
+                supportedParsers: ["text", "qwen"],
+                toolParserMode: .qwen,
+                toolParserNamespaces: ["tools.vision"],
+                toolParserXMLFallback: true
+            )
+        }
+    }
+
+    private static func applyCapabilityAdapter(
+        _ adapter: CapabilityAdapterMetadata,
+        to model: inout Melix_Controlplane_V1_ModelSummary
+    ) {
+        model.routeClass = workerRouteClass(for: adapter.routeKind)
+        if let capabilityClass = capabilityClass(for: adapter.capabilityIdentifier) {
+            model.capabilityClass = capabilityClass
+        }
+        model.supportedModalities = adapter.supportedModalities
+        model.supportedTasks = adapter.supportedTasks
+        model.settings.ext.merge(adapter.ext) { _, new in new }
+    }
+
+    private static func workerRouteClass(
+        for routeKind: WorkerRouteKind
+    ) -> Melix_Controlplane_V1_WorkerRouteClass {
+        switch routeKind {
+        case .swiftText:
+            return .workerRouteSwiftText
+        case .pythonCompatibility:
+            return .workerRoutePythonTextCompatibility
+        case .pythonEmbedding:
+            return .workerRoutePythonEmbedding
+        case .pythonRerank:
+            return .workerRoutePythonRerank
+        case .pythonModelOperations:
+            return .workerRoutePythonModelOperations
+        case .pythonOCR:
+            return .workerRoutePythonOcr
+        case .pythonVLM:
+            return .workerRoutePythonVlm
+        case .pythonTranscription:
+            return .workerRoutePythonTranscription
+        case .pythonSpeech:
+            return .workerRoutePythonSpeech
+        case .pythonImage:
+            return .workerRoutePythonImage
+        }
+    }
+
+    private static func capabilityClass(
+        for identifier: String
+    ) -> Melix_Controlplane_V1_ModelCapabilityClass? {
+        switch identifier {
+        case "text":
+            return .modelCapabilityText
+        case "embedding":
+            return .modelCapabilityEmbedding
+        case "rerank":
+            return .modelCapabilityRerank
+        case "model_operations":
+            return .modelCapabilityModelOperations
+        case "ocr":
+            return .modelCapabilityOcr
+        case "vlm":
+            return .modelCapabilityVlm
+        case "transcription":
+            return .modelCapabilityTranscription
+        case "speech":
+            return .modelCapabilitySpeech
+        case "image_generation":
+            return .modelCapabilityImageGeneration
+        default:
+            return nil
+        }
+    }
+
     public static func devTextModel() -> Melix_Controlplane_V1_ModelSummary {
         var model = Melix_Controlplane_V1_ModelSummary()
         model.modelID = "melix-dev-text"
@@ -388,6 +564,7 @@ public actor ModelCatalog {
         model.settings.ext["detected_family_id"] = detected.familyID
         model.settings.ext["detected_identity_source"] = detected.source
         model.settings.ext["identity_override"] = identityOverride
+        applyCapabilityAdapter(embeddingCapabilityAdapter(familyID: resolvedFamilyID), to: &model)
         return withSynchronizedResidency(model)
     }
 
@@ -447,6 +624,7 @@ public actor ModelCatalog {
         if !resolvedYesNoLabels.isEmpty {
             model.settings.ext["rerank_yes_no_labels"] = resolvedYesNoLabels
         }
+        applyCapabilityAdapter(rerankCapabilityAdapter(familyID: resolvedFamilyID), to: &model)
         return withSynchronizedResidency(model)
     }
 
@@ -489,6 +667,8 @@ public actor ModelCatalog {
     }
 
     public static func devVLMModel() -> Melix_Controlplane_V1_ModelSummary {
+        let familyID = "llava-v1"
+        let capabilityAdapter = visionCapabilityAdapter(familyID: familyID)
         var model = Melix_Controlplane_V1_ModelSummary()
         model.modelID = "melix-dev-vlm"
         model.kind = "vlm"
@@ -496,16 +676,15 @@ public actor ModelCatalog {
         model.capabilityClass = .modelCapabilityVlm
         model.routeClass = .workerRoutePythonVlm
         model.features = ["vision", "chat"]
-        model.supportedModalities = ["image", "text"]
-        model.supportedTasks = ["vlm"]
         model.settings.alias = "Melix Dev VLM"
         model.settings.memoryPolicy = .memoryResidencyEvictable
-        model.settings.ext["vision_family_id"] = "llava-v1"
+        model.settings.ext["vision_family_id"] = familyID
         model.settings.ext["vision_prompt_profile_id"] = "llava-chatml-v1"
         model.settings.ext["vision_tokenization_mode"] = "interleaved"
         model.settings.ext["vision_max_images_per_prompt"] = "8"
         model.settings.ext["vision_supports_tool_calls"] = "true"
-        model.settings.ext["melix.multimodal_adapter_hash"] = "vision-family-llava-v1"
+        model.settings.ext["melix.multimodal_adapter_hash"] = capabilityAdapter.adapterSetHash
+        applyCapabilityAdapter(capabilityAdapter, to: &model)
         return withSynchronizedResidency(model)
     }
 

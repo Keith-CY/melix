@@ -24,12 +24,20 @@ struct ModelCatalogTests {
         #expect(models.first(where: { $0.modelID == "melix-dev-embed" })?.routeClass == .workerRoutePythonEmbedding)
         #expect(models.first(where: { $0.modelID == "melix-dev-embed" })?.settings.ext["embedding_backend_id"] == "bert-v1")
         #expect(models.first(where: { $0.modelID == "melix-dev-embed" })?.settings.ext["embedding_family_id"] == "bert")
+        #expect(models.first(where: { $0.modelID == "melix-dev-embed" })?.settings.ext["melix.adapter_set_hash"] == "embedding-family-bert")
+        #expect(models.first(where: { $0.modelID == "melix-dev-embed" })?.settings.ext["melix.capability.route_kind"] == "python_embedding")
         #expect(models.first(where: { $0.modelID == "melix-dev-embed" })?.settings.ext["embedding_pooling_mode"] == "cls")
         #expect(models.first(where: { $0.modelID == "melix-dev-embed" })?.settings.ext["embedding_dimensions"] == "8")
+        #expect(models.first(where: { $0.modelID == "melix-dev-embed" })?.supportedModalities == ["text"])
+        #expect(models.first(where: { $0.modelID == "melix-dev-embed" })?.supportedTasks == ["embed"])
         #expect(models.first(where: { $0.modelID == "melix-dev-rerank" })?.routeClass == .workerRoutePythonRerank)
         #expect(models.first(where: { $0.modelID == "melix-dev-rerank" })?.settings.ext["rerank_backend_id"] == "token-overlap-v1")
         #expect(models.first(where: { $0.modelID == "melix-dev-rerank" })?.settings.ext["rerank_family_id"] == "jina-v3")
+        #expect(models.first(where: { $0.modelID == "melix-dev-rerank" })?.settings.ext["melix.adapter_set_hash"] == "rerank-family-jina-v3")
+        #expect(models.first(where: { $0.modelID == "melix-dev-rerank" })?.settings.ext["melix.capability.class"] == "rerank")
         #expect(models.first(where: { $0.modelID == "melix-dev-rerank" })?.settings.ext["rerank_scoring_mode"] == "order-aware-overlap")
+        #expect(models.first(where: { $0.modelID == "melix-dev-rerank" })?.supportedModalities == ["text"])
+        #expect(models.first(where: { $0.modelID == "melix-dev-rerank" })?.supportedTasks == ["rerank"])
         #expect(models.first(where: { $0.modelID == "melix-dev-model-ops" })?.routeClass == .workerRoutePythonModelOperations)
     }
 
@@ -132,6 +140,24 @@ struct ModelCatalogTests {
         #expect(basic.settings.ext["rerank_family_id"] == "basic")
         #expect(basic.settings.ext["rerank_scoring_mode"] == "set-overlap")
         #expect(basic.settings.ext["detected_architecture"] == "cross-encoder")
+    }
+
+    @Test("dev vlm model exposes family capability adapter defaults")
+    func devVLMModelExposesFamilyCapabilityAdapterDefaults() async throws {
+        let model = ModelCatalog.devVLMModel()
+
+        #expect(model.routeClass == .workerRoutePythonVlm)
+        #expect(model.capabilityClass == .modelCapabilityVlm)
+        #expect(model.supportedModalities == ["text", "image"])
+        #expect(model.supportedTasks == ["vlm", "generate"])
+        #expect(model.settings.ext["vision_family_id"] == "llava-v1")
+        #expect(model.settings.ext["melix.adapter_set_hash"] == "vision-family-llava-v1")
+        #expect(model.settings.ext["melix.capability.route_kind"] == "python_vlm")
+        #expect(model.settings.ext["melix.capability.class"] == "vlm")
+        #expect(model.settings.ext["melix.capability.supported_parsers"] == "text,qwen")
+        #expect(model.settings.ext["tool_parser_mode"] == "qwen")
+        #expect(model.settings.ext["tool_parser_namespaces"] == "tools.vision")
+        #expect(model.settings.ext["tool_parser_xml_fallback"] == "true")
     }
 
     @Test("model settings updates persist alias and requested residency without faking pin state")

@@ -183,6 +183,16 @@ struct ToolParserRegistryTests {
         #expect(shapedWithOverride.toolParser?.namespaces == ["tools.search"])
     }
 
+    @Test("vlm family metadata supplies model-default tool parser selection")
+    func vlmFamilyMetadataSuppliesModelDefaultToolParserSelection() throws {
+        let modelSelection = try #require(ToolParserSelection(modelSettings: ModelCatalog.devVLMModel().settings))
+
+        #expect(modelSelection.mode == .qwen)
+        #expect(modelSelection.source == "model")
+        #expect(modelSelection.namespaces == ["tools.vision"])
+        #expect(modelSelection.fallbackMode == .xml)
+    }
+
     @Test("tool parser validation rejects invalid namespaces")
     func toolParserValidationRejectsInvalidNamespaces() {
         #expect(throws: ToolParserConfigurationError.self) {

@@ -62,6 +62,15 @@ def paligemma_vlm_model() -> common_pb2.ModelSpec:
     model.ext["vision_max_images_per_prompt"] = "1"
     model.ext["vision_supports_tool_calls"] = "false"
     model.ext["melix.multimodal_adapter_hash"] = "vision-family-paligemma-v1"
+    model.ext["melix.adapter_set_hash"] = "vision-family-paligemma-v1"
+    model.ext["melix.capability.route_kind"] = "python_vlm"
+    model.ext["melix.capability.class"] = "vlm"
+    model.ext["melix.capability.supported_modalities"] = "text,image"
+    model.ext["melix.capability.supported_tasks"] = "vlm,generate"
+    model.ext["melix.capability.supported_parsers"] = "text"
+    model.ext["tool_parser_mode"] = ""
+    model.ext["tool_parser_namespaces"] = ""
+    model.ext["tool_parser_xml_fallback"] = ""
     return model
 
 
@@ -155,6 +164,7 @@ def test_generate_streams_vlm_response_from_file_image_uri(tmp_path: Path) -> No
     assert model_info.ok is True
     assert model_info.supported_modalities == ["text", "image"]
     assert model_info.supported_tasks == ["vlm", "generate"]
+    assert model_info.supported_parsers == ["text", "qwen"]
 
 
 def test_generate_streams_vlm_response_from_image_only_prompt(tmp_path: Path) -> None:

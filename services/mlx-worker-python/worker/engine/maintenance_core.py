@@ -10,6 +10,10 @@ from packages.protocol.python.worker.v1 import common_pb2, maintenance_pb2
 from worker.model_ops.job_registry import ModelOpsJobRegistry
 from worker.registry import WorkerRegistry
 
+_CAPABILITY_SUPPORTED_MODALITIES_KEY = "melix.capability.supported_modalities"
+_CAPABILITY_SUPPORTED_TASKS_KEY = "melix.capability.supported_tasks"
+_CAPABILITY_SUPPORTED_PARSERS_KEY = "melix.capability.supported_parsers"
+
 
 @dataclass(frozen=True)
 class BenchMetricSpec:
@@ -17,6 +21,28 @@ class BenchMetricSpec:
     name: str
     value: float
     unit: str
+
+
+def _split_capability_values(raw_value: str) -> list[str]:
+    return [
+        part.strip()
+        for part in raw_value.split(",")
+        if part.strip()
+    ]
+
+
+def _default_capability_lists(model_kind: str) -> tuple[list[str], list[str]]:
+    if model_kind == "ocr":
+        return ["text", "image"], ["ocr", "generate"]
+    if model_kind == "vlm":
+        return ["text", "image"], ["vlm", "generate"]
+    if model_kind == "transcription":
+        return ["audio", "text"], ["transcribe"]
+    if model_kind == "speech":
+        return ["text", "audio"], ["speak"]
+    if model_kind == "image":
+        return ["text", "image"], ["image_generate", "image_edit"]
+    return ["text"], ["generate"]
 
 
 class MaintenanceCore:
@@ -124,29 +150,29 @@ class MaintenanceCore:
                 error=common_pb2.ErrorStatus(code="not_found", message="Unknown source model."),
             )
 
-        supported_modalities = ["text"]
-        supported_tasks = ["generate"]
-        if model.model_kind == "ocr":
-            supported_modalities = ["text", "image"]
-            supported_tasks = ["ocr", "generate"]
-        elif model.model_kind == "vlm":
-            supported_modalities = ["text", "image"]
-            supported_tasks = ["vlm", "generate"]
-        elif model.model_kind == "transcription":
-            supported_modalities = ["audio", "text"]
-            supported_tasks = ["transcribe"]
-        elif model.model_kind == "speech":
-            supported_modalities = ["text", "audio"]
-            supported_tasks = ["speak"]
-        elif model.model_kind == "image":
-            supported_modalities = ["text", "image"]
-            supported_tasks = ["image_generate", "image_edit"]
+        ext = dict(model.ext)
+        fallback_modalities, fallback_tasks = _default_capability_lists(model.model_kind)
+        supported_modalities = _split_capability_values(
+            ext.get(_CAPABILITY_SUPPORTED_MODALITIES_KEY, "")
+        ) or fallback_modalities
+        supported_tasks = _split_capability_values(
+            ext.get(_CAPABILITY_SUPPORTED_TASKS_KEY, "")
+        ) or fallback_tasks
+        supported_parsers = _split_capability_values(
+            ext.get(_CAPABILITY_SUPPORTED_PARSERS_KEY, "")
+        )
+        base_parser = (model.parser_mode or "").strip()
+        if base_parser and base_parser not in supported_parsers:
+            supported_parsers.insert(0, base_parser)
+        tool_parser = ext.get("tool_parser_mode", "").strip()
+        if tool_parser and tool_parser not in supported_parsers:
+            supported_parsers.append(tool_parser)
 
         return maintenance_pb2.GetModelInfoResponse(
             ok=True,
             model_kind=model.model_kind,
             max_context=model.max_context,
-            supported_parsers=[model.parser_mode] if model.parser_mode else [],
+            supported_parsers=supported_parsers,
             supported_modalities=supported_modalities,
             supported_tasks=supported_tasks,
         )

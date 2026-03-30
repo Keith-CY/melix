@@ -546,6 +546,49 @@ def test_multimodal_chat_streams_tool_calls_with_shared_parser_selection(tmp_pat
         stack.stop()
 
 
+def test_multimodal_chat_uses_model_default_parser_selection_for_llava_family(tmp_path: Path) -> None:
+    stack = LiveMelixStack(Path(__file__).resolve().parents[2])
+    image_path = tmp_path / "default-tool-image.txt"
+    image_path.write_text("phase6 default tool image")
+
+    try:
+        stack.start()
+        stack.wait_for_models(["melix-dev-vlm"])
+
+        status, payload = _post_json(
+            stack.chat_url(),
+            {
+                "model": "melix-dev-vlm",
+                "stream": True,
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": "Call the tool for this image."},
+                            {
+                                "type": "input_image",
+                                "input_image": {
+                                    "url": str(image_path),
+                                    "mime_type": "image/png",
+                                    "filename": image_path.name,
+                                },
+                            },
+                        ],
+                    }
+                ],
+            },
+        )
+
+        assert status == 200
+        assert b"event: tool_call" in payload
+        assert b"\"parser_mode\":\"qwen\"" in payload
+        assert b"\"parser_namespaces\":[\"tools.vision\"]" in payload
+        assert b"\"parser_fallback_mode\":\"xml\"" in payload
+        assert b"\"name\":\"tools.vision\"" in payload
+    finally:
+        stack.stop()
+
+
 def test_phase6_vision_evidence_report_is_machine_readable(tmp_path: Path) -> None:
     stack = LiveMelixStack(Path(__file__).resolve().parents[2])
     local_image = tmp_path / "vision-local.txt"
