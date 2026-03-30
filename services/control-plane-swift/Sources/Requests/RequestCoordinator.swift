@@ -30,6 +30,7 @@ private enum CacheRouteClass: String, Sendable {
 }
 
 private let boundarySafePrefillChunkTargetTokens: UInt32 = 16
+private let continuousBatchTargetSize: UInt32 = 2
 
 private struct SchedulingPlan: Sendable {
     let translatedRequest: TranslatedChatRequest
@@ -41,6 +42,9 @@ private struct SchedulingPlan: Sendable {
     let cacheRouteEligible: Bool
     let prefixAffinityEligible: Bool
     let prefixAffinityHit: Bool
+    let continuousBatchEligible: Bool
+    let batchCohortID: String
+    let batchMaxSize: UInt32
 }
 
 public actor RequestCoordinator {
@@ -115,7 +119,10 @@ public actor RequestCoordinator {
             )
             throw RequestCoordinatorError.requestAlreadyActive
         }
-        let initialQueuePosition = await admissionGate.nextQueuePosition()
+        let initialQueuePosition = await admissionGate.nextQueuePosition(
+            cohortID: plan.batchCohortID,
+            maxBatchSize: plan.batchMaxSize
+        )
         await schedulerReadModel.recordQueued(
             requestID: request.requestID,
             laneHint: lane,
@@ -165,7 +172,12 @@ public actor RequestCoordinator {
             return await makeCancelledExecution(requestID: request.requestID, modelID: request.modelID)
         }
 
-        switch await admissionGate.acquire(requestID: request.requestID) {
+        let admission = await admissionGate.acquire(
+            requestID: request.requestID,
+            cohortID: plan.batchCohortID,
+            maxBatchSize: plan.batchMaxSize
+        )
+        switch admission.outcome {
         case .cancelled:
             await finishRequestTracking(requestID: request.requestID, phase: .requestAborted)
             return await makeCancelledExecution(requestID: request.requestID, modelID: request.modelID)
@@ -179,6 +191,16 @@ public actor RequestCoordinator {
             laneHint: lane,
             priority: priority,
             admissionLatencyMs: now().timeIntervalSince(routeStartedAt) * 1000
+        )
+        await schedulerReadModel.recordContinuousBatchAdmission(
+            requestID: request.requestID,
+            cohortID: plan.batchCohortID,
+            batchPosition: admission.batchPosition,
+            batchSize: admission.batchSize,
+            batchCapacity: admission.batchCapacity,
+            eligible: plan.continuousBatchEligible,
+            mergedIntoBatch: admission.mergedIntoBatch,
+            affinityClass: plan.cacheRouteClass.rawValue
         )
         _ = await modelCatalog?.markModelUsed(id: request.modelID)
         if !(await abortRegistry.contains(request.requestID)) {
@@ -558,7 +580,10 @@ public actor RequestCoordinator {
                 cacheRouteClass: .cold,
                 cacheRouteEligible: false,
                 prefixAffinityEligible: false,
-                prefixAffinityHit: false
+                prefixAffinityHit: false,
+                continuousBatchEligible: false,
+                batchCohortID: "",
+                batchMaxSize: 1
             )
         }
         guard
@@ -580,7 +605,23 @@ public actor RequestCoordinator {
                 cacheRouteClass: .cold,
                 cacheRouteEligible: shouldUsePhaseAwareExecution(for: request.workerRequest),
                 prefixAffinityEligible: false,
-                prefixAffinityHit: false
+                prefixAffinityHit: false,
+                continuousBatchEligible: isContinuousBatchEligible(
+                    request: request,
+                    routeKind: routeKind,
+                    prefillLane: prefillLane
+                ),
+                batchCohortID: continuousBatchCohortID(
+                    request: request,
+                    routeKind: routeKind,
+                    prefillLane: prefillLane,
+                    cacheRouteClass: .cold
+                ),
+                batchMaxSize: resolvedContinuousBatchSize(
+                    request: request,
+                    routeKind: routeKind,
+                    prefillLane: prefillLane
+                )
             )
         }
 
@@ -622,6 +663,11 @@ public actor RequestCoordinator {
             prefillLane = decodeLane
         }
 
+        let continuousBatchEligible = isContinuousBatchEligible(
+            request: request,
+            routeKind: routeKind,
+            prefillLane: prefillLane
+        )
         return SchedulingPlan(
             translatedRequest: request,
             routeKind: routeKind,
@@ -631,8 +677,68 @@ public actor RequestCoordinator {
             cacheRouteClass: cacheRouteClass,
             cacheRouteEligible: cacheRouteEligible,
             prefixAffinityEligible: prefixAffinityEligible,
-            prefixAffinityHit: prefixAffinityHit
+            prefixAffinityHit: prefixAffinityHit,
+            continuousBatchEligible: continuousBatchEligible,
+            batchCohortID: continuousBatchEligible
+                ? continuousBatchCohortID(
+                    request: request,
+                    routeKind: routeKind,
+                    prefillLane: prefillLane,
+                    cacheRouteClass: cacheRouteClass
+                )
+                : "",
+            batchMaxSize: continuousBatchEligible ? continuousBatchTargetSize : 1
         )
+    }
+
+    private func isContinuousBatchEligible(
+        request: TranslatedChatRequest,
+        routeKind: WorkerRouteKind,
+        prefillLane: String
+    ) -> Bool {
+        guard routeKind == .swiftText else {
+            return false
+        }
+        guard shouldUsePhaseAwareExecution(for: request.workerRequest) else {
+            return false
+        }
+        return prefillLane.hasPrefix("text.prefill.")
+    }
+
+    private func resolvedContinuousBatchSize(
+        request: TranslatedChatRequest,
+        routeKind: WorkerRouteKind,
+        prefillLane: String
+    ) -> UInt32 {
+        isContinuousBatchEligible(
+            request: request,
+            routeKind: routeKind,
+            prefillLane: prefillLane
+        ) ? continuousBatchTargetSize : 1
+    }
+
+    private func continuousBatchCohortID(
+        request: TranslatedChatRequest,
+        routeKind: WorkerRouteKind,
+        prefillLane: String,
+        cacheRouteClass: CacheRouteClass
+    ) -> String {
+        let restoreKey = request.workerRequest.execution.cacheHints.restoreSnapshotID
+        let affinityKey: String
+        if !restoreKey.isEmpty {
+            affinityKey = "restore:\(restoreKey)"
+        } else if request.workerRequest.execution.cacheHints.preferHotPrefix {
+            affinityKey = "prefer-hot"
+        } else {
+            affinityKey = cacheRouteClass.rawValue
+        }
+        return [
+            routeKind.rawValue,
+            request.modelID,
+            prefillLane,
+            cacheRouteClass.rawValue,
+            affinityKey,
+        ].joined(separator: "|")
     }
 
     private func makePhaseAwareUpstream(

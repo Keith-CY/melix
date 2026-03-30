@@ -811,6 +811,94 @@ struct RequestCoordinatorTests {
         #expect(metrics.values["scheduler.prefill_last_chunk_tokens"] == 24)
     }
 
+    @Test("phase-aware text requests join the active continuous batch cohort")
+    func phaseAwareTextRequestsJoinTheActiveContinuousBatchCohort() async throws {
+        let workerClient = PhaseAwareWorkerClient()
+        let metricsStore = MetricsStore()
+        let schedulerReadModel = SchedulerReadModel(metricsStore: metricsStore)
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(defaultTextClient: workerClient),
+            abortRegistry: AbortRegistry(),
+            schedulerReadModel: schedulerReadModel,
+            metricsStore: metricsStore
+        )
+
+        let execution1 = try await coordinator.startChatCompletion(
+            makeTranslatedChatRequest(
+                requestID: "req-batch-1",
+                saveBoundarySnapshot: true
+            )
+        )
+        let consumer1 = Task {
+            do {
+                for try await _ in execution1.stream {
+                }
+            } catch {
+            }
+        }
+        defer { consumer1.cancel() }
+
+        let secondTask = Task {
+            try await coordinator.startChatCompletion(
+                makeTranslatedChatRequest(
+                    requestID: "req-batch-2",
+                    saveBoundarySnapshot: true
+                )
+            )
+        }
+
+        let secondPrefillProgress = await waitForProgress(
+            schedulerReadModel: schedulerReadModel,
+            requestID: "req-batch-2",
+            phase: .requestPrefilling,
+            lane: "text.prefill.background",
+            attempts: 50
+        )
+        let secondProgress = if let secondPrefillProgress {
+            secondPrefillProgress
+        } else {
+            await waitForProgress(
+                schedulerReadModel: schedulerReadModel,
+                requestID: "req-batch-2",
+                phase: .requestAdmitted,
+                lane: "text.prefill.background",
+                attempts: 50
+            )
+        }
+        #expect(secondProgress?.lane == "text.prefill.background")
+
+        let execution2 = try await secondTask.value
+        let consumer2 = Task {
+            do {
+                for try await _ in execution2.stream {
+                }
+            } catch {
+            }
+        }
+        defer { consumer2.cancel() }
+
+        let snapshot = await schedulerReadModel.snapshot()
+        let metrics = await metricsStore.snapshot()
+
+        #expect(snapshot.activeRequests == 2)
+        #expect(metrics.values["scheduler.continuous_batch_eligible_rate"] == 100)
+        #expect(metrics.values["scheduler.continuous_batch_merge_rate"] == 50)
+        #expect(metrics.values["scheduler.continuous_batch_size"] == 2)
+        #expect(metrics.values["scheduler.continuous_batch_occupancy_pct"] == 100)
+        #expect(metrics.values["scheduler.continuous_batch_active_cohorts"] == 1)
+        #expect(metrics.values["scheduler.batch_affinity_preferred_rate"] == 0)
+
+        await workerClient.emitDecodeStarted(requestID: "req-batch-1", decodeHandle: "decode-req-batch-1")
+        await workerClient.emitToken(requestID: "req-batch-1", text: "batch-one")
+        await workerClient.finishDecode(requestID: "req-batch-1")
+        await workerClient.emitDecodeStarted(requestID: "req-batch-2", decodeHandle: "decode-req-batch-2")
+        await workerClient.emitToken(requestID: "req-batch-2", text: "batch-two")
+        await workerClient.finishDecode(requestID: "req-batch-2")
+
+        _ = await consumer1.result
+        _ = await consumer2.result
+    }
+
     @Test("cold session requests prefer background prefill lanes before reuse exists")
     func coldSessionRequestsPreferBackgroundPrefillLanesBeforeReuseExists() async throws {
         let workerClient = PhaseAwareWorkerClient()

@@ -98,7 +98,7 @@ actor WorkerRuntimeRegistry {
         capabilities.cache = cache
 
         var execution = Melix_Worker_V1_ExecutionCapabilities()
-        execution.supportsContinuousBatching = false
+        execution.supportsContinuousBatching = true
         execution.supportsSpeculativeDecoding = supportsSpeculativeDecoding()
         capabilities.execution = execution
 

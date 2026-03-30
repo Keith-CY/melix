@@ -272,6 +272,69 @@ struct SchedulerReadModelTests {
         #expect(snapshot.activeRequests == 0)
     }
 
+    @Test("continuous batch admissions publish merge occupancy and affinity metrics")
+    func continuousBatchAdmissionsPublishMergeOccupancyAndAffinityMetrics() async {
+        let metricsStore = MetricsStore()
+        let readModel = SchedulerReadModel(metricsStore: metricsStore)
+
+        await readModel.recordQueued(
+            requestID: "req-batch-1",
+            laneHint: "text.prefill.hot",
+            priority: 60,
+            queuePosition: 1
+        )
+        _ = await readModel.recordAdmitted(
+            requestID: "req-batch-1",
+            laneHint: "text.prefill.hot",
+            priority: 60,
+            workerID: "swift-text-worker",
+            admissionLatencyMs: 1
+        )
+        await readModel.recordContinuousBatchAdmission(
+            requestID: "req-batch-1",
+            cohortID: "swift-text|hot",
+            batchPosition: 1,
+            batchSize: 1,
+            batchCapacity: 2,
+            eligible: true,
+            mergedIntoBatch: false,
+            affinityClass: "warm"
+        )
+
+        await readModel.recordQueued(
+            requestID: "req-batch-2",
+            laneHint: "text.prefill.hot",
+            priority: 60,
+            queuePosition: 1
+        )
+        _ = await readModel.recordAdmitted(
+            requestID: "req-batch-2",
+            laneHint: "text.prefill.hot",
+            priority: 60,
+            workerID: "swift-text-worker",
+            admissionLatencyMs: 1
+        )
+        await readModel.recordContinuousBatchAdmission(
+            requestID: "req-batch-2",
+            cohortID: "swift-text|hot",
+            batchPosition: 2,
+            batchSize: 2,
+            batchCapacity: 2,
+            eligible: true,
+            mergedIntoBatch: true,
+            affinityClass: "warm"
+        )
+
+        let metrics = await metricsStore.snapshot()
+
+        #expect(metrics.values["scheduler.continuous_batch_eligible_rate"] == 100)
+        #expect(metrics.values["scheduler.continuous_batch_merge_rate"] == 50)
+        #expect(metrics.values["scheduler.continuous_batch_size"] == 2)
+        #expect(metrics.values["scheduler.continuous_batch_occupancy_pct"] == 100)
+        #expect(metrics.values["scheduler.continuous_batch_active_cohorts"] == 1)
+        #expect(metrics.values["scheduler.batch_affinity_preferred_rate"] == 100)
+    }
+
     @Test("aborted terminal state overrides a previously completed request")
     func abortedTerminalStateOverridesAPreviouslyCompletedRequest() async {
         let recorder = SchedulerEventRecorder()

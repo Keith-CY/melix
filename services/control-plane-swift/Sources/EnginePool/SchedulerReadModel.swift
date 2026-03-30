@@ -40,6 +40,9 @@ public actor SchedulerReadModel {
         var admissionState: Melix_Controlplane_V1_AdmissionState
         var priorityScore: Double
         var queuedAt: Date?
+        var batchCohortID: String = ""
+        var batchCapacity: UInt32 = 1
+        var affinityClass: String = "cold"
     }
 
     private let laneDefinitions: [String: SchedulerLaneDefinition]
@@ -52,10 +55,16 @@ public actor SchedulerReadModel {
     private var activeRequestIDs: Set<String>
     private var requestRecords: [String: RequestRecord]
     private var requestProgressSnapshots: [String: Melix_Controlplane_V1_RequestProgressEvent]
+    private var batchRequestIDsByCohort: [String: Set<String>]
     private var admittedRequests: UInt32
     private var rejectedRequests: UInt32
     private var lastAdmissionLatencyMs: Double
     private var lastQueueDelayMs: Double
+    private var batchEligibleRequestCount: Double
+    private var batchMergedRequestCount: Double
+    private var batchAffinityPreferredCount: Double
+    private var lastContinuousBatchSize: UInt32
+    private var lastContinuousBatchOccupancyPct: Double
 
     public init(
         laneDefinitions: [SchedulerLaneDefinition] = SchedulerReadModel.defaultLanes,
@@ -76,10 +85,16 @@ public actor SchedulerReadModel {
         self.activeRequestIDs = []
         self.requestRecords = [:]
         self.requestProgressSnapshots = [:]
+        self.batchRequestIDsByCohort = [:]
         self.admittedRequests = 0
         self.rejectedRequests = 0
         self.lastAdmissionLatencyMs = 0
         self.lastQueueDelayMs = 0
+        self.batchEligibleRequestCount = 0
+        self.batchMergedRequestCount = 0
+        self.batchAffinityPreferredCount = 0
+        self.lastContinuousBatchSize = 0
+        self.lastContinuousBatchOccupancyPct = 0
     }
 
     public func recordQueued(
@@ -151,7 +166,10 @@ public actor SchedulerReadModel {
             phase: .requestRejected,
             admissionState: .admissionRejected,
             priorityScore: priorityScore,
-            queuedAt: requestRecords[requestID]?.queuedAt
+            queuedAt: requestRecords[requestID]?.queuedAt,
+            batchCohortID: requestRecords[requestID]?.batchCohortID ?? "",
+            batchCapacity: requestRecords[requestID]?.batchCapacity ?? 1,
+            affinityClass: requestRecords[requestID]?.affinityClass ?? "cold"
         )
         requestProgressSnapshots[requestID] = progress
         await publish(progress, source: "scheduler")
@@ -210,7 +228,10 @@ public actor SchedulerReadModel {
             phase: .requestAdmitted,
             admissionState: .admissionAdmitted,
             priorityScore: priorityScore,
-            queuedAt: queuedAt
+            queuedAt: queuedAt,
+            batchCohortID: requestRecords[requestID]?.batchCohortID ?? "",
+            batchCapacity: requestRecords[requestID]?.batchCapacity ?? 1,
+            affinityClass: requestRecords[requestID]?.affinityClass ?? "cold"
         )
         requestProgressSnapshots[requestID] = progress
         await publish(progress, source: "scheduler")
@@ -224,6 +245,53 @@ public actor SchedulerReadModel {
             backpressure: backpressureBeforeAdmission,
             admissionState: .admissionAdmitted
         )
+    }
+
+    public func recordContinuousBatchAdmission(
+        requestID: String,
+        cohortID: String,
+        batchPosition: UInt32,
+        batchSize: UInt32,
+        batchCapacity: UInt32,
+        eligible: Bool,
+        mergedIntoBatch: Bool,
+        affinityClass: String
+    ) async {
+        guard var record = requestRecords[requestID] else {
+            return
+        }
+
+        let normalizedCapacity = max(batchCapacity, 1)
+        record.batchCohortID = cohortID
+        record.batchCapacity = normalizedCapacity
+        record.affinityClass = affinityClass
+        requestRecords[requestID] = record
+
+        if !cohortID.isEmpty {
+            var cohortRequests = batchRequestIDsByCohort[cohortID, default: []]
+            cohortRequests.insert(requestID)
+            batchRequestIDsByCohort[cohortID] = cohortRequests
+        }
+
+        if eligible {
+            batchEligibleRequestCount += 1
+            if affinityClass != "cold" {
+                batchAffinityPreferredCount += 1
+            }
+        }
+        if mergedIntoBatch {
+            batchMergedRequestCount += 1
+        }
+
+        lastContinuousBatchSize = batchSize
+        lastContinuousBatchOccupancyPct = Double(batchSize) / Double(normalizedCapacity) * 100
+
+        var progress = requestProgressSnapshots[requestID] ?? Melix_Controlplane_V1_RequestProgressEvent()
+        progress.requestID = requestID
+        progress.queuePosition = batchPosition
+        requestProgressSnapshots[requestID] = progress
+
+        await updateMetrics(backpressure: currentBackpressure())
     }
 
     public func recordPhaseTransition(
@@ -318,6 +386,15 @@ public actor SchedulerReadModel {
                 0,
                 laneStats[record.laneID, default: LaneStats()].activeRequests - 1
             )
+        }
+        if !record.batchCohortID.isEmpty {
+            var cohortRequests = batchRequestIDsByCohort[record.batchCohortID, default: []]
+            cohortRequests.remove(requestID)
+            if cohortRequests.isEmpty {
+                batchRequestIDsByCohort.removeValue(forKey: record.batchCohortID)
+            } else {
+                batchRequestIDsByCohort[record.batchCohortID] = cohortRequests
+            }
         }
         if record.phase == .requestQueued {
             laneStats[record.laneID, default: LaneStats()].queuedRequests = max(
@@ -481,6 +558,36 @@ public actor SchedulerReadModel {
         let multimodalBackpressure = (activeMultimodalRequestCount() > 0 || multimodalQueuedRequests > 0) ? 1.0 : 0.0
         await metricsStore.set(multimodalBackpressure, forKey: "scheduler.multimodal_backpressure")
         await metricsStore.set(multimodalBackpressure, forKey: "scheduler.text_protection_active")
+        await metricsStore.set(
+            Double(batchRequestIDsByCohort.count),
+            forKey: "scheduler.continuous_batch_active_cohorts"
+        )
+        await metricsStore.set(
+            admittedRequests == 0
+                ? 0
+                : batchEligibleRequestCount / Double(admittedRequests) * 100,
+            forKey: "scheduler.continuous_batch_eligible_rate"
+        )
+        await metricsStore.set(
+            batchEligibleRequestCount == 0
+                ? 0
+                : batchMergedRequestCount / batchEligibleRequestCount * 100,
+            forKey: "scheduler.continuous_batch_merge_rate"
+        )
+        await metricsStore.set(
+            Double(lastContinuousBatchSize),
+            forKey: "scheduler.continuous_batch_size"
+        )
+        await metricsStore.set(
+            lastContinuousBatchOccupancyPct,
+            forKey: "scheduler.continuous_batch_occupancy_pct"
+        )
+        await metricsStore.set(
+            batchEligibleRequestCount == 0
+                ? 0
+                : batchAffinityPreferredCount / batchEligibleRequestCount * 100,
+            forKey: "scheduler.batch_affinity_preferred_rate"
+        )
     }
 
     private func percentile(_ percentile: Double, samples: [Double]) -> Double {

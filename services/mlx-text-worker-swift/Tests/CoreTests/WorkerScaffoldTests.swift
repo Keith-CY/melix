@@ -463,7 +463,7 @@ final class WorkerScaffoldTests: XCTestCase {
             response.capabilities.cache.experimentalModes,
             [.rotating, .hybrid]
         )
-        XCTAssertFalse(response.capabilities.execution.supportsContinuousBatching)
+        XCTAssertTrue(response.capabilities.execution.supportsContinuousBatching)
         XCTAssertFalse(response.capabilities.execution.supportsSpeculativeDecoding)
         XCTAssertEqual(
             response.capabilities.ext.map { $0.name },

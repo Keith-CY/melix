@@ -278,6 +278,8 @@ The control plane protocol should expose queue read models, including lane-level
 
 Worker requests should also carry scheduling hints such as lane, priority, latency sensitivity, and queue delay so execution can honor control-plane intent without turning the worker into the global scheduler.
 
+The current continuous-batching baseline should be enabled only on the Swift text route and only for phase-aware prefill work. Batch cohorts should be keyed by route, model, prefill lane, and cache-affinity class so hot and restored work do not collapse into the same admission group accidentally. Admission fairness should remain FIFO across cohorts: a compatible request may join the active batch only while no earlier incompatible work is already queued.
+
 ### Priority Function
 
 Requests should be ordered with a weighted function shaped by:

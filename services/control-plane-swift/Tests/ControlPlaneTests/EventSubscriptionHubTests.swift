@@ -276,7 +276,7 @@ struct CoreUtilityTests {
         let gate = AdmissionGate()
 
         let first = await gate.acquire(requestID: "req-1")
-        #expect(first == .admitted)
+        #expect(first.outcome == .admitted)
         #expect(await gate.nextQueuePosition() == 1)
 
         let secondTask = Task {
@@ -291,9 +291,85 @@ struct CoreUtilityTests {
         let second = await secondTask.value
         let snapshotAfterRelease = await gate.snapshot()
 
-        #expect(second == .admitted)
+        #expect(second.outcome == .admitted)
         #expect(snapshotAfterRelease.activeRequestID == "req-2")
+        #expect(snapshotAfterRelease.activeRequestIDs == ["req-2"])
         #expect(snapshotAfterRelease.queuedRequestIDs.isEmpty)
+    }
+
+    @Test("admission gate batches compatible requests without skipping queued cohorts")
+    func admissionGateBatchesCompatibleRequestsWithoutSkippingQueuedCohorts() async {
+        let gate = AdmissionGate()
+
+        let first = await gate.acquire(
+            requestID: "req-batch-1",
+            cohortID: "swift-text|hot",
+            maxBatchSize: 2
+        )
+        #expect(first.outcome == .admitted)
+        #expect(first.batchPosition == 1)
+        #expect(first.batchSize == 1)
+        #expect(first.batchCapacity == 2)
+        #expect(first.mergedIntoBatch == false)
+
+        let second = await gate.acquire(
+            requestID: "req-batch-2",
+            cohortID: "swift-text|hot",
+            maxBatchSize: 2
+        )
+        #expect(second.outcome == .admitted)
+        #expect(second.batchPosition == 2)
+        #expect(second.batchSize == 2)
+        #expect(second.batchCapacity == 2)
+        #expect(second.mergedIntoBatch)
+
+        let secondSnapshot = await gate.snapshot()
+        #expect(secondSnapshot.activeRequestIDs == ["req-batch-1", "req-batch-2"])
+        #expect(secondSnapshot.activeCohortID == "swift-text|hot")
+
+        let queuedCold = Task {
+            await gate.acquire(
+                requestID: "req-cold-queued",
+                cohortID: "swift-text|cold",
+                maxBatchSize: 2
+            )
+        }
+        await Task.yield()
+
+        let queuedHot = Task {
+            await gate.acquire(
+                requestID: "req-hot-queued",
+                cohortID: "swift-text|hot",
+                maxBatchSize: 2
+            )
+        }
+        await Task.yield()
+
+        let queuedSnapshot = await gate.snapshot()
+        #expect(queuedSnapshot.queuedRequestIDs == ["req-cold-queued", "req-hot-queued"])
+
+        await gate.release(requestID: "req-batch-1")
+        let halfReleasedSnapshot = await gate.snapshot()
+        #expect(halfReleasedSnapshot.activeRequestIDs == ["req-batch-2"])
+        #expect(halfReleasedSnapshot.queuedRequestIDs == ["req-cold-queued", "req-hot-queued"])
+
+        await gate.release(requestID: "req-batch-2")
+        let coldGrant = await queuedCold.value
+        let coldSnapshot = await gate.snapshot()
+        #expect(coldGrant.outcome == .admitted)
+        #expect(coldGrant.batchPosition == 1)
+        #expect(coldGrant.batchSize == 1)
+        #expect(coldSnapshot.activeRequestIDs == ["req-cold-queued"])
+        #expect(coldSnapshot.queuedRequestIDs == ["req-hot-queued"])
+
+        await gate.release(requestID: "req-cold-queued")
+        let hotGrant = await queuedHot.value
+        let finalSnapshot = await gate.snapshot()
+        #expect(hotGrant.outcome == .admitted)
+        #expect(hotGrant.batchPosition == 1)
+        #expect(hotGrant.batchSize == 1)
+        #expect(finalSnapshot.activeRequestIDs == ["req-hot-queued"])
+        #expect(finalSnapshot.queuedRequestIDs.isEmpty)
     }
 
     @Test("dev text model has the expected defaults")
