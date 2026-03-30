@@ -17,7 +17,9 @@ Add a controlled disk-streaming execution mode for large-model serving, with exp
 - adjustable virtual-memory budget
 - load admission based on memory and SSD headroom
 - explicit policy for prefix cache, paged KV cache, persistent disk cache, and cache quantization when disk streaming is active
-- cache memory limit, cache memory percentage, block size, max cache size, block-cache directory, and cache directory controls
+- memory-aware cache accounting by tracked bytes rather than entry count alone
+- cache memory limit, cache memory percentage, memory-aware-cache disable mode, block size, max cache size, block-cache directory, and cache directory controls
+- multimodal cache controls, including explicit image or video cache budgets where multimodal reuse remains enabled
 - operator-visible hot-tier, paged-tier, and cold-tier state for large-model sessions
 - benchmark coverage for SSD-backed execution paths
 
@@ -42,6 +44,7 @@ Add a controlled disk-streaming execution mode for large-model serving, with exp
 - Disk streaming should remain an explicit mode, not an implicit fallback after memory pressure has already destabilized the runtime.
 - Cache policy should prefer correctness and observability over opportunistic reuse when streaming compatibility is unclear.
 - Virtual-memory budgets should align with the existing memory-enforcement and residency-accounting model rather than creating a second budgeting scheme.
+- Memory-aware cache policy should stay measurable in bytes and should not silently degrade to entry-count heuristics.
 - Metrics must separate RAM-resident reuse from SSD-backed restore and execution cost.
 
 ## Verification

@@ -110,6 +110,16 @@ Current phase-status and planning documents:
 - `plans/2026-03-31-m15-2-update-banners-and-runtime-signal-unification.md`
 - `plans/2026-03-31-m15-3-download-queue-persistence-and-paused-recovery.md`
 - `plans/2026-03-31-m15-4-desktop-polish-integration-evidence.md`
+- `plans/2026-03-31-m16-video-understanding-and-media-lifecycle.md`
+- `plans/2026-03-31-m17-speech-backends-and-voice-catalog.md`
+- `plans/2026-03-31-m16-1-video-ingress-and-media-normalization-contracts.md`
+- `plans/2026-03-31-m16-2-frame-policy-video-runtime-and-background-lane-routing.md`
+- `plans/2026-03-31-m16-3-temporary-media-lifecycle-cleanup-and-failure-recovery.md`
+- `plans/2026-03-31-m16-4-video-integration-benchmarks-and-operator-evidence.md`
+- `plans/2026-03-31-m17-1-speech-to-text-backend-adapters-and-model-matrix.md`
+- `plans/2026-03-31-m17-2-text-to-speech-backend-adapters-and-multilingual-voice-catalog.md`
+- `plans/2026-03-31-m17-3-speech-settings-locale-policy-and-optional-dependency-profiles.md`
+- `plans/2026-03-31-m17-4-speech-integration-benchmarks-runbooks-and-operator-evidence.md`
 - `plans/2026-03-31-m10-m15-executable-goals.md`
 - `plans/2026-03-30-m3-12-protocol-compatibility-test-matrix.md`
 - `plans/2026-03-28-p1-m2-swift-text-worker-scaffold.md`

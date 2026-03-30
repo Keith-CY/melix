@@ -8,6 +8,7 @@ Expose the cache-policy and settings surface needed to run disk-streamed session
 
 - define cache compatibility under disk streaming
 - expose cache memory and directory controls
+- expose memory-aware cache and multimodal-cache budget controls
 - keep cache policy visible after settings resolution
 
 ## Files
@@ -20,6 +21,7 @@ Expose the cache-policy and settings surface needed to run disk-streamed session
 ## Implementation Notes
 
 - Settings should explain when cache tiers are disabled, limited, or downgraded.
+- Memory-aware policy should show tracked-byte budgets, RAM-percentage budgets, and the explicit disable path.
 - Directory and size controls must remain deterministic and inspectable.
 - UI should show effective policy, not only requested settings.
 
@@ -32,3 +34,4 @@ Expose the cache-policy and settings surface needed to run disk-streamed session
 
 - Cache compatibility rules under disk streaming are operator-visible and test-covered.
 - Effective cache settings can be inspected after merges and overrides.
+- Multimodal cache budgets and memory-aware policy remain visible after settings resolution.

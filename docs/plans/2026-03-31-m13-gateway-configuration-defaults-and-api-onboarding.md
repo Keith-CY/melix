@@ -14,6 +14,7 @@ Expose a complete local gateway-configuration surface, generation-defaults model
 ## Coverage
 
 - host, port, API key, served-model name, rate limit, timeout, log level, and CORS settings
+- sliding-window rate-limit enforcement and request-timeout cancellation semantics
 - concurrent-processing, max-concurrent-sequence, prefill-batch-size, and completion-batch-size controls
 - default max tokens, default temperature, default top-p, and stream interval
 - speculative-decoding controls, including draft-model selection and `num-draft-tokens` policy
@@ -40,6 +41,7 @@ Expose a complete local gateway-configuration surface, generation-defaults model
 ## Implementation Notes
 
 - Settings precedence must remain explicit across packaged defaults, config files, and operator overrides.
+- Runtime enforcement semantics for rate limits and timeouts must remain inspectable rather than being hidden behind transport-only behavior.
 - The API reference should describe only supported, live surfaces and should not advertise incomplete placeholder routes.
 - Quick-start examples should stay synchronized with supported endpoint shapes and streaming behavior.
 - Tool and MCP configuration should remain configuration-driven and inspectable instead of hidden behind implicit boot logic.
@@ -54,4 +56,5 @@ Expose a complete local gateway-configuration surface, generation-defaults model
 
 - Gateway configuration is complete, operator-visible, and round-trippable through control-plane truth.
 - Generation and speculative defaults are inspectable and test-covered.
+- Rate-limit and timeout behavior are both configurable and observable at runtime.
 - API onboarding material matches live supported endpoints and payloads.

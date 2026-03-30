@@ -4,7 +4,7 @@ Parent roadmap: `docs/plans/2026-03-30-full-capability-roadmap.md`
 
 This index maps every roadmap execution slice to its own implementation-plan document. Each child plan should be treated as an independent execution unit with its own verification and acceptance criteria.
 
-The roadmap extension in `M10-M15` is currently tracked as one implementation-plan document per milestone. Those milestones can later be decomposed into smaller `Mx.y` plans if execution pressure or ownership boundaries require it.
+The roadmap extension in `M10-M17` includes milestone-level plans plus decomposed child-plan documents for execution slices that already have stable ownership boundaries.
 
 ## M1: Runtime Core
 
@@ -163,3 +163,17 @@ The roadmap extension in `M10-M15` is currently tracked as one implementation-pl
 - `M15.2` `docs/plans/2026-03-31-m15-2-update-banners-and-runtime-signal-unification.md`
 - `M15.3` `docs/plans/2026-03-31-m15-3-download-queue-persistence-and-paused-recovery.md`
 - `M15.4` `docs/plans/2026-03-31-m15-4-desktop-polish-integration-evidence.md`
+
+## M16: Video Understanding And Media Lifecycle
+
+- `M16.1` `docs/plans/2026-03-31-m16-1-video-ingress-and-media-normalization-contracts.md`
+- `M16.2` `docs/plans/2026-03-31-m16-2-frame-policy-video-runtime-and-background-lane-routing.md`
+- `M16.3` `docs/plans/2026-03-31-m16-3-temporary-media-lifecycle-cleanup-and-failure-recovery.md`
+- `M16.4` `docs/plans/2026-03-31-m16-4-video-integration-benchmarks-and-operator-evidence.md`
+
+## M17: Speech Backends And Voice Catalog
+
+- `M17.1` `docs/plans/2026-03-31-m17-1-speech-to-text-backend-adapters-and-model-matrix.md`
+- `M17.2` `docs/plans/2026-03-31-m17-2-text-to-speech-backend-adapters-and-multilingual-voice-catalog.md`
+- `M17.3` `docs/plans/2026-03-31-m17-3-speech-settings-locale-policy-and-optional-dependency-profiles.md`
+- `M17.4` `docs/plans/2026-03-31-m17-4-speech-integration-benchmarks-runbooks-and-operator-evidence.md`

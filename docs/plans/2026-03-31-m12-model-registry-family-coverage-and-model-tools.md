@@ -17,6 +17,7 @@ Complete the model-discovery and model-operations surface so Melix can scan mult
 - default plus user-added model roots with ordered scanning and reload
 - structured provider, organization, model, and variant identity
 - expanded text-family coverage for `Mistral Small 4 (119B)`, `model_type: mistral4`, MLA attention, `128-expert MoE`, `YaRN interleaved RoPE`, `Nemotron-H`, and MoE gate-dequant paths
+- expanded multimodal auto-detection for `Gemma 3`, `MedGemma`, and related families that should classify as multimodal-capable without manual overrides
 - expanded image-family dispatch for `Klein 4B/9B`, `Kontext`, `Fill`, `QwenImage`, and `FIBO`, with correct class-based routing rather than pattern-only dispatch
 - model inspection metadata and health-check reporting
 - HuggingFace-to-quantized-artifact workflow
@@ -42,6 +43,7 @@ Complete the model-discovery and model-operations surface so Melix can scan mult
 ## Implementation Notes
 
 - Family-specific behavior should remain adapter-driven instead of leaking into generic routing code.
+- Multimodal detection should remain metadata-driven and inspectable instead of hiding behind implicit filename heuristics.
 - Inspection and health-check payloads should be typed and stable enough for both desktop rendering and CLI or API export.
 - Conversion and packaging flows should reuse existing model-ops job infrastructure rather than bypassing it with direct worker actions.
 - Root ordering and identity derivation must remain deterministic even when roots contain partial or invalid artifacts.
