@@ -224,40 +224,28 @@ public struct OpenAIHandler: Sendable {
     private func handleCompletions(_ request: HTTPRequest) async throws -> HTTPResponse {
         let completionsRequest = try decoder.decode(OpenAICompletionsRequest.self, from: request.body)
         let normalized = translator.normalize(completionsRequest)
-        do {
-            let translated = try await translatedRequest(normalized)
-            return try await streamResponse(
-                translated: translated,
-                shape: .completions
-            )
-        } catch let error as HTTPRequestHandlingError {
-            return httpErrorResponse(for: error)
-        }
+        return try await streamNormalizedTextRequest(normalized, shape: .completions)
     }
 
     private func handleResponses(_ request: HTTPRequest) async throws -> HTTPResponse {
         let responsesRequest = try decoder.decode(OpenAIResponsesRequest.self, from: request.body)
         let normalized = translator.normalize(responsesRequest)
-        do {
-            let translated = try await translatedRequest(normalized)
-            return try await streamResponse(
-                translated: translated,
-                shape: .responses
-            )
-        } catch let error as HTTPRequestHandlingError {
-            return httpErrorResponse(for: error)
-        }
+        return try await streamNormalizedTextRequest(normalized, shape: .responses)
     }
 
     private func handleMessages(_ request: HTTPRequest) async throws -> HTTPResponse {
         let messagesRequest = try decoder.decode(MelixMessagesRequest.self, from: request.body)
         let normalized = translator.normalize(messagesRequest)
+        return try await streamNormalizedTextRequest(normalized, shape: .messages)
+    }
+
+    private func streamNormalizedTextRequest(
+        _ normalized: NormalizedTextRequest,
+        shape: SSEStreamWriter.StreamShape
+    ) async throws -> HTTPResponse {
         do {
             let translated = try await translatedRequest(normalized)
-            return try await streamResponse(
-                translated: translated,
-                shape: .messages
-            )
+            return try await streamResponse(translated: translated, shape: shape)
         } catch let error as HTTPRequestHandlingError {
             return httpErrorResponse(for: error)
         }

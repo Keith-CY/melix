@@ -577,13 +577,13 @@ public struct ChatRequestTranslator: Sendable {
     public func normalize(
         _ request: OpenAIChatCompletionsRequest
     ) -> NormalizedTextRequest {
-        NormalizedTextRequest(
+        makeNormalizedRequest(
             endpoint: .chatCompletions,
             model: request.model,
             messages: request.messages.map {
                 NormalizedTextMessage(role: $0.role, content: $0.content)
             },
-            stream: request.stream ?? true,
+            stream: request.stream,
             temperature: request.temperature,
             topP: request.topP,
             maxTokens: request.maxTokens,
@@ -613,11 +613,11 @@ public struct ChatRequestTranslator: Sendable {
             return NormalizedTextMessage(role: message.role, content: message.content)
         }
 
-        return NormalizedTextRequest(
+        return makeNormalizedRequest(
             endpoint: .chatCompletions,
             model: request.model,
             messages: messages,
-            stream: request.stream ?? true,
+            stream: request.stream,
             temperature: request.temperature,
             topP: request.topP,
             maxTokens: request.maxTokens,
@@ -636,13 +636,13 @@ public struct ChatRequestTranslator: Sendable {
     public func normalize(
         _ request: OpenAICompletionsRequest
     ) -> NormalizedTextRequest {
-        NormalizedTextRequest(
+        makeNormalizedRequest(
             endpoint: .completions,
             model: request.model,
             messages: [
                 NormalizedTextMessage(role: "user", content: request.prompt),
             ],
-            stream: request.stream ?? true,
+            stream: request.stream,
             temperature: request.temperature,
             topP: request.topP,
             maxTokens: request.maxTokens,
@@ -676,11 +676,11 @@ public struct ChatRequestTranslator: Sendable {
             )
         }
 
-        return NormalizedTextRequest(
+        return makeNormalizedRequest(
             endpoint: .responses,
             model: request.model,
             messages: messages,
-            stream: request.stream ?? true,
+            stream: request.stream,
             temperature: request.temperature,
             topP: request.topP,
             maxTokens: request.maxTokens,
@@ -709,11 +709,11 @@ public struct ChatRequestTranslator: Sendable {
             }
         )
 
-        return NormalizedTextRequest(
+        return makeNormalizedRequest(
             endpoint: .messages,
             model: request.model,
             messages: messages,
-            stream: request.stream ?? true,
+            stream: request.stream,
             temperature: request.temperature,
             topP: request.topP,
             maxTokens: request.maxTokens,
@@ -726,6 +726,44 @@ public struct ChatRequestTranslator: Sendable {
             workflow: request.workflow,
             workflowRunID: request.workflowRunID,
             workflowNodeID: request.workflowNodeID
+        )
+    }
+
+    private func makeNormalizedRequest(
+        endpoint: TextEndpointKind,
+        model: String,
+        messages: [NormalizedTextMessage],
+        stream: Bool?,
+        temperature: Double?,
+        topP: Double?,
+        maxTokens: UInt32?,
+        sessionID: String?,
+        branchID: String?,
+        parentRequestID: String?,
+        restoreSnapshotID: String?,
+        saveBoundarySnapshot: Bool?,
+        presetID: String?,
+        workflow: TextWorkflowKind?,
+        workflowRunID: String?,
+        workflowNodeID: String?
+    ) -> NormalizedTextRequest {
+        NormalizedTextRequest(
+            endpoint: endpoint,
+            model: model,
+            messages: messages,
+            stream: stream ?? true,
+            temperature: temperature,
+            topP: topP,
+            maxTokens: maxTokens,
+            sessionID: sessionID,
+            branchID: branchID,
+            parentRequestID: parentRequestID,
+            restoreSnapshotID: restoreSnapshotID,
+            saveBoundarySnapshot: saveBoundarySnapshot,
+            presetID: presetID,
+            workflow: workflow,
+            workflowRunID: workflowRunID,
+            workflowNodeID: workflowNodeID
         )
     }
 

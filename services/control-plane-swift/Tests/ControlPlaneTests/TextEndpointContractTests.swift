@@ -380,6 +380,105 @@ struct TextEndpointContractTests {
         )
     }
 
+    @Test("equivalent endpoint requests normalize shared execution metadata consistently")
+    func equivalentEndpointRequestsNormalizeSharedExecutionMetadataConsistently() {
+        let translator = ChatRequestTranslator()
+
+        let chat = translator.normalize(
+            OpenAIChatCompletionsRequest(
+                model: "melix-dev-text",
+                messages: [.init(role: "user", content: "Explain cache routing.")],
+                stream: false,
+                temperature: 0.3,
+                topP: 0.85,
+                maxTokens: 96,
+                sessionID: "session-shared",
+                branchID: "branch-alt",
+                parentRequestID: "req-parent",
+                restoreSnapshotID: "snap-001",
+                saveBoundarySnapshot: false,
+                presetID: "deep_reasoning",
+                workflow: .toolFollowup,
+                workflowRunID: "wf-1",
+                workflowNodeID: "node-1"
+            )
+        )
+        let completions = translator.normalize(
+            OpenAICompletionsRequest(
+                model: "melix-dev-text",
+                prompt: "Explain cache routing.",
+                stream: false,
+                temperature: 0.3,
+                topP: 0.85,
+                maxTokens: 96,
+                sessionID: "session-shared",
+                branchID: "branch-alt",
+                parentRequestID: "req-parent",
+                restoreSnapshotID: "snap-001",
+                saveBoundarySnapshot: false,
+                presetID: "deep_reasoning",
+                workflow: .toolFollowup,
+                workflowRunID: "wf-1",
+                workflowNodeID: "node-1"
+            )
+        )
+        let responses = translator.normalize(
+            OpenAIResponsesRequest(
+                model: "melix-dev-text",
+                input: .text("Explain cache routing."),
+                stream: false,
+                temperature: 0.3,
+                topP: 0.85,
+                maxTokens: 96,
+                sessionID: "session-shared",
+                branchID: "branch-alt",
+                parentRequestID: "req-parent",
+                restoreSnapshotID: "snap-001",
+                saveBoundarySnapshot: false,
+                presetID: "deep_reasoning",
+                workflow: .toolFollowup,
+                workflowRunID: "wf-1",
+                workflowNodeID: "node-1"
+            )
+        )
+        let messages = translator.normalize(
+            MelixMessagesRequest(
+                model: "melix-dev-text",
+                messages: [.init(role: "user", content: "Explain cache routing.")],
+                stream: false,
+                temperature: 0.3,
+                topP: 0.85,
+                maxTokens: 96,
+                sessionID: "session-shared",
+                branchID: "branch-alt",
+                parentRequestID: "req-parent",
+                restoreSnapshotID: "snap-001",
+                saveBoundarySnapshot: false,
+                presetID: "deep_reasoning",
+                workflow: .toolFollowup,
+                workflowRunID: "wf-1",
+                workflowNodeID: "node-1"
+            )
+        )
+
+        for request in [chat, completions, responses, messages] {
+            #expect(request.model == "melix-dev-text")
+            #expect(request.stream == false)
+            #expect(request.temperature == 0.3)
+            #expect(request.topP == 0.85)
+            #expect(request.maxTokens == 96)
+            #expect(request.sessionID == "session-shared")
+            #expect(request.branchID == "branch-alt")
+            #expect(request.parentRequestID == "req-parent")
+            #expect(request.restoreSnapshotID == "snap-001")
+            #expect(request.saveBoundarySnapshot == false)
+            #expect(request.presetID == "deep_reasoning")
+            #expect(request.workflow == .toolFollowup)
+            #expect(request.workflowRunID == "wf-1")
+            #expect(request.workflowNodeID == "node-1")
+        }
+    }
+
     @Test("normalized requests translate recovery and cache metadata consistently")
     func normalizedRequestsTranslateRecoveryMetadataConsistently() throws {
         let translator = ChatRequestTranslator(requestIDGenerator: { "req-text-endpoints" })
