@@ -27,6 +27,8 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(configuration.cacheRootPath, ".runtime/swift-text-worker-cache")
         XCTAssertEqual(configuration.processMemoryBudgetBytes, 0)
         XCTAssertEqual(configuration.modelLoadHeadroomBytes, 0)
+        XCTAssertEqual(configuration.prefillMemoryHeadroomBytes, 0)
+        XCTAssertEqual(configuration.prefillQuadraticGuardTokenThreshold, 0)
     }
 
     func testConfigurationReadsEnvironmentOverrides() {
@@ -39,6 +41,8 @@ final class WorkerScaffoldTests: XCTestCase {
             "MELIX_SWIFT_TEXT_WORKER_CACHE_ROOT": "/tmp/melix-swift-text-worker-cache",
             "MELIX_SWIFT_TEXT_WORKER_PROCESS_MEMORY_BUDGET_BYTES": "65536",
             "MELIX_SWIFT_TEXT_WORKER_MODEL_LOAD_HEADROOM_BYTES": "2048",
+            "MELIX_SWIFT_TEXT_WORKER_PREFILL_MEMORY_HEADROOM_BYTES": "4096",
+            "MELIX_SWIFT_TEXT_WORKER_PREFILL_QUADRATIC_GUARD_TOKEN_THRESHOLD": "1024",
         ])
 
         XCTAssertEqual(configuration.workerID, "swift-text-worker-dev")
@@ -49,6 +53,8 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(configuration.cacheRootPath, "/tmp/melix-swift-text-worker-cache")
         XCTAssertEqual(configuration.processMemoryBudgetBytes, 65_536)
         XCTAssertEqual(configuration.modelLoadHeadroomBytes, 2_048)
+        XCTAssertEqual(configuration.prefillMemoryHeadroomBytes, 4_096)
+        XCTAssertEqual(configuration.prefillQuadraticGuardTokenThreshold, 1_024)
     }
 
     func testConfigurationFallsBackToDefaultsForEmptyEnvironment() {
@@ -1012,6 +1018,230 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertNil(storedAfterUnload)
     }
 
+    func testRuntimeRegistryRejectsPrefillRequestsThatExceedModelContextLimit() async throws {
+        let registry = WorkerRuntimeRegistry(
+            configuration: WorkerConfiguration(),
+            modelCatalog: WorkerModelCatalog(environment: [
+                "MELIX_DEV_TEXT_MODEL_PATH": "mlx-community/melix-dev-text-4bit"
+            ]),
+            runtime: TextRuntime(backend: FakeRuntimeBackend())
+        )
+
+        var loadRequest = Melix_Worker_V1_ModelSpec()
+        loadRequest.modelID = "melix-dev-text"
+        let loaded = try await registry.loadModel(loadRequest)
+
+        var acceleration = Melix_Worker_V1_AccelerationPolicy()
+        acceleration.mode = .baseline
+
+        do {
+            _ = try await registry.prefill(
+                requestID: "req-prefill-context-limit",
+                modelHandle: loaded.handle,
+                messages: [makeUserMessage(repeatingTokenPrompt(count: 8_193))],
+                prefillStepSize: 8,
+                returnDecodeHandle: true,
+                resumeHint: "context-limit",
+                acceleration: acceleration,
+                shouldAbort: { false }
+            )
+            XCTFail("expected context-limit guard to reject oversized prefill")
+        } catch let error as WorkerRuntimeRegistryError {
+            guard case let WorkerRuntimeRegistryError.contextLimitExceeded(maxContext, promptTokens) = error else {
+                return XCTFail("expected contextLimitExceeded, got \(error)")
+            }
+            XCTAssertEqual(maxContext, 8_192)
+            XCTAssertEqual(promptTokens, 8_193)
+        }
+    }
+
+    func testRuntimeRegistryRejectsPrefillRequestsThatExceedProcessBudget() async throws {
+        let registry = WorkerRuntimeRegistry(
+            configuration: WorkerConfiguration(
+                processMemoryBudgetBytes: 4_500,
+                prefillMemoryHeadroomBytes: 1_024
+            ),
+            modelCatalog: WorkerModelCatalog(environment: [
+                "MELIX_DEV_TEXT_MODEL_PATH": "mlx-community/melix-dev-text-4bit"
+            ]),
+            runtime: TextRuntime(backend: FakeRuntimeBackend())
+        )
+
+        var loadRequest = Melix_Worker_V1_ModelSpec()
+        loadRequest.modelID = "melix-dev-text"
+        let loaded = try await registry.loadModel(loadRequest)
+
+        var acceleration = Melix_Worker_V1_AccelerationPolicy()
+        acceleration.mode = .baseline
+
+        do {
+            _ = try await registry.prefill(
+                requestID: "req-prefill-memory-guard",
+                modelHandle: loaded.handle,
+                messages: [makeUserMessage(repeatingTokenPrompt(count: 2))],
+                prefillStepSize: 8,
+                returnDecodeHandle: true,
+                resumeHint: "memory-guard",
+                acceleration: acceleration,
+                shouldAbort: { false }
+            )
+            XCTFail("expected prefill memory guard to reject oversized request")
+        } catch let error as WorkerRuntimeRegistryError {
+            guard case let WorkerRuntimeRegistryError.prefillMemoryGuardExceeded(
+                budgetBytes,
+                headroomBytes,
+                projectedResidentBytes,
+                promptTokens,
+                estimatedPrefillBytes,
+                requiredBytes
+            ) = error else {
+                return XCTFail("expected prefillMemoryGuardExceeded, got \(error)")
+            }
+            XCTAssertEqual(budgetBytes, 4_500)
+            XCTAssertEqual(headroomBytes, 1_024)
+            XCTAssertEqual(projectedResidentBytes, 4_096)
+            XCTAssertEqual(promptTokens, 2)
+            XCTAssertEqual(estimatedPrefillBytes, 4_096)
+            XCTAssertEqual(requiredBytes, 5_120)
+        }
+    }
+
+    func testRuntimeRegistryRejectsQuadraticPrefillFallbacksAboveConfiguredThreshold() async throws {
+        let registry = WorkerRuntimeRegistry(
+            configuration: WorkerConfiguration(
+                prefillQuadraticGuardTokenThreshold: 4
+            ),
+            modelCatalog: WorkerModelCatalog(environment: [
+                "MELIX_DEV_TEXT_MODEL_PATH": "mlx-community/melix-dev-text-4bit"
+            ]),
+            runtime: TextRuntime(backend: FakeRuntimeBackend())
+        )
+
+        var loadRequest = Melix_Worker_V1_ModelSpec()
+        loadRequest.modelID = "melix-dev-text"
+        let loaded = try await registry.loadModel(loadRequest)
+
+        var acceleration = Melix_Worker_V1_AccelerationPolicy()
+        acceleration.mode = .baseline
+
+        do {
+            _ = try await registry.prefill(
+                requestID: "req-prefill-quadratic-guard",
+                modelHandle: loaded.handle,
+                messages: [makeUserMessage(repeatingTokenPrompt(count: 5))],
+                prefillStepSize: 8,
+                returnDecodeHandle: true,
+                resumeHint: "quadratic-guard",
+                acceleration: acceleration,
+                shouldAbort: { false }
+            )
+            XCTFail("expected quadratic prefill guard to reject baseline fallback")
+        } catch let error as WorkerRuntimeRegistryError {
+            guard case let WorkerRuntimeRegistryError.quadraticPrefillGuardExceeded(
+                promptTokens,
+                tokenLimit,
+                accelerationMode
+            ) = error else {
+                return XCTFail("expected quadraticPrefillGuardExceeded, got \(error)")
+            }
+            XCTAssertEqual(promptTokens, 5)
+            XCTAssertEqual(tokenLimit, 4)
+            XCTAssertEqual(accelerationMode, "baseline")
+        }
+    }
+
+    func testRuntimeRegistryCountsNameOnlyPromptTokensForContextGuard() async throws {
+        let registry = WorkerRuntimeRegistry(
+            configuration: WorkerConfiguration(),
+            modelCatalog: WorkerModelCatalog(environment: [
+                "MELIX_DEV_TEXT_MODEL_PATH": "mlx-community/melix-dev-text-4bit"
+            ]),
+            runtime: TextRuntime(backend: FakeRuntimeBackend())
+        )
+
+        var loadRequest = Melix_Worker_V1_ModelSpec()
+        loadRequest.modelID = "melix-dev-text"
+        loadRequest.maxContext = 2
+        let loaded = try await registry.loadModel(loadRequest)
+
+        var namedMessage = Melix_Worker_V1_ChatMessage()
+        namedMessage.role = "user"
+        namedMessage.name = "alpha beta gamma"
+
+        var acceleration = Melix_Worker_V1_AccelerationPolicy()
+        acceleration.mode = .baseline
+
+        do {
+            _ = try await registry.prefill(
+                requestID: "req-prefill-name-only",
+                modelHandle: loaded.handle,
+                messages: [namedMessage],
+                prefillStepSize: 8,
+                returnDecodeHandle: true,
+                resumeHint: "name-only",
+                acceleration: acceleration,
+                shouldAbort: { false }
+            )
+            XCTFail("expected context-limit guard to use name-only prompt tokens")
+        } catch let error as WorkerRuntimeRegistryError {
+            guard case let .contextLimitExceeded(maxContext, promptTokens) = error else {
+                return XCTFail("expected contextLimitExceeded, got \(error)")
+            }
+            XCTAssertEqual(maxContext, 2)
+            XCTAssertEqual(promptTokens, 3)
+        }
+    }
+
+    func testRuntimeRegistryCountsMediaBlankAndNilPartsForContextGuard() async throws {
+        let registry = WorkerRuntimeRegistry(
+            configuration: WorkerConfiguration(),
+            modelCatalog: WorkerModelCatalog(environment: [
+                "MELIX_DEV_TEXT_MODEL_PATH": "mlx-community/melix-dev-text-4bit"
+            ]),
+            runtime: TextRuntime(backend: FakeRuntimeBackend())
+        )
+
+        var loadRequest = Melix_Worker_V1_ModelSpec()
+        loadRequest.modelID = "melix-dev-text"
+        loadRequest.maxContext = 200
+        let loaded = try await registry.loadModel(loadRequest)
+
+        var blankPart = Melix_Worker_V1_MessagePart()
+        blankPart.text = "   "
+
+        let nilPart = Melix_Worker_V1_MessagePart()
+
+        var imagePart = Melix_Worker_V1_MessagePart()
+        imagePart.imageUri = "file:///tmp/test.png"
+
+        var message = Melix_Worker_V1_ChatMessage()
+        message.role = "user"
+        message.parts = [blankPart, nilPart, imagePart]
+
+        var acceleration = Melix_Worker_V1_AccelerationPolicy()
+        acceleration.mode = .baseline
+
+        do {
+            _ = try await registry.prefill(
+                requestID: "req-prefill-media-part",
+                modelHandle: loaded.handle,
+                messages: [message],
+                prefillStepSize: 8,
+                returnDecodeHandle: true,
+                resumeHint: "media-part",
+                acceleration: acceleration,
+                shouldAbort: { false }
+            )
+            XCTFail("expected context-limit guard to count media parts")
+        } catch let error as WorkerRuntimeRegistryError {
+            guard case let .contextLimitExceeded(maxContext, promptTokens) = error else {
+                return XCTFail("expected contextLimitExceeded, got \(error)")
+            }
+            XCTAssertEqual(maxContext, 200)
+            XCTAssertEqual(promptTokens, 256)
+        }
+    }
+
     func testRuntimeRegistryBeginDecodeConsumesStoredContextAndTracksActiveDecodeState() async throws {
         let registry = WorkerRuntimeRegistry(
             configuration: WorkerConfiguration(),
@@ -1257,6 +1487,98 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(budgetError, sameBudgetError)
         XCTAssertNotEqual(budgetError, differentBudgetError)
         XCTAssertNotEqual(budgetError, .unknownModelHandle)
+    }
+
+    func testWorkerRuntimeRegistryErrorExposesPrefillGuardMetadataAndMappings() {
+        let contextError = WorkerRuntimeRegistryError.contextLimitExceeded(maxContext: 32, promptTokens: 64)
+        let sameContextError = WorkerRuntimeRegistryError.contextLimitExceeded(maxContext: 32, promptTokens: 64)
+        let differentContextError = WorkerRuntimeRegistryError.contextLimitExceeded(maxContext: 16, promptTokens: 64)
+
+        XCTAssertEqual(contextError.errorDescription, "Prefill prompt exceeds the model context limit.")
+        XCTAssertEqual(contextError.explicitPrefillErrorCode, "context_limit_exceeded")
+        XCTAssertEqual(contextError.explicitPrefillErrorDetails["max_context"], "32")
+        XCTAssertEqual(contextError.explicitPrefillErrorDetails["prompt_tokens"], "64")
+        XCTAssertEqual(contextError.saveRestoreErrorCode, "out_of_range")
+        XCTAssertEqual(contextError, sameContextError)
+        XCTAssertNotEqual(contextError, differentContextError)
+
+        let prefillGuardError = WorkerRuntimeRegistryError.prefillMemoryGuardExceeded(
+            budgetBytes: 4_500,
+            headroomBytes: 1_024,
+            projectedResidentBytes: 4_096,
+            promptTokens: 2,
+            estimatedPrefillBytes: 4_096,
+            requiredBytes: 5_120
+        )
+        let samePrefillGuardError = WorkerRuntimeRegistryError.prefillMemoryGuardExceeded(
+            budgetBytes: 4_500,
+            headroomBytes: 1_024,
+            projectedResidentBytes: 4_096,
+            promptTokens: 2,
+            estimatedPrefillBytes: 4_096,
+            requiredBytes: 5_120
+        )
+        let differentPrefillGuardError = WorkerRuntimeRegistryError.prefillMemoryGuardExceeded(
+            budgetBytes: 4_500,
+            headroomBytes: 1_024,
+            projectedResidentBytes: 4_096,
+            promptTokens: 3,
+            estimatedPrefillBytes: 6_144,
+            requiredBytes: 6_168
+        )
+
+        XCTAssertEqual(
+            prefillGuardError.errorDescription,
+            "Projected prefill memory would exceed the process budget."
+        )
+        XCTAssertEqual(prefillGuardError.explicitPrefillErrorCode, "prefill_memory_guard_exceeded")
+        XCTAssertEqual(prefillGuardError.explicitPrefillErrorDetails["budget_bytes"], "4500")
+        XCTAssertEqual(prefillGuardError.explicitPrefillErrorDetails["headroom_bytes"], "1024")
+        XCTAssertEqual(prefillGuardError.explicitPrefillErrorDetails["projected_resident_bytes"], "4096")
+        XCTAssertEqual(prefillGuardError.explicitPrefillErrorDetails["prompt_tokens"], "2")
+        XCTAssertEqual(prefillGuardError.explicitPrefillErrorDetails["estimated_prefill_bytes"], "4096")
+        XCTAssertEqual(prefillGuardError.explicitPrefillErrorDetails["required_bytes"], "5120")
+        XCTAssertEqual(prefillGuardError.saveRestoreErrorCode, "resource_exhausted")
+        XCTAssertEqual(prefillGuardError, samePrefillGuardError)
+        XCTAssertNotEqual(prefillGuardError, differentPrefillGuardError)
+
+        let quadraticError = WorkerRuntimeRegistryError.quadraticPrefillGuardExceeded(
+            promptTokens: 5,
+            tokenLimit: 4,
+            accelerationMode: "speculative_decode"
+        )
+        let sameQuadraticError = WorkerRuntimeRegistryError.quadraticPrefillGuardExceeded(
+            promptTokens: 5,
+            tokenLimit: 4,
+            accelerationMode: "speculative_decode"
+        )
+        let differentQuadraticError = WorkerRuntimeRegistryError.quadraticPrefillGuardExceeded(
+            promptTokens: 6,
+            tokenLimit: 4,
+            accelerationMode: "active_kv_quantized"
+        )
+
+        XCTAssertEqual(
+            quadraticError.errorDescription,
+            "Prefill request exceeds the configured quadratic fallback threshold."
+        )
+        XCTAssertEqual(quadraticError.explicitPrefillErrorCode, "quadratic_prefill_guard_exceeded")
+        XCTAssertEqual(quadraticError.explicitPrefillErrorDetails["prompt_tokens"], "5")
+        XCTAssertEqual(quadraticError.explicitPrefillErrorDetails["token_limit"], "4")
+        XCTAssertEqual(quadraticError.explicitPrefillErrorDetails["acceleration_mode"], "speculative_decode")
+        XCTAssertEqual(quadraticError.saveRestoreErrorCode, "resource_exhausted")
+        XCTAssertEqual(quadraticError, sameQuadraticError)
+        XCTAssertNotEqual(quadraticError, differentQuadraticError)
+
+        XCTAssertNil(WorkerRuntimeRegistryError.unknownModelHandle.explicitPrefillErrorCode)
+        XCTAssertEqual(WorkerRuntimeRegistryError.unknownModelHandle.explicitPrefillErrorDetails, [:])
+        XCTAssertEqual(WorkerRuntimeRegistryError.unknownModelHandle.saveRestoreErrorCode, "not_found")
+        XCTAssertEqual(WorkerRuntimeRegistryError.snapshotModelNotLoaded.saveRestoreErrorCode, "failed_precondition")
+        XCTAssertEqual(accelerationModeName(.baseline), "baseline")
+        XCTAssertEqual(accelerationModeName(.acceleratedPrefill), "accelerated_prefill")
+        XCTAssertEqual(accelerationModeName(.speculativeDecode), "speculative_decode")
+        XCTAssertEqual(accelerationModeName(.activeKvQuantized), "active_kv_quantized")
+        XCTAssertEqual(accelerationModeName(.UNRECOGNIZED(999)), "unspecified")
     }
 
     func testRuntimeLifecycleReportsLoadFailuresAndMissingHandles() async throws {
@@ -1689,6 +2011,154 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(response.error.code, "runtime_error")
         XCTAssertEqual(services.metrics.counters["swift_text.rpc_error_count"], 1)
         XCTAssertNotNil(services.metrics.counters["swift_text.prefill_ms"])
+    }
+
+    func testPrefillReturnsContextLimitExceededForOversizedRequests() async throws {
+        let services = makeServices(
+            environment: ["MELIX_DEV_TEXT_MODEL_PATH": "mlx-community/melix-dev-text-4bit"],
+            backend: FakeRuntimeBackend()
+        )
+
+        let loadResponse = try await withTestServerContextRPCCancellationHandle { handle in
+            var request = Melix_Worker_V1_LoadModelRequest()
+            request.model.modelID = "melix-dev-text"
+            return try await services.runtime.loadModel(
+                request: request,
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_RuntimeService.Method.LoadModel.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
+        let response = try await withTestServerContextRPCCancellationHandle { handle in
+            var request = Melix_Worker_V1_PrefillRequest()
+            request.execution.id.requestID = "req-prefill-context-limit-rpc"
+            request.execution.modelHandle = loadResponse.modelHandle
+            request.returnDecodeHandle = true
+            request.execution.acceleration.mode = .baseline
+            request.messages = [makeUserMessage(repeatingTokenPrompt(count: 8_193))]
+            return try await services.inference.prefill(
+                request: request,
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_InferenceService.Method.Prefill.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
+        XCTAssertFalse(response.ok)
+        XCTAssertEqual(response.error.code, "context_limit_exceeded")
+        XCTAssertEqual(response.error.details["max_context"], "8192")
+        XCTAssertEqual(response.error.details["prompt_tokens"], "8193")
+        XCTAssertEqual(services.metrics.counters["swift_text.prefill_guard_rejection_count"], 1)
+        XCTAssertEqual(services.metrics.counters["swift_text.prefill_context_limit_rejection_count"], 1)
+    }
+
+    func testPrefillReturnsExplicitMemoryGuardFailures() async throws {
+        let services = makeServices(
+            environment: [
+                "MELIX_DEV_TEXT_MODEL_PATH": "mlx-community/melix-dev-text-4bit",
+                "MELIX_SWIFT_TEXT_WORKER_PROCESS_MEMORY_BUDGET_BYTES": "4500",
+                "MELIX_SWIFT_TEXT_WORKER_PREFILL_MEMORY_HEADROOM_BYTES": "1024",
+            ],
+            backend: FakeRuntimeBackend()
+        )
+
+        let loadResponse = try await withTestServerContextRPCCancellationHandle { handle in
+            var request = Melix_Worker_V1_LoadModelRequest()
+            request.model.modelID = "melix-dev-text"
+            return try await services.runtime.loadModel(
+                request: request,
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_RuntimeService.Method.LoadModel.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
+        let response = try await withTestServerContextRPCCancellationHandle { handle in
+            var request = Melix_Worker_V1_PrefillRequest()
+            request.execution.id.requestID = "req-prefill-memory-guard-rpc"
+            request.execution.modelHandle = loadResponse.modelHandle
+            request.returnDecodeHandle = true
+            request.execution.acceleration.mode = .baseline
+            request.messages = [makeUserMessage(repeatingTokenPrompt(count: 2))]
+            return try await services.inference.prefill(
+                request: request,
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_InferenceService.Method.Prefill.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
+        XCTAssertFalse(response.ok)
+        XCTAssertEqual(response.error.code, "prefill_memory_guard_exceeded")
+        XCTAssertEqual(response.error.details["budget_bytes"], "4500")
+        XCTAssertEqual(response.error.details["headroom_bytes"], "1024")
+        XCTAssertEqual(response.error.details["prompt_tokens"], "2")
+        XCTAssertEqual(response.error.details["required_bytes"], "5120")
+        XCTAssertEqual(services.metrics.counters["swift_text.prefill_guard_rejection_count"], 1)
+        XCTAssertEqual(services.metrics.counters["swift_text.prefill_memory_guard_rejection_count"], 1)
+    }
+
+    func testPrefillReturnsQuadraticGuardFailuresForLargeBaselineRequests() async throws {
+        let services = makeServices(
+            environment: [
+                "MELIX_DEV_TEXT_MODEL_PATH": "mlx-community/melix-dev-text-4bit",
+                "MELIX_SWIFT_TEXT_WORKER_PREFILL_QUADRATIC_GUARD_TOKEN_THRESHOLD": "4",
+            ],
+            backend: FakeRuntimeBackend()
+        )
+
+        let loadResponse = try await withTestServerContextRPCCancellationHandle { handle in
+            var request = Melix_Worker_V1_LoadModelRequest()
+            request.model.modelID = "melix-dev-text"
+            return try await services.runtime.loadModel(
+                request: request,
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_RuntimeService.Method.LoadModel.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
+        let response = try await withTestServerContextRPCCancellationHandle { handle in
+            var request = Melix_Worker_V1_PrefillRequest()
+            request.execution.id.requestID = "req-prefill-quadratic-guard-rpc"
+            request.execution.modelHandle = loadResponse.modelHandle
+            request.returnDecodeHandle = true
+            request.execution.acceleration.mode = .baseline
+            request.messages = [makeUserMessage(repeatingTokenPrompt(count: 5))]
+            return try await services.inference.prefill(
+                request: request,
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_InferenceService.Method.Prefill.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
+        XCTAssertFalse(response.ok)
+        XCTAssertEqual(response.error.code, "quadratic_prefill_guard_exceeded")
+        XCTAssertEqual(response.error.details["prompt_tokens"], "5")
+        XCTAssertEqual(response.error.details["token_limit"], "4")
+        XCTAssertEqual(response.error.details["acceleration_mode"], "baseline")
+        XCTAssertEqual(services.metrics.counters["swift_text.prefill_guard_rejection_count"], 1)
+        XCTAssertEqual(services.metrics.counters["swift_text.prefill_quadratic_guard_rejection_count"], 1)
     }
 
     func testGenerateStreamsPrefillTokenUsageAndCompletedForLoadedModel() async throws {
@@ -4015,6 +4485,11 @@ private func renderedSummary(from events: [TextGenerationEvent]) -> TextGenerati
         }
     }
     return nil
+}
+
+@available(macOS 15.0, *)
+private func repeatingTokenPrompt(count: Int) -> String {
+    Array(repeating: "token", count: count).joined(separator: " ")
 }
 
 @available(macOS 15.0, *)

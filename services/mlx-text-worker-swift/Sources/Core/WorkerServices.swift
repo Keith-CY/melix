@@ -540,14 +540,7 @@ final class MaintenanceRPCService: Melix_Worker_V1_MaintenanceService.SimpleServ
 }
 
 private func saveRestoreErrorCode(for error: WorkerRuntimeRegistryError) -> String {
-    switch error {
-    case .unknownDecodeHandle, .unknownSnapshotID, .unknownModelHandle:
-        return "not_found"
-    case .snapshotModelNotLoaded:
-        return "failed_precondition"
-    case .memoryBudgetExceeded:
-        return "resource_exhausted"
-    }
+    error.saveRestoreErrorCode
 }
 
 private func makeUnimplementedStatus(_ message: String) -> Melix_Worker_V1_ErrorStatus {

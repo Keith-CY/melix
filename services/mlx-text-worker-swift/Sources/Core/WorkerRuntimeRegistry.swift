@@ -43,6 +43,9 @@ struct WorkerDecodeSession: @unchecked Sendable {
 }
 
 actor WorkerRuntimeRegistry {
+    private static let estimatedPrefillResidentBytesPerToken: UInt64 = 2_048
+    private static let estimatedMediaPartTokens = 256
+
     private let configuration: WorkerConfiguration
     private let modelCatalog: WorkerModelCatalog
     private let runtime: TextRuntime
@@ -224,6 +227,13 @@ actor WorkerRuntimeRegistry {
             throw WorkerRuntimeRegistryError.unknownModelHandle
         }
 
+        let resolvedAcceleration = normalizedAccelerationPolicy(acceleration)
+        try enforcePrefillGuards(
+            loaded: loaded,
+            messages: messages,
+            acceleration: resolvedAcceleration
+        )
+
         activeRequests += 1
         activePrefills += 1
         defer {
@@ -246,7 +256,7 @@ actor WorkerRuntimeRegistry {
                 messages: requestMessages,
                 prefillStepSize: 0,
                 resumeHint: restoreResumeHint,
-                acceleration: restored.acceleration,
+                acceleration: normalizedAccelerationPolicy(restored.acceleration),
                 shouldAbort: shouldAbort
             )
 
@@ -288,7 +298,7 @@ actor WorkerRuntimeRegistry {
             messages: messages,
             prefillStepSize: prefillStepSize,
             resumeHint: resumeHint,
-            acceleration: acceleration,
+            acceleration: resolvedAcceleration,
             shouldAbort: shouldAbort
         )
 
@@ -615,6 +625,91 @@ actor WorkerRuntimeRegistry {
             decodeHandle: decodeHandle
         )
     }
+
+    private func enforcePrefillGuards(
+        loaded: LoadedModelRecord,
+        messages: [Melix_Worker_V1_ChatMessage],
+        acceleration: Melix_Worker_V1_AccelerationPolicy
+    ) throws {
+        let promptTokens = estimatedPromptTokens(for: messages)
+        if loaded.spec.maxContext > 0, promptTokens > Int(loaded.spec.maxContext) {
+            throw WorkerRuntimeRegistryError.contextLimitExceeded(
+                maxContext: loaded.spec.maxContext,
+                promptTokens: promptTokens
+            )
+        }
+
+        if configuration.prefillQuadraticGuardTokenThreshold > 0,
+           promptTokens > Int(configuration.prefillQuadraticGuardTokenThreshold),
+           usesQuadraticPrefillPath(acceleration) {
+            throw WorkerRuntimeRegistryError.quadraticPrefillGuardExceeded(
+                promptTokens: promptTokens,
+                tokenLimit: configuration.prefillQuadraticGuardTokenThreshold,
+                accelerationMode: accelerationModeName(acceleration.mode)
+            )
+        }
+
+        let estimatedPrefillBytes = estimatedPrefillResidentBytes(forPromptTokens: promptTokens)
+        let existingResidentBytes = loadedModels.values.reduce(0) { $0 + $1.estimatedResidentBytes }
+        let projectedResidentBytes = existingResidentBytes &+ estimatedPrefillBytes
+        let requiredBytes = projectedResidentBytes &+ configuration.prefillMemoryHeadroomBytes
+        if configuration.processMemoryBudgetBytes > 0, requiredBytes > configuration.processMemoryBudgetBytes {
+            throw WorkerRuntimeRegistryError.prefillMemoryGuardExceeded(
+                budgetBytes: configuration.processMemoryBudgetBytes,
+                headroomBytes: configuration.prefillMemoryHeadroomBytes,
+                projectedResidentBytes: projectedResidentBytes,
+                promptTokens: promptTokens,
+                estimatedPrefillBytes: estimatedPrefillBytes,
+                requiredBytes: requiredBytes
+            )
+        }
+    }
+
+    private func estimatedPrefillResidentBytes(forPromptTokens promptTokens: Int) -> UInt64 {
+        UInt64(max(promptTokens, 1)) * Self.estimatedPrefillResidentBytesPerToken
+    }
+
+    private func estimatedPromptTokens(for messages: [Melix_Worker_V1_ChatMessage]) -> Int {
+        let total = messages.reduce(0) { partialResult, message in
+            partialResult + estimatedPromptTokens(for: message)
+        }
+        return max(total, 1)
+    }
+
+    private func estimatedPromptTokens(for message: Melix_Worker_V1_ChatMessage) -> Int {
+        let partTokens = message.parts.reduce(0) { partialResult, part in
+            partialResult + estimatedPromptTokens(for: part)
+        }
+        if partTokens > 0 {
+            return partTokens
+        }
+
+        let nameTokens = estimatedPromptTokens(in: message.name)
+        return max(nameTokens, 1)
+    }
+
+    private func estimatedPromptTokens(for part: Melix_Worker_V1_MessagePart) -> Int {
+        switch part.part {
+        case .text(let text):
+            return estimatedPromptTokens(in: text)
+        case .imageUri, .imageBytes, .audioUri, .audioBytes:
+            return Self.estimatedMediaPartTokens
+        case nil:
+            return 0
+        }
+    }
+
+    private func estimatedPromptTokens(in text: String) -> Int {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return 0
+        }
+        return max(1, trimmed.split(whereSeparator: \.isWhitespace).count)
+    }
+
+    private func usesQuadraticPrefillPath(_ acceleration: Melix_Worker_V1_AccelerationPolicy) -> Bool {
+        acceleration.mode != .acceleratedPrefill
+    }
 }
 
 enum WorkerRuntimeRegistryError: Error, LocalizedError, Equatable {
@@ -622,11 +717,25 @@ enum WorkerRuntimeRegistryError: Error, LocalizedError, Equatable {
     case unknownDecodeHandle
     case unknownSnapshotID
     case snapshotModelNotLoaded
+    case contextLimitExceeded(maxContext: UInt32, promptTokens: Int)
     case memoryBudgetExceeded(
         budgetBytes: UInt64,
         headroomBytes: UInt64,
         projectedResidentBytes: UInt64,
         requiredBytes: UInt64
+    )
+    case prefillMemoryGuardExceeded(
+        budgetBytes: UInt64,
+        headroomBytes: UInt64,
+        projectedResidentBytes: UInt64,
+        promptTokens: Int,
+        estimatedPrefillBytes: UInt64,
+        requiredBytes: UInt64
+    )
+    case quadraticPrefillGuardExceeded(
+        promptTokens: Int,
+        tokenLimit: UInt32,
+        accelerationMode: String
     )
 
     var errorDescription: String? {
@@ -641,6 +750,72 @@ enum WorkerRuntimeRegistryError: Error, LocalizedError, Equatable {
             return "The model required for this snapshot is not currently loaded."
         case .memoryBudgetExceeded:
             return "Projected resident memory would exceed the process budget."
+        case .contextLimitExceeded:
+            return "Prefill prompt exceeds the model context limit."
+        case .prefillMemoryGuardExceeded:
+            return "Projected prefill memory would exceed the process budget."
+        case .quadraticPrefillGuardExceeded:
+            return "Prefill request exceeds the configured quadratic fallback threshold."
+        }
+    }
+
+    var explicitPrefillErrorCode: String? {
+        switch self {
+        case .contextLimitExceeded:
+            return "context_limit_exceeded"
+        case .prefillMemoryGuardExceeded:
+            return "prefill_memory_guard_exceeded"
+        case .quadraticPrefillGuardExceeded:
+            return "quadratic_prefill_guard_exceeded"
+        default:
+            return nil
+        }
+    }
+
+    var explicitPrefillErrorDetails: [String: String] {
+        switch self {
+        case let .contextLimitExceeded(maxContext, promptTokens):
+            return [
+                "max_context": String(maxContext),
+                "prompt_tokens": String(promptTokens),
+            ]
+        case let .prefillMemoryGuardExceeded(
+            budgetBytes,
+            headroomBytes,
+            projectedResidentBytes,
+            promptTokens,
+            estimatedPrefillBytes,
+            requiredBytes
+        ):
+            return [
+                "budget_bytes": String(budgetBytes),
+                "headroom_bytes": String(headroomBytes),
+                "projected_resident_bytes": String(projectedResidentBytes),
+                "prompt_tokens": String(promptTokens),
+                "estimated_prefill_bytes": String(estimatedPrefillBytes),
+                "required_bytes": String(requiredBytes),
+            ]
+        case let .quadraticPrefillGuardExceeded(promptTokens, tokenLimit, accelerationMode):
+            return [
+                "prompt_tokens": String(promptTokens),
+                "token_limit": String(tokenLimit),
+                "acceleration_mode": accelerationMode,
+            ]
+        default:
+            return [:]
+        }
+    }
+
+    var saveRestoreErrorCode: String {
+        switch self {
+        case .unknownDecodeHandle, .unknownSnapshotID, .unknownModelHandle:
+            return "not_found"
+        case .snapshotModelNotLoaded:
+            return "failed_precondition"
+        case .memoryBudgetExceeded, .prefillMemoryGuardExceeded, .quadraticPrefillGuardExceeded:
+            return "resource_exhausted"
+        case .contextLimitExceeded:
+            return "out_of_range"
         }
     }
 
@@ -651,6 +826,12 @@ enum WorkerRuntimeRegistryError: Error, LocalizedError, Equatable {
              (.unknownSnapshotID, .unknownSnapshotID),
              (.snapshotModelNotLoaded, .snapshotModelNotLoaded):
             return true
+        case let (
+            .contextLimitExceeded(maxContext: lhsMaxContext, promptTokens: lhsPromptTokens),
+            .contextLimitExceeded(maxContext: rhsMaxContext, promptTokens: rhsPromptTokens)
+        ):
+            return lhsMaxContext == rhsMaxContext &&
+                lhsPromptTokens == rhsPromptTokens
         case let (
             .memoryBudgetExceeded(
                 budgetBytes: lhsBudgetBytes,
@@ -669,9 +850,63 @@ enum WorkerRuntimeRegistryError: Error, LocalizedError, Equatable {
                 lhsHeadroomBytes == rhsHeadroomBytes &&
                 lhsProjectedResidentBytes == rhsProjectedResidentBytes &&
                 lhsRequiredBytes == rhsRequiredBytes
+        case let (
+            .prefillMemoryGuardExceeded(
+                budgetBytes: lhsBudgetBytes,
+                headroomBytes: lhsHeadroomBytes,
+                projectedResidentBytes: lhsProjectedResidentBytes,
+                promptTokens: lhsPromptTokens,
+                estimatedPrefillBytes: lhsEstimatedPrefillBytes,
+                requiredBytes: lhsRequiredBytes
+            ),
+            .prefillMemoryGuardExceeded(
+                budgetBytes: rhsBudgetBytes,
+                headroomBytes: rhsHeadroomBytes,
+                projectedResidentBytes: rhsProjectedResidentBytes,
+                promptTokens: rhsPromptTokens,
+                estimatedPrefillBytes: rhsEstimatedPrefillBytes,
+                requiredBytes: rhsRequiredBytes
+            )
+        ):
+            return lhsBudgetBytes == rhsBudgetBytes &&
+                lhsHeadroomBytes == rhsHeadroomBytes &&
+                lhsProjectedResidentBytes == rhsProjectedResidentBytes &&
+                lhsPromptTokens == rhsPromptTokens &&
+                lhsEstimatedPrefillBytes == rhsEstimatedPrefillBytes &&
+                lhsRequiredBytes == rhsRequiredBytes
+        case let (
+            .quadraticPrefillGuardExceeded(
+                promptTokens: lhsPromptTokens,
+                tokenLimit: lhsTokenLimit,
+                accelerationMode: lhsAccelerationMode
+            ),
+            .quadraticPrefillGuardExceeded(
+                promptTokens: rhsPromptTokens,
+                tokenLimit: rhsTokenLimit,
+                accelerationMode: rhsAccelerationMode
+            )
+        ):
+            return lhsPromptTokens == rhsPromptTokens &&
+                lhsTokenLimit == rhsTokenLimit &&
+                lhsAccelerationMode == rhsAccelerationMode
         default:
             return false
         }
+    }
+}
+
+func accelerationModeName(_ mode: Melix_Worker_V1_AccelerationMode) -> String {
+    switch mode {
+    case .baseline:
+        return "baseline"
+    case .acceleratedPrefill:
+        return "accelerated_prefill"
+    case .speculativeDecode:
+        return "speculative_decode"
+    case .activeKvQuantized:
+        return "active_kv_quantized"
+    default:
+        return "unspecified"
     }
 }
 

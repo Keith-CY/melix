@@ -6,31 +6,38 @@ Protect Melix from oversized prefill requests and fallback paths that would exce
 
 ## Scope
 
-- add inline prefill memory checks
-- protect large-context and quadratic-fallback cases
-- make guard failures observable and recoverable
+- add inline prefill guards in the Swift text worker before prefill allocation work begins
+- protect large-context requests, process-budget overruns, and quadratic fallback paths
+- make guard failures observable through explicit status codes and worker metrics
 
 ## Files
 
-- update `services/mlx-text-worker-swift/Sources/Core/Inference/`
-- update `services/mlx-worker-python/worker/runtime/`
-- update `services/control-plane-swift/Sources/Requests/`
-- update `packages/protocol/schema/worker/v1/`
+- update `services/mlx-text-worker-swift/Sources/Core/Inference/TextPrefillEngine.swift`
+- update `services/mlx-text-worker-swift/Sources/Core/MetricsStore.swift`
+- update `services/mlx-text-worker-swift/Sources/Core/WorkerConfiguration.swift`
+- update `services/mlx-text-worker-swift/Sources/Core/WorkerRuntimeRegistry.swift`
+- update `services/mlx-text-worker-swift/Sources/Core/WorkerServices.swift`
+- update `services/mlx-text-worker-swift/Tests/CoreTests/WorkerScaffoldTests.swift`
 
 ## Implementation Notes
 
 - guard logic should run before irreversible allocation work begins
-- errors should preserve request identity and be safe to surface through HTTP and XPC
-- use the shared memory-accounting schema from the earlier runtime-core slices
+- configuration should support:
+  - `MELIX_SWIFT_TEXT_WORKER_PROCESS_MEMORY_BUDGET_BYTES`
+  - `MELIX_SWIFT_TEXT_WORKER_PREFILL_MEMORY_HEADROOM_BYTES`
+  - `MELIX_SWIFT_TEXT_WORKER_PREFILL_QUADRATIC_GUARD_TOKEN_THRESHOLD`
+- guard failures should surface explicit worker error codes and structured details
+- metrics should record both aggregate guard rejections and the last rejected prompt and budget details
 
 ## Verification
 
-- `make proto`
-- `make swift-test`
-- `make py-test`
-- `make integration-test`
+- `swift test --package-path services/mlx-text-worker-swift --filter WorkerScaffoldTests`
+- `swift test --package-path services/mlx-text-worker-swift --enable-code-coverage --filter WorkerScaffoldTests`
+- `python3 scripts/swift_changed_line_coverage.py --binary services/mlx-text-worker-swift/.build/arm64-apple-macosx/debug/MelixTextWorkerSwiftPackageTests.xctest/Contents/MacOS/MelixTextWorkerSwiftPackageTests --profdata services/mlx-text-worker-swift/.build/arm64-apple-macosx/debug/codecov/default.profdata services/mlx-text-worker-swift/Sources/Core/WorkerConfiguration.swift services/mlx-text-worker-swift/Sources/Core/MetricsStore.swift services/mlx-text-worker-swift/Sources/Core/Inference/TextPrefillEngine.swift services/mlx-text-worker-swift/Sources/Core/WorkerRuntimeRegistry.swift services/mlx-text-worker-swift/Sources/Core/WorkerServices.swift`
+- `git diff --check`
 
 ## Acceptance
 
 - oversized prefill requests fail with explicit guard errors
-- guard behavior is integration-tested on at least one live execution path
+- context-limit, projected-memory, and quadratic-fallback guard failures are all test-covered
+- worker metrics expose guard rejection counters and the last rejected request budget details

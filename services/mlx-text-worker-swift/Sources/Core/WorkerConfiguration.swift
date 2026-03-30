@@ -9,6 +9,8 @@ package struct WorkerConfiguration: Sendable, Equatable {
     var cacheRootPath: String
     var processMemoryBudgetBytes: UInt64
     var modelLoadHeadroomBytes: UInt64
+    var prefillMemoryHeadroomBytes: UInt64
+    var prefillQuadraticGuardTokenThreshold: UInt32
 
     init(
         workerID: String = "swift-text-worker-001",
@@ -18,7 +20,9 @@ package struct WorkerConfiguration: Sendable, Equatable {
         metricsExportPath: String? = nil,
         cacheRootPath: String = ".runtime/swift-text-worker-cache",
         processMemoryBudgetBytes: UInt64 = 0,
-        modelLoadHeadroomBytes: UInt64 = 0
+        modelLoadHeadroomBytes: UInt64 = 0,
+        prefillMemoryHeadroomBytes: UInt64 = 0,
+        prefillQuadraticGuardTokenThreshold: UInt32 = 0
     ) {
         self.workerID = workerID
         self.socketPath = socketPath
@@ -28,6 +32,8 @@ package struct WorkerConfiguration: Sendable, Equatable {
         self.cacheRootPath = cacheRootPath
         self.processMemoryBudgetBytes = processMemoryBudgetBytes
         self.modelLoadHeadroomBytes = modelLoadHeadroomBytes
+        self.prefillMemoryHeadroomBytes = prefillMemoryHeadroomBytes
+        self.prefillQuadraticGuardTokenThreshold = prefillQuadraticGuardTokenThreshold
     }
 
     package static func fromEnvironment(
@@ -45,12 +51,25 @@ package struct WorkerConfiguration: Sendable, Equatable {
             ),
             modelLoadHeadroomBytes: positiveUInt64(
                 from: environment["MELIX_SWIFT_TEXT_WORKER_MODEL_LOAD_HEADROOM_BYTES"]
+            ),
+            prefillMemoryHeadroomBytes: positiveUInt64(
+                from: environment["MELIX_SWIFT_TEXT_WORKER_PREFILL_MEMORY_HEADROOM_BYTES"]
+            ),
+            prefillQuadraticGuardTokenThreshold: positiveUInt32(
+                from: environment["MELIX_SWIFT_TEXT_WORKER_PREFILL_QUADRATIC_GUARD_TOKEN_THRESHOLD"]
             )
         )
     }
 
     private static func positiveUInt64(from rawValue: String?) -> UInt64 {
         guard let rawValue, let parsed = UInt64(rawValue), parsed > 0 else {
+            return 0
+        }
+        return parsed
+    }
+
+    private static func positiveUInt32(from rawValue: String?) -> UInt32 {
+        guard let rawValue, let parsed = UInt32(rawValue), parsed > 0 else {
             return 0
         }
         return parsed

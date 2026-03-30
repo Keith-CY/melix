@@ -86,6 +86,35 @@ struct TextPrefillEngine: Sendable {
             response.ok = false
             response.error = makePrefillErrorStatus(code: "not_found", message: "Unknown model handle.")
             return response
+        } catch let error as WorkerRuntimeRegistryError where error.explicitPrefillErrorCode != nil {
+            metrics.increment("swift_text.rpc_error_count")
+            metrics.increment("swift_text.prefill_guard_rejection_count")
+            if let promptTokens = error.explicitPrefillErrorDetails["prompt_tokens"].flatMap(Int.init) {
+                metrics.set("swift_text.prefill_guard_last_prompt_tokens", value: promptTokens)
+            }
+            if let requiredBytes = error.explicitPrefillErrorDetails["required_bytes"].flatMap(Int.init) {
+                metrics.set("swift_text.prefill_guard_last_required_bytes", value: requiredBytes)
+            }
+            if let budgetBytes = error.explicitPrefillErrorDetails["budget_bytes"].flatMap(Int.init) {
+                metrics.set("swift_text.prefill_guard_last_budget_bytes", value: budgetBytes)
+            }
+            if case .contextLimitExceeded = error {
+                metrics.increment("swift_text.prefill_context_limit_rejection_count")
+            } else if case .prefillMemoryGuardExceeded = error {
+                metrics.increment("swift_text.prefill_memory_guard_rejection_count")
+            } else if case .quadraticPrefillGuardExceeded = error {
+                metrics.increment("swift_text.prefill_quadratic_guard_rejection_count")
+            }
+            metrics.recordMilliseconds("swift_text.prefill_ms", value: elapsedMilliseconds(since: startedAt))
+
+            var response = Melix_Worker_V1_PrefillResponse()
+            response.ok = false
+            response.error = makePrefillErrorStatus(
+                code: error.explicitPrefillErrorCode ?? "runtime_error",
+                message: error.localizedDescription,
+                details: error.explicitPrefillErrorDetails
+            )
+            return response
         } catch {
             metrics.increment("swift_text.rpc_error_count")
             metrics.recordMilliseconds("swift_text.prefill_ms", value: elapsedMilliseconds(since: startedAt))
@@ -110,11 +139,13 @@ private func elapsedMilliseconds(since startedAt: Date) -> Int {
 
 private func makePrefillErrorStatus(
     code: String,
-    message: String
+    message: String,
+    details: [String: String] = [:]
 ) -> Melix_Worker_V1_ErrorStatus {
     var status = Melix_Worker_V1_ErrorStatus()
     status.code = code
     status.message = message
     status.retriable = false
+    status.details = details
     return status
 }
