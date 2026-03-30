@@ -12,25 +12,36 @@ Prevent cache reuse across incompatible adapter sets by binding dispatch, cache,
 
 ## Files
 
-- update `services/control-plane-swift/Sources/ModelCatalog/`
-- update `services/control-plane-swift/Sources/Requests/`
-- update `services/control-plane-swift/Sources/Snapshots/`
-- update `services/mlx-text-worker-swift/Sources/Core/`
-- update `services/mlx-worker-python/worker/model_ops/`
+- update `services/control-plane-swift/Sources/WorkerClient/PythonBridgeWorkerClient.swift`
+- update `services/control-plane-swift/Sources/WorkerClient/OnDemandModelLoader.swift`
+- update `services/control-plane-swift/Sources/XPCService/ControlPlaneService.swift`
+- update `services/control-plane-swift/Tests/WorkerClientTests/PythonBridgeWorkerClientTests.swift`
+- update `services/control-plane-swift/Tests/ControlPlaneTests/ControlPlaneServiceTests.swift`
+- update `services/mlx-text-worker-swift/Sources/Core/HotCacheStore.swift`
+- update `services/mlx-text-worker-swift/Sources/Core/DiskCacheStore.swift`
+- update `services/mlx-text-worker-swift/Sources/Core/WorkerRuntimeRegistry.swift`
+- update `services/mlx-text-worker-swift/Tests/CoreTests/WorkerScaffoldTests.swift`
 
 ## Implementation Notes
 
 - adapter identity should compose cleanly with parser mode, reasoning profile, and quant profile
-- cache restore must fail safely when adapter identity is incompatible
-- training and publish flows should emit enough metadata for adapter-aware cache namespacing
+- control-plane worker loads should forward `melix.adapter_set_hash` from model settings into worker model specs
+- runtime handles should remain stable for a loaded adapter set and visibly differ across incompatible adapter sets
+- cache restore must fail safely with `failed_precondition` when adapter identity is incompatible
+- unload must purge only the matching adapter scope instead of evicting every cache entry for the base model ID
 
 ## Verification
 
-- `make swift-test`
-- `make py-test`
-- `make integration-test`
+- `swift test --package-path services/mlx-text-worker-swift --filter WorkerScaffoldTests/testRuntimeRegistryIsolatesDispatchHandlesAndCacheScopesByAdapterSet`
+- `swift test --package-path services/mlx-text-worker-swift --filter WorkerScaffoldTests/testBoundarySnapshotRestoreRejectsMismatchedAdapterScope`
+- `swift test --package-path services/mlx-text-worker-swift --filter WorkerScaffoldTests/testUnloadModelPurgesOnlyMatchingAdapterScope`
+- `swift test --package-path services/control-plane-swift --filter PythonBridgeWorkerClientTests/bootstrapWorkerPreparationCarriesAdapterSetHashIntoWorkerModelSpecs`
+- `swift test --package-path services/control-plane-swift --filter ControlPlaneServiceTests/executeWorkerBackedModelLoadForwardsAdapterSetHashFromModelSettings`
+- `swift test --package-path services/control-plane-swift --filter ControlPlaneServiceTests/startChatLazyTextLoadsPreserveAdapterSetHashInWorkerRequests`
 
 ## Acceptance
 
 - adapter switches do not reuse incompatible cache assets
-- adapter-aware cache and restore behavior is observable in integration tests
+- adapter-aware worker loads preserve adapter metadata from the control-plane model catalog
+- restore requests reject mismatched adapter scopes with a structured `failed_precondition`
+- unloading one adapter-scoped model instance does not purge surviving adapter scopes for the same base model

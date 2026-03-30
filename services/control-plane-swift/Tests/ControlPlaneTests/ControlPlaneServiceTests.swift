@@ -164,6 +164,29 @@ struct ControlPlaneServiceTests {
         #expect(await catalog.dispatchHandle(for: "melix-dev-text") == "melix-dev-text::swift")
     }
 
+    @Test("execute worker-backed model.load forwards adapter-set hash from model settings")
+    func executeWorkerBackedModelLoadForwardsAdapterSetHashFromModelSettings() async throws {
+        var seeded = ModelCatalog.devTextModel()
+        seeded.settings.ext["melix.adapter_set_hash"] = "adapter-alpha"
+
+        let catalog = ModelCatalog(seedModels: [seeded])
+        let workerClient = ModelLifecycleWorkerClient()
+        var loadResponse = Melix_Worker_V1_LoadModelResponse()
+        loadResponse.ok = true
+        loadResponse.modelHandle = "melix-dev-text::swift"
+        await workerClient.setLoadResponse(loadResponse)
+
+        let registry = WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog)
+        let service = ControlPlaneService(modelCatalog: catalog, workerRegistry: registry)
+
+        let response = try await service.execute(makeLoadModelRequest(modelID: "melix-dev-text"))
+        let loadRequest = try #require(await workerClient.loadRequests.first)
+
+        #expect(response.ok)
+        #expect(loadRequest.model.modelID == "melix-dev-text")
+        #expect(loadRequest.model.ext["melix.adapter_set_hash"] == "adapter-alpha")
+    }
+
     @Test("execute returns unavailable and records failed state when worker-backed model.load fails")
     func executeReturnsUnavailableAndRecordsFailedStateWhenWorkerBackedModelLoadFails() async throws {
         let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel()])
@@ -1842,6 +1865,41 @@ struct ControlPlaneServiceTests {
         #expect(loadRequest.pinOnLoad == false)
         #expect(generated.execution.modelHandle == "melix-dev-text")
         #expect(model?.state == .modelWarm)
+    }
+
+    @Test("startChat lazy text loads preserve adapter-set hash in worker requests")
+    func startChatLazyTextLoadsPreserveAdapterSetHashInWorkerRequests() async throws {
+        var seeded = ModelCatalog.devTextModel()
+        seeded.state = .modelDiscovered
+        seeded.settings.ext["melix.adapter_set_hash"] = "adapter-alpha"
+
+        let modelCatalog = ModelCatalog(seedModels: [seeded])
+        let textClient = ScriptedChatWorkerClient(events: [
+            makeQueuedExecuteEvent(requestID: "chat-lazy-adapter"),
+            makeCompletedExecuteEvent(
+                requestID: "chat-lazy-adapter",
+                finishReason: "stop",
+                assistant: "assistant",
+                reasoning: ""
+            ),
+        ])
+        let service = ControlPlaneService(
+            modelCatalog: modelCatalog,
+            workerRegistry: WorkerRegistry(defaultTextClient: textClient, modelCatalog: modelCatalog),
+            chatTranslator: ChatRequestTranslator(requestIDGenerator: { "chat-lazy-adapter" })
+        )
+
+        let execution = try await service.startChat(
+            ControlPlaneChatRequest(
+                modelID: "melix-dev-text",
+                messages: [.init(role: "user", content: "hello")]
+            )
+        )
+
+        _ = try await Array(execution.stream)
+        let loadRequest = try #require(await textClient.lastLoadModelRequest)
+
+        #expect(loadRequest.model.ext["melix.adapter_set_hash"] == "adapter-alpha")
     }
 
     @Test("execute maps fallback model policy values")

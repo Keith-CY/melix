@@ -231,6 +231,14 @@ actor HotCacheStore {
         await diskStore.purgeModel(modelID: modelID)
     }
 
+    func purgeScope(_ scope: Melix_Worker_V1_CacheScope) async {
+        for prefix in prefixesByID.values.map(\.prefix) where matches(scope: scope, prefix: prefix) {
+            prefixesByID.removeValue(forKey: prefix.prefixID)
+            prefixIDByKey.removeValue(forKey: cacheKeyIdentifier(prefix.cacheKey))
+        }
+        await diskStore.purgeScope(scope)
+    }
+
     private func updatePinState(
         for request: Melix_Worker_V1_PrefixRef,
         pinned: Bool
@@ -348,6 +356,9 @@ private func resolveScope(
     if scope.reasoningMode.isEmpty {
         scope.reasoningMode = model.reasoningMode
     }
+    if scope.multimodalAdapterHash.isEmpty {
+        scope.multimodalAdapterHash = cacheAdapterSetHash(from: model)
+    }
     if scope.scopeID.isEmpty {
         scope.scopeID = makeScopeID(scope)
     }
@@ -456,7 +467,18 @@ private func makeScopeID(_ scope: Melix_Worker_V1_CacheScope) -> String {
         scope.promptTemplateHash,
         scope.parserMode,
         scope.reasoningMode,
+        scope.multimodalAdapterHash,
     ].joined(separator: "::")
+}
+
+private func cacheAdapterSetHash(from model: Melix_Worker_V1_ModelSpec) -> String {
+    if let explicit = model.ext["melix.adapter_set_hash"], !explicit.isEmpty {
+        return explicit
+    }
+    if let legacy = model.ext["adapter_set_hash"], !legacy.isEmpty {
+        return legacy
+    }
+    return ""
 }
 
 private func makePrefixID(for key: Melix_Worker_V1_CacheKey) -> String {

@@ -3,6 +3,7 @@ import SwiftProtobuf
 import Testing
 
 @testable import MelixControlPlaneCore
+import MelixControlPlaneProtocol
 import MelixWorkerProtocol
 
 @Suite("Python Bridge Worker Client", .serialized)
@@ -22,6 +23,14 @@ struct PythonBridgeWorkerClientTests {
         let client = PythonBridgeWorkerClient(socketPath: "/tmp/melix-test.sock", runner: runner)
 
         #expect(await client.canDispatchRequests())
+    }
+
+    @Test("bootstrap worker preparation returns nil for unknown model summaries")
+    func bootstrapWorkerPreparationReturnsNilForUnknownModelSummaries() {
+        var summary = Melix_Controlplane_V1_ModelSummary()
+        summary.modelID = "unknown-model"
+
+        #expect(BootstrapWorkerPreparation.modelSpec(for: summary) == nil)
     }
 
     @Test("load model returns the worker handle from the bridge")
@@ -634,6 +643,17 @@ struct PythonBridgeWorkerClientTests {
 
         #expect(preloaded)
         #expect(await catalog.dispatchHandle(for: "melix-dev-text") == "melix-dev-text::bridge")
+    }
+
+    @Test("bootstrap worker preparation carries adapter-set hash into worker model specs")
+    func bootstrapWorkerPreparationCarriesAdapterSetHashIntoWorkerModelSpecs() throws {
+        var summary = ModelCatalog.devTextModel()
+        summary.settings.ext["melix.adapter_set_hash"] = "adapter-alpha"
+
+        let spec = try #require(BootstrapWorkerPreparation.modelSpec(for: summary))
+
+        #expect(spec.modelID == "melix-dev-text")
+        #expect(spec.ext["melix.adapter_set_hash"] == "adapter-alpha")
     }
 
     @Test("bridge client treats helper errors as unavailable")

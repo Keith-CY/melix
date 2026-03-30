@@ -1282,8 +1282,9 @@ public actor ControlPlaneService {
         modelID: String,
         reason: String
     ) async -> ModelLoadOutcome {
+        let preparedModelSpec = await modelCatalog.model(id: modelID).flatMap(BootstrapWorkerPreparation.modelSpec(for:))
         guard let workerRegistry,
-              let modelSpec = BootstrapWorkerPreparation.modelSpec(for: modelID),
+              let modelSpec = preparedModelSpec,
               let workerClient = await workerRegistry.client(forModelID: modelID) else {
             let model = await modelCatalog.recordLoadSucceeded(
                 id: modelID,

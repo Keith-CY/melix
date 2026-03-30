@@ -1,6 +1,7 @@
 import Foundation
 import SwiftProtobuf
 
+import MelixControlPlaneProtocol
 import MelixWorkerProtocol
 
 public enum BridgeCommandKind: String, Sendable {
@@ -296,6 +297,8 @@ public struct PythonBridgeWorkerClient:
 }
 
 public enum BootstrapWorkerPreparation {
+    private static let adapterSetHashExtKey = "melix.adapter_set_hash"
+
     public static func modelSpec(for modelID: String) -> Melix_Worker_V1_ModelSpec? {
         switch modelID {
         case "melix-dev-text":
@@ -317,6 +320,16 @@ public enum BootstrapWorkerPreparation {
         default:
             return nil
         }
+    }
+
+    public static func modelSpec(
+        for summary: Melix_Controlplane_V1_ModelSummary
+    ) -> Melix_Worker_V1_ModelSpec? {
+        guard var spec = modelSpec(for: summary.modelID) else { return nil }
+        if let adapterSetHash = summary.settings.ext[adapterSetHashExtKey], !adapterSetHash.isEmpty {
+            spec.ext[adapterSetHashExtKey] = adapterSetHash
+        }
+        return spec
     }
 
     public static func preloadDevTextModel(

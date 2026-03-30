@@ -989,6 +989,56 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertGreaterThan(cacheResponse.stats.dedupRatio, 1)
     }
 
+    func testRuntimeRegistryIsolatesDispatchHandlesAndCacheScopesByAdapterSet() async throws {
+        let registry = WorkerRuntimeRegistry(
+            configuration: WorkerConfiguration(),
+            modelCatalog: WorkerModelCatalog(environment: [
+                "MELIX_DEV_TEXT_MODEL_PATH": "mlx-community/melix-dev-text-4bit"
+            ]),
+            runtime: TextRuntime(backend: FakeRuntimeBackend())
+        )
+
+        var adapterAlpha = Melix_Worker_V1_ModelSpec()
+        adapterAlpha.modelID = "melix-dev-text"
+        adapterAlpha.ext["melix.adapter_set_hash"] = "adapter-alpha"
+        let loadedAlpha = try await registry.loadModel(adapterAlpha)
+
+        var adapterBeta = Melix_Worker_V1_ModelSpec()
+        adapterBeta.modelID = "melix-dev-text"
+        adapterBeta.ext["melix.adapter_set_hash"] = "adapter-beta"
+        let loadedBeta = try await registry.loadModel(adapterBeta)
+
+        let messages = [makeUserMessage("adapter isolated cache")]
+        let alphaPrefill = try await registry.prefill(
+            requestID: "req-adapter-alpha",
+            modelHandle: loadedAlpha.handle,
+            messages: messages,
+            prefillStepSize: 8,
+            returnDecodeHandle: true,
+            resumeHint: "adapter-alpha",
+            acceleration: makeAccelerationPolicy(mode: .baseline),
+            shouldAbort: { false }
+        )
+        let betaPrefill = try await registry.prefill(
+            requestID: "req-adapter-beta",
+            modelHandle: loadedBeta.handle,
+            messages: messages,
+            prefillStepSize: 8,
+            returnDecodeHandle: true,
+            resumeHint: "adapter-beta",
+            acceleration: makeAccelerationPolicy(mode: .baseline),
+            shouldAbort: { false }
+        )
+
+        let cacheResponse = await registry.cacheStatsResponse()
+
+        XCTAssertTrue(loadedAlpha.handle.contains("::adapter::adapter_alpha::"))
+        XCTAssertTrue(loadedBeta.handle.contains("::adapter::adapter_beta::"))
+        XCTAssertNotEqual(alphaPrefill.blockTable.scopeID, betaPrefill.blockTable.scopeID)
+        XCTAssertNotEqual(alphaPrefill.blockTable.cacheKey.scopeID, betaPrefill.blockTable.cacheKey.scopeID)
+        XCTAssertEqual(cacheResponse.snapshot.hotPrefixes.count, 2)
+    }
+
     func testRuntimeRegistryPrefillWithoutDecodeHandleDoesNotStoreContextAndUnloadClearsStoredContexts() async throws {
         let registry = WorkerRuntimeRegistry(
             configuration: WorkerConfiguration(),
@@ -3738,6 +3788,285 @@ final class WorkerScaffoldTests: XCTestCase {
             XCTAssertFalse(failedPreconditionRestore.ok)
             XCTAssertEqual(failedPreconditionRestore.error.code, "failed_precondition")
             XCTAssertGreaterThanOrEqual(services.metrics.counters["swift_text.rpc_error_count"] ?? 0, 2)
+        }
+    }
+
+    func testBoundarySnapshotRestoreRejectsMismatchedAdapterScope() async throws {
+        try await withTemporaryCacheRoot { cacheRoot in
+            let environment = ["MELIX_SWIFT_TEXT_WORKER_CACHE_ROOT": cacheRoot.path]
+            let initialServices = makeServices(
+                environment: environment,
+                backend: DeterministicTextBackend(tokenDelayNanos: 0)
+            )
+
+            let initialLoad = try await withTestServerContextRPCCancellationHandle { handle in
+                var request = Melix_Worker_V1_LoadModelRequest()
+                request.model.modelID = "melix-dev-text"
+                request.model.ext["melix.adapter_set_hash"] = "adapter-alpha"
+                return try await initialServices.runtime.loadModel(
+                    request: request,
+                    context: ServerContext(
+                        descriptor: Melix_Worker_V1_RuntimeService.Method.LoadModel.descriptor,
+                        remotePeer: "in-process:test",
+                        localPeer: "in-process:test",
+                        cancellation: handle
+                    )
+                )
+            }
+
+            let prefillResponse = try await withTestServerContextRPCCancellationHandle { handle in
+                var request = Melix_Worker_V1_PrefillRequest()
+                request.execution.id.requestID = "req-adapter-snapshot"
+                request.execution.modelHandle = initialLoad.modelHandle
+                request.execution.cacheHints.allowL2 = true
+                request.execution.cacheHints.persistL2 = true
+                request.returnDecodeHandle = true
+                request.messages = [makeUserMessage("persist adapter alpha")]
+                return try await initialServices.inference.prefill(
+                    request: request,
+                    context: ServerContext(
+                        descriptor: Melix_Worker_V1_InferenceService.Method.Prefill.descriptor,
+                        remotePeer: "in-process:test",
+                        localPeer: "in-process:test",
+                        cancellation: handle
+                    )
+                )
+            }
+
+            let saveResponse = try await withTestServerContextRPCCancellationHandle { handle in
+                var request = Melix_Worker_V1_SaveBoundarySnapshotRequest()
+                request.requestID = "req-adapter-snapshot"
+                request.decodeHandle = prefillResponse.decodeHandle
+                request.tokenBoundary = prefillResponse.promptTokens
+                return try await initialServices.cache.saveBoundarySnapshot(
+                    request: request,
+                    context: ServerContext(
+                        descriptor: Melix_Worker_V1_CacheService.Method.SaveBoundarySnapshot.descriptor,
+                        remotePeer: "in-process:test",
+                        localPeer: "in-process:test",
+                        cancellation: handle
+                    )
+                )
+            }
+
+            let restartedServices = makeServices(
+                environment: environment,
+                backend: DeterministicTextBackend(tokenDelayNanos: 0)
+            )
+
+            _ = try await withTestServerContextRPCCancellationHandle { handle in
+                var request = Melix_Worker_V1_LoadModelRequest()
+                request.model.modelID = "melix-dev-text"
+                request.model.ext["melix.adapter_set_hash"] = "adapter-beta"
+                return try await restartedServices.runtime.loadModel(
+                    request: request,
+                    context: ServerContext(
+                        descriptor: Melix_Worker_V1_RuntimeService.Method.LoadModel.descriptor,
+                        remotePeer: "in-process:test",
+                        localPeer: "in-process:test",
+                        cancellation: handle
+                    )
+                )
+            }
+
+            let restoreResponse = try await withTestServerContextRPCCancellationHandle { handle in
+                var request = Melix_Worker_V1_RestoreBoundarySnapshotRequest()
+                request.snapshotID = saveResponse.snapshotID
+                return try await restartedServices.cache.restoreBoundarySnapshot(
+                    request: request,
+                    context: ServerContext(
+                        descriptor: Melix_Worker_V1_CacheService.Method.RestoreBoundarySnapshot.descriptor,
+                        remotePeer: "in-process:test",
+                        localPeer: "in-process:test",
+                        cancellation: handle
+                    )
+                )
+            }
+
+            XCTAssertFalse(restoreResponse.ok)
+            XCTAssertEqual(restoreResponse.error.code, "failed_precondition")
+            XCTAssertEqual(
+                restoreResponse.error.message,
+                "The loaded model configuration is incompatible with this snapshot."
+            )
+        }
+    }
+
+    func testUnloadModelPurgesOnlyMatchingAdapterScope() async throws {
+        let registry = WorkerRuntimeRegistry(
+            configuration: WorkerConfiguration(),
+            modelCatalog: WorkerModelCatalog(environment: [
+                "MELIX_DEV_TEXT_MODEL_PATH": "mlx-community/melix-dev-text-4bit"
+            ]),
+            runtime: TextRuntime(backend: FakeRuntimeBackend())
+        )
+
+        var adapterAlpha = Melix_Worker_V1_ModelSpec()
+        adapterAlpha.modelID = "melix-dev-text"
+        adapterAlpha.ext["melix.adapter_set_hash"] = "adapter-alpha"
+        let loadedAlpha = try await registry.loadModel(adapterAlpha)
+
+        var adapterBeta = Melix_Worker_V1_ModelSpec()
+        adapterBeta.modelID = "melix-dev-text"
+        adapterBeta.ext["melix.adapter_set_hash"] = "adapter-beta"
+        let loadedBeta = try await registry.loadModel(adapterBeta)
+
+        let messages = [makeUserMessage("adapter scoped purge")]
+        let alphaPrefill = try await registry.prefill(
+            requestID: "req-purge-alpha",
+            modelHandle: loadedAlpha.handle,
+            messages: messages,
+            prefillStepSize: 8,
+            returnDecodeHandle: true,
+            resumeHint: "purge-alpha",
+            acceleration: makeAccelerationPolicy(mode: .baseline),
+            shouldAbort: { false }
+        )
+        let betaPrefill = try await registry.prefill(
+            requestID: "req-purge-beta",
+            modelHandle: loadedBeta.handle,
+            messages: messages,
+            prefillStepSize: 8,
+            returnDecodeHandle: true,
+            resumeHint: "purge-beta",
+            acceleration: makeAccelerationPolicy(mode: .baseline),
+            shouldAbort: { false }
+        )
+
+        XCTAssertNotEqual(alphaPrefill.blockTable.scopeID, betaPrefill.blockTable.scopeID)
+
+        let unloaded = await registry.unloadModel(loadedAlpha.handle)
+        let cacheResponse = await registry.cacheStatsResponse()
+
+        XCTAssertTrue(unloaded)
+        XCTAssertEqual(cacheResponse.snapshot.hotPrefixes.count, 1)
+        XCTAssertEqual(cacheResponse.snapshot.hotPrefixes.first?.scope.scopeID, betaPrefill.blockTable.scopeID)
+    }
+
+    func testRuntimeRegistryUsesLegacyAdapterHashForHandlesAndCacheScopes() async throws {
+        let registry = WorkerRuntimeRegistry(
+            configuration: WorkerConfiguration(),
+            modelCatalog: WorkerModelCatalog(environment: [
+                "MELIX_DEV_TEXT_MODEL_PATH": "mlx-community/melix-dev-text-4bit"
+            ]),
+            runtime: TextRuntime(backend: FakeRuntimeBackend())
+        )
+
+        var legacyAdapter = Melix_Worker_V1_ModelSpec()
+        legacyAdapter.modelID = "melix-dev-text"
+        legacyAdapter.ext["adapter_set_hash"] = "adapter-legacy"
+
+        let loaded = try await registry.loadModel(legacyAdapter)
+        let prefill = try await registry.prefill(
+            requestID: "req-legacy-adapter",
+            modelHandle: loaded.handle,
+            messages: [makeUserMessage("legacy adapter scope")],
+            prefillStepSize: 8,
+            returnDecodeHandle: true,
+            resumeHint: "legacy-adapter",
+            acceleration: makeAccelerationPolicy(mode: .baseline),
+            shouldAbort: { false }
+        )
+        let cacheResponse = await registry.cacheStatsResponse()
+
+        XCTAssertTrue(loaded.handle.contains("::adapter::adapter_legacy::"))
+        XCTAssertEqual(cacheResponse.snapshot.hotPrefixes.count, 1)
+        XCTAssertEqual(cacheResponse.snapshot.hotPrefixes.first?.scope.multimodalAdapterHash, "adapter-legacy")
+        XCTAssertEqual(cacheResponse.snapshot.hotPrefixes.first?.scope.scopeID, prefill.blockTable.scopeID)
+    }
+
+    func testDiskCacheStorePurgeScopeSupportsEmptyAndModelOnlyScopes() async throws {
+        try await withTemporaryCacheRoot { cacheRoot in
+            let fileManager = FileManager.default
+            try fileManager.createDirectory(
+                at: cacheRoot.appendingPathComponent("prefixes", isDirectory: true),
+                withIntermediateDirectories: true
+            )
+            try fileManager.createDirectory(
+                at: cacheRoot.appendingPathComponent("snapshots", isDirectory: true),
+                withIntermediateDirectories: true
+            )
+
+            let store = DiskCacheStore(rootPath: cacheRoot.path)
+
+            func persistSnapshot(
+                scopeID: String,
+                modelID: String,
+                prefixID: String,
+                snapshotID: String
+            ) async {
+                let scope = makeCacheScope(scopeID: scopeID, modelID: modelID)
+                let key = makeCacheKey(
+                    scopeID: scopeID,
+                    prefixSeed: "\(prefixID)-prefix",
+                    fingerprintSeed: "\(prefixID)-fingerprint"
+                )
+                let prefix = makePrefixRef(prefixID: prefixID, scope: scope, cacheKey: key)
+                let table = makeBlockTable(scopeID: scopeID, cacheKey: key, blockIDs: ["\(prefixID)-block"], bytes: [64])
+
+                await store.persistPrefix(
+                    prefix: prefix,
+                    blockTableID: "table-\(prefixID)",
+                    blockTable: table,
+                    quantizedBytes: 32
+                )
+                await store.saveSnapshot(
+                    snapshot: makeSnapshotRef(snapshotID: snapshotID),
+                    model: makeModelSpec(modelID: modelID),
+                    messages: [makeUserMessage(snapshotID)],
+                    resumeHint: "resume-\(snapshotID)",
+                    acceleration: makeAccelerationPolicy(mode: .baseline),
+                    promptTokens: 4,
+                    blockTableID: "table-\(prefixID)",
+                    blockTable: table,
+                    prefix: nil
+                )
+            }
+
+            await persistSnapshot(
+                scopeID: "scope-alpha",
+                modelID: "model-alpha",
+                prefixID: "prefix-alpha",
+                snapshotID: "snapshot-alpha"
+            )
+            await persistSnapshot(
+                scopeID: "scope-beta",
+                modelID: "model-beta",
+                prefixID: "prefix-beta",
+                snapshotID: "snapshot-beta"
+            )
+
+            await store.purgeScope(Melix_Worker_V1_CacheScope())
+
+            let fullyPurged = await store.summary()
+            XCTAssertEqual(fullyPurged.snapshotCount, 0)
+            XCTAssertEqual(fullyPurged.l2Bytes, 0)
+
+            await persistSnapshot(
+                scopeID: "scope-alpha",
+                modelID: "model-alpha",
+                prefixID: "prefix-alpha-2",
+                snapshotID: "snapshot-alpha-2"
+            )
+            await persistSnapshot(
+                scopeID: "scope-beta",
+                modelID: "model-beta",
+                prefixID: "prefix-beta-2",
+                snapshotID: "snapshot-beta-2"
+            )
+
+            var modelOnlyScope = Melix_Worker_V1_CacheScope()
+            modelOnlyScope.modelID = "model-beta"
+            await store.purgeScope(modelOnlyScope)
+
+            let remaining = await store.summary()
+            let betaRestore = await store.restoreSnapshot(snapshotID: "snapshot-beta-2")
+            let alphaRestore = await store.restoreSnapshot(snapshotID: "snapshot-alpha-2")
+            XCTAssertEqual(remaining.snapshotCount, 1)
+            XCTAssertEqual(remaining.l2Bytes, 32)
+            XCTAssertEqual(remaining.scopes.first?.scope.modelID, "model-alpha")
+            XCTAssertNil(betaRestore)
+            XCTAssertNotNil(alphaRestore)
         }
     }
 

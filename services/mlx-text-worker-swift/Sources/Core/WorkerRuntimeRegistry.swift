@@ -154,7 +154,7 @@ actor WorkerRuntimeRegistry {
                 requiredBytes: requiredRequestBytes
             )
         }
-        let handle = "\(resolved.modelID)::\(nextModelHandle)"
+        let handle = makeModelHandle(for: resolved, ordinal: nextModelHandle)
         nextModelHandle += 1
 
         let record = LoadedModelRecord(
@@ -172,7 +172,7 @@ actor WorkerRuntimeRegistry {
             return false
         }
         prefillContexts = prefillContexts.filter { $0.value.modelHandle != handle }
-        await cacheStore.purgeModel(modelID: removed.spec.modelID)
+        await cacheStore.purgeScope(resolveCacheScope(Melix_Worker_V1_CacheScope(), fallback: removed.spec))
         await runtime.unloadModel(removed.runtimeModel)
         return true
     }
@@ -585,8 +585,25 @@ actor WorkerRuntimeRegistry {
             throw WorkerRuntimeRegistryError.unknownSnapshotID
         }
 
+        let restoredScopeID = if !restored.blockTable.scopeID.isEmpty {
+            restored.blockTable.scopeID
+        } else if !restored.blockTable.cacheKey.scopeID.isEmpty {
+            restored.blockTable.cacheKey.scopeID
+        } else {
+            resolveCacheScope(Melix_Worker_V1_CacheScope(), fallback: restored.model).scopeID
+        }
+
+        if loadedModels.values.contains(where: { $0.spec.modelID == restored.model.modelID }),
+           !loadedModels.values.contains(where: {
+               $0.spec.modelID == restored.model.modelID &&
+                   resolveCacheScope(Melix_Worker_V1_CacheScope(), fallback: $0.spec).scopeID == restoredScopeID
+           }) {
+            throw WorkerRuntimeRegistryError.snapshotScopeMismatch
+        }
+
         guard let loaded = loadedModels.values.first(where: {
-            $0.spec.modelID == restored.model.modelID
+            $0.spec.modelID == restored.model.modelID &&
+                resolveCacheScope(Melix_Worker_V1_CacheScope(), fallback: $0.spec).scopeID == restoredScopeID
         }) else {
             throw WorkerRuntimeRegistryError.snapshotModelNotLoaded
         }
@@ -724,6 +741,7 @@ enum WorkerRuntimeRegistryError: Error, LocalizedError, Equatable {
     case unknownDecodeHandle
     case unknownSnapshotID
     case snapshotModelNotLoaded
+    case snapshotScopeMismatch
     case contextLimitExceeded(maxContext: UInt32, promptTokens: Int)
     case memoryBudgetExceeded(
         budgetBytes: UInt64,
@@ -755,6 +773,8 @@ enum WorkerRuntimeRegistryError: Error, LocalizedError, Equatable {
             return "Unknown snapshot ID."
         case .snapshotModelNotLoaded:
             return "The model required for this snapshot is not currently loaded."
+        case .snapshotScopeMismatch:
+            return "The loaded model configuration is incompatible with this snapshot."
         case .memoryBudgetExceeded:
             return "Projected resident memory would exceed the process budget."
         case .contextLimitExceeded:
@@ -817,7 +837,7 @@ enum WorkerRuntimeRegistryError: Error, LocalizedError, Equatable {
         switch self {
         case .unknownDecodeHandle, .unknownSnapshotID, .unknownModelHandle:
             return "not_found"
-        case .snapshotModelNotLoaded:
+        case .snapshotModelNotLoaded, .snapshotScopeMismatch:
             return "failed_precondition"
         case .memoryBudgetExceeded, .prefillMemoryGuardExceeded, .quadraticPrefillGuardExceeded:
             return "resource_exhausted"
@@ -831,7 +851,8 @@ enum WorkerRuntimeRegistryError: Error, LocalizedError, Equatable {
         case (.unknownModelHandle, .unknownModelHandle),
              (.unknownDecodeHandle, .unknownDecodeHandle),
              (.unknownSnapshotID, .unknownSnapshotID),
-             (.snapshotModelNotLoaded, .snapshotModelNotLoaded):
+             (.snapshotModelNotLoaded, .snapshotModelNotLoaded),
+             (.snapshotScopeMismatch, .snapshotScopeMismatch):
             return true
         case let (
             .contextLimitExceeded(maxContext: lhsMaxContext, promptTokens: lhsPromptTokens),
@@ -950,8 +971,86 @@ private func mergeModelSpec(
     if resolved.modelID.isEmpty {
         resolved.modelID = fallback.modelID
     }
-    if resolved.ext.isEmpty {
-        resolved.ext = fallback.ext
+    for (key, value) in fallback.ext where resolved.ext[key] == nil {
+        resolved.ext[key] = value
     }
     return resolved
+}
+
+private func makeModelHandle(
+    for spec: Melix_Worker_V1_ModelSpec,
+    ordinal: UInt64
+) -> String {
+    let adapterSetHash = cacheAdapterSetHash(from: spec)
+    guard !adapterSetHash.isEmpty else {
+        return "\(spec.modelID)::\(ordinal)"
+    }
+    return "\(spec.modelID)::adapter::\(sanitizeHandleComponent(adapterSetHash))::\(ordinal)"
+}
+
+private func resolveCacheScope(
+    _ requested: Melix_Worker_V1_CacheScope,
+    fallback model: Melix_Worker_V1_ModelSpec
+) -> Melix_Worker_V1_CacheScope {
+    var scope = requested
+    if scope.modelID.isEmpty {
+        scope.modelID = model.modelID
+    }
+    if scope.revision.isEmpty {
+        scope.revision = model.revision
+    }
+    if scope.tokenizerHash.isEmpty {
+        scope.tokenizerHash = model.tokenizerHash
+    }
+    if scope.quantProfileID.isEmpty {
+        scope.quantProfileID = model.quantProfileID
+    }
+    if scope.parserMode.isEmpty {
+        scope.parserMode = model.parserMode
+    }
+    if scope.reasoningMode.isEmpty {
+        scope.reasoningMode = model.reasoningMode
+    }
+    if scope.multimodalAdapterHash.isEmpty {
+        scope.multimodalAdapterHash = cacheAdapterSetHash(from: model)
+    }
+    if scope.scopeID.isEmpty {
+        scope.scopeID = makeCacheScopeID(scope)
+    }
+    return scope
+}
+
+private func makeCacheScopeID(_ scope: Melix_Worker_V1_CacheScope) -> String {
+    [
+        scope.modelID,
+        scope.revision,
+        scope.tokenizerHash,
+        scope.quantProfileID,
+        scope.promptTemplateHash,
+        scope.parserMode,
+        scope.reasoningMode,
+        scope.multimodalAdapterHash,
+    ].joined(separator: "::")
+}
+
+private func cacheAdapterSetHash(from model: Melix_Worker_V1_ModelSpec) -> String {
+    if let explicit = model.ext["melix.adapter_set_hash"], !explicit.isEmpty {
+        return explicit
+    }
+    if let legacy = model.ext["adapter_set_hash"], !legacy.isEmpty {
+        return legacy
+    }
+    return ""
+}
+
+private func sanitizeHandleComponent(_ raw: String) -> String {
+    let normalized = raw.lowercased().map { character in
+        switch character {
+        case "a"..."z", "0"..."9":
+            return character
+        default:
+            return "_"
+        }
+    }
+    return String(normalized.prefix(24))
 }

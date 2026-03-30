@@ -242,7 +242,7 @@ actor DiskCacheStore {
         }
 
         let matchingSnapshotIDs = snapshotsByID.values.compactMap { snapshot -> String? in
-            guard scope.scopeID.isEmpty || snapshot.blockTable.scopeID == scope.scopeID || scope.modelID == snapshot.model.modelID else {
+            guard snapshotMatches(scope: scope, snapshot: snapshot) else {
                 return nil
             }
             if !cacheKey.scopeID.isEmpty && snapshot.blockTable.cacheKey.scopeID != cacheKey.scopeID {
@@ -274,6 +274,24 @@ actor DiskCacheStore {
 
         let snapshotIDs = snapshotsByID.values
             .filter { $0.model.modelID == modelID }
+            .map { $0.snapshot.snapshotID }
+        for snapshotID in snapshotIDs {
+            snapshotsByID.removeValue(forKey: snapshotID)
+            try? fileManager.removeItem(at: snapshotFileURL(snapshotID: snapshotID))
+        }
+    }
+
+    func purgeScope(_ scope: Melix_Worker_V1_CacheScope) {
+        let prefixIDs = prefixesByID.values
+            .filter { diskMatches(scope: scope, prefix: $0.prefix) }
+            .map { $0.prefix.prefixID }
+        for prefixID in prefixIDs {
+            prefixesByID.removeValue(forKey: prefixID)
+            try? fileManager.removeItem(at: prefixFileURL(prefixID: prefixID))
+        }
+
+        let snapshotIDs = snapshotsByID.values
+            .filter { snapshotMatches(scope: scope, snapshot: $0) }
             .map { $0.snapshot.snapshotID }
         for snapshotID in snapshotIDs {
             snapshotsByID.removeValue(forKey: snapshotID)
@@ -436,6 +454,22 @@ private func diskMatches(
         return prefix.scope.scopeID == scope.scopeID
     }
     return prefix.scope.modelID == scope.modelID
+}
+
+private func snapshotMatches(
+    scope: Melix_Worker_V1_CacheScope,
+    snapshot: StoredBoundarySnapshotRecord
+) -> Bool {
+    if scope.scopeID.isEmpty && scope.modelID.isEmpty {
+        return true
+    }
+    if !scope.scopeID.isEmpty {
+        let snapshotScopeID = snapshot.blockTable.scopeID.isEmpty
+            ? snapshot.blockTable.cacheKey.scopeID
+            : snapshot.blockTable.scopeID
+        return snapshotScopeID == scope.scopeID
+    }
+    return snapshot.model.modelID == scope.modelID
 }
 
 private func diskMatches(

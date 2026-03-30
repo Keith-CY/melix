@@ -32,7 +32,7 @@ enum OnDemandModelLoader {
         guard model.kind == "text" || model.capabilityClass == .modelCapabilityText else {
             throw OnDemandModelLoadError.modelNotReady
         }
-        guard let modelSpec = BootstrapWorkerPreparation.modelSpec(for: modelID) else {
+        guard let modelSpec = BootstrapWorkerPreparation.modelSpec(for: model) else {
             throw OnDemandModelLoadError.modelNotReady
         }
         guard let workerRegistry,
