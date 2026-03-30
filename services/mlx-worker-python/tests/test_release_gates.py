@@ -67,6 +67,12 @@ def test_evaluate_release_gate_fails_closed_for_missing_or_regressed_evidence() 
             "training_duration_ms": 2100.0,
             "adapter_publish_ms": 151.0,
         },
+        "runtime_core": {
+            "multi_model_ready_count": 2.0,
+            "multi_model_request_success_rate": 66.0,
+            "prefill_memory_guard_rejection_count": 0.0,
+            "prefill_memory_guard_success_rate": 0.0,
+        },
     }
 
     failures = evaluate_release_gate(report, policy)
@@ -81,6 +87,10 @@ def test_evaluate_release_gate_fails_closed_for_missing_or_regressed_evidence() 
     assert "training_duration_ms=2100.00 exceeded maximum 2000.00" in failures
     assert "adapter_publish_ms=151.00 exceeded maximum 150.00" in failures
     assert "recovery evidence is missing" in failures
+    assert "multi_model_ready_count=2.00 fell below minimum 3.00" in failures
+    assert "multi_model_request_success_rate=66.00 fell below minimum 100.00" in failures
+    assert "prefill_memory_guard_rejection_count=0.00 fell below minimum 1.00" in failures
+    assert "prefill_memory_guard_success_rate=0.00 fell below minimum 100.00" in failures
 
 
 def test_build_release_gate_report_passes_with_supplied_recovery_evidence(tmp_path: Path) -> None:
@@ -93,6 +103,12 @@ def test_build_release_gate_report_passes_with_supplied_recovery_evidence(tmp_pa
         recovery={
             "restart_recovery_ms": 420.0,
             "restart_recovery_success_rate": 100.0,
+        },
+        runtime_core={
+            "multi_model_ready_count": 3.0,
+            "multi_model_request_success_rate": 100.0,
+            "prefill_memory_guard_rejection_count": 1.0,
+            "prefill_memory_guard_success_rate": 100.0,
         },
     )
 
@@ -129,6 +145,12 @@ def test_build_release_gate_report_uses_temp_jobs_root_and_reports_type_errors(t
             "restart_recovery_ms": 420.0,
             "restart_recovery_success_rate": 100.0,
         },
+        runtime_core={
+            "multi_model_ready_count": 3.0,
+            "multi_model_request_success_rate": 100.0,
+            "prefill_memory_guard_rejection_count": 1.0,
+            "prefill_memory_guard_success_rate": 100.0,
+        },
     )
     assert report["passed"] is True
 
@@ -158,9 +180,51 @@ def test_build_release_gate_report_uses_temp_jobs_root_and_reports_type_errors(t
                 "restart_recovery_ms": 420.0,
                 "restart_recovery_success_rate": 100.0,
             },
+            "runtime_core": {
+                "multi_model_ready_count": "three",
+                "multi_model_request_success_rate": 100.0,
+                "prefill_memory_guard_rejection_count": 1.0,
+                "prefill_memory_guard_success_rate": 100.0,
+            },
         },
         load_release_gate_policy(),
     )
 
     assert "checks.environment_script_exists is missing" in failures
     assert "bench.smoke.ttft_ms must be numeric" in failures
+    assert "multi_model_ready_count must be numeric" in failures
+
+
+def test_evaluate_release_gate_requires_runtime_core_evidence() -> None:
+    failures = evaluate_release_gate(
+        {
+            "install": {
+                "generated_asset_count": 5,
+                "bootstrap_command_count": 3,
+                "checks": {
+                    "manifest_exists": True,
+                    "environment_script_exists": True,
+                    "all_plists_exist": True,
+                },
+            },
+            "benchmarks": {
+                "report_exists": True,
+                "metrics": {
+                    "bench.smoke.ttft_ms": 24.45,
+                    "bench.smoke.tokens_per_second": 47.08,
+                    "bench.latency.p95_ms": 44.72,
+                },
+            },
+            "training": {
+                "training_duration_ms": 1420.0,
+                "adapter_publish_ms": 118.0,
+            },
+            "recovery": {
+                "restart_recovery_ms": 420.0,
+                "restart_recovery_success_rate": 100.0,
+            },
+        },
+        load_release_gate_policy(),
+    )
+
+    assert "runtime_core evidence is missing" in failures

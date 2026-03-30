@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "services/mlx-worker-python"))
 
-from phase8_runtime_probes import collect_restart_recovery_evidence
+from phase8_runtime_probes import collect_restart_recovery_evidence, collect_runtime_core_evidence
 from worker.productization.release_gates import (
     build_release_gate_report,
     load_release_gate_policy,
@@ -31,7 +31,13 @@ def main() -> int:
     repo_root = Path(args.repo_root).resolve()
     policy = load_release_gate_policy(args.policy)
     recovery = collect_restart_recovery_evidence(repo_root)
-    report = build_release_gate_report(repo_root, policy=policy, recovery=recovery)
+    runtime_core = collect_runtime_core_evidence(repo_root)
+    report = build_release_gate_report(
+        repo_root,
+        policy=policy,
+        recovery=recovery,
+        runtime_core=runtime_core,
+    )
 
     if args.json:
         print(json.dumps(report, indent=2, sort_keys=True))

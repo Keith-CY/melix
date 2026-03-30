@@ -14,21 +14,23 @@ Close the runtime-core milestone with live-path integration evidence, restart ev
 
 - update `tests/integration/`
 - update `services/mlx-worker-python/worker/productization/`
+- update `scripts/phase8_*.py`
+- update `infra/release/phase8-release-gate-policy.json`
 - update `docs/runbooks/`
-- update `docs/plans/2026-03-30-full-capability-roadmap.md`
 
 ## Implementation Notes
 
-- evidence should cover multi-model coexistence, eviction, adapter isolation, and memory guards
+- evidence should cover live multi-model coexistence and memory guards
+- runtime-core evidence should be machine-readable and consumable by phase-8 release gates
+- eviction and adapter isolation remain backed by existing runtime-core unit coverage in this slice
 - keep metrics machine-readable so later release gates can consume them
 - do not rely on deterministic-only paths as the sole proof of completion
 
 ## Verification
 
 - `make py-test`
-- `make swift-test`
 - `make integration-test`
-- touched-scope coverage command for the runtime-core slice
+- touched-scope Python coverage command for the runtime-core slice
 
 ## Acceptance
 

@@ -42,6 +42,8 @@ This verifies:
 - install evidence
 - benchmark thresholds
 - restart recovery
+- runtime-core multi-model evidence
+- runtime-core memory-guard evidence
 - training sanity
 
 ## Final Metrics Report
@@ -74,6 +76,10 @@ The report includes:
 - first text-model warm latency
 - first text-model estimated resident bytes
 - first text-model resident bytes
+- runtime-core multi-model ready count
+- runtime-core multi-model request success rate
+- runtime-core prefill memory-guard rejection count
+- runtime-core prefill memory-guard success rate
 - operator action latency
 - install success rate
 - benchmark regression percentage

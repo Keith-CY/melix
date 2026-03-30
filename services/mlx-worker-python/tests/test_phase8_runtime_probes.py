@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import io
 import inspect
 import json
+import runpy
 import sys
+import urllib.error
 from types import SimpleNamespace
 from pathlib import Path
 
@@ -60,6 +63,87 @@ def test_wait_for_metrics_times_out_when_required_keys_never_appear(tmp_path: Pa
             ["control_plane.background_preload_ms"],
             timeout_seconds=0.01,
         )
+
+
+def test_wait_for_metric_minimum_returns_when_threshold_is_reached(tmp_path: Path) -> None:
+    metrics_path = tmp_path / "swift-text-worker-metrics.json"
+    metrics_path.write_text(
+        json.dumps(
+            {
+                "updated_at_unix_ms": 1,
+                "values": {
+                    "swift_text.prefill_memory_guard_rejection_count": 1.0,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    value = phase8_runtime_probes.wait_for_metric_minimum(
+        metrics_path,
+        "swift_text.prefill_memory_guard_rejection_count",
+        minimum=1.0,
+        timeout_seconds=0.01,
+    )
+
+    assert value == 1.0
+
+
+def test_wait_for_metric_minimum_times_out_when_threshold_never_arrives(tmp_path: Path) -> None:
+    metrics_path = tmp_path / "swift-text-worker-metrics.json"
+    metrics_path.write_text(
+        json.dumps(
+            {
+                "updated_at_unix_ms": 1,
+                "values": {
+                    "swift_text.prefill_memory_guard_rejection_count": 0.0,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(RuntimeError, match="Timed out waiting for metric"):
+        phase8_runtime_probes.wait_for_metric_minimum(
+            metrics_path,
+            "swift_text.prefill_memory_guard_rejection_count",
+            minimum=1.0,
+            timeout_seconds=0.01,
+        )
+
+
+def test_wait_for_metric_minimum_ignores_transient_decode_errors(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    metrics_path = tmp_path / "swift-text-worker-metrics.json"
+    metrics_path.write_text("{}", encoding="utf-8")
+
+    class FlakyReader:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def __call__(self, path: Path) -> dict[str, object]:
+            self.calls += 1
+            if self.calls == 1:
+                raise json.JSONDecodeError("bad", "{}", 0)
+            return {
+                "values": {
+                    "swift_text.prefill_memory_guard_rejection_count": 1.0,
+                }
+            }
+
+    monkeypatch.setattr(phase8_runtime_probes, "read_metrics_export", FlakyReader())
+    ticks = iter([0.0, 0.04, 0.08, 0.08])
+
+    assert phase8_runtime_probes.wait_for_metric_minimum(
+        metrics_path,
+        "swift_text.prefill_memory_guard_rejection_count",
+        minimum=1.0,
+        timeout_seconds=0.1,
+        clock=lambda: next(ticks),
+        sleep_fn=lambda _: None,
+    ) == 1.0
 
 
 def test_measure_cold_boot_to_ready_reads_bootstrap_metrics_from_the_stack(
@@ -166,6 +250,243 @@ def test_measure_cold_boot_to_ready_reads_bootstrap_metrics_from_the_stack(
     assert report["first_text_model_warm_ms"] == 125.0
     assert report["text_model_load_estimated_resident_bytes"] == 4096.0
     assert report["text_model_load_resident_bytes"] == 8192.0
+
+
+def test_collect_runtime_core_evidence_reports_multimodel_and_guard_signals(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeStack:
+        environments: list[dict[str, str]] = []
+
+        def __init__(
+            self,
+            repo_root: Path,
+            *,
+            environment_overrides: dict[str, str] | None = None,
+            **_: object,
+        ) -> None:
+            self.repo_root = repo_root
+            self.environment_overrides = dict(environment_overrides or {})
+            self.swift_text_worker_metrics_path = tmp_path / f"swift-{len(FakeStack.environments)}.json"
+            self.started = False
+            self.stopped = False
+            FakeStack.environments.append(self.environment_overrides)
+
+        def start(self) -> None:
+            self.started = True
+
+        def stop(self) -> None:
+            self.stopped = True
+
+        def chat_url(self) -> str:
+            return "http://127.0.0.1:11434/v1/chat/completions"
+
+        def models_url(self) -> str:
+            return "http://127.0.0.1:11434/v1/models"
+
+        def wait_for_models(self, model_ids: list[str], *, timeout_seconds: float = 120) -> None:
+            assert model_ids == ["melix-dev-text", "melix-dev-embed", "melix-dev-rerank"]
+            assert timeout_seconds == 30
+
+        @property
+        def http_port(self) -> int:
+            return 11434
+
+    monkeypatch.setattr(phase8_runtime_probes, "LiveMelixStack", FakeStack)
+    monkeypatch.setattr(
+        phase8_runtime_probes,
+        "stream_chat_completion",
+        lambda stack, payload: {"status": 200, "body": "data: [DONE]\n\n"},
+    )
+    monkeypatch.setattr(
+        phase8_runtime_probes,
+        "_post_json",
+        lambda url, payload: (
+            200,
+            {"model": payload["model"], "data": [{"index": 1}, {"index": 0}]},
+        ),
+    )
+    monkeypatch.setattr(
+        phase8_runtime_probes,
+        "_read_model_states",
+        lambda url: {
+            "melix-dev-text": "warm",
+            "melix-dev-embed": "warm",
+            "melix-dev-rerank": "warm",
+        },
+    )
+    monkeypatch.setattr(
+        phase8_runtime_probes,
+        "_run_prefill_memory_guard_probe",
+        lambda stack: {
+            "ok": False,
+            "error_code": "prefill_memory_guard_exceeded",
+            "error_message": "Projected prefill memory would exceed the process budget.",
+        },
+    )
+    monkeypatch.setattr(
+        phase8_runtime_probes,
+        "wait_for_metric_minimum",
+        lambda *args, **kwargs: 1.0,
+    )
+    monkeypatch.setattr(
+        phase8_runtime_probes,
+        "wait_for_metrics",
+        lambda *args, **kwargs: {
+            "swift_text.prefill_guard_last_prompt_tokens": 1.0,
+            "swift_text.prefill_guard_last_required_bytes": 18432.0,
+            "swift_text.prefill_guard_last_budget_bytes": 16384.0,
+        },
+    )
+
+    report = phase8_runtime_probes.collect_runtime_core_evidence(tmp_path)
+
+    assert report["multi_model_ready_count"] == 3
+    assert report["multi_model_request_success_rate"] == 100.0
+    assert report["multi_model_ready_model_ids"] == [
+        "melix-dev-text",
+        "melix-dev-embed",
+        "melix-dev-rerank",
+    ]
+    assert report["prefill_memory_guard_rejection_count"] == 1.0
+    assert report["prefill_memory_guard_success_rate"] == 100.0
+    assert report["prefill_memory_guard_last_prompt_tokens"] == 1.0
+    assert report["prefill_memory_guard_last_required_bytes"] == 18432.0
+    assert report["prefill_memory_guard_last_budget_bytes"] == 16384.0
+    assert FakeStack.environments[1]["MELIX_SWIFT_TEXT_WORKER_PROCESS_MEMORY_BUDGET_BYTES"] == "16384"
+    assert FakeStack.environments[1]["MELIX_SWIFT_TEXT_WORKER_PREFILL_MEMORY_HEADROOM_BYTES"] == "16384"
+
+
+def test_collect_multi_model_coexistence_evidence_raises_on_text_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeStack:
+        def __init__(self, repo_root: Path) -> None:
+            self.http_port = 11434
+
+        def start(self) -> None:
+            return None
+
+        def stop(self) -> None:
+            return None
+
+    monkeypatch.setattr(phase8_runtime_probes, "LiveMelixStack", FakeStack)
+    monkeypatch.setattr(
+        phase8_runtime_probes,
+        "stream_chat_completion",
+        lambda stack, payload: {"status": 503, "body": "worker unavailable"},
+    )
+
+    with pytest.raises(SystemExit, match="runtime-core text smoke failed"):
+        phase8_runtime_probes._collect_multi_model_coexistence_evidence(tmp_path)
+
+
+def test_collect_multi_model_coexistence_evidence_raises_on_embedding_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeStack:
+        def __init__(self, repo_root: Path) -> None:
+            self.http_port = 11434
+
+        def start(self) -> None:
+            return None
+
+        def stop(self) -> None:
+            return None
+
+    monkeypatch.setattr(phase8_runtime_probes, "LiveMelixStack", FakeStack)
+    monkeypatch.setattr(
+        phase8_runtime_probes,
+        "stream_chat_completion",
+        lambda stack, payload: {"status": 200, "body": "data: [DONE]"},
+    )
+    monkeypatch.setattr(
+        phase8_runtime_probes,
+        "_post_json",
+        lambda url, payload: (500, "embed failed"),
+    )
+
+    with pytest.raises(SystemExit, match="runtime-core embedding smoke failed"):
+        phase8_runtime_probes._collect_multi_model_coexistence_evidence(tmp_path)
+
+
+def test_collect_multi_model_coexistence_evidence_raises_on_rerank_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeStack:
+        def __init__(self, repo_root: Path) -> None:
+            self.http_port = 11434
+
+        def start(self) -> None:
+            return None
+
+        def stop(self) -> None:
+            return None
+
+    post_results = iter(
+        [
+            (200, {"data": [{"index": 0}]}),
+            (500, "rerank failed"),
+        ]
+    )
+
+    monkeypatch.setattr(phase8_runtime_probes, "LiveMelixStack", FakeStack)
+    monkeypatch.setattr(
+        phase8_runtime_probes,
+        "stream_chat_completion",
+        lambda stack, payload: {"status": 200, "body": "data: [DONE]"},
+    )
+    monkeypatch.setattr(
+        phase8_runtime_probes,
+        "_post_json",
+        lambda url, payload: next(post_results),
+    )
+
+    with pytest.raises(SystemExit, match="runtime-core rerank smoke failed"):
+        phase8_runtime_probes._collect_multi_model_coexistence_evidence(tmp_path)
+
+
+def test_collect_prefill_memory_guard_evidence_raises_when_probe_does_not_reject(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeStack:
+        def __init__(self, repo_root: Path, **_: object) -> None:
+            self.swift_text_worker_metrics_path = tmp_path / "swift-text-worker-metrics.json"
+
+        def start(self) -> None:
+            return None
+
+        def stop(self) -> None:
+            return None
+
+    monkeypatch.setattr(phase8_runtime_probes, "LiveMelixStack", FakeStack)
+    monkeypatch.setattr(
+        phase8_runtime_probes,
+        "_run_prefill_memory_guard_probe",
+        lambda stack: {"ok": True, "error_code": "", "error_message": ""},
+    )
+    monkeypatch.setattr(
+        phase8_runtime_probes,
+        "wait_for_metric_minimum",
+        lambda *args, **kwargs: 1.0,
+    )
+    monkeypatch.setattr(
+        phase8_runtime_probes,
+        "wait_for_metrics",
+        lambda *args, **kwargs: {
+            "swift_text.prefill_guard_last_prompt_tokens": 1.0,
+            "swift_text.prefill_guard_last_required_bytes": 18432.0,
+            "swift_text.prefill_guard_last_budget_bytes": 16384.0,
+        },
+    )
+
+    with pytest.raises(SystemExit, match="runtime-core prefill guard smoke failed"):
+        phase8_runtime_probes._collect_prefill_memory_guard_evidence(tmp_path)
 
 
 def test_measure_cold_boot_to_ready_raises_when_first_text_warmup_fails(
@@ -417,6 +738,219 @@ def test_stream_chat_completion_reads_http_status_and_body(
     assert result == {"status": 200, "body": "data: [DONE]"}
 
 
+def test_post_json_returns_decoded_payload_on_success(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeResponse:
+        status = 202
+
+        def read(self) -> bytes:
+            return b'{"ok": true, "count": 2}'
+
+        def __enter__(self) -> "FakeResponse":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+    monkeypatch.setattr(
+        phase8_runtime_probes.urllib.request,
+        "urlopen",
+        lambda request, timeout: FakeResponse(),
+    )
+
+    status, payload = phase8_runtime_probes._post_json(
+        "http://127.0.0.1:11434/v1/embeddings",
+        {"model": "melix-dev-embed", "input": ["alpha"]},
+    )
+
+    assert status == 202
+    assert payload == {"ok": True, "count": 2}
+
+
+def test_post_json_returns_decoded_http_error_payload(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_urlopen(request, timeout):
+        raise urllib.error.HTTPError(
+            request.full_url,
+            503,
+            "service unavailable",
+            hdrs=None,
+            fp=io.BytesIO(b'{"error":"boom"}'),
+        )
+
+    monkeypatch.setattr(phase8_runtime_probes.urllib.request, "urlopen", fake_urlopen)
+
+    status, payload = phase8_runtime_probes._post_json(
+        "http://127.0.0.1:11434/v1/rerank",
+        {"model": "melix-dev-rerank"},
+    )
+
+    assert status == 503
+    assert payload == {"error": "boom"}
+
+
+def test_post_json_returns_plain_text_http_error_payload(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_urlopen(request, timeout):
+        raise urllib.error.HTTPError(
+            request.full_url,
+            500,
+            "server error",
+            hdrs=None,
+            fp=io.BytesIO(b"internal error"),
+        )
+
+    monkeypatch.setattr(phase8_runtime_probes.urllib.request, "urlopen", fake_urlopen)
+
+    status, payload = phase8_runtime_probes._post_json(
+        "http://127.0.0.1:11434/v1/rerank",
+        {"model": "melix-dev-rerank"},
+    )
+
+    assert status == 500
+    assert payload == "internal error"
+
+
+def test_read_model_states_extracts_model_status_by_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeResponse:
+        def read(self) -> bytes:
+            return json.dumps(
+                {
+                    "data": [
+                        {"id": "melix-dev-text", "melix_state": "warm"},
+                        {"id": "melix-dev-rerank", "melix_state": "pinned"},
+                    ]
+                }
+            ).encode("utf-8")
+
+        def __enter__(self) -> "FakeResponse":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+    monkeypatch.setattr(
+        phase8_runtime_probes.urllib.request,
+        "urlopen",
+        lambda url, timeout: FakeResponse(),
+    )
+
+    assert phase8_runtime_probes._read_model_states("http://127.0.0.1:11434/v1/models") == {
+        "melix-dev-text": "warm",
+        "melix-dev-rerank": "pinned",
+    }
+
+
+def test_run_prefill_memory_guard_probe_returns_load_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    closed: list[bool] = []
+
+    class FakeChannel:
+        def close(self) -> None:
+            closed.append(True)
+
+    class FakeRuntimeStub:
+        def __init__(self, channel: object) -> None:
+            pass
+
+        def LoadModel(self, request: object, timeout: float) -> object:
+            return SimpleNamespace(
+                ok=False,
+                model_handle="",
+                error=SimpleNamespace(code="", message="could not load"),
+            )
+
+    class FakeInferenceStub:
+        def __init__(self, channel: object) -> None:
+            pass
+
+    monkeypatch.setattr(
+        phase8_runtime_probes.grpc,
+        "insecure_channel",
+        lambda target: FakeChannel(),
+    )
+    monkeypatch.setattr(phase8_runtime_probes.runtime_pb2_grpc, "RuntimeServiceStub", FakeRuntimeStub)
+    monkeypatch.setattr(
+        phase8_runtime_probes.inference_pb2_grpc,
+        "InferenceServiceStub",
+        FakeInferenceStub,
+    )
+
+    result = phase8_runtime_probes._run_prefill_memory_guard_probe(
+        SimpleNamespace(swift_socket_path="/tmp/swift.sock")
+    )
+
+    assert result == {
+        "ok": False,
+        "error_code": "load_failed",
+        "error_message": "could not load",
+    }
+    assert closed == [True]
+
+
+def test_run_prefill_memory_guard_probe_returns_prefill_response(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    closed: list[bool] = []
+
+    class FakeChannel:
+        def close(self) -> None:
+            closed.append(True)
+
+    class FakeRuntimeStub:
+        def __init__(self, channel: object) -> None:
+            pass
+
+        def LoadModel(self, request: object, timeout: float) -> object:
+            return SimpleNamespace(
+                ok=True,
+                model_handle="handle-123",
+                error=SimpleNamespace(code="", message=""),
+            )
+
+    class FakeInferenceStub:
+        def __init__(self, channel: object) -> None:
+            pass
+
+        def Prefill(self, request: object, timeout: float) -> object:
+            return SimpleNamespace(
+                ok=False,
+                error=SimpleNamespace(
+                    code="prefill_memory_guard_exceeded",
+                    message="Projected prefill memory would exceed the process budget.",
+                ),
+            )
+
+    monkeypatch.setattr(
+        phase8_runtime_probes.grpc,
+        "insecure_channel",
+        lambda target: FakeChannel(),
+    )
+    monkeypatch.setattr(phase8_runtime_probes.runtime_pb2_grpc, "RuntimeServiceStub", FakeRuntimeStub)
+    monkeypatch.setattr(
+        phase8_runtime_probes.inference_pb2_grpc,
+        "InferenceServiceStub",
+        FakeInferenceStub,
+    )
+
+    result = phase8_runtime_probes._run_prefill_memory_guard_probe(
+        SimpleNamespace(swift_socket_path="/tmp/swift.sock")
+    )
+
+    assert result == {
+        "ok": False,
+        "error_code": "prefill_memory_guard_exceeded",
+        "error_message": "Projected prefill memory would exceed the process budget.",
+    }
+    assert closed == [True]
+
+
 def test_wait_for_metrics_ignores_transient_decode_errors(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -519,17 +1053,28 @@ def test_phase8_metrics_report_main_emits_split_bootstrap_metrics(
     )
     monkeypatch.setattr(
         phase8_metrics_report,
+        "collect_runtime_core_evidence",
+        lambda repo_root: {
+            "multi_model_ready_count": 3,
+            "multi_model_request_success_rate": 100.0,
+            "prefill_memory_guard_rejection_count": 1.0,
+            "prefill_memory_guard_success_rate": 100.0,
+        },
+    )
+    monkeypatch.setattr(
+        phase8_metrics_report,
         "load_release_gate_policy",
         lambda path: policy,
     )
     monkeypatch.setattr(
         phase8_metrics_report,
         "build_release_gate_report",
-        lambda repo_root, policy, recovery: {
+        lambda repo_root, policy, recovery, runtime_core: {
             "install": {"checks": {"manifest_exists": True, "environment_script_exists": True, "all_plists_exist": True}},
             "benchmarks": {"report_exists": True, "metrics": {}},
             "training": {"training_duration_ms": 1420.0, "adapter_publish_ms": 118.0},
             "recovery": recovery,
+            "runtime_core": runtime_core,
             "passed": True,
             "failures": [],
         },
@@ -579,6 +1124,10 @@ def test_phase8_metrics_report_main_emits_split_bootstrap_metrics(
     assert metrics["desktop.restart_control_plane_spawn_to_ready_ms"] == 1292.3
     assert metrics["desktop.snapshot_restore_ms"] == 98.4
     assert metrics["desktop.restart_recovery_ms"] == 710.7
+    assert metrics["runtime.multi_model_ready_count"] == 3.0
+    assert metrics["runtime.multi_model_request_success_rate"] == 100.0
+    assert metrics["runtime.prefill_memory_guard_rejection_count"] == 1.0
+    assert metrics["runtime.prefill_memory_guard_success_rate"] == 100.0
 
 
 def test_phase8_metrics_report_main_returns_nonzero_when_release_gate_fails(
@@ -628,11 +1177,27 @@ def test_phase8_metrics_report_main_returns_nonzero_when_release_gate_fails(
     )
     monkeypatch.setattr(
         phase8_metrics_report,
+        "collect_runtime_core_evidence",
+        lambda repo_root: {
+            "multi_model_ready_count": 3,
+            "multi_model_request_success_rate": 100.0,
+            "prefill_memory_guard_rejection_count": 1.0,
+            "prefill_memory_guard_success_rate": 100.0,
+        },
+    )
+    monkeypatch.setattr(
+        phase8_metrics_report,
         "load_release_gate_policy",
         lambda path: {
             "benchmarks": {},
             "install": {},
             "recovery": {"restart_recovery_ms": {"max": 15_000.0}, "restart_recovery_success_rate": {"min": 100.0}},
+            "runtime_core": {
+                "multi_model_ready_count": {"min": 3.0},
+                "multi_model_request_success_rate": {"min": 100.0},
+                "prefill_memory_guard_rejection_count": {"min": 1.0},
+                "prefill_memory_guard_success_rate": {"min": 100.0},
+            },
             "training": {
                 "training_duration_ms": {"max": 2_000.0},
                 "adapter_publish_ms": {"max": 150.0},
@@ -642,11 +1207,12 @@ def test_phase8_metrics_report_main_returns_nonzero_when_release_gate_fails(
     monkeypatch.setattr(
         phase8_metrics_report,
         "build_release_gate_report",
-        lambda repo_root, policy, recovery: {
+        lambda repo_root, policy, recovery, runtime_core: {
             "install": {"checks": {"manifest_exists": True, "environment_script_exists": True, "all_plists_exist": True}},
             "benchmarks": {"report_exists": True, "metrics": {}},
             "training": {"training_duration_ms": 1420.0, "adapter_publish_ms": 118.0},
             "recovery": recovery,
+            "runtime_core": runtime_core,
             "passed": False,
             "failures": ["restart_recovery_ms exceeded"],
         },
@@ -670,3 +1236,173 @@ def test_phase8_metrics_report_main_returns_nonzero_when_release_gate_fails(
 
     payload = json.loads(capsys.readouterr().out)
     assert payload["release_gate"]["passed"] is False
+
+
+def test_phase8_metrics_report_main_emits_output_without_json_flag(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(
+        phase8_metrics_report,
+        "measure_cold_boot_to_ready",
+        lambda repo_root: {
+            "cold_boot_to_ready_ms": 700.0,
+            "http_ready_ms": 700.0,
+        },
+    )
+    monkeypatch.setattr(
+        phase8_metrics_report,
+        "collect_restart_recovery_evidence",
+        lambda repo_root: {
+            "restart_recovery_ms": 500.0,
+            "restart_recovery_success_rate": 100.0,
+        },
+    )
+    monkeypatch.setattr(
+        phase8_metrics_report,
+        "collect_runtime_core_evidence",
+        lambda repo_root: {
+            "multi_model_ready_count": 3.0,
+            "multi_model_request_success_rate": 100.0,
+            "prefill_memory_guard_rejection_count": 1.0,
+            "prefill_memory_guard_success_rate": 100.0,
+        },
+    )
+    monkeypatch.setattr(
+        phase8_metrics_report,
+        "load_release_gate_policy",
+        lambda path: {
+            "benchmarks": {},
+            "install": {},
+            "recovery": {"restart_recovery_ms": {"max": 15_000.0}, "restart_recovery_success_rate": {"min": 100.0}},
+            "runtime_core": {
+                "multi_model_ready_count": {"min": 3.0},
+                "multi_model_request_success_rate": {"min": 100.0},
+                "prefill_memory_guard_rejection_count": {"min": 1.0},
+                "prefill_memory_guard_success_rate": {"min": 100.0},
+            },
+            "training": {
+                "training_duration_ms": {"max": 2_000.0},
+                "adapter_publish_ms": {"max": 150.0},
+            },
+        },
+    )
+    monkeypatch.setattr(
+        phase8_metrics_report,
+        "build_release_gate_report",
+        lambda repo_root, policy, recovery, runtime_core: {
+            "install": {"checks": {"manifest_exists": True, "environment_script_exists": True, "all_plists_exist": True}},
+            "benchmarks": {"report_exists": True, "metrics": {}},
+            "training": {"training_duration_ms": 1000.0, "adapter_publish_ms": 100.0},
+            "recovery": recovery,
+            "runtime_core": runtime_core,
+            "passed": True,
+            "failures": [],
+        },
+    )
+    monkeypatch.setattr(
+        phase8_metrics_report,
+        "collect_operator_action_evidence",
+        lambda jobs_root: {
+            "operator_action_latency_ms": 0.5,
+            "registry_job_count": 2,
+            "registry_adapter_count": 1,
+        },
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["phase8_metrics_report.py", "--repo-root", str(tmp_path)],
+    )
+
+    assert phase8_metrics_report.main() == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["release_gate"]["passed"] is True
+
+
+def test_phase8_metrics_report_run_path_exits_through_main(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import phase8_runtime_probes as runtime_probes_module
+    from worker.productization import acceptance_metrics as acceptance_metrics_module
+    from worker.productization import release_gates as release_gates_module
+
+    monkeypatch.setattr(
+        runtime_probes_module,
+        "measure_cold_boot_to_ready",
+        lambda repo_root: {
+            "cold_boot_to_ready_ms": 700.0,
+            "http_ready_ms": 700.0,
+        },
+    )
+    monkeypatch.setattr(
+        runtime_probes_module,
+        "collect_restart_recovery_evidence",
+        lambda repo_root: {
+            "restart_recovery_ms": 500.0,
+            "restart_recovery_success_rate": 100.0,
+        },
+    )
+    monkeypatch.setattr(
+        runtime_probes_module,
+        "collect_runtime_core_evidence",
+        lambda repo_root: {
+            "multi_model_ready_count": 3.0,
+            "multi_model_request_success_rate": 100.0,
+            "prefill_memory_guard_rejection_count": 1.0,
+            "prefill_memory_guard_success_rate": 100.0,
+        },
+    )
+    monkeypatch.setattr(
+        acceptance_metrics_module,
+        "collect_operator_action_evidence",
+        lambda jobs_root: {
+            "operator_action_latency_ms": 0.5,
+            "registry_job_count": 2,
+            "registry_adapter_count": 1,
+        },
+    )
+    monkeypatch.setattr(
+        release_gates_module,
+        "load_release_gate_policy",
+        lambda path: {
+            "benchmarks": {},
+            "install": {},
+            "recovery": {"restart_recovery_ms": {"max": 15_000.0}, "restart_recovery_success_rate": {"min": 100.0}},
+            "runtime_core": {
+                "multi_model_ready_count": {"min": 3.0},
+                "multi_model_request_success_rate": {"min": 100.0},
+                "prefill_memory_guard_rejection_count": {"min": 1.0},
+                "prefill_memory_guard_success_rate": {"min": 100.0},
+            },
+            "training": {
+                "training_duration_ms": {"max": 2_000.0},
+                "adapter_publish_ms": {"max": 150.0},
+            },
+        },
+    )
+    monkeypatch.setattr(
+        release_gates_module,
+        "build_release_gate_report",
+        lambda repo_root, policy, recovery, runtime_core: {
+            "install": {"checks": {"manifest_exists": True, "environment_script_exists": True, "all_plists_exist": True}},
+            "benchmarks": {"report_exists": True, "metrics": {}},
+            "training": {"training_duration_ms": 1000.0, "adapter_publish_ms": 100.0},
+            "recovery": recovery,
+            "runtime_core": runtime_core,
+            "passed": True,
+            "failures": [],
+        },
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["phase8_metrics_report.py", "--repo-root", str(tmp_path), "--json"],
+    )
+
+    with pytest.raises(SystemExit) as excinfo:
+        runpy.run_path(str(ROOT / "scripts" / "phase8_metrics_report.py"), run_name="__main__")
+
+    assert excinfo.value.code == 0

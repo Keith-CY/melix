@@ -116,12 +116,50 @@ def test_compute_release_smoke_pass_rate_uses_all_gate_sections() -> None:
             "restart_recovery_ms": 13550.49,
             "restart_recovery_success_rate": 100.0,
         },
+        "runtime_core": {
+            "multi_model_ready_count": 3.0,
+            "multi_model_request_success_rate": 100.0,
+            "prefill_memory_guard_rejection_count": 1.0,
+            "prefill_memory_guard_success_rate": 100.0,
+        },
     }
 
     assert compute_release_smoke_pass_rate(report, policy) == 100.0
 
     report["recovery"]["restart_recovery_success_rate"] = 0.0
-    assert compute_release_smoke_pass_rate(report, policy) == 75.0
+    assert compute_release_smoke_pass_rate(report, policy) == 80.0
+
+
+def test_compute_release_smoke_pass_rate_fails_non_dict_runtime_core() -> None:
+    policy = load_release_gate_policy()
+    report = {
+        "install": {
+            "checks": {
+                "manifest_exists": True,
+                "environment_script_exists": True,
+                "all_plists_exist": True,
+            }
+        },
+        "benchmarks": {
+            "report_exists": True,
+            "metrics": {
+                "bench.smoke.ttft_ms": 24.45,
+                "bench.smoke.tokens_per_second": 47.08,
+                "bench.latency.p95_ms": 44.72,
+            },
+        },
+        "training": {
+            "training_duration_ms": 1420.0,
+            "adapter_publish_ms": 118.0,
+        },
+        "recovery": {
+            "restart_recovery_ms": 13550.49,
+            "restart_recovery_success_rate": 100.0,
+        },
+        "runtime_core": "invalid",
+    }
+
+    assert compute_release_smoke_pass_rate(report, policy) == 80.0
 
 
 def test_build_phase8_metrics_report_includes_required_probe_names() -> None:
@@ -184,8 +222,20 @@ def test_build_phase8_metrics_report_includes_required_probe_names() -> None:
                 "restart_recovery_ms": 13550.49,
                 "restart_recovery_success_rate": 100.0,
             },
+            "runtime_core": {
+                "multi_model_ready_count": 3.0,
+                "multi_model_request_success_rate": 100.0,
+                "prefill_memory_guard_rejection_count": 1.0,
+                "prefill_memory_guard_success_rate": 100.0,
+            },
             "passed": True,
             "failures": [],
+        },
+        runtime_core={
+            "multi_model_ready_count": 3.0,
+            "multi_model_request_success_rate": 100.0,
+            "prefill_memory_guard_rejection_count": 1.0,
+            "prefill_memory_guard_success_rate": 100.0,
         },
         policy=policy,
     )
@@ -219,8 +269,68 @@ def test_build_phase8_metrics_report_includes_required_probe_names() -> None:
     assert metrics["desktop.snapshot_restore_ms"] == 109.7
     assert metrics["desktop.restart_recovery_ms"] == 13550.49
     assert metrics["desktop.crash_recovery_success_rate"] == 100.0
+    assert metrics["runtime.multi_model_ready_count"] == 3.0
+    assert metrics["runtime.multi_model_request_success_rate"] == 100.0
+    assert metrics["runtime.prefill_memory_guard_rejection_count"] == 1.0
+    assert metrics["runtime.prefill_memory_guard_success_rate"] == 100.0
     assert metrics["release.benchmark_regression_pct"] == 0.0
     assert metrics["release.smoke_pass_rate"] == 100.0
     assert metrics["install.success_rate"] == 100.0
     assert metrics["training.job_duration_ms"] == 1420.0
     assert metrics["training.adapter_publish_ms"] == 118.0
+
+
+def test_build_phase8_metrics_report_accepts_cold_boot_metric_parameter() -> None:
+    policy = load_release_gate_policy()
+
+    report = build_phase8_metrics_report(
+        cold_boot_to_ready_ms=700.0,
+        cold_boot={},
+        operator={
+            "operator_action_latency_ms": 1.0,
+            "registry_job_count": 2,
+            "registry_adapter_count": 1,
+        },
+        release_gate_report={
+            "install": {
+                "checks": {
+                    "manifest_exists": True,
+                    "environment_script_exists": True,
+                    "all_plists_exist": True,
+                }
+            },
+            "benchmarks": {
+                "report_exists": True,
+                "metrics": {
+                    "bench.smoke.ttft_ms": 24.45,
+                    "bench.smoke.tokens_per_second": 47.08,
+                    "bench.latency.p95_ms": 44.72,
+                },
+            },
+            "training": {
+                "training_duration_ms": 1420.0,
+                "adapter_publish_ms": 118.0,
+            },
+            "recovery": {
+                "restart_recovery_ms": 600.0,
+                "restart_recovery_success_rate": 100.0,
+            },
+            "runtime_core": {
+                "multi_model_ready_count": 3.0,
+                "multi_model_request_success_rate": 100.0,
+                "prefill_memory_guard_rejection_count": 1.0,
+                "prefill_memory_guard_success_rate": 100.0,
+            },
+            "passed": True,
+            "failures": [],
+        },
+        runtime_core={
+            "multi_model_ready_count": 3.0,
+            "multi_model_request_success_rate": 100.0,
+            "prefill_memory_guard_rejection_count": 1.0,
+            "prefill_memory_guard_success_rate": 100.0,
+        },
+        policy=policy,
+    )
+
+    assert report["metrics"]["desktop.cold_boot_to_ready_ms"] == 700.0

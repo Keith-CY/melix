@@ -35,6 +35,12 @@ DEFAULT_RELEASE_GATE_POLICY: dict[str, Any] = {
         "restart_recovery_ms": {"max": 15_000.0},
         "restart_recovery_success_rate": {"min": 100.0},
     },
+    "runtime_core": {
+        "multi_model_ready_count": {"min": 3},
+        "multi_model_request_success_rate": {"min": 100.0},
+        "prefill_memory_guard_rejection_count": {"min": 1.0},
+        "prefill_memory_guard_success_rate": {"min": 100.0},
+    },
 }
 
 
@@ -134,6 +140,7 @@ def build_release_gate_report(
     policy: dict[str, Any] | None = None,
     jobs_root: str | Path | None = None,
     recovery: dict[str, Any] | None = None,
+    runtime_core: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     active_policy = policy or load_release_gate_policy()
     if jobs_root is None:
@@ -143,6 +150,7 @@ def build_release_gate_report(
                 policy=active_policy,
                 jobs_root=tempdir,
                 recovery=recovery,
+                runtime_core=runtime_core,
             )
 
     report = {
@@ -152,6 +160,8 @@ def build_release_gate_report(
     }
     if recovery is not None:
         report["recovery"] = recovery
+    if runtime_core is not None:
+        report["runtime_core"] = runtime_core
 
     failures = evaluate_release_gate(report, active_policy)
     report["passed"] = not failures
@@ -183,6 +193,12 @@ def evaluate_release_gate(report: dict[str, Any], policy: dict[str, Any]) -> lis
         failures.append("recovery evidence is missing")
     else:
         failures.extend(_evaluate_section_metrics(recovery, policy.get("recovery", {})))
+
+    runtime_core = report.get("runtime_core")
+    if not isinstance(runtime_core, dict):
+        failures.append("runtime_core evidence is missing")
+    else:
+        failures.extend(_evaluate_section_metrics(runtime_core, policy.get("runtime_core", {})))
 
     return failures
 

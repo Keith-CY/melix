@@ -26,6 +26,20 @@
       "min": 100.0
     }
   },
+  "runtime_core": {
+    "multi_model_ready_count": {
+      "min": 3.0
+    },
+    "multi_model_request_success_rate": {
+      "min": 100.0
+    },
+    "prefill_memory_guard_rejection_count": {
+      "min": 1.0
+    },
+    "prefill_memory_guard_success_rate": {
+      "min": 100.0
+    }
+  },
   "training": {
     "adapter_publish_ms": {
       "max": 150.0

@@ -9,7 +9,7 @@ from packages.protocol.python.worker.v1 import maintenance_pb2
 
 from worker.engine.maintenance_core import MaintenanceCore
 from worker.model_registry.catalog import WorkerModelCatalog
-from worker.productization.release_gates import load_release_gate_policy
+from worker.productization.release_gates import _evaluate_section_metrics, load_release_gate_policy
 from worker.registry import WorkerRegistry
 
 
@@ -50,6 +50,7 @@ def build_phase8_metrics_report(
     cold_boot: dict[str, Any] | None = None,
     operator: dict[str, Any],
     release_gate_report: dict[str, Any],
+    runtime_core: dict[str, Any] | None = None,
     policy: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     active_policy = policy or load_release_gate_policy()
@@ -57,6 +58,7 @@ def build_phase8_metrics_report(
     if cold_boot_to_ready_ms is not None:
         cold_boot_evidence.setdefault("cold_boot_to_ready_ms", cold_boot_to_ready_ms)
     recovery = release_gate_report["recovery"]
+    runtime_core_evidence = dict(runtime_core or release_gate_report.get("runtime_core", {}))
 
     metrics = {
         "desktop.cold_boot_to_ready_ms": round(
@@ -143,6 +145,22 @@ def build_phase8_metrics_report(
         "desktop.crash_recovery_success_rate": float(
             recovery["restart_recovery_success_rate"]
         ),
+        "runtime.multi_model_ready_count": round(
+            float(runtime_core_evidence.get("multi_model_ready_count", 0.0)),
+            2,
+        ),
+        "runtime.multi_model_request_success_rate": round(
+            float(runtime_core_evidence.get("multi_model_request_success_rate", 0.0)),
+            2,
+        ),
+        "runtime.prefill_memory_guard_rejection_count": round(
+            float(runtime_core_evidence.get("prefill_memory_guard_rejection_count", 0.0)),
+            2,
+        ),
+        "runtime.prefill_memory_guard_success_rate": round(
+            float(runtime_core_evidence.get("prefill_memory_guard_success_rate", 0.0)),
+            2,
+        ),
         "release.benchmark_regression_pct": round(
             compute_benchmark_regression_pct(release_gate_report["benchmarks"], active_policy),
             2,
@@ -171,6 +189,7 @@ def build_phase8_metrics_report(
             key: round(float(value), 2) if isinstance(value, (int, float)) else value
             for key, value in cold_boot_evidence.items()
         },
+        "runtime_core": runtime_core_evidence,
         "operator": operator,
         "release_gate": release_gate_report,
     }
@@ -210,6 +229,7 @@ def compute_release_smoke_pass_rate(report: dict[str, Any], policy: dict[str, An
         and compute_benchmark_regression_pct(report.get("benchmarks", {}), policy) == 0.0,
         _training_sane(report.get("training", {}), policy),
         _recovery_sane(report.get("recovery", {}), policy),
+        _runtime_core_sane(report.get("runtime_core", {}), policy),
     ]
     passed = sum(1 for section in sections if section)
     return (passed / len(sections)) * 100.0
@@ -277,3 +297,9 @@ def _recovery_sane(recovery: dict[str, Any], policy: dict[str, Any]) -> bool:
         and float(duration) <= float(rules["restart_recovery_ms"]["max"])
         and float(success_rate) >= float(rules["restart_recovery_success_rate"]["min"])
     )
+
+
+def _runtime_core_sane(runtime_core: dict[str, Any], policy: dict[str, Any]) -> bool:
+    if not isinstance(runtime_core, dict):
+        return False
+    return not _evaluate_section_metrics(runtime_core, policy.get("runtime_core", {}))
