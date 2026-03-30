@@ -202,6 +202,7 @@ public struct ShapedTextRequest: Sendable, Equatable {
     public let structuredOutput: StructuredOutputConfiguration?
     public let toolParser: ToolParserSelection?
     public let chatTemplate: ResolvedChatTemplatePolicy?
+    public let ocrPolicy: ResolvedOCRExecutionPolicy?
     public let partialMode: String?
     public let assistantPrefill: AssistantPrefillSelection?
 }
@@ -248,6 +249,39 @@ public struct OpenAIStreamOptions: Codable, Sendable, Equatable {
 }
 
 public struct OpenAIChatCompletionsRequest: Codable, Sendable {
+    private enum StopSequencesValue: Codable, Sendable, Equatable {
+        case single(String)
+        case many([String])
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.singleValueContainer()
+            if let value = try? container.decode(String.self) {
+                self = .single(value)
+                return
+            }
+            self = .many(try container.decode([String].self))
+        }
+
+        func encode(to encoder: Encoder) throws {
+            var container = encoder.singleValueContainer()
+            switch self {
+            case let .single(value):
+                try container.encode(value)
+            case let .many(values):
+                try container.encode(values)
+            }
+        }
+
+        var normalized: [String] {
+            switch self {
+            case let .single(value):
+                return value.isEmpty ? [] : [value]
+            case let .many(values):
+                return values.filter { !$0.isEmpty }
+            }
+        }
+    }
+
     public struct Message: Codable, Sendable, Equatable {
         public let role: String
         public let name: String?
@@ -311,6 +345,7 @@ public struct OpenAIChatCompletionsRequest: Codable, Sendable {
     public let temperature: Double?
     public let topP: Double?
     public let maxTokens: UInt32?
+    public let stopSequences: [String]?
     public let sessionID: String?
     public let branchID: String?
     public let parentRequestID: String?
@@ -332,6 +367,8 @@ public struct OpenAIChatCompletionsRequest: Codable, Sendable {
         case temperature
         case topP = "top_p"
         case maxTokens = "max_tokens"
+        case stop
+        case stopSequences = "stop_sequences"
         case sessionID = "session_id"
         case branchID = "branch_id"
         case parentRequestID = "parent_request_id"
@@ -354,6 +391,7 @@ public struct OpenAIChatCompletionsRequest: Codable, Sendable {
         temperature: Double? = nil,
         topP: Double? = nil,
         maxTokens: UInt32? = nil,
+        stopSequences: [String]? = nil,
         sessionID: String? = nil,
         branchID: String? = nil,
         parentRequestID: String? = nil,
@@ -374,6 +412,7 @@ public struct OpenAIChatCompletionsRequest: Codable, Sendable {
         self.temperature = temperature
         self.topP = topP
         self.maxTokens = maxTokens
+        self.stopSequences = stopSequences
         self.sessionID = sessionID
         self.branchID = branchID
         self.parentRequestID = parentRequestID
@@ -386,6 +425,54 @@ public struct OpenAIChatCompletionsRequest: Codable, Sendable {
         self.responseFormat = responseFormat
         self.toolParser = toolParser
         self.chatTemplateKwargs = chatTemplateKwargs
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.model = try container.decode(String.self, forKey: .model)
+        self.messages = try container.decode([Message].self, forKey: .messages)
+        self.stream = try container.decodeIfPresent(Bool.self, forKey: .stream)
+        self.streamOptions = try container.decodeIfPresent(OpenAIStreamOptions.self, forKey: .streamOptions)
+        self.temperature = try container.decodeIfPresent(Double.self, forKey: .temperature)
+        self.topP = try container.decodeIfPresent(Double.self, forKey: .topP)
+        self.maxTokens = try container.decodeIfPresent(UInt32.self, forKey: .maxTokens)
+        self.stopSequences = try Self.decodeStopSequences(from: container)
+        self.sessionID = try container.decodeIfPresent(String.self, forKey: .sessionID)
+        self.branchID = try container.decodeIfPresent(String.self, forKey: .branchID)
+        self.parentRequestID = try container.decodeIfPresent(String.self, forKey: .parentRequestID)
+        self.restoreSnapshotID = try container.decodeIfPresent(String.self, forKey: .restoreSnapshotID)
+        self.saveBoundarySnapshot = try container.decodeIfPresent(Bool.self, forKey: .saveBoundarySnapshot)
+        self.presetID = try container.decodeIfPresent(String.self, forKey: .presetID)
+        self.workflow = try container.decodeIfPresent(TextWorkflowKind.self, forKey: .workflow)
+        self.workflowRunID = try container.decodeIfPresent(String.self, forKey: .workflowRunID)
+        self.workflowNodeID = try container.decodeIfPresent(String.self, forKey: .workflowNodeID)
+        self.responseFormat = try container.decodeIfPresent(StructuredOutputRequestFormat.self, forKey: .responseFormat)
+        self.toolParser = try container.decodeIfPresent(ToolParserRequestConfiguration.self, forKey: .toolParser)
+        self.chatTemplateKwargs = try container.decodeIfPresent(ChatTemplateRequestConfiguration.self, forKey: .chatTemplateKwargs)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(model, forKey: .model)
+        try container.encode(messages, forKey: .messages)
+        try container.encodeIfPresent(stream, forKey: .stream)
+        try container.encodeIfPresent(streamOptions, forKey: .streamOptions)
+        try container.encodeIfPresent(temperature, forKey: .temperature)
+        try container.encodeIfPresent(topP, forKey: .topP)
+        try container.encodeIfPresent(maxTokens, forKey: .maxTokens)
+        try encodeStopSequences(into: &container)
+        try container.encodeIfPresent(sessionID, forKey: .sessionID)
+        try container.encodeIfPresent(branchID, forKey: .branchID)
+        try container.encodeIfPresent(parentRequestID, forKey: .parentRequestID)
+        try container.encodeIfPresent(restoreSnapshotID, forKey: .restoreSnapshotID)
+        try container.encodeIfPresent(saveBoundarySnapshot, forKey: .saveBoundarySnapshot)
+        try container.encodeIfPresent(presetID, forKey: .presetID)
+        try container.encodeIfPresent(workflow, forKey: .workflow)
+        try container.encodeIfPresent(workflowRunID, forKey: .workflowRunID)
+        try container.encodeIfPresent(workflowNodeID, forKey: .workflowNodeID)
+        try container.encodeIfPresent(responseFormat, forKey: .responseFormat)
+        try container.encodeIfPresent(toolParser, forKey: .toolParser)
+        try container.encodeIfPresent(chatTemplateKwargs, forKey: .chatTemplateKwargs)
     }
 
     public var structuredOutputConfiguration: StructuredOutputConfiguration? {
@@ -402,6 +489,33 @@ public struct OpenAIChatCompletionsRequest: Codable, Sendable {
 
     public var chatTemplateSelection: ChatTemplateSelection? {
         chatTemplateKwargs?.resolvedSelection()
+    }
+
+    private static func decodeStopSequences(
+        from container: KeyedDecodingContainer<CodingKeys>
+    ) throws -> [String]? {
+        if let stopValue = try container.decodeIfPresent(StopSequencesValue.self, forKey: .stop) {
+            let normalized = stopValue.normalized
+            return normalized.isEmpty ? nil : normalized
+        }
+        if let stopValue = try container.decodeIfPresent(StopSequencesValue.self, forKey: .stopSequences) {
+            let normalized = stopValue.normalized
+            return normalized.isEmpty ? nil : normalized
+        }
+        return nil
+    }
+
+    private func encodeStopSequences(
+        into container: inout KeyedEncodingContainer<CodingKeys>
+    ) throws {
+        guard let stopSequences, !stopSequences.isEmpty else {
+            return
+        }
+        if stopSequences.count == 1, let stopSequence = stopSequences.first {
+            try container.encode(StopSequencesValue.single(stopSequence), forKey: .stop)
+            return
+        }
+        try container.encode(StopSequencesValue.many(stopSequences), forKey: .stop)
     }
 }
 
@@ -1125,6 +1239,7 @@ public struct ChatRequestTranslator: Sendable {
             workflow: request.workflow,
             workflowRunID: request.workflowRunID,
             workflowNodeID: request.workflowNodeID,
+            stopSequences: request.stopSequences,
             structuredOutput: try request.structuredOutputConfiguration,
             toolParser: try request.toolParserSelection,
             chatTemplate: request.chatTemplateSelection
@@ -1163,6 +1278,7 @@ public struct ChatRequestTranslator: Sendable {
             workflow: request.workflow,
             workflowRunID: request.workflowRunID,
             workflowNodeID: request.workflowNodeID,
+            stopSequences: request.stopSequences,
             structuredOutput: try request.structuredOutputConfiguration,
             toolParser: try request.toolParserSelection,
             chatTemplate: request.chatTemplateSelection
@@ -1395,13 +1511,15 @@ public struct ChatRequestTranslator: Sendable {
         _ normalizedRequest: NormalizedTextRequest,
         modelHandle: String,
         modelToolParser: ToolParserSelection? = nil,
-        modelChatTemplatePolicy: ModelChatTemplatePolicy? = nil
+        modelChatTemplatePolicy: ModelChatTemplatePolicy? = nil,
+        modelOCRPolicy: OCRExecutionPolicy? = nil
     ) throws -> TranslatedChatRequest {
         let requestID = requestIDGenerator()
         let shapedRequest = requestShaper.shape(
             normalizedRequest,
             modelToolParser: modelToolParser,
-            modelChatTemplatePolicy: modelChatTemplatePolicy
+            modelChatTemplatePolicy: modelChatTemplatePolicy,
+            modelOCRPolicy: modelOCRPolicy
         )
 
         var generateRequest = Melix_Worker_V1_GenerateRequest()
@@ -1472,6 +1590,17 @@ public struct ChatRequestTranslator: Sendable {
             }
             if !chatTemplate.forcedKeys.isEmpty {
                 generateRequest.execution.ext["melix.chat_template_kwargs.forced_keys"] = chatTemplate.forcedKeys.joined(separator: ",")
+            }
+        }
+        if let ocrPolicy = shapedRequest.ocrPolicy {
+            generateRequest.execution.ext["melix.ocr.prompt_profile_id"] = ocrPolicy.promptProfileID
+            generateRequest.execution.ext["melix.ocr.prompt_template"] = ocrPolicy.promptTemplate
+            generateRequest.execution.ext["melix.ocr.auto_prompt"] = ocrPolicy.autoPrompt
+            generateRequest.execution.ext["melix.ocr.prompt_source"] = ocrPolicy.promptSource
+            generateRequest.execution.ext["melix.ocr.sampling_profile_id"] = ocrPolicy.samplingProfileID
+            generateRequest.execution.ext["melix.ocr.sampling_source"] = ocrPolicy.samplingSource
+            if !ocrPolicy.stopSequences.isEmpty {
+                generateRequest.execution.ext["melix.ocr.stop_sequences"] = ocrPolicy.stopSequences.joined(separator: ",")
             }
         }
         if let partialMode = shapedRequest.partialMode {

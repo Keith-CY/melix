@@ -106,6 +106,45 @@ struct DesktopFoundationViewTests {
         #expect(view.subviews.isEmpty == false)
     }
 
+    @Test("tools tab renders OCR profile metadata when selected model info includes OCR defaults")
+    @MainActor
+    func toolsTabRendersOCRProfileMetadata() async throws {
+        let client = FakeControlPlaneXPCClient()
+        var snapshot = Melix_Controlplane_V1_ServerSnapshot()
+        snapshot.serverState = .serverReady
+
+        var model = Melix_Controlplane_V1_ModelSummary()
+        model.modelID = "melix-dev-ocr"
+        model.kind = "ocr"
+        model.state = .modelDiscovered
+        model.settings.alias = "Melix Dev OCR"
+        model.settings.ext["ocr_prompt_profile_id"] = "ocr-default-v1"
+        model.settings.ext["ocr_sampling_profile_id"] = "ocr-deterministic"
+        model.settings.ext["ocr_stop_sequences"] = "<ocr:end>"
+        snapshot.models = [model]
+
+        var info = Melix_Controlplane_V1_ModelInfo()
+        info.ok = true
+        info.modelKind = "ocr"
+        info.maxContext = 4096
+        info.supportedParsers = ["text"]
+        info.supportedModalities = ["image"]
+
+        await client.configureSnapshot(snapshot)
+        await client.configureModelInfo(info)
+
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        await viewModel.fetchModelInfo(modelID: "melix-dev-ocr")
+
+        let view = hostView(DesktopToolsTabView(viewModel: viewModel))
+
+        #expect(view.subviews.isEmpty == false)
+        #expect(viewModel.selectedModelInfo?.ocrPromptProfileText == "ocr-default-v1")
+        #expect(viewModel.selectedModelInfo?.ocrSamplingProfileText == "ocr-deterministic")
+        #expect(viewModel.selectedModelInfo?.ocrStopSequencesText == "<ocr:end>")
+    }
+
     @Test("tools tab buttons dispatch inspect diagnostics bench and model operations")
     @MainActor
     func toolsTabButtonsDispatchActions() async throws {

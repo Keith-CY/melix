@@ -1,4 +1,84 @@
 import Foundation
+import MelixControlPlaneProtocol
+
+public struct OCRExecutionPolicy: Sendable, Equatable {
+    public let promptProfileID: String
+    public let promptTemplate: String
+    public let autoPrompt: String
+    public let stopSequences: [String]
+    public let samplingProfileID: String
+    public let temperature: Double?
+    public let topP: Double?
+    public let maxTokens: UInt32?
+
+    public init?(
+        modelSettings: Melix_Controlplane_V1_ModelSettings
+    ) {
+        let promptProfileID = modelSettings.ext["ocr_prompt_profile_id"]?.nilIfEmpty
+        let promptTemplate = modelSettings.ext["ocr_prompt_template"]?.nilIfEmpty
+        let autoPrompt = modelSettings.ext["ocr_auto_prompt"]?.nilIfEmpty
+        let stopSequences = Self.parseList(modelSettings.ext["ocr_stop_sequences"])
+        let samplingProfileID = modelSettings.ext["ocr_sampling_profile_id"]?.nilIfEmpty
+        let temperature = Self.parseDouble(modelSettings.ext["ocr_default_temperature"])
+        let topP = Self.parseDouble(modelSettings.ext["ocr_default_top_p"])
+        let maxTokens = Self.parseUInt32(modelSettings.ext["ocr_default_max_tokens"])
+
+        guard promptProfileID != nil
+            || promptTemplate != nil
+            || autoPrompt != nil
+            || samplingProfileID != nil
+            || !stopSequences.isEmpty
+            || temperature != nil
+            || topP != nil
+            || maxTokens != nil
+        else {
+            return nil
+        }
+
+        self.promptProfileID = promptProfileID ?? "ocr-default"
+        self.promptTemplate = promptTemplate ?? "{prompt}"
+        self.autoPrompt = autoPrompt ?? "Extract the text from the image exactly as written."
+        self.stopSequences = stopSequences
+        self.samplingProfileID = samplingProfileID ?? "ocr-default"
+        self.temperature = temperature
+        self.topP = topP
+        self.maxTokens = maxTokens
+    }
+
+    private static func parseList(_ rawValue: String?) -> [String] {
+        guard let rawValue else {
+            return []
+        }
+        return rawValue
+            .split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+    }
+
+    private static func parseDouble(_ rawValue: String?) -> Double? {
+        guard let rawValue = rawValue?.nilIfEmpty else {
+            return nil
+        }
+        return Double(rawValue)
+    }
+
+    private static func parseUInt32(_ rawValue: String?) -> UInt32? {
+        guard let rawValue = rawValue?.nilIfEmpty else {
+            return nil
+        }
+        return UInt32(rawValue)
+    }
+}
+
+public struct ResolvedOCRExecutionPolicy: Sendable, Equatable {
+    public let promptProfileID: String
+    public let promptTemplate: String
+    public let autoPrompt: String
+    public let promptSource: String
+    public let samplingProfileID: String
+    public let samplingSource: String
+    public let stopSequences: [String]
+}
 
 public struct TextRequestShaper: Sendable {
     private struct PresetDefaults: Sendable {
@@ -115,22 +195,30 @@ public struct TextRequestShaper: Sendable {
     public func shape(
         _ request: NormalizedTextRequest,
         modelToolParser: ToolParserSelection? = nil,
-        modelChatTemplatePolicy: ModelChatTemplatePolicy? = nil
+        modelChatTemplatePolicy: ModelChatTemplatePolicy? = nil,
+        modelOCRPolicy: OCRExecutionPolicy? = nil
     ) -> ShapedTextRequest {
         let preset = request.presetID.flatMap { presets[$0] }
         let workflowKind = request.workflow ?? .interactive
         let workflow = workflows[workflowKind] ?? workflows[.interactive]!
         let resolvedSessionID = request.sessionID?.nilIfEmpty
         let resolvedBranchID = request.branchID?.nilIfEmpty ?? (resolvedSessionID == nil ? nil : "branch-main")
+        let resolvedOCRPolicy = resolveOCRPolicy(
+            request: request,
+            modelPolicy: modelOCRPolicy
+        )
 
         let temperature = request.temperature
             ?? preset?.temperature
+            ?? modelOCRPolicy?.temperature
             ?? 0.7
         let topP = request.topP
             ?? preset?.topP
+            ?? modelOCRPolicy?.topP
             ?? 1.0
         let maxTokens = request.maxTokens
             ?? preset?.maxTokens
+            ?? modelOCRPolicy?.maxTokens
             ?? 256
         let saveBoundarySnapshot = request.saveBoundarySnapshot
             ?? preset?.saveBoundarySnapshot
@@ -181,7 +269,7 @@ public struct TextRequestShaper: Sendable {
             latencySensitive: workflow.latencySensitive,
             admissionPolicy: workflow.admissionPolicy,
             cachePolicy: cachePolicy,
-            stopSequences: request.stopSequences,
+            stopSequences: resolvedOCRPolicy?.stopSequences ?? request.stopSequences,
             userID: request.userID?.nilIfEmpty,
             thinking: resolvedThinking.config,
             reasoningMode: resolvedThinking.mode,
@@ -189,8 +277,36 @@ public struct TextRequestShaper: Sendable {
             structuredOutput: request.structuredOutput,
             toolParser: resolvedToolParser,
             chatTemplate: resolvedChatTemplate,
+            ocrPolicy: resolvedOCRPolicy,
             partialMode: partialMode.mode,
             assistantPrefill: partialMode.assistantPrefill
+        )
+    }
+
+    private func resolveOCRPolicy(
+        request: NormalizedTextRequest,
+        modelPolicy: OCRExecutionPolicy?
+    ) -> ResolvedOCRExecutionPolicy? {
+        guard let modelPolicy else {
+            return nil
+        }
+
+        let hasExplicitSamplingOverride = request.temperature != nil
+            || request.topP != nil
+            || request.maxTokens != nil
+            || !request.stopSequences.isEmpty
+        let hasExplicitPrompt = request.messages.contains { message in
+            message.parts.contains { !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        }
+
+        return ResolvedOCRExecutionPolicy(
+            promptProfileID: modelPolicy.promptProfileID,
+            promptTemplate: modelPolicy.promptTemplate,
+            autoPrompt: modelPolicy.autoPrompt,
+            promptSource: hasExplicitPrompt ? "request" : "model_auto_prompt",
+            samplingProfileID: modelPolicy.samplingProfileID,
+            samplingSource: hasExplicitSamplingOverride ? "request" : "model",
+            stopSequences: request.stopSequences.isEmpty ? modelPolicy.stopSequences : request.stopSequences
         )
     }
 

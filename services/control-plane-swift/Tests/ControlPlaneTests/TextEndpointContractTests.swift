@@ -229,6 +229,78 @@ struct TextEndpointContractTests {
         #expect(translated.workerRequest.execution.ext["melix.reasoning.overflow_behavior"] == "close_stream")
     }
 
+    @Test("chat completions request decodes stop aliases into normalized stop sequences")
+    func chatCompletionsRequestDecodesStopAliases() throws {
+        let decoder = JSONDecoder()
+
+        let requestWithArrayStop = try decoder.decode(
+            OpenAIChatCompletionsRequest.self,
+            from: Data(
+                """
+                {
+                  "model": "melix-dev-text",
+                  "stop": ["</final>"],
+                  "messages": [
+                    { "role": "user", "content": "Hello" }
+                  ]
+                }
+                """.utf8
+            )
+        )
+        let requestWithLegacyStopSequences = try decoder.decode(
+            OpenAIChatCompletionsRequest.self,
+            from: Data(
+                """
+                {
+                  "model": "melix-dev-text",
+                  "stop_sequences": "</legacy>",
+                  "messages": [
+                    { "role": "user", "content": "Hello" }
+                  ]
+                }
+                """.utf8
+            )
+        )
+
+        #expect(requestWithArrayStop.stopSequences == ["</final>"])
+        #expect(requestWithLegacyStopSequences.stopSequences == ["</legacy>"])
+    }
+
+    @Test("chat completions request encodes stop aliases back into OpenAI stop fields")
+    func chatCompletionsRequestEncodesStopAliases() throws {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+
+        let singleStop = OpenAIChatCompletionsRequest(
+            model: "melix-dev-text",
+            messages: [.init(role: "user", content: "Hello")],
+            stopSequences: ["</final>"]
+        )
+        let manyStops = OpenAIChatCompletionsRequest(
+            model: "melix-dev-text",
+            messages: [.init(role: "user", content: "Hello")],
+            stopSequences: ["</final>", "</alt>"]
+        )
+
+        let singleEncoded = try #require(
+            JSONSerialization.jsonObject(with: encoder.encode(singleStop)) as? [String: Any]
+        )
+        let manyEncoded = try #require(
+            JSONSerialization.jsonObject(with: encoder.encode(manyStops)) as? [String: Any]
+        )
+
+        #expect(singleEncoded["stop"] as? String == "</final>")
+        #expect(singleEncoded["stop_sequences"] == nil)
+        #expect(manyEncoded["stop"] as? [String] == ["</final>", "</alt>"])
+    }
+
+    @Test("ocr execution policy stays disabled when model settings do not declare OCR defaults")
+    func ocrExecutionPolicyStaysDisabledWithoutModelDefaults() {
+        let policy = OCRExecutionPolicy(modelSettings: .init())
+
+        #expect(policy == nil)
+    }
+
     @Test("messages request initializers encode block content and skip empty thinking blocks")
     func messagesRequestInitializersEncodeBlockContentAndSkipEmptyThinkingBlocks() throws {
         let encoder = JSONEncoder()
@@ -552,6 +624,111 @@ struct TextEndpointContractTests {
         #expect(message.parts[1].media.sourceKind == .mediaSourceUri)
         #expect(message.parts[1].media.mimeType == "image/png")
         #expect(message.parts[1].media.filename == "fixture.png")
+    }
+
+    @Test("ocr model policies shape multimodal requests with default sampling and stop sequences")
+    func ocrModelPoliciesShapeMultimodalRequestsWithDefaultSamplingAndStopSequences() throws {
+        let decoder = JSONDecoder()
+        let translator = ChatRequestTranslator()
+        let model = ModelCatalog.devOCRModel()
+
+        let request = try decoder.decode(
+            OpenAIChatCompletionsRequest.self,
+            from: Data(
+                """
+                {
+                  "model": "melix-dev-ocr",
+                  "stream": true,
+                  "messages": [
+                    {
+                      "role": "user",
+                      "content": [
+                        {
+                          "type": "input_image",
+                          "input_image": {
+                            "data": "aGVsbG8=",
+                            "mime_type": "image/png",
+                            "format": "png",
+                            "filename": "fixture.png"
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+                """.utf8
+            )
+        )
+
+        let normalized = try translator.normalizeMultimodalChat(request)
+        let translated = try translator.translate(
+            normalized,
+            modelHandle: "melix-dev-ocr::python",
+            modelOCRPolicy: OCRExecutionPolicy(modelSettings: model.settings)
+        )
+
+        #expect(translated.workerRequest.sampling.temperature == 0)
+        #expect(translated.workerRequest.sampling.topP == 1)
+        #expect(translated.workerRequest.sampling.maxOutputTokens == 256)
+        #expect(translated.workerRequest.sampling.stop == ["<ocr:end>"])
+        #expect(translated.workerRequest.execution.ext["melix.ocr.prompt_profile_id"] == "ocr-default-v1")
+        #expect(translated.workerRequest.execution.ext["melix.ocr.prompt_source"] == "model_auto_prompt")
+        #expect(translated.workerRequest.execution.ext["melix.ocr.sampling_source"] == "model")
+    }
+
+    @Test("ocr request overrides win over model sampling defaults")
+    func ocrRequestOverridesWinOverModelSamplingDefaults() throws {
+        let decoder = JSONDecoder()
+        let translator = ChatRequestTranslator()
+        let model = ModelCatalog.devOCRModel()
+
+        let request = try decoder.decode(
+            OpenAIChatCompletionsRequest.self,
+            from: Data(
+                """
+                {
+                  "model": "melix-dev-ocr",
+                  "stream": true,
+                  "temperature": 0.4,
+                  "top_p": 0.8,
+                  "max_tokens": 32,
+                  "stop": ["BODY"],
+                  "messages": [
+                    {
+                      "role": "user",
+                      "content": [
+                        { "type": "text", "text": "Read the header only." },
+                        {
+                          "type": "input_image",
+                          "input_image": {
+                            "data": "aGVsbG8=",
+                            "mime_type": "image/png",
+                            "format": "png",
+                            "filename": "fixture.png"
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+                """.utf8
+            )
+        )
+
+        let normalized = try translator.normalizeMultimodalChat(request)
+        let translated = try translator.translate(
+            normalized,
+            modelHandle: "melix-dev-ocr::python",
+            modelOCRPolicy: OCRExecutionPolicy(modelSettings: model.settings)
+        )
+
+        #expect(translated.workerRequest.sampling.temperature == 0.4)
+        #expect(translated.workerRequest.sampling.topP == 0.8)
+        #expect(translated.workerRequest.sampling.maxOutputTokens == 32)
+        #expect(translated.workerRequest.sampling.stop == ["BODY"])
+        #expect(translated.workerRequest.execution.ext["melix.ocr.prompt_source"] == "request")
+        #expect(translated.workerRequest.execution.ext["melix.ocr.sampling_source"] == "request")
+        #expect(translated.workerRequest.execution.ext["melix.ocr.stop_sequences"] == "BODY")
     }
 
     @Test("chat request contracts accept image-only multimodal content")

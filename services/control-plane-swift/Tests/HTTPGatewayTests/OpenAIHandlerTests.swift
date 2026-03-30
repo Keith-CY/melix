@@ -1029,6 +1029,51 @@ struct OpenAIHandlerTests {
         #expect(request.messages[0].parts.first?.text == "hello default stream")
     }
 
+    @Test("POST /v1/chat/completions applies model OCR defaults for OCR models")
+    func postChatCompletionsAppliesModelOCRDefaultsForOCRModels() async throws {
+        let catalog = ModelCatalog(seedModels: [warmOCRModel()])
+        let workerClient = ScriptedWorkerClient(events: [
+            makeCompletedEvent(requestID: "req-ocr-http", seq: 1, finishReason: "stop", assistantText: "done"),
+        ])
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: workerClient),
+                abortRegistry: AbortRegistry()
+            ),
+            translator: ChatRequestTranslator(requestIDGenerator: { "req-ocr-http" })
+        )
+
+        let body = try #require(
+            """
+            {
+              "model": "melix-dev-ocr",
+              "stream": true,
+              "messages": [
+                { "role": "user", "content": "Read this image." }
+              ]
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/chat/completions",
+                headers: ["content-type": "application/json"],
+                body: body
+            )
+        )
+        let request = try #require(await workerClient.lastGenerateRequest)
+
+        #expect(response.statusCode == 200)
+        #expect(request.execution.modelHandle == "melix-dev-ocr::local")
+        #expect(request.sampling.stop == ["<ocr:end>"])
+        #expect(request.execution.ext["melix.ocr.prompt_profile_id"] == "ocr-default-v1")
+        #expect(request.execution.ext["melix.ocr.prompt_source"] == "request")
+        #expect(request.execution.ext["melix.ocr.sampling_source"] == "model")
+    }
+
     @Test("responses requests preserve harmony metadata while keeping standard stream frames")
     func harmonyResponsesRequestsPreserveMetadataAndStreamFrames() async throws {
         let catalog = ModelCatalog(seedModels: [warmModel()])
@@ -4095,6 +4140,12 @@ struct OpenAIHandlerTests {
 
     private func warmEmbeddingModel() -> Melix_Controlplane_V1_ModelSummary {
         var model = ModelCatalog.devEmbeddingModel()
+        model.state = .modelWarm
+        return model
+    }
+
+    private func warmOCRModel() -> Melix_Controlplane_V1_ModelSummary {
+        var model = ModelCatalog.devOCRModel()
         model.state = .modelWarm
         return model
     }

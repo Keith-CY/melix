@@ -336,7 +336,11 @@ struct ModelCatalogTests {
         let catalog = ModelCatalog(seedModels: ModelCatalog.phaseSixContractSeedModels())
         let models = await catalog.listModels()
 
-        #expect(models.first(where: { $0.modelID == "melix-dev-ocr" })?.routeClass == .workerRoutePythonOcr)
+        let ocrModel = try #require(models.first(where: { $0.modelID == "melix-dev-ocr" }))
+        #expect(ocrModel.routeClass == .workerRoutePythonOcr)
+        #expect(ocrModel.settings.ext["ocr_prompt_profile_id"] == "ocr-default-v1")
+        #expect(ocrModel.settings.ext["ocr_sampling_profile_id"] == "ocr-deterministic")
+        #expect(ocrModel.settings.ext["ocr_stop_sequences"] == "<ocr:end>")
         #expect(models.first(where: { $0.modelID == "melix-dev-vlm" })?.capabilityClass == .modelCapabilityVlm)
         #expect(models.first(where: { $0.modelID == "melix-dev-transcribe" })?.supportedTasks == ["transcribe"])
         #expect(models.first(where: { $0.modelID == "melix-dev-speech" })?.supportedModalities == ["text", "audio"])

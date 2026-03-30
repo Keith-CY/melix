@@ -289,6 +289,18 @@ struct DesktopToolsTabView: View {
                             .foregroundStyle(.secondary)
                         Text("modalities: \(info.supportedModalities.joined(separator: ", "))")
                             .foregroundStyle(.secondary)
+                        if !info.ocrPromptProfileText.isEmpty {
+                            Text("ocr prompt profile: \(info.ocrPromptProfileText)")
+                                .foregroundStyle(.secondary)
+                        }
+                        if !info.ocrSamplingProfileText.isEmpty {
+                            Text("ocr sampling profile: \(info.ocrSamplingProfileText)")
+                                .foregroundStyle(.secondary)
+                        }
+                        if !info.ocrStopSequencesText.isEmpty {
+                            Text("ocr stop sequences: \(info.ocrStopSequencesText)")
+                                .foregroundStyle(.secondary)
+                        }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }

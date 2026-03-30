@@ -1830,6 +1830,43 @@ struct ControlPlaneServiceTests {
         }))
     }
 
+    @Test("startChat applies model OCR defaults for OCR models")
+    func startChatAppliesModelOCRDefaultsForOCRModels() async throws {
+        var ocrModel = ModelCatalog.devOCRModel()
+        ocrModel.state = .modelWarm
+        let modelCatalog = ModelCatalog(seedModels: [ocrModel])
+        let textClient = ScriptedChatWorkerClient(events: [
+            makeQueuedExecuteEvent(requestID: "chat-ocr-service"),
+            makeCompletedExecuteEvent(
+                requestID: "chat-ocr-service",
+                finishReason: "stop",
+                assistant: "done",
+                reasoning: ""
+            ),
+        ])
+        let service = ControlPlaneService(
+            modelCatalog: modelCatalog,
+            workerRegistry: WorkerRegistry(defaultTextClient: textClient),
+            chatTranslator: ChatRequestTranslator(requestIDGenerator: { "chat-ocr-service" })
+        )
+
+        let execution = try await service.startChat(
+            ControlPlaneChatRequest(
+                modelID: "melix-dev-ocr",
+                messages: [.init(role: "user", content: "Read this image.")]
+            )
+        )
+        _ = try await Array(execution.stream)
+        let generated = try #require(await textClient.lastGenerateRequest)
+
+        #expect(execution.modelID == "melix-dev-ocr")
+        #expect(generated.execution.modelHandle == "melix-dev-ocr::local")
+        #expect(generated.sampling.stop == ["<ocr:end>"])
+        #expect(generated.execution.ext["melix.ocr.prompt_profile_id"] == "ocr-default-v1")
+        #expect(generated.execution.ext["melix.ocr.prompt_source"] == "request")
+        #expect(generated.execution.ext["melix.ocr.sampling_source"] == "model")
+    }
+
     @Test("startChat lazily loads a discovered text model before streaming")
     func startChatLazilyLoadsDiscoveredTextModel() async throws {
         let modelCatalog = ModelCatalog()

@@ -234,6 +234,73 @@ def test_multimodal_operator_smoke_records_phase6_metrics() -> None:
         stack.stop()
 
 
+def test_ocr_chat_applies_default_and_overridden_stop_sequences() -> None:
+    stack = LiveMelixStack(Path(__file__).resolve().parents[2])
+    inline_image = base64.b64encode(b"title<ocr:end>body").decode("ascii")
+
+    try:
+        stack.start()
+        stack.wait_for_models(["melix-dev-ocr"])
+
+        default_status, default_payload = _post_json(
+            stack.chat_url(),
+            {
+                "model": "melix-dev-ocr",
+                "stream": True,
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "input_image",
+                                "input_image": {
+                                    "data": inline_image,
+                                    "mime_type": "image/png",
+                                    "format": "png",
+                                    "filename": "ocr-default-stop.png",
+                                },
+                            }
+                        ],
+                    }
+                ],
+            },
+        )
+        override_status, override_payload = _post_json(
+            stack.chat_url(),
+            {
+                "model": "melix-dev-ocr",
+                "stream": True,
+                "stop": ["body"],
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "input_image",
+                                "input_image": {
+                                    "data": inline_image,
+                                    "mime_type": "image/png",
+                                    "format": "png",
+                                    "filename": "ocr-request-stop.png",
+                                },
+                            }
+                        ],
+                    }
+                ],
+            },
+        )
+
+        assert default_status == 200
+        assert override_status == 200
+        assert b"title" in default_payload
+        assert b"<ocr:end>" not in default_payload
+        assert b"body" not in default_payload
+        assert b"title<ocr:end>" in override_payload
+        assert b"body" not in override_payload
+    finally:
+        stack.stop()
+
+
 def test_multimodal_chat_accepts_local_and_remote_image_urls(tmp_path: Path) -> None:
     stack = LiveMelixStack(Path(__file__).resolve().parents[2])
     local_image = tmp_path / "local-image.txt"

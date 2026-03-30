@@ -890,12 +890,18 @@ public struct OpenAIHandler: Sendable {
         } else {
             nil
         }
+        let modelOCRPolicy: OCRExecutionPolicy? = if let model = await modelCatalog.model(id: normalized.model) {
+            OCRExecutionPolicy(modelSettings: model.settings)
+        } else {
+            nil
+        }
         let shapingStartedAt = Date()
         let translated = try translator.translate(
             normalized,
             modelHandle: modelHandle,
             modelToolParser: modelToolParser,
-            modelChatTemplatePolicy: modelChatTemplatePolicy
+            modelChatTemplatePolicy: modelChatTemplatePolicy,
+            modelOCRPolicy: modelOCRPolicy
         )
         await recordShapingMetrics(for: translated, startedAt: shapingStartedAt)
         return translated

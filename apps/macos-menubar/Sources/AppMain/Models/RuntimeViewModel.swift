@@ -53,6 +53,9 @@ public struct RuntimeModelInfoState: Equatable, Sendable {
     public let maxContext: UInt32
     public let supportedParsers: [String]
     public let supportedModalities: [String]
+    public let ocrPromptProfileText: String
+    public let ocrSamplingProfileText: String
+    public let ocrStopSequencesText: String
 }
 
 public struct RuntimeModelOperationState: Equatable, Sendable {
@@ -639,6 +642,7 @@ public final class RuntimeViewModel {
         let startedAt = Date()
         do {
             let info = try await client.modelInfo(modelID: modelID)
+            let snapshotModel = latestSnapshot.models.first(where: { $0.modelID == modelID })
             await metrics.record(
                 name: "menu.model_info_ms",
                 valueMs: Date().timeIntervalSince(startedAt) * 1_000
@@ -648,7 +652,10 @@ public final class RuntimeViewModel {
                 modelKind: info.modelKind,
                 maxContext: info.maxContext,
                 supportedParsers: info.supportedParsers,
-                supportedModalities: info.supportedModalities
+                supportedModalities: info.supportedModalities,
+                ocrPromptProfileText: snapshotModel?.settings.ext["ocr_prompt_profile_id"] ?? "",
+                ocrSamplingProfileText: snapshotModel?.settings.ext["ocr_sampling_profile_id"] ?? "",
+                ocrStopSequencesText: snapshotModel?.settings.ext["ocr_stop_sequences"] ?? ""
             )
         } catch {
             recordLocalError(String(describing: error))

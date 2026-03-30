@@ -378,6 +378,14 @@ public actor ModelCatalog {
         model.supportedTasks = ["ocr"]
         model.settings.alias = "Melix Dev OCR"
         model.settings.memoryPolicy = .memoryResidencyEvictable
+        model.settings.ext["ocr_prompt_profile_id"] = "ocr-default-v1"
+        model.settings.ext["ocr_prompt_template"] = "OCR instruction: {prompt}"
+        model.settings.ext["ocr_auto_prompt"] = "Extract the text from the image exactly as written."
+        model.settings.ext["ocr_stop_sequences"] = "<ocr:end>"
+        model.settings.ext["ocr_sampling_profile_id"] = "ocr-deterministic"
+        model.settings.ext["ocr_default_temperature"] = "0.0"
+        model.settings.ext["ocr_default_top_p"] = "1.0"
+        model.settings.ext["ocr_default_max_tokens"] = "256"
         return withSynchronizedResidency(model)
     }
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+import hashlib
+from dataclasses import dataclass, replace
 from threading import Event
 
 from worker.runtime.deterministic_delay import sleep_if_configured
@@ -27,7 +28,11 @@ class DeterministicOCRRuntime:
         self._last_probe = VisionProbeSnapshot(0.0, 0, 0, 0.0)
 
     def load_model(self, model_spec):
-        return {"model_id": model_spec.model_id, "model_kind": model_spec.model_kind}
+        return {
+            "model_id": model_spec.model_id,
+            "model_kind": model_spec.model_kind,
+            "metadata": dict(model_spec.ext),
+        }
 
     def estimate_resident_bytes(self, model_spec):
         return 3072
@@ -40,10 +45,16 @@ class DeterministicOCRRuntime:
         execution_ext=None,
     ) -> PreparedVisionRequest:
         _ = template_kwargs
-        _ = execution_ext
         prepared = prepare_vision_request(messages)
         if len(prepared.images) != 1:
             raise MultimodalPreprocessError("OCR only supports single-image requests.")
+        effective_prompt = self._effective_prompt(
+            prepared.prompt_text,
+            loaded_model=loaded_model,
+            execution_ext=execution_ext,
+        )
+        if effective_prompt != prepared.prompt_text:
+            prepared = self._with_prompt_text(prepared, effective_prompt)
         self._last_probe = VisionProbeSnapshot(
             preprocess_latency_ms=prepared.preprocess_latency_ms,
             preprocess_input_bytes=prepared.preprocess_input_bytes,
@@ -65,8 +76,13 @@ class DeterministicOCRRuntime:
         cancel_event: Event,
         execution_ext=None,
     ):
-        _ = execution_ext
         extracted_text = prepared_request.images[0].decoded_text()
+        output_text = self._apply_stop_sequences(
+            extracted_text,
+            sampling=sampling,
+            loaded_model=loaded_model,
+            execution_ext=execution_ext,
+        )
         self._last_probe = VisionProbeSnapshot(
             preprocess_latency_ms=prepared_request.preprocess_latency_ms,
             preprocess_input_bytes=prepared_request.preprocess_input_bytes,
@@ -77,11 +93,101 @@ class DeterministicOCRRuntime:
         if cancel_event.is_set():
             return
         yield RuntimeTokenEvent(
-            text=extracted_text,
+            text=output_text,
             prompt_tokens=self.prompt_token_count(prepared_request),
-            completion_tokens=max(1, len(extracted_text.split())),
-            finish_reason="stop",
+            completion_tokens=max(1, len(output_text.split())),
+            finish_reason="stop_sequence" if output_text != extracted_text else "stop",
         )
 
     def last_probe_snapshot(self) -> VisionProbeSnapshot:
         return self._last_probe
+
+    def _effective_prompt(
+        self,
+        prompt_text: str,
+        *,
+        loaded_model,
+        execution_ext,
+    ) -> str:
+        metadata = self._metadata(loaded_model)
+        template = (execution_ext or {}).get("melix.ocr.prompt_template") or metadata.get("ocr_prompt_template", "")
+        auto_prompt = (execution_ext or {}).get("melix.ocr.auto_prompt") or metadata.get(
+            "ocr_auto_prompt",
+            "",
+        )
+        effective_instruction = prompt_text.strip() or auto_prompt.strip()
+        if not effective_instruction:
+            return prompt_text
+        if "{prompt}" in template:
+            return template.replace("{prompt}", effective_instruction)
+        return effective_instruction
+
+    def _apply_stop_sequences(
+        self,
+        text: str,
+        *,
+        sampling,
+        loaded_model,
+        execution_ext,
+    ) -> str:
+        stop_sequences = self._stop_sequences(
+            sampling=sampling,
+            loaded_model=loaded_model,
+            execution_ext=execution_ext,
+        )
+        if not stop_sequences:
+            return text
+
+        stop_index: int | None = None
+        for stop_sequence in stop_sequences:
+            if not stop_sequence:
+                continue
+            index = text.find(stop_sequence)
+            if index == -1:
+                continue
+            if stop_index is None or index < stop_index:
+                stop_index = index
+        if stop_index is None:
+            return text
+        return text[:stop_index]
+
+    def _stop_sequences(
+        self,
+        *,
+        sampling,
+        loaded_model,
+        execution_ext,
+    ) -> list[str]:
+        configured = getattr(sampling, "stop", None)
+        if configured:
+            return [str(item) for item in configured if str(item)]
+
+        raw_value = (execution_ext or {}).get("melix.ocr.stop_sequences")
+        if raw_value is None:
+            raw_value = self._metadata(loaded_model).get("ocr_stop_sequences", "")
+        return [item.strip() for item in raw_value.split(",") if item.strip()]
+
+    @staticmethod
+    def _metadata(loaded_model) -> dict[str, str]:
+        if isinstance(loaded_model, dict):
+            metadata = loaded_model.get("metadata")
+            if isinstance(metadata, dict):
+                return metadata
+        return {}
+
+    @staticmethod
+    def _with_prompt_text(
+        prepared_request: PreparedVisionRequest,
+        prompt_text: str,
+    ) -> PreparedVisionRequest:
+        prompt_hash_hex = hashlib.sha256(prompt_text.encode("utf-8")).hexdigest()
+        digest = hashlib.sha256()
+        digest.update(prompt_hash_hex.encode("ascii"))
+        for image in prepared_request.images:
+            digest.update(image.sha256_hex.encode("ascii"))
+        return replace(
+            prepared_request,
+            prompt_text=prompt_text,
+            prompt_hash_hex=prompt_hash_hex,
+            multimodal_hash_hex=digest.hexdigest(),
+        )

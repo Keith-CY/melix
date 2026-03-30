@@ -156,7 +156,28 @@ public actor ControlPlaneService {
         } catch {
             throw ControlPlaneChatExecutionError.unavailable
         }
-        let translated = try chatTranslator.translate(normalized, modelHandle: modelHandle)
+        let modelToolParser: ToolParserSelection? = if let model = await modelCatalog.model(id: normalized.model) {
+            ToolParserSelection(modelSettings: model.settings)
+        } else {
+            nil
+        }
+        let modelChatTemplatePolicy: ModelChatTemplatePolicy? = if let model = await modelCatalog.model(id: normalized.model) {
+            try ModelChatTemplatePolicy(modelSettings: model.settings)
+        } else {
+            nil
+        }
+        let modelOCRPolicy: OCRExecutionPolicy? = if let model = await modelCatalog.model(id: normalized.model) {
+            OCRExecutionPolicy(modelSettings: model.settings)
+        } else {
+            nil
+        }
+        let translated = try chatTranslator.translate(
+            normalized,
+            modelHandle: modelHandle,
+            modelToolParser: modelToolParser,
+            modelChatTemplatePolicy: modelChatTemplatePolicy,
+            modelOCRPolicy: modelOCRPolicy
+        )
         let execution = try await requestCoordinator.startChatCompletion(translated)
 
         let stream = AsyncThrowingStream<ControlPlaneChatStreamEvent, Error> { continuation in

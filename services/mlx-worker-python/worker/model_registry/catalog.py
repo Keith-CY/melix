@@ -80,6 +80,16 @@ class WorkerModelCatalog:
             parser_mode="text",
             reasoning_mode="off",
             max_context=4096,
+            ext={
+                "ocr_prompt_profile_id": "ocr-default-v1",
+                "ocr_prompt_template": "OCR instruction: {prompt}",
+                "ocr_auto_prompt": "Extract the text from the image exactly as written.",
+                "ocr_stop_sequences": "<ocr:end>",
+                "ocr_sampling_profile_id": "ocr-deterministic",
+                "ocr_default_temperature": "0.0",
+                "ocr_default_top_p": "1.0",
+                "ocr_default_max_tokens": "256",
+            },
         )
 
     @staticmethod

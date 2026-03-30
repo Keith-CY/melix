@@ -283,6 +283,16 @@ public struct PythonBridgeWorkerClient:
 
 public enum BootstrapWorkerPreparation {
     private static let adapterSetHashExtKey = "melix.adapter_set_hash"
+    private static let ocrExtKeys = [
+        "ocr_prompt_profile_id",
+        "ocr_prompt_template",
+        "ocr_auto_prompt",
+        "ocr_stop_sequences",
+        "ocr_sampling_profile_id",
+        "ocr_default_temperature",
+        "ocr_default_top_p",
+        "ocr_default_max_tokens",
+    ]
 
     public static func modelSpec(for modelID: String) -> Melix_Worker_V1_ModelSpec? {
         switch modelID {
@@ -313,6 +323,11 @@ public enum BootstrapWorkerPreparation {
         guard var spec = modelSpec(for: summary.modelID) else { return nil }
         if let adapterSetHash = summary.settings.ext[adapterSetHashExtKey], !adapterSetHash.isEmpty {
             spec.ext[adapterSetHashExtKey] = adapterSetHash
+        }
+        for key in ocrExtKeys {
+            if let value = summary.settings.ext[key], !value.isEmpty {
+                spec.ext[key] = value
+            }
         }
         let adaptiveThinkingMode = summary.settings.adaptiveThinking.mode
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -494,6 +509,14 @@ public enum BootstrapWorkerPreparation {
         model.parserMode = "text"
         model.reasoningMode = "off"
         model.maxContext = 4096
+        model.ext["ocr_prompt_profile_id"] = "ocr-default-v1"
+        model.ext["ocr_prompt_template"] = "OCR instruction: {prompt}"
+        model.ext["ocr_auto_prompt"] = "Extract the text from the image exactly as written."
+        model.ext["ocr_stop_sequences"] = "<ocr:end>"
+        model.ext["ocr_sampling_profile_id"] = "ocr-deterministic"
+        model.ext["ocr_default_temperature"] = "0.0"
+        model.ext["ocr_default_top_p"] = "1.0"
+        model.ext["ocr_default_max_tokens"] = "256"
         return model
     }
 

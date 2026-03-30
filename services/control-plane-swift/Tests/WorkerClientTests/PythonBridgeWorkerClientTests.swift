@@ -751,6 +751,20 @@ struct PythonBridgeWorkerClientTests {
         #expect(spec.ext["melix.adaptive_thinking.budget_tokens"] == "192")
     }
 
+    @Test("bootstrap worker preparation carries OCR profile metadata into worker model specs")
+    func bootstrapWorkerPreparationCarriesOCRProfileMetadataIntoWorkerModelSpecs() throws {
+        let summary = ModelCatalog.devOCRModel()
+
+        let spec = try #require(BootstrapWorkerPreparation.modelSpec(for: summary))
+
+        #expect(spec.modelID == "melix-dev-ocr")
+        #expect(spec.ext["ocr_prompt_profile_id"] == "ocr-default-v1")
+        #expect(spec.ext["ocr_prompt_template"] == "OCR instruction: {prompt}")
+        #expect(spec.ext["ocr_auto_prompt"] == "Extract the text from the image exactly as written.")
+        #expect(spec.ext["ocr_stop_sequences"] == "<ocr:end>")
+        #expect(spec.ext["ocr_sampling_profile_id"] == "ocr-deterministic")
+    }
+
     @Test("bridge client treats helper errors as unavailable")
     func bridgeClientTreatsHelperErrorsAsUnavailable() async throws {
         let runner = ScriptedBridgeRunner()

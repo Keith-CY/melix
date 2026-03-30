@@ -521,6 +521,67 @@ def test_generate_streams_ocr_text_from_image_only_prompt() -> None:
     assert completed.assistant_text == "image only ocr"
 
 
+def test_generate_streams_ocr_text_with_default_stop_sequence_and_request_override() -> None:
+    runtime_service, inference_service, _ = build_services()
+    model_handle = load_model(runtime_service, WorkerModelCatalog.dev_ocr_model())
+    messages = [
+        common_pb2.ChatMessage(
+            role="user",
+            parts=[
+                common_pb2.MessagePart(text="Extract the title only."),
+                common_pb2.MessagePart(
+                    image_bytes=b"title<ocr:end>body",
+                    media=common_pb2.MediaMetadata(
+                        media_type=common_pb2.MEDIA_TYPE_IMAGE,
+                        mime_type="image/png",
+                        source_kind=common_pb2.MEDIA_SOURCE_INLINE_BYTES,
+                        filename="ocr-stop.png",
+                    ),
+                ),
+            ],
+        )
+    ]
+
+    default_events = list(
+        inference_service.Generate(
+            inference_pb2.GenerateRequest(
+                execution=inference_pb2.ExecutionMetadata(
+                    id=common_pb2.RequestIdentity(request_id="ocr-default-stop"),
+                    model_handle=model_handle,
+                ),
+                messages=messages,
+                sampling=common_pb2.SamplingConfig(max_output_tokens=32),
+                stream=True,
+            ),
+            context=None,
+        )
+    )
+    override_events = list(
+        inference_service.Generate(
+            inference_pb2.GenerateRequest(
+                execution=inference_pb2.ExecutionMetadata(
+                    id=common_pb2.RequestIdentity(request_id="ocr-request-stop"),
+                    model_handle=model_handle,
+                ),
+                messages=messages,
+                sampling=common_pb2.SamplingConfig(max_output_tokens=32, stop=["body"]),
+                stream=True,
+            ),
+            context=None,
+        )
+    )
+
+    default_text = "".join(event.token_delta.text for event in default_events if event.HasField("token_delta"))
+    override_text = "".join(event.token_delta.text for event in override_events if event.HasField("token_delta"))
+    default_completed = next(event.completed for event in default_events if event.HasField("completed"))
+    override_completed = next(event.completed for event in override_events if event.HasField("completed"))
+
+    assert default_text == "title"
+    assert default_completed.assistant_text == "title"
+    assert override_text == "title<ocr:end>"
+    assert override_completed.assistant_text == "title<ocr:end>"
+
+
 def test_prepare_vision_request_accepts_remote_http_inputs(monkeypatch: pytest.MonkeyPatch) -> None:
     class FakeHeaders:
         def get_content_type(self) -> str:
@@ -747,6 +808,31 @@ def test_ocr_runtime_render_prompt_accepts_chat_template_kwargs() -> None:
 
     assert prepared.prompt_text == "Inspect the image."
     assert prepared.images[0].decoded_text() == "ocr template kwargs"
+
+
+def test_ocr_runtime_applies_model_aware_auto_prompt_when_metadata_is_present() -> None:
+    runtime = DeterministicOCRRuntime()
+    loaded_model = runtime.load_model(WorkerModelCatalog.dev_ocr_model())
+    prepared = runtime.render_prompt(
+        [
+            common_pb2.ChatMessage(
+                role="user",
+                parts=[
+                    common_pb2.MessagePart(
+                        image_bytes=b"ocr auto prompt",
+                        media=common_pb2.MediaMetadata(
+                            media_type=common_pb2.MEDIA_TYPE_IMAGE,
+                            source_kind=common_pb2.MEDIA_SOURCE_INLINE_BYTES,
+                        ),
+                    ),
+                ],
+            )
+        ],
+        loaded_model=loaded_model,
+    )
+
+    assert prepared.prompt_text == "OCR instruction: Extract the text from the image exactly as written."
+    assert prepared.images[0].decoded_text() == "ocr auto prompt"
 
 
 def test_ocr_runtime_rejects_multi_image_prompts() -> None:
