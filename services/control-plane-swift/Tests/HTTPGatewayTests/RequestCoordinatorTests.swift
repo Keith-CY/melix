@@ -618,6 +618,7 @@ struct RequestCoordinatorTests {
         cacheStats.stats.l1HitRate = 0.5
         cacheStats.stats.l2RestoreHitRate = 1.0
         cacheStats.stats.compressionRatio = 0.25
+        cacheStats.stats.activeMode = .hybrid
         await workerClient.setCacheStatsResponse(cacheStats)
 
         let sessionGraphStore = SessionGraphStore(nowUnixMs: { 11_000 })
@@ -688,9 +689,11 @@ struct RequestCoordinatorTests {
         #expect(metrics.values["cache.disk_bytes"] == 4_096)
         #expect(metrics.values["cache.hit_rate"] == 50)
         #expect(metrics.values["cache.l2_restore_hit_rate"] == 100)
+        #expect(metrics.values["cache.active_mode"] == 3)
         #expect(metrics.values["scheduler.cache_pressure"] == 0.25)
         #expect(cacheSummary.l1Bytes == 2_048)
         #expect(cacheSummary.l2Bytes == 4_096)
+        #expect(cacheSummary.activeMode == .hybrid)
     }
 
     @Test("partial restore plans are recorded in scheduler metrics and cache metadata")

@@ -2732,6 +2732,7 @@ struct OpenAIHandlerTests {
         snapshot.summary.l2RestoreHitRate = 0.75
         snapshot.summary.compressionRatio = 0.25
         snapshot.summary.quantizedBytes = 1024
+        snapshot.summary.activeMode = .rotating
 
         let handler = OpenAIHandler(
             modelCatalog: ModelCatalog(seedModels: [warmModel()]),
@@ -2754,6 +2755,7 @@ struct OpenAIHandlerTests {
         #expect(payload.contains("\"l2_restore_hit_rate\":0.75"))
         #expect(payload.contains("\"compression_ratio\":0.25"))
         #expect(payload.contains("\"quantized_bytes\":1024"))
+        #expect(payload.contains("\"active_cache_mode\":\"rotating\""))
     }
 
     @Test("GET /v1/cache/stats returns empty zeros and metrics without a cache store")
@@ -2778,6 +2780,7 @@ struct OpenAIHandlerTests {
         #expect(payload.contains("\"l1_bytes\":0"))
         #expect(payload.contains("\"l2_bytes\":0"))
         #expect(payload.contains("\"compression_ratio\":0"))
+        #expect(payload.contains("\"active_cache_mode\":\"tiered\""))
         #expect(metrics.values["operator.cache_stats_latency_ms", default: -1] >= 0)
     }
 

@@ -445,6 +445,48 @@ public enum Melix_Worker_V1_ImageArtifactRole: SwiftProtobuf.Enum, Swift.CaseIte
 
 }
 
+public enum Melix_Worker_V1_CacheMode: SwiftProtobuf.Enum, Swift.CaseIterable {
+  public typealias RawValue = Int
+  case unspecified // = 0
+  case tiered // = 1
+  case rotating // = 2
+  case hybrid // = 3
+  case UNRECOGNIZED(Int)
+
+  public init() {
+    self = .unspecified
+  }
+
+  public init?(rawValue: Int) {
+    switch rawValue {
+    case 0: self = .unspecified
+    case 1: self = .tiered
+    case 2: self = .rotating
+    case 3: self = .hybrid
+    default: self = .UNRECOGNIZED(rawValue)
+    }
+  }
+
+  public var rawValue: Int {
+    switch self {
+    case .unspecified: return 0
+    case .tiered: return 1
+    case .rotating: return 2
+    case .hybrid: return 3
+    case .UNRECOGNIZED(let i): return i
+    }
+  }
+
+  // The compiler won't synthesize support with the UNRECOGNIZED case.
+  public static let allCases: [Melix_Worker_V1_CacheMode] = [
+    .unspecified,
+    .tiered,
+    .rotating,
+    .hybrid,
+  ]
+
+}
+
 public enum Melix_Worker_V1_AdmissionState: SwiftProtobuf.Enum, Swift.CaseIterable {
   public typealias RawValue = Int
   case unspecified // = 0
@@ -788,6 +830,10 @@ public struct Melix_Worker_V1_CacheCapabilities: Sendable {
   public var kvQuantProfiles: [String] = []
 
   public var supportsBoundarySnapshots: Bool = false
+
+  public var supportedModes: [Melix_Worker_V1_CacheMode] = []
+
+  public var experimentalModes: [Melix_Worker_V1_CacheMode] = []
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -1253,6 +1299,8 @@ public struct Melix_Worker_V1_CacheHints: Sendable {
   /// Clears the value of `restorePlan`. Subsequent reads from it will return its default value.
   public mutating func clearRestorePlan() {self._restorePlan = nil}
 
+  public var cacheMode: Melix_Worker_V1_CacheMode = .unspecified
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -1518,6 +1566,11 @@ public struct Melix_Worker_V1_CacheRestorePlan: @unchecked Sendable {
     set {_uniqueStorage()._tier = newValue}
   }
 
+  public var cacheMode: Melix_Worker_V1_CacheMode {
+    get {_storage._cacheMode}
+    set {_uniqueStorage()._cacheMode = newValue}
+  }
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -1559,6 +1612,10 @@ extension Melix_Worker_V1_ImageJobState: SwiftProtobuf._ProtoNameProviding {
 
 extension Melix_Worker_V1_ImageArtifactRole: SwiftProtobuf._ProtoNameProviding {
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0IMAGE_ARTIFACT_ROLE_UNSPECIFIED\0\u{1}IMAGE_ARTIFACT_INPUT\0\u{1}IMAGE_ARTIFACT_MASK\0\u{1}IMAGE_ARTIFACT_GENERATED\0\u{1}IMAGE_ARTIFACT_EDIT_SOURCE\0\u{1}IMAGE_ARTIFACT_PREVIEW\0")
+}
+
+extension Melix_Worker_V1_CacheMode: SwiftProtobuf._ProtoNameProviding {
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0CACHE_MODE_UNSPECIFIED\0\u{1}CACHE_MODE_TIERED\0\u{1}CACHE_MODE_ROTATING\0\u{1}CACHE_MODE_HYBRID\0")
 }
 
 extension Melix_Worker_V1_AdmissionState: SwiftProtobuf._ProtoNameProviding {
@@ -1934,7 +1991,7 @@ extension Melix_Worker_V1_RuntimeCapabilities: SwiftProtobuf.Message, SwiftProto
 
 extension Melix_Worker_V1_CacheCapabilities: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".CacheCapabilities"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}supports_prefix_cache\0\u{3}supports_paged_cache\0\u{3}supports_disk_cache\0\u{3}kv_quant_profiles\0\u{3}supports_boundary_snapshots\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}supports_prefix_cache\0\u{3}supports_paged_cache\0\u{3}supports_disk_cache\0\u{3}kv_quant_profiles\0\u{3}supports_boundary_snapshots\0\u{3}supported_modes\0\u{3}experimental_modes\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -1947,6 +2004,8 @@ extension Melix_Worker_V1_CacheCapabilities: SwiftProtobuf.Message, SwiftProtobu
       case 3: try { try decoder.decodeSingularBoolField(value: &self.supportsDiskCache) }()
       case 4: try { try decoder.decodeRepeatedStringField(value: &self.kvQuantProfiles) }()
       case 5: try { try decoder.decodeSingularBoolField(value: &self.supportsBoundarySnapshots) }()
+      case 6: try { try decoder.decodeRepeatedEnumField(value: &self.supportedModes) }()
+      case 7: try { try decoder.decodeRepeatedEnumField(value: &self.experimentalModes) }()
       default: break
       }
     }
@@ -1968,6 +2027,12 @@ extension Melix_Worker_V1_CacheCapabilities: SwiftProtobuf.Message, SwiftProtobu
     if self.supportsBoundarySnapshots != false {
       try visitor.visitSingularBoolField(value: self.supportsBoundarySnapshots, fieldNumber: 5)
     }
+    if !self.supportedModes.isEmpty {
+      try visitor.visitPackedEnumField(value: self.supportedModes, fieldNumber: 6)
+    }
+    if !self.experimentalModes.isEmpty {
+      try visitor.visitPackedEnumField(value: self.experimentalModes, fieldNumber: 7)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -1977,6 +2042,8 @@ extension Melix_Worker_V1_CacheCapabilities: SwiftProtobuf.Message, SwiftProtobu
     if lhs.supportsDiskCache != rhs.supportsDiskCache {return false}
     if lhs.kvQuantProfiles != rhs.kvQuantProfiles {return false}
     if lhs.supportsBoundarySnapshots != rhs.supportsBoundarySnapshots {return false}
+    if lhs.supportedModes != rhs.supportedModes {return false}
+    if lhs.experimentalModes != rhs.experimentalModes {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -2931,7 +2998,7 @@ extension Melix_Worker_V1_ChatMessage: SwiftProtobuf.Message, SwiftProtobuf._Mes
 
 extension Melix_Worker_V1_CacheHints: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".CacheHints"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}allow_l1\0\u{3}allow_l2\0\u{3}persist_l2\0\u{3}prefer_hot_prefix\0\u{3}save_boundary_snapshot\0\u{3}restore_snapshot_id\0\u{3}pin_prefix_ids\0\u{3}cache_policy\0\u{3}preferred_block_size\0\u{3}restore_plan\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}allow_l1\0\u{3}allow_l2\0\u{3}persist_l2\0\u{3}prefer_hot_prefix\0\u{3}save_boundary_snapshot\0\u{3}restore_snapshot_id\0\u{3}pin_prefix_ids\0\u{3}cache_policy\0\u{3}preferred_block_size\0\u{3}restore_plan\0\u{3}cache_mode\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -2949,6 +3016,7 @@ extension Melix_Worker_V1_CacheHints: SwiftProtobuf.Message, SwiftProtobuf._Mess
       case 8: try { try decoder.decodeSingularStringField(value: &self.cachePolicy) }()
       case 9: try { try decoder.decodeSingularUInt32Field(value: &self.preferredBlockSize) }()
       case 10: try { try decoder.decodeSingularMessageField(value: &self._restorePlan) }()
+      case 11: try { try decoder.decodeSingularEnumField(value: &self.cacheMode) }()
       default: break
       }
     }
@@ -2989,6 +3057,9 @@ extension Melix_Worker_V1_CacheHints: SwiftProtobuf.Message, SwiftProtobuf._Mess
     try { if let v = self._restorePlan {
       try visitor.visitSingularMessageField(value: v, fieldNumber: 10)
     } }()
+    if self.cacheMode != .unspecified {
+      try visitor.visitSingularEnumField(value: self.cacheMode, fieldNumber: 11)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -3003,6 +3074,7 @@ extension Melix_Worker_V1_CacheHints: SwiftProtobuf.Message, SwiftProtobuf._Mess
     if lhs.cachePolicy != rhs.cachePolicy {return false}
     if lhs.preferredBlockSize != rhs.preferredBlockSize {return false}
     if lhs._restorePlan != rhs._restorePlan {return false}
+    if lhs.cacheMode != rhs.cacheMode {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -3447,7 +3519,7 @@ extension Melix_Worker_V1_RestoreBoundaryRef: SwiftProtobuf.Message, SwiftProtob
 
 extension Melix_Worker_V1_CacheRestorePlan: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".CacheRestorePlan"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}plan_id\0\u{1}boundary\0\u{3}block_table_id\0\u{3}block_table\0\u{1}pages\0\u{3}restored_token_count\0\u{1}partial\0\u{1}tier\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}plan_id\0\u{1}boundary\0\u{3}block_table_id\0\u{3}block_table\0\u{1}pages\0\u{3}restored_token_count\0\u{1}partial\0\u{1}tier\0\u{3}cache_mode\0")
 
   fileprivate class _StorageClass {
     var _planID: String = String()
@@ -3458,6 +3530,7 @@ extension Melix_Worker_V1_CacheRestorePlan: SwiftProtobuf.Message, SwiftProtobuf
     var _restoredTokenCount: UInt32 = 0
     var _partial: Bool = false
     var _tier: String = String()
+    var _cacheMode: Melix_Worker_V1_CacheMode = .unspecified
 
       // This property is used as the initial default value for new instances of the type.
       // The type itself is protecting the reference to its storage via CoW semantics.
@@ -3476,6 +3549,7 @@ extension Melix_Worker_V1_CacheRestorePlan: SwiftProtobuf.Message, SwiftProtobuf
       _restoredTokenCount = source._restoredTokenCount
       _partial = source._partial
       _tier = source._tier
+      _cacheMode = source._cacheMode
     }
   }
 
@@ -3502,6 +3576,7 @@ extension Melix_Worker_V1_CacheRestorePlan: SwiftProtobuf.Message, SwiftProtobuf
         case 6: try { try decoder.decodeSingularUInt32Field(value: &_storage._restoredTokenCount) }()
         case 7: try { try decoder.decodeSingularBoolField(value: &_storage._partial) }()
         case 8: try { try decoder.decodeSingularStringField(value: &_storage._tier) }()
+        case 9: try { try decoder.decodeSingularEnumField(value: &_storage._cacheMode) }()
         default: break
         }
       }
@@ -3538,6 +3613,9 @@ extension Melix_Worker_V1_CacheRestorePlan: SwiftProtobuf.Message, SwiftProtobuf
       if !_storage._tier.isEmpty {
         try visitor.visitSingularStringField(value: _storage._tier, fieldNumber: 8)
       }
+      if _storage._cacheMode != .unspecified {
+        try visitor.visitSingularEnumField(value: _storage._cacheMode, fieldNumber: 9)
+      }
     }
     try unknownFields.traverse(visitor: &visitor)
   }
@@ -3555,6 +3633,7 @@ extension Melix_Worker_V1_CacheRestorePlan: SwiftProtobuf.Message, SwiftProtobuf
         if _storage._restoredTokenCount != rhs_storage._restoredTokenCount {return false}
         if _storage._partial != rhs_storage._partial {return false}
         if _storage._tier != rhs_storage._tier {return false}
+        if _storage._cacheMode != rhs_storage._cacheMode {return false}
         return true
       }
       if !storagesAreEqual {return false}

@@ -47,6 +47,8 @@ public struct Melix_Worker_V1_CacheStats: Sendable {
 
   public var l2RestoreHitRate: Double = 0
 
+  public var activeMode: Melix_Worker_V1_CacheMode = .unspecified
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -470,7 +472,7 @@ fileprivate let _protobuf_package = "melix.worker.v1"
 
 extension Melix_Worker_V1_CacheStats: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".CacheStats"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}l1_bytes\0\u{3}l2_bytes\0\u{3}block_count\0\u{3}pinned_prefix_count\0\u{3}snapshot_count\0\u{3}l1_hit_rate\0\u{3}l2_hit_rate\0\u{3}dedup_ratio\0\u{3}quantized_bytes\0\u{3}compression_ratio\0\u{3}l2_restore_hit_rate\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}l1_bytes\0\u{3}l2_bytes\0\u{3}block_count\0\u{3}pinned_prefix_count\0\u{3}snapshot_count\0\u{3}l1_hit_rate\0\u{3}l2_hit_rate\0\u{3}dedup_ratio\0\u{3}quantized_bytes\0\u{3}compression_ratio\0\u{3}l2_restore_hit_rate\0\u{3}active_mode\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -489,6 +491,7 @@ extension Melix_Worker_V1_CacheStats: SwiftProtobuf.Message, SwiftProtobuf._Mess
       case 9: try { try decoder.decodeSingularUInt64Field(value: &self.quantizedBytes) }()
       case 10: try { try decoder.decodeSingularDoubleField(value: &self.compressionRatio) }()
       case 11: try { try decoder.decodeSingularDoubleField(value: &self.l2RestoreHitRate) }()
+      case 12: try { try decoder.decodeSingularEnumField(value: &self.activeMode) }()
       default: break
       }
     }
@@ -528,6 +531,9 @@ extension Melix_Worker_V1_CacheStats: SwiftProtobuf.Message, SwiftProtobuf._Mess
     if self.l2RestoreHitRate.bitPattern != 0 {
       try visitor.visitSingularDoubleField(value: self.l2RestoreHitRate, fieldNumber: 11)
     }
+    if self.activeMode != .unspecified {
+      try visitor.visitSingularEnumField(value: self.activeMode, fieldNumber: 12)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -543,6 +549,7 @@ extension Melix_Worker_V1_CacheStats: SwiftProtobuf.Message, SwiftProtobuf._Mess
     if lhs.quantizedBytes != rhs.quantizedBytes {return false}
     if lhs.compressionRatio != rhs.compressionRatio {return false}
     if lhs.l2RestoreHitRate != rhs.l2RestoreHitRate {return false}
+    if lhs.activeMode != rhs.activeMode {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

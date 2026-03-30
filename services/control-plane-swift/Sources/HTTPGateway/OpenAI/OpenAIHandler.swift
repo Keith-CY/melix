@@ -186,7 +186,8 @@ public struct OpenAIHandler: Sendable {
             blockCount: summary.blockCount,
             quantizedBytes: summary.quantizedBytes,
             compressionRatio: summary.compressionRatio,
-            l2RestoreHitRate: summary.l2RestoreHitRate
+            l2RestoreHitRate: summary.l2RestoreHitRate,
+            activeCacheMode: cacheModeLabel(summary.activeMode)
         )
         await metricsStore.set(
             Date().timeIntervalSince(startedAt) * 1000,
@@ -1256,6 +1257,7 @@ private struct CacheStatsResponse: Codable {
     let quantizedBytes: UInt64
     let compressionRatio: Double
     let l2RestoreHitRate: Double
+    let activeCacheMode: String
 
     enum CodingKeys: String, CodingKey {
         case l1Bytes = "l1_bytes"
@@ -1267,6 +1269,7 @@ private struct CacheStatsResponse: Codable {
         case quantizedBytes = "quantized_bytes"
         case compressionRatio = "compression_ratio"
         case l2RestoreHitRate = "l2_restore_hit_rate"
+        case activeCacheMode = "active_cache_mode"
     }
 }
 

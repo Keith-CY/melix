@@ -66,6 +66,7 @@ private struct StoredHotBlockOwnership: Sendable {
 actor HotCacheStore {
     private let diskStore: DiskCacheStore
     private let initialCacheBlocks: UInt32
+    private var activeMode: Melix_Worker_V1_CacheMode
     private var prefixesByID: [String: StoredHotPrefix] = [:]
     private var prefixIDByKey: [String: String] = [:]
     private var pagesByID: [String: StoredHotPageOwnership] = [:]
@@ -81,6 +82,11 @@ actor HotCacheStore {
     ) {
         self.diskStore = diskStore
         self.initialCacheBlocks = initialCacheBlocks
+        self.activeMode = .tiered
+    }
+
+    func setActiveMode(_ mode: Melix_Worker_V1_CacheMode) {
+        activeMode = mode == .unspecified ? .tiered : mode
     }
 
     func registerPrefill(
@@ -425,6 +431,7 @@ actor HotCacheStore {
         stats.quantizedBytes = quantizedBytes
         stats.compressionRatio = quantizedBytes > 0 ? Double(totalUnquantizedBytes) / Double(quantizedBytes) : 0
         stats.l2RestoreHitRate = diskSummary.l2RestoreHitRate
+        stats.activeMode = activeMode
         return stats
     }
 

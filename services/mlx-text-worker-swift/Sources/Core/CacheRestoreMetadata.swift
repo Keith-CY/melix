@@ -28,6 +28,7 @@ func makeCacheRestorePlan(
     blockTableID: String,
     blockTable: Melix_Worker_V1_BlockTable,
     tier: String,
+    cacheMode: Melix_Worker_V1_CacheMode = .tiered,
     partial: Bool = false,
     boundaryKind: String = "boundary_snapshot"
 ) -> Melix_Worker_V1_CacheRestorePlan {
@@ -46,6 +47,7 @@ func makeCacheRestorePlan(
     plan.restoredTokenCount = normalizedTable.totalTokenCount
     plan.partial = partial
     plan.tier = tier
+    plan.cacheMode = cacheMode
     return plan
 }
 
@@ -55,7 +57,8 @@ func makeWalkedBackCacheRestorePlan(
     blockTable: Melix_Worker_V1_BlockTable,
     cachedMessages: [Melix_Worker_V1_ChatMessage],
     requestMessages: [Melix_Worker_V1_ChatMessage],
-    tier: String
+    tier: String,
+    cacheMode: Melix_Worker_V1_CacheMode = .tiered
 ) -> Melix_Worker_V1_CacheRestorePlan? {
     let normalizedTable = normalizedBlockTable(blockTable)
     if requestMessages.isEmpty {
@@ -63,7 +66,8 @@ func makeWalkedBackCacheRestorePlan(
             snapshot: snapshot,
             blockTableID: blockTableID,
             blockTable: normalizedTable,
-            tier: tier
+            tier: tier,
+            cacheMode: cacheMode
         )
     }
 
@@ -88,7 +92,8 @@ func makeWalkedBackCacheRestorePlan(
             snapshot: snapshot,
             blockTableID: blockTableID,
             blockTable: normalizedTable,
-            tier: tier
+            tier: tier,
+            cacheMode: cacheMode
         )
     }
 
@@ -105,6 +110,7 @@ func makeWalkedBackCacheRestorePlan(
         blockTableID: "\(blockTableID)::walkback-\(safeBoundary)",
         blockTable: truncatedTable,
         tier: tier,
+        cacheMode: cacheMode,
         partial: true,
         boundaryKind: "partial_prefix_walk_back"
     )

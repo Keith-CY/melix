@@ -313,6 +313,13 @@ Melix uses three cache tiers:
 
 This layout exists to balance hot-path latency with persistence.
 
+The default cache mode should remain `tiered`, which means `L1` plus `L2` reuse without experimental eviction or rolling-window behavior. Melix should also reserve explicit protocol-visible cache modes for experimental long-context execution:
+
+- `rotating`: a rolling active-window strategy for long decode paths where earlier KV state may be compacted behind a stable restore boundary
+- `hybrid`: a mixed strategy that keeps tiered prefix reuse while allowing a rotating active window for the tail of execution
+
+These modes should be visible in runtime policy and cache metrics before they become default execution behavior. Experimental modes must remain opt-in until benchmark and recovery evidence are stable.
+
 ### Scope and Reuse Rules
 
 Cache reuse should be isolated by a scope that includes:

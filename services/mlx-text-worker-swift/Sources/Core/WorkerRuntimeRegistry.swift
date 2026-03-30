@@ -93,6 +93,8 @@ actor WorkerRuntimeRegistry {
         cache.supportsDiskCache = false
         cache.kvQuantProfiles = ["q4", "q8"]
         cache.supportsBoundarySnapshots = false
+        cache.supportedModes = CacheModePolicy.supportedModes
+        cache.experimentalModes = CacheModePolicy.experimentalModes
         capabilities.cache = cache
 
         var execution = Melix_Worker_V1_ExecutionCapabilities()
@@ -232,6 +234,8 @@ actor WorkerRuntimeRegistry {
         guard let loaded = loadedModels[modelHandle] else {
             throw WorkerRuntimeRegistryError.unknownModelHandle
         }
+        let cacheMode = CacheModePolicy.resolve(from: execution.cacheHints)
+        await cacheStore.setActiveMode(cacheMode)
 
         let resolvedAcceleration = normalizedAccelerationPolicy(acceleration)
         try enforcePrefillGuards(
@@ -260,7 +264,8 @@ actor WorkerRuntimeRegistry {
                 blockTable: restored.blockTable,
                 cachedMessages: restored.messages,
                 requestMessages: requestMessages,
-                tier: "l2"
+                tier: "l2",
+                cacheMode: cacheMode
             ) {
                 let restoreResumeHint = restoreResumeHint(
                     snapshotID: restored.snapshot.snapshotID,

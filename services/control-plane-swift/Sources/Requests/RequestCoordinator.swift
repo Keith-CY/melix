@@ -1111,6 +1111,8 @@ public actor RequestCoordinator {
         await metricsStore.set(cacheStats.stats.l1HitRate * 100, forKey: "cache.hit_rate")
         await metricsStore.set(cacheStats.stats.l2RestoreHitRate * 100, forKey: "cache.l2_restore_hit_rate")
         await metricsStore.set(cacheStats.stats.compressionRatio * 100, forKey: "cache.compression_ratio")
+        let activeCacheMode = makeControlPlaneCacheMode(from: cacheStats.stats.activeMode)
+        await metricsStore.set(cacheModeMetricValue(activeCacheMode), forKey: "cache.active_mode")
         let residentBytes = max(Double(runtimeStats.memoryEvidence.residentBytes), 1)
         let cachePressure = min(1, Double(cacheStats.stats.l1Bytes) / residentBytes)
         await metricsStore.set(cachePressure, forKey: "scheduler.cache_pressure")
@@ -1211,6 +1213,7 @@ private func controlPlaneCacheSummary(
     summary.quantizedBytes = workerStats.quantizedBytes
     summary.compressionRatio = workerStats.compressionRatio
     summary.l2RestoreHitRate = workerStats.l2RestoreHitRate
+    summary.activeMode = makeControlPlaneCacheMode(from: workerStats.activeMode)
     return summary
 }
 

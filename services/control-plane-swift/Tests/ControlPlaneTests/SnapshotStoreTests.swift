@@ -7,6 +7,27 @@ import MelixWorkerProtocol
 
 @Suite("Snapshot Stores")
 struct SnapshotStoreTests {
+    @Test("cache mode metadata bridges worker enums into labels and metrics")
+    func cacheModeMetadataBridgesEnumsAndMetrics() {
+        #expect(makeControlPlaneCacheMode(from: .tiered) == .tiered)
+        #expect(makeControlPlaneCacheMode(from: .rotating) == .rotating)
+        #expect(makeControlPlaneCacheMode(from: .hybrid) == .hybrid)
+        #expect(makeControlPlaneCacheMode(from: .unspecified) == .unspecified)
+        #expect(makeControlPlaneCacheMode(from: .UNRECOGNIZED(99)) == .unspecified)
+
+        #expect(cacheModeLabel(.tiered) == "tiered")
+        #expect(cacheModeLabel(.rotating) == "rotating")
+        #expect(cacheModeLabel(.hybrid) == "hybrid")
+        #expect(cacheModeLabel(.unspecified) == "unspecified")
+        #expect(cacheModeLabel(.UNRECOGNIZED(99)) == "unspecified")
+
+        #expect(cacheModeMetricValue(.tiered) == 1)
+        #expect(cacheModeMetricValue(.rotating) == 2)
+        #expect(cacheModeMetricValue(.hybrid) == 3)
+        #expect(cacheModeMetricValue(.unspecified) == 0)
+        #expect(cacheModeMetricValue(.UNRECOGNIZED(99)) == 0)
+    }
+
     @Test("cache metadata store defaults to an empty typed snapshot")
     func cacheMetadataStoreDefaultsToEmptySnapshot() async {
         let store = CacheMetadataStore()
@@ -19,6 +40,7 @@ struct SnapshotStoreTests {
         #expect(snapshot.summary.compressionRatio == 0)
         #expect(summary.blockCount == 0)
         #expect(summary.l2RestoreHitRate == 0)
+        #expect(summary.activeMode == .tiered)
     }
 
     @Test("cache metadata store replaces the live snapshot")
@@ -28,6 +50,7 @@ struct SnapshotStoreTests {
         snapshot.summary.l1Bytes = 128
         snapshot.summary.blockCount = 3
         snapshot.summary.quantizedBytes = 64
+        snapshot.summary.activeMode = .hybrid
 
         await store.replace(snapshot: snapshot)
 
@@ -35,6 +58,7 @@ struct SnapshotStoreTests {
         #expect(updated.summary.l1Bytes == 128)
         #expect(updated.summary.blockCount == 3)
         #expect(updated.summary.quantizedBytes == 64)
+        #expect(updated.summary.activeMode == .hybrid)
     }
 
     @Test("cache metadata store preserves restore plans across replacements and trims appended plans")

@@ -55,6 +55,7 @@ public actor CacheMetadataStore {
         summary.quantizedBytes = 0
         summary.compressionRatio = 0
         summary.l2RestoreHitRate = 0
+        summary.activeMode = .tiered
         return summary
     }
 }

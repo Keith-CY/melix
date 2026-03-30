@@ -14,6 +14,7 @@ func makeControlPlaneRestorePlan(
     plan.restoredTokenCount = workerPlan.restoredTokenCount
     plan.partial = workerPlan.partial
     plan.tier = workerPlan.tier
+    plan.cacheMode = makeControlPlaneCacheMode(from: workerPlan.cacheMode)
     return plan
 }
 

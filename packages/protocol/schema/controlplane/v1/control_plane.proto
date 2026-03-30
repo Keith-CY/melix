@@ -629,6 +629,14 @@ message CacheSummary {
   double l2_restore_hit_rate = 12;
   repeated PrefixRef hot_prefixes = 13;
   repeated SnapshotRef recent_snapshots = 14;
+  CacheMode active_mode = 15;
+}
+
+enum CacheMode {
+  CACHE_MODE_UNSPECIFIED = 0;
+  CACHE_MODE_TIERED = 1;
+  CACHE_MODE_ROTATING = 2;
+  CACHE_MODE_HYBRID = 3;
 }
 
 message CacheScopeKey {
@@ -700,6 +708,7 @@ message CacheRestorePlan {
   uint32 restored_token_count = 4;
   bool partial = 5;
   string tier = 6;
+  CacheMode cache_mode = 7;
 }
 
 message CacheScopeSummary {

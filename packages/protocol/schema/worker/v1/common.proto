@@ -95,6 +95,8 @@ message CacheCapabilities {
   bool supports_disk_cache = 3;
   repeated string kv_quant_profiles = 4;
   bool supports_boundary_snapshots = 5;
+  repeated CacheMode supported_modes = 6;
+  repeated CacheMode experimental_modes = 7;
 }
 
 message ExecutionCapabilities {
@@ -188,6 +190,13 @@ message ImageArtifactMetadata {
 message Capability {
   string name = 1;
   map<string, string> metadata = 2;
+}
+
+enum CacheMode {
+  CACHE_MODE_UNSPECIFIED = 0;
+  CACHE_MODE_TIERED = 1;
+  CACHE_MODE_ROTATING = 2;
+  CACHE_MODE_HYBRID = 3;
 }
 
 message CacheScope {
@@ -287,6 +296,7 @@ message CacheHints {
   string cache_policy = 8;
   uint32 preferred_block_size = 9;
   CacheRestorePlan restore_plan = 10;
+  CacheMode cache_mode = 11;
 }
 
 message RequestIdentity {
@@ -394,4 +404,5 @@ message CacheRestorePlan {
   uint32 restored_token_count = 6;
   bool partial = 7;
   string tier = 8;
+  CacheMode cache_mode = 9;
 }

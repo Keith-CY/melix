@@ -767,6 +767,48 @@ public enum Melix_Controlplane_V1_ImageArtifactRole: SwiftProtobuf.Enum, Swift.C
 
 }
 
+public enum Melix_Controlplane_V1_CacheMode: SwiftProtobuf.Enum, Swift.CaseIterable {
+  public typealias RawValue = Int
+  case unspecified // = 0
+  case tiered // = 1
+  case rotating // = 2
+  case hybrid // = 3
+  case UNRECOGNIZED(Int)
+
+  public init() {
+    self = .unspecified
+  }
+
+  public init?(rawValue: Int) {
+    switch rawValue {
+    case 0: self = .unspecified
+    case 1: self = .tiered
+    case 2: self = .rotating
+    case 3: self = .hybrid
+    default: self = .UNRECOGNIZED(rawValue)
+    }
+  }
+
+  public var rawValue: Int {
+    switch self {
+    case .unspecified: return 0
+    case .tiered: return 1
+    case .rotating: return 2
+    case .hybrid: return 3
+    case .UNRECOGNIZED(let i): return i
+    }
+  }
+
+  // The compiler won't synthesize support with the UNRECOGNIZED case.
+  public static let allCases: [Melix_Controlplane_V1_CacheMode] = [
+    .unspecified,
+    .tiered,
+    .rotating,
+    .hybrid,
+  ]
+
+}
+
 public struct Melix_Controlplane_V1_ErrorStatus: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
@@ -2918,6 +2960,8 @@ public struct Melix_Controlplane_V1_CacheSummary: Sendable {
 
   public var recentSnapshots: [Melix_Controlplane_V1_SnapshotRef] = []
 
+  public var activeMode: Melix_Controlplane_V1_CacheMode = .unspecified
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -3147,6 +3191,11 @@ public struct Melix_Controlplane_V1_CacheRestorePlan: @unchecked Sendable {
   public var tier: String {
     get {_storage._tier}
     set {_uniqueStorage()._tier = newValue}
+  }
+
+  public var cacheMode: Melix_Controlplane_V1_CacheMode {
+    get {_storage._cacheMode}
+    set {_uniqueStorage()._cacheMode = newValue}
   }
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
@@ -3687,6 +3736,10 @@ extension Melix_Controlplane_V1_ImageJobState: SwiftProtobuf._ProtoNameProviding
 
 extension Melix_Controlplane_V1_ImageArtifactRole: SwiftProtobuf._ProtoNameProviding {
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0IMAGE_ARTIFACT_ROLE_UNSPECIFIED\0\u{1}IMAGE_ARTIFACT_INPUT\0\u{1}IMAGE_ARTIFACT_MASK\0\u{1}IMAGE_ARTIFACT_GENERATED\0\u{1}IMAGE_ARTIFACT_EDIT_SOURCE\0\u{1}IMAGE_ARTIFACT_PREVIEW\0")
+}
+
+extension Melix_Controlplane_V1_CacheMode: SwiftProtobuf._ProtoNameProviding {
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0CACHE_MODE_UNSPECIFIED\0\u{1}CACHE_MODE_TIERED\0\u{1}CACHE_MODE_ROTATING\0\u{1}CACHE_MODE_HYBRID\0")
 }
 
 extension Melix_Controlplane_V1_ErrorStatus: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
@@ -8043,7 +8096,7 @@ extension Melix_Controlplane_V1_QueueLaneSummary: SwiftProtobuf.Message, SwiftPr
 
 extension Melix_Controlplane_V1_CacheSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".CacheSummary"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}l1_bytes\0\u{3}l2_bytes\0\u{3}l1_hit_rate\0\u{3}l2_hit_rate\0\u{3}dedup_ratio\0\u{3}pinned_prefix_hit_rate\0\u{3}checkpoint_count\0\u{3}hot_keys\0\u{3}block_count\0\u{3}quantized_bytes\0\u{3}compression_ratio\0\u{3}l2_restore_hit_rate\0\u{3}hot_prefixes\0\u{3}recent_snapshots\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}l1_bytes\0\u{3}l2_bytes\0\u{3}l1_hit_rate\0\u{3}l2_hit_rate\0\u{3}dedup_ratio\0\u{3}pinned_prefix_hit_rate\0\u{3}checkpoint_count\0\u{3}hot_keys\0\u{3}block_count\0\u{3}quantized_bytes\0\u{3}compression_ratio\0\u{3}l2_restore_hit_rate\0\u{3}hot_prefixes\0\u{3}recent_snapshots\0\u{3}active_mode\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -8065,6 +8118,7 @@ extension Melix_Controlplane_V1_CacheSummary: SwiftProtobuf.Message, SwiftProtob
       case 12: try { try decoder.decodeSingularDoubleField(value: &self.l2RestoreHitRate) }()
       case 13: try { try decoder.decodeRepeatedMessageField(value: &self.hotPrefixes) }()
       case 14: try { try decoder.decodeRepeatedMessageField(value: &self.recentSnapshots) }()
+      case 15: try { try decoder.decodeSingularEnumField(value: &self.activeMode) }()
       default: break
       }
     }
@@ -8113,6 +8167,9 @@ extension Melix_Controlplane_V1_CacheSummary: SwiftProtobuf.Message, SwiftProtob
     if !self.recentSnapshots.isEmpty {
       try visitor.visitRepeatedMessageField(value: self.recentSnapshots, fieldNumber: 14)
     }
+    if self.activeMode != .unspecified {
+      try visitor.visitSingularEnumField(value: self.activeMode, fieldNumber: 15)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -8131,6 +8188,7 @@ extension Melix_Controlplane_V1_CacheSummary: SwiftProtobuf.Message, SwiftProtob
     if lhs.l2RestoreHitRate != rhs.l2RestoreHitRate {return false}
     if lhs.hotPrefixes != rhs.hotPrefixes {return false}
     if lhs.recentSnapshots != rhs.recentSnapshots {return false}
+    if lhs.activeMode != rhs.activeMode {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -8540,7 +8598,7 @@ extension Melix_Controlplane_V1_CacheRestoreBoundary: SwiftProtobuf.Message, Swi
 
 extension Melix_Controlplane_V1_CacheRestorePlan: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".CacheRestorePlan"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}plan_id\0\u{1}boundary\0\u{3}block_table\0\u{3}restored_token_count\0\u{1}partial\0\u{1}tier\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}plan_id\0\u{1}boundary\0\u{3}block_table\0\u{3}restored_token_count\0\u{1}partial\0\u{1}tier\0\u{3}cache_mode\0")
 
   fileprivate class _StorageClass {
     var _planID: String = String()
@@ -8549,6 +8607,7 @@ extension Melix_Controlplane_V1_CacheRestorePlan: SwiftProtobuf.Message, SwiftPr
     var _restoredTokenCount: UInt32 = 0
     var _partial: Bool = false
     var _tier: String = String()
+    var _cacheMode: Melix_Controlplane_V1_CacheMode = .unspecified
 
       // This property is used as the initial default value for new instances of the type.
       // The type itself is protecting the reference to its storage via CoW semantics.
@@ -8565,6 +8624,7 @@ extension Melix_Controlplane_V1_CacheRestorePlan: SwiftProtobuf.Message, SwiftPr
       _restoredTokenCount = source._restoredTokenCount
       _partial = source._partial
       _tier = source._tier
+      _cacheMode = source._cacheMode
     }
   }
 
@@ -8589,6 +8649,7 @@ extension Melix_Controlplane_V1_CacheRestorePlan: SwiftProtobuf.Message, SwiftPr
         case 4: try { try decoder.decodeSingularUInt32Field(value: &_storage._restoredTokenCount) }()
         case 5: try { try decoder.decodeSingularBoolField(value: &_storage._partial) }()
         case 6: try { try decoder.decodeSingularStringField(value: &_storage._tier) }()
+        case 7: try { try decoder.decodeSingularEnumField(value: &_storage._cacheMode) }()
         default: break
         }
       }
@@ -8619,6 +8680,9 @@ extension Melix_Controlplane_V1_CacheRestorePlan: SwiftProtobuf.Message, SwiftPr
       if !_storage._tier.isEmpty {
         try visitor.visitSingularStringField(value: _storage._tier, fieldNumber: 6)
       }
+      if _storage._cacheMode != .unspecified {
+        try visitor.visitSingularEnumField(value: _storage._cacheMode, fieldNumber: 7)
+      }
     }
     try unknownFields.traverse(visitor: &visitor)
   }
@@ -8634,6 +8698,7 @@ extension Melix_Controlplane_V1_CacheRestorePlan: SwiftProtobuf.Message, SwiftPr
         if _storage._restoredTokenCount != rhs_storage._restoredTokenCount {return false}
         if _storage._partial != rhs_storage._partial {return false}
         if _storage._tier != rhs_storage._tier {return false}
+        if _storage._cacheMode != rhs_storage._cacheMode {return false}
         return true
       }
       if !storagesAreEqual {return false}

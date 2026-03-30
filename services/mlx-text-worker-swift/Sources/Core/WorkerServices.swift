@@ -400,6 +400,19 @@ final class CacheRPCService: Melix_Worker_V1_CacheService.SimpleServiceProtocol,
             "swift_text.cache_l2_writeback_count",
             value: Int(clamping: tierMetrics.l2WriteBackCount)
         )
+        let activeMode = response.stats.activeMode
+        metrics.set(
+            "swift_text.cache_active_mode",
+            value: CacheModePolicy.metricValue(for: activeMode)
+        )
+        metrics.set(
+            "swift_text.cache_rotating_mode_active",
+            value: activeMode == .rotating ? 1 : 0
+        )
+        metrics.set(
+            "swift_text.cache_hybrid_mode_active",
+            value: activeMode == .hybrid ? 1 : 0
+        )
         return response
     }
 

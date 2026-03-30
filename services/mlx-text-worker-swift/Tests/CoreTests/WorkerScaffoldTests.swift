@@ -191,6 +191,7 @@ final class WorkerScaffoldTests: XCTestCase {
             blockTableID: "bt-1",
             blockTable: table,
             tier: "l2",
+            cacheMode: .rotating,
             partial: false
         )
         let decoded = try Melix_Worker_V1_CacheRestorePlan(serializedBytes: plan.serializedData())
@@ -203,6 +204,7 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(decoded.pages.count, 1)
         XCTAssertEqual(decoded.restoredTokenCount, 16)
         XCTAssertEqual(decoded.tier, "l2")
+        XCTAssertEqual(decoded.cacheMode, .rotating)
     }
 
     func testCacheRestoreMetadataWalkBackReturnsFullPlanForEmptyRequestMessages() throws {
@@ -228,13 +230,62 @@ final class WorkerScaffoldTests: XCTestCase {
                 blockTable: blockTable,
                 cachedMessages: [makeUserMessage("alpha beta gamma delta")],
                 requestMessages: [],
-                tier: "l2"
+                tier: "l2",
+                cacheMode: .hybrid
             )
         )
 
         XCTAssertFalse(plan.partial)
         XCTAssertEqual(plan.blockTableID, "bt-empty-request")
         XCTAssertEqual(plan.restoredTokenCount, blockTable.totalTokenCount)
+        XCTAssertEqual(plan.cacheMode, .hybrid)
+    }
+
+    func testCacheRestoreMetadataWalkBackReturnsFullPlanForFullySharedMessages() throws {
+        let cacheKey = makeCacheKey(
+            scopeID: "scope-worker",
+            prefixSeed: "prefix-full-shared",
+            fingerprintSeed: "fingerprint-full-shared"
+        )
+        let snapshot = makeSnapshotRef(snapshotID: "snap-full-shared")
+
+        var block = Melix_Worker_V1_BlockRef()
+        block.blockID = "blk-full-shared"
+        block.tokenStart = 0
+        block.tokenEnd = 4
+        block.bytes = 256
+
+        var page = Melix_Worker_V1_PageRef()
+        page.pageID = "page-full-shared"
+        page.blockIds = ["blk-full-shared"]
+        page.tokenStart = 0
+        page.tokenEnd = 4
+        page.bytes = 256
+
+        var blockTable = Melix_Worker_V1_BlockTable()
+        blockTable.scopeID = "scope-worker"
+        blockTable.cacheKey = cacheKey
+        blockTable.blocks = [block]
+        blockTable.pages = [page]
+        blockTable.totalTokenCount = 4
+
+        let sharedMessage = makeUserMessage("alpha beta gamma delta")
+        let plan = try XCTUnwrap(
+            makeWalkedBackCacheRestorePlan(
+                snapshot: snapshot,
+                blockTableID: "bt-full-shared",
+                blockTable: blockTable,
+                cachedMessages: [sharedMessage],
+                requestMessages: [sharedMessage],
+                tier: "l2",
+                cacheMode: .rotating
+            )
+        )
+
+        XCTAssertFalse(plan.partial)
+        XCTAssertEqual(plan.blockTableID, "bt-full-shared")
+        XCTAssertEqual(plan.restoredTokenCount, 4)
+        XCTAssertEqual(plan.cacheMode, .rotating)
     }
 
     func testCacheRestoreMetadataWalkBackAccountsForMediaPrefixesAndIgnoresNilParts() throws {
@@ -404,12 +455,41 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(response.runtimeVersion, "melix-swift-text-worker/dev")
         XCTAssertTrue(response.capabilities.cache.supportsPrefixCache)
         XCTAssertEqual(response.capabilities.cache.kvQuantProfiles, ["q4", "q8"])
+        XCTAssertEqual(
+            response.capabilities.cache.supportedModes,
+            [.tiered, .rotating, .hybrid]
+        )
+        XCTAssertEqual(
+            response.capabilities.cache.experimentalModes,
+            [.rotating, .hybrid]
+        )
         XCTAssertFalse(response.capabilities.execution.supportsContinuousBatching)
         XCTAssertFalse(response.capabilities.execution.supportsSpeculativeDecoding)
         XCTAssertEqual(
             response.capabilities.ext.map { $0.name },
             ["engine_family", "accelerated_prefill", "active_kv_quantized"]
         )
+    }
+
+    func testCacheModePolicyResolvesPolicyStringsAndMapsMetrics() {
+        var hints = Melix_Worker_V1_CacheHints()
+        XCTAssertEqual(CacheModePolicy.resolve(from: hints), .tiered)
+
+        hints.cachePolicy = " rotating-long-context "
+        XCTAssertEqual(CacheModePolicy.resolve(from: hints), .rotating)
+
+        hints.cachePolicy = "hybrid-prefill"
+        XCTAssertEqual(CacheModePolicy.resolve(from: hints), .hybrid)
+
+        hints.cacheMode = .hybrid
+        hints.cachePolicy = "rotating"
+        XCTAssertEqual(CacheModePolicy.resolve(from: hints), .hybrid)
+
+        XCTAssertEqual(CacheModePolicy.metricValue(for: .tiered), 1)
+        XCTAssertEqual(CacheModePolicy.metricValue(for: .rotating), 2)
+        XCTAssertEqual(CacheModePolicy.metricValue(for: .hybrid), 3)
+        XCTAssertEqual(CacheModePolicy.metricValue(for: .unspecified), 0)
+        XCTAssertEqual(CacheModePolicy.metricValue(for: .UNRECOGNIZED(99)), 0)
     }
 
     func testRuntimeStatsAndModelListReflectEmptyWorkerState() async throws {
@@ -3674,6 +3754,71 @@ final class WorkerScaffoldTests: XCTestCase {
         }
     }
 
+    func testCacheManagementRpcsPublishActiveExperimentalCacheModeMetrics() async throws {
+        try await withTemporaryCacheRoot { cacheRoot in
+            let environment = [
+                "MELIX_DEV_TEXT_MODEL_PATH": "mlx-community/melix-dev-text-4bit",
+                "MELIX_SWIFT_TEXT_WORKER_CACHE_ROOT": cacheRoot.path,
+            ]
+            let services = makeServices(
+                environment: environment,
+                backend: DeterministicTextBackend(tokenDelayNanos: 0)
+            )
+
+            let loadResponse = try await withTestServerContextRPCCancellationHandle { handle in
+                var request = Melix_Worker_V1_LoadModelRequest()
+                request.model.modelID = "melix-dev-text"
+                return try await services.runtime.loadModel(
+                    request: request,
+                    context: ServerContext(
+                        descriptor: Melix_Worker_V1_RuntimeService.Method.LoadModel.descriptor,
+                        remotePeer: "in-process:test",
+                        localPeer: "in-process:test",
+                        cancellation: handle
+                    )
+                )
+            }
+
+            _ = try await withTestServerContextRPCCancellationHandle { handle in
+                var request = Melix_Worker_V1_PrefillRequest()
+                request.execution.id.requestID = "req-hybrid-cache-mode"
+                request.execution.modelHandle = loadResponse.modelHandle
+                request.execution.cacheHints.allowL2 = true
+                request.execution.cacheHints.persistL2 = true
+                request.execution.cacheHints.cacheMode = .hybrid
+                request.returnDecodeHandle = true
+                request.prefillStepSize = 8
+                request.messages = [makeUserMessage("activate hybrid cache mode")]
+                return try await services.inference.prefill(
+                    request: request,
+                    context: ServerContext(
+                        descriptor: Melix_Worker_V1_InferenceService.Method.Prefill.descriptor,
+                        remotePeer: "in-process:test",
+                        localPeer: "in-process:test",
+                        cancellation: handle
+                    )
+                )
+            }
+
+            let cacheResponse = try await withTestServerContextRPCCancellationHandle { handle in
+                try await services.cache.getCacheStats(
+                    request: Melix_Worker_V1_GetCacheStatsRequest(),
+                    context: ServerContext(
+                        descriptor: Melix_Worker_V1_CacheService.Method.GetCacheStats.descriptor,
+                        remotePeer: "in-process:test",
+                        localPeer: "in-process:test",
+                        cancellation: handle
+                    )
+                )
+            }
+
+            XCTAssertEqual(cacheResponse.stats.activeMode, .hybrid)
+            XCTAssertEqual(services.metrics.counters["swift_text.cache_active_mode"], 3)
+            XCTAssertEqual(services.metrics.counters["swift_text.cache_rotating_mode_active"], 0)
+            XCTAssertEqual(services.metrics.counters["swift_text.cache_hybrid_mode_active"], 1)
+        }
+    }
+
     func testBoundarySnapshotRestoreSurvivesRegistryRestartOnDeterministicBackend() async throws {
         try await withTemporaryCacheRoot { cacheRoot in
             let environment = ["MELIX_SWIFT_TEXT_WORKER_CACHE_ROOT": cacheRoot.path]
@@ -3871,6 +4016,7 @@ final class WorkerScaffoldTests: XCTestCase {
             restorePrefill.execution.id.requestID = "req-restore-target"
             restorePrefill.execution.modelHandle = loadResponse.modelHandle
             restorePrefill.execution.cacheHints.restoreSnapshotID = savedSnapshot.snapshotID
+            restorePrefill.execution.cacheHints.cacheMode = .rotating
             restorePrefill.returnDecodeHandle = true
             let restoreResponse = try await withTestServerContextRPCCancellationHandle { handle in
                 try await services.inference.prefill(
@@ -3890,6 +4036,7 @@ final class WorkerScaffoldTests: XCTestCase {
             XCTAssertFalse(restoreResponse.decodeHandle.isEmpty)
             XCTAssertTrue(restoreResponse.hasRestorePlan)
             XCTAssertFalse(restoreResponse.restorePlan.partial)
+            XCTAssertEqual(restoreResponse.restorePlan.cacheMode, .rotating)
             let restoredContext = await services.registry.prefillContext(for: restoreResponse.decodeHandle)
             XCTAssertEqual(restoredContext?.restoredSnapshotID, savedSnapshot.snapshotID)
         }
@@ -3959,6 +4106,7 @@ final class WorkerScaffoldTests: XCTestCase {
             restorePrefill.execution.id.requestID = "req-partial-target"
             restorePrefill.execution.modelHandle = loadResponse.modelHandle
             restorePrefill.execution.cacheHints.restoreSnapshotID = savedSnapshot.snapshotID
+            restorePrefill.execution.cacheHints.cachePolicy = "hybrid"
             restorePrefill.prefillStepSize = 16
             restorePrefill.returnDecodeHandle = true
             restorePrefill.messages = [makeUserMessage(divergedPrompt)]
@@ -3981,6 +4129,7 @@ final class WorkerScaffoldTests: XCTestCase {
             XCTAssertEqual(restoreResponse.restorePlan.restoredTokenCount, 16)
             XCTAssertEqual(restoreResponse.restorePlan.blockTable.totalTokenCount, 16)
             XCTAssertTrue(restoreResponse.blockTableID.contains("walkback-16"))
+            XCTAssertEqual(restoreResponse.restorePlan.cacheMode, .hybrid)
             XCTAssertEqual(restoreResponse.promptTokens, 22)
 
             let restoredContext = await services.registry.prefillContext(for: restoreResponse.decodeHandle)

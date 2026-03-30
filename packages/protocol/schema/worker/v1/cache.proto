@@ -25,6 +25,7 @@ message CacheStats {
   uint64 quantized_bytes = 9;
   double compression_ratio = 10;
   double l2_restore_hit_rate = 11;
+  CacheMode active_mode = 12;
 }
 
 message CacheScopeSummary {
