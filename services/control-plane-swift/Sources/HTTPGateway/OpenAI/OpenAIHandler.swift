@@ -864,6 +864,9 @@ public struct OpenAIHandler: Sendable {
         if translated.workerRequest.execution.ext["melix.workflow"] != nil {
             await metricsStore.increment("http.workflow_shaped_count")
         }
+        if translated.workerRequest.execution.ext["melix.harmony"] == "true" {
+            await metricsStore.increment("http.harmony_shaped_count")
+        }
     }
 
     private func streamResponse(

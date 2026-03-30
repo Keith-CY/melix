@@ -18,20 +18,59 @@ public enum TextWorkflowKind: String, Sendable, Codable, Equatable {
     case backgroundAnalysis = "background_analysis"
 }
 
+public struct HarmonyMessageMetadata: Sendable, Equatable {
+    public let channel: String?
+    public let recipient: String?
+    public let contentType: String?
+
+    public init(
+        channel: String? = nil,
+        recipient: String? = nil,
+        contentType: String? = nil
+    ) {
+        self.channel = Self.normalize(channel)
+        self.recipient = Self.normalize(recipient)
+        self.contentType = Self.normalize(contentType)
+    }
+
+    public var isEmpty: Bool {
+        channel == nil && recipient == nil && contentType == nil
+    }
+
+    private static func normalize(_ value: String?) -> String? {
+        guard let value else {
+            return nil
+        }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+}
+
 public struct NormalizedTextMessage: Sendable, Equatable {
     public let role: String
     public let parts: [Melix_Worker_V1_MessagePart]
+    public let harmonyMetadata: HarmonyMessageMetadata?
 
-    public init(role: String, content: String) {
+    public init(
+        role: String,
+        content: String,
+        harmonyMetadata: HarmonyMessageMetadata? = nil
+    ) {
         self.role = role
         var part = Melix_Worker_V1_MessagePart()
         part.text = content
         self.parts = [part]
+        self.harmonyMetadata = harmonyMetadata?.isEmpty == false ? harmonyMetadata : nil
     }
 
-    public init(role: String, parts: [Melix_Worker_V1_MessagePart]) {
+    public init(
+        role: String,
+        parts: [Melix_Worker_V1_MessagePart],
+        harmonyMetadata: HarmonyMessageMetadata? = nil
+    ) {
         self.role = role
         self.parts = parts
+        self.harmonyMetadata = harmonyMetadata?.isEmpty == false ? harmonyMetadata : nil
     }
 
     public var content: String {
@@ -349,10 +388,39 @@ public struct OpenAIResponsesRequest: Codable, Sendable {
     public struct Message: Codable, Sendable, Equatable {
         public let role: String
         public let content: String
+        public let channel: String?
+        public let recipient: String?
+        public let contentType: String?
 
-        public init(role: String, content: String) {
+        enum CodingKeys: String, CodingKey {
+            case role
+            case content
+            case channel
+            case recipient
+            case contentType = "content_type"
+        }
+
+        public init(
+            role: String,
+            content: String,
+            channel: String? = nil,
+            recipient: String? = nil,
+            contentType: String? = nil
+        ) {
             self.role = role
             self.content = content
+            self.channel = channel
+            self.recipient = recipient
+            self.contentType = contentType
+        }
+
+        public var harmonyMetadata: HarmonyMessageMetadata? {
+            let metadata = HarmonyMessageMetadata(
+                channel: channel,
+                recipient: recipient,
+                contentType: contentType
+            )
+            return metadata.isEmpty ? nil : metadata
         }
     }
 
@@ -918,7 +986,11 @@ public struct ChatRequestTranslator: Sendable {
         case let .messages(inputMessages):
             messages.append(
                 contentsOf: inputMessages.map {
-                    NormalizedTextMessage(role: $0.role, content: $0.content)
+                    NormalizedTextMessage(
+                        role: $0.role,
+                        content: $0.content,
+                        harmonyMetadata: $0.harmonyMetadata
+                    )
                 }
             )
         }
@@ -1113,6 +1185,26 @@ public struct ChatRequestTranslator: Sendable {
         generateRequest.execution.ext["melix.endpoint"] = shapedRequest.endpoint.rawValue
         if let userID = shapedRequest.userID, !userID.isEmpty {
             generateRequest.execution.ext["melix.messages.user_id"] = userID
+        }
+        var hasHarmonyMetadata = false
+        for (index, message) in shapedRequest.messages.enumerated() {
+            guard let harmonyMetadata = message.harmonyMetadata else {
+                continue
+            }
+            hasHarmonyMetadata = true
+            generateRequest.execution.ext["melix.harmony.message.\(index).role"] = message.role
+            if let channel = harmonyMetadata.channel {
+                generateRequest.execution.ext["melix.harmony.message.\(index).channel"] = channel
+            }
+            if let recipient = harmonyMetadata.recipient {
+                generateRequest.execution.ext["melix.harmony.message.\(index).recipient"] = recipient
+            }
+            if let contentType = harmonyMetadata.contentType {
+                generateRequest.execution.ext["melix.harmony.message.\(index).content_type"] = contentType
+            }
+        }
+        if hasHarmonyMetadata {
+            generateRequest.execution.ext["melix.harmony"] = "true"
         }
         if let thinking = shapedRequest.thinking, thinking.isEnabled {
             generateRequest.execution.reasoning = Melix_Worker_V1_ReasoningConfig()

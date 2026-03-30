@@ -304,6 +304,90 @@ struct TextEndpointContractTests {
         #expect(encoded.contains("\"input\":["))
     }
 
+    @Test("responses message inputs preserve harmony metadata")
+    func responsesMessageInputsPreserveHarmonyMetadata() throws {
+        let decoder = JSONDecoder()
+        let translator = ChatRequestTranslator()
+
+        let request = try decoder.decode(
+            OpenAIResponsesRequest.self,
+            from: Data(
+                """
+                {
+                  "model": "melix-dev-text",
+                  "input": [
+                    { "role": "developer", "content": "Use tools carefully." },
+                    { "role": "assistant", "channel": "analysis", "content": "Need to call the weather tool." },
+                    {
+                      "role": "assistant",
+                      "channel": "commentary",
+                      "recipient": "functions.get_weather",
+                      "content_type": "json",
+                      "content": "{\\"location\\":\\"Tokyo\\"}"
+                    },
+                    {
+                      "role": "functions.get_weather",
+                      "channel": "commentary",
+                      "recipient": "assistant",
+                      "content": "{\\"temperature\\":20}"
+                    }
+                  ]
+                }
+                """.utf8
+            )
+        )
+
+        let normalized = translator.normalize(request)
+
+        #expect(normalized.messages.count == 4)
+        #expect(normalized.messages[1].harmonyMetadata?.channel == "analysis")
+        #expect(normalized.messages[2].harmonyMetadata?.channel == "commentary")
+        #expect(normalized.messages[2].harmonyMetadata?.recipient == "functions.get_weather")
+        #expect(normalized.messages[2].harmonyMetadata?.contentType == "json")
+        #expect(normalized.messages[3].role == "functions.get_weather")
+        #expect(normalized.messages[3].harmonyMetadata?.recipient == "assistant")
+    }
+
+    @Test("harmony-compatible responses requests translate into shared execution requests")
+    func harmonyResponsesRequestsTranslateIntoSharedExecutionRequests() throws {
+        let translator = ChatRequestTranslator(requestIDGenerator: { "resp-harmony" })
+
+        let translated = try translator.translate(
+            OpenAIResponsesRequest(
+                model: "melix-dev-text",
+                input: .messages([
+                    .init(role: "developer", content: "Use tools carefully."),
+                    .init(role: "assistant", content: "Need to call the weather tool.", channel: "analysis"),
+                    .init(
+                        role: "assistant",
+                        content: #"{"location":"Tokyo"}"#,
+                        channel: "commentary",
+                        recipient: "functions.get_weather",
+                        contentType: "json"
+                    ),
+                    .init(
+                        role: "functions.get_weather",
+                        content: #"{"temperature":20}"#,
+                        channel: "commentary",
+                        recipient: "assistant"
+                    ),
+                ]),
+                stream: true
+            ),
+            modelHandle: "melix-dev-text::swift"
+        )
+
+        #expect(translated.workerRequest.execution.ext["melix.harmony"] == "true")
+        #expect(translated.workerRequest.execution.ext["melix.harmony.message.1.role"] == "assistant")
+        #expect(translated.workerRequest.execution.ext["melix.harmony.message.1.channel"] == "analysis")
+        #expect(translated.workerRequest.execution.ext["melix.harmony.message.2.channel"] == "commentary")
+        #expect(translated.workerRequest.execution.ext["melix.harmony.message.2.recipient"] == "functions.get_weather")
+        #expect(translated.workerRequest.execution.ext["melix.harmony.message.2.content_type"] == "json")
+        #expect(translated.workerRequest.execution.ext["melix.harmony.message.3.role"] == "functions.get_weather")
+        #expect(translated.workerRequest.execution.ext["melix.harmony.message.3.recipient"] == "assistant")
+        #expect(translated.workerRequest.messages[2].parts.first?.text == #"{"location":"Tokyo"}"#)
+    }
+
     @Test("chat request contracts decode multimodal content arrays and normalize worker parts")
     func chatRequestContractsDecodeMultimodalContentArrays() throws {
         let decoder = JSONDecoder()

@@ -726,6 +726,71 @@ struct OpenAIHandlerTests {
         #expect(request.messages[0].parts.first?.text == "hello default stream")
     }
 
+    @Test("responses requests preserve harmony metadata while keeping standard stream frames")
+    func harmonyResponsesRequestsPreserveMetadataAndStreamFrames() async throws {
+        let catalog = ModelCatalog(seedModels: [warmModel()])
+        let workerClient = ScriptedWorkerClient(events: [
+            makeReasoningEvent(requestID: "resp-harmony", seq: 1, text: "Need to continue."),
+            makeTokenEvent(requestID: "resp-harmony", seq: 2, text: "Final answer."),
+            makeCompletedEvent(requestID: "resp-harmony", seq: 3, finishReason: "stop", assistantText: "Final answer."),
+        ])
+        let metricsStore = MetricsStore()
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: workerClient),
+                abortRegistry: AbortRegistry(),
+                metricsStore: metricsStore
+            ),
+            metricsStore: metricsStore,
+            translator: ChatRequestTranslator(requestIDGenerator: { "resp-harmony" })
+        )
+
+        let body = try #require(
+            """
+            {
+              "model": "melix-dev-text",
+              "input": [
+                { "role": "developer", "content": "Use tools carefully." },
+                { "role": "assistant", "channel": "analysis", "content": "Need to call the weather tool." },
+                {
+                  "role": "assistant",
+                  "channel": "commentary",
+                  "recipient": "functions.get_weather",
+                  "content_type": "json",
+                  "content": "{\\"location\\":\\"Tokyo\\"}"
+                },
+                {
+                  "role": "functions.get_weather",
+                  "channel": "commentary",
+                  "recipient": "assistant",
+                  "content": "{\\"temperature\\":20}"
+                },
+                { "role": "user", "content": "Give me the final answer." }
+              ]
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(method: .post, path: "/v1/responses", headers: [:], body: body)
+        )
+        let payload = try await collectBody(response.body)
+        let request = try #require(await workerClient.lastGenerateRequest)
+        let metrics = await metricsStore.snapshot()
+
+        #expect(response.statusCode == 200)
+        #expect(payload.contains("event: response.reasoning.delta"))
+        #expect(payload.contains("event: response.output_text.delta"))
+        #expect(payload.contains("event: response.completed"))
+        #expect(request.execution.ext["melix.harmony"] == "true")
+        #expect(request.execution.ext["melix.harmony.message.1.channel"] == "analysis")
+        #expect(request.execution.ext["melix.harmony.message.2.recipient"] == "functions.get_weather")
+        #expect(request.execution.ext["melix.harmony.message.2.content_type"] == "json")
+        #expect(request.execution.ext["melix.harmony.message.3.role"] == "functions.get_weather")
+        #expect(metrics.values["http.harmony_shaped_count", default: 0] == 1)
+    }
+
     @Test("non-stream responses requests return 400")
     func nonStreamResponsesRequestsReturn400() async throws {
         let handler = OpenAIHandler(
