@@ -132,6 +132,8 @@ public struct ShapedTextRequest: Sendable, Equatable {
     public let stopSequences: [String]
     public let userID: String?
     public let thinking: MelixMessagesThinkingConfig?
+    public let reasoningMode: String
+    public let reasoningSource: String
 }
 
 public struct TranslatedChatRequest: Sendable {
@@ -544,7 +546,25 @@ public struct MelixMessagesThinkingConfig: Codable, Sendable, Equatable {
     }
 
     public var isEnabled: Bool {
-        type != "disabled"
+        normalizedType != "disabled"
+    }
+
+    public var normalizedType: String {
+        let normalized = type
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        return normalized.isEmpty ? "enabled" : normalized
+    }
+
+    public var reasoningMode: String {
+        switch normalizedType {
+        case "disabled":
+            "off"
+        case "adaptive":
+            "adaptive"
+        default:
+            "enabled"
+        }
     }
 }
 
@@ -1082,6 +1102,8 @@ public struct ChatRequestTranslator: Sendable {
         generateRequest.execution.scheduling.admissionPolicy = shapedRequest.admissionPolicy
         generateRequest.execution.cacheHints = Melix_Worker_V1_CacheHints()
         generateRequest.execution.cacheHints.cachePolicy = shapedRequest.cachePolicy ?? ""
+        generateRequest.execution.ext["melix.reasoning.mode"] = shapedRequest.reasoningMode
+        generateRequest.execution.ext["melix.reasoning.source"] = shapedRequest.reasoningSource
         if let presetID = shapedRequest.presetID {
             generateRequest.execution.ext["melix.preset_id"] = presetID
         }
@@ -1096,7 +1118,7 @@ public struct ChatRequestTranslator: Sendable {
             generateRequest.execution.reasoning = Melix_Worker_V1_ReasoningConfig()
             generateRequest.execution.reasoning.enabled = true
             generateRequest.execution.reasoning.separateStream = true
-            generateRequest.execution.ext["melix.messages.thinking.type"] = thinking.type
+            generateRequest.execution.ext["melix.messages.thinking.type"] = thinking.normalizedType
             if let budgetTokens = thinking.budgetTokens {
                 generateRequest.execution.ext["melix.messages.thinking.budget_tokens"] = String(budgetTokens)
             }

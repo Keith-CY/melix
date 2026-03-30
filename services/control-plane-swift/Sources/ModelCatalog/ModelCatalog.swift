@@ -311,11 +311,13 @@ public actor ModelCatalog {
         model.routeClass = .workerRouteSwiftText
         model.quantProfileID = "dev-q4"
         model.maxContext = 8192
-        model.features = ["chat"]
+        model.features = ["chat", "adaptive_thinking"]
         model.settings.alias = "Melix Dev Text"
         model.settings.pinOnLoad = false
         model.settings.memoryPolicy = .memoryResidencyEvictable
         model.settings.defaultAccelerationMode = .baseline
+        model.settings.adaptiveThinking.mode = "adaptive"
+        model.settings.adaptiveThinking.budgetTokens = 192
         return withSynchronizedResidency(model)
     }
 

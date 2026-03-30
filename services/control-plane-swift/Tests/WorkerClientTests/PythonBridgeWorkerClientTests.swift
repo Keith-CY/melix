@@ -686,7 +686,9 @@ struct PythonBridgeWorkerClientTests {
         let spec = try #require(BootstrapWorkerPreparation.modelSpec(for: summary))
 
         #expect(spec.modelID == "melix-dev-text")
+        #expect(spec.reasoningMode == "adaptive")
         #expect(spec.ext["melix.adapter_set_hash"] == "adapter-alpha")
+        #expect(spec.ext["melix.adaptive_thinking.budget_tokens"] == "192")
     }
 
     @Test("bridge client treats helper errors as unavailable")

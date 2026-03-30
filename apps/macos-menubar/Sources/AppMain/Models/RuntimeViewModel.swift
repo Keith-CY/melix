@@ -26,6 +26,7 @@ public struct RuntimeModelRow: Identifiable, Equatable, Sendable {
     public let maxContext: UInt32
     public let alias: String
     public let memoryPolicyText: String
+    public let adaptiveThinkingText: String
     public let accelerationModeText: String
     public let accelerationProfileID: String
     public let residencyText: String
@@ -1544,6 +1545,7 @@ func makeRuntimeModelRow(_ model: Melix_Controlplane_V1_ModelSummary) -> Runtime
         maxContext: model.maxContext,
         alias: model.settings.alias,
         memoryPolicyText: runtimeMemoryPolicyText(model.settings.memoryPolicy),
+        adaptiveThinkingText: runtimeAdaptiveThinkingText(model.settings.adaptiveThinking),
         accelerationModeText: runtimeAccelerationModeText(model.settings.defaultAccelerationMode),
         accelerationProfileID: model.settings.accelerationProfileID,
         residencyText: runtimeResidencyText(for: model),
@@ -1592,6 +1594,31 @@ private func runtimeTransitionReasonText(_ reason: String) -> String {
         return "Unknown"
     }
     return String(first).uppercased() + separatorNormalized.dropFirst()
+}
+
+private func runtimeAdaptiveThinkingText(
+    _ policy: Melix_Controlplane_V1_AdaptiveThinkingPolicy
+) -> String {
+    let normalizedMode = policy.mode
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+        .lowercased()
+    guard !normalizedMode.isEmpty, normalizedMode != "off" else {
+        return "Off"
+    }
+
+    let label = switch normalizedMode {
+    case "adaptive":
+        "Adaptive"
+    case "enabled":
+        "Enabled"
+    default:
+        String(normalizedMode.prefix(1)).uppercased() + normalizedMode.dropFirst()
+    }
+
+    guard policy.budgetTokens > 0 else {
+        return label
+    }
+    return "\(label) • \(policy.budgetTokens) tok"
 }
 
 private func runtimeActionTitle(for state: Melix_Controlplane_V1_ModelState) -> String {

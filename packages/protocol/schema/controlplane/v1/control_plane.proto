@@ -440,6 +440,12 @@ message ModelSettings {
   AccelerationMode default_acceleration_mode = 6;
   string acceleration_profile_id = 7;
   map<string, string> ext = 8;
+  AdaptiveThinkingPolicy adaptive_thinking = 9;
+}
+
+message AdaptiveThinkingPolicy {
+  string mode = 1;
+  uint32 budget_tokens = 2;
 }
 
 message ResidencySummary {

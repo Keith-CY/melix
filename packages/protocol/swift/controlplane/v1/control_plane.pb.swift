@@ -2421,6 +2421,31 @@ public struct Melix_Controlplane_V1_ModelSettings: Sendable {
 
   public var ext: Dictionary<String,String> = [:]
 
+  public var adaptiveThinking: Melix_Controlplane_V1_AdaptiveThinkingPolicy {
+    get {_adaptiveThinking ?? Melix_Controlplane_V1_AdaptiveThinkingPolicy()}
+    set {_adaptiveThinking = newValue}
+  }
+  /// Returns true if `adaptiveThinking` has been explicitly set.
+  public var hasAdaptiveThinking: Bool {self._adaptiveThinking != nil}
+  /// Clears the value of `adaptiveThinking`. Subsequent reads from it will return its default value.
+  public mutating func clearAdaptiveThinking() {self._adaptiveThinking = nil}
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+
+  fileprivate var _adaptiveThinking: Melix_Controlplane_V1_AdaptiveThinkingPolicy? = nil
+}
+
+public struct Melix_Controlplane_V1_AdaptiveThinkingPolicy: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var mode: String = String()
+
+  public var budgetTokens: UInt32 = 0
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -7090,7 +7115,7 @@ extension Melix_Controlplane_V1_ImportPreset: SwiftProtobuf.Message, SwiftProtob
 
 extension Melix_Controlplane_V1_ModelSettings: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ModelSettings"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}alias\0\u{3}type_override\0\u{3}ttl_seconds\0\u{3}pin_on_load\0\u{3}memory_policy\0\u{3}default_acceleration_mode\0\u{3}acceleration_profile_id\0\u{1}ext\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}alias\0\u{3}type_override\0\u{3}ttl_seconds\0\u{3}pin_on_load\0\u{3}memory_policy\0\u{3}default_acceleration_mode\0\u{3}acceleration_profile_id\0\u{1}ext\0\u{3}adaptive_thinking\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -7106,12 +7131,17 @@ extension Melix_Controlplane_V1_ModelSettings: SwiftProtobuf.Message, SwiftProto
       case 6: try { try decoder.decodeSingularEnumField(value: &self.defaultAccelerationMode) }()
       case 7: try { try decoder.decodeSingularStringField(value: &self.accelerationProfileID) }()
       case 8: try { try decoder.decodeMapField(fieldType: SwiftProtobuf._ProtobufMap<SwiftProtobuf.ProtobufString,SwiftProtobuf.ProtobufString>.self, value: &self.ext) }()
+      case 9: try { try decoder.decodeSingularMessageField(value: &self._adaptiveThinking) }()
       default: break
       }
     }
   }
 
   public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    // The use of inline closures is to circumvent an issue where the compiler
+    // allocates stack space for every if/case branch local when no optimizations
+    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+    // https://github.com/apple/swift-protobuf/issues/1182
     if !self.alias.isEmpty {
       try visitor.visitSingularStringField(value: self.alias, fieldNumber: 1)
     }
@@ -7136,6 +7166,9 @@ extension Melix_Controlplane_V1_ModelSettings: SwiftProtobuf.Message, SwiftProto
     if !self.ext.isEmpty {
       try visitor.visitMapField(fieldType: SwiftProtobuf._ProtobufMap<SwiftProtobuf.ProtobufString,SwiftProtobuf.ProtobufString>.self, value: self.ext, fieldNumber: 8)
     }
+    try { if let v = self._adaptiveThinking {
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 9)
+    } }()
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -7148,6 +7181,42 @@ extension Melix_Controlplane_V1_ModelSettings: SwiftProtobuf.Message, SwiftProto
     if lhs.defaultAccelerationMode != rhs.defaultAccelerationMode {return false}
     if lhs.accelerationProfileID != rhs.accelerationProfileID {return false}
     if lhs.ext != rhs.ext {return false}
+    if lhs._adaptiveThinking != rhs._adaptiveThinking {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+extension Melix_Controlplane_V1_AdaptiveThinkingPolicy: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".AdaptiveThinkingPolicy"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}mode\0\u{3}budget_tokens\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.mode) }()
+      case 2: try { try decoder.decodeSingularUInt32Field(value: &self.budgetTokens) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.mode.isEmpty {
+      try visitor.visitSingularStringField(value: self.mode, fieldNumber: 1)
+    }
+    if self.budgetTokens != 0 {
+      try visitor.visitSingularUInt32Field(value: self.budgetTokens, fieldNumber: 2)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Melix_Controlplane_V1_AdaptiveThinkingPolicy, rhs: Melix_Controlplane_V1_AdaptiveThinkingPolicy) -> Bool {
+    if lhs.mode != rhs.mode {return false}
+    if lhs.budgetTokens != rhs.budgetTokens {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

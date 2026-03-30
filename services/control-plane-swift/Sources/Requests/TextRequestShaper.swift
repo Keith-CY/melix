@@ -7,6 +7,7 @@ public struct TextRequestShaper: Sendable {
         let maxTokens: UInt32?
         let saveBoundarySnapshot: Bool?
         let cachePolicy: String?
+        let thinking: MelixMessagesThinkingConfig?
     }
 
     private struct WorkflowDefaults: Sendable {
@@ -19,13 +20,34 @@ public struct TextRequestShaper: Sendable {
         let saveBoundarySnapshot: Bool?
     }
 
+    private struct ResolvedThinking: Sendable {
+        let config: MelixMessagesThinkingConfig?
+        let mode: String
+        let source: String
+    }
+
     private let presets: [String: PresetDefaults]
     private let workflows: [TextWorkflowKind: WorkflowDefaults]
+    private let modelThinkingPolicies: [String: MelixMessagesThinkingConfig]
 
     public init(
-        presets: [String: (temperature: Double?, topP: Double?, maxTokens: UInt32?, saveBoundarySnapshot: Bool?, cachePolicy: String?)] = [
-            "deep_reasoning": (0.2, 0.95, 512, true, "reasoning-deep"),
-            "concise": (0.4, 1.0, 128, nil, nil),
+        presets: [String: (
+            temperature: Double?,
+            topP: Double?,
+            maxTokens: UInt32?,
+            saveBoundarySnapshot: Bool?,
+            cachePolicy: String?,
+            thinking: MelixMessagesThinkingConfig?
+        )] = [
+            "deep_reasoning": (
+                0.2,
+                0.95,
+                512,
+                true,
+                "reasoning-deep",
+                .init(type: "enabled", budgetTokens: 512)
+            ),
+            "concise": (0.4, 1.0, 128, nil, nil, .init(type: "disabled")),
         ],
         workflows: [TextWorkflowKind: (lane: String, priority: Int32, latencySensitive: Bool, latencyClass: String, admissionPolicy: String, cachePolicy: String?, saveBoundarySnapshot: Bool?)] = [
             .interactive: (
@@ -55,6 +77,9 @@ public struct TextRequestShaper: Sendable {
                 cachePolicy: "background-prefill",
                 saveBoundarySnapshot: false
             ),
+        ],
+        modelThinkingPolicies: [String: MelixMessagesThinkingConfig] = [
+            "melix-dev-text": .init(type: "adaptive", budgetTokens: 192),
         ]
     ) {
         self.presets = presets.mapValues { value in
@@ -63,7 +88,8 @@ public struct TextRequestShaper: Sendable {
                 topP: value.topP,
                 maxTokens: value.maxTokens,
                 saveBoundarySnapshot: value.saveBoundarySnapshot,
-                cachePolicy: value.cachePolicy
+                cachePolicy: value.cachePolicy,
+                thinking: value.thinking
             )
         }
         self.workflows = workflows.mapValues { value in
@@ -77,6 +103,7 @@ public struct TextRequestShaper: Sendable {
                 saveBoundarySnapshot: value.saveBoundarySnapshot
             )
         }
+        self.modelThinkingPolicies = modelThinkingPolicies
     }
 
     public func shape(_ request: NormalizedTextRequest) -> ShapedTextRequest {
@@ -102,6 +129,11 @@ public struct TextRequestShaper: Sendable {
         let cachePolicy = workflow.cachePolicy
             ?? preset?.cachePolicy
             ?? (resolvedSessionID == nil ? nil : "session-reuse")
+        let resolvedThinking = resolveThinking(
+            requested: request.thinking,
+            preset: preset?.thinking,
+            modelPolicy: modelThinkingPolicies[request.model]
+        )
 
         return ShapedTextRequest(
             endpoint: request.endpoint,
@@ -128,7 +160,68 @@ public struct TextRequestShaper: Sendable {
             cachePolicy: cachePolicy,
             stopSequences: request.stopSequences,
             userID: request.userID?.nilIfEmpty,
-            thinking: request.thinking
+            thinking: resolvedThinking.config,
+            reasoningMode: resolvedThinking.mode,
+            reasoningSource: resolvedThinking.source
+        )
+    }
+
+    private func resolveThinking(
+        requested: MelixMessagesThinkingConfig?,
+        preset: MelixMessagesThinkingConfig?,
+        modelPolicy: MelixMessagesThinkingConfig?
+    ) -> ResolvedThinking {
+        let fallback = preset ?? modelPolicy
+
+        if let requested {
+            let normalizedType = requested.normalizedType
+            if normalizedType == "disabled" {
+                return ResolvedThinking(
+                    config: .init(type: "disabled"),
+                    mode: "off",
+                    source: "request"
+                )
+            }
+
+            let resolved = MelixMessagesThinkingConfig(
+                type: normalizedType,
+                budgetTokens: requested.budgetTokens ?? fallback?.budgetTokens
+            )
+            return ResolvedThinking(
+                config: resolved,
+                mode: resolved.reasoningMode,
+                source: "request"
+            )
+        }
+
+        if let preset {
+            let resolved = MelixMessagesThinkingConfig(
+                type: preset.normalizedType,
+                budgetTokens: preset.budgetTokens
+            )
+            return ResolvedThinking(
+                config: resolved.normalizedType == "disabled" ? .init(type: "disabled") : resolved,
+                mode: resolved.reasoningMode,
+                source: "preset"
+            )
+        }
+
+        if let modelPolicy {
+            let resolved = MelixMessagesThinkingConfig(
+                type: modelPolicy.normalizedType,
+                budgetTokens: modelPolicy.budgetTokens
+            )
+            return ResolvedThinking(
+                config: resolved.normalizedType == "disabled" ? .init(type: "disabled") : resolved,
+                mode: resolved.reasoningMode,
+                source: "model"
+            )
+        }
+
+        return ResolvedThinking(
+            config: nil,
+            mode: "off",
+            source: "none"
         )
     }
 }

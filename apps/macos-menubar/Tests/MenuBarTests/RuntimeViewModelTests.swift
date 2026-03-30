@@ -237,6 +237,22 @@ struct RuntimeViewModelTests {
         #expect(row.memoryAlertText == "Memory protection • Memory budget exceeded")
     }
 
+    @Test("runtime model row surfaces adaptive thinking policy")
+    func runtimeModelRowSurfacesAdaptiveThinkingPolicy() {
+        let adaptive = makeModelSummary(
+            state: .modelWarm,
+            adaptiveThinkingMode: "adaptive",
+            adaptiveThinkingBudgetTokens: 192
+        )
+        let off = makeModelSummary(
+            state: .modelWarm,
+            adaptiveThinkingMode: "off"
+        )
+
+        #expect(makeRuntimeModelRow(adaptive).adaptiveThinkingText == "Adaptive • 192 tok")
+        #expect(makeRuntimeModelRow(off).adaptiveThinkingText == "Off")
+    }
+
     @Test("runtime model row falls back across residency states policies and ttl descriptors")
     func runtimeModelRowFallsBackAcrossResidencyStateBranches() {
         var explicitResidency = makeModelSummary(
@@ -1582,7 +1598,9 @@ private func makeModelSummary(
     ttlSeconds: UInt32 = 0,
     estimatedBytes: UInt64 = 0,
     inflightRequests: UInt64 = 0,
-    memoryPolicy: Melix_Controlplane_V1_MemoryResidencyPolicy = .memoryResidencyEvictable
+    memoryPolicy: Melix_Controlplane_V1_MemoryResidencyPolicy = .memoryResidencyEvictable,
+    adaptiveThinkingMode: String = "",
+    adaptiveThinkingBudgetTokens: UInt32 = 0
 ) -> Melix_Controlplane_V1_ModelSummary {
     var model = Melix_Controlplane_V1_ModelSummary()
     model.modelID = modelID
@@ -1596,6 +1614,8 @@ private func makeModelSummary(
     model.settings.pinOnLoad = pinRequested
     model.settings.ttlSeconds = ttlSeconds
     model.settings.memoryPolicy = memoryPolicy
+    model.settings.adaptiveThinking.mode = adaptiveThinkingMode
+    model.settings.adaptiveThinking.budgetTokens = adaptiveThinkingBudgetTokens
     model.residency.pinRequested = pinRequested
     model.residency.pinned = pinned
     model.residency.ttlSeconds = ttlSeconds
@@ -1629,6 +1649,7 @@ private func makeRuntimeModelRow(state: Melix_Controlplane_V1_ModelState) -> Run
         maxContext: 8192,
         alias: "Melix Dev Text",
         memoryPolicyText: "Evictable",
+        adaptiveThinkingText: "Adaptive • 192 tok",
         accelerationModeText: "Baseline",
         accelerationProfileID: "",
         residencyText: "Warm • Evictable",

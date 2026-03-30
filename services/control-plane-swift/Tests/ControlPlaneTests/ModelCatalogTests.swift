@@ -19,6 +19,8 @@ struct ModelCatalogTests {
             "melix-dev-text",
         ])
         #expect(models.first(where: { $0.modelID == "melix-dev-text" })?.capabilityClass == .modelCapabilityText)
+        #expect(models.first(where: { $0.modelID == "melix-dev-text" })?.settings.adaptiveThinking.mode == "adaptive")
+        #expect(models.first(where: { $0.modelID == "melix-dev-text" })?.settings.adaptiveThinking.budgetTokens == 192)
         #expect(models.first(where: { $0.modelID == "melix-dev-embed" })?.routeClass == .workerRoutePythonEmbedding)
         #expect(models.first(where: { $0.modelID == "melix-dev-rerank" })?.routeClass == .workerRoutePythonRerank)
         #expect(models.first(where: { $0.modelID == "melix-dev-model-ops" })?.routeClass == .workerRoutePythonModelOperations)

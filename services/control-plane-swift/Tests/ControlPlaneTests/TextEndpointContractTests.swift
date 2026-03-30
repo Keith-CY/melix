@@ -214,6 +214,52 @@ struct TextEndpointContractTests {
         #expect(normalized.messages[2].parts.map(\.text) == ["Ship it."])
     }
 
+    @Test("adaptive thinking resolves from model policy preset and request overrides")
+    func adaptiveThinkingResolvesFromModelPolicyPresetAndRequestOverrides() throws {
+        let translator = ChatRequestTranslator(requestIDGenerator: { "adaptive-thinking" })
+
+        let modelPolicyTranslated = try translator.translate(
+            OpenAIChatCompletionsRequest(
+                model: "melix-dev-text",
+                messages: [.init(role: "user", content: "Explain the cache.")]
+            ),
+            modelHandle: "melix-dev-text::swift"
+        )
+        #expect(modelPolicyTranslated.workerRequest.execution.reasoning.enabled)
+        #expect(modelPolicyTranslated.workerRequest.execution.ext["melix.reasoning.mode"] == "adaptive")
+        #expect(modelPolicyTranslated.workerRequest.execution.ext["melix.reasoning.source"] == "model")
+        #expect(modelPolicyTranslated.workerRequest.execution.ext["melix.messages.thinking.type"] == "adaptive")
+        #expect(modelPolicyTranslated.workerRequest.execution.ext["melix.messages.thinking.budget_tokens"] == "192")
+
+        let presetTranslated = try translator.translate(
+            OpenAIChatCompletionsRequest(
+                model: "melix-dev-text",
+                messages: [.init(role: "user", content: "Explain the cache.")],
+                presetID: "deep_reasoning"
+            ),
+            modelHandle: "melix-dev-text::swift"
+        )
+        #expect(presetTranslated.workerRequest.execution.reasoning.enabled)
+        #expect(presetTranslated.workerRequest.execution.ext["melix.reasoning.mode"] == "enabled")
+        #expect(presetTranslated.workerRequest.execution.ext["melix.reasoning.source"] == "preset")
+        #expect(presetTranslated.workerRequest.execution.ext["melix.messages.thinking.type"] == "enabled")
+        #expect(presetTranslated.workerRequest.execution.ext["melix.messages.thinking.budget_tokens"] == "512")
+
+        let requestOverrideTranslated = try translator.translate(
+            MelixMessagesRequest(
+                model: "melix-dev-text",
+                messages: [.init(role: "user", content: "Explain the cache.")],
+                thinking: .init(type: "disabled"),
+                presetID: "deep_reasoning"
+            ),
+            modelHandle: "melix-dev-text::swift"
+        )
+        #expect(requestOverrideTranslated.workerRequest.execution.reasoning.enabled == false)
+        #expect(requestOverrideTranslated.workerRequest.execution.ext["melix.reasoning.mode"] == "off")
+        #expect(requestOverrideTranslated.workerRequest.execution.ext["melix.reasoning.source"] == "request")
+        #expect(requestOverrideTranslated.workerRequest.execution.ext["melix.messages.thinking.type"] == nil)
+    }
+
     @Test("responses input supports both text and message-array codable forms")
     func responsesInputSupportsTextAndMessageArrays() throws {
         let decoder = JSONDecoder()

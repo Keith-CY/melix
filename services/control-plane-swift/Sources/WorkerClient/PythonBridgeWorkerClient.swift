@@ -339,6 +339,15 @@ public enum BootstrapWorkerPreparation {
         if let adapterSetHash = summary.settings.ext[adapterSetHashExtKey], !adapterSetHash.isEmpty {
             spec.ext[adapterSetHashExtKey] = adapterSetHash
         }
+        let adaptiveThinkingMode = summary.settings.adaptiveThinking.mode
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        if !adaptiveThinkingMode.isEmpty {
+            spec.reasoningMode = adaptiveThinkingMode
+        }
+        if summary.settings.adaptiveThinking.budgetTokens > 0 {
+            spec.ext["melix.adaptive_thinking.budget_tokens"] = String(summary.settings.adaptiveThinking.budgetTokens)
+        }
         return spec
     }
 
