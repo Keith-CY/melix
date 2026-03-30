@@ -32,8 +32,15 @@ class DeterministicOCRRuntime:
     def estimate_resident_bytes(self, model_spec):
         return 3072
 
-    def render_prompt(self, messages, loaded_model=None, template_kwargs=None) -> PreparedVisionRequest:
+    def render_prompt(
+        self,
+        messages,
+        loaded_model=None,
+        template_kwargs=None,
+        execution_ext=None,
+    ) -> PreparedVisionRequest:
         _ = template_kwargs
+        _ = execution_ext
         prepared = prepare_vision_request(messages)
         if len(prepared.images) != 1:
             raise MultimodalPreprocessError("OCR only supports single-image requests.")
@@ -56,7 +63,9 @@ class DeterministicOCRRuntime:
         prepared_request: PreparedVisionRequest,
         sampling,
         cancel_event: Event,
+        execution_ext=None,
     ):
+        _ = execution_ext
         extracted_text = prepared_request.images[0].decoded_text()
         self._last_probe = VisionProbeSnapshot(
             preprocess_latency_ms=prepared_request.preprocess_latency_ms,

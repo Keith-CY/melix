@@ -21,6 +21,13 @@ class RuntimeTokenEvent:
     finish_reason: str | None = None
 
 
+@dataclass
+class RuntimeToolCallEvent:
+    call_id: str
+    tool_name: str
+    arguments_json_fragment: str
+
+
 class AutoMLXBackend:
     runtime_name = "mlx-unavailable"
 
@@ -138,7 +145,9 @@ class MLXTextRuntime:
         messages,
         loaded_model: Any | None = None,
         template_kwargs: dict[str, Any] | None = None,
+        execution_ext: dict[str, str] | None = None,
     ) -> str:
+        _ = execution_ext
         tokenizer = None
         if isinstance(loaded_model, dict):
             tokenizer = loaded_model.get("tokenizer")
@@ -168,9 +177,17 @@ class MLXTextRuntime:
                     chunks.append(part.text)
         return "\n".join(chunks)
 
-    def generate_tokens(self, loaded_model, prompt: str, sampling, cancel_event):
+    def generate_tokens(
+        self,
+        loaded_model,
+        prompt: str,
+        sampling,
+        cancel_event,
+        execution_ext: dict[str, str] | None = None,
+    ):
+        _ = execution_ext
         for item in self._backend.generate_tokens(loaded_model, prompt, sampling, cancel_event):
-            if isinstance(item, RuntimeTokenEvent):
+            if isinstance(item, (RuntimeTokenEvent, RuntimeToolCallEvent)):
                 yield item
             else:
                 yield RuntimeTokenEvent(text=str(item))

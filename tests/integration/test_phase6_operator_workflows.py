@@ -414,3 +414,53 @@ def test_multimodal_chat_accepts_image_only_requests() -> None:
         assert b"Prompt: Describe the image." in vlm_payload
     finally:
         stack.stop()
+
+
+def test_multimodal_chat_streams_tool_calls_with_shared_parser_selection(tmp_path: Path) -> None:
+    stack = LiveMelixStack(Path(__file__).resolve().parents[2])
+    image_path = tmp_path / "tool-image.txt"
+    image_path.write_text("phase6 tool image")
+
+    try:
+        stack.start()
+        stack.wait_for_models(["melix-dev-vlm"])
+
+        status, payload = _post_json(
+            stack.chat_url(),
+            {
+                "model": "melix-dev-vlm",
+                "stream": True,
+                "tool_parser": {
+                    "mode": "qwen",
+                    "namespaces": ["tools.vision"],
+                    "xml_fallback": True,
+                },
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": "Call the tool for this image."},
+                            {
+                                "type": "input_image",
+                                "input_image": {
+                                    "url": str(image_path),
+                                    "mime_type": "image/png",
+                                    "filename": image_path.name,
+                                },
+                            },
+                        ],
+                    }
+                ],
+            },
+        )
+
+        assert status == 200
+        assert b"event: tool_call" in payload
+        assert b"\"parser_mode\":\"qwen\"" in payload
+        assert b"\"parser_namespaces\":[\"tools.vision\"]" in payload
+        assert b"\"parser_fallback_mode\":\"xml\"" in payload
+        assert b"\"name\":\"tools.vision\"" in payload
+        assert b"Image content: phase6 tool image" in payload
+        assert b"Prompt: Call the tool for this image." in payload
+    finally:
+        stack.stop()

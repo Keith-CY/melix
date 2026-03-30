@@ -25,11 +25,22 @@ Connect VLM execution to the shared tool parser layer so vision requests can par
 
 ## Verification
 
-- `make py-test`
-- `make swift-test`
-- `make integration-test`
+- `PYTHONPATH=.:services/mlx-worker-python uv run --project services/mlx-worker-python pytest services/mlx-worker-python/tests/test_generate_stream.py services/mlx-worker-python/tests/test_vision_runtime.py -q`
+- `PYTHONPATH=.:services/mlx-worker-python uv run --project services/mlx-worker-python pytest tests/integration/test_phase6_operator_workflows.py -k 'tool_calls_with_shared_parser_selection' -q`
+- `swift test --package-path services/control-plane-swift --filter 'ToolParserRegistryTests|RequestCoordinatorTests'`
+- `PYTHONPATH=.:services/mlx-worker-python uv run --project services/mlx-worker-python coverage run --include='services/mlx-worker-python/worker/engine/engine_core.py,services/mlx-worker-python/worker/runtime/deterministic_ocr_runtime.py,services/mlx-worker-python/worker/runtime/deterministic_vlm_runtime.py,services/mlx-worker-python/worker/runtime/mlx_text_runtime.py,services/mlx-worker-python/tests/test_generate_stream.py,services/mlx-worker-python/tests/test_vision_runtime.py,tests/integration/test_phase6_operator_workflows.py' -m pytest services/mlx-worker-python/tests/test_generate_stream.py services/mlx-worker-python/tests/test_vision_runtime.py tests/integration/test_phase6_operator_workflows.py`
+- `PYTHONPATH=.:services/mlx-worker-python uv run --project services/mlx-worker-python coverage json -o /tmp/m4_6_python_coverage.json`
+- `python3 scripts/python_changed_line_coverage.py --coverage-json /tmp/m4_6_python_coverage.json services/mlx-worker-python/worker/engine/engine_core.py services/mlx-worker-python/worker/runtime/deterministic_ocr_runtime.py services/mlx-worker-python/worker/runtime/deterministic_vlm_runtime.py services/mlx-worker-python/worker/runtime/mlx_text_runtime.py services/mlx-worker-python/tests/test_vision_runtime.py tests/integration/test_phase6_operator_workflows.py`
+- `swift test --enable-code-coverage --package-path services/control-plane-swift --filter 'ToolParserRegistryTests|RequestCoordinatorTests'`
+- `python3 scripts/swift_changed_line_coverage.py --binary services/control-plane-swift/.build/arm64-apple-macosx/debug/MelixControlPlanePackageTests.xctest/Contents/MacOS/MelixControlPlanePackageTests --profdata services/control-plane-swift/.build/arm64-apple-macosx/debug/codecov/default.profdata services/control-plane-swift/Tests/ControlPlaneTests/ToolParserRegistryTests.swift services/control-plane-swift/Tests/HTTPGatewayTests/RequestCoordinatorTests.swift`
 
 ## Acceptance
 
 - VLM requests can emit parsed tool calls through the shared parser stack
 - stream and completed behaviors are integration-tested
+
+## Metrics Report
+
+- Python changed-line coverage: `97.35% (110/113)` across the touched worker and integration files
+- Swift changed-line coverage: `99.34% (151/152)` across the touched control-plane test files
+- Live multimodal parser integration: `1/1` targeted phase 6 operator workflow test passed

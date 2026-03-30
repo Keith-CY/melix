@@ -6,6 +6,7 @@ import json
 from packages.protocol.python.worker.v1 import common_pb2, inference_pb2
 
 from worker.registry import WorkerRegistry
+from worker.runtime.mlx_text_runtime import RuntimeToolCallEvent, RuntimeTokenEvent
 
 
 class EngineCore:
@@ -22,7 +23,7 @@ class EngineCore:
         runtime = self._registry.runtime_for_loaded_model(loaded_model)
         state = self._registry.start_request(request_id, runtime_kind=loaded_model.runtime_kind)
         prompt_tokens_default = 0
-        last_runtime_event = None
+        last_token_event: RuntimeTokenEvent | None = None
 
         try:
             template_kwargs = self._chat_template_kwargs(request)
@@ -30,6 +31,7 @@ class EngineCore:
                 request.messages,
                 loaded_model=loaded_model.runtime_model,
                 template_kwargs=template_kwargs,
+                execution_ext=request.execution.ext,
             )
             prompt_tokens_default = (
                 runtime.prompt_token_count(prompt)
@@ -41,10 +43,24 @@ class EngineCore:
                 prompt,
                 request.sampling,
                 state.cancel_event,
+                execution_ext=request.execution.ext,
             ):
-                last_runtime_event = runtime_event
                 if state.cancel_event.is_set():
                     break
+                if isinstance(runtime_event, RuntimeToolCallEvent):
+                    yield inference_pb2.ExecuteEvent(
+                        request_id=request_id,
+                        execution_kind="generate",
+                        seq=state.allocate_seq(),
+                        tool_call_delta=inference_pb2.ToolCallDelta(
+                            call_id=runtime_event.call_id,
+                            tool_name=runtime_event.tool_name,
+                            arguments_json_fragment=runtime_event.arguments_json_fragment,
+                        ),
+                    )
+                    continue
+
+                last_token_event = runtime_event
                 if runtime_event.text:
                     state.append_token(runtime_event.text)
                     yield inference_pb2.ExecuteEvent(
@@ -57,9 +73,9 @@ class EngineCore:
             if request.return_usage and not state.cancel_event.is_set():
                 prompt_tokens = prompt_tokens_default
                 completion_tokens = len(state.emitted_tokens)
-                if last_runtime_event is not None:
-                    prompt_tokens = int(last_runtime_event.prompt_tokens or prompt_tokens)
-                    completion_tokens = int(last_runtime_event.completion_tokens or completion_tokens)
+                if last_token_event is not None:
+                    prompt_tokens = int(last_token_event.prompt_tokens or prompt_tokens)
+                    completion_tokens = int(last_token_event.completion_tokens or completion_tokens)
                 yield inference_pb2.ExecuteEvent(
                     request_id=request_id,
                     execution_kind="generate",
@@ -73,8 +89,8 @@ class EngineCore:
             finish_reason = "stop"
             if state.cancel_event.is_set():
                 finish_reason = "cancelled"
-            elif last_runtime_event is not None and last_runtime_event.finish_reason:
-                finish_reason = last_runtime_event.finish_reason
+            elif last_token_event is not None and last_token_event.finish_reason:
+                finish_reason = last_token_event.finish_reason
 
             yield inference_pb2.ExecuteEvent(
                 request_id=request_id,
@@ -119,6 +135,7 @@ class EngineCore:
                 request_id=request_id,
                 loaded_model=loaded_model.runtime_model,
                 messages=request.messages,
+                execution_ext=request.execution.ext,
             )
             response = inference_pb2.PrefillResponse(
                 ok=True,
@@ -180,7 +197,7 @@ class EngineCore:
             return
 
         self._registry.set_request_phase(request_id, "decode")
-        last_runtime_event = None
+        last_token_event: RuntimeTokenEvent | None = None
 
         try:
             yield inference_pb2.ExecuteEvent(
@@ -200,10 +217,26 @@ class EngineCore:
                 request.decode_handle,
                 request.sampling,
                 state.cancel_event,
+                execution_ext=request.execution.ext,
             ):
-                last_runtime_event = runtime_event
                 if state.cancel_event.is_set():
                     break
+                if isinstance(runtime_event, RuntimeToolCallEvent):
+                    yield inference_pb2.ExecuteEvent(
+                        request_id=request_id,
+                        execution_kind="decode",
+                        seq=state.allocate_seq(),
+                        phase=common_pb2.EXECUTION_DECODING,
+                        admission_state=common_pb2.ADMISSION_ADMITTED,
+                        tool_call_delta=inference_pb2.ToolCallDelta(
+                            call_id=runtime_event.call_id,
+                            tool_name=runtime_event.tool_name,
+                            arguments_json_fragment=runtime_event.arguments_json_fragment,
+                        ),
+                    )
+                    continue
+
+                last_token_event = runtime_event
                 if runtime_event.text:
                     state.append_token(runtime_event.text)
                     yield inference_pb2.ExecuteEvent(
@@ -223,10 +256,10 @@ class EngineCore:
                     phase=common_pb2.EXECUTION_DECODING,
                     admission_state=common_pb2.ADMISSION_ADMITTED,
                     usage_delta=inference_pb2.UsageDelta(
-                        prompt_tokens=int(last_runtime_event.prompt_tokens or 0) if last_runtime_event is not None else 0,
+                        prompt_tokens=int(last_token_event.prompt_tokens or 0) if last_token_event is not None else 0,
                         completion_tokens=(
-                            int(last_runtime_event.completion_tokens or len(state.emitted_tokens))
-                            if last_runtime_event is not None
+                            int(last_token_event.completion_tokens or len(state.emitted_tokens))
+                            if last_token_event is not None
                             else len(state.emitted_tokens)
                         ),
                     ),
@@ -235,8 +268,8 @@ class EngineCore:
             finish_reason = "stop"
             if state.cancel_event.is_set():
                 finish_reason = "cancelled"
-            elif last_runtime_event is not None and last_runtime_event.finish_reason:
-                finish_reason = last_runtime_event.finish_reason
+            elif last_token_event is not None and last_token_event.finish_reason:
+                finish_reason = last_token_event.finish_reason
 
             yield inference_pb2.ExecuteEvent(
                 request_id=request_id,

@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 from threading import Event
 
 from packages.protocol.python.worker.v1 import cache_pb2, common_pb2
 
 from worker.runtime.deterministic_delay import sleep_if_configured
-from worker.runtime.mlx_text_runtime import RuntimeTokenEvent
+from worker.runtime.mlx_text_runtime import RuntimeTokenEvent, RuntimeToolCallEvent
 from worker.runtime.multimodal_preprocessing import PreparedVisionRequest, prepare_vision_request
 
 
@@ -45,6 +46,7 @@ class VisionPrefillSession:
     prompt_tokens: int
     response_text: str
     completion_tokens: int
+    tool_call_event: RuntimeToolCallEvent | None
     cache_identity: str
     scope_id: str
     cache_hit: bool
@@ -77,10 +79,20 @@ class DeterministicVLMRuntime:
     def estimate_resident_bytes(self, model_spec):
         return 4096
 
-    def render_prompt(self, messages, loaded_model=None, template_kwargs=None) -> PreparedVisionRequest:
+    def render_prompt(
+        self,
+        messages,
+        loaded_model=None,
+        template_kwargs=None,
+        execution_ext: dict[str, str] | None = None,
+    ) -> PreparedVisionRequest:
         _ = template_kwargs
         prepared = prepare_vision_request(messages)
-        cache_identity, scope_id = self._cache_identity(prepared, loaded_model)
+        cache_identity, scope_id = self._cache_identity(
+            prepared,
+            loaded_model,
+            execution_ext=execution_ext,
+        )
         self._last_probe = VisionProbeSnapshot(
             preprocess_latency_ms=prepared.preprocess_latency_ms,
             preprocess_input_bytes=prepared.preprocess_input_bytes,
@@ -102,10 +114,19 @@ class DeterministicVLMRuntime:
         request_id: str,
         loaded_model,
         messages,
+        execution_ext: dict[str, str] | None = None,
     ) -> VisionPrefillSession:
-        prepared_request = self.render_prompt(messages, loaded_model=loaded_model)
+        prepared_request = self.render_prompt(
+            messages,
+            loaded_model=loaded_model,
+            execution_ext=execution_ext,
+        )
         prompt_tokens = self.prompt_token_count(prepared_request)
-        cache_identity, scope_id = self._cache_identity(prepared_request, loaded_model)
+        cache_identity, scope_id = self._cache_identity(
+            prepared_request,
+            loaded_model,
+            execution_ext=execution_ext,
+        )
         self._cache_lookups += 1
         cache_hit = cache_identity in self._cache_entries
         if cache_hit:
@@ -116,6 +137,7 @@ class DeterministicVLMRuntime:
                 prepared_request=prepared_request,
                 cache_identity=cache_identity,
                 scope_id=scope_id,
+                execution_ext=execution_ext,
             )
         block_table_id = f"vlm-block:{cache_identity[:16]}"
         block_table = self._block_table_for(
@@ -126,12 +148,14 @@ class DeterministicVLMRuntime:
         )
         decode_handle = f"vlm:{request_id}"
         response_text = self._response_text(prepared_request)
+        tool_call_event = self._tool_call_event(prepared_request, execution_ext)
         session = VisionPrefillSession(
             decode_handle=decode_handle,
             prepared_request=prepared_request,
             prompt_tokens=prompt_tokens,
             response_text=response_text,
             completion_tokens=max(1, len(response_text.split())),
+            tool_call_event=tool_call_event,
             cache_identity=cache_identity,
             scope_id=scope_id,
             cache_hit=cache_hit,
@@ -156,8 +180,10 @@ class DeterministicVLMRuntime:
         decode_handle: str,
         sampling,
         cancel_event: Event,
+        execution_ext: dict[str, str] | None = None,
     ):
         _ = sampling
+        _ = execution_ext
         session = self._decode_sessions.pop(decode_handle, None)
         if session is None:
             raise KeyError(f"Unknown decode handle: {decode_handle}")
@@ -177,6 +203,10 @@ class DeterministicVLMRuntime:
         sleep_if_configured("vlm")
         if cancel_event.is_set():
             return
+        if session.tool_call_event is not None:
+            yield session.tool_call_event
+            if cancel_event.is_set():
+                return
         yield RuntimeTokenEvent(
             text=session.response_text,
             prompt_tokens=session.prompt_tokens,
@@ -190,9 +220,14 @@ class DeterministicVLMRuntime:
         prepared_request: PreparedVisionRequest,
         sampling,
         cancel_event: Event,
+        execution_ext: dict[str, str] | None = None,
     ):
         response = self._response_text(prepared_request)
-        cache_identity, scope_id = self._cache_identity(prepared_request, loaded_model)
+        cache_identity, scope_id = self._cache_identity(
+            prepared_request,
+            loaded_model,
+            execution_ext=execution_ext,
+        )
         self._cache_lookups += 1
         cache_hit = cache_identity in self._cache_entries
         if cache_hit:
@@ -203,6 +238,7 @@ class DeterministicVLMRuntime:
                 prepared_request=prepared_request,
                 cache_identity=cache_identity,
                 scope_id=scope_id,
+                execution_ext=execution_ext,
             )
             self._cache_entries[cache_identity] = entry
         self._last_probe = VisionProbeSnapshot(
@@ -221,6 +257,11 @@ class DeterministicVLMRuntime:
         sleep_if_configured("vlm")
         if cancel_event.is_set():
             return
+        tool_call_event = self._tool_call_event(prepared_request, execution_ext)
+        if tool_call_event is not None:
+            yield tool_call_event
+            if cancel_event.is_set():
+                return
         yield RuntimeTokenEvent(
             text=response,
             prompt_tokens=self.prompt_token_count(prepared_request),
@@ -295,11 +336,12 @@ class DeterministicVLMRuntime:
         self,
         prepared_request: PreparedVisionRequest,
         loaded_model,
+        execution_ext: dict[str, str] | None = None,
     ) -> tuple[str, str]:
         model_id = self._metadata_value(loaded_model, "model_id", "melix-dev-vlm")
         revision = self._metadata_value(loaded_model, "revision", "dev")
         quant_profile_id = self._metadata_value(loaded_model, "quant_profile_id", "q8")
-        parser_mode = self._metadata_value(loaded_model, "parser_mode", "text")
+        parser_mode = self._effective_parser_mode(loaded_model, execution_ext)
         reasoning_mode = self._metadata_value(loaded_model, "reasoning_mode", "off")
         identity = ":".join(
             [
@@ -353,6 +395,7 @@ class DeterministicVLMRuntime:
         prepared_request: PreparedVisionRequest,
         cache_identity: str,
         scope_id: str,
+        execution_ext: dict[str, str] | None = None,
     ) -> VisionCacheEntry:
         prompt_bytes = len(prepared_request.prompt_text.encode("utf-8"))
         token_length = self.prompt_token_count(prepared_request)
@@ -367,7 +410,7 @@ class DeterministicVLMRuntime:
             revision=self._metadata_value(loaded_model, "revision", "dev"),
             tokenizer_hash=self._metadata_value(loaded_model, "tokenizer_hash", "tok-vlm-dev"),
             quant_profile_id=self._metadata_value(loaded_model, "quant_profile_id", "q8"),
-            parser_mode=self._metadata_value(loaded_model, "parser_mode", "text"),
+            parser_mode=self._effective_parser_mode(loaded_model, execution_ext),
             reasoning_mode=self._metadata_value(loaded_model, "reasoning_mode", "off"),
             multimodal_adapter_hash=self._metadata_value(loaded_model, "multimodal_adapter_hash", ""),
             prompt_hash_hex=prepared_request.prompt_hash_hex,
@@ -388,6 +431,49 @@ class DeterministicVLMRuntime:
         ]
         image_lines.append(f"Prompt: {prompt_text}")
         return "\n".join(image_lines)
+
+    def _tool_call_event(
+        self,
+        prepared_request: PreparedVisionRequest,
+        execution_ext: dict[str, str] | None,
+    ) -> RuntimeToolCallEvent | None:
+        parser_mode = (execution_ext or {}).get("melix.tool_parser.mode", "").strip()
+        if not parser_mode:
+            return None
+
+        prompt_text = prepared_request.prompt_text or "Describe the image."
+        if "tool" not in prompt_text.lower():
+            return None
+
+        namespaces = [
+            item.strip()
+            for item in (execution_ext or {}).get("melix.tool_parser.namespaces", "").split(",")
+            if item.strip()
+        ]
+        tool_name = namespaces[0] if namespaces else "vision.inspect"
+        arguments_json = json.dumps(
+            {
+                "prompt": prompt_text,
+                "image_count": len(prepared_request.images),
+            },
+            separators=(",", ":"),
+        )
+        return RuntimeToolCallEvent(
+            call_id=f"tool:{prepared_request.multimodal_hash_hex[:12]}",
+            tool_name=tool_name,
+            arguments_json_fragment=arguments_json,
+        )
+
+    def _effective_parser_mode(
+        self,
+        loaded_model,
+        execution_ext: dict[str, str] | None,
+    ) -> str:
+        if execution_ext is not None:
+            mode = execution_ext.get("melix.tool_parser.mode", "").strip()
+            if mode:
+                return mode
+        return self._metadata_value(loaded_model, "parser_mode", "text")
 
     @staticmethod
     def _metadata_value(loaded_model, key: str, default: str) -> str:

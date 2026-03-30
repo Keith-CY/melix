@@ -102,6 +102,58 @@ struct ToolParserRegistryTests {
         #expect(translated.workerRequest.execution.ext["melix.tool_parser.fallback_mode"] == "xml")
     }
 
+    @Test("multimodal tool parser requests preserve image parts and execution metadata")
+    func multimodalToolParserRequestsPreserveImagePartsAndExecutionMetadata() throws {
+        let decoder = JSONDecoder()
+        let translator = ChatRequestTranslator(requestIDGenerator: { "chat-vlm-tool-parser" })
+        let request = try decoder.decode(
+            OpenAIChatCompletionsRequest.self,
+            from: Data(
+                """
+                {
+                  "model": "melix-dev-vlm",
+                  "stream": true,
+                  "tool_parser": {
+                    "mode": "qwen",
+                    "namespaces": ["tools.vision"],
+                    "xml_fallback": true
+                  },
+                  "messages": [
+                    {
+                      "role": "user",
+                      "content": [
+                        { "type": "text", "text": "Call the tool for this image." },
+                        {
+                          "type": "input_image",
+                          "input_image": {
+                            "url": "file:///tmp/fixture.png",
+                            "mime_type": "image/png",
+                            "filename": "fixture.png"
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+                """.utf8
+            )
+        )
+
+        let normalized = try translator.normalizeMultimodalChat(request)
+        let translated = try translator.translate(normalized, modelHandle: "worker-vlm")
+        let message = try #require(translated.workerRequest.messages.first)
+
+        #expect(message.parts.count == 2)
+        #expect(message.parts[0].text == "Call the tool for this image.")
+        #expect(message.parts[1].imageUri == "file:///tmp/fixture.png")
+        #expect(message.parts[1].media.mimeType == "image/png")
+        #expect(message.parts[1].media.filename == "fixture.png")
+        #expect(translated.workerRequest.execution.ext["melix.tool_parser.mode"] == "qwen")
+        #expect(translated.workerRequest.execution.ext["melix.tool_parser.source"] == "request")
+        #expect(translated.workerRequest.execution.ext["melix.tool_parser.namespaces"] == "tools.vision")
+        #expect(translated.workerRequest.execution.ext["melix.tool_parser.fallback_mode"] == "xml")
+    }
+
     @Test("tool parser model defaults apply and request overrides win")
     func toolParserModelDefaultsApplyAndRequestOverridesWin() throws {
         var settings = Melix_Controlplane_V1_ModelSettings()

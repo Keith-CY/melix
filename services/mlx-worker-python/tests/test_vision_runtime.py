@@ -236,6 +236,53 @@ def test_generate_streams_vlm_response_from_multi_image_prompt(tmp_path: Path) -
     assert completed.assistant_text == token_text
 
 
+def test_generate_streams_vlm_tool_call_delta_when_tool_parser_is_enabled() -> None:
+    runtime_service, inference_service, _ = build_services()
+    model_handle = load_model(runtime_service, WorkerModelCatalog.dev_vlm_model())
+
+    request = inference_pb2.GenerateRequest(
+        execution=inference_pb2.ExecutionMetadata(
+            id=common_pb2.RequestIdentity(request_id="vlm-tool-call-1"),
+            model_handle=model_handle,
+            ext={
+                "melix.tool_parser.mode": "qwen",
+                "melix.tool_parser.namespaces": "tools.vision",
+                "melix.tool_parser.fallback_mode": "xml",
+            },
+        ),
+        messages=[
+            common_pb2.ChatMessage(
+                role="user",
+                parts=[
+                    common_pb2.MessagePart(text="Call the tool for this image."),
+                    common_pb2.MessagePart(
+                        image_bytes=b"vision tool image",
+                        media=common_pb2.MediaMetadata(
+                            media_type=common_pb2.MEDIA_TYPE_IMAGE,
+                            source_kind=common_pb2.MEDIA_SOURCE_INLINE_BYTES,
+                            mime_type="image/png",
+                            filename="tool-image.png",
+                        ),
+                    ),
+                ],
+            )
+        ],
+        sampling=common_pb2.SamplingConfig(max_output_tokens=64),
+        stream=True,
+    )
+
+    events = list(inference_service.Generate(request, context=None))
+    tool_call = next(event.tool_call_delta for event in events if event.HasField("tool_call_delta"))
+    token_text = "".join(event.token_delta.text for event in events if event.HasField("token_delta"))
+    completed = next(event.completed for event in events if event.HasField("completed"))
+
+    assert tool_call.tool_name == "tools.vision"
+    assert tool_call.call_id.startswith("tool:")
+    assert tool_call.arguments_json_fragment == '{"prompt":"Call the tool for this image.","image_count":1}'
+    assert token_text == "Image content: vision tool image\nPrompt: Call the tool for this image."
+    assert completed.assistant_text == token_text
+
+
 def test_vlm_prefill_and_decode_expose_explicit_runtime_lifecycle() -> None:
     registry = WorkerRegistry(
         runtime=MLXTextRuntime(backend=PassiveTextBackend()),
@@ -329,6 +376,77 @@ def test_vlm_prefill_and_decode_expose_explicit_runtime_lifecycle() -> None:
     assert final_stats.active_prefills == 0
     assert final_stats.active_decodes == 0
     assert final_stats.last_probe_kind == "vlm"
+
+
+def test_vlm_phase_aware_decode_streams_tool_call_delta_when_tool_parser_is_enabled() -> None:
+    registry = WorkerRegistry(
+        runtime=MLXTextRuntime(backend=PassiveTextBackend()),
+        model_catalog=WorkerModelCatalog(),
+    )
+    runtime_service = WorkerRuntimeService(registry)
+    inference_service = WorkerInferenceService(registry)
+    model_handle = load_model(runtime_service, WorkerModelCatalog.dev_vlm_model())
+
+    request_id = "vlm-phase-aware-tool-1"
+    messages = [
+        common_pb2.ChatMessage(
+            role="user",
+            parts=[
+                common_pb2.MessagePart(text="Call the tool for this image."),
+                common_pb2.MessagePart(
+                    image_bytes=b"phase aware tool image",
+                    media=common_pb2.MediaMetadata(
+                        media_type=common_pb2.MEDIA_TYPE_IMAGE,
+                        source_kind=common_pb2.MEDIA_SOURCE_INLINE_BYTES,
+                        mime_type="image/png",
+                        filename="phase-aware-tool.png",
+                    ),
+                ),
+            ],
+        )
+    ]
+
+    prefill_response = inference_service.Prefill(
+        inference_pb2.PrefillRequest(
+            execution=inference_pb2.ExecutionMetadata(
+                id=common_pb2.RequestIdentity(request_id=request_id),
+                model_handle=model_handle,
+                ext={
+                    "melix.tool_parser.mode": "qwen",
+                    "melix.tool_parser.namespaces": "tools.vision",
+                },
+            ),
+            messages=messages,
+            return_decode_handle=True,
+            prefill_step_size=16,
+        ),
+        context=None,
+    )
+
+    assert prefill_response.ok is True
+
+    decode_events = list(
+        inference_service.Decode(
+            inference_pb2.DecodeRequest(
+                execution=inference_pb2.ExecutionMetadata(
+                    id=common_pb2.RequestIdentity(request_id=request_id),
+                    model_handle=model_handle,
+                ),
+                decode_handle=prefill_response.decode_handle,
+                sampling=common_pb2.SamplingConfig(max_output_tokens=64),
+                max_output_tokens=64,
+            ),
+            context=None,
+        )
+    )
+
+    tool_call = next(event.tool_call_delta for event in decode_events if event.HasField("tool_call_delta"))
+    token_text = "".join(event.token_delta.text for event in decode_events if event.HasField("token_delta"))
+    completed = next(event.completed for event in decode_events if event.HasField("completed"))
+
+    assert tool_call.tool_name == "tools.vision"
+    assert token_text == "Image content: phase aware tool image\nPrompt: Call the tool for this image."
+    assert completed.assistant_text == token_text
 
 
 def test_prepare_vision_request_accepts_plain_local_paths(tmp_path: Path) -> None:

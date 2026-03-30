@@ -747,6 +747,92 @@ struct RequestCoordinatorTests {
         #expect(metrics.values["session_graph.restore_snapshot_count", default: 0] >= 1)
     }
 
+    @Test("phase-aware vlm requests preserve tool parser metadata and stream tool call deltas")
+    func phaseAwareVLMRequestsPreserveToolParserMetadataAndStreamToolCallDeltas() async throws {
+        let workerClient = PhaseAwareWorkerClient()
+        let metricsStore = MetricsStore()
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel(), ModelCatalog.devVLMModel()])
+        _ = await catalog.loadModel(id: "melix-dev-vlm", dispatchHandle: "melix-dev-vlm::python")
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: BlockingWorkerClient(),
+                pythonCompatibilityClient: workerClient,
+                modelCatalog: catalog
+            ),
+            abortRegistry: AbortRegistry(),
+            metricsStore: metricsStore
+        )
+
+        let base = makeTranslatedChatRequest(
+            requestID: "req-vlm-tool-parser",
+            modelID: "melix-dev-vlm",
+            messages: [makeWorkerVisionMessage(text: "Call the tool for this image.", imageBytes: Data("hello".utf8))]
+        )
+        var workerRequest = base.workerRequest
+        workerRequest.execution.modelHandle = "melix-dev-vlm::python"
+        workerRequest.execution.ext["melix.tool_parser.mode"] = "qwen"
+        workerRequest.execution.ext["melix.tool_parser.source"] = "request"
+        workerRequest.execution.ext["melix.tool_parser.namespaces"] = "tools.vision"
+        workerRequest.execution.ext["melix.tool_parser.fallback_mode"] = "xml"
+        let translated = TranslatedChatRequest(
+            requestID: base.requestID,
+            modelID: base.modelID,
+            workerRequest: workerRequest,
+            stream: base.stream
+        )
+
+        let execution = try await coordinator.startChatCompletion(translated)
+        let consumer = Task { () -> [Melix_Worker_V1_ExecuteEvent] in
+            var events: [Melix_Worker_V1_ExecuteEvent] = []
+            for try await event in execution.stream {
+                events.append(event)
+            }
+            return events
+        }
+
+        let prefillRequest = try #require(await waitForPrefillRequest(workerClient: workerClient))
+        let decodeRequest = try #require(await waitForDecodeRequest(workerClient: workerClient))
+
+        #expect(prefillRequest.execution.ext["melix.tool_parser.mode"] == "qwen")
+        #expect(prefillRequest.execution.ext["melix.tool_parser.namespaces"] == "tools.vision")
+        #expect(prefillRequest.messages.first?.parts.count == 2)
+        #expect(decodeRequest.execution.ext["melix.tool_parser.mode"] == "qwen")
+        #expect(decodeRequest.execution.ext["melix.tool_parser.fallback_mode"] == "xml")
+
+        await workerClient.emitDecodeStarted(
+            requestID: "req-vlm-tool-parser",
+            decodeHandle: decodeRequest.decodeHandle
+        )
+        await workerClient.emitToolCall(
+            requestID: "req-vlm-tool-parser",
+            callID: "tool-vlm-1",
+            toolName: "tools.vision",
+            argumentsJSONFragment: #"{"prompt":"Call the tool for this image.","image_count":1}"#
+        )
+        await workerClient.emitToken(requestID: "req-vlm-tool-parser", text: "vision done")
+        await workerClient.finishDecode(requestID: "req-vlm-tool-parser", assistantText: "vision done")
+
+        let events = try await consumer.value
+        let toolCall = try #require(events.first(where: {
+            if case .toolCallDelta = $0.payload {
+                return true
+            }
+            return false
+        }))
+        let completed = try #require(events.last(where: {
+            if case .completed = $0.payload {
+                return true
+            }
+            return false
+        }))
+        let metrics = await metricsStore.snapshot()
+
+        #expect(toolCall.toolCallDelta.toolName == "tools.vision")
+        #expect(toolCall.toolCallDelta.argumentsJsonFragment == #"{"prompt":"Call the tool for this image.","image_count":1}"#)
+        #expect(completed.completed.assistantText == "vision done")
+        #expect(metrics.values["http.tool_delta_count", default: 0] == 1)
+    }
+
     @Test("warm follow-up requests prefer hot prefill lanes and refresh cache observability")
     func warmFollowUpRequestsPreferHotPrefillLanesAndRefreshCacheObservability() async throws {
         let workerClient = PhaseAwareWorkerClient()
@@ -2147,6 +2233,31 @@ private actor PhaseAwareWorkerClient:
         var payload = Melix_Worker_V1_ReasoningDelta()
         payload.text = text
         event.reasoningDelta = payload
+        continuation.yield(event)
+    }
+
+    func emitToolCall(
+        requestID: String,
+        callID: String,
+        toolName: String,
+        argumentsJSONFragment: String,
+        accelerationMode: Melix_Worker_V1_AccelerationMode = .unspecified
+    ) {
+        guard let continuation = continuations[requestID] else {
+            return
+        }
+        var event = Melix_Worker_V1_ExecuteEvent()
+        event.requestID = requestID
+        event.executionKind = "generate"
+        event.phase = .executionDecoding
+        event.admissionState = .admissionAdmitted
+        event.lane = "text.decode.interactive"
+        event.accelerationMode = accelerationMode
+        var payload = Melix_Worker_V1_ToolCallDelta()
+        payload.callID = callID
+        payload.toolName = toolName
+        payload.argumentsJsonFragment = argumentsJSONFragment
+        event.toolCallDelta = payload
         continuation.yield(event)
     }
 
