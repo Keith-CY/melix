@@ -818,6 +818,13 @@ message RequestProgressEvent {
   string acceleration_profile_id = 12;
   string draft_model_id = 13;
   string image_job_id = 14;
+  uint32 prefill_processed_tokens = 15;
+  uint32 prefill_total_tokens = 16;
+  double prefill_progress_pct = 17;
+  uint32 active_requests = 18;
+  uint32 waiting_requests = 19;
+  string restore_stage = 20;
+  double cache_pressure = 21;
 }
 
 message SessionStateChanged {

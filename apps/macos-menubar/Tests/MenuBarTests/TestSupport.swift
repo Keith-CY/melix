@@ -395,12 +395,30 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
         emit(event)
     }
 
-    func sendRequestProgress(requestID: String, phase: Melix_Controlplane_V1_RequestPhase) {
+    func sendRequestProgress(
+        requestID: String,
+        phase: Melix_Controlplane_V1_RequestPhase,
+        prefillProcessedTokens: UInt32 = 0,
+        prefillTotalTokens: UInt32 = 0,
+        activeRequests: UInt32 = 0,
+        waitingRequests: UInt32 = 0,
+        restoreStage: String = "",
+        cachePressure: Double = 0
+    ) {
         var event = Melix_Controlplane_V1_ControlPlaneEvent()
         event.eventType = "request.progress"
         event.requestProgress = Melix_Controlplane_V1_RequestProgressEvent()
         event.requestProgress.requestID = requestID
         event.requestProgress.phase = phase
+        event.requestProgress.prefillProcessedTokens = prefillProcessedTokens
+        event.requestProgress.prefillTotalTokens = prefillTotalTokens
+        event.requestProgress.prefillProgressPct = prefillTotalTokens == 0
+            ? 0
+            : Double(prefillProcessedTokens) / Double(prefillTotalTokens) * 100
+        event.requestProgress.activeRequests = activeRequests
+        event.requestProgress.waitingRequests = waitingRequests
+        event.requestProgress.restoreStage = restoreStage
+        event.requestProgress.cachePressure = cachePressure
         emit(event)
     }
 

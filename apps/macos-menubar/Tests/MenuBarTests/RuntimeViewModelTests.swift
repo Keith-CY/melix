@@ -499,7 +499,16 @@ struct RuntimeViewModelTests {
         await client.sendSessionStateChanged(sessionID: "session-42", branchCount: 2)
         await client.sendCacheStats(l1Bytes: 32 * 1024 * 1024, l2Bytes: 128 * 1024 * 1024)
         await client.sendResourcePressure(scope: "metal", usedBytes: 4 * 1024 * 1024 * 1024, totalBytes: 8 * 1024 * 1024 * 1024)
-        await client.sendRequestProgress(requestID: "request-42", phase: .requestDecoding)
+        await client.sendRequestProgress(
+            requestID: "request-42",
+            phase: .requestPrefilling,
+            prefillProcessedTokens: 12,
+            prefillTotalTokens: 24,
+            activeRequests: 2,
+            waitingRequests: 1,
+            restoreStage: "partial",
+            cachePressure: 0.25
+        )
         await client.sendHeartbeat()
         await client.sendLog(level: "error", message: "thermal pressure")
         try await waitForRuntimeViewModelCondition("streamed events should update dashboard state") {
@@ -518,8 +527,68 @@ struct RuntimeViewModelTests {
         #expect(foundation.logs.contains(where: { $0.message == "Session session-42 updated" }))
         #expect(foundation.logs.contains(where: { $0.message == "Cache summary updated" }))
         #expect(foundation.logs.contains(where: { $0.message == "Resource pressure in metal" && $0.level == "warning" }))
-        #expect(foundation.logs.contains(where: { $0.message.contains("request-42") }))
+        #expect(foundation.logs.contains(where: { $0.message == "request-42 prefilling • 50% 12/24 • active 2 • waiting 1 • restore partial • pressure 0.25" }))
         #expect(foundation.logs.contains(where: { $0.message == "Heartbeat" }))
+        #expect(foundation.benchMetrics.contains(where: { $0.name == "scheduler.prefill_progress_pct" && $0.value == "50.00" }))
+        #expect(foundation.benchMetrics.contains(where: { $0.name == "scheduler.cache_pressure" && $0.value == "0.25" }))
+    }
+
+    @Test("request progress events map all operator-facing phase labels")
+    @MainActor
+    func requestProgressEventsMapAllOperatorFacingPhaseLabels() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+        await client.sendRequestProgress(
+            requestID: "request-queue",
+            phase: .requestQueued,
+            restoreStage: "restored"
+        )
+        await client.sendRequestProgress(
+            requestID: "request-admitted",
+            phase: .requestAdmitted
+        )
+        await client.sendRequestProgress(
+            requestID: "request-decode",
+            phase: .requestDecoding
+        )
+        await client.sendRequestProgress(
+            requestID: "request-complete",
+            phase: .requestCompleted
+        )
+        await client.sendRequestProgress(
+            requestID: "request-abort",
+            phase: .requestAborted
+        )
+        await client.sendRequestProgress(
+            requestID: "request-fail",
+            phase: .requestFailed
+        )
+        await client.sendRequestProgress(
+            requestID: "request-reject",
+            phase: .requestRejected
+        )
+        await client.sendRequestProgress(
+            requestID: "request-unknown",
+            phase: .UNRECOGNIZED(-1),
+            restoreStage: "none"
+        )
+
+        try await waitForRuntimeViewModelCondition("all request progress labels should be logged") {
+            let messages = viewModel.desktopFoundationState.logs.map(\.message)
+            return messages.contains("request-queue queued • restore restored")
+                && messages.contains("request-admitted admitted")
+                && messages.contains("request-decode decoding")
+                && messages.contains("request-complete completed")
+                && messages.contains("request-abort aborted")
+                && messages.contains("request-fail failed")
+                && messages.contains("request-reject rejected")
+                && messages.contains("request-unknown unknown • restore none")
+        }
+
+        let foundation = viewModel.desktopFoundationState
+        #expect(foundation.benchMetrics.contains(where: { $0.name == "scheduler.restore_stage_code" && $0.value == "0.00" }))
     }
 
     @Test("recent logs are trimmed to the last forty entries")

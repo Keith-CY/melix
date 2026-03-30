@@ -882,6 +882,16 @@ public final class RuntimeViewModel {
             upsert(model: model)
         case .sessionState(let sessionStateChanged):
             upsert(session: sessionStateChanged.state)
+        case .requestProgress(let progress):
+            latestSnapshot.metrics.values["scheduler.prefill_progress_processed_tokens"] = Double(progress.prefillProcessedTokens)
+            latestSnapshot.metrics.values["scheduler.prefill_progress_total_tokens"] = Double(progress.prefillTotalTokens)
+            latestSnapshot.metrics.values["scheduler.prefill_progress_pct"] = progress.prefillProgressPct
+            latestSnapshot.metrics.values["scheduler.prefill_active_requests"] = Double(progress.activeRequests)
+            latestSnapshot.metrics.values["scheduler.prefill_waiting_requests"] = Double(progress.waitingRequests)
+            latestSnapshot.metrics.values["scheduler.restore_stage_code"] = Self.restoreStageMetricCode(progress.restoreStage)
+            latestSnapshot.metrics.values["scheduler.cache_pressure"] = progress.cachePressure
+            latestSnapshot.queues.activeRequests = progress.activeRequests
+            latestSnapshot.queues.queuedRequests = progress.waitingRequests
         case .cacheStats(let cacheStats):
             latestSnapshot.cache = cacheStats.summary
         case .resourcePressure(let resourcePressure):
@@ -1363,7 +1373,7 @@ public final class RuntimeViewModel {
         case .modelState(let modelStateChanged):
             return "\(modelStateChanged.modelID) -> \(modelStateText(modelStateChanged.state))"
         case .requestProgress(let progress):
-            return "\(progress.requestID) \(String(describing: progress.phase).lowercased())"
+            return requestProgressMessage(progress)
         case .sessionState(let sessionStateChanged):
             return "Session \(sessionStateChanged.state.sessionID) updated"
         case .cacheStats:
@@ -1395,6 +1405,60 @@ public final class RuntimeViewModel {
             return "Failed • \(job.operation)"
         default:
             return job.operation.isEmpty ? "Idle" : job.operation
+        }
+    }
+
+    private static func requestProgressMessage(_ progress: Melix_Controlplane_V1_RequestProgressEvent) -> String {
+        var segments = [requestPhaseText(progress.phase)]
+        if progress.prefillTotalTokens > 0 {
+            segments.append(
+                "\(Int(progress.prefillProgressPct.rounded()))% \(progress.prefillProcessedTokens)/\(progress.prefillTotalTokens)"
+            )
+        }
+        if progress.activeRequests > 0 || progress.waitingRequests > 0 {
+            segments.append("active \(progress.activeRequests)")
+            segments.append("waiting \(progress.waitingRequests)")
+        }
+        if !progress.restoreStage.isEmpty {
+            segments.append("restore \(progress.restoreStage)")
+        }
+        if progress.cachePressure > 0 {
+            segments.append("pressure \(String(format: "%.2f", progress.cachePressure))")
+        }
+        return "\(progress.requestID) \(segments.joined(separator: " • "))"
+    }
+
+    private static func requestPhaseText(_ phase: Melix_Controlplane_V1_RequestPhase) -> String {
+        switch phase {
+        case .requestQueued:
+            return "queued"
+        case .requestAdmitted:
+            return "admitted"
+        case .requestPrefilling:
+            return "prefilling"
+        case .requestDecoding:
+            return "decoding"
+        case .requestCompleted:
+            return "completed"
+        case .requestAborted:
+            return "aborted"
+        case .requestFailed:
+            return "failed"
+        case .requestRejected:
+            return "rejected"
+        default:
+            return "unknown"
+        }
+    }
+
+    private static func restoreStageMetricCode(_ restoreStage: String) -> Double {
+        switch restoreStage.lowercased() {
+        case "restored":
+            return 1
+        case "partial":
+            return 2
+        default:
+            return 0
         }
     }
 

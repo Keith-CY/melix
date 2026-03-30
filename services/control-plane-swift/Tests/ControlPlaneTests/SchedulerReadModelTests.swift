@@ -335,6 +335,62 @@ struct SchedulerReadModelTests {
         #expect(metrics.values["scheduler.batch_affinity_preferred_rate"] == 100)
     }
 
+    @Test("prefill progress snapshots publish machine-readable operator metrics")
+    func prefillProgressSnapshotsPublishMachineReadableOperatorMetrics() async {
+        let metricsStore = MetricsStore()
+        let recorder = SchedulerEventRecorder()
+        let readModel = SchedulerReadModel(
+            metricsStore: metricsStore,
+            eventPublisher: { event in
+                await recorder.append(event)
+            }
+        )
+
+        await readModel.recordQueued(
+            requestID: "req-prefill-progress",
+            laneHint: "text.prefill.background",
+            priority: 20,
+            queuePosition: 1
+        )
+        _ = await readModel.recordAdmitted(
+            requestID: "req-prefill-progress",
+            laneHint: "text.prefill.background",
+            priority: 20,
+            workerID: "swift-text-worker",
+            admissionLatencyMs: 1
+        )
+        await readModel.recordPrefillProgress(
+            requestID: "req-prefill-progress",
+            processedTokens: 12,
+            totalTokens: 24,
+            restoreStage: "partial",
+            cachePressure: 0.25,
+            source: "swift-text-worker"
+        )
+
+        let progress = await readModel.progressSnapshot(for: "req-prefill-progress")
+        let metrics = await metricsStore.snapshot()
+        let events = await recorder.snapshot()
+
+        #expect(progress?.phase == .requestPrefilling)
+        #expect(progress?.prefillProcessedTokens == 12)
+        #expect(progress?.prefillTotalTokens == 24)
+        #expect(progress?.prefillProgressPct == 50)
+        #expect(progress?.activeRequests == 1)
+        #expect(progress?.waitingRequests == 0)
+        #expect(progress?.restoreStage == "partial")
+        #expect(progress?.cachePressure == 0.25)
+        #expect(metrics.values["scheduler.prefill_progress_processed_tokens"] == 12)
+        #expect(metrics.values["scheduler.prefill_progress_total_tokens"] == 24)
+        #expect(metrics.values["scheduler.prefill_progress_pct"] == 50)
+        #expect(metrics.values["scheduler.prefill_active_requests"] == 1)
+        #expect(metrics.values["scheduler.prefill_waiting_requests"] == 0)
+        #expect(metrics.values["scheduler.restore_stage_code"] == 2)
+        #expect(metrics.values["scheduler.cache_pressure"] == 0.25)
+        #expect(events.last?.requestProgress.prefillProcessedTokens == 12)
+        #expect(events.last?.requestProgress.restoreStage == "partial")
+    }
+
     @Test("aborted terminal state overrides a previously completed request")
     func abortedTerminalStateOverridesAPreviouslyCompletedRequest() async {
         let recorder = SchedulerEventRecorder()

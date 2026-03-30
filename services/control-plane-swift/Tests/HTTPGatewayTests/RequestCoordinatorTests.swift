@@ -759,8 +759,18 @@ struct RequestCoordinatorTests {
     @Test("chunked prefills emit progress events and scheduler metrics for long prompts")
     func chunkedPrefillsEmitProgressEventsAndSchedulerMetricsForLongPrompts() async throws {
         let workerClient = PhaseAwareWorkerClient()
-        let schedulerReadModel = SchedulerReadModel()
         let metricsStore = MetricsStore()
+        let schedulerReadModel = SchedulerReadModel(metricsStore: metricsStore)
+        var runtimeStats = Melix_Worker_V1_GetRuntimeStatsResponse()
+        runtimeStats.stats.residentBytes = 8_192
+        runtimeStats.stats.modelResidentBytes = 6_144
+        runtimeStats.stats.cacheResidentBytes = 2_048
+        await workerClient.setRuntimeStatsResponse(runtimeStats)
+
+        var cacheStats = Melix_Worker_V1_GetCacheStatsResponse()
+        cacheStats.stats.l1Bytes = 2_048
+        cacheStats.stats.activeMode = .hybrid
+        await workerClient.setCacheStatsResponse(cacheStats)
         let coordinator = RequestCoordinator(
             workerRegistry: WorkerRegistry(defaultTextClient: workerClient),
             abortRegistry: AbortRegistry(),
@@ -791,6 +801,13 @@ struct RequestCoordinatorTests {
         #expect(prefillRequest.prefillStepSize == 16)
 
         _ = try #require(await waitForDecodeRequest(workerClient: workerClient))
+        let prefillProgress = try #require(await waitForProgress(
+            schedulerReadModel: schedulerReadModel,
+            requestID: "req-chunked-prefill",
+            phase: .requestPrefilling,
+            lane: "text.prefill.background",
+            attempts: 50
+        ))
         await workerClient.emitDecodeStarted(requestID: "req-chunked-prefill", decodeHandle: "decode-req-chunked-prefill")
         await workerClient.emitToken(requestID: "req-chunked-prefill", text: "chunked")
         await workerClient.finishDecode(requestID: "req-chunked-prefill")
@@ -806,9 +823,23 @@ struct RequestCoordinatorTests {
 
         #expect(progressEvents.map(\.processedTokens) == [16, 24])
         #expect(progressEvents.allSatisfy { $0.totalTokens == 24 })
+        #expect(prefillProgress.prefillProcessedTokens == 24)
+        #expect(prefillProgress.prefillTotalTokens == 24)
+        #expect(prefillProgress.prefillProgressPct == 100)
+        #expect(prefillProgress.activeRequests == 1)
+        #expect(prefillProgress.waitingRequests == 0)
+        #expect(prefillProgress.restoreStage == "none")
+        #expect(prefillProgress.cachePressure == 0.25)
         #expect(metrics.values["scheduler.prefill_chunk_count"] == 2)
         #expect(metrics.values["scheduler.prefill_chunk_target_tokens"] == 16)
         #expect(metrics.values["scheduler.prefill_last_chunk_tokens"] == 24)
+        #expect(metrics.values["scheduler.prefill_progress_processed_tokens"] == 24)
+        #expect(metrics.values["scheduler.prefill_progress_total_tokens"] == 24)
+        #expect(metrics.values["scheduler.prefill_progress_pct"] == 100)
+        #expect(metrics.values["scheduler.prefill_active_requests"] == 1)
+        #expect(metrics.values["scheduler.prefill_waiting_requests"] == 0)
+        #expect(metrics.values["scheduler.restore_stage_code"] == 0)
+        #expect(metrics.values["scheduler.cache_pressure"] == 0.25)
     }
 
     @Test("phase-aware text requests join the active continuous batch cohort")

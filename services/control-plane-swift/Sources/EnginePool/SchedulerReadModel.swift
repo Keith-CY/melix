@@ -65,6 +65,13 @@ public actor SchedulerReadModel {
     private var batchAffinityPreferredCount: Double
     private var lastContinuousBatchSize: UInt32
     private var lastContinuousBatchOccupancyPct: Double
+    private var lastPrefillProcessedTokens: UInt32
+    private var lastPrefillTotalTokens: UInt32
+    private var lastPrefillProgressPct: Double
+    private var lastPrefillActiveRequests: UInt32
+    private var lastPrefillWaitingRequests: UInt32
+    private var lastRestoreStageCode: Double
+    private var lastObservedCachePressure: Double
 
     public init(
         laneDefinitions: [SchedulerLaneDefinition] = SchedulerReadModel.defaultLanes,
@@ -95,6 +102,13 @@ public actor SchedulerReadModel {
         self.batchAffinityPreferredCount = 0
         self.lastContinuousBatchSize = 0
         self.lastContinuousBatchOccupancyPct = 0
+        self.lastPrefillProcessedTokens = 0
+        self.lastPrefillTotalTokens = 0
+        self.lastPrefillProgressPct = 0
+        self.lastPrefillActiveRequests = 0
+        self.lastPrefillWaitingRequests = 0
+        self.lastRestoreStageCode = 0
+        self.lastObservedCachePressure = 0
     }
 
     public func recordQueued(
@@ -125,6 +139,7 @@ public actor SchedulerReadModel {
         progress.workerID = workerID ?? ""
         progress.admissionState = .admissionQueued
         progress.queuePosition = queuePosition
+        populateSchedulerSnapshot(into: &progress)
         requestProgressSnapshots[requestID] = progress
 
         await updateMetrics(backpressure: currentBackpressure())
@@ -161,6 +176,7 @@ public actor SchedulerReadModel {
         progress.workerID = workerID ?? ""
         progress.admissionState = .admissionRejected
         progress.queuePosition = totalActiveRequests == 0 ? 0 : 1
+        populateSchedulerSnapshot(into: &progress)
         requestRecords[requestID] = RequestRecord(
             laneID: lane.laneID,
             phase: .requestRejected,
@@ -223,6 +239,7 @@ public actor SchedulerReadModel {
         progress.backpressure = backpressureBeforeAdmission
         progress.workerID = workerID ?? ""
         progress.admissionState = .admissionAdmitted
+        populateSchedulerSnapshot(into: &progress)
         requestRecords[requestID] = RequestRecord(
             laneID: lane.laneID,
             phase: .requestAdmitted,
@@ -289,9 +306,58 @@ public actor SchedulerReadModel {
         var progress = requestProgressSnapshots[requestID] ?? Melix_Controlplane_V1_RequestProgressEvent()
         progress.requestID = requestID
         progress.queuePosition = batchPosition
+        populateSchedulerSnapshot(into: &progress)
         requestProgressSnapshots[requestID] = progress
 
         await updateMetrics(backpressure: currentBackpressure())
+    }
+
+    public func recordPrefillProgress(
+        requestID: String,
+        processedTokens: UInt32,
+        totalTokens: UInt32,
+        restoreStage: String,
+        cachePressure: Double,
+        source: String = "scheduler"
+    ) async {
+        guard var record = requestRecords[requestID] else {
+            return
+        }
+        guard !isTerminal(record.phase) else {
+            return
+        }
+
+        let normalizedTotalTokens = max(totalTokens, processedTokens)
+        let progressPct = normalizedTotalTokens == 0
+            ? 0
+            : min(Double(processedTokens) / Double(normalizedTotalTokens) * 100, 100)
+
+        lastPrefillProcessedTokens = processedTokens
+        lastPrefillTotalTokens = normalizedTotalTokens
+        lastPrefillProgressPct = progressPct
+        lastPrefillActiveRequests = totalActiveRequests
+        lastPrefillWaitingRequests = totalQueuedRequests
+        lastRestoreStageCode = restoreStageMetricCode(for: restoreStage)
+        lastObservedCachePressure = cachePressure
+
+        var progress = requestProgressSnapshots[requestID] ?? Melix_Controlplane_V1_RequestProgressEvent()
+        progress.requestID = requestID
+        progress.phase = .requestPrefilling
+        progress.lane = record.laneID
+        progress.backpressure = currentBackpressure()
+        progress.prefillProcessedTokens = processedTokens
+        progress.prefillTotalTokens = normalizedTotalTokens
+        progress.prefillProgressPct = progressPct
+        progress.restoreStage = restoreStage
+        progress.cachePressure = cachePressure
+        populateSchedulerSnapshot(into: &progress)
+
+        record.phase = .requestPrefilling
+        requestRecords[requestID] = record
+        requestProgressSnapshots[requestID] = progress
+
+        await updateMetrics(backpressure: currentBackpressure())
+        await publish(progress, source: source)
     }
 
     public func recordPhaseTransition(
@@ -341,6 +407,7 @@ public actor SchedulerReadModel {
         if let draftModelID, !draftModelID.isEmpty {
             progress.draftModelID = draftModelID
         }
+        populateSchedulerSnapshot(into: &progress)
 
         record.laneID = lane.laneID
         record.phase = phase
@@ -369,6 +436,7 @@ public actor SchedulerReadModel {
             progress.phase = .requestAborted
             progress.lane = record.laneID
             progress.workerID = workerID ?? progress.workerID
+            populateSchedulerSnapshot(into: &progress)
             requestRecords[requestID] = RequestRecord(
                 laneID: record.laneID,
                 phase: .requestAborted,
@@ -410,6 +478,7 @@ public actor SchedulerReadModel {
         progress.phase = phase
         progress.lane = record.laneID
         progress.workerID = workerID ?? progress.workerID
+        populateSchedulerSnapshot(into: &progress)
         requestRecords[requestID] = RequestRecord(
             laneID: record.laneID,
             phase: phase,
@@ -588,6 +657,55 @@ public actor SchedulerReadModel {
                 : batchAffinityPreferredCount / batchEligibleRequestCount * 100,
             forKey: "scheduler.batch_affinity_preferred_rate"
         )
+        await metricsStore.set(
+            Double(lastPrefillProcessedTokens),
+            forKey: "scheduler.prefill_progress_processed_tokens"
+        )
+        await metricsStore.set(
+            Double(lastPrefillTotalTokens),
+            forKey: "scheduler.prefill_progress_total_tokens"
+        )
+        await metricsStore.set(
+            lastPrefillProgressPct,
+            forKey: "scheduler.prefill_progress_pct"
+        )
+        await metricsStore.set(
+            Double(lastPrefillActiveRequests),
+            forKey: "scheduler.prefill_active_requests"
+        )
+        await metricsStore.set(
+            Double(lastPrefillWaitingRequests),
+            forKey: "scheduler.prefill_waiting_requests"
+        )
+        await metricsStore.set(
+            lastRestoreStageCode,
+            forKey: "scheduler.restore_stage_code"
+        )
+        await metricsStore.set(
+            lastObservedCachePressure,
+            forKey: "scheduler.cache_pressure"
+        )
+    }
+
+    private func populateSchedulerSnapshot(
+        into progress: inout Melix_Controlplane_V1_RequestProgressEvent
+    ) {
+        progress.activeRequests = totalActiveRequests
+        progress.waitingRequests = totalQueuedRequests
+        if progress.cachePressure == 0 {
+            progress.cachePressure = lastObservedCachePressure
+        }
+    }
+
+    private func restoreStageMetricCode(for restoreStage: String) -> Double {
+        switch restoreStage.lowercased() {
+        case "restored":
+            return 1
+        case "partial":
+            return 2
+        default:
+            return 0
+        }
     }
 
     private func percentile(_ percentile: Double, samples: [Double]) -> Double {

@@ -3506,42 +3506,121 @@ public struct Melix_Controlplane_V1_ModelStateChanged: Sendable {
   public init() {}
 }
 
-public struct Melix_Controlplane_V1_RequestProgressEvent: Sendable {
+public struct Melix_Controlplane_V1_RequestProgressEvent: @unchecked Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
-  public var requestID: String = String()
+  public var requestID: String {
+    get {_storage._requestID}
+    set {_uniqueStorage()._requestID = newValue}
+  }
 
-  public var phase: Melix_Controlplane_V1_RequestPhase = .unspecified
+  public var phase: Melix_Controlplane_V1_RequestPhase {
+    get {_storage._phase}
+    set {_uniqueStorage()._phase = newValue}
+  }
 
-  public var lane: String = String()
+  public var lane: String {
+    get {_storage._lane}
+    set {_uniqueStorage()._lane = newValue}
+  }
 
-  public var queueDelayMs: Double = 0
+  public var queueDelayMs: Double {
+    get {_storage._queueDelayMs}
+    set {_uniqueStorage()._queueDelayMs = newValue}
+  }
 
-  public var priorityScore: Double = 0
+  public var priorityScore: Double {
+    get {_storage._priorityScore}
+    set {_uniqueStorage()._priorityScore = newValue}
+  }
 
-  public var backpressure: Double = 0
+  public var backpressure: Double {
+    get {_storage._backpressure}
+    set {_uniqueStorage()._backpressure = newValue}
+  }
 
-  public var workerID: String = String()
+  public var workerID: String {
+    get {_storage._workerID}
+    set {_uniqueStorage()._workerID = newValue}
+  }
 
-  public var admissionState: Melix_Controlplane_V1_AdmissionState = .unspecified
+  public var admissionState: Melix_Controlplane_V1_AdmissionState {
+    get {_storage._admissionState}
+    set {_uniqueStorage()._admissionState = newValue}
+  }
 
-  public var queuePosition: UInt32 = 0
+  public var queuePosition: UInt32 {
+    get {_storage._queuePosition}
+    set {_uniqueStorage()._queuePosition = newValue}
+  }
 
-  public var decodeHandle: String = String()
+  public var decodeHandle: String {
+    get {_storage._decodeHandle}
+    set {_uniqueStorage()._decodeHandle = newValue}
+  }
 
-  public var accelerationMode: Melix_Controlplane_V1_AccelerationMode = .unspecified
+  public var accelerationMode: Melix_Controlplane_V1_AccelerationMode {
+    get {_storage._accelerationMode}
+    set {_uniqueStorage()._accelerationMode = newValue}
+  }
 
-  public var accelerationProfileID: String = String()
+  public var accelerationProfileID: String {
+    get {_storage._accelerationProfileID}
+    set {_uniqueStorage()._accelerationProfileID = newValue}
+  }
 
-  public var draftModelID: String = String()
+  public var draftModelID: String {
+    get {_storage._draftModelID}
+    set {_uniqueStorage()._draftModelID = newValue}
+  }
 
-  public var imageJobID: String = String()
+  public var imageJobID: String {
+    get {_storage._imageJobID}
+    set {_uniqueStorage()._imageJobID = newValue}
+  }
+
+  public var prefillProcessedTokens: UInt32 {
+    get {_storage._prefillProcessedTokens}
+    set {_uniqueStorage()._prefillProcessedTokens = newValue}
+  }
+
+  public var prefillTotalTokens: UInt32 {
+    get {_storage._prefillTotalTokens}
+    set {_uniqueStorage()._prefillTotalTokens = newValue}
+  }
+
+  public var prefillProgressPct: Double {
+    get {_storage._prefillProgressPct}
+    set {_uniqueStorage()._prefillProgressPct = newValue}
+  }
+
+  public var activeRequests: UInt32 {
+    get {_storage._activeRequests}
+    set {_uniqueStorage()._activeRequests = newValue}
+  }
+
+  public var waitingRequests: UInt32 {
+    get {_storage._waitingRequests}
+    set {_uniqueStorage()._waitingRequests = newValue}
+  }
+
+  public var restoreStage: String {
+    get {_storage._restoreStage}
+    set {_uniqueStorage()._restoreStage = newValue}
+  }
+
+  public var cachePressure: Double {
+    get {_storage._cachePressure}
+    set {_uniqueStorage()._cachePressure = newValue}
+  }
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
+
+  fileprivate var _storage = _StorageClass.defaultInstance
 }
 
 public struct Melix_Controlplane_V1_SessionStateChanged: Sendable {
@@ -9402,94 +9481,205 @@ extension Melix_Controlplane_V1_ModelStateChanged: SwiftProtobuf.Message, SwiftP
 
 extension Melix_Controlplane_V1_RequestProgressEvent: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".RequestProgressEvent"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}request_id\0\u{1}phase\0\u{1}lane\0\u{3}queue_delay_ms\0\u{3}priority_score\0\u{1}backpressure\0\u{3}worker_id\0\u{3}admission_state\0\u{3}queue_position\0\u{3}decode_handle\0\u{3}acceleration_mode\0\u{3}acceleration_profile_id\0\u{3}draft_model_id\0\u{3}image_job_id\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}request_id\0\u{1}phase\0\u{1}lane\0\u{3}queue_delay_ms\0\u{3}priority_score\0\u{1}backpressure\0\u{3}worker_id\0\u{3}admission_state\0\u{3}queue_position\0\u{3}decode_handle\0\u{3}acceleration_mode\0\u{3}acceleration_profile_id\0\u{3}draft_model_id\0\u{3}image_job_id\0\u{3}prefill_processed_tokens\0\u{3}prefill_total_tokens\0\u{3}prefill_progress_pct\0\u{3}active_requests\0\u{3}waiting_requests\0\u{3}restore_stage\0\u{3}cache_pressure\0")
+
+  fileprivate class _StorageClass {
+    var _requestID: String = String()
+    var _phase: Melix_Controlplane_V1_RequestPhase = .unspecified
+    var _lane: String = String()
+    var _queueDelayMs: Double = 0
+    var _priorityScore: Double = 0
+    var _backpressure: Double = 0
+    var _workerID: String = String()
+    var _admissionState: Melix_Controlplane_V1_AdmissionState = .unspecified
+    var _queuePosition: UInt32 = 0
+    var _decodeHandle: String = String()
+    var _accelerationMode: Melix_Controlplane_V1_AccelerationMode = .unspecified
+    var _accelerationProfileID: String = String()
+    var _draftModelID: String = String()
+    var _imageJobID: String = String()
+    var _prefillProcessedTokens: UInt32 = 0
+    var _prefillTotalTokens: UInt32 = 0
+    var _prefillProgressPct: Double = 0
+    var _activeRequests: UInt32 = 0
+    var _waitingRequests: UInt32 = 0
+    var _restoreStage: String = String()
+    var _cachePressure: Double = 0
+
+      // This property is used as the initial default value for new instances of the type.
+      // The type itself is protecting the reference to its storage via CoW semantics.
+      // This will force a copy to be made of this reference when the first mutation occurs;
+      // hence, it is safe to mark this as `nonisolated(unsafe)`.
+      static nonisolated(unsafe) let defaultInstance = _StorageClass()
+
+    private init() {}
+
+    init(copying source: _StorageClass) {
+      _requestID = source._requestID
+      _phase = source._phase
+      _lane = source._lane
+      _queueDelayMs = source._queueDelayMs
+      _priorityScore = source._priorityScore
+      _backpressure = source._backpressure
+      _workerID = source._workerID
+      _admissionState = source._admissionState
+      _queuePosition = source._queuePosition
+      _decodeHandle = source._decodeHandle
+      _accelerationMode = source._accelerationMode
+      _accelerationProfileID = source._accelerationProfileID
+      _draftModelID = source._draftModelID
+      _imageJobID = source._imageJobID
+      _prefillProcessedTokens = source._prefillProcessedTokens
+      _prefillTotalTokens = source._prefillTotalTokens
+      _prefillProgressPct = source._prefillProgressPct
+      _activeRequests = source._activeRequests
+      _waitingRequests = source._waitingRequests
+      _restoreStage = source._restoreStage
+      _cachePressure = source._cachePressure
+    }
+  }
+
+  fileprivate mutating func _uniqueStorage() -> _StorageClass {
+    if !isKnownUniquelyReferenced(&_storage) {
+      _storage = _StorageClass(copying: _storage)
+    }
+    return _storage
+  }
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
-    while let fieldNumber = try decoder.nextFieldNumber() {
-      // The use of inline closures is to circumvent an issue where the compiler
-      // allocates stack space for every case branch when no optimizations are
-      // enabled. https://github.com/apple/swift-protobuf/issues/1034
-      switch fieldNumber {
-      case 1: try { try decoder.decodeSingularStringField(value: &self.requestID) }()
-      case 2: try { try decoder.decodeSingularEnumField(value: &self.phase) }()
-      case 3: try { try decoder.decodeSingularStringField(value: &self.lane) }()
-      case 4: try { try decoder.decodeSingularDoubleField(value: &self.queueDelayMs) }()
-      case 5: try { try decoder.decodeSingularDoubleField(value: &self.priorityScore) }()
-      case 6: try { try decoder.decodeSingularDoubleField(value: &self.backpressure) }()
-      case 7: try { try decoder.decodeSingularStringField(value: &self.workerID) }()
-      case 8: try { try decoder.decodeSingularEnumField(value: &self.admissionState) }()
-      case 9: try { try decoder.decodeSingularUInt32Field(value: &self.queuePosition) }()
-      case 10: try { try decoder.decodeSingularStringField(value: &self.decodeHandle) }()
-      case 11: try { try decoder.decodeSingularEnumField(value: &self.accelerationMode) }()
-      case 12: try { try decoder.decodeSingularStringField(value: &self.accelerationProfileID) }()
-      case 13: try { try decoder.decodeSingularStringField(value: &self.draftModelID) }()
-      case 14: try { try decoder.decodeSingularStringField(value: &self.imageJobID) }()
-      default: break
+    _ = _uniqueStorage()
+    try withExtendedLifetime(_storage) { (_storage: _StorageClass) in
+      while let fieldNumber = try decoder.nextFieldNumber() {
+        // The use of inline closures is to circumvent an issue where the compiler
+        // allocates stack space for every case branch when no optimizations are
+        // enabled. https://github.com/apple/swift-protobuf/issues/1034
+        switch fieldNumber {
+        case 1: try { try decoder.decodeSingularStringField(value: &_storage._requestID) }()
+        case 2: try { try decoder.decodeSingularEnumField(value: &_storage._phase) }()
+        case 3: try { try decoder.decodeSingularStringField(value: &_storage._lane) }()
+        case 4: try { try decoder.decodeSingularDoubleField(value: &_storage._queueDelayMs) }()
+        case 5: try { try decoder.decodeSingularDoubleField(value: &_storage._priorityScore) }()
+        case 6: try { try decoder.decodeSingularDoubleField(value: &_storage._backpressure) }()
+        case 7: try { try decoder.decodeSingularStringField(value: &_storage._workerID) }()
+        case 8: try { try decoder.decodeSingularEnumField(value: &_storage._admissionState) }()
+        case 9: try { try decoder.decodeSingularUInt32Field(value: &_storage._queuePosition) }()
+        case 10: try { try decoder.decodeSingularStringField(value: &_storage._decodeHandle) }()
+        case 11: try { try decoder.decodeSingularEnumField(value: &_storage._accelerationMode) }()
+        case 12: try { try decoder.decodeSingularStringField(value: &_storage._accelerationProfileID) }()
+        case 13: try { try decoder.decodeSingularStringField(value: &_storage._draftModelID) }()
+        case 14: try { try decoder.decodeSingularStringField(value: &_storage._imageJobID) }()
+        case 15: try { try decoder.decodeSingularUInt32Field(value: &_storage._prefillProcessedTokens) }()
+        case 16: try { try decoder.decodeSingularUInt32Field(value: &_storage._prefillTotalTokens) }()
+        case 17: try { try decoder.decodeSingularDoubleField(value: &_storage._prefillProgressPct) }()
+        case 18: try { try decoder.decodeSingularUInt32Field(value: &_storage._activeRequests) }()
+        case 19: try { try decoder.decodeSingularUInt32Field(value: &_storage._waitingRequests) }()
+        case 20: try { try decoder.decodeSingularStringField(value: &_storage._restoreStage) }()
+        case 21: try { try decoder.decodeSingularDoubleField(value: &_storage._cachePressure) }()
+        default: break
+        }
       }
     }
   }
 
   public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
-    if !self.requestID.isEmpty {
-      try visitor.visitSingularStringField(value: self.requestID, fieldNumber: 1)
-    }
-    if self.phase != .unspecified {
-      try visitor.visitSingularEnumField(value: self.phase, fieldNumber: 2)
-    }
-    if !self.lane.isEmpty {
-      try visitor.visitSingularStringField(value: self.lane, fieldNumber: 3)
-    }
-    if self.queueDelayMs.bitPattern != 0 {
-      try visitor.visitSingularDoubleField(value: self.queueDelayMs, fieldNumber: 4)
-    }
-    if self.priorityScore.bitPattern != 0 {
-      try visitor.visitSingularDoubleField(value: self.priorityScore, fieldNumber: 5)
-    }
-    if self.backpressure.bitPattern != 0 {
-      try visitor.visitSingularDoubleField(value: self.backpressure, fieldNumber: 6)
-    }
-    if !self.workerID.isEmpty {
-      try visitor.visitSingularStringField(value: self.workerID, fieldNumber: 7)
-    }
-    if self.admissionState != .unspecified {
-      try visitor.visitSingularEnumField(value: self.admissionState, fieldNumber: 8)
-    }
-    if self.queuePosition != 0 {
-      try visitor.visitSingularUInt32Field(value: self.queuePosition, fieldNumber: 9)
-    }
-    if !self.decodeHandle.isEmpty {
-      try visitor.visitSingularStringField(value: self.decodeHandle, fieldNumber: 10)
-    }
-    if self.accelerationMode != .unspecified {
-      try visitor.visitSingularEnumField(value: self.accelerationMode, fieldNumber: 11)
-    }
-    if !self.accelerationProfileID.isEmpty {
-      try visitor.visitSingularStringField(value: self.accelerationProfileID, fieldNumber: 12)
-    }
-    if !self.draftModelID.isEmpty {
-      try visitor.visitSingularStringField(value: self.draftModelID, fieldNumber: 13)
-    }
-    if !self.imageJobID.isEmpty {
-      try visitor.visitSingularStringField(value: self.imageJobID, fieldNumber: 14)
+    try withExtendedLifetime(_storage) { (_storage: _StorageClass) in
+      if !_storage._requestID.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._requestID, fieldNumber: 1)
+      }
+      if _storage._phase != .unspecified {
+        try visitor.visitSingularEnumField(value: _storage._phase, fieldNumber: 2)
+      }
+      if !_storage._lane.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._lane, fieldNumber: 3)
+      }
+      if _storage._queueDelayMs.bitPattern != 0 {
+        try visitor.visitSingularDoubleField(value: _storage._queueDelayMs, fieldNumber: 4)
+      }
+      if _storage._priorityScore.bitPattern != 0 {
+        try visitor.visitSingularDoubleField(value: _storage._priorityScore, fieldNumber: 5)
+      }
+      if _storage._backpressure.bitPattern != 0 {
+        try visitor.visitSingularDoubleField(value: _storage._backpressure, fieldNumber: 6)
+      }
+      if !_storage._workerID.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._workerID, fieldNumber: 7)
+      }
+      if _storage._admissionState != .unspecified {
+        try visitor.visitSingularEnumField(value: _storage._admissionState, fieldNumber: 8)
+      }
+      if _storage._queuePosition != 0 {
+        try visitor.visitSingularUInt32Field(value: _storage._queuePosition, fieldNumber: 9)
+      }
+      if !_storage._decodeHandle.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._decodeHandle, fieldNumber: 10)
+      }
+      if _storage._accelerationMode != .unspecified {
+        try visitor.visitSingularEnumField(value: _storage._accelerationMode, fieldNumber: 11)
+      }
+      if !_storage._accelerationProfileID.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._accelerationProfileID, fieldNumber: 12)
+      }
+      if !_storage._draftModelID.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._draftModelID, fieldNumber: 13)
+      }
+      if !_storage._imageJobID.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._imageJobID, fieldNumber: 14)
+      }
+      if _storage._prefillProcessedTokens != 0 {
+        try visitor.visitSingularUInt32Field(value: _storage._prefillProcessedTokens, fieldNumber: 15)
+      }
+      if _storage._prefillTotalTokens != 0 {
+        try visitor.visitSingularUInt32Field(value: _storage._prefillTotalTokens, fieldNumber: 16)
+      }
+      if _storage._prefillProgressPct.bitPattern != 0 {
+        try visitor.visitSingularDoubleField(value: _storage._prefillProgressPct, fieldNumber: 17)
+      }
+      if _storage._activeRequests != 0 {
+        try visitor.visitSingularUInt32Field(value: _storage._activeRequests, fieldNumber: 18)
+      }
+      if _storage._waitingRequests != 0 {
+        try visitor.visitSingularUInt32Field(value: _storage._waitingRequests, fieldNumber: 19)
+      }
+      if !_storage._restoreStage.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._restoreStage, fieldNumber: 20)
+      }
+      if _storage._cachePressure.bitPattern != 0 {
+        try visitor.visitSingularDoubleField(value: _storage._cachePressure, fieldNumber: 21)
+      }
     }
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: Melix_Controlplane_V1_RequestProgressEvent, rhs: Melix_Controlplane_V1_RequestProgressEvent) -> Bool {
-    if lhs.requestID != rhs.requestID {return false}
-    if lhs.phase != rhs.phase {return false}
-    if lhs.lane != rhs.lane {return false}
-    if lhs.queueDelayMs != rhs.queueDelayMs {return false}
-    if lhs.priorityScore != rhs.priorityScore {return false}
-    if lhs.backpressure != rhs.backpressure {return false}
-    if lhs.workerID != rhs.workerID {return false}
-    if lhs.admissionState != rhs.admissionState {return false}
-    if lhs.queuePosition != rhs.queuePosition {return false}
-    if lhs.decodeHandle != rhs.decodeHandle {return false}
-    if lhs.accelerationMode != rhs.accelerationMode {return false}
-    if lhs.accelerationProfileID != rhs.accelerationProfileID {return false}
-    if lhs.draftModelID != rhs.draftModelID {return false}
-    if lhs.imageJobID != rhs.imageJobID {return false}
+    if lhs._storage !== rhs._storage {
+      let storagesAreEqual: Bool = withExtendedLifetime((lhs._storage, rhs._storage)) { (_args: (_StorageClass, _StorageClass)) in
+        let _storage = _args.0
+        let rhs_storage = _args.1
+        if _storage._requestID != rhs_storage._requestID {return false}
+        if _storage._phase != rhs_storage._phase {return false}
+        if _storage._lane != rhs_storage._lane {return false}
+        if _storage._queueDelayMs != rhs_storage._queueDelayMs {return false}
+        if _storage._priorityScore != rhs_storage._priorityScore {return false}
+        if _storage._backpressure != rhs_storage._backpressure {return false}
+        if _storage._workerID != rhs_storage._workerID {return false}
+        if _storage._admissionState != rhs_storage._admissionState {return false}
+        if _storage._queuePosition != rhs_storage._queuePosition {return false}
+        if _storage._decodeHandle != rhs_storage._decodeHandle {return false}
+        if _storage._accelerationMode != rhs_storage._accelerationMode {return false}
+        if _storage._accelerationProfileID != rhs_storage._accelerationProfileID {return false}
+        if _storage._draftModelID != rhs_storage._draftModelID {return false}
+        if _storage._imageJobID != rhs_storage._imageJobID {return false}
+        if _storage._prefillProcessedTokens != rhs_storage._prefillProcessedTokens {return false}
+        if _storage._prefillTotalTokens != rhs_storage._prefillTotalTokens {return false}
+        if _storage._prefillProgressPct != rhs_storage._prefillProgressPct {return false}
+        if _storage._activeRequests != rhs_storage._activeRequests {return false}
+        if _storage._waitingRequests != rhs_storage._waitingRequests {return false}
+        if _storage._restoreStage != rhs_storage._restoreStage {return false}
+        if _storage._cachePressure != rhs_storage._cachePressure {return false}
+        return true
+      }
+      if !storagesAreEqual {return false}
+    }
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

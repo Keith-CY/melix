@@ -144,7 +144,7 @@ public actor RequestCoordinator {
             )
             throw RequestCoordinatorError.workerUnavailable
         }
-        await refreshWorkerCacheObservability(using: workerClient)
+        _ = await refreshWorkerCacheObservability(using: workerClient)
         await metricsStore.set(
             now().timeIntervalSince(routeStartedAt) * 1000,
             forKey: "control_plane.worker_route_ms"
@@ -280,7 +280,7 @@ public actor RequestCoordinator {
                             continuation.yield(event)
                         }
                         await metricsStore.decrement("requests.inflight")
-                        await self.refreshWorkerCacheObservability(using: workerClient)
+                        _ = await self.refreshWorkerCacheObservability(using: workerClient)
                         await self.refreshWorkerRuntimeObservability(
                             using: workerClient,
                             routeKind: plan.routeKind
@@ -293,7 +293,7 @@ public actor RequestCoordinator {
                         continuation.finish()
                     } catch {
                         await metricsStore.decrement("requests.inflight")
-                        await self.refreshWorkerCacheObservability(using: workerClient)
+                        _ = await self.refreshWorkerCacheObservability(using: workerClient)
                         await self.refreshWorkerRuntimeObservability(
                             using: workerClient,
                             routeKind: plan.routeKind
@@ -792,6 +792,8 @@ public actor RequestCoordinator {
                             )
                         }
                     }
+                    let restoreStage = self.restoreStageLabel(for: effectiveRestorePlan)
+                    let cachePressure = await self.refreshWorkerCacheObservability(using: client) ?? 0
 
                     var prefillEvent = makePrefillStartedEvent(
                         request: request,
@@ -814,7 +816,18 @@ public actor RequestCoordinator {
                         boundaries: prefillChunkBoundaries,
                         chunkTokenTarget: prefillRequest.prefillStepSize
                     )
-                    for boundary in prefillChunkBoundaries {
+                    let observedPrefillBoundaries = prefillChunkBoundaries.isEmpty
+                        ? [effectivePromptTokens]
+                        : prefillChunkBoundaries
+                    for boundary in observedPrefillBoundaries {
+                        await self.schedulerReadModel.recordPrefillProgress(
+                            requestID: request.execution.id.requestID,
+                            processedTokens: boundary,
+                            totalTokens: effectivePromptTokens,
+                            restoreStage: restoreStage,
+                            cachePressure: cachePressure,
+                            source: "swift-text-worker"
+                        )
                         var progressEvent = makePrefillProgressEvent(
                             requestID: request.execution.id.requestID,
                             lane: prefillLane,
@@ -1104,6 +1117,15 @@ public actor RequestCoordinator {
         )
     }
 
+    private func restoreStageLabel(
+        for restorePlan: Melix_Worker_V1_CacheRestorePlan?
+    ) -> String {
+        guard let restorePlan else {
+            return "none"
+        }
+        return restorePlan.partial ? "partial" : "restored"
+    }
+
     private func recordTTFTMetrics(requestID: String, ttftMs: Double) async {
         guard let plan = requestPlans[requestID] else {
             return
@@ -1201,15 +1223,15 @@ public actor RequestCoordinator {
 
     private func refreshWorkerCacheObservability(
         using workerClient: any WorkerClient
-    ) async {
+    ) async -> Double? {
         guard let introspectingClient = workerClient as? any CacheIntrospectingWorkerClientProtocol else {
-            return
+            return nil
         }
         guard
             let runtimeStats = try? await introspectingClient.runtimeStats(),
             let cacheStats = try? await introspectingClient.cacheStats()
         else {
-            return
+            return nil
         }
 
         await metricsStore.set(Double(cacheStats.stats.l1Bytes), forKey: "cache.memory_bytes")
@@ -1231,6 +1253,7 @@ public actor RequestCoordinator {
                 )
             )
         }
+        return cachePressure
     }
 
     private func refreshWorkerRuntimeObservability(
