@@ -98,6 +98,20 @@ def test_load_model_exposes_jina_v3_rerank_metadata() -> None:
     assert loaded["rerank_scoring_mode"] == "order-aware-overlap"
 
 
+def test_load_model_exposes_causal_lm_yes_no_metadata() -> None:
+    runtime = DeterministicRerankRuntime()
+
+    loaded = runtime.load_model(
+        WorkerModelCatalog.dev_rerank_model(
+            environment={"MELIX_DEV_RERANK_FAMILY_ID": "causal-lm"}
+        )
+    )
+
+    assert loaded["rerank_family_id"] == "causal-lm"
+    assert loaded["rerank_scoring_mode"] == "yes-no-logits"
+    assert loaded["rerank_yes_no_labels"] == "yes,no"
+
+
 def test_jina_v3_rerank_prefers_exact_query_order() -> None:
     runtime_service, inference_service = build_services()
     model_handle = load_model(runtime_service, WorkerModelCatalog.dev_rerank_model())
@@ -116,6 +130,34 @@ def test_jina_v3_rerank_prefers_exact_query_order() -> None:
     assert rerank.error.code == ""
     assert [item.index for item in rerank.items] == [1, 0]
     assert rerank.items[0].score > rerank.items[1].score
+
+
+def test_causal_lm_rerank_produces_positive_and_negative_logits() -> None:
+    runtime_service, inference_service = build_services(
+        environment={"MELIX_DEV_RERANK_FAMILY_ID": "causal-lm"}
+    )
+    model_handle = load_model(
+        runtime_service,
+        WorkerModelCatalog.dev_rerank_model(
+            environment={"MELIX_DEV_RERANK_FAMILY_ID": "causal-lm"}
+        ),
+    )
+
+    rerank = inference_service.Rerank(
+        inference_pb2.RerankRequest(
+            id=common_pb2.RequestIdentity(request_id="rerank-causal-lm"),
+            model_handle=model_handle,
+            query="swift runtime",
+            documents=["swift runtime is available", "python packaging release"],
+            top_k=2,
+        ),
+        context=None,
+    )
+
+    assert rerank.error.code == ""
+    assert [item.index for item in rerank.items] == [0, 1]
+    assert rerank.items[0].score > 0
+    assert rerank.items[1].score < 0
 
 
 def test_load_model_rejects_unsupported_rerank_family() -> None:

@@ -128,6 +128,40 @@ class JinaV3RerankFamilyAdapter(RerankFamilyAdapter):
         return False
 
 
+class CausalLMRerankFamilyAdapter(RerankFamilyAdapter):
+    descriptor = RerankFamilyDescriptor(
+        family_id="causal-lm",
+        scoring_mode="yes-no-logits",
+    )
+
+    def metadata(self) -> dict[str, object]:
+        metadata = super().metadata()
+        metadata["rerank_yes_no_labels"] = "yes,no"
+        return metadata
+
+    def score(self, backend: DeterministicRerankBackend, query: str, document: str) -> float:
+        query_tokens = backend.tokenize(query)
+        document_tokens = backend.tokenize(document)
+        query_token_set = set(query_tokens)
+        document_token_set = set(document_tokens)
+        overlap = len(query_token_set & document_token_set) / (len(query_token_set) or 1)
+        pair_bonus = JinaV3RerankFamilyAdapter._ordered_pair_bonus(query_tokens, document_tokens)
+        exact_order = JinaV3RerankFamilyAdapter._contains_contiguous_query(document_tokens, query_tokens)
+        prefix_match = bool(query_tokens) and document_tokens[: len(query_tokens)] == query_tokens
+
+        yes_logit = overlap * 6.0
+        yes_logit += pair_bonus * 3.0
+        yes_logit += 0.75 if exact_order else 0.0
+        yes_logit += 0.5 if prefix_match else 0.0
+
+        no_logit = 1.5
+        no_logit -= overlap * 3.0
+        if not (query_token_set & document_token_set):
+            no_logit += 0.3
+
+        return round(yes_logit - no_logit + backend.tie_breaker(query, document), 6)
+
+
 def resolve_rerank_backend(backend_id: str) -> DeterministicRerankBackend:
     normalized = backend_id.strip() or "token-overlap-v1"
     if normalized == "token-overlap-v1":
@@ -144,4 +178,6 @@ def resolve_rerank_family(
         return JinaV3RerankFamilyAdapter()
     if normalized == "basic":
         return BasicRerankFamilyAdapter()
+    if normalized == "causal-lm":
+        return CausalLMRerankFamilyAdapter()
     raise ValueError(f"Unsupported rerank family: {family_id}")

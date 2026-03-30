@@ -312,6 +312,7 @@ public enum BootstrapWorkerPreparation {
         "rerank_backend_id",
         "rerank_family_id",
         "rerank_scoring_mode",
+        "rerank_yes_no_labels",
     ]
 
     public static func modelSpec(for modelID: String) -> Melix_Worker_V1_ModelSpec? {
@@ -394,16 +395,26 @@ public enum BootstrapWorkerPreparation {
         modelCatalog: ModelCatalog,
         memoryBudgetBytes: UInt64 = 0
     ) async throws {
-        _ = try await preloadModel(
-            workerClient: workerClient,
+        let embeddingModel = await catalogAwareModelSpec(
+            for: "melix-dev-embed",
             modelCatalog: modelCatalog,
-            model: devEmbeddingModel(),
-            memoryBudgetBytes: memoryBudgetBytes
+            fallback: devEmbeddingModel()
         )
         _ = try await preloadModel(
             workerClient: workerClient,
             modelCatalog: modelCatalog,
-            model: devRerankModel(),
+            model: embeddingModel,
+            memoryBudgetBytes: memoryBudgetBytes
+        )
+        let rerankModel = await catalogAwareModelSpec(
+            for: "melix-dev-rerank",
+            modelCatalog: modelCatalog,
+            fallback: devRerankModel()
+        )
+        _ = try await preloadModel(
+            workerClient: workerClient,
+            modelCatalog: modelCatalog,
+            model: rerankModel,
             memoryBudgetBytes: memoryBudgetBytes
         )
     }
@@ -489,6 +500,18 @@ public enum BootstrapWorkerPreparation {
             workerResidency: response.hasResidency ? response.residency : nil
         )
         return true
+    }
+
+    private static func catalogAwareModelSpec(
+        for modelID: String,
+        modelCatalog: ModelCatalog,
+        fallback: Melix_Worker_V1_ModelSpec
+    ) async -> Melix_Worker_V1_ModelSpec {
+        if let summary = await modelCatalog.model(id: modelID),
+           let spec = modelSpec(for: summary) {
+            return spec
+        }
+        return fallback
     }
 
     private static func devTextModel() -> Melix_Worker_V1_ModelSpec {

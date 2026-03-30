@@ -805,19 +805,23 @@ struct PythonBridgeWorkerClientTests {
         #expect(spec.ext["embedding_dimensions"] == "10")
     }
 
-    @Test("bootstrap worker preparation carries rerank family metadata into worker model specs")
-    func bootstrapWorkerPreparationCarriesRerankFamilyMetadataIntoWorkerModelSpecs() throws {
-        var summary = ModelCatalog.devRerankModel()
+    @Test("bootstrap worker preparation carries causal-lm rerank metadata into worker model specs")
+    func bootstrapWorkerPreparationCarriesCausalLMRerankMetadataIntoWorkerModelSpecs() throws {
+        var summary = ModelCatalog.devRerankModel(environment: [
+            "MELIX_DEV_RERANK_FAMILY_ID": "causal-lm",
+        ])
         summary.settings.ext["rerank_backend_id"] = "token-overlap-v1"
-        summary.settings.ext["rerank_family_id"] = "jina-v3"
-        summary.settings.ext["rerank_scoring_mode"] = "order-aware-overlap"
+        summary.settings.ext["rerank_family_id"] = "causal-lm"
+        summary.settings.ext["rerank_scoring_mode"] = "yes-no-logits"
+        summary.settings.ext["rerank_yes_no_labels"] = "yes,no"
 
         let spec = try #require(BootstrapWorkerPreparation.modelSpec(for: summary))
 
         #expect(spec.modelID == "melix-dev-rerank")
         #expect(spec.ext["rerank_backend_id"] == "token-overlap-v1")
-        #expect(spec.ext["rerank_family_id"] == "jina-v3")
-        #expect(spec.ext["rerank_scoring_mode"] == "order-aware-overlap")
+        #expect(spec.ext["rerank_family_id"] == "causal-lm")
+        #expect(spec.ext["rerank_scoring_mode"] == "yes-no-logits")
+        #expect(spec.ext["rerank_yes_no_labels"] == "yes,no")
     }
 
     @Test("bridge client treats helper errors as unavailable")

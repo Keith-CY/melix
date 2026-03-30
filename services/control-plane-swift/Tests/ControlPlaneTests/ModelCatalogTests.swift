@@ -33,6 +33,18 @@ struct ModelCatalogTests {
         #expect(models.first(where: { $0.modelID == "melix-dev-model-ops" })?.routeClass == .workerRoutePythonModelOperations)
     }
 
+    @Test("dev rerank model reads causal-lm environment overrides")
+    func devRerankModelReadsCausalLMEnvironmentOverrides() async throws {
+        let model = ModelCatalog.devRerankModel(environment: [
+            "MELIX_DEV_RERANK_FAMILY_ID": "causal-lm",
+        ])
+
+        #expect(model.settings.ext["rerank_backend_id"] == "token-overlap-v1")
+        #expect(model.settings.ext["rerank_family_id"] == "causal-lm")
+        #expect(model.settings.ext["rerank_scoring_mode"] == "yes-no-logits")
+        #expect(model.settings.ext["rerank_yes_no_labels"] == "yes,no")
+    }
+
     @Test("model settings updates persist alias and requested residency without faking pin state")
     func modelSettingsUpdatesPersistAliasAndRequestedResidencyWithoutFakingPinState() async throws {
         let catalog = ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels())

@@ -341,7 +341,35 @@ public actor ModelCatalog {
         return withSynchronizedResidency(model)
     }
 
-    public static func devRerankModel() -> Melix_Controlplane_V1_ModelSummary {
+    public static func devRerankModel(
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> Melix_Controlplane_V1_ModelSummary {
+        let backendID = environment["MELIX_DEV_RERANK_BACKEND_ID"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let familyID = environment["MELIX_DEV_RERANK_FAMILY_ID"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let resolvedBackendID = (backendID?.isEmpty == false) ? backendID! : "token-overlap-v1"
+        let resolvedFamilyID = (familyID?.isEmpty == false) ? familyID! : "jina-v3"
+        let defaultScoringMode: String
+        switch resolvedFamilyID {
+        case "basic":
+            defaultScoringMode = "set-overlap"
+        case "causal-lm":
+            defaultScoringMode = "yes-no-logits"
+        default:
+            defaultScoringMode = "order-aware-overlap"
+        }
+        let configuredScoringMode = environment["MELIX_DEV_RERANK_SCORING_MODE"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let resolvedScoringMode = (configuredScoringMode?.isEmpty == false) ? configuredScoringMode! : defaultScoringMode
+        let configuredYesNoLabels = environment["MELIX_DEV_RERANK_YES_NO_LABELS"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let resolvedYesNoLabels = if resolvedFamilyID == "causal-lm" {
+            (configuredYesNoLabels?.isEmpty == false) ? configuredYesNoLabels! : "yes,no"
+        } else {
+            ""
+        }
+
         var model = Melix_Controlplane_V1_ModelSummary()
         model.modelID = "melix-dev-rerank"
         model.kind = "rerank"
@@ -353,9 +381,12 @@ public actor ModelCatalog {
         model.features = ["rerank"]
         model.settings.alias = "Melix Dev Rerank"
         model.settings.memoryPolicy = .memoryResidencyEvictable
-        model.settings.ext["rerank_backend_id"] = "token-overlap-v1"
-        model.settings.ext["rerank_family_id"] = "jina-v3"
-        model.settings.ext["rerank_scoring_mode"] = "order-aware-overlap"
+        model.settings.ext["rerank_backend_id"] = resolvedBackendID
+        model.settings.ext["rerank_family_id"] = resolvedFamilyID
+        model.settings.ext["rerank_scoring_mode"] = resolvedScoringMode
+        if !resolvedYesNoLabels.isEmpty {
+            model.settings.ext["rerank_yes_no_labels"] = resolvedYesNoLabels
+        }
         return withSynchronizedResidency(model)
     }
 

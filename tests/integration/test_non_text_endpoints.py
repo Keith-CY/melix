@@ -178,6 +178,32 @@ def test_rerank_endpoint_prefers_exact_order_for_jina_v3_family() -> None:
         stack.stop()
 
 
+def test_rerank_endpoint_supports_causal_lm_yes_no_scoring() -> None:
+    stack = LiveMelixStack(
+        Path(__file__).resolve().parents[2],
+        environment_overrides={"MELIX_DEV_RERANK_FAMILY_ID": "causal-lm"},
+    )
+
+    try:
+        stack.start()
+        stack.wait_for_models(["melix-dev-rerank"])
+        status, payload = _post_rerank(
+            stack,
+            "melix-dev-rerank",
+            "swift runtime",
+            ["swift runtime is available", "python packaging release"],
+            2,
+        )
+
+        assert status == 200
+        assert payload["model"] == "melix-dev-rerank"
+        assert [item["index"] for item in payload["data"]] == [0, 1]
+        assert payload["data"][0]["score"] > 0
+        assert payload["data"][1]["score"] < 0
+    finally:
+        stack.stop()
+
+
 def test_health_and_cache_endpoints_return_operator_state() -> None:
     stack = LiveMelixStack(Path(__file__).resolve().parents[2])
 
