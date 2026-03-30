@@ -146,6 +146,16 @@ struct RuntimeViewModelTests {
         await failedViewModel.start()
         #expect(failedViewModel.primaryModel?.stateText == "Failed")
 
+        let evictingClient = SnapshotControlPlaneXPCClient(
+            snapshot: makeSnapshot(
+                serverState: .serverReady,
+                models: [makeModelSummary(state: .modelEvicting)]
+            )
+        )
+        let evictingViewModel = RuntimeViewModel(client: evictingClient)
+        await evictingViewModel.start()
+        #expect(evictingViewModel.primaryModel?.stateText == "Evicting")
+
         let unknownClient = SnapshotControlPlaneXPCClient(
             snapshot: makeSnapshot(
                 serverState: .serverReady,

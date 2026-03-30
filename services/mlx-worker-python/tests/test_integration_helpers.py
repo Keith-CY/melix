@@ -150,6 +150,38 @@ def test_wait_for_http_model_states_times_out_with_last_error(
         )
 
 
+def test_wait_for_http_model_states_accepts_pinned_when_warm_is_required(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    perf_times = iter([0.0, 0.1, 0.2, 0.3, 0.4, 0.6])
+
+    class FakeResponse:
+        def __enter__(self) -> "FakeResponse":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> bool:
+            return False
+
+        def read(self) -> bytes:
+            return json.dumps(
+                {
+                    "data": [
+                        {"id": "melix-dev-image", "melix_state": "pinned"},
+                    ]
+                }
+            ).encode("utf-8")
+
+    monkeypatch.setattr(helpers.time, "time", lambda: next(perf_times))
+    monkeypatch.setattr(helpers.time, "sleep", lambda seconds: None)
+    monkeypatch.setattr(helpers.urllib.request, "urlopen", lambda url, timeout: FakeResponse())
+
+    helpers.wait_for_http_model_states(
+        11434,
+        required_states={"melix-dev-image": "warm"},
+        timeout_seconds=0.5,
+    )
+
+
 def test_stop_process_escalates_to_sigkill_after_timeout(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

@@ -98,6 +98,126 @@ struct ControlPlaneServiceTests {
         #expect(event.modelState.state == .modelUnloaded)
     }
 
+    @Test("execute handles worker-backed model.load with loading and warm transitions")
+    func executeHandlesWorkerBackedModelLoadWithIntermediateTransitions() async throws {
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel()])
+        let workerClient = ModelLifecycleWorkerClient()
+        var loadResponse = Melix_Worker_V1_LoadModelResponse()
+        loadResponse.ok = true
+        loadResponse.modelHandle = "melix-dev-text::swift"
+        loadResponse.residency.state = .warm
+        await workerClient.setLoadResponse(loadResponse)
+
+        let registry = WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog)
+        let service = ControlPlaneService(modelCatalog: catalog, workerRegistry: registry)
+        let subscription = await service.subscribe()
+
+        let eventTask = Task {
+            var iterator = subscription.stream.makeAsyncIterator()
+            return [
+                try #require(await iterator.next()),
+                try #require(await iterator.next()),
+            ]
+        }
+
+        let response = try await service.execute(makeLoadModelRequest(modelID: "melix-dev-text"))
+        let events = try await eventTask.value
+
+        #expect(response.ok)
+        #expect(events.map(\.modelState.state) == [.modelLoading, .modelWarm])
+        #expect(await catalog.dispatchHandle(for: "melix-dev-text") == "melix-dev-text::swift")
+    }
+
+    @Test("execute returns unavailable and records failed state when worker-backed model.load fails")
+    func executeReturnsUnavailableAndRecordsFailedStateWhenWorkerBackedModelLoadFails() async throws {
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel()])
+        let workerClient = ModelLifecycleWorkerClient()
+        await workerClient.setLoadError(WorkerClientError.unavailable)
+
+        let registry = WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog)
+        let service = ControlPlaneService(modelCatalog: catalog, workerRegistry: registry)
+        let subscription = await service.subscribe()
+
+        let eventTask = Task {
+            var iterator = subscription.stream.makeAsyncIterator()
+            return [
+                try #require(await iterator.next()),
+                try #require(await iterator.next()),
+            ]
+        }
+
+        let response = try await service.execute(makeLoadModelRequest(modelID: "melix-dev-text"))
+        let events = try await eventTask.value
+        let model = try #require(await catalog.model(id: "melix-dev-text"))
+
+        #expect(!response.ok)
+        #expect(response.error.code == "unavailable")
+        #expect(events.map(\.modelState.state) == [.modelLoading, .modelFailed])
+        #expect(model.state == .modelFailed)
+        #expect(await catalog.dispatchHandle(for: "melix-dev-text") == nil)
+    }
+
+    @Test("execute handles worker-backed model.unload with evicting and unloaded transitions")
+    func executeHandlesWorkerBackedModelUnloadWithIntermediateTransitions() async throws {
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel()])
+        _ = await catalog.recordLoadSucceeded(id: "melix-dev-text", dispatchHandle: "melix-dev-text::swift")
+
+        let workerClient = ModelLifecycleWorkerClient()
+        var unloadResponse = Melix_Worker_V1_UnloadModelResponse()
+        unloadResponse.ok = true
+        await workerClient.setUnloadResponse(unloadResponse)
+
+        let registry = WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog)
+        let service = ControlPlaneService(modelCatalog: catalog, workerRegistry: registry)
+        let subscription = await service.subscribe()
+
+        let eventTask = Task {
+            var iterator = subscription.stream.makeAsyncIterator()
+            return [
+                try #require(await iterator.next()),
+                try #require(await iterator.next()),
+            ]
+        }
+
+        let response = try await service.execute(makeUnloadModelRequest(modelID: "melix-dev-text"))
+        let events = try await eventTask.value
+
+        #expect(response.ok)
+        #expect(events.map(\.modelState.state) == [.modelEvicting, .modelUnloaded])
+        #expect(await catalog.dispatchHandle(for: "melix-dev-text") == nil)
+    }
+
+    @Test("execute returns unavailable and records failed state when worker-backed model.unload fails")
+    func executeReturnsUnavailableAndRecordsFailedStateWhenWorkerBackedModelUnloadFails() async throws {
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel()])
+        _ = await catalog.recordLoadSucceeded(id: "melix-dev-text", dispatchHandle: "melix-dev-text::swift")
+
+        let workerClient = ModelLifecycleWorkerClient()
+        await workerClient.setUnloadError(WorkerClientError.unavailable)
+
+        let registry = WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog)
+        let service = ControlPlaneService(modelCatalog: catalog, workerRegistry: registry)
+        let subscription = await service.subscribe()
+
+        let eventTask = Task {
+            var iterator = subscription.stream.makeAsyncIterator()
+            return [
+                try #require(await iterator.next()),
+                try #require(await iterator.next()),
+            ]
+        }
+
+        let response = try await service.execute(makeUnloadModelRequest(modelID: "melix-dev-text"))
+        let events = try await eventTask.value
+        let model = try #require(await catalog.model(id: "melix-dev-text"))
+
+        #expect(!response.ok)
+        #expect(response.error.code == "unavailable")
+        #expect(events.map(\.modelState.state) == [.modelEvicting, .modelFailed])
+        #expect(model.state == .modelFailed)
+        #expect(await catalog.dispatchHandle(for: "melix-dev-text") == nil)
+    }
+
     @Test("execute handles model.set_policy and updates typed model settings")
     func executeHandlesModelSetPolicyAndUpdatesTypedModelSettings() async throws {
         let service = ControlPlaneService(modelCatalog: ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels()))
@@ -2666,6 +2786,65 @@ private func waitForControlPlaneCondition(
 
 private struct ControlPlaneConditionTimeoutError: Error, CustomStringConvertible {
     let description: String
+}
+
+private actor ModelLifecycleWorkerClient: WorkerRoutingClient {
+    private var loadResponse = Melix_Worker_V1_LoadModelResponse()
+    private var unloadResponse = Melix_Worker_V1_UnloadModelResponse()
+    private var loadError: Error?
+    private var unloadError: Error?
+
+    func setLoadResponse(_ response: Melix_Worker_V1_LoadModelResponse) {
+        loadResponse = response
+    }
+
+    func setUnloadResponse(_ response: Melix_Worker_V1_UnloadModelResponse) {
+        unloadResponse = response
+    }
+
+    func setLoadError(_ error: Error?) {
+        loadError = error
+    }
+
+    func setUnloadError(_ error: Error?) {
+        unloadError = error
+    }
+
+    func canDispatchRequests() async -> Bool {
+        true
+    }
+
+    func generate(
+        request: Melix_Worker_V1_GenerateRequest
+    ) async throws -> AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error> {
+        _ = request
+        throw WorkerClientError.unavailable
+    }
+
+    func abort(requestID: String) async throws -> Bool {
+        _ = requestID
+        return false
+    }
+
+    func loadModel(
+        request: Melix_Worker_V1_LoadModelRequest
+    ) async throws -> Melix_Worker_V1_LoadModelResponse {
+        _ = request
+        if let loadError {
+            throw loadError
+        }
+        return loadResponse
+    }
+
+    func unloadModel(
+        request: Melix_Worker_V1_UnloadModelRequest
+    ) async throws -> Melix_Worker_V1_UnloadModelResponse {
+        _ = request
+        if let unloadError {
+            throw unloadError
+        }
+        return unloadResponse
+    }
 }
 
 private actor ScriptedModelOperationsWorkerClient: WorkerRoutingClient, ModelOperationsWorkerClientProtocol {

@@ -459,7 +459,10 @@ def wait_for_http_model_states(
             with urllib.request.urlopen(f"http://127.0.0.1:{port}/v1/models", timeout=2) as response:
                 payload = json.loads(response.read().decode("utf-8"))
                 states = {item["id"]: item["melix_state"] for item in payload["data"]}
-                if all(states.get(model_id) == expected for model_id, expected in required_states.items()):
+                if all(
+                    _model_state_satisfies(states.get(model_id), expected)
+                    for model_id, expected in required_states.items()
+                ):
                     return
         except (urllib.error.URLError, TimeoutError, ConnectionError, json.JSONDecodeError) as exc:
             last_error = exc
@@ -498,3 +501,9 @@ def _format_process_failure(message: str, stdout_path: Path | None, stderr_path:
     stdout = stdout_path.read_text(encoding="utf-8") if isinstance(stdout_path, Path) and stdout_path.exists() else ""
     stderr = stderr_path.read_text(encoding="utf-8") if isinstance(stderr_path, Path) and stderr_path.exists() else ""
     return f"{message}: stdout={stdout!r} stderr={stderr!r}"
+
+
+def _model_state_satisfies(actual: str | None, expected: str) -> bool:
+    if expected == "warm":
+        return actual in {"warm", "pinned"}
+    return actual == expected

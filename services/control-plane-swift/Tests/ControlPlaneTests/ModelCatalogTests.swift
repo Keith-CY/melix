@@ -3,6 +3,7 @@ import Testing
 
 @testable import MelixControlPlaneCore
 import MelixControlPlaneProtocol
+import MelixWorkerProtocol
 
 @Suite("Model Catalog")
 struct ModelCatalogTests {
@@ -23,8 +24,8 @@ struct ModelCatalogTests {
         #expect(models.first(where: { $0.modelID == "melix-dev-model-ops" })?.routeClass == .workerRoutePythonModelOperations)
     }
 
-    @Test("model settings updates persist alias residency and pin semantics")
-    func modelSettingsUpdatesPersistAliasResidencyAndPinSemantics() async throws {
+    @Test("model settings updates persist alias and requested residency without faking pin state")
+    func modelSettingsUpdatesPersistAliasAndRequestedResidencyWithoutFakingPinState() async throws {
         let catalog = ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels())
         var settings = Melix_Controlplane_V1_ModelSettings()
         settings.alias = "Operations Embed"
@@ -43,7 +44,9 @@ struct ModelCatalogTests {
         #expect(updated.settings.memoryPolicy == .memoryResidencyTtl)
         #expect(updated.settings.defaultAccelerationMode == .activeKvQuantized)
         #expect(updated.settings.accelerationProfileID == "embed-q8")
-        #expect(updated.pinned)
+        #expect(!updated.pinned)
+        #expect(updated.residency.pinRequested)
+        #expect(!updated.residency.pinned)
         #expect(reloaded == updated)
     }
 
@@ -119,6 +122,99 @@ struct ModelCatalogTests {
 
         let unspecified = try #require(byID["unspecified"])
         #expect(unspecified.residency.state == .unspecified)
+    }
+
+    @Test("explicit residency transitions separate loading failure evicting and worker-reported states")
+    func explicitResidencyTransitionsSeparateLoadingFailureEvictingAndWorkerReportedStates() async throws {
+        let catalog = ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels())
+
+        let loading = try #require(await catalog.beginLoad(id: "melix-dev-text"))
+        #expect(loading.state == .modelLoading)
+        #expect(loading.residency.state == .loading)
+        #expect(await catalog.dispatchHandle(for: "melix-dev-text") == nil)
+
+        let failed = try #require(await catalog.recordLoadFailed(id: "melix-dev-text"))
+        #expect(failed.state == .modelFailed)
+        #expect(failed.residency.state == .failed)
+
+        var workerResidency = Melix_Worker_V1_ResidencyInfo()
+        workerResidency.state = .pinned
+        workerResidency.pinned = true
+
+        let loaded = try #require(await catalog.recordLoadSucceeded(
+            id: "melix-dev-text",
+            dispatchHandle: "melix-dev-text::swift",
+            workerResidency: workerResidency
+        ))
+        #expect(loaded.state == .modelPinned)
+        #expect(loaded.residency.state == .pinned)
+        #expect(loaded.pinned)
+        #expect(await catalog.dispatchHandle(for: "melix-dev-text") == "melix-dev-text::swift")
+
+        let evicting = try #require(await catalog.beginUnload(id: "melix-dev-text"))
+        #expect(evicting.state == .modelEvicting)
+        #expect(evicting.residency.state == .evicting)
+        #expect(await catalog.dispatchHandle(for: "melix-dev-text") == nil)
+
+        let unloaded = try #require(await catalog.recordUnloadSucceeded(id: "melix-dev-text"))
+        #expect(unloaded.state == .modelUnloaded)
+        #expect(unloaded.residency.state == .unloaded)
+    }
+
+    @Test("worker residency mappings drive ready states and dispatch-handle retention")
+    func workerResidencyMappingsDriveReadyStatesAndDispatchHandleRetention() async throws {
+        let cases: [(Melix_Worker_V1_ResidencyState, Melix_Controlplane_V1_ModelState, Bool)] = [
+            (.warm, .modelWarm, true),
+            (.loading, .modelLoading, false),
+            (.evicting, .modelEvicting, false),
+            (.unloaded, .modelUnloaded, false),
+            (.failed, .modelFailed, false),
+            (.UNRECOGNIZED(-1), .modelWarm, true),
+        ]
+
+        for (workerState, expectedState, keepsHandle) in cases {
+            let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel()])
+            var workerResidency = Melix_Worker_V1_ResidencyInfo()
+            workerResidency.state = workerState
+
+            let loaded = try #require(await catalog.recordLoadSucceeded(
+                id: "melix-dev-text",
+                dispatchHandle: "melix-dev-text::swift",
+                workerResidency: workerResidency
+            ))
+
+            #expect(loaded.state == expectedState)
+            #expect(await catalog.dispatchHandle(for: "melix-dev-text") == (keepsHandle ? "melix-dev-text::swift" : nil))
+            #expect(await catalog.storedDispatchHandle(for: "melix-dev-text") == (keepsHandle ? "melix-dev-text::swift" : nil))
+        }
+    }
+
+    @Test("explicit transition helpers handle missing models custom handles and unload failures")
+    func explicitTransitionHelpersHandleMissingModelsCustomHandlesAndUnloadFailures() async throws {
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel()])
+
+        #expect(await catalog.beginLoad(id: "missing-model") == nil)
+        #expect(await catalog.recordLoadFailed(id: "missing-model") == nil)
+        #expect(await catalog.beginUnload(id: "missing-model") == nil)
+        #expect(await catalog.recordUnloadFailed(id: "missing-model") == nil)
+
+        let loaded = try #require(await catalog.loadModel(
+            id: "melix-dev-text",
+            dispatchHandle: "melix-dev-text::custom"
+        ))
+        #expect(loaded.state == .modelWarm)
+        #expect(await catalog.dispatchHandle(for: "melix-dev-text") == "melix-dev-text::custom")
+
+        let evicting = try #require(await catalog.beginUnload(id: "melix-dev-text"))
+        #expect(evicting.state == .modelEvicting)
+        #expect(await catalog.dispatchHandle(for: "melix-dev-text") == nil)
+        #expect(await catalog.storedDispatchHandle(for: "melix-dev-text") == "melix-dev-text::custom")
+
+        let failed = try #require(await catalog.recordUnloadFailed(id: "melix-dev-text"))
+        #expect(failed.state == .modelFailed)
+        #expect(failed.residency.state == .failed)
+        #expect(await catalog.dispatchHandle(for: "melix-dev-text") == nil)
+        #expect(await catalog.storedDispatchHandle(for: "melix-dev-text") == nil)
     }
 
     @Test("phase six contract seed models expose multimodal routes and task visibility")

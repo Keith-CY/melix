@@ -62,6 +62,18 @@ public protocol WorkerRoutingClient: WorkerClient {
     func loadModel(
         request: Melix_Worker_V1_LoadModelRequest
     ) async throws -> Melix_Worker_V1_LoadModelResponse
+
+    func unloadModel(
+        request: Melix_Worker_V1_UnloadModelRequest
+    ) async throws -> Melix_Worker_V1_UnloadModelResponse
+}
+
+public extension WorkerRoutingClient {
+    func unloadModel(
+        request: Melix_Worker_V1_UnloadModelRequest
+    ) async throws -> Melix_Worker_V1_UnloadModelResponse {
+        throw WorkerClientError.unavailable
+    }
 }
 
 public protocol ModelOperationsWorkerClientProtocol: WorkerClient {
@@ -102,6 +114,12 @@ public struct NullWorkerClient: WorkerRoutingClient {
     public func loadModel(
         request: Melix_Worker_V1_LoadModelRequest
     ) async throws -> Melix_Worker_V1_LoadModelResponse {
+        throw WorkerClientError.unavailable
+    }
+
+    public func unloadModel(
+        request: Melix_Worker_V1_UnloadModelRequest
+    ) async throws -> Melix_Worker_V1_UnloadModelResponse {
         throw WorkerClientError.unavailable
     }
 }

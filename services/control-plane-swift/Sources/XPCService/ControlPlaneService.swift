@@ -216,19 +216,47 @@ public actor ControlPlaneService {
             reply.models = await modelCatalog.listModels()
             return okResponse(for: request, model: reply)
         case .load(let load):
-            guard let model = await modelCatalog.loadModel(id: load.modelID) else {
+            guard await modelCatalog.model(id: load.modelID) != nil else {
                 return errorResponse(for: request, code: "not_found", message: "Unknown model ID.")
             }
-            await publishModelStateChanged(model)
+            if let loading = await modelCatalog.beginLoad(id: load.modelID),
+               workerRegistry != nil {
+                await publishModelStateChanged(loading)
+            }
+            let model = await handleModelLoad(modelID: load.modelID)
+            if workerRegistry != nil {
+                await publishModelStateChanged(model)
+            }
+            guard model.state != .modelFailed else {
+                return errorResponse(
+                    for: request,
+                    code: "unavailable",
+                    message: "The worker could not load the requested model."
+                )
+            }
             var reply = Melix_Controlplane_V1_ModelReply()
             reply.model = model
             reply.models = await modelCatalog.listModels()
             return okResponse(for: request, model: reply)
         case .unload(let unload):
-            guard let model = await modelCatalog.unloadModel(id: unload.modelID) else {
+            guard await modelCatalog.model(id: unload.modelID) != nil else {
                 return errorResponse(for: request, code: "not_found", message: "Unknown model ID.")
             }
-            await publishModelStateChanged(model)
+            if let evicting = await modelCatalog.beginUnload(id: unload.modelID),
+               workerRegistry != nil {
+                await publishModelStateChanged(evicting)
+            }
+            let model = await handleModelUnload(modelID: unload.modelID)
+            if workerRegistry != nil {
+                await publishModelStateChanged(model)
+            }
+            guard model.state != .modelFailed else {
+                return errorResponse(
+                    for: request,
+                    code: "unavailable",
+                    message: "The worker could not unload the requested model."
+                )
+            }
             var reply = Melix_Controlplane_V1_ModelReply()
             reply.model = model
             reply.models = await modelCatalog.listModels()
@@ -1231,6 +1259,63 @@ public actor ControlPlaneService {
         event.modelState.modelID = model.modelID
         event.modelState.state = model.state
         await eventHub.publish(event)
+    }
+
+    private func handleModelLoad(
+        modelID: String
+    ) async -> Melix_Controlplane_V1_ModelSummary {
+        guard let workerRegistry,
+              let modelSpec = BootstrapWorkerPreparation.modelSpec(for: modelID),
+              let workerClient = await workerRegistry.client(forModelID: modelID) else {
+            return await modelCatalog.recordLoadSucceeded(
+                id: modelID,
+                dispatchHandle: "\(modelID)::local"
+            ) ?? Melix_Controlplane_V1_ModelSummary()
+        }
+
+        var workerRequest = Melix_Worker_V1_LoadModelRequest()
+        workerRequest.model = modelSpec
+        workerRequest.memoryBudgetBytes = 0
+        workerRequest.pinOnLoad = false
+        workerRequest.warmupAfterLoad = false
+
+        do {
+            let response = try await workerClient.loadModel(request: workerRequest)
+            guard response.ok, !response.modelHandle.isEmpty else {
+                return await modelCatalog.recordLoadFailed(id: modelID) ?? Melix_Controlplane_V1_ModelSummary()
+            }
+            return await modelCatalog.recordLoadSucceeded(
+                id: modelID,
+                dispatchHandle: response.modelHandle,
+                pinRequested: workerRequest.pinOnLoad,
+                workerResidency: response.hasResidency ? response.residency : nil
+            ) ?? Melix_Controlplane_V1_ModelSummary()
+        } catch {
+            return await modelCatalog.recordLoadFailed(id: modelID) ?? Melix_Controlplane_V1_ModelSummary()
+        }
+    }
+
+    private func handleModelUnload(
+        modelID: String
+    ) async -> Melix_Controlplane_V1_ModelSummary {
+        guard let workerRegistry,
+              let handle = await modelCatalog.storedDispatchHandle(for: modelID),
+              let workerClient = await workerRegistry.client(forModelID: modelID) else {
+            return await modelCatalog.recordUnloadSucceeded(id: modelID) ?? Melix_Controlplane_V1_ModelSummary()
+        }
+
+        var workerRequest = Melix_Worker_V1_UnloadModelRequest()
+        workerRequest.modelHandle = handle
+
+        do {
+            let response = try await workerClient.unloadModel(request: workerRequest)
+            guard response.ok else {
+                return await modelCatalog.recordUnloadFailed(id: modelID) ?? Melix_Controlplane_V1_ModelSummary()
+            }
+            return await modelCatalog.recordUnloadSucceeded(id: modelID) ?? Melix_Controlplane_V1_ModelSummary()
+        } catch {
+            return await modelCatalog.recordUnloadFailed(id: modelID) ?? Melix_Controlplane_V1_ModelSummary()
+        }
     }
 
     private func publishSessionStateChanged(_ session: Melix_Controlplane_V1_SessionState) async {

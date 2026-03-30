@@ -33,6 +33,9 @@ class FakeRuntimeStub:
             model_handle=f"{request.model.model_id}::bridge",
         )
 
+    def UnloadModel(self, request):
+        return runtime_pb2.UnloadModelResponse(ok=True)
+
     def GetRuntimeStats(self, request):
         return runtime_pb2.GetRuntimeStatsResponse(
             stats=runtime_pb2.RuntimeStats(
@@ -124,6 +127,24 @@ def test_bridge_helper_handles_health_load_and_generate(monkeypatch, capsys) -> 
     load_payload = runtime_pb2.LoadModelResponse.FromString(base64.b64decode(load_line["message_b64"]))
     assert load_payload.ok is True
     assert load_payload.model_handle == "melix-dev-text::bridge"
+
+    unload_request = runtime_pb2.UnloadModelRequest(model_handle="melix-dev-text::bridge")
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "control_plane_bridge.py",
+            "unload-model",
+            "--socket-path",
+            "/tmp/unused.sock",
+            "--request-b64",
+            base64.b64encode(unload_request.SerializeToString()).decode("ascii"),
+        ],
+    )
+    control_plane_bridge.main()
+    unload_line = json.loads(capsys.readouterr().out.strip())
+    unload_payload = runtime_pb2.UnloadModelResponse.FromString(base64.b64decode(unload_line["message_b64"]))
+    assert unload_payload.ok is True
 
     runtime_stats_request = runtime_pb2.GetRuntimeStatsRequest()
     monkeypatch.setattr(

@@ -15,6 +15,11 @@ public protocol SwiftTextWorkerRPCRunning: Sendable {
         request: Melix_Worker_V1_LoadModelRequest
     ) async throws -> Melix_Worker_V1_LoadModelResponse
 
+    func unloadModel(
+        socketPath: String,
+        request: Melix_Worker_V1_UnloadModelRequest
+    ) async throws -> Melix_Worker_V1_UnloadModelResponse
+
     func runtimeStats(
         socketPath: String,
         request: Melix_Worker_V1_GetRuntimeStatsRequest
@@ -84,6 +89,12 @@ public struct SwiftTextWorkerClient:
         try await runner.loadModel(socketPath: socketPath, request: request)
     }
 
+    public func unloadModel(
+        request: Melix_Worker_V1_UnloadModelRequest
+    ) async throws -> Melix_Worker_V1_UnloadModelResponse {
+        try await runner.unloadModel(socketPath: socketPath, request: request)
+    }
+
     public func runtimeStats() async throws -> Melix_Worker_V1_GetRuntimeStatsResponse {
         try await runner.runtimeStats(
             socketPath: socketPath,
@@ -143,6 +154,15 @@ public struct GRPCSwiftTextWorkerRunner: SwiftTextWorkerRPCRunning, Sendable {
     ) async throws -> Melix_Worker_V1_LoadModelResponse {
         try await withRPCClients(socketPath: socketPath) { runtimeClient, _, _ in
             try await runtimeClient.loadModel(request)
+        }
+    }
+
+    public func unloadModel(
+        socketPath: String,
+        request: Melix_Worker_V1_UnloadModelRequest
+    ) async throws -> Melix_Worker_V1_UnloadModelResponse {
+        try await withRPCClients(socketPath: socketPath) { runtimeClient, _, _ in
+            try await runtimeClient.unloadModel(request)
         }
     }
 

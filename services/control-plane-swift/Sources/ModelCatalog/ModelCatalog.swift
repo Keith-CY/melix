@@ -1,4 +1,5 @@
 import MelixControlPlaneProtocol
+import MelixWorkerProtocol
 
 public actor ModelCatalog {
     private var models: [String: Melix_Controlplane_V1_ModelSummary]
@@ -25,23 +26,70 @@ public actor ModelCatalog {
         models[id]
     }
 
-    public func loadModel(id: String) -> Melix_Controlplane_V1_ModelSummary? {
-        loadModel(id: id, dispatchHandle: ModelCatalog.defaultDispatchHandle(for: id))
-    }
-
-    public func loadModel(id: String, dispatchHandle: String) -> Melix_Controlplane_V1_ModelSummary? {
+    public func beginLoad(id: String) -> Melix_Controlplane_V1_ModelSummary? {
         guard var model = models[id] else {
             return nil
         }
-        model.state = ModelCatalog.loadState(for: model.settings)
-        model.pinned = model.state == .modelPinned
+        model.state = .modelLoading
+        model.pinned = false
         model = ModelCatalog.withSynchronizedResidency(model)
         models[id] = model
-        dispatchHandles[id] = dispatchHandle
         return model
     }
 
-    public func unloadModel(id: String) -> Melix_Controlplane_V1_ModelSummary? {
+    public func recordLoadSucceeded(
+        id: String,
+        dispatchHandle: String,
+        pinRequested: Bool = false,
+        workerResidency: Melix_Worker_V1_ResidencyInfo? = nil
+    ) -> Melix_Controlplane_V1_ModelSummary? {
+        guard var model = models[id] else {
+            return nil
+        }
+
+        let loadedState = ModelCatalog.loadedState(
+            for: model.settings,
+            pinRequested: pinRequested,
+            workerResidency: workerResidency
+        )
+        model.state = loadedState
+        model.pinned = loadedState == .modelPinned || workerResidency?.pinned == true
+        model = ModelCatalog.withSynchronizedResidency(model)
+        models[id] = model
+
+        if loadedState == .modelWarm || loadedState == .modelPinned {
+            dispatchHandles[id] = dispatchHandle
+        } else {
+            dispatchHandles.removeValue(forKey: id)
+        }
+
+        return model
+    }
+
+    public func recordLoadFailed(id: String) -> Melix_Controlplane_V1_ModelSummary? {
+        guard var model = models[id] else {
+            return nil
+        }
+        model.state = .modelFailed
+        model.pinned = false
+        model = ModelCatalog.withSynchronizedResidency(model)
+        models[id] = model
+        dispatchHandles.removeValue(forKey: id)
+        return model
+    }
+
+    public func beginUnload(id: String) -> Melix_Controlplane_V1_ModelSummary? {
+        guard var model = models[id] else {
+            return nil
+        }
+        model.state = .modelEvicting
+        model.pinned = false
+        model = ModelCatalog.withSynchronizedResidency(model)
+        models[id] = model
+        return model
+    }
+
+    public func recordUnloadSucceeded(id: String) -> Melix_Controlplane_V1_ModelSummary? {
         guard var model = models[id] else {
             return nil
         }
@@ -53,6 +101,36 @@ public actor ModelCatalog {
         return model
     }
 
+    public func recordUnloadFailed(id: String) -> Melix_Controlplane_V1_ModelSummary? {
+        guard var model = models[id] else {
+            return nil
+        }
+        model.state = .modelFailed
+        model.pinned = false
+        model = ModelCatalog.withSynchronizedResidency(model)
+        models[id] = model
+        dispatchHandles.removeValue(forKey: id)
+        return model
+    }
+
+    public func loadModel(id: String) -> Melix_Controlplane_V1_ModelSummary? {
+        _ = beginLoad(id: id)
+        return recordLoadSucceeded(
+            id: id,
+            dispatchHandle: ModelCatalog.defaultDispatchHandle(for: id)
+        )
+    }
+
+    public func loadModel(id: String, dispatchHandle: String) -> Melix_Controlplane_V1_ModelSummary? {
+        _ = beginLoad(id: id)
+        return recordLoadSucceeded(id: id, dispatchHandle: dispatchHandle)
+    }
+
+    public func unloadModel(id: String) -> Melix_Controlplane_V1_ModelSummary? {
+        _ = beginUnload(id: id)
+        return recordUnloadSucceeded(id: id)
+    }
+
     public func updateSettings(
         id: String,
         settings: Melix_Controlplane_V1_ModelSettings
@@ -61,7 +139,6 @@ public actor ModelCatalog {
             return nil
         }
         model.settings = settings
-        model.pinned = settings.pinOnLoad
         model = ModelCatalog.withSynchronizedResidency(model)
         models[id] = model
         return model
@@ -74,7 +151,11 @@ public actor ModelCatalog {
         guard model.state == .modelWarm || model.state == .modelPinned else {
             return nil
         }
-        return dispatchHandles[id] ?? ModelCatalog.defaultDispatchHandle(for: id)
+        return dispatchHandles[id]
+    }
+
+    public func storedDispatchHandle(for id: String) -> String? {
+        dispatchHandles[id]
     }
 
     public static func devTextModel() -> Melix_Controlplane_V1_ModelSummary {
@@ -246,7 +327,7 @@ public actor ModelCatalog {
         _ source: Melix_Controlplane_V1_ModelSummary
     ) -> Melix_Controlplane_V1_ModelSummary {
         var model = source
-        model.pinned = model.state == .modelPinned || model.settings.pinOnLoad
+        model.pinned = effectivePinnedFlag(for: model)
         model.residency = residencySummary(for: model)
         return model
     }
@@ -282,6 +363,49 @@ public actor ModelCatalog {
         for settings: Melix_Controlplane_V1_ModelSettings
     ) -> Melix_Controlplane_V1_ModelState {
         effectivePolicy(for: settings) == .memoryResidencyPinned ? .modelPinned : .modelWarm
+    }
+
+    private static func loadedState(
+        for settings: Melix_Controlplane_V1_ModelSettings,
+        pinRequested: Bool,
+        workerResidency: Melix_Worker_V1_ResidencyInfo?
+    ) -> Melix_Controlplane_V1_ModelState {
+        guard let workerResidency else {
+            if pinRequested {
+                return .modelPinned
+            }
+            return loadState(for: settings)
+        }
+
+        switch workerResidency.state {
+        case .pinned:
+            return .modelPinned
+        case .warm:
+            return .modelWarm
+        case .loading:
+            return .modelLoading
+        case .evicting:
+            return .modelEvicting
+        case .unloaded:
+            return .modelUnloaded
+        case .failed:
+            return .modelFailed
+        default:
+            return loadState(for: settings)
+        }
+    }
+
+    private static func effectivePinnedFlag(
+        for model: Melix_Controlplane_V1_ModelSummary
+    ) -> Bool {
+        switch model.state {
+        case .modelPinned:
+            return true
+        case .modelWarm:
+            return model.pinned
+        default:
+            return false
+        }
     }
 
     private static func residencyState(

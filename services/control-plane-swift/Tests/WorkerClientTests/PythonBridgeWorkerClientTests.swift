@@ -47,6 +47,26 @@ struct PythonBridgeWorkerClientTests {
         #expect(loaded.modelHandle == "melix-dev-text::bridge")
     }
 
+    @Test("unload model returns the bridge acknowledgement")
+    func unloadModelReturnsBridgeAcknowledgement() async throws {
+        var request = Melix_Worker_V1_UnloadModelRequest()
+        request.modelHandle = "melix-dev-text::bridge"
+
+        var response = Melix_Worker_V1_UnloadModelResponse()
+        response.ok = true
+
+        let runner = ScriptedBridgeRunner()
+        await runner.setUnaryResponse(
+            .unloadModel,
+            line: bridgeMessageLine(message: try response.serializedData())
+        )
+
+        let client = PythonBridgeWorkerClient(socketPath: "/tmp/melix-test.sock", runner: runner)
+        let unloaded = try await client.unloadModel(request: request)
+
+        #expect(unloaded.ok)
+    }
+
     @Test("generate decodes streamed execute events from the bridge")
     func generateDecodesStreamedExecuteEventsFromTheBridge() async throws {
         var request = Melix_Worker_V1_GenerateRequest()

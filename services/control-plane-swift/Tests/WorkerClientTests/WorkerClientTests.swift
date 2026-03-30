@@ -32,5 +32,51 @@ struct WorkerClientTests {
         } catch let error as WorkerClientError {
             #expect(error == .unavailable)
         }
+
+        var unloadRequest = Melix_Worker_V1_UnloadModelRequest()
+        unloadRequest.modelHandle = "missing::handle"
+
+        do {
+            _ = try await client.unloadModel(request: unloadRequest)
+            Issue.record("Expected null worker unload to fail.")
+        } catch let error as WorkerClientError {
+            #expect(error == .unavailable)
+        }
+    }
+
+    @Test("worker-routing default unload model throws unavailable")
+    func workerRoutingDefaultUnloadModelThrowsUnavailable() async throws {
+        let client = DefaultUnloadWorkerClient()
+        var unloadRequest = Melix_Worker_V1_UnloadModelRequest()
+        unloadRequest.modelHandle = "missing::handle"
+
+        do {
+            _ = try await client.unloadModel(request: unloadRequest)
+            Issue.record("Expected default unload implementation to fail.")
+        } catch let error as WorkerClientError {
+            #expect(error == .unavailable)
+        }
+    }
+}
+
+private struct DefaultUnloadWorkerClient: WorkerRoutingClient {
+    func canDispatchRequests() async -> Bool { true }
+
+    func generate(
+        request: Melix_Worker_V1_GenerateRequest
+    ) async throws -> AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error> {
+        AsyncThrowingStream { continuation in
+            continuation.finish()
+        }
+    }
+
+    func abort(requestID: String) async throws -> Bool { false }
+
+    func loadModel(
+        request: Melix_Worker_V1_LoadModelRequest
+    ) async throws -> Melix_Worker_V1_LoadModelResponse {
+        var response = Melix_Worker_V1_LoadModelResponse()
+        response.ok = true
+        return response
     }
 }

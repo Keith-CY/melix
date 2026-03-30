@@ -33,6 +33,7 @@ enum OnDemandModelLoader {
             throw OnDemandModelLoadError.workerUnavailable
         }
 
+        _ = await modelCatalog.beginLoad(id: modelID)
         var request = Melix_Worker_V1_LoadModelRequest()
         request.model = modelSpec
         request.memoryBudgetBytes = memoryBudgetBytes
@@ -44,13 +45,20 @@ enum OnDemandModelLoader {
         do {
             response = try await workerClient.loadModel(request: request)
         } catch {
+            _ = await modelCatalog.recordLoadFailed(id: modelID)
             throw OnDemandModelLoadError.workerUnavailable
         }
         guard response.ok, !response.modelHandle.isEmpty else {
+            _ = await modelCatalog.recordLoadFailed(id: modelID)
             throw OnDemandModelLoadError.workerUnavailable
         }
 
-        _ = await modelCatalog.loadModel(id: modelID, dispatchHandle: response.modelHandle)
+        _ = await modelCatalog.recordLoadSucceeded(
+            id: modelID,
+            dispatchHandle: response.modelHandle,
+            pinRequested: request.pinOnLoad,
+            workerResidency: response.hasResidency ? response.residency : nil
+        )
 
         let elapsedMs = Date().timeIntervalSince(startedAt) * 1000
         await metricsStore.set(elapsedMs, forKey: "control_plane.text_first_load_ms")

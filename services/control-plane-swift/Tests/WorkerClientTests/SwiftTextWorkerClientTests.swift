@@ -35,6 +35,20 @@ struct SwiftTextWorkerClientTests {
         #expect(loaded.modelHandle == "melix-dev-text::swift")
     }
 
+    @Test("unload model returns the worker acknowledgement from the runner")
+    func unloadModelReturnsWorkerAcknowledgement() async throws {
+        let runner = ScriptedSwiftTextWorkerRunner()
+        await runner.setHandshakeResponse(makeHandshakeResponse())
+
+        var request = Melix_Worker_V1_UnloadModelRequest()
+        request.modelHandle = "melix-dev-text::swift"
+
+        let client = SwiftTextWorkerClient(socketPath: "/tmp/melix-swift-test.sock", runner: runner)
+        let unloaded = try await client.unloadModel(request: request)
+
+        #expect(unloaded.ok)
+    }
+
     @Test("runtime and cache stats forward unary responses from the runner")
     func runtimeAndCacheStatsForwardUnaryResponsesFromTheRunner() async throws {
         let runner = ScriptedSwiftTextWorkerRunner()
@@ -200,6 +214,11 @@ struct SwiftTextWorkerClientTests {
         let loadResponse = try await client.loadModel(request: makeLoadModelRequest())
         #expect(loadResponse.modelHandle == "melix-dev-text::swift-live")
 
+        var unloadRequest = Melix_Worker_V1_UnloadModelRequest()
+        unloadRequest.modelHandle = "melix-dev-text::swift-live"
+        let unloadResponse = try await client.unloadModel(request: unloadRequest)
+        #expect(unloadResponse.ok)
+
         let runtimeStats = try await client.runtimeStats()
         #expect(runtimeStats.stats.residentBytes == 8_192)
 
@@ -302,6 +321,17 @@ private actor ScriptedSwiftTextWorkerRunner: SwiftTextWorkerRPCRunning {
         }()
     }
 
+    func unloadModel(
+        socketPath: String,
+        request: Melix_Worker_V1_UnloadModelRequest
+    ) async throws -> Melix_Worker_V1_UnloadModelResponse {
+        _ = socketPath
+        _ = request
+        var response = Melix_Worker_V1_UnloadModelResponse()
+        response.ok = true
+        return response
+    }
+
     func runtimeStats(
         socketPath: String,
         request: Melix_Worker_V1_GetRuntimeStatsRequest
@@ -402,6 +432,11 @@ private actor LiveSwiftWorkerFixture {
         let runtime = TestRuntimeService(
             handshakeResponse: handshakeResponse,
             loadModelResponse: loadModelResponse,
+            unloadModelResponse: {
+                var response = Melix_Worker_V1_UnloadModelResponse()
+                response.ok = true
+                return response
+            }(),
             runtimeStatsResponse: runtimeStatsResponse
         )
         let inference = TestInferenceService(
@@ -441,15 +476,18 @@ private actor LiveSwiftWorkerFixture {
 private final class TestRuntimeService: Melix_Worker_V1_RuntimeService.SimpleServiceProtocol, @unchecked Sendable {
     private let handshakeResponse: Melix_Worker_V1_HandshakeResponse
     private let loadModelResponse: Melix_Worker_V1_LoadModelResponse
+    private let unloadModelResponse: Melix_Worker_V1_UnloadModelResponse
     private let runtimeStatsResponse: Melix_Worker_V1_GetRuntimeStatsResponse
 
     init(
         handshakeResponse: Melix_Worker_V1_HandshakeResponse,
         loadModelResponse: Melix_Worker_V1_LoadModelResponse,
+        unloadModelResponse: Melix_Worker_V1_UnloadModelResponse,
         runtimeStatsResponse: Melix_Worker_V1_GetRuntimeStatsResponse
     ) {
         self.handshakeResponse = handshakeResponse
         self.loadModelResponse = loadModelResponse
+        self.unloadModelResponse = unloadModelResponse
         self.runtimeStatsResponse = runtimeStatsResponse
     }
 
@@ -471,7 +509,7 @@ private final class TestRuntimeService: Melix_Worker_V1_RuntimeService.SimpleSer
         request: Melix_Worker_V1_UnloadModelRequest,
         context: ServerContext
     ) async throws -> Melix_Worker_V1_UnloadModelResponse {
-        Melix_Worker_V1_UnloadModelResponse()
+        unloadModelResponse
     }
 
     func warmupModel(

@@ -6,6 +6,7 @@ import MelixWorkerProtocol
 public enum BridgeCommandKind: String, Sendable {
     case handshake = "handshake"
     case loadModel = "load-model"
+    case unloadModel = "unload-model"
     case getRuntimeStats = "get-runtime-stats"
     case generate = "generate"
     case abort = "abort"
@@ -89,6 +90,12 @@ public struct PythonBridgeWorkerClient:
         request: Melix_Worker_V1_LoadModelRequest
     ) async throws -> Melix_Worker_V1_LoadModelResponse {
         try await sendUnary(kind: .loadModel, request: request, as: Melix_Worker_V1_LoadModelResponse.self)
+    }
+
+    public func unloadModel(
+        request: Melix_Worker_V1_UnloadModelRequest
+    ) async throws -> Melix_Worker_V1_UnloadModelResponse {
+        try await sendUnary(kind: .unloadModel, request: request, as: Melix_Worker_V1_UnloadModelResponse.self)
     }
 
     public func generate(
@@ -405,6 +412,7 @@ public enum BootstrapWorkerPreparation {
         model: Melix_Worker_V1_ModelSpec,
         memoryBudgetBytes: UInt64
     ) async throws -> Bool {
+        _ = await modelCatalog.beginLoad(id: model.modelID)
         var request = Melix_Worker_V1_LoadModelRequest()
         request.model = model
         request.memoryBudgetBytes = memoryBudgetBytes
@@ -413,10 +421,16 @@ public enum BootstrapWorkerPreparation {
 
         let response = try await workerClient.loadModel(request: request)
         guard response.ok, !response.modelHandle.isEmpty else {
+            _ = await modelCatalog.recordLoadFailed(id: model.modelID)
             return false
         }
 
-        _ = await modelCatalog.loadModel(id: request.model.modelID, dispatchHandle: response.modelHandle)
+        _ = await modelCatalog.recordLoadSucceeded(
+            id: request.model.modelID,
+            dispatchHandle: response.modelHandle,
+            pinRequested: request.pinOnLoad,
+            workerResidency: response.hasResidency ? response.residency : nil
+        )
         return true
     }
 

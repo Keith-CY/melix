@@ -1320,6 +1320,8 @@ public final class RuntimeViewModel {
             return "Unloaded"
         case .modelLoading:
             return "Loading"
+        case .modelEvicting:
+            return "Evicting"
         case .modelFailed:
             return "Failed"
         default:
@@ -1485,6 +1487,8 @@ private func runtimeModelStateText(_ state: Melix_Controlplane_V1_ModelState) ->
         return "Unloaded"
     case .modelLoading:
         return "Loading"
+    case .modelEvicting:
+        return "Evicting"
     case .modelFailed:
         return "Failed"
     default:
