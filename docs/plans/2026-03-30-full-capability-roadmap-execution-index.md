@@ -4,6 +4,8 @@ Parent roadmap: `docs/plans/2026-03-30-full-capability-roadmap.md`
 
 This index maps every roadmap execution slice to its own implementation-plan document. Each child plan should be treated as an independent execution unit with its own verification and acceptance criteria.
 
+The roadmap extension in `M10-M17` includes milestone-level plans plus decomposed child-plan documents for execution slices that already have stable ownership boundaries.
+
 ## M1: Runtime Core
 
 - `M1.1` `docs/plans/2026-03-30-m1-1-residency-manager-contracts.md`
@@ -119,3 +121,59 @@ This index maps every roadmap execution slice to its own implementation-plan doc
 - `M9.6` `docs/plans/2026-03-30-m9-6-connection-lifecycle-hardening.md`
 - `M9.7` `docs/plans/2026-03-30-m9-7-security-and-stability-closure-audit.md`
 - `M9.8` `docs/plans/2026-03-30-m9-8-ecosystem-and-security-release-gates.md`
+
+## M10: Session Lifecycle And Power Management
+
+- `M10.1` `docs/plans/2026-03-31-m10-1-session-state-protocol-and-snapshots.md`
+- `M10.2` `docs/plans/2026-03-31-m10-2-power-policy-and-lifecycle-controls.md`
+- `M10.3` `docs/plans/2026-03-31-m10-3-desktop-status-banners-and-operator-surfaces.md`
+- `M10.4` `docs/plans/2026-03-31-m10-4-session-lifecycle-integration-evidence.md`
+
+## M11: Disk Streaming, Memory Budgeting, And Cache Policy
+
+- `M11.1` `docs/plans/2026-03-31-m11-1-disk-streaming-mode-and-runtime-flags.md`
+- `M11.2` `docs/plans/2026-03-31-m11-2-memory-budget-admission-and-safety-guards.md`
+- `M11.3` `docs/plans/2026-03-31-m11-3-streaming-cache-compatibility-and-settings-surface.md`
+- `M11.4` `docs/plans/2026-03-31-m11-4-large-model-streaming-benchmarks-and-runbooks.md`
+
+## M12: Model Registry, Family Coverage, And Model Tools
+
+- `M12.1` `docs/plans/2026-03-31-m12-1-multi-root-registry-management-and-rescan.md`
+- `M12.2` `docs/plans/2026-03-31-m12-2-text-and-moe-family-adapters.md`
+- `M12.3` `docs/plans/2026-03-31-m12-3-image-family-dispatch-and-picker-completion.md`
+- `M12.4` `docs/plans/2026-03-31-m12-4-model-inspect-health-and-conversion-tools.md`
+
+## M13: Gateway Configuration, Defaults, And API Onboarding
+
+- `M13.1` `docs/plans/2026-03-31-m13-1-gateway-config-state-model-and-persistence.md`
+- `M13.2` `docs/plans/2026-03-31-m13-2-generation-batching-and-speculative-defaults.md`
+- `M13.3` `docs/plans/2026-03-31-m13-3-tooling-embedding-and-config-file-settings.md`
+- `M13.4` `docs/plans/2026-03-31-m13-4-api-reference-and-quick-start-onboarding.md`
+
+## M14: Image Iteration And Persisted Creative Workflows
+
+- `M14.1` `docs/plans/2026-03-31-m14-1-image-variation-and-iterate-request-semantics.md`
+- `M14.2` `docs/plans/2026-03-31-m14-2-persisted-image-defaults-and-role-aware-picker.md`
+- `M14.3` `docs/plans/2026-03-31-m14-3-redo-actions-and-long-running-timeout-policy.md`
+- `M14.4` `docs/plans/2026-03-31-m14-4-image-iteration-integration-and-artifact-lineage-evidence.md`
+
+## M15: Desktop Signals, Download Recovery, And Streaming Polish
+
+- `M15.1` `docs/plans/2026-03-31-m15-1-token-stream-presentation-smoothing.md`
+- `M15.2` `docs/plans/2026-03-31-m15-2-update-banners-and-runtime-signal-unification.md`
+- `M15.3` `docs/plans/2026-03-31-m15-3-download-queue-persistence-and-paused-recovery.md`
+- `M15.4` `docs/plans/2026-03-31-m15-4-desktop-polish-integration-evidence.md`
+
+## M16: Video Understanding And Media Lifecycle
+
+- `M16.1` `docs/plans/2026-03-31-m16-1-video-ingress-and-media-normalization-contracts.md`
+- `M16.2` `docs/plans/2026-03-31-m16-2-frame-policy-video-runtime-and-background-lane-routing.md`
+- `M16.3` `docs/plans/2026-03-31-m16-3-temporary-media-lifecycle-cleanup-and-failure-recovery.md`
+- `M16.4` `docs/plans/2026-03-31-m16-4-video-integration-benchmarks-and-operator-evidence.md`
+
+## M17: Speech Backends And Voice Catalog
+
+- `M17.1` `docs/plans/2026-03-31-m17-1-speech-to-text-backend-adapters-and-model-matrix.md`
+- `M17.2` `docs/plans/2026-03-31-m17-2-text-to-speech-backend-adapters-and-multilingual-voice-catalog.md`
+- `M17.3` `docs/plans/2026-03-31-m17-3-speech-settings-locale-policy-and-optional-dependency-profiles.md`
+- `M17.4` `docs/plans/2026-03-31-m17-4-speech-integration-benchmarks-runbooks-and-operator-evidence.md`
