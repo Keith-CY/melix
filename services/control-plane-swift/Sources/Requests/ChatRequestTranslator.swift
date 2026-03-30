@@ -1418,6 +1418,9 @@ public struct ChatRequestTranslator: Sendable {
             generateRequest.execution.ext["melix.messages.thinking.type"] = thinking.normalizedType
             if let budgetTokens = thinking.budgetTokens {
                 generateRequest.execution.ext["melix.messages.thinking.budget_tokens"] = String(budgetTokens)
+                generateRequest.execution.ext["melix.reasoning.budget_tokens"] = String(budgetTokens)
+                generateRequest.execution.ext["melix.reasoning.enforcement"] = "control-plane"
+                generateRequest.execution.ext["melix.reasoning.overflow_behavior"] = "close_stream"
             }
         }
         if !(shapedRequest.sessionID ?? "").isEmpty {

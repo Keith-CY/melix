@@ -1426,6 +1426,138 @@ struct RequestCoordinatorTests {
         #expect(metrics.values["http.stream_first_event_ms", default: -1] >= 0)
     }
 
+    @Test("reasoning budget overflow truncates streamed reasoning and closes the request explicitly")
+    func reasoningBudgetOverflowTruncatesStreamedReasoningAndClosesTheRequestExplicitly() async throws {
+        let workerClient = PhaseAwareWorkerClient()
+        let metricsStore = MetricsStore()
+        let schedulerReadModel = SchedulerReadModel()
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(defaultTextClient: workerClient),
+            abortRegistry: AbortRegistry(),
+            schedulerReadModel: schedulerReadModel,
+            metricsStore: metricsStore
+        )
+        var workerRequest = makeTranslatedChatRequest(
+            requestID: "req-reasoning-budget",
+            saveBoundarySnapshot: true
+        ).workerRequest
+        workerRequest.execution.reasoning.enabled = true
+        workerRequest.execution.reasoning.separateStream = true
+        workerRequest.execution.ext["melix.reasoning.budget_tokens"] = "3"
+        workerRequest.execution.ext["melix.reasoning.enforcement"] = "control-plane"
+        let execution = try await coordinator.startChatCompletion(
+            TranslatedChatRequest(
+                requestID: "req-reasoning-budget",
+                modelID: "melix-dev-text",
+                workerRequest: workerRequest,
+                stream: true
+            )
+        )
+
+        let collector = Task {
+            var events: [Melix_Worker_V1_ExecuteEvent] = []
+            for try await event in execution.stream {
+                events.append(event)
+            }
+            return events
+        }
+
+        await workerClient.emitPrefillStarted(requestID: "req-reasoning-budget")
+        _ = try #require(await waitForDecodeRequest(workerClient: workerClient))
+        await workerClient.emitDecodeStarted(
+            requestID: "req-reasoning-budget",
+            decodeHandle: "decode-reasoning-budget"
+        )
+        await workerClient.emitReasoningDelta(
+            requestID: "req-reasoning-budget",
+            text: "alpha beta"
+        )
+        await workerClient.emitReasoningDelta(
+            requestID: "req-reasoning-budget",
+            text: " gamma delta"
+        )
+
+        let events = try await collector.value
+        let reasoningFragments = events.compactMap { event -> String? in
+            guard case .reasoningDelta(let reasoningDelta) = event.payload else {
+                return nil
+            }
+            return reasoningDelta.text
+        }
+        let completed = try #require(events.last?.completed)
+        let metrics = await metricsStore.snapshot()
+        let terminalProgress = await waitForProgress(
+            schedulerReadModel: schedulerReadModel,
+            requestID: "req-reasoning-budget",
+            phase: .requestCompleted
+        )
+
+        #expect(reasoningFragments == ["alpha beta", " gamma"])
+        #expect(completed.finishReason == "reasoning_budget_exceeded")
+        #expect(completed.reasoningText == "alpha beta gamma")
+        #expect(metrics.values["http.reasoning_budget_overflow_count", default: 0] == 1)
+        #expect(metrics.values["http.reasoning_budget_limit_tokens", default: 0] == 3)
+        #expect(metrics.values["http.reasoning_budget_emitted_tokens", default: 0] == 3)
+        #expect(terminalProgress?.phase == .requestCompleted)
+        #expect(await workerClient.abortedRequestIDs == ["req-reasoning-budget"])
+    }
+
+    @Test("reasoning budget overflow clips completed reasoning output without requiring deltas")
+    func reasoningBudgetOverflowClipsCompletedReasoningOutputWithoutRequiringDeltas() async throws {
+        let workerClient = PhaseAwareWorkerClient()
+        let metricsStore = MetricsStore()
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(defaultTextClient: workerClient),
+            abortRegistry: AbortRegistry(),
+            metricsStore: metricsStore
+        )
+        var workerRequest = makeTranslatedChatRequest(
+            requestID: "req-reasoning-completed",
+            saveBoundarySnapshot: true
+        ).workerRequest
+        workerRequest.execution.reasoning.enabled = true
+        workerRequest.execution.reasoning.separateStream = true
+        workerRequest.execution.ext["melix.reasoning.budget_tokens"] = "2"
+        workerRequest.execution.ext["melix.reasoning.enforcement"] = "control-plane"
+        let execution = try await coordinator.startChatCompletion(
+            TranslatedChatRequest(
+                requestID: "req-reasoning-completed",
+                modelID: "melix-dev-text",
+                workerRequest: workerRequest,
+                stream: true
+            )
+        )
+
+        let collector = Task {
+            var events: [Melix_Worker_V1_ExecuteEvent] = []
+            for try await event in execution.stream {
+                events.append(event)
+            }
+            return events
+        }
+
+        await workerClient.emitPrefillStarted(requestID: "req-reasoning-completed")
+        _ = try #require(await waitForDecodeRequest(workerClient: workerClient))
+        await workerClient.emitDecodeStarted(
+            requestID: "req-reasoning-completed",
+            decodeHandle: "decode-reasoning-completed"
+        )
+        await workerClient.finishDecode(
+            requestID: "req-reasoning-completed",
+            assistantText: "answer",
+            reasoningText: "alpha beta gamma"
+        )
+
+        let events = try await collector.value
+        let completed = try #require(events.last?.completed)
+        let metrics = await metricsStore.snapshot()
+
+        #expect(completed.finishReason == "reasoning_budget_exceeded")
+        #expect(completed.assistantText == "answer")
+        #expect(completed.reasoningText == "alpha beta")
+        #expect(metrics.values["http.reasoning_budget_overflow_count", default: 0] == 1)
+    }
+
 }
 
 private actor BlockingWorkerClient: WorkerRoutingClient {
@@ -1903,7 +2035,11 @@ private actor PhaseAwareWorkerClient:
         finishDecode(requestID: requestID)
     }
 
-    func finishDecode(requestID: String) {
+    func finishDecode(
+        requestID: String,
+        assistantText: String = "done",
+        reasoningText: String = ""
+    ) {
         guard let continuation = continuations.removeValue(forKey: requestID) else {
             return
         }
@@ -1915,7 +2051,8 @@ private actor PhaseAwareWorkerClient:
         event.lane = "text.decode.interactive"
         var completed = Melix_Worker_V1_Completed()
         completed.finishReason = "stop"
-        completed.assistantText = "done"
+        completed.assistantText = assistantText
+        completed.reasoningText = reasoningText
         event.completed = completed
         continuation.yield(event)
         continuation.finish()

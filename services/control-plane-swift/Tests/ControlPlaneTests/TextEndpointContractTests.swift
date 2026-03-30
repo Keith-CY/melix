@@ -151,6 +151,9 @@ struct TextEndpointContractTests {
         #expect(translated.workerRequest.execution.ext["melix.messages.user_id"] == "operator-1")
         #expect(translated.workerRequest.execution.ext["melix.messages.thinking.type"] == "enabled")
         #expect(translated.workerRequest.execution.ext["melix.messages.thinking.budget_tokens"] == "64")
+        #expect(translated.workerRequest.execution.ext["melix.reasoning.budget_tokens"] == "64")
+        #expect(translated.workerRequest.execution.ext["melix.reasoning.enforcement"] == "control-plane")
+        #expect(translated.workerRequest.execution.ext["melix.reasoning.overflow_behavior"] == "close_stream")
     }
 
     @Test("messages request initializers encode block content and skip empty thinking blocks")
@@ -228,6 +231,7 @@ struct TextEndpointContractTests {
         #expect(modelPolicyTranslated.workerRequest.execution.reasoning.enabled)
         #expect(modelPolicyTranslated.workerRequest.execution.ext["melix.reasoning.mode"] == "adaptive")
         #expect(modelPolicyTranslated.workerRequest.execution.ext["melix.reasoning.source"] == "model")
+        #expect(modelPolicyTranslated.workerRequest.execution.ext["melix.reasoning.budget_tokens"] == "192")
         #expect(modelPolicyTranslated.workerRequest.execution.ext["melix.messages.thinking.type"] == "adaptive")
         #expect(modelPolicyTranslated.workerRequest.execution.ext["melix.messages.thinking.budget_tokens"] == "192")
 
@@ -242,6 +246,7 @@ struct TextEndpointContractTests {
         #expect(presetTranslated.workerRequest.execution.reasoning.enabled)
         #expect(presetTranslated.workerRequest.execution.ext["melix.reasoning.mode"] == "enabled")
         #expect(presetTranslated.workerRequest.execution.ext["melix.reasoning.source"] == "preset")
+        #expect(presetTranslated.workerRequest.execution.ext["melix.reasoning.budget_tokens"] == "512")
         #expect(presetTranslated.workerRequest.execution.ext["melix.messages.thinking.type"] == "enabled")
         #expect(presetTranslated.workerRequest.execution.ext["melix.messages.thinking.budget_tokens"] == "512")
 

@@ -53,6 +53,150 @@ private struct StructuredOutputValidationEvent: Sendable {
     let didFail: Bool
 }
 
+private struct ReasoningBudgetState: Sendable {
+    let limitTokens: UInt32
+    private(set) var emittedTokens: UInt32 = 0
+    private(set) var accumulatedText = ""
+    private(set) var overflowed = false
+
+    init?(execution: Melix_Worker_V1_ExecutionMetadata) {
+        guard execution.reasoning.enabled else {
+            return nil
+        }
+        guard
+            let rawBudget = execution.ext["melix.reasoning.budget_tokens"] ?? execution.ext["melix.messages.thinking.budget_tokens"],
+            let budget = UInt32(rawBudget),
+            budget > 0
+        else {
+            return nil
+        }
+        self.limitTokens = budget
+    }
+
+    mutating func apply(
+        to event: Melix_Worker_V1_ExecuteEvent
+    ) -> (events: [Melix_Worker_V1_ExecuteEvent], didOverflow: Bool, shouldStop: Bool) {
+        if overflowed {
+            return ([], false, true)
+        }
+
+        switch event.payload {
+        case .reasoningDelta(let delta):
+            return applyReasoningDelta(event: event, text: delta.text)
+        case .completed(let completed):
+            return applyCompleted(event: event, completed: completed)
+        default:
+            return ([event], false, false)
+        }
+    }
+
+    private mutating func applyReasoningDelta(
+        event: Melix_Worker_V1_ExecuteEvent,
+        text: String
+    ) -> (events: [Melix_Worker_V1_ExecuteEvent], didOverflow: Bool, shouldStop: Bool) {
+        let tokenCount = Self.tokenCount(in: text)
+        guard tokenCount > 0 else {
+            return ([event], false, false)
+        }
+
+        let remainingTokens = limitTokens > emittedTokens ? limitTokens - emittedTokens : 0
+        guard tokenCount > remainingTokens else {
+            accumulate(text)
+            return ([event], false, false)
+        }
+
+        var events: [Melix_Worker_V1_ExecuteEvent] = []
+        let permittedText = Self.prefix(text, limitedTo: remainingTokens)
+        if !permittedText.isEmpty {
+            var truncatedEvent = event
+            truncatedEvent.reasoningDelta.text = permittedText
+            events.append(truncatedEvent)
+            accumulate(permittedText)
+        }
+        overflowed = true
+        events.append(makeOverflowCompleted(from: event))
+        return (events, true, true)
+    }
+
+    private mutating func applyCompleted(
+        event: Melix_Worker_V1_ExecuteEvent,
+        completed: Melix_Worker_V1_Completed
+    ) -> (events: [Melix_Worker_V1_ExecuteEvent], didOverflow: Bool, shouldStop: Bool) {
+        if accumulatedText.isEmpty, !completed.reasoningText.isEmpty {
+            let tokenCount = Self.tokenCount(in: completed.reasoningText)
+            let remainingTokens = limitTokens > emittedTokens ? limitTokens - emittedTokens : 0
+            if tokenCount > remainingTokens {
+                let permittedText = Self.prefix(completed.reasoningText, limitedTo: remainingTokens)
+                if !permittedText.isEmpty {
+                    accumulate(permittedText)
+                }
+                overflowed = true
+                return ([makeOverflowCompleted(from: event, assistantText: completed.assistantText)], true, true)
+            }
+            accumulate(completed.reasoningText)
+        }
+
+        var adjustedEvent = event
+        adjustedEvent.completed.reasoningText = accumulatedText.isEmpty ? completed.reasoningText : accumulatedText
+        return ([adjustedEvent], false, false)
+    }
+
+    private mutating func accumulate(_ text: String) {
+        guard !text.isEmpty else {
+            return
+        }
+        emittedTokens = min(limitTokens, emittedTokens + Self.tokenCount(in: text))
+        accumulatedText += text
+    }
+
+    private func makeOverflowCompleted(
+        from event: Melix_Worker_V1_ExecuteEvent,
+        assistantText: String? = nil
+    ) -> Melix_Worker_V1_ExecuteEvent {
+        var completedEvent = event
+        completedEvent.completed.finishReason = "reasoning_budget_exceeded"
+        completedEvent.completed.assistantText = assistantText ?? event.completed.assistantText
+        completedEvent.completed.reasoningText = accumulatedText
+        return completedEvent
+    }
+
+    private static func tokenCount(in text: String) -> UInt32 {
+        UInt32(text.split(whereSeparator: \.isWhitespace).count)
+    }
+
+    private static func prefix(_ text: String, limitedTo tokenLimit: UInt32) -> String {
+        guard tokenLimit > 0 else {
+            return ""
+        }
+
+        var tokensSeen: UInt32 = 0
+        var inToken = false
+        var endIndex = text.startIndex
+
+        for index in text.indices {
+            let character = text[index]
+            if character.isWhitespace {
+                inToken = false
+            } else if !inToken {
+                tokensSeen += 1
+                inToken = true
+                if tokensSeen > tokenLimit {
+                    break
+                }
+            }
+            if tokensSeen <= tokenLimit {
+                endIndex = text.index(after: index)
+            }
+        }
+
+        var prefix = String(text[..<endIndex])
+        while let lastCharacter = prefix.last, lastCharacter.isWhitespace {
+            prefix.removeLast()
+        }
+        return prefix
+    }
+}
+
 public actor RequestCoordinator {
     private let workerRegistry: WorkerRegistry
     private let abortRegistry: AbortRegistry
@@ -243,12 +387,14 @@ public actor RequestCoordinator {
                 executionExt: request.workerRequest.execution.ext
             )
             let structuredOutputValidator = StructuredOutputValidator()
+            let initialReasoningBudget = ReasoningBudgetState(execution: request.workerRequest.execution)
 
             let stream = AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error> { continuation in
                 let task = Task {
                     var firstDeltaRecorded = false
                     var firstSemanticEventRecorded = false
                     var eventCount = 0.0
+                    var reasoningBudget = initialReasoningBudget
 
                     do {
                         for try await event in upstream {
@@ -265,42 +411,63 @@ public actor RequestCoordinator {
                                     await metricsStore.increment("http.structured_output_validation_pass_count")
                                 }
                             }
-                            await self.recordPhaseObservability(
-                                requestID: requestID,
-                                fallbackLane: plan.decodeLane,
-                                requestIdentity: request.workerRequest.execution.id,
-                                routeKind: plan.routeKind,
-                                event: validatedEvent.event
-                            )
-                            if !firstSemanticEventRecorded,
-                               self.isSemanticStreamEvent(validatedEvent.event) {
-                                firstSemanticEventRecorded = true
-                                let firstEventMs = now().timeIntervalSince(dispatchStartedAt) * 1000
+                            let budgetOutcome: (events: [Melix_Worker_V1_ExecuteEvent], didOverflow: Bool, shouldStop: Bool) =
+                                reasoningBudget?.apply(to: validatedEvent.event)
+                                ?? (events: [validatedEvent.event], didOverflow: false, shouldStop: false)
+                            if budgetOutcome.didOverflow,
+                               let reasoningBudget {
+                                await metricsStore.increment("http.reasoning_budget_overflow_count")
                                 await metricsStore.set(
-                                    firstEventMs,
-                                    forKey: "http.stream_first_event_ms"
+                                    Double(reasoningBudget.limitTokens),
+                                    forKey: "http.reasoning_budget_limit_tokens"
+                                )
+                                await metricsStore.set(
+                                    Double(reasoningBudget.emittedTokens),
+                                    forKey: "http.reasoning_budget_emitted_tokens"
                                 )
                             }
-                            if !firstDeltaRecorded, case .tokenDelta = validatedEvent.event.payload {
-                                firstDeltaRecorded = true
-                                let ttftMs = now().timeIntervalSince(dispatchStartedAt) * 1000
-                                await metricsStore.set(
-                                    ttftMs,
-                                    forKey: "http.ttfd_ms"
+                            for outputEvent in budgetOutcome.events {
+                                await self.recordPhaseObservability(
+                                    requestID: requestID,
+                                    fallbackLane: plan.decodeLane,
+                                    requestIdentity: request.workerRequest.execution.id,
+                                    routeKind: plan.routeKind,
+                                    event: outputEvent
                                 )
-                                await self.recordTTFTMetrics(requestID: requestID, ttftMs: ttftMs)
+                                if !firstSemanticEventRecorded,
+                                   self.isSemanticStreamEvent(outputEvent) {
+                                    firstSemanticEventRecorded = true
+                                    let firstEventMs = now().timeIntervalSince(dispatchStartedAt) * 1000
+                                    await metricsStore.set(
+                                        firstEventMs,
+                                        forKey: "http.stream_first_event_ms"
+                                    )
+                                }
+                                if !firstDeltaRecorded, case .tokenDelta = outputEvent.payload {
+                                    firstDeltaRecorded = true
+                                    let ttftMs = now().timeIntervalSince(dispatchStartedAt) * 1000
+                                    await metricsStore.set(
+                                        ttftMs,
+                                        forKey: "http.ttfd_ms"
+                                    )
+                                    await self.recordTTFTMetrics(requestID: requestID, ttftMs: ttftMs)
+                                }
+                                switch outputEvent.payload {
+                                case .reasoningDelta:
+                                    await metricsStore.increment("http.reasoning_delta_count")
+                                case .toolCallDelta:
+                                    await metricsStore.increment("http.tool_delta_count")
+                                default:
+                                    break
+                                }
+                                eventCount += 1
+                                await metricsStore.set(eventCount, forKey: "http.stream_event_count")
+                                continuation.yield(outputEvent)
                             }
-                            switch validatedEvent.event.payload {
-                            case .reasoningDelta:
-                                await metricsStore.increment("http.reasoning_delta_count")
-                            case .toolCallDelta:
-                                await metricsStore.increment("http.tool_delta_count")
-                            default:
+                            if budgetOutcome.shouldStop {
+                                _ = try? await workerClient.abort(requestID: requestID)
                                 break
                             }
-                            eventCount += 1
-                            await metricsStore.set(eventCount, forKey: "http.stream_event_count")
-                            continuation.yield(validatedEvent.event)
                         }
                         await metricsStore.decrement("requests.inflight")
                         _ = await self.refreshWorkerCacheObservability(using: workerClient)
