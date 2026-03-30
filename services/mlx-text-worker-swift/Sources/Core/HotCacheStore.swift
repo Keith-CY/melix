@@ -9,12 +9,36 @@ struct HotCacheRegistration: Sendable {
     let cacheHit: Bool
 }
 
+struct HotCacheOwnershipSnapshot: Sendable {
+    let prefixCount: Int
+    let pageCount: Int
+    let blockCount: Int
+    let pageIDsByPrefixID: [String: [String]]
+    let blockIDsByPageID: [String: [String]]
+}
+
 private struct StoredHotPrefix: Sendable {
     var prefix: Melix_Worker_V1_PrefixRef
     let blockTableID: String
     let blockTable: Melix_Worker_V1_BlockTable
+    let pageIDs: [String]
+    let blockIDs: [String]
     let quantizedBytes: UInt64
     var accessCount: UInt64
+}
+
+private struct StoredHotPageOwnership: Sendable {
+    var page: Melix_Worker_V1_PageRef
+    let scopeID: String
+    var prefixIDs: Set<String>
+    var blockTableIDs: Set<String>
+}
+
+private struct StoredHotBlockOwnership: Sendable {
+    let block: Melix_Worker_V1_BlockRef
+    let scopeID: String
+    var prefixIDs: Set<String>
+    var pageIDs: Set<String>
 }
 
 actor HotCacheStore {
@@ -22,6 +46,8 @@ actor HotCacheStore {
     private let initialCacheBlocks: UInt32
     private var prefixesByID: [String: StoredHotPrefix] = [:]
     private var prefixIDByKey: [String: String] = [:]
+    private var pagesByID: [String: StoredHotPageOwnership] = [:]
+    private var blocksByID: [String: StoredHotBlockOwnership] = [:]
     private var totalLookups: UInt64 = 0
     private var totalHits: UInt64 = 0
     private var totalReusedBlocks: UInt64 = 0
@@ -54,7 +80,7 @@ actor HotCacheStore {
 
         if let existingID = prefixIDByKey[keyID], var existing = prefixesByID[existingID] {
             totalHits += 1
-            totalReusedBlocks += UInt64(existing.blockTable.blocks.count)
+            totalReusedBlocks += UInt64(existing.blockIDs.count)
             existing.accessCount += 1
             if shouldPinPrefix(existing.prefix.prefixID, hints: execution.cacheHints) {
                 existing.prefix.pinned = true
@@ -70,14 +96,14 @@ actor HotCacheStore {
 
         let prefixID = makePrefixID(for: resolvedKey)
         let blockTableID = "bt-\(decodeHandle)"
-        let blockTable = makeBlockTable(
+        let blockTable = normalizedBlockTable(makeBlockTable(
             cacheKey: resolvedKey,
             scopeID: resolvedScope.scopeID,
             decodeHandle: decodeHandle,
             promptTokens: promptTokens,
             preferredBlockSize: execution.cacheHints.preferredBlockSize,
             initialCacheBlocks: initialCacheBlocks
-        )
+        ))
 
         var prefix = Melix_Worker_V1_PrefixRef()
         prefix.prefixID = prefixID
@@ -91,6 +117,8 @@ actor HotCacheStore {
             prefix: prefix,
             blockTableID: blockTableID,
             blockTable: blockTable,
+            pageIDs: blockTable.pages.map(\.pageID),
+            blockIDs: blockTable.blocks.map(\.blockID),
             quantizedBytes: quantizedBytes(
                 for: blockTable,
                 activeKVQuantizationRatio: activeKVQuantizationRatio
@@ -100,6 +128,7 @@ actor HotCacheStore {
 
         prefixesByID[prefixID] = stored
         prefixIDByKey[keyID] = prefixID
+        registerOwnership(for: stored)
         if execution.cacheHints.allowL2 || execution.cacheHints.persistL2 {
             let l2QuantizedBytes = storageBoundaryQuantizedBytes(
                 for: blockTable,
@@ -117,6 +146,24 @@ actor HotCacheStore {
             blockTableID: blockTableID,
             blockTable: blockTable,
             cacheHit: false
+        )
+    }
+
+    func ownershipSnapshot() async -> HotCacheOwnershipSnapshot {
+        HotCacheOwnershipSnapshot(
+            prefixCount: prefixesByID.count,
+            pageCount: pagesByID.count,
+            blockCount: blocksByID.count,
+            pageIDsByPrefixID: Dictionary(
+                uniqueKeysWithValues: prefixesByID.map { key, value in
+                    (key, value.pageIDs.sorted())
+                }
+            ),
+            blockIDsByPageID: Dictionary(
+                uniqueKeysWithValues: pagesByID.map { key, value in
+                    (key, value.page.blockIds.sorted())
+                }
+            )
         )
     }
 
@@ -213,7 +260,7 @@ actor HotCacheStore {
                 continue
             }
             prefixIDByKey.removeValue(forKey: cacheKeyIdentifier(removed.prefix.cacheKey))
-            purgedBlocks += UInt64(removed.blockTable.blocks.count)
+            purgedBlocks += unregisterOwnership(for: removed)
         }
         let l2PurgedBlocks = await diskStore.purge(
             scope: scope,
@@ -224,17 +271,27 @@ actor HotCacheStore {
     }
 
     func purgeModel(modelID: String) async {
-        for prefix in prefixesByID.values.map(\.prefix) where prefix.scope.modelID == modelID {
-            prefixesByID.removeValue(forKey: prefix.prefixID)
-            prefixIDByKey.removeValue(forKey: cacheKeyIdentifier(prefix.cacheKey))
+        for prefixID in prefixesByID.values
+            .filter({ $0.prefix.scope.modelID == modelID })
+            .map(\.prefix.prefixID) {
+            guard let removed = prefixesByID.removeValue(forKey: prefixID) else {
+                continue
+            }
+            prefixIDByKey.removeValue(forKey: cacheKeyIdentifier(removed.prefix.cacheKey))
+            _ = unregisterOwnership(for: removed)
         }
         await diskStore.purgeModel(modelID: modelID)
     }
 
     func purgeScope(_ scope: Melix_Worker_V1_CacheScope) async {
-        for prefix in prefixesByID.values.map(\.prefix) where matches(scope: scope, prefix: prefix) {
-            prefixesByID.removeValue(forKey: prefix.prefixID)
-            prefixIDByKey.removeValue(forKey: cacheKeyIdentifier(prefix.cacheKey))
+        for prefixID in prefixesByID.values
+            .filter({ matches(scope: scope, prefix: $0.prefix) })
+            .map(\.prefix.prefixID) {
+            guard let removed = prefixesByID.removeValue(forKey: prefixID) else {
+                continue
+            }
+            prefixIDByKey.removeValue(forKey: cacheKeyIdentifier(removed.prefix.cacheKey))
+            _ = unregisterOwnership(for: removed)
         }
         await diskStore.purgeScope(scope)
     }
@@ -262,9 +319,7 @@ actor HotCacheStore {
         diskSummary: DiskCacheSummary
     ) -> Melix_Worker_V1_CacheStats {
         let entries = prefixesByID.values
-        let l1Bytes = entries.reduce(UInt64(0)) { partial, entry in
-            partial + entry.blockTable.blocks.reduce(UInt64(0)) { $0 + $1.bytes }
-        }
+        let l1Bytes = blocksByID.values.reduce(UInt64(0)) { $0 + $1.block.bytes }
         let l1QuantizedBytes = entries.reduce(UInt64(0)) { $0 + $1.quantizedBytes }
         let quantizedBytes = l1QuantizedBytes + diskSummary.quantizedBytes
         let totalUnquantizedBytes = l1Bytes + diskSummary.unquantizedBytes
@@ -272,7 +327,7 @@ actor HotCacheStore {
         var stats = Melix_Worker_V1_CacheStats()
         stats.l1Bytes = l1Bytes
         stats.l2Bytes = diskSummary.l2Bytes
-        stats.blockCount = UInt64(entries.reduce(0) { $0 + $1.blockTable.blocks.count })
+        stats.blockCount = UInt64(blocksByID.count)
         stats.pinnedPrefixCount = UInt64(entries.filter(\.prefix.pinned).count)
         stats.snapshotCount = diskSummary.snapshotCount
         stats.l1HitRate = totalLookups > 0 ? Double(totalHits) / Double(totalLookups) : 0
@@ -308,6 +363,8 @@ actor HotCacheStore {
                     prefix: Melix_Worker_V1_PrefixRef(),
                     blockTableID: "",
                     blockTable: Melix_Worker_V1_BlockTable(),
+                    pageIDs: [],
+                    blockIDs: [],
                     quantizedBytes: 0,
                     accessCount: 0
                 )
@@ -320,16 +377,87 @@ actor HotCacheStore {
             var summary = Melix_Worker_V1_CacheScopeSummary()
             summary.scopeID = scopeID
             summary.scope = first.prefix.scope
-            summary.l1Bytes = group.reduce(UInt64(0)) { partial, entry in
-                partial + entry.blockTable.blocks.reduce(UInt64(0)) { $0 + $1.bytes }
-            }
+            let scopeBlocks = blocksByID.values
+                .filter { $0.scopeID == scopeID }
+                .map(\.block)
+                .sorted { $0.blockID < $1.blockID }
+            summary.l1Bytes = scopeBlocks.reduce(UInt64(0)) { $0 + $1.bytes }
             summary.l2Bytes = diskScope?.l2Bytes ?? 0
-            summary.blockCount = UInt64(group.reduce(0) { $0 + $1.blockTable.blocks.count })
+            summary.blockCount = UInt64(scopeBlocks.count)
             summary.prefixCount = UInt64(group.count)
             summary.snapshotCount = diskScope?.snapshotCount ?? 0
-            summary.hotBlocks = group.flatMap(\.blockTable.blocks)
+            summary.hotBlocks = scopeBlocks
             return summary
         }
+    }
+
+    private func registerOwnership(for stored: StoredHotPrefix) {
+        let scopeID = stored.blockTable.scopeID.isEmpty ? stored.prefix.scope.scopeID : stored.blockTable.scopeID
+        let pageIDByBlockID = Dictionary(
+            uniqueKeysWithValues: stored.blockTable.pages.flatMap { page in
+                page.blockIds.map { ($0, page.pageID) }
+            }
+        )
+
+        for page in stored.blockTable.pages {
+            var ownership = pagesByID[page.pageID] ?? StoredHotPageOwnership(
+                page: page,
+                scopeID: scopeID,
+                prefixIDs: [],
+                blockTableIDs: []
+            )
+            ownership.page = page
+            ownership.prefixIDs.insert(stored.prefix.prefixID)
+            ownership.blockTableIDs.insert(stored.blockTableID)
+            pagesByID[page.pageID] = ownership
+        }
+
+        for block in stored.blockTable.blocks {
+            var ownership = blocksByID[block.blockID] ?? StoredHotBlockOwnership(
+                block: block,
+                scopeID: scopeID,
+                prefixIDs: [],
+                pageIDs: []
+            )
+            ownership.prefixIDs.insert(stored.prefix.prefixID)
+            if let pageID = pageIDByBlockID[block.blockID] {
+                ownership.pageIDs.insert(pageID)
+            }
+            blocksByID[block.blockID] = ownership
+        }
+    }
+
+    @discardableResult
+    private func unregisterOwnership(for stored: StoredHotPrefix) -> UInt64 {
+        var removedBlocks: UInt64 = 0
+
+        for pageID in stored.pageIDs {
+            guard var ownership = pagesByID[pageID] else {
+                continue
+            }
+            ownership.prefixIDs.remove(stored.prefix.prefixID)
+            ownership.blockTableIDs.remove(stored.blockTableID)
+            if ownership.prefixIDs.isEmpty {
+                pagesByID.removeValue(forKey: pageID)
+            } else {
+                pagesByID[pageID] = ownership
+            }
+        }
+
+        for blockID in stored.blockIDs {
+            guard var ownership = blocksByID[blockID] else {
+                continue
+            }
+            ownership.prefixIDs.remove(stored.prefix.prefixID)
+            if ownership.prefixIDs.isEmpty {
+                blocksByID.removeValue(forKey: blockID)
+                removedBlocks += 1
+            } else {
+                blocksByID[blockID] = ownership
+            }
+        }
+
+        return removedBlocks
     }
 }
 

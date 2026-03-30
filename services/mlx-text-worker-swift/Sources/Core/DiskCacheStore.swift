@@ -29,6 +29,13 @@ struct RestoredBoundarySnapshot: Sendable {
     let blockTable: Melix_Worker_V1_BlockTable
 }
 
+struct DiskCacheOwnershipSnapshot: Sendable {
+    let prefixCount: Int
+    let pageCount: Int
+    let blockCount: Int
+    let snapshotCount: Int
+}
+
 private struct PersistedPrefixEnvelope: Codable {
     let prefixID: String
     let prefixData: Data
@@ -109,12 +116,13 @@ actor DiskCacheStore {
         blockTable: Melix_Worker_V1_BlockTable,
         quantizedBytes: UInt64
     ) {
+        let normalizedTable = normalizedBlockTable(blockTable)
         let record = StoredL2PrefixRecord(
             prefix: prefix,
             blockTableID: blockTableID,
-            blockTable: blockTable,
+            blockTable: normalizedTable,
             quantizedBytes: quantizedBytes,
-            unquantizedBytes: blockTable.blocks.reduce(UInt64(0)) { $0 + $1.bytes }
+            unquantizedBytes: normalizedTable.blocks.reduce(UInt64(0)) { $0 + $1.bytes }
         )
         prefixesByID[prefix.prefixID] = record
         writePrefixRecord(record)
@@ -131,15 +139,16 @@ actor DiskCacheStore {
         blockTable: Melix_Worker_V1_BlockTable,
         prefix: Melix_Worker_V1_PrefixRef?
     ) {
+        let normalizedTable = normalizedBlockTable(blockTable)
         if let prefix {
             let quantizedBytes = storageBoundaryQuantizedBytes(
-                for: blockTable,
+                for: normalizedTable,
                 activeKVQuantizationRatio: activeKVQuantizationRatio(from: acceleration)
             )
             persistPrefix(
                 prefix: prefix,
                 blockTableID: blockTableID,
-                blockTable: blockTable,
+                blockTable: normalizedTable,
                 quantizedBytes: quantizedBytes
             )
         }
@@ -152,10 +161,22 @@ actor DiskCacheStore {
             acceleration: acceleration,
             promptTokens: promptTokens,
             blockTableID: blockTableID,
-            blockTable: blockTable
+            blockTable: normalizedTable
         )
         snapshotsByID[snapshot.snapshotID] = record
         writeSnapshotRecord(record)
+    }
+
+    func ownershipSnapshot() -> DiskCacheOwnershipSnapshot {
+        let tables = prefixesByID.values.map(\.blockTable)
+        let pageCount = Set(tables.flatMap(\.pages).map(\.pageID)).count
+        let blockCount = Set(tables.flatMap(\.blocks).map(\.blockID)).count
+        return DiskCacheOwnershipSnapshot(
+            prefixCount: prefixesByID.count,
+            pageCount: pageCount,
+            blockCount: blockCount,
+            snapshotCount: snapshotsByID.count
+        )
     }
 
     func restoreSnapshot(snapshotID: String) -> RestoredBoundarySnapshot? {
@@ -371,7 +392,7 @@ actor DiskCacheStore {
                 prefixes[envelope.prefixID] = StoredL2PrefixRecord(
                     prefix: prefix,
                     blockTableID: envelope.blockTableID,
-                    blockTable: blockTable,
+                    blockTable: normalizedBlockTable(blockTable),
                     quantizedBytes: envelope.quantizedBytes,
                     unquantizedBytes: envelope.unquantizedBytes
                 )
@@ -398,7 +419,7 @@ actor DiskCacheStore {
                     acceleration: acceleration,
                     promptTokens: envelope.promptTokens,
                     blockTableID: envelope.blockTableID,
-                    blockTable: blockTable
+                    blockTable: normalizedBlockTable(blockTable)
                 )
             }
         }

@@ -4250,6 +4250,242 @@ final class WorkerScaffoldTests: XCTestCase {
         }
     }
 
+    func testHotCacheStoreTracksPagedOwnershipAndPurgesItWithPrefixEntries() async throws {
+        try await withTemporaryCacheRoot { cacheRoot in
+            let store = HotCacheStore(
+                diskStore: DiskCacheStore(rootPath: cacheRoot.path),
+                initialCacheBlocks: 0
+            )
+
+            let scope = makeCacheScope(scopeID: "scope-hot", modelID: "model-hot")
+            let cacheKey = makeCacheKey(
+                scopeID: scope.scopeID,
+                prefixSeed: "hot-prefix",
+                fingerprintSeed: "hot-fingerprint"
+            )
+            var execution = Melix_Worker_V1_ExecutionMetadata()
+            execution.scope = scope
+            execution.cacheKey = cacheKey
+            execution.cacheHints.preferredBlockSize = 16
+
+            let registration = try await store.registerPrefill(
+                execution: execution,
+                model: makeModelSpec(modelID: "model-hot"),
+                messages: [makeUserMessage("paged cache ownership")],
+                promptTokens: 40,
+                decodeHandle: "decode-hot-1",
+                activeKVQuantizationRatio: 50
+            )
+
+            let ownership = await store.ownershipSnapshot()
+            let stats = await store.stats()
+
+            XCTAssertEqual(registration.blockTable.blocks.count, 3)
+            XCTAssertEqual(registration.blockTable.pages.count, 3)
+            XCTAssertEqual(ownership.prefixCount, 1)
+            XCTAssertEqual(ownership.pageCount, 3)
+            XCTAssertEqual(ownership.blockCount, 3)
+            XCTAssertEqual(ownership.pageIDsByPrefixID[registration.prefix.prefixID]?.count, 3)
+            XCTAssertEqual(
+                Set(ownership.blockIDsByPageID.values.flatMap { $0 }),
+                Set(registration.blockTable.blocks.map(\.blockID))
+            )
+            XCTAssertEqual(stats.blockCount, 3)
+
+            let purged = await store.purgeCache(scope: scope, cacheKey: cacheKey, includePinned: true)
+            let postPurgeOwnership = await store.ownershipSnapshot()
+
+            XCTAssertEqual(purged, 3)
+            XCTAssertEqual(postPurgeOwnership.prefixCount, 0)
+            XCTAssertEqual(postPurgeOwnership.pageCount, 0)
+            XCTAssertEqual(postPurgeOwnership.blockCount, 0)
+        }
+    }
+
+    func testHotCacheStoreRetainsSharedPagedOwnershipUntilLastPrefixIsPurged() async throws {
+        try await withTemporaryCacheRoot { cacheRoot in
+            let store = HotCacheStore(
+                diskStore: DiskCacheStore(rootPath: cacheRoot.path),
+                initialCacheBlocks: 0
+            )
+
+            let scope = makeCacheScope(scopeID: "scope-shared", modelID: "model-shared")
+
+            func register(prefixSeed: String, fingerprintSeed: String) async throws -> HotCacheRegistration {
+                var execution = Melix_Worker_V1_ExecutionMetadata()
+                execution.scope = scope
+                execution.cacheKey = makeCacheKey(
+                    scopeID: scope.scopeID,
+                    prefixSeed: prefixSeed,
+                    fingerprintSeed: fingerprintSeed
+                )
+                execution.cacheHints.preferredBlockSize = 16
+                return try await store.registerPrefill(
+                    execution: execution,
+                    model: makeModelSpec(modelID: "model-shared"),
+                    messages: [makeUserMessage(prefixSeed)],
+                    promptTokens: 32,
+                    decodeHandle: "decode-shared",
+                    activeKVQuantizationRatio: 50
+                )
+            }
+
+            let first = try await register(prefixSeed: "shared-1", fingerprintSeed: "shared-fp-1")
+            let second = try await register(prefixSeed: "shared-2", fingerprintSeed: "shared-fp-2")
+
+            XCTAssertNotEqual(first.prefix.prefixID, second.prefix.prefixID)
+
+            let initialOwnership = await store.ownershipSnapshot()
+            XCTAssertEqual(initialOwnership.prefixCount, 2)
+            XCTAssertEqual(initialOwnership.pageCount, 2)
+            XCTAssertEqual(initialOwnership.blockCount, 2)
+
+            let firstPurged = await store.purgeCache(
+                scope: scope,
+                cacheKey: first.prefix.cacheKey,
+                includePinned: true
+            )
+            let midOwnership = await store.ownershipSnapshot()
+
+            XCTAssertEqual(firstPurged, 0)
+            XCTAssertEqual(midOwnership.prefixCount, 1)
+            XCTAssertEqual(midOwnership.pageCount, 2)
+            XCTAssertEqual(midOwnership.blockCount, 2)
+
+            let secondPurged = await store.purgeCache(
+                scope: scope,
+                cacheKey: second.prefix.cacheKey,
+                includePinned: true
+            )
+            let finalOwnership = await store.ownershipSnapshot()
+
+            XCTAssertEqual(secondPurged, 2)
+            XCTAssertEqual(finalOwnership.prefixCount, 0)
+            XCTAssertEqual(finalOwnership.pageCount, 0)
+            XCTAssertEqual(finalOwnership.blockCount, 0)
+        }
+    }
+
+    func testHotCacheStorePurgesPagedOwnershipByModelAndScope() async throws {
+        try await withTemporaryCacheRoot { cacheRoot in
+            let store = HotCacheStore(
+                diskStore: DiskCacheStore(rootPath: cacheRoot.path),
+                initialCacheBlocks: 0
+            )
+
+            func register(
+                scopeID: String,
+                modelID: String,
+                prefixSeed: String
+            ) async throws {
+                var execution = Melix_Worker_V1_ExecutionMetadata()
+                execution.scope = makeCacheScope(scopeID: scopeID, modelID: modelID)
+                execution.cacheKey = makeCacheKey(
+                    scopeID: scopeID,
+                    prefixSeed: prefixSeed,
+                    fingerprintSeed: "\(prefixSeed)-fp"
+                )
+                execution.cacheHints.preferredBlockSize = 16
+                _ = try await store.registerPrefill(
+                    execution: execution,
+                    model: makeModelSpec(modelID: modelID),
+                    messages: [makeUserMessage(prefixSeed)],
+                    promptTokens: 16,
+                    decodeHandle: "decode-\(prefixSeed)",
+                    activeKVQuantizationRatio: 25
+                )
+            }
+
+            try await register(scopeID: "scope-one", modelID: "model-one", prefixSeed: "prefix-one")
+            try await register(scopeID: "scope-two", modelID: "model-two", prefixSeed: "prefix-two")
+
+            await store.purgeModel(modelID: "model-one")
+            let afterModelPurge = await store.ownershipSnapshot()
+            XCTAssertEqual(afterModelPurge.prefixCount, 1)
+            XCTAssertEqual(afterModelPurge.pageCount, 1)
+            XCTAssertEqual(afterModelPurge.blockCount, 1)
+
+            await store.purgeScope(makeCacheScope(scopeID: "scope-two", modelID: "model-two"))
+            let afterScopePurge = await store.ownershipSnapshot()
+            XCTAssertEqual(afterScopePurge.prefixCount, 0)
+            XCTAssertEqual(afterScopePurge.pageCount, 0)
+            XCTAssertEqual(afterScopePurge.blockCount, 0)
+        }
+    }
+
+    func testHotCacheSnapshotIncludesDiskOnlyScopeSummary() async throws {
+        try await withTemporaryCacheRoot { cacheRoot in
+            let diskStore = DiskCacheStore(rootPath: cacheRoot.path)
+            let store = HotCacheStore(diskStore: diskStore, initialCacheBlocks: 0)
+            let scope = makeCacheScope(scopeID: "scope-disk-only", modelID: "model-disk-only")
+            let cacheKey = makeCacheKey(
+                scopeID: scope.scopeID,
+                prefixSeed: "disk-only-prefix",
+                fingerprintSeed: "disk-only-fingerprint"
+            )
+            let prefix = makePrefixRef(prefixID: "prefix-disk-only", scope: scope, cacheKey: cacheKey)
+            let blockTable = makeBlockTable(
+                scopeID: scope.scopeID,
+                cacheKey: cacheKey,
+                blockIDs: ["disk-block"],
+                bytes: [128]
+            )
+
+            await diskStore.persistPrefix(
+                prefix: prefix,
+                blockTableID: "table-disk-only",
+                blockTable: blockTable,
+                quantizedBytes: 64
+            )
+
+            let snapshot = await store.snapshot()
+            let scopeSummary = try XCTUnwrap(snapshot.scopes.first)
+
+            XCTAssertTrue(snapshot.hotPrefixes.isEmpty)
+            XCTAssertEqual(scopeSummary.scope.scopeID, "scope-disk-only")
+            XCTAssertEqual(scopeSummary.l1Bytes, 0)
+            XCTAssertEqual(scopeSummary.l2Bytes, 64)
+            XCTAssertEqual(scopeSummary.prefixCount, 0)
+        }
+    }
+
+    func testDiskCacheStoreNormalizesLegacyBlockTablesIntoPagedOwnership() async throws {
+        try await withTemporaryCacheRoot { cacheRoot in
+            let store = DiskCacheStore(rootPath: cacheRoot.path)
+            let scope = makeCacheScope(scopeID: "scope-disk", modelID: "model-disk")
+            let cacheKey = makeCacheKey(
+                scopeID: scope.scopeID,
+                prefixSeed: "disk-prefix",
+                fingerprintSeed: "disk-fingerprint"
+            )
+            let prefix = makePrefixRef(prefixID: "prefix-disk", scope: scope, cacheKey: cacheKey)
+            let legacyTable = makeBlockTable(
+                scopeID: scope.scopeID,
+                cacheKey: cacheKey,
+                blockIDs: ["d0", "d1"],
+                bytes: [96, 96]
+            )
+
+            XCTAssertTrue(legacyTable.pages.isEmpty)
+
+            await store.persistPrefix(
+                prefix: prefix,
+                blockTableID: "table-disk",
+                blockTable: legacyTable,
+                quantizedBytes: 64
+            )
+
+            let ownership = await store.ownershipSnapshot()
+            let summary = await store.summary()
+
+            XCTAssertEqual(ownership.prefixCount, 1)
+            XCTAssertEqual(ownership.pageCount, 2)
+            XCTAssertEqual(ownership.blockCount, 2)
+            XCTAssertEqual(summary.scopes.first?.snapshotCount, 0)
+            XCTAssertEqual(summary.l2Bytes, 64)
+        }
+    }
+
     func testDiskCacheQuantizationHelpersClampAndNormalizeProfiles() {
         let table = makeBlockTable(
             scopeID: "scope-quant",
