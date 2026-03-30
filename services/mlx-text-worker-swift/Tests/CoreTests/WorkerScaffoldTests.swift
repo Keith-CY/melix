@@ -161,6 +161,11 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(stats.stats.workerState, "idle")
         XCTAssertEqual(stats.stats.activeRequests, 0)
         XCTAssertEqual(stats.stats.residentBytes, 0)
+        XCTAssertEqual(stats.stats.modelResidentBytes, 0)
+        XCTAssertEqual(stats.stats.cacheResidentBytes, 0)
+        XCTAssertEqual(stats.stats.kvCacheBytes, 0)
+        XCTAssertEqual(stats.stats.peakAllocationBytes, 0)
+        XCTAssertEqual(stats.stats.memoryHeadroomBytes, 0)
         XCTAssertTrue(models.modelHandles.isEmpty)
     }
 
@@ -882,6 +887,7 @@ final class WorkerScaffoldTests: XCTestCase {
         let stored = await registry.prefillContext(for: result.decodeHandle)
         let contextCount = await registry.prefillContextCount()
         let cacheResponse = await registry.cacheStatsResponse()
+        let runtimeStats = await registry.runtimeStats()
 
         XCTAssertFalse(result.decodeHandle.isEmpty)
         XCTAssertFalse(result.blockTableID.isEmpty)
@@ -896,6 +902,9 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(cacheResponse.stats.blockCount, 1)
         XCTAssertEqual(cacheResponse.snapshot.hotPrefixes.count, 1)
         XCTAssertEqual(cacheResponse.snapshot.hotPrefixes.first?.tokenLength, 1)
+        XCTAssertEqual(runtimeStats.modelResidentBytes, 0)
+        XCTAssertEqual(runtimeStats.cacheResidentBytes, cacheResponse.stats.l1Bytes)
+        XCTAssertEqual(runtimeStats.residentBytes, cacheResponse.stats.l1Bytes)
     }
 
     func testRuntimeRegistryPrefillReusesMatchingHotPrefixMetadata() async throws {
@@ -1120,8 +1129,12 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(loadResponse.estimatedResidentBytes, 4_096)
         XCTAssertEqual(listedResponse.modelHandles, ["melix-dev-text::1"])
         XCTAssertEqual(loadedStats.stats.residentBytes, 4_096)
+        XCTAssertEqual(loadedStats.stats.modelResidentBytes, 4_096)
+        XCTAssertEqual(loadedStats.stats.cacheResidentBytes, 0)
+        XCTAssertEqual(loadedStats.stats.kvCacheBytes, 0)
         XCTAssertTrue(unloadResponse.ok)
         XCTAssertEqual(postUnloadStats.stats.residentBytes, 0)
+        XCTAssertEqual(postUnloadStats.stats.modelResidentBytes, 0)
         XCTAssertEqual(services.metrics.counters["swift_text.loaded_model_count"], 0)
 
         let loadedSpecs = await backend.loadedSpecs()

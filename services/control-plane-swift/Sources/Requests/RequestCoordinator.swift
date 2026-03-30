@@ -987,7 +987,7 @@ public actor RequestCoordinator {
         await metricsStore.set(cacheStats.stats.l1HitRate * 100, forKey: "cache.hit_rate")
         await metricsStore.set(cacheStats.stats.l2RestoreHitRate * 100, forKey: "cache.l2_restore_hit_rate")
         await metricsStore.set(cacheStats.stats.compressionRatio * 100, forKey: "cache.compression_ratio")
-        let residentBytes = max(Double(runtimeStats.stats.residentBytes), 1)
+        let residentBytes = max(Double(runtimeStats.memoryEvidence.residentBytes), 1)
         let cachePressure = min(1, Double(cacheStats.stats.l1Bytes) / residentBytes)
         await metricsStore.set(cachePressure, forKey: "scheduler.cache_pressure")
 

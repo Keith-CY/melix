@@ -70,7 +70,7 @@ enum OnDemandModelLoader {
         let residentBytes: Double
         if let runtimeClient = workerClient as? any RuntimeIntrospectingWorkerClientProtocol,
            let runtimeStats = try? await runtimeClient.runtimeStats() {
-            residentBytes = Double(runtimeStats.stats.residentBytes)
+            residentBytes = Double(runtimeStats.memoryEvidence.residentBytes)
         } else {
             residentBytes = Double(response.estimatedResidentBytes)
         }

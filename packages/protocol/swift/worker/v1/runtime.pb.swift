@@ -336,6 +336,31 @@ public struct Melix_Worker_V1_RuntimeStats: @unchecked Sendable {
     set {_uniqueStorage()._lastImagePeakMemoryBytes = newValue}
   }
 
+  public var modelResidentBytes: UInt64 {
+    get {_storage._modelResidentBytes}
+    set {_uniqueStorage()._modelResidentBytes = newValue}
+  }
+
+  public var cacheResidentBytes: UInt64 {
+    get {_storage._cacheResidentBytes}
+    set {_uniqueStorage()._cacheResidentBytes = newValue}
+  }
+
+  public var kvCacheBytes: UInt64 {
+    get {_storage._kvCacheBytes}
+    set {_uniqueStorage()._kvCacheBytes = newValue}
+  }
+
+  public var peakAllocationBytes: UInt64 {
+    get {_storage._peakAllocationBytes}
+    set {_uniqueStorage()._peakAllocationBytes = newValue}
+  }
+
+  public var memoryHeadroomBytes: UInt64 {
+    get {_storage._memoryHeadroomBytes}
+    set {_uniqueStorage()._memoryHeadroomBytes = newValue}
+  }
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -832,7 +857,7 @@ extension Melix_Worker_V1_WarmupModelResponse: SwiftProtobuf.Message, SwiftProto
 
 extension Melix_Worker_V1_RuntimeStats: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".RuntimeStats"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}worker_state\0\u{3}resident_bytes\0\u{3}active_requests\0\u{3}active_prefills\0\u{3}active_decodes\0\u{3}l1_cache_bytes\0\u{3}l2_cache_bytes\0\u{3}l1_hit_rate\0\u{3}l2_hit_rate\0\u{3}active_multimodal_requests\0\u{3}last_probe_kind\0\u{3}last_preprocess_latency_ms\0\u{3}last_preprocess_input_bytes\0\u{3}last_preprocess_peak_memory_bytes\0\u{3}last_first_token_latency_ms\0\u{3}last_transcription_latency_ms\0\u{3}last_speech_latency_ms\0\u{3}last_audio_duration_seconds\0\u{3}last_audio_chunk_count\0\u{3}last_audio_output_bytes\0\u{3}last_image_job_latency_ms\0\u{3}last_image_artifact_publish_ms\0\u{3}last_image_output_bytes\0\u{3}last_image_peak_memory_bytes\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}worker_state\0\u{3}resident_bytes\0\u{3}active_requests\0\u{3}active_prefills\0\u{3}active_decodes\0\u{3}l1_cache_bytes\0\u{3}l2_cache_bytes\0\u{3}l1_hit_rate\0\u{3}l2_hit_rate\0\u{3}active_multimodal_requests\0\u{3}last_probe_kind\0\u{3}last_preprocess_latency_ms\0\u{3}last_preprocess_input_bytes\0\u{3}last_preprocess_peak_memory_bytes\0\u{3}last_first_token_latency_ms\0\u{3}last_transcription_latency_ms\0\u{3}last_speech_latency_ms\0\u{3}last_audio_duration_seconds\0\u{3}last_audio_chunk_count\0\u{3}last_audio_output_bytes\0\u{3}last_image_job_latency_ms\0\u{3}last_image_artifact_publish_ms\0\u{3}last_image_output_bytes\0\u{3}last_image_peak_memory_bytes\0\u{3}model_resident_bytes\0\u{3}cache_resident_bytes\0\u{3}kv_cache_bytes\0\u{3}peak_allocation_bytes\0\u{3}memory_headroom_bytes\0")
 
   fileprivate class _StorageClass {
     var _workerState: String = String()
@@ -859,6 +884,11 @@ extension Melix_Worker_V1_RuntimeStats: SwiftProtobuf.Message, SwiftProtobuf._Me
     var _lastImageArtifactPublishMs: Double = 0
     var _lastImageOutputBytes: UInt64 = 0
     var _lastImagePeakMemoryBytes: UInt64 = 0
+    var _modelResidentBytes: UInt64 = 0
+    var _cacheResidentBytes: UInt64 = 0
+    var _kvCacheBytes: UInt64 = 0
+    var _peakAllocationBytes: UInt64 = 0
+    var _memoryHeadroomBytes: UInt64 = 0
 
       // This property is used as the initial default value for new instances of the type.
       // The type itself is protecting the reference to its storage via CoW semantics.
@@ -893,6 +923,11 @@ extension Melix_Worker_V1_RuntimeStats: SwiftProtobuf.Message, SwiftProtobuf._Me
       _lastImageArtifactPublishMs = source._lastImageArtifactPublishMs
       _lastImageOutputBytes = source._lastImageOutputBytes
       _lastImagePeakMemoryBytes = source._lastImagePeakMemoryBytes
+      _modelResidentBytes = source._modelResidentBytes
+      _cacheResidentBytes = source._cacheResidentBytes
+      _kvCacheBytes = source._kvCacheBytes
+      _peakAllocationBytes = source._peakAllocationBytes
+      _memoryHeadroomBytes = source._memoryHeadroomBytes
     }
   }
 
@@ -935,6 +970,11 @@ extension Melix_Worker_V1_RuntimeStats: SwiftProtobuf.Message, SwiftProtobuf._Me
         case 22: try { try decoder.decodeSingularDoubleField(value: &_storage._lastImageArtifactPublishMs) }()
         case 23: try { try decoder.decodeSingularUInt64Field(value: &_storage._lastImageOutputBytes) }()
         case 24: try { try decoder.decodeSingularUInt64Field(value: &_storage._lastImagePeakMemoryBytes) }()
+        case 25: try { try decoder.decodeSingularUInt64Field(value: &_storage._modelResidentBytes) }()
+        case 26: try { try decoder.decodeSingularUInt64Field(value: &_storage._cacheResidentBytes) }()
+        case 27: try { try decoder.decodeSingularUInt64Field(value: &_storage._kvCacheBytes) }()
+        case 28: try { try decoder.decodeSingularUInt64Field(value: &_storage._peakAllocationBytes) }()
+        case 29: try { try decoder.decodeSingularUInt64Field(value: &_storage._memoryHeadroomBytes) }()
         default: break
         }
       }
@@ -1015,6 +1055,21 @@ extension Melix_Worker_V1_RuntimeStats: SwiftProtobuf.Message, SwiftProtobuf._Me
       if _storage._lastImagePeakMemoryBytes != 0 {
         try visitor.visitSingularUInt64Field(value: _storage._lastImagePeakMemoryBytes, fieldNumber: 24)
       }
+      if _storage._modelResidentBytes != 0 {
+        try visitor.visitSingularUInt64Field(value: _storage._modelResidentBytes, fieldNumber: 25)
+      }
+      if _storage._cacheResidentBytes != 0 {
+        try visitor.visitSingularUInt64Field(value: _storage._cacheResidentBytes, fieldNumber: 26)
+      }
+      if _storage._kvCacheBytes != 0 {
+        try visitor.visitSingularUInt64Field(value: _storage._kvCacheBytes, fieldNumber: 27)
+      }
+      if _storage._peakAllocationBytes != 0 {
+        try visitor.visitSingularUInt64Field(value: _storage._peakAllocationBytes, fieldNumber: 28)
+      }
+      if _storage._memoryHeadroomBytes != 0 {
+        try visitor.visitSingularUInt64Field(value: _storage._memoryHeadroomBytes, fieldNumber: 29)
+      }
     }
     try unknownFields.traverse(visitor: &visitor)
   }
@@ -1048,6 +1103,11 @@ extension Melix_Worker_V1_RuntimeStats: SwiftProtobuf.Message, SwiftProtobuf._Me
         if _storage._lastImageArtifactPublishMs != rhs_storage._lastImageArtifactPublishMs {return false}
         if _storage._lastImageOutputBytes != rhs_storage._lastImageOutputBytes {return false}
         if _storage._lastImagePeakMemoryBytes != rhs_storage._lastImagePeakMemoryBytes {return false}
+        if _storage._modelResidentBytes != rhs_storage._modelResidentBytes {return false}
+        if _storage._cacheResidentBytes != rhs_storage._cacheResidentBytes {return false}
+        if _storage._kvCacheBytes != rhs_storage._kvCacheBytes {return false}
+        if _storage._peakAllocationBytes != rhs_storage._peakAllocationBytes {return false}
+        if _storage._memoryHeadroomBytes != rhs_storage._memoryHeadroomBytes {return false}
         return true
       }
       if !storagesAreEqual {return false}

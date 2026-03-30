@@ -89,6 +89,11 @@ message RuntimeStats {
   double last_image_artifact_publish_ms = 22;
   uint64 last_image_output_bytes = 23;
   uint64 last_image_peak_memory_bytes = 24;
+  uint64 model_resident_bytes = 25;
+  uint64 cache_resident_bytes = 26;
+  uint64 kv_cache_bytes = 27;
+  uint64 peak_allocation_bytes = 28;
+  uint64 memory_headroom_bytes = 29;
 }
 
 message GetRuntimeStatsRequest {}

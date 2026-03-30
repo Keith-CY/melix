@@ -410,6 +410,9 @@ actor WorkerRuntimeRegistry {
 
     func runtimeStats() async -> Melix_Worker_V1_RuntimeStats {
         let cacheStats = await cacheStore.stats()
+        let modelResidentBytes = loadedModels.values.reduce(0) { $0 + $1.estimatedResidentBytes }
+        let cacheResidentBytes = cacheStats.l1Bytes
+        let kvCacheBytes: UInt64 = 0
         var stats = Melix_Worker_V1_RuntimeStats()
         if draining {
             stats.workerState = "draining"
@@ -418,7 +421,12 @@ actor WorkerRuntimeRegistry {
         } else {
             stats.workerState = "idle"
         }
-        stats.residentBytes = loadedModels.values.reduce(0) { $0 + $1.estimatedResidentBytes }
+        stats.modelResidentBytes = modelResidentBytes
+        stats.cacheResidentBytes = cacheResidentBytes
+        stats.kvCacheBytes = kvCacheBytes
+        stats.peakAllocationBytes = 0
+        stats.memoryHeadroomBytes = 0
+        stats.residentBytes = modelResidentBytes &+ cacheResidentBytes &+ kvCacheBytes
         stats.activeRequests = activeRequests
         stats.activePrefills = activePrefills
         stats.activeDecodes = activeDecodes

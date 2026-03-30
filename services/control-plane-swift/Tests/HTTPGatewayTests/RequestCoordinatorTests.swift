@@ -579,7 +579,9 @@ struct RequestCoordinatorTests {
     func warmFollowUpRequestsPreferHotPrefillLanesAndRefreshCacheObservability() async throws {
         let workerClient = PhaseAwareWorkerClient()
         var runtimeStats = Melix_Worker_V1_GetRuntimeStatsResponse()
-        runtimeStats.stats.residentBytes = 8_192
+        runtimeStats.stats.residentBytes = 6_144
+        runtimeStats.stats.modelResidentBytes = 6_144
+        runtimeStats.stats.cacheResidentBytes = 2_048
         await workerClient.setRuntimeStatsResponse(runtimeStats)
 
         var cacheStats = Melix_Worker_V1_GetCacheStatsResponse()

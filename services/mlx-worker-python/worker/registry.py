@@ -164,7 +164,12 @@ class WorkerRegistry:
             active_multimodal_requests = sum(
                 1 for state in self._requests.values() if state.runtime_kind in {"ocr", "vlm", "transcription", "speech", "image"}
             )
-            resident_bytes = sum(item.estimated_resident_bytes for item in self._loaded_models.values())
+            model_resident_bytes = sum(item.estimated_resident_bytes for item in self._loaded_models.values())
+            cache_resident_bytes = 0
+            kv_cache_bytes = 0
+            peak_allocation_bytes = 0
+            memory_headroom_bytes = 0
+            resident_bytes = model_resident_bytes + cache_resident_bytes + kv_cache_bytes
             last_probe_kind = self._last_probe_kind
             last_preprocess_latency_ms = self._last_preprocess_latency_ms
             last_preprocess_input_bytes = self._last_preprocess_input_bytes
@@ -179,7 +184,7 @@ class WorkerRegistry:
             last_image_artifact_publish_ms = self._last_image_artifact_publish_ms
             last_image_output_bytes = self._last_image_output_bytes
             last_image_peak_memory_bytes = self._last_image_peak_memory_bytes
-        return runtime_pb2.RuntimeStats(
+        stats = runtime_pb2.RuntimeStats(
             worker_state="draining" if self._draining else "idle",
             resident_bytes=resident_bytes,
             active_requests=active_requests,
@@ -205,6 +210,12 @@ class WorkerRegistry:
             last_image_output_bytes=last_image_output_bytes,
             last_image_peak_memory_bytes=last_image_peak_memory_bytes,
         )
+        stats.model_resident_bytes = model_resident_bytes
+        stats.cache_resident_bytes = cache_resident_bytes
+        stats.kv_cache_bytes = kv_cache_bytes
+        stats.peak_allocation_bytes = peak_allocation_bytes
+        stats.memory_headroom_bytes = memory_headroom_bytes
+        return stats
 
     def set_draining(self, draining: bool) -> None:
         with self._lock:

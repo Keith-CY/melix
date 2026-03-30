@@ -90,6 +90,11 @@ def test_runtime_service_handles_failures_and_state_transitions() -> None:
     stats = runtime_service.GetRuntimeStats(runtime_pb2.GetRuntimeStatsRequest(), context=None)
     assert stats.stats.worker_state == "idle"
     assert stats.stats.resident_bytes == 4096
+    assert stats.stats.model_resident_bytes == 4096
+    assert stats.stats.cache_resident_bytes == 0
+    assert stats.stats.kv_cache_bytes == 0
+    assert stats.stats.peak_allocation_bytes == 0
+    assert stats.stats.memory_headroom_bytes == 0
 
     drained = runtime_service.Drain(
         runtime_pb2.DrainRequest(stop_accepting_new=True),
@@ -208,6 +213,9 @@ def test_registry_capabilities_and_request_lifecycle() -> None:
     assert image_stats.last_image_artifact_publish_ms == 3.25
     assert image_stats.last_image_output_bytes == 512
     assert image_stats.last_image_peak_memory_bytes == 40960
+    assert image_stats.model_resident_bytes == 0
+    assert image_stats.cache_resident_bytes == 0
+    assert image_stats.kv_cache_bytes == 0
 
     registry.finish_request("req-vision")
     registry.finish_request("req-transcription")

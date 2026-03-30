@@ -5,6 +5,46 @@ public enum WorkerClientError: Error, Equatable {
     case unavailable
 }
 
+public struct WorkerMemoryEvidence: Equatable, Sendable {
+    public let residentBytes: UInt64
+    public let modelResidentBytes: UInt64
+    public let cacheResidentBytes: UInt64
+    public let kvCacheBytes: UInt64
+    public let peakAllocationBytes: UInt64
+    public let memoryHeadroomBytes: UInt64
+
+    public init(stats: Melix_Worker_V1_RuntimeStats) {
+        let modelResidentBytes = stats.modelResidentBytes > 0 ? stats.modelResidentBytes : stats.residentBytes
+        let cacheResidentBytes = stats.cacheResidentBytes > 0 ? stats.cacheResidentBytes : stats.l1CacheBytes
+        let kvCacheBytes = stats.kvCacheBytes
+        let normalizedResidentBytes = WorkerMemoryEvidence.sumResidentBytes(
+            modelResidentBytes,
+            cacheResidentBytes,
+            kvCacheBytes
+        )
+
+        self.modelResidentBytes = modelResidentBytes
+        self.cacheResidentBytes = cacheResidentBytes
+        self.kvCacheBytes = kvCacheBytes
+        self.residentBytes = max(stats.residentBytes, normalizedResidentBytes)
+        self.peakAllocationBytes = stats.peakAllocationBytes
+        self.memoryHeadroomBytes = stats.memoryHeadroomBytes
+    }
+
+    private static func sumResidentBytes(_ values: UInt64...) -> UInt64 {
+        values.reduce(0) { partial, value in
+            let (sum, overflow) = partial.addingReportingOverflow(value)
+            return overflow ? UInt64.max : sum
+        }
+    }
+}
+
+public extension Melix_Worker_V1_GetRuntimeStatsResponse {
+    var memoryEvidence: WorkerMemoryEvidence {
+        WorkerMemoryEvidence(stats: stats)
+    }
+}
+
 public protocol WorkerClient: Sendable {
     func canDispatchRequests() async -> Bool
     func generate(

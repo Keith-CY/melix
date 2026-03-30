@@ -85,7 +85,8 @@ struct OpenAIHandlerTests {
             ],
             loadModelHandle: "melix-dev-text::swift",
             loadModelEstimatedResidentBytes: 4_096,
-            runtimeResidentBytes: 8_192
+            runtimeResidentBytes: 6_144,
+            runtimeCacheResidentBytes: 2_048
         )
         let registry = WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog)
         let coordinator = RequestCoordinator(
@@ -191,6 +192,63 @@ struct OpenAIHandlerTests {
         #expect(response.statusCode == 200)
         #expect(metrics.values["control_plane.text_first_load_estimated_resident_bytes"] == 12_288)
         #expect(metrics.values["control_plane.text_first_load_resident_bytes"] == 12_288)
+        #expect(payload.contains("data: [DONE]"))
+    }
+
+    @Test("POST /v1/chat/completions prefers explicit runtime memory accounting fields when available")
+    func postChatCompletionsPrefersExplicitRuntimeMemoryAccountingFields() async throws {
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel()])
+        let metricsStore = MetricsStore()
+        let workerClient = ScriptedWorkerClient(
+            events: [
+                makeCompletedEvent(requestID: "req-lazy-explicit", seq: 1, finishReason: "stop", assistantText: "done"),
+            ],
+            loadModelHandle: "melix-dev-text::swift",
+            loadModelEstimatedResidentBytes: 4_096,
+            runtimeResidentBytes: 4_096,
+            runtimeModelResidentBytes: 5_120,
+            runtimeCacheResidentBytes: 1_024,
+            runtimeKVCacheBytes: 256
+        )
+        let registry = WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog)
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: registry,
+                abortRegistry: AbortRegistry(),
+                metricsStore: metricsStore
+            ),
+            workerRegistry: registry,
+            metricsStore: metricsStore,
+            translator: ChatRequestTranslator(requestIDGenerator: { "req-lazy-explicit" })
+        )
+
+        let body = try #require(
+            """
+            {
+              "model": "melix-dev-text",
+              "stream": true,
+              "messages": [
+                { "role": "user", "content": "prefer explicit runtime accounting" }
+              ]
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/chat/completions",
+                headers: ["content-type": "application/json"],
+                body: body
+            )
+        )
+        let payload = try await collectBody(response.body)
+        let metrics = await metricsStore.snapshot()
+
+        #expect(response.statusCode == 200)
+        #expect(metrics.values["control_plane.text_first_load_estimated_resident_bytes"] == 4_096)
+        #expect(metrics.values["control_plane.text_first_load_resident_bytes"] == 6_400)
         #expect(payload.contains("data: [DONE]"))
     }
 
@@ -3216,6 +3274,9 @@ private actor ScriptedWorkerClient: WorkerRoutingClient, RuntimeIntrospectingWor
     private let loadModelHandle: String
     private let loadModelEstimatedResidentBytes: UInt64
     private let runtimeResidentBytes: UInt64
+    private let runtimeModelResidentBytes: UInt64
+    private let runtimeCacheResidentBytes: UInt64
+    private let runtimeKVCacheBytes: UInt64
     private let runtimeStatsFailure: Error?
     private(set) var lastGenerateRequest: Melix_Worker_V1_GenerateRequest?
     private(set) var lastLoadModelRequest: Melix_Worker_V1_LoadModelRequest?
@@ -3225,12 +3286,18 @@ private actor ScriptedWorkerClient: WorkerRoutingClient, RuntimeIntrospectingWor
         loadModelHandle: String = "melix-dev-text::swift",
         loadModelEstimatedResidentBytes: UInt64 = 0,
         runtimeResidentBytes: UInt64 = 0,
+        runtimeModelResidentBytes: UInt64 = 0,
+        runtimeCacheResidentBytes: UInt64 = 0,
+        runtimeKVCacheBytes: UInt64 = 0,
         runtimeStatsFailure: Error? = nil
     ) {
         self.events = events
         self.loadModelHandle = loadModelHandle
         self.loadModelEstimatedResidentBytes = loadModelEstimatedResidentBytes
         self.runtimeResidentBytes = runtimeResidentBytes
+        self.runtimeModelResidentBytes = runtimeModelResidentBytes
+        self.runtimeCacheResidentBytes = runtimeCacheResidentBytes
+        self.runtimeKVCacheBytes = runtimeKVCacheBytes
         self.runtimeStatsFailure = runtimeStatsFailure
     }
 
@@ -3272,6 +3339,9 @@ private actor ScriptedWorkerClient: WorkerRoutingClient, RuntimeIntrospectingWor
         }
         var response = Melix_Worker_V1_GetRuntimeStatsResponse()
         response.stats.residentBytes = runtimeResidentBytes
+        response.stats.modelResidentBytes = runtimeModelResidentBytes
+        response.stats.cacheResidentBytes = runtimeCacheResidentBytes
+        response.stats.kvCacheBytes = runtimeKVCacheBytes
         return response
     }
 }
