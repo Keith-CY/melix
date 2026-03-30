@@ -691,6 +691,109 @@ struct OpenAIHandlerTests {
         #expect(payload.contains("event: response.completed"))
     }
 
+    @Test("POST /v1/responses rejects invalid tool parser namespaces")
+    func postResponsesRejectsInvalidToolParserNamespaces() async throws {
+        let handler = OpenAIHandler(
+            modelCatalog: ModelCatalog(seedModels: [warmModel()]),
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: ScriptedWorkerClient(events: [])),
+                abortRegistry: AbortRegistry()
+            )
+        )
+
+        let body = try #require(
+            """
+            {
+              "model": "melix-dev-text",
+              "stream": true,
+              "input": "hello responses",
+              "tool_parser": {
+                "mode": "qwen",
+                "namespaces": ["bad namespace"]
+              }
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/responses",
+                headers: ["content-type": "application/json"],
+                body: body
+            )
+        )
+        let payload = try await collectBody(response.body)
+
+        #expect(response.statusCode == 400)
+        #expect(payload.contains("\"code\":\"invalid_argument\""))
+        #expect(payload.contains("Invalid tool parser namespace"))
+    }
+
+    @Test("POST /v1/responses applies model default tool parser to request metrics and stream frames")
+    func postResponsesAppliesModelDefaultToolParserToRequestMetricsAndStreamFrames() async throws {
+        var model = warmModel()
+        model.settings.ext["tool_parser_mode"] = "qwen"
+        model.settings.ext["tool_parser_namespaces"] = "tools.search"
+        model.settings.ext["tool_parser_xml_fallback"] = "true"
+
+        let catalog = ModelCatalog(seedModels: [model])
+        let workerClient = ScriptedWorkerClient(events: [
+            makeToolCallEvent(
+                requestID: "resp-model-parser",
+                seq: 1,
+                callID: "tool-1",
+                toolName: "search",
+                argumentsJSONFragment: "{\"q\":\"melix\"}"
+            ),
+            makeCompletedEvent(requestID: "resp-model-parser", seq: 2, finishReason: "stop", assistantText: "done"),
+        ])
+        let metricsStore = MetricsStore()
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: workerClient),
+                abortRegistry: AbortRegistry()
+            ),
+            metricsStore: metricsStore,
+            translator: ChatRequestTranslator(requestIDGenerator: { "resp-model-parser" }),
+            sseWriter: SSEStreamWriter(now: { Date(timeIntervalSince1970: 456) })
+        )
+
+        let body = try #require(
+            """
+            {
+              "model": "melix-dev-text",
+              "stream": true,
+              "input": "hello responses"
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/responses",
+                headers: ["content-type": "application/json"],
+                body: body
+            )
+        )
+        let request = try #require(await workerClient.lastGenerateRequest)
+        let payload = try await collectBody(response.body)
+        let metrics = await metricsStore.snapshot()
+
+        #expect(response.statusCode == 200)
+        #expect(request.execution.ext["melix.tool_parser.mode"] == "qwen")
+        #expect(request.execution.ext["melix.tool_parser.source"] == "model")
+        #expect(request.execution.ext["melix.tool_parser.namespaces"] == "tools.search")
+        #expect(request.execution.ext["melix.tool_parser.fallback_mode"] == "xml")
+        #expect(payload.contains("\"parser_mode\":\"qwen\""))
+        #expect(payload.contains("\"parser_namespaces\":[\"tools.search\"]"))
+        #expect(payload.contains("\"parser_fallback_mode\":\"xml\""))
+        #expect(metrics.values["http.tool_parser_request_count"] == 1)
+        #expect(metrics.values["http.tool_parser_qwen_request_count"] == 1)
+    }
+
     @Test("responses requests default stream to true when omitted")
     func responsesRequestsDefaultStreamToTrue() async throws {
         let catalog = ModelCatalog(seedModels: [warmModel()])

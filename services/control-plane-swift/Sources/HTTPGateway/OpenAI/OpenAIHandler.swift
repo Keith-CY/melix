@@ -218,6 +218,8 @@ public struct OpenAIHandler: Sendable {
             return invalidArgumentResponse(message: error.operatorMessage)
         } catch let error as StructuredOutputFormatError {
             return invalidArgumentResponse(message: error.operatorMessage)
+        } catch let error as ToolParserConfigurationError {
+            return invalidArgumentResponse(message: error.operatorMessage)
         } catch let error as HTTPRequestHandlingError {
             return httpErrorResponse(for: error)
         }
@@ -230,6 +232,8 @@ public struct OpenAIHandler: Sendable {
             return try await streamNormalizedTextRequest(normalized, shape: .completions)
         } catch let error as StructuredOutputFormatError {
             return invalidArgumentResponse(message: error.operatorMessage)
+        } catch let error as ToolParserConfigurationError {
+            return invalidArgumentResponse(message: error.operatorMessage)
         } catch let error as HTTPRequestHandlingError {
             return httpErrorResponse(for: error)
         }
@@ -241,6 +245,8 @@ public struct OpenAIHandler: Sendable {
             let normalized = try translator.normalize(responsesRequest)
             return try await streamNormalizedTextRequest(normalized, shape: .responses)
         } catch let error as StructuredOutputFormatError {
+            return invalidArgumentResponse(message: error.operatorMessage)
+        } catch let error as ToolParserConfigurationError {
             return invalidArgumentResponse(message: error.operatorMessage)
         } catch let error as HTTPRequestHandlingError {
             return httpErrorResponse(for: error)
@@ -257,6 +263,8 @@ public struct OpenAIHandler: Sendable {
                 headers: request.headers
             )
         } catch let error as StructuredOutputFormatError {
+            return invalidArgumentResponse(message: error.operatorMessage)
+        } catch let error as ToolParserConfigurationError {
             return invalidArgumentResponse(message: error.operatorMessage)
         } catch let error as HTTPRequestHandlingError {
             return httpErrorResponse(for: error)
@@ -864,8 +872,17 @@ public struct OpenAIHandler: Sendable {
         } catch {
             throw HTTPRequestHandlingError.workerUnavailable
         }
+        let modelToolParser: ToolParserSelection? = if let model = await modelCatalog.model(id: normalized.model) {
+            ToolParserSelection(modelSettings: model.settings)
+        } else {
+            nil
+        }
         let shapingStartedAt = Date()
-        let translated = try translator.translate(normalized, modelHandle: modelHandle)
+        let translated = try translator.translate(
+            normalized,
+            modelHandle: modelHandle,
+            modelToolParser: modelToolParser
+        )
         await recordShapingMetrics(for: translated, startedAt: shapingStartedAt)
         return translated
     }
@@ -890,6 +907,10 @@ public struct OpenAIHandler: Sendable {
         if translated.workerRequest.execution.ext["melix.structured_output.mode"] != nil {
             await metricsStore.increment("http.structured_output_request_count")
         }
+        if let parserMode = translated.workerRequest.execution.ext["melix.tool_parser.mode"] {
+            await metricsStore.increment("http.tool_parser_request_count")
+            await metricsStore.increment("http.tool_parser_\(parserMode)_request_count")
+        }
     }
 
     private func streamResponse(
@@ -913,7 +934,8 @@ public struct OpenAIHandler: Sendable {
             stream: execution.stream,
             requestID: execution.requestID,
             modelID: execution.modelID,
-            shape: shape
+            shape: shape,
+            toolParser: ToolParserSelection(executionExt: translated.workerRequest.execution.ext)
         )
 
         return HTTPResponse(

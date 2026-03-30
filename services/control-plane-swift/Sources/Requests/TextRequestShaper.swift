@@ -29,6 +29,7 @@ public struct TextRequestShaper: Sendable {
     private let presets: [String: PresetDefaults]
     private let workflows: [TextWorkflowKind: WorkflowDefaults]
     private let modelThinkingPolicies: [String: MelixMessagesThinkingConfig]
+    private let toolParserRegistry: ToolParserRegistry
 
     public init(
         presets: [String: (
@@ -80,7 +81,8 @@ public struct TextRequestShaper: Sendable {
         ],
         modelThinkingPolicies: [String: MelixMessagesThinkingConfig] = [
             "melix-dev-text": .init(type: "adaptive", budgetTokens: 192),
-        ]
+        ],
+        toolParserRegistry: ToolParserRegistry = ToolParserRegistry()
     ) {
         self.presets = presets.mapValues { value in
             PresetDefaults(
@@ -104,9 +106,13 @@ public struct TextRequestShaper: Sendable {
             )
         }
         self.modelThinkingPolicies = modelThinkingPolicies
+        self.toolParserRegistry = toolParserRegistry
     }
 
-    public func shape(_ request: NormalizedTextRequest) -> ShapedTextRequest {
+    public func shape(
+        _ request: NormalizedTextRequest,
+        modelToolParser: ToolParserSelection? = nil
+    ) -> ShapedTextRequest {
         let preset = request.presetID.flatMap { presets[$0] }
         let workflowKind = request.workflow ?? .interactive
         let workflow = workflows[workflowKind] ?? workflows[.interactive]!
@@ -133,6 +139,10 @@ public struct TextRequestShaper: Sendable {
             requested: request.thinking,
             preset: preset?.thinking,
             modelPolicy: modelThinkingPolicies[request.model]
+        )
+        let resolvedToolParser = toolParserRegistry.resolve(
+            requested: request.toolParser,
+            modelDefault: modelToolParser
         )
 
         return ShapedTextRequest(
@@ -163,7 +173,8 @@ public struct TextRequestShaper: Sendable {
             thinking: resolvedThinking.config,
             reasoningMode: resolvedThinking.mode,
             reasoningSource: resolvedThinking.source,
-            structuredOutput: request.structuredOutput
+            structuredOutput: request.structuredOutput,
+            toolParser: resolvedToolParser
         )
     }
 

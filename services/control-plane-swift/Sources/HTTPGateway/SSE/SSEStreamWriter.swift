@@ -19,7 +19,8 @@ public struct SSEStreamWriter: Sendable {
         stream: AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error>,
         requestID: String,
         modelID: String,
-        shape: StreamShape = .chatCompletions
+        shape: StreamShape = .chatCompletions,
+        toolParser: ToolParserSelection? = nil
     ) -> AsyncThrowingStream<Data, Error> {
         AsyncThrowingStream { continuation in
             let task = Task {
@@ -30,7 +31,8 @@ public struct SSEStreamWriter: Sendable {
                                 event: event,
                                 requestID: requestID,
                                 modelID: modelID,
-                                shape: shape
+                                shape: shape,
+                                toolParser: toolParser
                             )
                         )
                     }
@@ -52,24 +54,26 @@ public struct SSEStreamWriter: Sendable {
         event: Melix_Worker_V1_ExecuteEvent,
         requestID: String,
         modelID: String,
-        shape: StreamShape
+        shape: StreamShape,
+        toolParser: ToolParserSelection?
     ) -> Data {
         switch shape {
         case .chatCompletions:
-            return encodeChatCompletions(event: event, requestID: requestID, modelID: modelID)
+            return encodeChatCompletions(event: event, requestID: requestID, modelID: modelID, toolParser: toolParser)
         case .completions:
-            return encodeCompletions(event: event, requestID: requestID, modelID: modelID)
+            return encodeCompletions(event: event, requestID: requestID, modelID: modelID, toolParser: toolParser)
         case .responses:
-            return encodeResponses(event: event, requestID: requestID, modelID: modelID)
+            return encodeResponses(event: event, requestID: requestID, modelID: modelID, toolParser: toolParser)
         case .messages:
-            return encodeMessages(event: event, requestID: requestID, modelID: modelID)
+            return encodeMessages(event: event, requestID: requestID, modelID: modelID, toolParser: toolParser)
         }
     }
 
     private func encodeCompletions(
         event: Melix_Worker_V1_ExecuteEvent,
         requestID: String,
-        modelID: String
+        modelID: String,
+        toolParser: ToolParserSelection?
     ) -> Data {
         switch event.payload {
         case .tokenDelta(let delta):
@@ -113,9 +117,8 @@ public struct SSEStreamWriter: Sendable {
                 ]
             )
         case .toolCallDelta(let toolCall):
-            return frame(
-                event: "tool_call",
-                json: [
+            let payload = mergeToolParserMetadata(
+                into: [
                     "id": requestID,
                     "type": "completion.tool_call.delta",
                     "object": "text_completion.tool_call.delta",
@@ -126,7 +129,12 @@ public struct SSEStreamWriter: Sendable {
                         "tool_name": toolCall.toolName,
                         "arguments": toolCall.argumentsJsonFragment,
                     ],
-                ]
+                ],
+                toolParser: toolParser
+            )
+            return frame(
+                event: "tool_call",
+                json: payload
             )
         case .heartbeat(let heartbeat):
             return frame(
@@ -173,7 +181,8 @@ public struct SSEStreamWriter: Sendable {
     private func encodeChatCompletions(
         event: Melix_Worker_V1_ExecuteEvent,
         requestID: String,
-        modelID: String
+        modelID: String,
+        toolParser: ToolParserSelection?
     ) -> Data {
         switch event.payload {
         case .tokenDelta(let delta):
@@ -226,9 +235,8 @@ public struct SSEStreamWriter: Sendable {
                 ]
             )
         case .toolCallDelta(let toolCall):
-            return frame(
-                event: "tool_call",
-                json: [
+            let payload = mergeToolParserMetadata(
+                into: [
                     "id": requestID,
                     "object": "chat.completion.tool_call.delta",
                     "created": Int(now().timeIntervalSince1970),
@@ -251,7 +259,12 @@ public struct SSEStreamWriter: Sendable {
                             "finish_reason": NSNull(),
                         ],
                     ],
-                ]
+                ],
+                toolParser: toolParser
+            )
+            return frame(
+                event: "tool_call",
+                json: payload
             )
         case .heartbeat(let heartbeat):
             return frame(
@@ -301,7 +314,8 @@ public struct SSEStreamWriter: Sendable {
     private func encodeResponses(
         event: Melix_Worker_V1_ExecuteEvent,
         requestID: String,
-        modelID: String
+        modelID: String,
+        toolParser: ToolParserSelection?
     ) -> Data {
         switch event.payload {
         case .tokenDelta(let delta):
@@ -339,16 +353,20 @@ public struct SSEStreamWriter: Sendable {
                 ]
             )
         case .toolCallDelta(let toolCall):
-            return frame(
-                event: "response.tool_call.delta",
-                json: [
+            let payload = mergeToolParserMetadata(
+                into: [
                     "type": "response.tool_call.delta",
                     "response_id": requestID,
                     "model": modelID,
                     "call_id": toolCall.callID,
                     "tool_name": toolCall.toolName,
                     "arguments": toolCall.argumentsJsonFragment,
-                ]
+                ],
+                toolParser: toolParser
+            )
+            return frame(
+                event: "response.tool_call.delta",
+                json: payload
             )
         case .heartbeat(let heartbeat):
             return frame(
@@ -396,7 +414,8 @@ public struct SSEStreamWriter: Sendable {
     private func encodeMessages(
         event: Melix_Worker_V1_ExecuteEvent,
         requestID: String,
-        modelID: String
+        modelID: String,
+        toolParser: ToolParserSelection?
     ) -> Data {
         switch event.payload {
         case .tokenDelta(let delta):
@@ -432,16 +451,20 @@ public struct SSEStreamWriter: Sendable {
                 ]
             )
         case .toolCallDelta(let toolCall):
-            return frame(
-                event: "message.tool_call.delta",
-                json: [
+            let payload = mergeToolParserMetadata(
+                into: [
                     "type": "message.tool_call.delta",
                     "message_id": requestID,
                     "model": modelID,
                     "call_id": toolCall.callID,
                     "tool_name": toolCall.toolName,
                     "arguments": toolCall.argumentsJsonFragment,
-                ]
+                ],
+                toolParser: toolParser
+            )
+            return frame(
+                event: "message.tool_call.delta",
+                json: payload
             )
         case .usageDelta(let usage):
             return frame(
@@ -524,6 +547,25 @@ public struct SSEStreamWriter: Sendable {
 
     private func doneFrame() -> Data {
         Data("data: [DONE]\n\n".utf8)
+    }
+
+    private func mergeToolParserMetadata(
+        into json: [String: Any],
+        toolParser: ToolParserSelection?
+    ) -> [String: Any] {
+        guard let toolParser else {
+            return json
+        }
+
+        var merged = json
+        merged["parser_mode"] = toolParser.mode.rawValue
+        if !toolParser.namespaces.isEmpty {
+            merged["parser_namespaces"] = toolParser.namespaces
+        }
+        if let fallbackMode = toolParser.fallbackMode {
+            merged["parser_fallback_mode"] = fallbackMode.rawValue
+        }
+        return merged
     }
 
     private func frame(event: String, json: [String: Any]) -> Data {

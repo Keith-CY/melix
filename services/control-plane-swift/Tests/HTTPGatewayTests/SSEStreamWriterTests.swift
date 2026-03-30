@@ -335,6 +335,12 @@ struct SSEStreamWriterTests {
     @Test("chat completions streams emit reasoning and tool deltas in order")
     func emitsChatReasoningAndToolFrames() async throws {
         let writer = SSEStreamWriter(now: { Date(timeIntervalSince1970: 456) })
+        let parser = ToolParserSelection(
+            mode: .qwen,
+            namespaces: ["tools.search"],
+            source: "request",
+            fallbackMode: .xml
+        )
 
         let stream = AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error> { continuation in
             continuation.yield(makeReasoningEvent(requestID: "chat-deltas", seq: 1, text: "think"))
@@ -354,7 +360,8 @@ struct SSEStreamWriterTests {
                 stream: stream,
                 requestID: "chat-deltas",
                 modelID: "melix-dev-text",
-                shape: .chatCompletions
+                shape: .chatCompletions,
+                toolParser: parser
             )
         )
 
@@ -365,6 +372,9 @@ struct SSEStreamWriterTests {
         #expect(payload.contains("\"object\":\"chat.completion.tool_call.delta\""))
         #expect(payload.contains("\"name\":\"search\""))
         #expect(payload.contains("\"arguments\":\"{\\\"q\\\":\\\"melix\\\"}\""))
+        #expect(payload.contains("\"parser_mode\":\"qwen\""))
+        #expect(payload.contains("\"parser_namespaces\":[\"tools.search\"]"))
+        #expect(payload.contains("\"parser_fallback_mode\":\"xml\""))
         #expect(orderedRanges(in: payload, needles: [
             "event: reasoning",
             "event: tool_call",
@@ -376,6 +386,11 @@ struct SSEStreamWriterTests {
     @Test("responses messages and completions streams emit endpoint-specific reasoning and tool deltas")
     func emitsEndpointSpecificReasoningAndToolFrames() async throws {
         let writer = SSEStreamWriter(now: { Date(timeIntervalSince1970: 456) })
+        let parser = ToolParserSelection(
+            mode: .mistral,
+            namespaces: ["tools.math"],
+            source: "model"
+        )
 
         func payload(for shape: SSEStreamWriter.StreamShape, requestID: String) async throws -> String {
             let stream = AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error> { continuation in
@@ -395,7 +410,8 @@ struct SSEStreamWriterTests {
                     stream: stream,
                     requestID: requestID,
                     modelID: "melix-dev-text",
-                    shape: shape
+                    shape: shape,
+                    toolParser: parser
                 )
             )
         }
@@ -407,12 +423,16 @@ struct SSEStreamWriterTests {
         #expect(completionsPayload.contains("event: tool_call"))
         #expect(completionsPayload.contains("\"type\":\"completion.tool_call.delta\""))
         #expect(completionsPayload.contains("\"call_id\":\"tool-1\""))
+        #expect(completionsPayload.contains("\"parser_mode\":\"mistral\""))
+        #expect(completionsPayload.contains("\"parser_namespaces\":[\"tools.math\"]"))
 
         let responsesPayload = try await payload(for: .responses, requestID: "resp-deltas")
         #expect(responsesPayload.contains("event: response.reasoning.delta"))
         #expect(responsesPayload.contains("\"type\":\"response.reasoning.delta\""))
         #expect(responsesPayload.contains("event: response.tool_call.delta"))
         #expect(responsesPayload.contains("\"type\":\"response.tool_call.delta\""))
+        #expect(responsesPayload.contains("\"parser_mode\":\"mistral\""))
+        #expect(responsesPayload.contains("\"parser_namespaces\":[\"tools.math\"]"))
 
         let messagesPayload = try await payload(for: .messages, requestID: "msg-deltas")
         #expect(messagesPayload.contains("event: message.reasoning.delta"))
@@ -421,6 +441,8 @@ struct SSEStreamWriterTests {
         #expect(messagesPayload.contains("\"delta\":{\"thinking\":\"think\",\"type\":\"thinking_delta\"}"))
         #expect(messagesPayload.contains("event: message.tool_call.delta"))
         #expect(messagesPayload.contains("\"type\":\"message.tool_call.delta\""))
+        #expect(messagesPayload.contains("\"parser_mode\":\"mistral\""))
+        #expect(messagesPayload.contains("\"parser_namespaces\":[\"tools.math\"]"))
     }
 }
 
