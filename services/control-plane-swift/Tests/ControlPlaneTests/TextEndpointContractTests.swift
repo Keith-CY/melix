@@ -34,6 +34,64 @@ struct TextEndpointContractTests {
         #expect(message.content == "alpha\nbeta")
     }
 
+    @Test("request contracts preserve message names across text endpoints")
+    func requestContractsPreserveMessageNamesAcrossTextEndpoints() throws {
+        let decoder = JSONDecoder()
+        let translator = ChatRequestTranslator(requestIDGenerator: { "named-message-contract" })
+
+        let chat = try decoder.decode(
+            OpenAIChatCompletionsRequest.self,
+            from: Data(
+                """
+                {
+                  "model": "melix-dev-text",
+                  "messages": [
+                    { "role": "assistant", "name": "planner", "content": "Draft answer." }
+                  ]
+                }
+                """.utf8
+            )
+        )
+        let responses = try decoder.decode(
+            OpenAIResponsesRequest.self,
+            from: Data(
+                """
+                {
+                  "model": "melix-dev-text",
+                  "input": [
+                    { "role": "assistant", "name": "planner", "content": "Draft answer." }
+                  ]
+                }
+                """.utf8
+            )
+        )
+        let messages = try decoder.decode(
+            MelixMessagesRequest.self,
+            from: Data(
+                """
+                {
+                  "model": "melix-dev-text",
+                  "messages": [
+                    { "role": "assistant", "name": "planner", "content": "Draft answer." }
+                  ]
+                }
+                """.utf8
+            )
+        )
+
+        #expect(chat.messages[0].name == "planner")
+        #expect({
+            if case let .messages(responseMessages) = responses.input {
+                return responseMessages[0].name
+            }
+            return nil
+        }() == "planner")
+        #expect(messages.messages[0].name == "planner")
+
+        let translated = try translator.translate(chat, modelHandle: "worker-text")
+        #expect(translated.workerRequest.messages[0].name == "planner")
+    }
+
     @Test("request contracts decode melix session metadata across endpoint variants")
     func requestContractsDecodeMelixSessionMetadata() throws {
         let decoder = JSONDecoder()

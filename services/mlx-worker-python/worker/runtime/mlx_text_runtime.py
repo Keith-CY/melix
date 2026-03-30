@@ -146,12 +146,13 @@ class MLXTextRuntime:
             chat_messages: list[dict[str, str]] = []
             for message in messages:
                 text_parts = [part.text for part in message.parts if part.WhichOneof("part") == "text"]
-                chat_messages.append(
-                    {
-                        "role": message.role,
-                        "content": "\n".join(text_parts),
-                    }
-                )
+                chat_message = {
+                    "role": message.role,
+                    "content": "\n".join(text_parts),
+                }
+                if message.name:
+                    chat_message["name"] = message.name
+                chat_messages.append(chat_message)
             resolved_template_kwargs: dict[str, Any] = {
                 "tokenize": False,
                 "add_generation_prompt": True,

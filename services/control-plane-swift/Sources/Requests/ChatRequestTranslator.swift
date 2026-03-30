@@ -48,15 +48,18 @@ public struct HarmonyMessageMetadata: Sendable, Equatable {
 
 public struct NormalizedTextMessage: Sendable, Equatable {
     public let role: String
+    public let name: String?
     public let parts: [Melix_Worker_V1_MessagePart]
     public let harmonyMetadata: HarmonyMessageMetadata?
 
     public init(
         role: String,
+        name: String? = nil,
         content: String,
         harmonyMetadata: HarmonyMessageMetadata? = nil
     ) {
         self.role = role
+        self.name = Self.normalize(name)
         var part = Melix_Worker_V1_MessagePart()
         part.text = content
         self.parts = [part]
@@ -65,10 +68,12 @@ public struct NormalizedTextMessage: Sendable, Equatable {
 
     public init(
         role: String,
+        name: String? = nil,
         parts: [Melix_Worker_V1_MessagePart],
         harmonyMetadata: HarmonyMessageMetadata? = nil
     ) {
         self.role = role
+        self.name = Self.normalize(name)
         self.parts = parts
         self.harmonyMetadata = harmonyMetadata?.isEmpty == false ? harmonyMetadata : nil
     }
@@ -78,6 +83,14 @@ public struct NormalizedTextMessage: Sendable, Equatable {
             .map(\.text)
             .filter { !$0.isEmpty }
             .joined(separator: "\n")
+    }
+
+    private static func normalize(_ value: String?) -> String? {
+        guard let value else {
+            return nil
+        }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 }
 
@@ -185,6 +198,18 @@ public struct ShapedTextRequest: Sendable, Equatable {
     public let structuredOutput: StructuredOutputConfiguration?
     public let toolParser: ToolParserSelection?
     public let chatTemplate: ResolvedChatTemplatePolicy?
+    public let partialMode: String?
+    public let assistantPrefill: AssistantPrefillSelection?
+}
+
+public struct AssistantPrefillSelection: Sendable, Equatable {
+    public let messageIndex: Int
+    public let messageName: String?
+
+    public init(messageIndex: Int, messageName: String? = nil) {
+        self.messageIndex = messageIndex
+        self.messageName = messageName
+    }
 }
 
 public struct TranslatedChatRequest: Sendable {
@@ -209,22 +234,26 @@ public struct TranslatedChatRequest: Sendable {
 public struct OpenAIChatCompletionsRequest: Codable, Sendable {
     public struct Message: Codable, Sendable, Equatable {
         public let role: String
+        public let name: String?
         public let content: String
         public let contentParts: [OpenAIMultimodalContentPart]?
 
         enum CodingKeys: String, CodingKey {
             case role
+            case name
             case content
         }
 
-        public init(role: String, content: String) {
+        public init(role: String, name: String? = nil, content: String) {
             self.role = role
+            self.name = name
             self.content = content
             self.contentParts = nil
         }
 
-        public init(role: String, contentParts: [OpenAIMultimodalContentPart]) {
+        public init(role: String, name: String? = nil, contentParts: [OpenAIMultimodalContentPart]) {
             self.role = role
+            self.name = name
             self.content = contentParts.compactMap(\.text).joined(separator: "\n")
             self.contentParts = contentParts
         }
@@ -232,6 +261,7 @@ public struct OpenAIChatCompletionsRequest: Codable, Sendable {
         public init(from decoder: Decoder) throws {
             let container = try decoder.container(keyedBy: CodingKeys.self)
             role = try container.decode(String.self, forKey: .role)
+            name = try container.decodeIfPresent(String.self, forKey: .name)
             if let text = try? container.decode(String.self, forKey: .content) {
                 content = text
                 contentParts = nil
@@ -245,6 +275,7 @@ public struct OpenAIChatCompletionsRequest: Codable, Sendable {
         public func encode(to encoder: Encoder) throws {
             var container = encoder.container(keyedBy: CodingKeys.self)
             try container.encode(role, forKey: .role)
+            try container.encodeIfPresent(name, forKey: .name)
             if let contentParts {
                 try container.encode(contentParts, forKey: .content)
             } else {
@@ -463,6 +494,7 @@ public struct OpenAIResponsesRequest: Codable, Sendable {
 
     public struct Message: Codable, Sendable, Equatable {
         public let role: String
+        public let name: String?
         public let content: String
         public let channel: String?
         public let recipient: String?
@@ -470,6 +502,7 @@ public struct OpenAIResponsesRequest: Codable, Sendable {
 
         enum CodingKeys: String, CodingKey {
             case role
+            case name
             case content
             case channel
             case recipient
@@ -478,12 +511,14 @@ public struct OpenAIResponsesRequest: Codable, Sendable {
 
         public init(
             role: String,
+            name: String? = nil,
             content: String,
             channel: String? = nil,
             recipient: String? = nil,
             contentType: String? = nil
         ) {
             self.role = role
+            self.name = name
             self.content = content
             self.channel = channel
             self.recipient = recipient
@@ -755,32 +790,38 @@ public struct MelixMessagesMetadata: Codable, Sendable, Equatable {
 public struct MelixMessagesRequest: Codable, Sendable {
     public struct Message: Codable, Sendable, Equatable {
         public let role: String
+        public let name: String?
         private let rawContent: MelixMessagesContentValue
 
         enum CodingKeys: String, CodingKey {
             case role
+            case name
             case content
         }
 
-        public init(role: String, content: String) {
+        public init(role: String, name: String? = nil, content: String) {
             self.role = role
+            self.name = name
             self.rawContent = .text(content)
         }
 
-        public init(role: String, contentBlocks: [MelixMessagesContentBlock]) {
+        public init(role: String, name: String? = nil, contentBlocks: [MelixMessagesContentBlock]) {
             self.role = role
+            self.name = name
             self.rawContent = .blocks(contentBlocks)
         }
 
         public init(from decoder: Decoder) throws {
             let container = try decoder.container(keyedBy: CodingKeys.self)
             self.role = try container.decode(String.self, forKey: .role)
+            self.name = try container.decodeIfPresent(String.self, forKey: .name)
             self.rawContent = try container.decode(MelixMessagesContentValue.self, forKey: .content)
         }
 
         public func encode(to encoder: Encoder) throws {
             var container = encoder.container(keyedBy: CodingKeys.self)
             try container.encode(role, forKey: .role)
+            try container.encodeIfPresent(name, forKey: .name)
             try container.encode(rawContent, forKey: .content)
         }
 
@@ -1034,7 +1075,7 @@ public struct ChatRequestTranslator: Sendable {
             endpoint: .chatCompletions,
             model: request.model,
             messages: request.messages.map {
-                NormalizedTextMessage(role: $0.role, content: $0.content)
+                NormalizedTextMessage(role: $0.role, name: $0.name, content: $0.content)
             },
             stream: request.stream,
             temperature: request.temperature,
@@ -1062,11 +1103,11 @@ public struct ChatRequestTranslator: Sendable {
         let messages = try request.messages.map { message in
             if let contentParts = message.contentParts {
                 let normalized = try normalizer.normalize(
-                    OpenAIMultimodalMessage(role: message.role, content: contentParts)
+                    OpenAIMultimodalMessage(role: message.role, name: message.name, content: contentParts)
                 )
-                return NormalizedTextMessage(role: normalized.role, parts: Array(normalized.parts))
+                return NormalizedTextMessage(role: normalized.role, name: normalized.name, parts: Array(normalized.parts))
             }
-            return NormalizedTextMessage(role: message.role, content: message.content)
+            return NormalizedTextMessage(role: message.role, name: message.name, content: message.content)
         }
 
         return makeNormalizedRequest(
@@ -1135,6 +1176,7 @@ public struct ChatRequestTranslator: Sendable {
                 contentsOf: inputMessages.map {
                     NormalizedTextMessage(
                         role: $0.role,
+                        name: $0.name,
                         content: $0.content,
                         harmonyMetadata: $0.harmonyMetadata
                     )
@@ -1180,9 +1222,9 @@ public struct ChatRequestTranslator: Sendable {
         messages.append(
             contentsOf: request.messages.map { message in
                 if let contentBlocks = message.contentBlocks {
-                    return NormalizedTextMessage(role: message.role, parts: messageParts(from: contentBlocks))
+                    return NormalizedTextMessage(role: message.role, name: message.name, parts: messageParts(from: contentBlocks))
                 }
-                return NormalizedTextMessage(role: message.role, content: message.content)
+                return NormalizedTextMessage(role: message.role, name: message.name, content: message.content)
             }
         )
 
@@ -1391,6 +1433,16 @@ public struct ChatRequestTranslator: Sendable {
                 generateRequest.execution.ext["melix.chat_template_kwargs.forced_keys"] = chatTemplate.forcedKeys.joined(separator: ",")
             }
         }
+        if let partialMode = shapedRequest.partialMode {
+            generateRequest.execution.ext["melix.partial_mode"] = partialMode
+        }
+        if let assistantPrefill = shapedRequest.assistantPrefill {
+            generateRequest.execution.ext["melix.assistant_prefill"] = "true"
+            generateRequest.execution.ext["melix.assistant_prefill.message_index"] = String(assistantPrefill.messageIndex)
+            if let messageName = assistantPrefill.messageName {
+                generateRequest.execution.ext["melix.assistant_prefill.name"] = messageName
+            }
+        }
         var hasHarmonyMetadata = false
         for (index, message) in shapedRequest.messages.enumerated() {
             guard let harmonyMetadata = message.harmonyMetadata else {
@@ -1441,6 +1493,7 @@ public struct ChatRequestTranslator: Sendable {
         generateRequest.messages = shapedRequest.messages.map { message in
             var chatMessage = Melix_Worker_V1_ChatMessage()
             chatMessage.role = message.role
+            chatMessage.name = message.name ?? ""
             chatMessage.parts = message.parts
             return chatMessage
         }

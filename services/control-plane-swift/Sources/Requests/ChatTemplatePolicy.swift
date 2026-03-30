@@ -119,6 +119,13 @@ public struct ResolvedChatTemplatePolicy: Sendable, Equatable {
         jsonString(for: forcedValues)
     }
 
+    var continueFinalMessageEnabled: Bool {
+        guard case let .bool(enabled)? = effectiveValues["continue_final_message"] else {
+            return false
+        }
+        return enabled
+    }
+
     private func jsonString(
         for values: [String: StructuredJSONValue]
     ) -> String? {

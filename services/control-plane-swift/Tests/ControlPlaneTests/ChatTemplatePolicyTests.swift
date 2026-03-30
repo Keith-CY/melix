@@ -103,6 +103,55 @@ struct ChatTemplatePolicyTests {
         #expect(translated.workerRequest.execution.ext["melix.chat_template_kwargs.forced_json"] == nil)
     }
 
+    @Test("partial mode marks assistant-prefill metadata and preserves names")
+    func partialModeMarksAssistantPrefillMetadataAndPreservesNames() throws {
+        let translator = ChatRequestTranslator(requestIDGenerator: { "req-assistant-prefill" })
+        let request = OpenAIChatCompletionsRequest(
+            model: "melix-dev-text",
+            messages: [
+                .init(role: "system", content: "Continue the assistant reply."),
+                .init(role: "assistant", name: "planner", content: "Draft answer")
+            ],
+            chatTemplateKwargs: ChatTemplateRequestConfiguration(
+                values: [
+                    "continue_final_message": .bool(true),
+                    "add_generation_prompt": .bool(false),
+                ]
+            )
+        )
+
+        let translated = try translator.translate(request, modelHandle: "worker-text")
+
+        #expect(translated.workerRequest.execution.ext["melix.partial_mode"] == "continue_final_message")
+        #expect(translated.workerRequest.execution.ext["melix.assistant_prefill"] == "true")
+        #expect(translated.workerRequest.execution.ext["melix.assistant_prefill.message_index"] == "1")
+        #expect(translated.workerRequest.execution.ext["melix.assistant_prefill.name"] == "planner")
+        #expect(translated.workerRequest.messages[1].name == "planner")
+    }
+
+    @Test("partial mode stays shared-path when final message is not assistant")
+    func partialModeStaysSharedPathWhenFinalMessageIsNotAssistant() throws {
+        let translator = ChatRequestTranslator(requestIDGenerator: { "req-partial-user-tail" })
+        let request = OpenAIChatCompletionsRequest(
+            model: "melix-dev-text",
+            messages: [
+                .init(role: "assistant", name: "planner", content: "Draft answer"),
+                .init(role: "user", content: "Keep going")
+            ],
+            chatTemplateKwargs: ChatTemplateRequestConfiguration(
+                values: [
+                    "continue_final_message": .bool(true),
+                ]
+            )
+        )
+
+        let translated = try translator.translate(request, modelHandle: "worker-text")
+
+        #expect(translated.workerRequest.execution.ext["melix.partial_mode"] == "continue_final_message")
+        #expect(translated.workerRequest.execution.ext["melix.assistant_prefill"] == nil)
+        #expect(translated.workerRequest.execution.ext["melix.assistant_prefill.message_index"] == nil)
+    }
+
     @Test("chat template policy resolves model defaults request overrides and forced keys deterministically")
     func chatTemplatePolicyResolvesModelDefaultsRequestOverridesAndForcedKeys() throws {
         var settings = Melix_Controlplane_V1_ModelSettings()
@@ -167,5 +216,20 @@ struct ChatTemplatePolicyTests {
                 )
             )
         }
+    }
+
+    @Test("continue final message helper only enables partial mode for explicit true")
+    func continueFinalMessageHelperOnlyEnablesPartialModeForExplicitTrue() {
+        let disabled = ResolvedChatTemplatePolicy(
+            effectiveValues: ["add_generation_prompt": .bool(true)],
+            source: "request"
+        )
+        let enabled = ResolvedChatTemplatePolicy(
+            effectiveValues: ["continue_final_message": .bool(true)],
+            source: "request"
+        )
+
+        #expect(disabled.continueFinalMessageEnabled == false)
+        #expect(enabled.continueFinalMessageEnabled == true)
     }
 }

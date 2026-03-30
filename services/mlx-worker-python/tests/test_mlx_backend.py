@@ -111,6 +111,40 @@ def test_runtime_merges_chat_template_kwargs_into_tokenizer_calls() -> None:
     ]
 
 
+def test_runtime_passes_message_names_into_tokenizer_calls() -> None:
+    runtime = MLXTextRuntime(backend=object())
+    tokenizer = FakeTokenizer()
+
+    prompt = runtime.render_prompt(
+        [
+            common_pb2.ChatMessage(
+                role="assistant",
+                name="planner",
+                parts=[common_pb2.MessagePart(text="Draft reply")],
+            )
+        ],
+        loaded_model={"tokenizer": tokenizer},
+        template_kwargs={
+            "add_generation_prompt": False,
+            "continue_final_message": True,
+        },
+    )
+
+    assert prompt == "<prompt-from-template>"
+    assert tokenizer.calls == [
+        (
+            [
+                {"role": "assistant", "name": "planner", "content": "Draft reply"},
+            ],
+            {
+                "tokenize": False,
+                "add_generation_prompt": False,
+                "continue_final_message": True,
+            },
+        )
+    ]
+
+
 def test_auto_backend_uses_mlx_load_stream_and_sampler_hooks() -> None:
     seen: dict[str, object] = {}
 
@@ -274,6 +308,63 @@ def test_auto_backend_handles_unavailable_runtime_and_skips_empty_segments(monke
 
     assert [chunk.text for chunk in visible_chunks] == ["tail"]
     assert cancelled_chunks == []
+
+
+def test_auto_backend_surfaces_import_failure_during_lazy_runtime_resolution(monkeypatch) -> None:
+    monkeypatch.setattr("importlib.util.find_spec", lambda name: object() if name == "mlx_lm" else None)
+    monkeypatch.setitem(sys.modules, "mlx_lm", None)
+    monkeypatch.delitem(sys.modules, "mlx_lm.sample_utils", raising=False)
+
+    backend = AutoMLXBackend()
+    backend._load_fn = None
+    backend._stream_generate_fn = None
+    backend._sampler_factory = None
+    backend._available = True
+
+    with pytest.raises(RuntimeUnavailableError):
+        backend._ensure_runtime()
+
+    assert backend.runtime_name == "mlx-unavailable"
+
+
+def test_auto_backend_reports_zero_resident_bytes_estimate() -> None:
+    backend = AutoMLXBackend(
+        load_fn=lambda model_source, **kwargs: (object(), FakeTokenizer()),
+        stream_generate_fn=lambda *args, **kwargs: iter(()),
+        sampler_factory=lambda **kwargs: "sampler",
+    )
+
+    assert backend.estimate_resident_bytes(WorkerModelCatalog.dev_text_model()) == 0
+
+
+def test_runtime_name_falls_back_when_backend_has_no_runtime_name() -> None:
+    runtime = MLXTextRuntime(backend=object())
+
+    assert runtime.runtime_name == "unknown-runtime"
+
+
+def test_runtime_wraps_plain_string_backend_tokens() -> None:
+    class PlainStringBackend:
+        def load_model(self, model_spec):
+            return {"model_id": model_spec.model_id}
+
+        def estimate_resident_bytes(self, model_spec):
+            return 1
+
+        def generate_tokens(self, loaded_model, prompt, sampling, cancel_event):
+            yield "plain-token"
+
+    runtime = MLXTextRuntime(backend=PlainStringBackend())
+    events = list(
+        runtime.generate_tokens(
+            {},
+            "prompt",
+            common_pb2.SamplingConfig(max_output_tokens=4),
+            Event(),
+        )
+    )
+
+    assert [event.text for event in events] == ["plain-token"]
 
 
 def test_worker_model_catalog_uses_environment_override_for_dev_text_model() -> None:

@@ -132,7 +132,8 @@ def test_generate_applies_chat_template_kwargs_from_execution_metadata() -> None
         ),
         messages=[
             common_pb2.ChatMessage(
-                role="user",
+                role="assistant",
+                name="planner",
                 parts=[common_pb2.MessagePart(text="Continue the reply")],
             )
         ],
@@ -146,7 +147,7 @@ def test_generate_applies_chat_template_kwargs_from_execution_metadata() -> None
     assert backend.prompts == ["<templated-prompt>"]
     assert backend.tokenizer.calls == [
         (
-            [{"role": "user", "content": "Continue the reply"}],
+            [{"role": "assistant", "name": "planner", "content": "Continue the reply"}],
             {
                 "tokenize": False,
                 "add_generation_prompt": False,

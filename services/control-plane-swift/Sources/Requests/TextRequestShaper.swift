@@ -152,6 +152,10 @@ public struct TextRequestShaper: Sendable {
             requested: request.chatTemplate,
             modelPolicy: modelChatTemplatePolicy
         )
+        let partialMode = resolvePartialMode(
+            messages: request.messages,
+            chatTemplate: resolvedChatTemplate
+        )
 
         return ShapedTextRequest(
             endpoint: request.endpoint,
@@ -183,7 +187,33 @@ public struct TextRequestShaper: Sendable {
             reasoningSource: resolvedThinking.source,
             structuredOutput: request.structuredOutput,
             toolParser: resolvedToolParser,
-            chatTemplate: resolvedChatTemplate
+            chatTemplate: resolvedChatTemplate,
+            partialMode: partialMode.mode,
+            assistantPrefill: partialMode.assistantPrefill
+        )
+    }
+
+    private func resolvePartialMode(
+        messages: [NormalizedTextMessage],
+        chatTemplate: ResolvedChatTemplatePolicy?
+    ) -> (mode: String?, assistantPrefill: AssistantPrefillSelection?) {
+        guard chatTemplate?.continueFinalMessageEnabled == true else {
+            return (nil, nil)
+        }
+
+        let mode = "continue_final_message"
+        guard let lastMessageIndex = messages.indices.last,
+              messages[lastMessageIndex].role == "assistant"
+        else {
+            return (mode, nil)
+        }
+
+        return (
+            mode,
+            AssistantPrefillSelection(
+                messageIndex: lastMessageIndex,
+                messageName: messages[lastMessageIndex].name?.nilIfEmpty
+            )
         )
     }
 

@@ -255,6 +255,55 @@ struct OpenAIHandlerTests {
         #expect(payload.contains("data: [DONE]"))
     }
 
+    @Test("POST /v1/chat/completions carries partial-mode assistant-prefill metadata")
+    func postChatCompletionsCarriesPartialModeAssistantPrefillMetadata() async throws {
+        let catalog = ModelCatalog(seedModels: [warmModel()])
+        let workerClient = ScriptedWorkerClient(events: [
+            makeCompletedEvent(requestID: "req-prefill-http", seq: 1, finishReason: "stop", assistantText: "done"),
+        ])
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: workerClient),
+                abortRegistry: AbortRegistry()
+            ),
+            translator: ChatRequestTranslator(requestIDGenerator: { "req-prefill-http" })
+        )
+
+        let body = try #require(
+            """
+            {
+              "model": "melix-dev-text",
+              "messages": [
+                { "role": "assistant", "name": "planner", "content": "Draft answer" }
+              ],
+              "chat_template_kwargs": {
+                "continue_final_message": true,
+                "add_generation_prompt": false
+              }
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/chat/completions",
+                headers: ["content-type": "application/json"],
+                body: body
+            )
+        )
+
+        let request = try #require(await workerClient.lastGenerateRequest)
+
+        #expect(response.statusCode == 200)
+        #expect(request.messages[0].name == "planner")
+        #expect(request.execution.ext["melix.partial_mode"] == "continue_final_message")
+        #expect(request.execution.ext["melix.assistant_prefill"] == "true")
+        #expect(request.execution.ext["melix.assistant_prefill.message_index"] == "0")
+        #expect(request.execution.ext["melix.assistant_prefill.name"] == "planner")
+    }
+
     @Test("POST /v1/responses rejects malformed model chat template kwargs")
     func postResponsesRejectsMalformedModelChatTemplateKwargs() async throws {
         let model = warmModel()
