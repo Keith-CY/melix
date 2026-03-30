@@ -519,7 +519,7 @@ actor WorkerRuntimeRegistry {
 
         let effectiveRequestID = requestID.isEmpty ? stored.requestID : requestID
         let boundary = tokenBoundary > 0 ? tokenBoundary : UInt32(max(0, stored.promptTokens))
-        let snapshot = await cacheStore.saveBoundarySnapshot(
+        let savedSnapshot = await cacheStore.saveBoundarySnapshot(
             requestID: effectiveRequestID,
             tokenBoundary: boundary,
             model: loaded.spec,
@@ -528,11 +528,11 @@ actor WorkerRuntimeRegistry {
 
         var response = Melix_Worker_V1_SaveBoundarySnapshotResponse()
         response.ok = true
-        response.snapshotID = snapshot.snapshotID
-        response.snapshot = snapshot
+        response.snapshotID = savedSnapshot.snapshot.snapshotID
+        response.snapshot = savedSnapshot.snapshot
         response.restoreBoundary = makeRestoreBoundaryRef(
-            snapshot: snapshot,
-            blockTable: stored.blockTable
+            snapshot: savedSnapshot.snapshot,
+            blockTable: savedSnapshot.blockTable
         )
         return response
     }
@@ -544,7 +544,7 @@ actor WorkerRuntimeRegistry {
     ) async -> Melix_Worker_V1_SaveBoundarySnapshotResponse {
         let effectiveRequestID = requestID.isEmpty ? session.prefill.requestID : requestID
         let boundary = tokenBoundary > 0 ? tokenBoundary : UInt32(max(0, session.prefill.promptTokens))
-        let snapshot = await cacheStore.saveBoundarySnapshot(
+        let savedSnapshot = await cacheStore.saveBoundarySnapshot(
             requestID: effectiveRequestID,
             tokenBoundary: boundary,
             model: session.loadedModel.spec,
@@ -553,11 +553,11 @@ actor WorkerRuntimeRegistry {
 
         var response = Melix_Worker_V1_SaveBoundarySnapshotResponse()
         response.ok = true
-        response.snapshotID = snapshot.snapshotID
-        response.snapshot = snapshot
+        response.snapshotID = savedSnapshot.snapshot.snapshotID
+        response.snapshot = savedSnapshot.snapshot
         response.restoreBoundary = makeRestoreBoundaryRef(
-            snapshot: snapshot,
-            blockTable: session.prefill.blockTable
+            snapshot: savedSnapshot.snapshot,
+            blockTable: savedSnapshot.blockTable
         )
         return response
     }

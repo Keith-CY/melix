@@ -303,6 +303,58 @@ struct SnapshotStoreTests {
         #expect(decoded.tier == "l2")
     }
 
+    @Test("control-plane restore metadata preserves copy-on-write block and page identifiers")
+    func controlPlaneRestoreMetadataPreservesCopyOnWriteIdentifiers() throws {
+        var cacheKey = Melix_Worker_V1_CacheKey()
+        cacheKey.prefixHash = Data([0xCC])
+        cacheKey.scopeID = "scope-cow"
+
+        var block = Melix_Worker_V1_BlockRef()
+        block.blockID = "blk-0::cow-snap-1"
+        block.tokenStart = 0
+        block.tokenEnd = 16
+        block.bytes = 1024
+
+        var page = Melix_Worker_V1_PageRef()
+        page.pageID = "page-blk-0::cow-snap-1"
+        page.blockIds = ["blk-0::cow-snap-1"]
+        page.tokenStart = 0
+        page.tokenEnd = 16
+        page.bytes = 1024
+
+        var table = Melix_Worker_V1_BlockTable()
+        table.blocks = [block]
+        table.cacheKey = cacheKey
+        table.scopeID = "scope-cow"
+        table.pages = [page]
+        table.totalTokenCount = 16
+
+        var snapshot = Melix_Worker_V1_SnapshotRef()
+        snapshot.snapshotID = "snap-cow"
+
+        var boundary = Melix_Worker_V1_RestoreBoundaryRef()
+        boundary.snapshot = snapshot
+        boundary.cacheKey = cacheKey
+        boundary.scopeID = "scope-cow"
+        boundary.boundaryKind = "boundary_snapshot"
+
+        var workerPlan = Melix_Worker_V1_CacheRestorePlan()
+        workerPlan.planID = "restore-bt-cow"
+        workerPlan.boundary = boundary
+        workerPlan.blockTableID = "bt-1::cow-snap-1"
+        workerPlan.blockTable = table
+        workerPlan.pages = [page]
+        workerPlan.restoredTokenCount = 16
+        workerPlan.tier = "l2"
+
+        let controlPlan = makeControlPlaneRestorePlan(from: workerPlan)
+
+        #expect(controlPlan.blockTable.blockTableID == "bt-1::cow-snap-1")
+        #expect(controlPlan.blockTable.blocks.first?.blockID == "blk-0::cow-snap-1")
+        #expect(controlPlan.blockTable.pages.first?.pageID == "page-blk-0::cow-snap-1")
+        #expect(controlPlan.blockTable.pages.first?.blockIds == ["blk-0::cow-snap-1"])
+    }
+
     private func makeSessionState(id: String) -> Melix_Controlplane_V1_SessionState {
         var scope = Melix_Controlplane_V1_CacheScopeKey()
         scope.modelID = "melix-dev-text"

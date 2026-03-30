@@ -15,6 +15,18 @@ struct HotCacheOwnershipSnapshot: Sendable {
     let blockCount: Int
     let pageIDsByPrefixID: [String: [String]]
     let blockIDsByPageID: [String: [String]]
+    let pageRefCountByPageID: [String: UInt64]
+    let blockRefCountByBlockID: [String: UInt64]
+    let sharedPageCount: Int
+    let sharedBlockCount: Int
+    let copyOnWriteForkCount: UInt64
+}
+
+struct SavedBoundarySnapshot: Sendable {
+    let snapshot: Melix_Worker_V1_SnapshotRef
+    let blockTableID: String
+    let blockTable: Melix_Worker_V1_BlockTable
+    let copyOnWriteForked: Bool
 }
 
 private struct StoredHotPrefix: Sendable {
@@ -32,6 +44,7 @@ private struct StoredHotPageOwnership: Sendable {
     let scopeID: String
     var prefixIDs: Set<String>
     var blockTableIDs: Set<String>
+    var referenceCount: UInt64
 }
 
 private struct StoredHotBlockOwnership: Sendable {
@@ -39,6 +52,7 @@ private struct StoredHotBlockOwnership: Sendable {
     let scopeID: String
     var prefixIDs: Set<String>
     var pageIDs: Set<String>
+    var referenceCount: UInt64
 }
 
 actor HotCacheStore {
@@ -51,6 +65,7 @@ actor HotCacheStore {
     private var totalLookups: UInt64 = 0
     private var totalHits: UInt64 = 0
     private var totalReusedBlocks: UInt64 = 0
+    private var totalCopyOnWriteForks: UInt64 = 0
 
     init(
         diskStore: DiskCacheStore = DiskCacheStore(rootPath: ".runtime/swift-text-worker-cache"),
@@ -150,7 +165,17 @@ actor HotCacheStore {
     }
 
     func ownershipSnapshot() async -> HotCacheOwnershipSnapshot {
-        HotCacheOwnershipSnapshot(
+        let pageRefCountByPageID = Dictionary(
+            uniqueKeysWithValues: pagesByID.map { key, value in
+                (key, value.referenceCount)
+            }
+        )
+        let blockRefCountByBlockID = Dictionary(
+            uniqueKeysWithValues: blocksByID.map { key, value in
+                (key, value.referenceCount)
+            }
+        )
+        return HotCacheOwnershipSnapshot(
             prefixCount: prefixesByID.count,
             pageCount: pagesByID.count,
             blockCount: blocksByID.count,
@@ -163,7 +188,12 @@ actor HotCacheStore {
                 uniqueKeysWithValues: pagesByID.map { key, value in
                     (key, value.page.blockIds.sorted())
                 }
-            )
+            ),
+            pageRefCountByPageID: pageRefCountByPageID,
+            blockRefCountByBlockID: blockRefCountByBlockID,
+            sharedPageCount: pageRefCountByPageID.values.filter { $0 > 1 }.count,
+            sharedBlockCount: blockRefCountByBlockID.values.filter { $0 > 1 }.count,
+            copyOnWriteForkCount: totalCopyOnWriteForks
         )
     }
 
@@ -187,7 +217,7 @@ actor HotCacheStore {
         tokenBoundary: UInt32,
         model: Melix_Worker_V1_ModelSpec,
         prefill: StoredPrefillContext
-    ) async -> Melix_Worker_V1_SnapshotRef {
+    ) async -> SavedBoundarySnapshot {
         var snapshot = Melix_Worker_V1_SnapshotRef()
         snapshot.snapshotID = "snap-\(UUID().uuidString.lowercased())"
         snapshot.requestID = requestID
@@ -199,6 +229,12 @@ actor HotCacheStore {
         }
         snapshot.branchID = prefill.modelHandle
 
+        let preparedSnapshot = prepareSnapshotPersistence(
+            snapshotID: snapshot.snapshotID,
+            blockTableID: prefill.blockTableID,
+            blockTable: prefill.blockTable
+        )
+
         await diskStore.saveSnapshot(
             snapshot: snapshot,
             model: model,
@@ -206,11 +242,16 @@ actor HotCacheStore {
             resumeHint: prefill.resumeHint,
             acceleration: prefill.acceleration,
             promptTokens: prefill.promptTokens,
-            blockTableID: prefill.blockTableID,
-            blockTable: prefill.blockTable,
+            blockTableID: preparedSnapshot.blockTableID,
+            blockTable: preparedSnapshot.blockTable,
             prefix: prefill.prefix
         )
-        return snapshot
+        return SavedBoundarySnapshot(
+            snapshot: snapshot,
+            blockTableID: preparedSnapshot.blockTableID,
+            blockTable: preparedSnapshot.blockTable,
+            copyOnWriteForked: preparedSnapshot.copyOnWriteForked
+        )
     }
 
     func restoreBoundarySnapshot(snapshotID: String) async -> RestoredBoundarySnapshot? {
@@ -404,11 +445,13 @@ actor HotCacheStore {
                 page: page,
                 scopeID: scopeID,
                 prefixIDs: [],
-                blockTableIDs: []
+                blockTableIDs: [],
+                referenceCount: 0
             )
             ownership.page = page
             ownership.prefixIDs.insert(stored.prefix.prefixID)
             ownership.blockTableIDs.insert(stored.blockTableID)
+            ownership.referenceCount = UInt64(ownership.prefixIDs.count)
             pagesByID[page.pageID] = ownership
         }
 
@@ -417,12 +460,14 @@ actor HotCacheStore {
                 block: block,
                 scopeID: scopeID,
                 prefixIDs: [],
-                pageIDs: []
+                pageIDs: [],
+                referenceCount: 0
             )
             ownership.prefixIDs.insert(stored.prefix.prefixID)
             if let pageID = pageIDByBlockID[block.blockID] {
                 ownership.pageIDs.insert(pageID)
             }
+            ownership.referenceCount = UInt64(ownership.prefixIDs.count)
             blocksByID[block.blockID] = ownership
         }
     }
@@ -440,6 +485,7 @@ actor HotCacheStore {
             if ownership.prefixIDs.isEmpty {
                 pagesByID.removeValue(forKey: pageID)
             } else {
+                ownership.referenceCount = UInt64(ownership.prefixIDs.count)
                 pagesByID[pageID] = ownership
             }
         }
@@ -453,11 +499,73 @@ actor HotCacheStore {
                 blocksByID.removeValue(forKey: blockID)
                 removedBlocks += 1
             } else {
+                ownership.referenceCount = UInt64(ownership.prefixIDs.count)
                 blocksByID[blockID] = ownership
             }
         }
 
         return removedBlocks
+    }
+
+    private func prepareSnapshotPersistence(
+        snapshotID: String,
+        blockTableID: String,
+        blockTable: Melix_Worker_V1_BlockTable
+    ) -> (blockTableID: String, blockTable: Melix_Worker_V1_BlockTable, copyOnWriteForked: Bool) {
+        let normalizedTable = normalizedBlockTable(blockTable)
+        guard shouldForkForSnapshotPersistence(normalizedTable) else {
+            return (blockTableID, normalizedTable, false)
+        }
+
+        let forkTag = "cow-\(snapshotID)"
+        let cloned = copyOnWriteForkedBlockTable(normalizedTable, forkTag: forkTag)
+        totalCopyOnWriteForks += 1
+        return ("\(blockTableID)::\(forkTag)", cloned, true)
+    }
+
+    private func shouldForkForSnapshotPersistence(
+        _ blockTable: Melix_Worker_V1_BlockTable
+    ) -> Bool {
+        for page in blockTable.pages {
+            if let ownership = pagesByID[page.pageID], ownership.referenceCount > 1 {
+                return true
+            }
+        }
+
+        for block in blockTable.blocks {
+            if let ownership = blocksByID[block.blockID], ownership.referenceCount > 1 {
+                return true
+            }
+        }
+
+        return false
+    }
+
+    private func copyOnWriteForkedBlockTable(
+        _ blockTable: Melix_Worker_V1_BlockTable,
+        forkTag: String
+    ) -> Melix_Worker_V1_BlockTable {
+        let blockIDMap = Dictionary(
+            uniqueKeysWithValues: blockTable.blocks.map { block in
+                (block.blockID, "\(block.blockID)::\(forkTag)")
+            }
+        )
+
+        var cloned = blockTable
+        cloned.blocks = blockTable.blocks.map { block in
+            var clonedBlock = block
+            clonedBlock.blockID = blockIDMap[block.blockID] ?? "\(block.blockID)::\(forkTag)"
+            return clonedBlock
+        }
+        cloned.pages = blockTable.pages.map { page in
+            var clonedPage = page
+            clonedPage.pageID = "\(page.pageID)::\(forkTag)"
+            clonedPage.blockIds = page.blockIds.map { blockID in
+                blockIDMap[blockID] ?? "\(blockID)::\(forkTag)"
+            }
+            return clonedPage
+        }
+        return cloned
     }
 }
 

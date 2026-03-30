@@ -4339,6 +4339,11 @@ final class WorkerScaffoldTests: XCTestCase {
             XCTAssertEqual(initialOwnership.prefixCount, 2)
             XCTAssertEqual(initialOwnership.pageCount, 2)
             XCTAssertEqual(initialOwnership.blockCount, 2)
+            XCTAssertEqual(initialOwnership.sharedPageCount, 2)
+            XCTAssertEqual(initialOwnership.sharedBlockCount, 2)
+            XCTAssertTrue(initialOwnership.pageRefCountByPageID.values.allSatisfy { $0 == 2 })
+            XCTAssertTrue(initialOwnership.blockRefCountByBlockID.values.allSatisfy { $0 == 2 })
+            XCTAssertEqual(initialOwnership.copyOnWriteForkCount, 0)
 
             let firstPurged = await store.purgeCache(
                 scope: scope,
@@ -4351,6 +4356,10 @@ final class WorkerScaffoldTests: XCTestCase {
             XCTAssertEqual(midOwnership.prefixCount, 1)
             XCTAssertEqual(midOwnership.pageCount, 2)
             XCTAssertEqual(midOwnership.blockCount, 2)
+            XCTAssertEqual(midOwnership.sharedPageCount, 0)
+            XCTAssertEqual(midOwnership.sharedBlockCount, 0)
+            XCTAssertTrue(midOwnership.pageRefCountByPageID.values.allSatisfy { $0 == 1 })
+            XCTAssertTrue(midOwnership.blockRefCountByBlockID.values.allSatisfy { $0 == 1 })
 
             let secondPurged = await store.purgeCache(
                 scope: scope,
@@ -4363,6 +4372,76 @@ final class WorkerScaffoldTests: XCTestCase {
             XCTAssertEqual(finalOwnership.prefixCount, 0)
             XCTAssertEqual(finalOwnership.pageCount, 0)
             XCTAssertEqual(finalOwnership.blockCount, 0)
+        }
+    }
+
+    func testBoundarySnapshotSaveForksSharedBlockTablesUsingCopyOnWrite() async throws {
+        try await withTemporaryCacheRoot { cacheRoot in
+            let diskStore = DiskCacheStore(rootPath: cacheRoot.path)
+            let store = HotCacheStore(
+                diskStore: diskStore,
+                initialCacheBlocks: 0
+            )
+
+            let scope = makeCacheScope(scopeID: "scope-cow", modelID: "model-cow")
+
+            func register(prefixSeed: String, fingerprintSeed: String) async throws -> HotCacheRegistration {
+                var execution = Melix_Worker_V1_ExecutionMetadata()
+                execution.scope = scope
+                execution.cacheKey = makeCacheKey(
+                    scopeID: scope.scopeID,
+                    prefixSeed: prefixSeed,
+                    fingerprintSeed: fingerprintSeed
+                )
+                execution.cacheHints.preferredBlockSize = 16
+                return try await store.registerPrefill(
+                    execution: execution,
+                    model: makeModelSpec(modelID: "model-cow"),
+                    messages: [makeUserMessage(prefixSeed)],
+                    promptTokens: 32,
+                    decodeHandle: "decode-shared-cow",
+                    activeKVQuantizationRatio: 50
+                )
+            }
+
+            let first = try await register(prefixSeed: "cow-1", fingerprintSeed: "cow-fp-1")
+            _ = try await register(prefixSeed: "cow-2", fingerprintSeed: "cow-fp-2")
+
+            let prefill = StoredPrefillContext(
+                decodeHandle: "decode-shared-cow",
+                modelHandle: "model-handle-cow",
+                requestID: "req-cow",
+                promptTokens: 32,
+                messages: [makeUserMessage("save a shared boundary snapshot")],
+                resumeHint: "",
+                acceleration: Melix_Worker_V1_AccelerationPolicy(),
+                activeKVQuantizationRatio: 50,
+                blockTableID: first.blockTableID,
+                blockTable: first.blockTable,
+                restoredSnapshotID: "",
+                prefix: first.prefix,
+                context: TextPrefillContext(storage: [:], promptTokens: 32)
+            )
+
+            let saved = await store.saveBoundarySnapshot(
+                requestID: "req-cow",
+                tokenBoundary: 32,
+                model: makeModelSpec(modelID: "model-cow"),
+                prefill: prefill
+            )
+            let ownership = await store.ownershipSnapshot()
+            let restoredSnapshot = await store.restoreBoundarySnapshot(snapshotID: saved.snapshot.snapshotID)
+            let restored = try XCTUnwrap(restoredSnapshot)
+
+            XCTAssertTrue(saved.copyOnWriteForked)
+            XCTAssertEqual(ownership.copyOnWriteForkCount, 1)
+            XCTAssertNotEqual(saved.blockTableID, first.blockTableID)
+            XCTAssertTrue(saved.blockTableID.contains("::cow-"))
+            XCTAssertTrue(saved.blockTable.blocks.allSatisfy { $0.blockID.contains("::cow-") })
+            XCTAssertTrue(saved.blockTable.pages.allSatisfy { $0.pageID.contains("::cow-") })
+            XCTAssertEqual(restored.blockTableID, saved.blockTableID)
+            XCTAssertEqual(restored.blockTable.blocks.map(\.blockID), saved.blockTable.blocks.map(\.blockID))
+            XCTAssertEqual(restored.blockTable.pages.map(\.pageID), saved.blockTable.pages.map(\.pageID))
         }
     }
 
