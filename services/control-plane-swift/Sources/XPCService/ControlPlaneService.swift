@@ -133,7 +133,7 @@ public actor ControlPlaneService {
             throw ControlPlaneChatExecutionError.unavailable
         }
 
-        let normalized = chatTranslator.normalize(
+        let normalized = try chatTranslator.normalize(
             OpenAIChatCompletionsRequest(
                 model: request.modelID,
                 messages: request.messages.map {

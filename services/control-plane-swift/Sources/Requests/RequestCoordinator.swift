@@ -47,6 +47,12 @@ private struct SchedulingPlan: Sendable {
     let batchMaxSize: UInt32
 }
 
+private struct StructuredOutputValidationEvent: Sendable {
+    let event: Melix_Worker_V1_ExecuteEvent
+    let didValidate: Bool
+    let didFail: Bool
+}
+
 public actor RequestCoordinator {
     private let workerRegistry: WorkerRegistry
     private let abortRegistry: AbortRegistry
@@ -233,6 +239,10 @@ public actor RequestCoordinator {
             let now = self.now
             let requestID = request.requestID
             let modelID = request.modelID
+            let structuredOutputConfiguration = StructuredOutputConfiguration(
+                executionExt: request.workerRequest.execution.ext
+            )
+            let structuredOutputValidator = StructuredOutputValidator()
 
             let stream = AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error> { continuation in
                 let task = Task {
@@ -242,15 +252,28 @@ public actor RequestCoordinator {
 
                     do {
                         for try await event in upstream {
+                            let validatedEvent = try self.validatedStructuredOutputEvent(
+                                event,
+                                requestID: requestID,
+                                configuration: structuredOutputConfiguration,
+                                validator: structuredOutputValidator
+                            )
+                            if validatedEvent.didValidate {
+                                if validatedEvent.didFail {
+                                    await metricsStore.increment("http.structured_output_validation_failure_count")
+                                } else {
+                                    await metricsStore.increment("http.structured_output_validation_pass_count")
+                                }
+                            }
                             await self.recordPhaseObservability(
                                 requestID: requestID,
                                 fallbackLane: plan.decodeLane,
                                 requestIdentity: request.workerRequest.execution.id,
                                 routeKind: plan.routeKind,
-                                event: event
+                                event: validatedEvent.event
                             )
                             if !firstSemanticEventRecorded,
-                               self.isSemanticStreamEvent(event) {
+                               self.isSemanticStreamEvent(validatedEvent.event) {
                                 firstSemanticEventRecorded = true
                                 let firstEventMs = now().timeIntervalSince(dispatchStartedAt) * 1000
                                 await metricsStore.set(
@@ -258,7 +281,7 @@ public actor RequestCoordinator {
                                     forKey: "http.stream_first_event_ms"
                                 )
                             }
-                            if !firstDeltaRecorded, case .tokenDelta = event.payload {
+                            if !firstDeltaRecorded, case .tokenDelta = validatedEvent.event.payload {
                                 firstDeltaRecorded = true
                                 let ttftMs = now().timeIntervalSince(dispatchStartedAt) * 1000
                                 await metricsStore.set(
@@ -267,7 +290,7 @@ public actor RequestCoordinator {
                                 )
                                 await self.recordTTFTMetrics(requestID: requestID, ttftMs: ttftMs)
                             }
-                            switch event.payload {
+                            switch validatedEvent.event.payload {
                             case .reasoningDelta:
                                 await metricsStore.increment("http.reasoning_delta_count")
                             case .toolCallDelta:
@@ -277,7 +300,7 @@ public actor RequestCoordinator {
                             }
                             eventCount += 1
                             await metricsStore.set(eventCount, forKey: "http.stream_event_count")
-                            continuation.yield(event)
+                            continuation.yield(validatedEvent.event)
                         }
                         await metricsStore.decrement("requests.inflight")
                         _ = await self.refreshWorkerCacheObservability(using: workerClient)
@@ -448,6 +471,14 @@ public actor RequestCoordinator {
                     source: workerSource
                 )
             }
+        case .error:
+            await schedulerReadModel.recordPhaseTransition(
+                requestID: requestID,
+                phase: .requestFailed,
+                laneHint: observedLane,
+                workerID: workerSource,
+                source: workerSource
+            )
         default:
             return
         }
@@ -982,6 +1013,73 @@ public actor RequestCoordinator {
         payload.error = error
         event.error = payload
         return event
+    }
+
+    private func validatedStructuredOutputEvent(
+        _ event: Melix_Worker_V1_ExecuteEvent,
+        requestID: String,
+        configuration: StructuredOutputConfiguration?,
+        validator: StructuredOutputValidator
+    ) throws -> StructuredOutputValidationEvent {
+        guard
+            let configuration,
+            configuration.isEnabled,
+            case .completed(let completed) = event.payload
+        else {
+            return StructuredOutputValidationEvent(
+                event: event,
+                didValidate: false,
+                didFail: false
+            )
+        }
+
+        let trimmed = completed.assistantText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return StructuredOutputValidationEvent(
+                event: event,
+                didValidate: false,
+                didFail: false
+            )
+        }
+
+        do {
+            try validator.validate(outputText: completed.assistantText, against: configuration)
+            return StructuredOutputValidationEvent(
+                event: event,
+                didValidate: true,
+                didFail: false
+            )
+        } catch let failure as StructuredOutputValidationFailure {
+            return StructuredOutputValidationEvent(
+                event: makeStructuredOutputValidationFailureEvent(
+                    from: event,
+                    requestID: requestID,
+                    failure: failure
+                ),
+                didValidate: true,
+                didFail: true
+            )
+        }
+    }
+
+    private func makeStructuredOutputValidationFailureEvent(
+        from event: Melix_Worker_V1_ExecuteEvent,
+        requestID: String,
+        failure: StructuredOutputValidationFailure
+    ) -> Melix_Worker_V1_ExecuteEvent {
+        var failedEvent = event
+        failedEvent.requestID = requestID
+        failedEvent.phase = .executionFailed
+
+        var error = Melix_Worker_V1_ErrorStatus()
+        error.code = failure.code
+        error.message = failure.message
+        error.details = failure.details
+
+        var payload = Melix_Worker_V1_ErrorEvent()
+        payload.error = error
+        failedEvent.error = payload
+        return failedEvent
     }
 
     private func terminalPhase(

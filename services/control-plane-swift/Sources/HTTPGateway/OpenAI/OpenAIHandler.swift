@@ -207,7 +207,7 @@ public struct OpenAIHandler: Sendable {
             let normalized = if chatRequest.messages.contains(where: \.hasMultimodalContent) {
                 try translator.normalizeMultimodalChat(chatRequest)
             } else {
-                translator.normalize(chatRequest)
+                try translator.normalize(chatRequest)
             }
             let translated = try await translatedRequest(normalized)
             return try await streamResponse(
@@ -216,31 +216,51 @@ public struct OpenAIHandler: Sendable {
             )
         } catch let error as MultimodalRequestNormalizationError {
             return invalidArgumentResponse(message: error.operatorMessage)
+        } catch let error as StructuredOutputFormatError {
+            return invalidArgumentResponse(message: error.operatorMessage)
         } catch let error as HTTPRequestHandlingError {
             return httpErrorResponse(for: error)
         }
     }
 
     private func handleCompletions(_ request: HTTPRequest) async throws -> HTTPResponse {
-        let completionsRequest = try decoder.decode(OpenAICompletionsRequest.self, from: request.body)
-        let normalized = translator.normalize(completionsRequest)
-        return try await streamNormalizedTextRequest(normalized, shape: .completions)
+        do {
+            let completionsRequest = try decoder.decode(OpenAICompletionsRequest.self, from: request.body)
+            let normalized = try translator.normalize(completionsRequest)
+            return try await streamNormalizedTextRequest(normalized, shape: .completions)
+        } catch let error as StructuredOutputFormatError {
+            return invalidArgumentResponse(message: error.operatorMessage)
+        } catch let error as HTTPRequestHandlingError {
+            return httpErrorResponse(for: error)
+        }
     }
 
     private func handleResponses(_ request: HTTPRequest) async throws -> HTTPResponse {
-        let responsesRequest = try decoder.decode(OpenAIResponsesRequest.self, from: request.body)
-        let normalized = translator.normalize(responsesRequest)
-        return try await streamNormalizedTextRequest(normalized, shape: .responses)
+        do {
+            let responsesRequest = try decoder.decode(OpenAIResponsesRequest.self, from: request.body)
+            let normalized = try translator.normalize(responsesRequest)
+            return try await streamNormalizedTextRequest(normalized, shape: .responses)
+        } catch let error as StructuredOutputFormatError {
+            return invalidArgumentResponse(message: error.operatorMessage)
+        } catch let error as HTTPRequestHandlingError {
+            return httpErrorResponse(for: error)
+        }
     }
 
     private func handleMessages(_ request: HTTPRequest) async throws -> HTTPResponse {
-        let messagesRequest = try decoder.decode(MelixMessagesRequest.self, from: request.body)
-        let normalized = translator.normalize(messagesRequest)
-        return try await streamNormalizedTextRequest(
-            normalized,
-            shape: .messages,
-            headers: request.headers
-        )
+        do {
+            let messagesRequest = try decoder.decode(MelixMessagesRequest.self, from: request.body)
+            let normalized = try translator.normalize(messagesRequest)
+            return try await streamNormalizedTextRequest(
+                normalized,
+                shape: .messages,
+                headers: request.headers
+            )
+        } catch let error as StructuredOutputFormatError {
+            return invalidArgumentResponse(message: error.operatorMessage)
+        } catch let error as HTTPRequestHandlingError {
+            return httpErrorResponse(for: error)
+        }
     }
 
     private func streamNormalizedTextRequest(
@@ -866,6 +886,9 @@ public struct OpenAIHandler: Sendable {
         }
         if translated.workerRequest.execution.ext["melix.harmony"] == "true" {
             await metricsStore.increment("http.harmony_shaped_count")
+        }
+        if translated.workerRequest.execution.ext["melix.structured_output.mode"] != nil {
+            await metricsStore.increment("http.structured_output_request_count")
         }
     }
 

@@ -137,7 +137,7 @@ struct TextEndpointContractTests {
         #expect(request.stopSequences == ["</final>"])
         #expect(request.thinking == .init(type: "enabled", budgetTokens: 64))
 
-        let normalized = translator.normalize(request)
+        let normalized = try translator.normalize(request)
         #expect(normalized.stopSequences == ["</final>"])
         #expect(normalized.userID == "operator-1")
         #expect(normalized.thinking == .init(type: "enabled", budgetTokens: 64))
@@ -208,7 +208,7 @@ struct TextEndpointContractTests {
         ] as [MelixMessagesContentBlock]?)
         #expect(decoded.messages[1] == .init(role: "user", content: "Ship it."))
 
-        let normalized = translator.normalize(decoded)
+        let normalized = try translator.normalize(decoded)
         #expect(normalized.messages[0].parts.map(\.text) == ["Be terse."])
         #expect(normalized.messages[1].parts.map(\.text) == ["draft"])
         #expect(normalized.messages[2].parts.map(\.text) == ["Ship it."])
@@ -337,7 +337,7 @@ struct TextEndpointContractTests {
             )
         )
 
-        let normalized = translator.normalize(request)
+        let normalized = try translator.normalize(request)
 
         #expect(normalized.messages.count == 4)
         #expect(normalized.messages[1].harmonyMetadata?.channel == "analysis")
@@ -513,10 +513,10 @@ struct TextEndpointContractTests {
     }
 
     @Test("equivalent single-turn requests normalize to the same internal text shape")
-    func equivalentSingleTurnRequestsNormalizeToSameShape() {
+    func equivalentSingleTurnRequestsNormalizeToSameShape() throws {
         let translator = ChatRequestTranslator(requestIDGenerator: { "req-normalized" })
 
-        let chat = translator.normalize(
+        let chat = try translator.normalize(
             OpenAIChatCompletionsRequest(
                 model: "melix-dev-text",
                 messages: [.init(role: "user", content: "Explain cache routing.")],
@@ -526,7 +526,7 @@ struct TextEndpointContractTests {
                 maxTokens: 128
             )
         )
-        let completions = translator.normalize(
+        let completions = try translator.normalize(
             OpenAICompletionsRequest(
                 model: "melix-dev-text",
                 prompt: "Explain cache routing.",
@@ -536,7 +536,7 @@ struct TextEndpointContractTests {
                 maxTokens: 128
             )
         )
-        let responses = translator.normalize(
+        let responses = try translator.normalize(
             OpenAIResponsesRequest(
                 model: "melix-dev-text",
                 input: .text("Explain cache routing."),
@@ -546,7 +546,7 @@ struct TextEndpointContractTests {
                 maxTokens: 128
             )
         )
-        let messages = translator.normalize(
+        let messages = try translator.normalize(
             MelixMessagesRequest(
                 model: "melix-dev-text",
                 messages: [.init(role: "user", content: "Explain cache routing.")],
@@ -577,10 +577,10 @@ struct TextEndpointContractTests {
     }
 
     @Test("system and instructions fields align across chat, responses, and messages requests")
-    func systemFieldsNormalizeConsistently() {
+    func systemFieldsNormalizeConsistently() throws {
         let translator = ChatRequestTranslator()
 
-        let chat = translator.normalize(
+        let chat = try translator.normalize(
             OpenAIChatCompletionsRequest(
                 model: "melix-dev-text",
                 messages: [
@@ -589,14 +589,14 @@ struct TextEndpointContractTests {
                 ]
             )
         )
-        let responses = translator.normalize(
+        let responses = try translator.normalize(
             OpenAIResponsesRequest(
                 model: "melix-dev-text",
                 input: .text("Summarize the queue."),
                 instructions: "Be terse."
             )
         )
-        let messages = translator.normalize(
+        let messages = try translator.normalize(
             MelixMessagesRequest(
                 model: "melix-dev-text",
                 messages: [.init(role: "user", content: "Summarize the queue.")],
@@ -614,9 +614,9 @@ struct TextEndpointContractTests {
     }
 
     @Test("responses message inputs normalize without losing role ordering")
-    func responsesMessageInputsNormalizeWithoutLosingRoleOrdering() {
+    func responsesMessageInputsNormalizeWithoutLosingRoleOrdering() throws {
         let translator = ChatRequestTranslator()
-        let normalized = translator.normalize(
+        let normalized = try translator.normalize(
             OpenAIResponsesRequest(
                 model: "melix-dev-text",
                 input: .messages([
@@ -637,10 +637,10 @@ struct TextEndpointContractTests {
     }
 
     @Test("equivalent endpoint requests normalize shared execution metadata consistently")
-    func equivalentEndpointRequestsNormalizeSharedExecutionMetadataConsistently() {
+    func equivalentEndpointRequestsNormalizeSharedExecutionMetadataConsistently() throws {
         let translator = ChatRequestTranslator()
 
-        let chat = translator.normalize(
+        let chat = try translator.normalize(
             OpenAIChatCompletionsRequest(
                 model: "melix-dev-text",
                 messages: [.init(role: "user", content: "Explain cache routing.")],
@@ -659,7 +659,7 @@ struct TextEndpointContractTests {
                 workflowNodeID: "node-1"
             )
         )
-        let completions = translator.normalize(
+        let completions = try translator.normalize(
             OpenAICompletionsRequest(
                 model: "melix-dev-text",
                 prompt: "Explain cache routing.",
@@ -678,7 +678,7 @@ struct TextEndpointContractTests {
                 workflowNodeID: "node-1"
             )
         )
-        let responses = translator.normalize(
+        let responses = try translator.normalize(
             OpenAIResponsesRequest(
                 model: "melix-dev-text",
                 input: .text("Explain cache routing."),
@@ -697,7 +697,7 @@ struct TextEndpointContractTests {
                 workflowNodeID: "node-1"
             )
         )
-        let messages = translator.normalize(
+        let messages = try translator.normalize(
             MelixMessagesRequest(
                 model: "melix-dev-text",
                 messages: [.init(role: "user", content: "Explain cache routing.")],
@@ -851,7 +851,7 @@ struct TextEndpointContractTests {
         let translator = ChatRequestTranslator(requestIDGenerator: { "req-shaped" })
 
         let chatTranslated = try translator.translate(
-            translator.normalize(
+            try translator.normalize(
                 OpenAIChatCompletionsRequest(
                     model: "melix-dev-text",
                     messages: [.init(role: "user", content: "Explain the cache.")],
@@ -865,7 +865,7 @@ struct TextEndpointContractTests {
             modelHandle: "melix-dev-text::swift"
         )
         let completionsTranslated = try translator.translate(
-            translator.normalize(
+            try translator.normalize(
                 OpenAICompletionsRequest(
                     model: "melix-dev-text",
                     prompt: "Explain the cache.",
@@ -879,7 +879,7 @@ struct TextEndpointContractTests {
             modelHandle: "melix-dev-text::swift"
         )
         let responsesTranslated = try translator.translate(
-            translator.normalize(
+            try translator.normalize(
                 OpenAIResponsesRequest(
                     model: "melix-dev-text",
                     input: .text("Explain the cache."),
@@ -893,7 +893,7 @@ struct TextEndpointContractTests {
             modelHandle: "melix-dev-text::swift"
         )
         let messagesTranslated = try translator.translate(
-            translator.normalize(
+            try translator.normalize(
                 MelixMessagesRequest(
                     model: "melix-dev-text",
                     messages: [.init(role: "user", content: "Explain the cache.")],

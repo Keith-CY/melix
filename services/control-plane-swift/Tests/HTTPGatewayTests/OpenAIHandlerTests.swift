@@ -791,6 +791,331 @@ struct OpenAIHandlerTests {
         #expect(metrics.values["http.harmony_shaped_count", default: 0] == 1)
     }
 
+    @Test("chat completions reject invalid structured output contracts")
+    func chatCompletionsRejectInvalidStructuredOutputContracts() async throws {
+        let handler = OpenAIHandler(
+            modelCatalog: ModelCatalog(seedModels: [warmModel()]),
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: ScriptedWorkerClient(events: [])),
+                abortRegistry: AbortRegistry()
+            )
+        )
+        let body = try #require(
+            """
+            {
+              "model": "melix-dev-text",
+              "stream": true,
+              "response_format": {
+                "type": "json_schema"
+              },
+              "messages": [
+                { "role": "user", "content": "Return JSON." }
+              ]
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(method: .post, path: "/v1/chat/completions", headers: [:], body: body)
+        )
+        let payload = try await collectBody(response.body)
+
+        #expect(response.statusCode == 400)
+        #expect(payload.contains("\"code\":\"invalid_argument\""))
+        #expect(payload.contains("response_format json_schema requests must include json_schema."))
+    }
+
+    @Test("completions reject invalid structured output contracts")
+    func completionsRejectInvalidStructuredOutputContracts() async throws {
+        let handler = OpenAIHandler(
+            modelCatalog: ModelCatalog(seedModels: [warmModel()]),
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: ScriptedWorkerClient(events: [])),
+                abortRegistry: AbortRegistry()
+            )
+        )
+        let body = try #require(
+            """
+            {
+              "model": "melix-dev-text",
+              "stream": true,
+              "response_format": {
+                "type": "json_schema"
+              },
+              "prompt": "Return JSON."
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(method: .post, path: "/v1/completions", headers: [:], body: body)
+        )
+        let payload = try await collectBody(response.body)
+
+        #expect(response.statusCode == 400)
+        #expect(payload.contains("\"code\":\"invalid_argument\""))
+        #expect(payload.contains("response_format json_schema requests must include json_schema."))
+    }
+
+    @Test("messages reject invalid structured output contracts")
+    func messagesRejectInvalidStructuredOutputContracts() async throws {
+        let handler = OpenAIHandler(
+            modelCatalog: ModelCatalog(seedModels: [warmModel()]),
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: ScriptedWorkerClient(events: [])),
+                abortRegistry: AbortRegistry()
+            )
+        )
+        let body = try #require(
+            """
+            {
+              "model": "melix-dev-text",
+              "stream": true,
+              "response_format": {
+                "type": "json_schema"
+              },
+              "messages": [
+                { "role": "user", "content": "Return JSON." }
+              ]
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(method: .post, path: "/v1/messages", headers: [:], body: body)
+        )
+        let payload = try await collectBody(response.body)
+
+        #expect(response.statusCode == 400)
+        #expect(payload.contains("\"code\":\"invalid_argument\""))
+        #expect(payload.contains("response_format json_schema requests must include json_schema."))
+    }
+
+    @Test("responses reject invalid structured output contracts")
+    func responsesRejectInvalidStructuredOutputContracts() async throws {
+        let handler = OpenAIHandler(
+            modelCatalog: ModelCatalog(seedModels: [warmModel()]),
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: ScriptedWorkerClient(events: [])),
+                abortRegistry: AbortRegistry()
+            )
+        )
+        let body = try #require(
+            """
+            {
+              "model": "melix-dev-text",
+              "stream": true,
+              "input": "Return JSON.",
+              "text": {
+                "format": {
+                  "type": "json_schema"
+                }
+              }
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(method: .post, path: "/v1/responses", headers: [:], body: body)
+        )
+        let payload = try await collectBody(response.body)
+
+        #expect(response.statusCode == 400)
+        #expect(payload.contains("\"code\":\"invalid_argument\""))
+        #expect(payload.contains("response_format json_schema requests must include json_schema."))
+    }
+
+    @Test("responses structured output requests validate completed JSON before final framing")
+    func responsesStructuredOutputRequestsValidateCompletedJSONBeforeFinalFraming() async throws {
+        let catalog = ModelCatalog(seedModels: [warmModel()])
+        let workerClient = ScriptedWorkerClient(events: [
+            makeCompletedEvent(
+                requestID: "resp-structured-fail",
+                seq: 1,
+                finishReason: "stop",
+                assistantText: "{\"answer\":\"done\",\"extra\":true}"
+            ),
+        ])
+        let metricsStore = MetricsStore()
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: workerClient),
+                abortRegistry: AbortRegistry(),
+                metricsStore: metricsStore
+            ),
+            metricsStore: metricsStore,
+            translator: ChatRequestTranslator(requestIDGenerator: { "resp-structured-fail" })
+        )
+
+        let body = try #require(
+            """
+            {
+              "model": "melix-dev-text",
+              "input": "Return JSON.",
+              "text": {
+                "format": {
+                  "type": "json_schema",
+                  "json_schema": {
+                    "name": "answer_contract",
+                    "schema": {
+                      "type": "object",
+                      "properties": {
+                        "answer": { "type": "string" }
+                      },
+                      "required": ["answer"]
+                    },
+                    "strict": true
+                  }
+                }
+              }
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(method: .post, path: "/v1/responses", headers: [:], body: body)
+        )
+        let payload = try await collectBody(response.body)
+        let request = try #require(await workerClient.lastGenerateRequest)
+        let metrics = await metricsStore.snapshot()
+
+        #expect(response.statusCode == 200)
+        #expect(request.execution.ext["melix.structured_output.mode"] == "json_schema")
+        #expect(request.execution.ext["melix.structured_output.schema_name"] == "answer_contract")
+        #expect(request.execution.ext["melix.structured_output.strict"] == "true")
+        #expect(request.execution.acceleration.prefillHint == "json-schema")
+        #expect(metrics.values["http.structured_output_request_count", default: 0] == 1)
+        #expect(metrics.values["http.structured_output_validation_failure_count", default: 0] == 1)
+        #expect(payload.contains("event: error"))
+        #expect(payload.contains("\"code\":\"schema_validation_failed\""))
+        #expect(!payload.contains("event: response.completed"))
+    }
+
+    @Test("responses structured output requests record validation pass metrics before final framing")
+    func responsesStructuredOutputRequestsRecordValidationPassMetricsBeforeFinalFraming() async throws {
+        let catalog = ModelCatalog(seedModels: [warmModel()])
+        let workerClient = ScriptedWorkerClient(events: [
+            makeCompletedEvent(
+                requestID: "resp-structured-pass",
+                seq: 1,
+                finishReason: "stop",
+                assistantText: "{\"answer\":\"done\"}"
+            ),
+        ])
+        let metricsStore = MetricsStore()
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: workerClient),
+                abortRegistry: AbortRegistry(),
+                metricsStore: metricsStore
+            ),
+            metricsStore: metricsStore,
+            translator: ChatRequestTranslator(requestIDGenerator: { "resp-structured-pass" })
+        )
+
+        let body = try #require(
+            """
+            {
+              "model": "melix-dev-text",
+              "input": "Return JSON.",
+              "text": {
+                "format": {
+                  "type": "json_schema",
+                  "json_schema": {
+                    "name": "answer_contract",
+                    "schema": {
+                      "type": "object",
+                      "properties": {
+                        "answer": { "type": "string" }
+                      },
+                      "required": ["answer"]
+                    },
+                    "strict": true
+                  }
+                }
+              }
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(method: .post, path: "/v1/responses", headers: [:], body: body)
+        )
+        let payload = try await collectBody(response.body)
+        let metrics = await metricsStore.snapshot()
+
+        #expect(response.statusCode == 200)
+        #expect(metrics.values["http.structured_output_request_count", default: 0] == 1)
+        #expect(metrics.values["http.structured_output_validation_pass_count", default: 0] == 1)
+        #expect(metrics.values["http.structured_output_validation_failure_count", default: 0] == 0)
+        #expect(!payload.contains("event: error"))
+        #expect(payload.contains("event: response.completed"))
+    }
+
+    @Test("responses structured output requests skip validation for empty completed text")
+    func responsesStructuredOutputRequestsSkipValidationForEmptyCompletedText() async throws {
+        let catalog = ModelCatalog(seedModels: [warmModel()])
+        let workerClient = ScriptedWorkerClient(events: [
+            makeCompletedEvent(
+                requestID: "resp-structured-empty",
+                seq: 1,
+                finishReason: "stop",
+                assistantText: ""
+            ),
+        ])
+        let metricsStore = MetricsStore()
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: workerClient),
+                abortRegistry: AbortRegistry(),
+                metricsStore: metricsStore
+            ),
+            metricsStore: metricsStore,
+            translator: ChatRequestTranslator(requestIDGenerator: { "resp-structured-empty" })
+        )
+
+        let body = try #require(
+            """
+            {
+              "model": "melix-dev-text",
+              "input": "Return JSON.",
+              "text": {
+                "format": {
+                  "type": "json_schema",
+                  "json_schema": {
+                    "name": "answer_contract",
+                    "schema": {
+                      "type": "object",
+                      "properties": {
+                        "answer": { "type": "string" }
+                      },
+                      "required": ["answer"]
+                    },
+                    "strict": true
+                  }
+                }
+              }
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(method: .post, path: "/v1/responses", headers: [:], body: body)
+        )
+        let payload = try await collectBody(response.body)
+        let metrics = await metricsStore.snapshot()
+
+        #expect(response.statusCode == 200)
+        #expect(metrics.values["http.structured_output_request_count", default: 0] == 1)
+        #expect(metrics.values["http.structured_output_validation_pass_count", default: 0] == 0)
+        #expect(metrics.values["http.structured_output_validation_failure_count", default: 0] == 0)
+        #expect(!payload.contains("event: error"))
+        #expect(payload.contains("event: response.completed"))
+    }
+
     @Test("non-stream responses requests return 400")
     func nonStreamResponsesRequestsReturn400() async throws {
         let handler = OpenAIHandler(
@@ -875,6 +1200,64 @@ struct OpenAIHandlerTests {
 
         #expect(response.statusCode == 400)
         #expect(payload.contains("\"code\":\"stream_required\""))
+    }
+
+    @Test("completions requests return 409 when the model is not ready")
+    func completionsModelNotReadyReturns409() async throws {
+        let handler = OpenAIHandler(
+            modelCatalog: ModelCatalog(seedModels: []),
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: ScriptedWorkerClient(events: [])),
+                abortRegistry: AbortRegistry()
+            )
+        )
+        let body = try #require(
+            """
+            {
+              "model": "melix-dev-text",
+              "stream": true,
+              "prompt": "Hello"
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(method: .post, path: "/v1/completions", headers: [:], body: body)
+        )
+        let payload = try await collectBody(response.body)
+
+        #expect(response.statusCode == 409)
+        #expect(payload.contains("\"code\":\"model_not_ready\""))
+    }
+
+    @Test("messages requests return 409 when the model is not ready")
+    func messagesModelNotReadyReturns409() async throws {
+        let handler = OpenAIHandler(
+            modelCatalog: ModelCatalog(seedModels: []),
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: ScriptedWorkerClient(events: [])),
+                abortRegistry: AbortRegistry()
+            )
+        )
+        let body = try #require(
+            """
+            {
+              "model": "melix-dev-text",
+              "stream": true,
+              "messages": [
+                { "role": "user", "content": "Hello" }
+              ]
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(method: .post, path: "/v1/messages", headers: [:], body: body)
+        )
+        let payload = try await collectBody(response.body)
+
+        #expect(response.statusCode == 409)
+        #expect(payload.contains("\"code\":\"model_not_ready\""))
     }
 
     @Test("responses requests return 409 when the model is not ready")

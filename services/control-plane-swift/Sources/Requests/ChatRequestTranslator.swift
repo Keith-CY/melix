@@ -101,6 +101,7 @@ public struct NormalizedTextRequest: Sendable, Equatable {
     public let stopSequences: [String]
     public let userID: String?
     public let thinking: MelixMessagesThinkingConfig?
+    public let structuredOutput: StructuredOutputConfiguration?
 
     public init(
         endpoint: TextEndpointKind,
@@ -121,7 +122,8 @@ public struct NormalizedTextRequest: Sendable, Equatable {
         workflowNodeID: String? = nil,
         stopSequences: [String] = [],
         userID: String? = nil,
-        thinking: MelixMessagesThinkingConfig? = nil
+        thinking: MelixMessagesThinkingConfig? = nil,
+        structuredOutput: StructuredOutputConfiguration? = nil
     ) {
         self.endpoint = endpoint
         self.model = model
@@ -142,6 +144,7 @@ public struct NormalizedTextRequest: Sendable, Equatable {
         self.stopSequences = stopSequences
         self.userID = userID
         self.thinking = thinking
+        self.structuredOutput = structuredOutput?.isEnabled == true ? structuredOutput : nil
     }
 }
 
@@ -173,6 +176,7 @@ public struct ShapedTextRequest: Sendable, Equatable {
     public let thinking: MelixMessagesThinkingConfig?
     public let reasoningMode: String
     public let reasoningSource: String
+    public let structuredOutput: StructuredOutputConfiguration?
 }
 
 public struct TranslatedChatRequest: Sendable {
@@ -260,6 +264,7 @@ public struct OpenAIChatCompletionsRequest: Codable, Sendable {
     public let workflow: TextWorkflowKind?
     public let workflowRunID: String?
     public let workflowNodeID: String?
+    public let responseFormat: StructuredOutputRequestFormat?
 
     enum CodingKeys: String, CodingKey {
         case model
@@ -277,6 +282,7 @@ public struct OpenAIChatCompletionsRequest: Codable, Sendable {
         case workflow
         case workflowRunID = "workflow_run_id"
         case workflowNodeID = "workflow_node_id"
+        case responseFormat = "response_format"
     }
 
     public init(
@@ -294,7 +300,8 @@ public struct OpenAIChatCompletionsRequest: Codable, Sendable {
         presetID: String? = nil,
         workflow: TextWorkflowKind? = nil,
         workflowRunID: String? = nil,
-        workflowNodeID: String? = nil
+        workflowNodeID: String? = nil,
+        responseFormat: StructuredOutputRequestFormat? = nil
     ) {
         self.model = model
         self.messages = messages
@@ -311,6 +318,13 @@ public struct OpenAIChatCompletionsRequest: Codable, Sendable {
         self.workflow = workflow
         self.workflowRunID = workflowRunID
         self.workflowNodeID = workflowNodeID
+        self.responseFormat = responseFormat
+    }
+
+    public var structuredOutputConfiguration: StructuredOutputConfiguration? {
+        get throws {
+            try responseFormat?.resolvedConfiguration()
+        }
     }
 }
 
@@ -330,6 +344,7 @@ public struct OpenAICompletionsRequest: Codable, Sendable {
     public let workflow: TextWorkflowKind?
     public let workflowRunID: String?
     public let workflowNodeID: String?
+    public let responseFormat: StructuredOutputRequestFormat?
 
     enum CodingKeys: String, CodingKey {
         case model
@@ -347,6 +362,7 @@ public struct OpenAICompletionsRequest: Codable, Sendable {
         case workflow
         case workflowRunID = "workflow_run_id"
         case workflowNodeID = "workflow_node_id"
+        case responseFormat = "response_format"
     }
 
     public init(
@@ -364,7 +380,8 @@ public struct OpenAICompletionsRequest: Codable, Sendable {
         presetID: String? = nil,
         workflow: TextWorkflowKind? = nil,
         workflowRunID: String? = nil,
-        workflowNodeID: String? = nil
+        workflowNodeID: String? = nil,
+        responseFormat: StructuredOutputRequestFormat? = nil
     ) {
         self.model = model
         self.prompt = prompt
@@ -381,10 +398,25 @@ public struct OpenAICompletionsRequest: Codable, Sendable {
         self.workflow = workflow
         self.workflowRunID = workflowRunID
         self.workflowNodeID = workflowNodeID
+        self.responseFormat = responseFormat
+    }
+
+    public var structuredOutputConfiguration: StructuredOutputConfiguration? {
+        get throws {
+            try responseFormat?.resolvedConfiguration()
+        }
     }
 }
 
 public struct OpenAIResponsesRequest: Codable, Sendable {
+    public struct TextOptions: Codable, Sendable, Equatable {
+        public let format: StructuredOutputRequestFormat?
+
+        public init(format: StructuredOutputRequestFormat? = nil) {
+            self.format = format
+        }
+    }
+
     public struct Message: Codable, Sendable, Equatable {
         public let role: String
         public let content: String
@@ -464,6 +496,7 @@ public struct OpenAIResponsesRequest: Codable, Sendable {
     public let workflow: TextWorkflowKind?
     public let workflowRunID: String?
     public let workflowNodeID: String?
+    public let text: TextOptions?
 
     enum CodingKeys: String, CodingKey {
         case model
@@ -482,6 +515,7 @@ public struct OpenAIResponsesRequest: Codable, Sendable {
         case workflow
         case workflowRunID = "workflow_run_id"
         case workflowNodeID = "workflow_node_id"
+        case text
     }
 
     public init(
@@ -500,7 +534,8 @@ public struct OpenAIResponsesRequest: Codable, Sendable {
         presetID: String? = nil,
         workflow: TextWorkflowKind? = nil,
         workflowRunID: String? = nil,
-        workflowNodeID: String? = nil
+        workflowNodeID: String? = nil,
+        text: TextOptions? = nil
     ) {
         self.model = model
         self.input = input
@@ -518,6 +553,13 @@ public struct OpenAIResponsesRequest: Codable, Sendable {
         self.workflow = workflow
         self.workflowRunID = workflowRunID
         self.workflowNodeID = workflowNodeID
+        self.text = text
+    }
+
+    public var structuredOutputConfiguration: StructuredOutputConfiguration? {
+        get throws {
+            try text?.format?.resolvedConfiguration()
+        }
     }
 }
 
@@ -708,6 +750,7 @@ public struct MelixMessagesRequest: Codable, Sendable {
     public let workflow: TextWorkflowKind?
     public let workflowRunID: String?
     public let workflowNodeID: String?
+    public let responseFormat: StructuredOutputRequestFormat?
 
     enum CodingKeys: String, CodingKey {
         case model
@@ -729,6 +772,7 @@ public struct MelixMessagesRequest: Codable, Sendable {
         case workflow
         case workflowRunID = "workflow_run_id"
         case workflowNodeID = "workflow_node_id"
+        case responseFormat = "response_format"
     }
 
     public init(
@@ -751,7 +795,8 @@ public struct MelixMessagesRequest: Codable, Sendable {
         presetID: String? = nil,
         workflow: TextWorkflowKind? = nil,
         workflowRunID: String? = nil,
-        workflowNodeID: String? = nil
+        workflowNodeID: String? = nil,
+        responseFormat: StructuredOutputRequestFormat? = nil
     ) {
         self.model = model
         self.messages = messages
@@ -778,6 +823,7 @@ public struct MelixMessagesRequest: Codable, Sendable {
         self.workflow = workflow
         self.workflowRunID = workflowRunID
         self.workflowNodeID = workflowNodeID
+        self.responseFormat = responseFormat
     }
 
     public init(from decoder: Decoder) throws {
@@ -801,6 +847,7 @@ public struct MelixMessagesRequest: Codable, Sendable {
         self.workflow = try container.decodeIfPresent(TextWorkflowKind.self, forKey: .workflow)
         self.workflowRunID = try container.decodeIfPresent(String.self, forKey: .workflowRunID)
         self.workflowNodeID = try container.decodeIfPresent(String.self, forKey: .workflowNodeID)
+        self.responseFormat = try container.decodeIfPresent(StructuredOutputRequestFormat.self, forKey: .responseFormat)
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -824,6 +871,7 @@ public struct MelixMessagesRequest: Codable, Sendable {
         try container.encodeIfPresent(workflow, forKey: .workflow)
         try container.encodeIfPresent(workflowRunID, forKey: .workflowRunID)
         try container.encodeIfPresent(workflowNodeID, forKey: .workflowNodeID)
+        try container.encodeIfPresent(responseFormat, forKey: .responseFormat)
     }
 
     public var system: String? {
@@ -835,6 +883,12 @@ public struct MelixMessagesRequest: Codable, Sendable {
 
     public var systemBlocks: [MelixMessagesContentBlock]? {
         rawSystem?.blocks
+    }
+
+    public var structuredOutputConfiguration: StructuredOutputConfiguration? {
+        get throws {
+            try responseFormat?.resolvedConfiguration()
+        }
     }
 }
 
@@ -891,7 +945,7 @@ public struct ChatRequestTranslator: Sendable {
 
     public func normalize(
         _ request: OpenAIChatCompletionsRequest
-    ) -> NormalizedTextRequest {
+    ) throws -> NormalizedTextRequest {
         makeNormalizedRequest(
             endpoint: .chatCompletions,
             model: request.model,
@@ -910,7 +964,8 @@ public struct ChatRequestTranslator: Sendable {
             presetID: request.presetID,
             workflow: request.workflow,
             workflowRunID: request.workflowRunID,
-            workflowNodeID: request.workflowNodeID
+            workflowNodeID: request.workflowNodeID,
+            structuredOutput: try request.structuredOutputConfiguration
         )
     }
 
@@ -944,13 +999,14 @@ public struct ChatRequestTranslator: Sendable {
             presetID: request.presetID,
             workflow: request.workflow,
             workflowRunID: request.workflowRunID,
-            workflowNodeID: request.workflowNodeID
+            workflowNodeID: request.workflowNodeID,
+            structuredOutput: try request.structuredOutputConfiguration
         )
     }
 
     public func normalize(
         _ request: OpenAICompletionsRequest
-    ) -> NormalizedTextRequest {
+    ) throws -> NormalizedTextRequest {
         makeNormalizedRequest(
             endpoint: .completions,
             model: request.model,
@@ -969,13 +1025,14 @@ public struct ChatRequestTranslator: Sendable {
             presetID: request.presetID,
             workflow: request.workflow,
             workflowRunID: request.workflowRunID,
-            workflowNodeID: request.workflowNodeID
+            workflowNodeID: request.workflowNodeID,
+            structuredOutput: try request.structuredOutputConfiguration
         )
     }
 
     public func normalize(
         _ request: OpenAIResponsesRequest
-    ) -> NormalizedTextRequest {
+    ) throws -> NormalizedTextRequest {
         var messages: [NormalizedTextMessage] = []
         if let instructions = request.instructions, !instructions.isEmpty {
             messages.append(NormalizedTextMessage(role: "system", content: instructions))
@@ -1011,13 +1068,14 @@ public struct ChatRequestTranslator: Sendable {
             presetID: request.presetID,
             workflow: request.workflow,
             workflowRunID: request.workflowRunID,
-            workflowNodeID: request.workflowNodeID
+            workflowNodeID: request.workflowNodeID,
+            structuredOutput: try request.structuredOutputConfiguration
         )
     }
 
     public func normalize(
         _ request: MelixMessagesRequest
-    ) -> NormalizedTextRequest {
+    ) throws -> NormalizedTextRequest {
         var messages: [NormalizedTextMessage] = []
         if let systemBlocks = request.systemBlocks {
             let systemParts = messageParts(from: systemBlocks)
@@ -1055,7 +1113,8 @@ public struct ChatRequestTranslator: Sendable {
             workflowNodeID: request.workflowNodeID,
             stopSequences: request.stopSequences,
             userID: request.metadata?.userID,
-            thinking: request.thinking
+            thinking: request.thinking,
+            structuredOutput: try request.structuredOutputConfiguration
         )
     }
 
@@ -1078,7 +1137,8 @@ public struct ChatRequestTranslator: Sendable {
         workflowNodeID: String?,
         stopSequences: [String]? = nil,
         userID: String? = nil,
-        thinking: MelixMessagesThinkingConfig? = nil
+        thinking: MelixMessagesThinkingConfig? = nil,
+        structuredOutput: StructuredOutputConfiguration? = nil
     ) -> NormalizedTextRequest {
         NormalizedTextRequest(
             endpoint: endpoint,
@@ -1099,7 +1159,8 @@ public struct ChatRequestTranslator: Sendable {
             workflowNodeID: workflowNodeID,
             stopSequences: stopSequences ?? [],
             userID: userID,
-            thinking: thinking
+            thinking: thinking,
+            structuredOutput: structuredOutput
         )
     }
 
@@ -1125,28 +1186,28 @@ public struct ChatRequestTranslator: Sendable {
         _ request: OpenAIChatCompletionsRequest,
         modelHandle: String
     ) throws -> TranslatedChatRequest {
-        try translate(normalize(request), modelHandle: modelHandle)
+        try translate(try normalize(request), modelHandle: modelHandle)
     }
 
     public func translate(
         _ request: OpenAICompletionsRequest,
         modelHandle: String
     ) throws -> TranslatedChatRequest {
-        try translate(normalize(request), modelHandle: modelHandle)
+        try translate(try normalize(request), modelHandle: modelHandle)
     }
 
     public func translate(
         _ request: OpenAIResponsesRequest,
         modelHandle: String
     ) throws -> TranslatedChatRequest {
-        try translate(normalize(request), modelHandle: modelHandle)
+        try translate(try normalize(request), modelHandle: modelHandle)
     }
 
     public func translate(
         _ request: MelixMessagesRequest,
         modelHandle: String
     ) throws -> TranslatedChatRequest {
-        try translate(normalize(request), modelHandle: modelHandle)
+        try translate(try normalize(request), modelHandle: modelHandle)
     }
 
     public func translate(
@@ -1185,6 +1246,19 @@ public struct ChatRequestTranslator: Sendable {
         generateRequest.execution.ext["melix.endpoint"] = shapedRequest.endpoint.rawValue
         if let userID = shapedRequest.userID, !userID.isEmpty {
             generateRequest.execution.ext["melix.messages.user_id"] = userID
+        }
+        if let structuredOutput = shapedRequest.structuredOutput, structuredOutput.isEnabled {
+            generateRequest.execution.ext["melix.structured_output.mode"] = structuredOutput.mode.rawValue
+            generateRequest.execution.acceleration.prefillHint = structuredOutput.prefillHint
+            if let schemaName = structuredOutput.schemaName {
+                generateRequest.execution.ext["melix.structured_output.schema_name"] = schemaName
+            }
+            if let schemaJSONString = structuredOutput.schemaJSONString {
+                generateRequest.execution.ext["melix.structured_output.schema_json"] = schemaJSONString
+            }
+            if structuredOutput.mode == .jsonSchema {
+                generateRequest.execution.ext["melix.structured_output.strict"] = structuredOutput.strict ? "true" : "false"
+            }
         }
         var hasHarmonyMetadata = false
         for (index, message) in shapedRequest.messages.enumerated() {

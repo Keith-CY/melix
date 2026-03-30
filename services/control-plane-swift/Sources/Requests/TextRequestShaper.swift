@@ -162,7 +162,8 @@ public struct TextRequestShaper: Sendable {
             userID: request.userID?.nilIfEmpty,
             thinking: resolvedThinking.config,
             reasoningMode: resolvedThinking.mode,
-            reasoningSource: resolvedThinking.source
+            reasoningSource: resolvedThinking.source,
+            structuredOutput: request.structuredOutput
         )
     }
 
