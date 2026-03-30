@@ -103,6 +103,7 @@ public struct NormalizedTextRequest: Sendable, Equatable {
     public let thinking: MelixMessagesThinkingConfig?
     public let structuredOutput: StructuredOutputConfiguration?
     public let toolParser: ToolParserSelection?
+    public let chatTemplate: ChatTemplateSelection?
 
     public init(
         endpoint: TextEndpointKind,
@@ -125,7 +126,8 @@ public struct NormalizedTextRequest: Sendable, Equatable {
         userID: String? = nil,
         thinking: MelixMessagesThinkingConfig? = nil,
         structuredOutput: StructuredOutputConfiguration? = nil,
-        toolParser: ToolParserSelection? = nil
+        toolParser: ToolParserSelection? = nil,
+        chatTemplate: ChatTemplateSelection? = nil
     ) {
         self.endpoint = endpoint
         self.model = model
@@ -148,6 +150,7 @@ public struct NormalizedTextRequest: Sendable, Equatable {
         self.thinking = thinking
         self.structuredOutput = structuredOutput?.isEnabled == true ? structuredOutput : nil
         self.toolParser = toolParser
+        self.chatTemplate = chatTemplate
     }
 }
 
@@ -181,6 +184,7 @@ public struct ShapedTextRequest: Sendable, Equatable {
     public let reasoningSource: String
     public let structuredOutput: StructuredOutputConfiguration?
     public let toolParser: ToolParserSelection?
+    public let chatTemplate: ResolvedChatTemplatePolicy?
 }
 
 public struct TranslatedChatRequest: Sendable {
@@ -270,6 +274,7 @@ public struct OpenAIChatCompletionsRequest: Codable, Sendable {
     public let workflowNodeID: String?
     public let responseFormat: StructuredOutputRequestFormat?
     public let toolParser: ToolParserRequestConfiguration?
+    public let chatTemplateKwargs: ChatTemplateRequestConfiguration?
 
     enum CodingKeys: String, CodingKey {
         case model
@@ -289,6 +294,7 @@ public struct OpenAIChatCompletionsRequest: Codable, Sendable {
         case workflowNodeID = "workflow_node_id"
         case responseFormat = "response_format"
         case toolParser = "tool_parser"
+        case chatTemplateKwargs = "chat_template_kwargs"
     }
 
     public init(
@@ -308,7 +314,8 @@ public struct OpenAIChatCompletionsRequest: Codable, Sendable {
         workflowRunID: String? = nil,
         workflowNodeID: String? = nil,
         responseFormat: StructuredOutputRequestFormat? = nil,
-        toolParser: ToolParserRequestConfiguration? = nil
+        toolParser: ToolParserRequestConfiguration? = nil,
+        chatTemplateKwargs: ChatTemplateRequestConfiguration? = nil
     ) {
         self.model = model
         self.messages = messages
@@ -327,6 +334,7 @@ public struct OpenAIChatCompletionsRequest: Codable, Sendable {
         self.workflowNodeID = workflowNodeID
         self.responseFormat = responseFormat
         self.toolParser = toolParser
+        self.chatTemplateKwargs = chatTemplateKwargs
     }
 
     public var structuredOutputConfiguration: StructuredOutputConfiguration? {
@@ -339,6 +347,10 @@ public struct OpenAIChatCompletionsRequest: Codable, Sendable {
         get throws {
             try toolParser?.resolvedSelection()
         }
+    }
+
+    public var chatTemplateSelection: ChatTemplateSelection? {
+        chatTemplateKwargs?.resolvedSelection()
     }
 }
 
@@ -360,6 +372,7 @@ public struct OpenAICompletionsRequest: Codable, Sendable {
     public let workflowNodeID: String?
     public let responseFormat: StructuredOutputRequestFormat?
     public let toolParser: ToolParserRequestConfiguration?
+    public let chatTemplateKwargs: ChatTemplateRequestConfiguration?
 
     enum CodingKeys: String, CodingKey {
         case model
@@ -379,6 +392,7 @@ public struct OpenAICompletionsRequest: Codable, Sendable {
         case workflowNodeID = "workflow_node_id"
         case responseFormat = "response_format"
         case toolParser = "tool_parser"
+        case chatTemplateKwargs = "chat_template_kwargs"
     }
 
     public init(
@@ -398,7 +412,8 @@ public struct OpenAICompletionsRequest: Codable, Sendable {
         workflowRunID: String? = nil,
         workflowNodeID: String? = nil,
         responseFormat: StructuredOutputRequestFormat? = nil,
-        toolParser: ToolParserRequestConfiguration? = nil
+        toolParser: ToolParserRequestConfiguration? = nil,
+        chatTemplateKwargs: ChatTemplateRequestConfiguration? = nil
     ) {
         self.model = model
         self.prompt = prompt
@@ -417,6 +432,7 @@ public struct OpenAICompletionsRequest: Codable, Sendable {
         self.workflowNodeID = workflowNodeID
         self.responseFormat = responseFormat
         self.toolParser = toolParser
+        self.chatTemplateKwargs = chatTemplateKwargs
     }
 
     public var structuredOutputConfiguration: StructuredOutputConfiguration? {
@@ -429,6 +445,10 @@ public struct OpenAICompletionsRequest: Codable, Sendable {
         get throws {
             try toolParser?.resolvedSelection()
         }
+    }
+
+    public var chatTemplateSelection: ChatTemplateSelection? {
+        chatTemplateKwargs?.resolvedSelection()
     }
 }
 
@@ -522,6 +542,7 @@ public struct OpenAIResponsesRequest: Codable, Sendable {
     public let workflowNodeID: String?
     public let text: TextOptions?
     public let toolParser: ToolParserRequestConfiguration?
+    public let chatTemplateKwargs: ChatTemplateRequestConfiguration?
 
     enum CodingKeys: String, CodingKey {
         case model
@@ -542,6 +563,7 @@ public struct OpenAIResponsesRequest: Codable, Sendable {
         case workflowNodeID = "workflow_node_id"
         case text
         case toolParser = "tool_parser"
+        case chatTemplateKwargs = "chat_template_kwargs"
     }
 
     public init(
@@ -562,7 +584,8 @@ public struct OpenAIResponsesRequest: Codable, Sendable {
         workflowRunID: String? = nil,
         workflowNodeID: String? = nil,
         text: TextOptions? = nil,
-        toolParser: ToolParserRequestConfiguration? = nil
+        toolParser: ToolParserRequestConfiguration? = nil,
+        chatTemplateKwargs: ChatTemplateRequestConfiguration? = nil
     ) {
         self.model = model
         self.input = input
@@ -582,6 +605,7 @@ public struct OpenAIResponsesRequest: Codable, Sendable {
         self.workflowNodeID = workflowNodeID
         self.text = text
         self.toolParser = toolParser
+        self.chatTemplateKwargs = chatTemplateKwargs
     }
 
     public var structuredOutputConfiguration: StructuredOutputConfiguration? {
@@ -594,6 +618,10 @@ public struct OpenAIResponsesRequest: Codable, Sendable {
         get throws {
             try toolParser?.resolvedSelection()
         }
+    }
+
+    public var chatTemplateSelection: ChatTemplateSelection? {
+        chatTemplateKwargs?.resolvedSelection()
     }
 }
 
@@ -786,6 +814,7 @@ public struct MelixMessagesRequest: Codable, Sendable {
     public let workflowNodeID: String?
     public let responseFormat: StructuredOutputRequestFormat?
     public let toolParser: ToolParserRequestConfiguration?
+    public let chatTemplateKwargs: ChatTemplateRequestConfiguration?
 
     enum CodingKeys: String, CodingKey {
         case model
@@ -809,6 +838,7 @@ public struct MelixMessagesRequest: Codable, Sendable {
         case workflowNodeID = "workflow_node_id"
         case responseFormat = "response_format"
         case toolParser = "tool_parser"
+        case chatTemplateKwargs = "chat_template_kwargs"
     }
 
     public init(
@@ -833,7 +863,8 @@ public struct MelixMessagesRequest: Codable, Sendable {
         workflowRunID: String? = nil,
         workflowNodeID: String? = nil,
         responseFormat: StructuredOutputRequestFormat? = nil,
-        toolParser: ToolParserRequestConfiguration? = nil
+        toolParser: ToolParserRequestConfiguration? = nil,
+        chatTemplateKwargs: ChatTemplateRequestConfiguration? = nil
     ) {
         self.model = model
         self.messages = messages
@@ -862,6 +893,7 @@ public struct MelixMessagesRequest: Codable, Sendable {
         self.workflowNodeID = workflowNodeID
         self.responseFormat = responseFormat
         self.toolParser = toolParser
+        self.chatTemplateKwargs = chatTemplateKwargs
     }
 
     public init(from decoder: Decoder) throws {
@@ -887,6 +919,7 @@ public struct MelixMessagesRequest: Codable, Sendable {
         self.workflowNodeID = try container.decodeIfPresent(String.self, forKey: .workflowNodeID)
         self.responseFormat = try container.decodeIfPresent(StructuredOutputRequestFormat.self, forKey: .responseFormat)
         self.toolParser = try container.decodeIfPresent(ToolParserRequestConfiguration.self, forKey: .toolParser)
+        self.chatTemplateKwargs = try container.decodeIfPresent(ChatTemplateRequestConfiguration.self, forKey: .chatTemplateKwargs)
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -912,6 +945,7 @@ public struct MelixMessagesRequest: Codable, Sendable {
         try container.encodeIfPresent(workflowNodeID, forKey: .workflowNodeID)
         try container.encodeIfPresent(responseFormat, forKey: .responseFormat)
         try container.encodeIfPresent(toolParser, forKey: .toolParser)
+        try container.encodeIfPresent(chatTemplateKwargs, forKey: .chatTemplateKwargs)
     }
 
     public var system: String? {
@@ -935,6 +969,10 @@ public struct MelixMessagesRequest: Codable, Sendable {
         get throws {
             try toolParser?.resolvedSelection()
         }
+    }
+
+    public var chatTemplateSelection: ChatTemplateSelection? {
+        chatTemplateKwargs?.resolvedSelection()
     }
 }
 
@@ -1012,7 +1050,8 @@ public struct ChatRequestTranslator: Sendable {
             workflowRunID: request.workflowRunID,
             workflowNodeID: request.workflowNodeID,
             structuredOutput: try request.structuredOutputConfiguration,
-            toolParser: try request.toolParserSelection
+            toolParser: try request.toolParserSelection,
+            chatTemplate: request.chatTemplateSelection
         )
     }
 
@@ -1048,7 +1087,8 @@ public struct ChatRequestTranslator: Sendable {
             workflowRunID: request.workflowRunID,
             workflowNodeID: request.workflowNodeID,
             structuredOutput: try request.structuredOutputConfiguration,
-            toolParser: try request.toolParserSelection
+            toolParser: try request.toolParserSelection,
+            chatTemplate: request.chatTemplateSelection
         )
     }
 
@@ -1075,7 +1115,8 @@ public struct ChatRequestTranslator: Sendable {
             workflowRunID: request.workflowRunID,
             workflowNodeID: request.workflowNodeID,
             structuredOutput: try request.structuredOutputConfiguration,
-            toolParser: try request.toolParserSelection
+            toolParser: try request.toolParserSelection,
+            chatTemplate: request.chatTemplateSelection
         )
     }
 
@@ -1119,7 +1160,8 @@ public struct ChatRequestTranslator: Sendable {
             workflowRunID: request.workflowRunID,
             workflowNodeID: request.workflowNodeID,
             structuredOutput: try request.structuredOutputConfiguration,
-            toolParser: try request.toolParserSelection
+            toolParser: try request.toolParserSelection,
+            chatTemplate: request.chatTemplateSelection
         )
     }
 
@@ -1165,7 +1207,8 @@ public struct ChatRequestTranslator: Sendable {
             userID: request.metadata?.userID,
             thinking: request.thinking,
             structuredOutput: try request.structuredOutputConfiguration,
-            toolParser: try request.toolParserSelection
+            toolParser: try request.toolParserSelection,
+            chatTemplate: request.chatTemplateSelection
         )
     }
 
@@ -1190,7 +1233,8 @@ public struct ChatRequestTranslator: Sendable {
         userID: String? = nil,
         thinking: MelixMessagesThinkingConfig? = nil,
         structuredOutput: StructuredOutputConfiguration? = nil,
-        toolParser: ToolParserSelection? = nil
+        toolParser: ToolParserSelection? = nil,
+        chatTemplate: ChatTemplateSelection? = nil
     ) -> NormalizedTextRequest {
         NormalizedTextRequest(
             endpoint: endpoint,
@@ -1213,7 +1257,8 @@ public struct ChatRequestTranslator: Sendable {
             userID: userID,
             thinking: thinking,
             structuredOutput: structuredOutput,
-            toolParser: toolParser
+            toolParser: toolParser,
+            chatTemplate: chatTemplate
         )
     }
 
@@ -1266,10 +1311,15 @@ public struct ChatRequestTranslator: Sendable {
     public func translate(
         _ normalizedRequest: NormalizedTextRequest,
         modelHandle: String,
-        modelToolParser: ToolParserSelection? = nil
+        modelToolParser: ToolParserSelection? = nil,
+        modelChatTemplatePolicy: ModelChatTemplatePolicy? = nil
     ) throws -> TranslatedChatRequest {
         let requestID = requestIDGenerator()
-        let shapedRequest = requestShaper.shape(normalizedRequest, modelToolParser: modelToolParser)
+        let shapedRequest = requestShaper.shape(
+            normalizedRequest,
+            modelToolParser: modelToolParser,
+            modelChatTemplatePolicy: modelChatTemplatePolicy
+        )
 
         var generateRequest = Melix_Worker_V1_GenerateRequest()
         generateRequest.execution = Melix_Worker_V1_ExecutionMetadata()
@@ -1322,6 +1372,23 @@ public struct ChatRequestTranslator: Sendable {
             }
             if let fallbackMode = toolParser.fallbackMode {
                 generateRequest.execution.ext["melix.tool_parser.fallback_mode"] = fallbackMode.rawValue
+            }
+        }
+        if let chatTemplate = shapedRequest.chatTemplate,
+           let effectiveJSONString = chatTemplate.effectiveJSONString {
+            generateRequest.execution.ext["melix.chat_template_kwargs.source"] = chatTemplate.source
+            generateRequest.execution.ext["melix.chat_template_kwargs.effective_json"] = effectiveJSONString
+            if let modelJSONString = chatTemplate.modelJSONString {
+                generateRequest.execution.ext["melix.chat_template_kwargs.model_json"] = modelJSONString
+            }
+            if let requestJSONString = chatTemplate.requestJSONString {
+                generateRequest.execution.ext["melix.chat_template_kwargs.request_json"] = requestJSONString
+            }
+            if let forcedJSONString = chatTemplate.forcedJSONString {
+                generateRequest.execution.ext["melix.chat_template_kwargs.forced_json"] = forcedJSONString
+            }
+            if !chatTemplate.forcedKeys.isEmpty {
+                generateRequest.execution.ext["melix.chat_template_kwargs.forced_keys"] = chatTemplate.forcedKeys.joined(separator: ",")
             }
         }
         var hasHarmonyMetadata = false

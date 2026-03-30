@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+import json
 
 from packages.protocol.python.worker.v1 import common_pb2, inference_pb2
 
@@ -20,17 +21,21 @@ class EngineCore:
 
         runtime = self._registry.runtime_for_loaded_model(loaded_model)
         state = self._registry.start_request(request_id, runtime_kind=loaded_model.runtime_kind)
-        prompt = runtime.render_prompt(request.messages, loaded_model=loaded_model.runtime_model)
-        if loaded_model.runtime_kind in {"ocr", "vlm"} and hasattr(runtime, "last_probe_snapshot"):
-            self._registry.record_vision_probe(loaded_model.runtime_kind, runtime.last_probe_snapshot())
-        prompt_tokens_default = (
-            runtime.prompt_token_count(prompt)
-            if hasattr(runtime, "prompt_token_count")
-            else len(prompt.split())
-        )
+        prompt_tokens_default = 0
         last_runtime_event = None
 
         try:
+            template_kwargs = self._chat_template_kwargs(request)
+            prompt = runtime.render_prompt(
+                request.messages,
+                loaded_model=loaded_model.runtime_model,
+                template_kwargs=template_kwargs,
+            )
+            prompt_tokens_default = (
+                runtime.prompt_token_count(prompt)
+                if hasattr(runtime, "prompt_token_count")
+                else len(prompt.split())
+            )
             for runtime_event in runtime.generate_tokens(
                 loaded_model.runtime_model,
                 prompt,
@@ -105,3 +110,18 @@ class EngineCore:
                 error=common_pb2.ErrorStatus(code=code, message=message)
             ),
         )
+
+    @staticmethod
+    def _chat_template_kwargs(
+        request: inference_pb2.GenerateRequest,
+    ) -> dict[str, object] | None:
+        raw_value = request.execution.ext.get("melix.chat_template_kwargs.effective_json", "").strip()
+        if not raw_value:
+            return None
+        try:
+            parsed = json.loads(raw_value)
+        except json.JSONDecodeError as exc:  # pragma: no cover - defensive branch
+            raise RuntimeError("Invalid melix.chat_template_kwargs.effective_json payload.") from exc
+        if not isinstance(parsed, dict):
+            raise RuntimeError("melix.chat_template_kwargs.effective_json must decode to an object.")
+        return parsed

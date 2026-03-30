@@ -28,7 +28,8 @@ class DeterministicOCRRuntime:
     def estimate_resident_bytes(self, model_spec):
         return 3072
 
-    def render_prompt(self, messages, loaded_model=None) -> PreparedVisionRequest:
+    def render_prompt(self, messages, loaded_model=None, template_kwargs=None) -> PreparedVisionRequest:
+        _ = template_kwargs
         prepared = prepare_vision_request(messages)
         self._last_probe = VisionProbeSnapshot(
             preprocess_latency_ms=prepared.preprocess_latency_ms,

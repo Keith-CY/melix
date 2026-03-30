@@ -62,7 +62,8 @@ class DeterministicVLMRuntime:
     def estimate_resident_bytes(self, model_spec):
         return 4096
 
-    def render_prompt(self, messages, loaded_model=None) -> PreparedVisionRequest:
+    def render_prompt(self, messages, loaded_model=None, template_kwargs=None) -> PreparedVisionRequest:
+        _ = template_kwargs
         prepared = prepare_vision_request(messages)
         cache_identity, scope_id = self._cache_identity(prepared, loaded_model)
         self._last_probe = VisionProbeSnapshot(

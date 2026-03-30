@@ -20,6 +20,33 @@ class StreamingFakeBackend:
         yield RuntimeTokenEvent(text=" world", prompt_tokens=5, completion_tokens=2, finish_reason="length")
 
 
+class TemplateCapturingTokenizer:
+    def __init__(self) -> None:
+        self.calls: list[tuple[list[dict[str, str]], dict[str, object]]] = []
+
+    def apply_chat_template(self, messages, **kwargs):
+        self.calls.append((messages, kwargs))
+        return "<templated-prompt>"
+
+
+class TemplateAwareStreamingBackend:
+    runtime_name = "fake-mlx"
+
+    def __init__(self) -> None:
+        self.tokenizer = TemplateCapturingTokenizer()
+        self.prompts: list[str] = []
+
+    def load_model(self, model_spec):
+        return {"model_id": model_spec.model_id, "tokenizer": self.tokenizer}
+
+    def estimate_resident_bytes(self, model_spec):
+        return 2048
+
+    def generate_tokens(self, loaded_model, prompt, sampling, cancel_event):
+        self.prompts.append(prompt)
+        yield RuntimeTokenEvent(text="templated", prompt_tokens=7, completion_tokens=1, finish_reason="stop")
+
+
 def build_services():
     registry = WorkerRegistry(
         runtime=MLXTextRuntime(backend=StreamingFakeBackend()),
@@ -80,3 +107,78 @@ def test_prefill_returns_structured_unimplemented_error() -> None:
 
     assert response.ok is False
     assert response.error.code == "unimplemented"
+
+
+def test_generate_applies_chat_template_kwargs_from_execution_metadata() -> None:
+    backend = TemplateAwareStreamingBackend()
+    registry = WorkerRegistry(
+        runtime=MLXTextRuntime(backend=backend),
+        model_catalog=WorkerModelCatalog(),
+    )
+    runtime_service = WorkerRuntimeService(registry)
+    inference_service = WorkerInferenceService(registry)
+    load_response = runtime_service.LoadModel(
+        runtime_pb2.LoadModelRequest(model=WorkerModelCatalog.dev_text_model()),
+        context=None,
+    )
+
+    request = inference_pb2.GenerateRequest(
+        execution=inference_pb2.ExecutionMetadata(
+            id=common_pb2.RequestIdentity(request_id="req-template-kwargs"),
+            model_handle=load_response.model_handle,
+            ext={
+                "melix.chat_template_kwargs.effective_json": "{\"add_generation_prompt\":false,\"continue_final_message\":true}"
+            },
+        ),
+        messages=[
+            common_pb2.ChatMessage(
+                role="user",
+                parts=[common_pb2.MessagePart(text="Continue the reply")],
+            )
+        ],
+        sampling=common_pb2.SamplingConfig(max_output_tokens=8),
+        stream=True,
+    )
+
+    events = list(inference_service.Generate(request, context=None))
+
+    assert [event.token_delta.text for event in events if event.HasField("token_delta")] == ["templated"]
+    assert backend.prompts == ["<templated-prompt>"]
+    assert backend.tokenizer.calls == [
+        (
+            [{"role": "user", "content": "Continue the reply"}],
+            {
+                "tokenize": False,
+                "add_generation_prompt": False,
+                "continue_final_message": True,
+            },
+        )
+    ]
+
+
+def test_generate_rejects_non_object_chat_template_kwargs_payloads() -> None:
+    _, inference_service, model_handle = build_services()
+
+    request = inference_pb2.GenerateRequest(
+        execution=inference_pb2.ExecutionMetadata(
+            id=common_pb2.RequestIdentity(request_id="req-template-invalid-root"),
+            model_handle=model_handle,
+            ext={
+                "melix.chat_template_kwargs.effective_json": "[1,2,3]"
+            },
+        ),
+        messages=[
+            common_pb2.ChatMessage(
+                role="user",
+                parts=[common_pb2.MessagePart(text="Continue the reply")],
+            )
+        ],
+        sampling=common_pb2.SamplingConfig(max_output_tokens=8),
+        stream=True,
+    )
+
+    events = list(inference_service.Generate(request, context=None))
+
+    error = next(event.error.error for event in events if event.HasField("error"))
+    assert error.code == "runtime_error"
+    assert "must decode to an object" in error.message

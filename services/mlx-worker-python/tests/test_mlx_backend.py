@@ -14,10 +14,10 @@ from worker.runtime.mlx_text_runtime import AutoMLXBackend, MLXTextRuntime, Runt
 
 class FakeTokenizer:
     def __init__(self) -> None:
-        self.calls: list[tuple[list[dict[str, str]], bool, bool]] = []
+        self.calls: list[tuple[list[dict[str, str]], dict[str, object]]] = []
 
-    def apply_chat_template(self, messages, tokenize: bool, add_generation_prompt: bool):
-        self.calls.append((messages, tokenize, add_generation_prompt))
+    def apply_chat_template(self, messages, **kwargs):
+        self.calls.append((messages, kwargs))
         return "<prompt-from-template>"
 
 
@@ -70,8 +70,43 @@ def test_runtime_uses_chat_template_when_runtime_model_exposes_tokenizer() -> No
                 {"role": "system", "content": "You are helpful."},
                 {"role": "user", "content": "Hello"},
             ],
-            False,
-            True,
+            {
+                "tokenize": False,
+                "add_generation_prompt": True,
+            },
+        )
+    ]
+
+
+def test_runtime_merges_chat_template_kwargs_into_tokenizer_calls() -> None:
+    runtime = MLXTextRuntime(backend=object())
+    tokenizer = FakeTokenizer()
+
+    prompt = runtime.render_prompt(
+        [
+            common_pb2.ChatMessage(
+                role="user",
+                parts=[common_pb2.MessagePart(text="Hello")],
+            )
+        ],
+        loaded_model={"tokenizer": tokenizer},
+        template_kwargs={
+            "add_generation_prompt": False,
+            "continue_final_message": True,
+        },
+    )
+
+    assert prompt == "<prompt-from-template>"
+    assert tokenizer.calls == [
+        (
+            [
+                {"role": "user", "content": "Hello"},
+            ],
+            {
+                "tokenize": False,
+                "add_generation_prompt": False,
+                "continue_final_message": True,
+            },
         )
     ]
 

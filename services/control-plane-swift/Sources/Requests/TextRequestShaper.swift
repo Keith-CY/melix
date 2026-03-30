@@ -30,6 +30,7 @@ public struct TextRequestShaper: Sendable {
     private let workflows: [TextWorkflowKind: WorkflowDefaults]
     private let modelThinkingPolicies: [String: MelixMessagesThinkingConfig]
     private let toolParserRegistry: ToolParserRegistry
+    private let chatTemplatePolicyRegistry: ChatTemplatePolicyRegistry
 
     public init(
         presets: [String: (
@@ -82,7 +83,8 @@ public struct TextRequestShaper: Sendable {
         modelThinkingPolicies: [String: MelixMessagesThinkingConfig] = [
             "melix-dev-text": .init(type: "adaptive", budgetTokens: 192),
         ],
-        toolParserRegistry: ToolParserRegistry = ToolParserRegistry()
+        toolParserRegistry: ToolParserRegistry = ToolParserRegistry(),
+        chatTemplatePolicyRegistry: ChatTemplatePolicyRegistry = ChatTemplatePolicyRegistry()
     ) {
         self.presets = presets.mapValues { value in
             PresetDefaults(
@@ -107,11 +109,13 @@ public struct TextRequestShaper: Sendable {
         }
         self.modelThinkingPolicies = modelThinkingPolicies
         self.toolParserRegistry = toolParserRegistry
+        self.chatTemplatePolicyRegistry = chatTemplatePolicyRegistry
     }
 
     public func shape(
         _ request: NormalizedTextRequest,
-        modelToolParser: ToolParserSelection? = nil
+        modelToolParser: ToolParserSelection? = nil,
+        modelChatTemplatePolicy: ModelChatTemplatePolicy? = nil
     ) -> ShapedTextRequest {
         let preset = request.presetID.flatMap { presets[$0] }
         let workflowKind = request.workflow ?? .interactive
@@ -144,6 +148,10 @@ public struct TextRequestShaper: Sendable {
             requested: request.toolParser,
             modelDefault: modelToolParser
         )
+        let resolvedChatTemplate = chatTemplatePolicyRegistry.resolve(
+            requested: request.chatTemplate,
+            modelPolicy: modelChatTemplatePolicy
+        )
 
         return ShapedTextRequest(
             endpoint: request.endpoint,
@@ -174,7 +182,8 @@ public struct TextRequestShaper: Sendable {
             reasoningMode: resolvedThinking.mode,
             reasoningSource: resolvedThinking.source,
             structuredOutput: request.structuredOutput,
-            toolParser: resolvedToolParser
+            toolParser: resolvedToolParser,
+            chatTemplate: resolvedChatTemplate
         )
     }
 

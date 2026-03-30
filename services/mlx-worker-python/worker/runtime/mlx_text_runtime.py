@@ -133,7 +133,12 @@ class MLXTextRuntime:
     def estimate_resident_bytes(self, model_spec) -> int:
         return int(self._backend.estimate_resident_bytes(model_spec))
 
-    def render_prompt(self, messages, loaded_model: Any | None = None) -> str:
+    def render_prompt(
+        self,
+        messages,
+        loaded_model: Any | None = None,
+        template_kwargs: dict[str, Any] | None = None,
+    ) -> str:
         tokenizer = None
         if isinstance(loaded_model, dict):
             tokenizer = loaded_model.get("tokenizer")
@@ -147,11 +152,13 @@ class MLXTextRuntime:
                         "content": "\n".join(text_parts),
                     }
                 )
-            return tokenizer.apply_chat_template(
-                chat_messages,
-                tokenize=False,
-                add_generation_prompt=True,
-            )
+            resolved_template_kwargs: dict[str, Any] = {
+                "tokenize": False,
+                "add_generation_prompt": True,
+            }
+            if template_kwargs:
+                resolved_template_kwargs.update(template_kwargs)
+            return tokenizer.apply_chat_template(chat_messages, **resolved_template_kwargs)
 
         chunks: list[str] = []
         for message in messages:

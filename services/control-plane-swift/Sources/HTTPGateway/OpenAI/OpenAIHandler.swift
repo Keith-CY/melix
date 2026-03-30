@@ -220,6 +220,8 @@ public struct OpenAIHandler: Sendable {
             return invalidArgumentResponse(message: error.operatorMessage)
         } catch let error as ToolParserConfigurationError {
             return invalidArgumentResponse(message: error.operatorMessage)
+        } catch let error as ChatTemplatePolicyError {
+            return invalidArgumentResponse(message: error.operatorMessage)
         } catch let error as HTTPRequestHandlingError {
             return httpErrorResponse(for: error)
         }
@@ -234,6 +236,8 @@ public struct OpenAIHandler: Sendable {
             return invalidArgumentResponse(message: error.operatorMessage)
         } catch let error as ToolParserConfigurationError {
             return invalidArgumentResponse(message: error.operatorMessage)
+        } catch let error as ChatTemplatePolicyError {
+            return invalidArgumentResponse(message: error.operatorMessage)
         } catch let error as HTTPRequestHandlingError {
             return httpErrorResponse(for: error)
         }
@@ -247,6 +251,8 @@ public struct OpenAIHandler: Sendable {
         } catch let error as StructuredOutputFormatError {
             return invalidArgumentResponse(message: error.operatorMessage)
         } catch let error as ToolParserConfigurationError {
+            return invalidArgumentResponse(message: error.operatorMessage)
+        } catch let error as ChatTemplatePolicyError {
             return invalidArgumentResponse(message: error.operatorMessage)
         } catch let error as HTTPRequestHandlingError {
             return httpErrorResponse(for: error)
@@ -265,6 +271,8 @@ public struct OpenAIHandler: Sendable {
         } catch let error as StructuredOutputFormatError {
             return invalidArgumentResponse(message: error.operatorMessage)
         } catch let error as ToolParserConfigurationError {
+            return invalidArgumentResponse(message: error.operatorMessage)
+        } catch let error as ChatTemplatePolicyError {
             return invalidArgumentResponse(message: error.operatorMessage)
         } catch let error as HTTPRequestHandlingError {
             return httpErrorResponse(for: error)
@@ -877,11 +885,17 @@ public struct OpenAIHandler: Sendable {
         } else {
             nil
         }
+        let modelChatTemplatePolicy: ModelChatTemplatePolicy? = if let model = await modelCatalog.model(id: normalized.model) {
+            try ModelChatTemplatePolicy(modelSettings: model.settings)
+        } else {
+            nil
+        }
         let shapingStartedAt = Date()
         let translated = try translator.translate(
             normalized,
             modelHandle: modelHandle,
-            modelToolParser: modelToolParser
+            modelToolParser: modelToolParser,
+            modelChatTemplatePolicy: modelChatTemplatePolicy
         )
         await recordShapingMetrics(for: translated, startedAt: shapingStartedAt)
         return translated
@@ -910,6 +924,12 @@ public struct OpenAIHandler: Sendable {
         if let parserMode = translated.workerRequest.execution.ext["melix.tool_parser.mode"] {
             await metricsStore.increment("http.tool_parser_request_count")
             await metricsStore.increment("http.tool_parser_\(parserMode)_request_count")
+        }
+        if translated.workerRequest.execution.ext["melix.chat_template_kwargs.effective_json"] != nil {
+            await metricsStore.increment("http.chat_template_kwargs_request_count")
+        }
+        if translated.workerRequest.execution.ext["melix.chat_template_kwargs.forced_json"] != nil {
+            await metricsStore.increment("http.chat_template_kwargs_forced_request_count")
         }
     }
 

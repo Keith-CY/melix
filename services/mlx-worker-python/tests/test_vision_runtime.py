@@ -276,6 +276,58 @@ def test_ocr_and_vlm_runtimes_expose_probe_snapshots_after_cancelled_generation(
     assert vlm_probe.first_token_latency_ms >= 0.0
 
 
+def test_ocr_runtime_render_prompt_accepts_chat_template_kwargs() -> None:
+    runtime = DeterministicOCRRuntime()
+    prepared = runtime.render_prompt(
+        [
+            common_pb2.ChatMessage(
+                role="user",
+                parts=[
+                    common_pb2.MessagePart(text="Inspect the image."),
+                    common_pb2.MessagePart(
+                        image_bytes=b"ocr template kwargs",
+                        media=common_pb2.MediaMetadata(
+                            media_type=common_pb2.MEDIA_TYPE_IMAGE,
+                            source_kind=common_pb2.MEDIA_SOURCE_INLINE_BYTES,
+                        ),
+                    ),
+                ],
+            )
+        ],
+        template_kwargs={"continue_final_message": True},
+    )
+
+    assert prepared.prompt_text == "Inspect the image."
+    assert prepared.images[0].decoded_text() == "ocr template kwargs"
+
+
+def test_vlm_runtime_render_prompt_accepts_chat_template_kwargs() -> None:
+    runtime = DeterministicVLMRuntime()
+    loaded_model = runtime.load_model(WorkerModelCatalog.dev_vlm_model())
+    prepared = runtime.render_prompt(
+        [
+            common_pb2.ChatMessage(
+                role="user",
+                parts=[
+                    common_pb2.MessagePart(text="Describe the image."),
+                    common_pb2.MessagePart(
+                        image_bytes=b"vlm template kwargs",
+                        media=common_pb2.MediaMetadata(
+                            media_type=common_pb2.MEDIA_TYPE_IMAGE,
+                            source_kind=common_pb2.MEDIA_SOURCE_INLINE_BYTES,
+                        ),
+                    ),
+                ],
+            )
+        ],
+        loaded_model=loaded_model,
+        template_kwargs={"continue_final_message": True},
+    )
+
+    assert prepared.prompt_text == "Describe the image."
+    assert prepared.images[0].decoded_text() == "vlm template kwargs"
+
+
 def test_vlm_runtime_reuses_cache_for_identical_multimodal_requests() -> None:
     runtime = DeterministicVLMRuntime()
     loaded_model = runtime.load_model(WorkerModelCatalog.dev_vlm_model())

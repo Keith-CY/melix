@@ -195,6 +195,107 @@ struct OpenAIHandlerTests {
         #expect(payload.contains("data: [DONE]"))
     }
 
+    @Test("POST /v1/responses merges model and request chat template kwargs and records metrics")
+    func postResponsesMergesModelAndRequestChatTemplateKwargsAndRecordsMetrics() async throws {
+        let model = warmModel()
+        var configuredModel = model
+        configuredModel.settings.ext["chat_template_kwargs"] = "{\"chat_template\":\"model-template\",\"tokenize\":true}"
+        configuredModel.settings.ext["chat_template_forced_kwargs"] = "{\"chat_template\":\"forced-template\",\"add_generation_prompt\":true}"
+        let catalog = ModelCatalog(seedModels: [configuredModel])
+        let metricsStore = MetricsStore()
+        let workerClient = ScriptedWorkerClient(events: [
+            makeCompletedEvent(requestID: "req-template-http", seq: 1, finishReason: "stop", assistantText: "done"),
+        ])
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(defaultTextClient: workerClient),
+            abortRegistry: AbortRegistry()
+        )
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: coordinator,
+            metricsStore: metricsStore,
+            translator: ChatRequestTranslator(requestIDGenerator: { "req-template-http" })
+        )
+
+        let body = try #require(
+            """
+            {
+              "model": "melix-dev-text",
+              "input": "Continue the answer.",
+              "chat_template_kwargs": {
+                "chat_template": "request-template",
+                "continue_final_message": true
+              }
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/responses",
+                headers: ["content-type": "application/json"],
+                body: body
+            )
+        )
+
+        let request = try #require(await workerClient.lastGenerateRequest)
+        let metrics = await metricsStore.snapshot()
+        let payload = try await collectBody(response.body)
+
+        #expect(response.statusCode == 200)
+        #expect(request.execution.ext["melix.chat_template_kwargs.source"] == "model+request+forced")
+        #expect(
+            request.execution.ext["melix.chat_template_kwargs.effective_json"]
+                == "{\"add_generation_prompt\":true,\"chat_template\":\"forced-template\",\"continue_final_message\":true,\"tokenize\":true}"
+        )
+        #expect(request.execution.ext["melix.chat_template_kwargs.forced_keys"] == "add_generation_prompt,chat_template")
+        #expect(metrics.values["http.chat_template_kwargs_request_count"] == 1)
+        #expect(metrics.values["http.chat_template_kwargs_forced_request_count"] == 1)
+        #expect(payload.contains("data: [DONE]"))
+    }
+
+    @Test("POST /v1/responses rejects malformed model chat template kwargs")
+    func postResponsesRejectsMalformedModelChatTemplateKwargs() async throws {
+        let model = warmModel()
+        var configuredModel = model
+        configuredModel.settings.ext["chat_template_kwargs"] = "[\"invalid-root\"]"
+        let catalog = ModelCatalog(seedModels: [configuredModel])
+        let workerClient = ScriptedWorkerClient(events: [])
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(defaultTextClient: workerClient),
+            abortRegistry: AbortRegistry()
+        )
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: coordinator,
+            translator: ChatRequestTranslator(requestIDGenerator: { "req-template-invalid-model" })
+        )
+
+        let body = try #require(
+            """
+            {
+              "model": "melix-dev-text",
+              "input": "Continue the answer."
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/responses",
+                headers: ["content-type": "application/json"],
+                body: body
+            )
+        )
+
+        let payload = try await collectBody(response.body)
+
+        #expect(response.statusCode == 400)
+        #expect(payload.contains("chat_template_kwargs must be a JSON object"))
+    }
+
     @Test("POST /v1/chat/completions prefers explicit runtime memory accounting fields when available")
     func postChatCompletionsPrefersExplicitRuntimeMemoryAccountingFields() async throws {
         let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel()])
