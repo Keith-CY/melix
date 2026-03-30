@@ -40,6 +40,17 @@ class WorkerModelCatalog:
     @staticmethod
     def dev_embedding_model(environment: dict[str, str] | None = None) -> common_pb2.ModelSpec:
         environment = dict(environment or os.environ)
+        backend_id = environment.get("MELIX_DEV_EMBED_BACKEND_ID", "bert-v1").strip() or "bert-v1"
+        family_id = environment.get(
+            "MELIX_DEV_EMBED_FAMILY_ID",
+            "xlmr" if backend_id == "xlmr-v1" else "bert",
+        ).strip() or ("xlmr" if backend_id == "xlmr-v1" else "bert")
+        pooling_mode = environment.get(
+            "MELIX_DEV_EMBED_POOLING_MODE",
+            "mean" if family_id == "xlmr" else "cls",
+        ).strip() or ("mean" if family_id == "xlmr" else "cls")
+        normalization = environment.get("MELIX_DEV_EMBED_NORMALIZATION", "l2").strip() or "l2"
+        dimensions = environment.get("MELIX_DEV_EMBED_DIMENSIONS", "8").strip() or "8"
         return common_pb2.ModelSpec(
             model_id="melix-dev-embed",
             model_path=environment.get("MELIX_DEV_EMBED_MODEL_PATH", "models/melix-dev-embed"),
@@ -50,6 +61,13 @@ class WorkerModelCatalog:
             parser_mode="text",
             reasoning_mode="off",
             max_context=8192,
+            ext={
+                "embedding_backend_id": backend_id,
+                "embedding_family_id": family_id,
+                "embedding_pooling_mode": pooling_mode,
+                "embedding_normalization": normalization,
+                "embedding_dimensions": dimensions,
+            },
         )
 
     @staticmethod

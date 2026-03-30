@@ -8,33 +8,64 @@ import urllib.request
 from tests.integration.helpers import LiveMelixStack
 
 
+def _post_embeddings(stack: LiveMelixStack, model: str, inputs: list[str]) -> tuple[int, dict[str, object]]:
+    request = urllib.request.Request(
+        f"http://127.0.0.1:{stack.http_port}/v1/embeddings",
+        data=json.dumps({"model": model, "input": inputs}).encode("utf-8"),
+        headers={"content-type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(request, timeout=10) as response:
+        payload = json.loads(response.read().decode("utf-8"))
+        return response.status, payload
+
+
 def test_embeddings_endpoint_returns_vectors() -> None:
     stack = LiveMelixStack(Path(__file__).resolve().parents[2])
 
     try:
         stack.start()
         stack.wait_for_models(["melix-dev-embed"])
-        request = urllib.request.Request(
-            f"http://127.0.0.1:{stack.http_port}/v1/embeddings",
-            data=json.dumps(
-                {
-                    "model": "melix-dev-embed",
-                    "input": ["alpha", "beta"],
-                }
-            ).encode("utf-8"),
-            headers={"content-type": "application/json"},
-            method="POST",
-        )
-        with urllib.request.urlopen(request, timeout=10) as response:
-            payload = json.loads(response.read().decode("utf-8"))
+        status, payload = _post_embeddings(stack, "melix-dev-embed", ["alpha", "beta"])
 
-        assert response.status == 200
+        assert status == 200
         assert payload["object"] == "list"
         assert payload["model"] == "melix-dev-embed"
         assert len(payload["data"]) == 2
         assert len(payload["data"][0]["embedding"]) == 8
     finally:
         stack.stop()
+
+
+def test_embeddings_endpoint_supports_xlmr_backend_override() -> None:
+    repo_root = Path(__file__).resolve().parents[2]
+    bert_stack = LiveMelixStack(repo_root)
+    xlmr_stack = LiveMelixStack(
+        repo_root,
+        environment_overrides={"MELIX_DEV_EMBED_BACKEND_ID": "xlmr-v1"},
+    )
+
+    try:
+        bert_stack.start()
+        bert_stack.wait_for_models(["melix-dev-embed"])
+        bert_status, bert_payload = _post_embeddings(bert_stack, "melix-dev-embed", ["Straße"])
+    finally:
+        bert_stack.stop()
+
+    try:
+        xlmr_stack.start()
+        xlmr_stack.wait_for_models(["melix-dev-embed"])
+        xlmr_status, xlmr_payload = _post_embeddings(xlmr_stack, "melix-dev-embed", ["Straße"])
+    finally:
+        xlmr_stack.stop()
+
+    assert bert_status == 200
+    assert xlmr_status == 200
+    assert bert_payload["model"] == "melix-dev-embed"
+    assert xlmr_payload["model"] == "melix-dev-embed"
+    assert len(bert_payload["data"][0]["embedding"]) == 8
+    assert len(xlmr_payload["data"][0]["embedding"]) == 8
+    assert bert_payload["data"][0]["embedding"] != xlmr_payload["data"][0]["embedding"]
 
 
 def test_rerank_endpoint_returns_ranked_items() -> None:

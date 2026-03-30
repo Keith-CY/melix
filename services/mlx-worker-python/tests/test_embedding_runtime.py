@@ -1,8 +1,11 @@
+import pytest
+
 from packages.protocol.python.worker.v1 import common_pb2, inference_pb2, runtime_pb2
 
 from worker.grpc_server import WorkerInferenceService, WorkerRuntimeService
 from worker.model_registry.catalog import WorkerModelCatalog
 from worker.registry import WorkerRegistry
+from worker.runtime.deterministic_embedding_runtime import DeterministicEmbeddingRuntime
 from worker.runtime.mlx_text_runtime import MLXTextRuntime
 
 
@@ -16,14 +19,14 @@ class PassiveTextBackend:
         return 1024
 
 
-def build_services():
+def build_services(model_catalog: WorkerModelCatalog | None = None):
     registry = WorkerRegistry(
         runtime=MLXTextRuntime(backend=PassiveTextBackend()),
-        model_catalog=WorkerModelCatalog(),
+        model_catalog=model_catalog or WorkerModelCatalog(),
     )
     runtime_service = WorkerRuntimeService(registry)
     inference_service = WorkerInferenceService(registry)
-    return runtime_service, inference_service
+    return registry, runtime_service, inference_service
 
 
 def load_model(runtime_service: WorkerRuntimeService, model: common_pb2.ModelSpec) -> str:
@@ -36,7 +39,7 @@ def load_model(runtime_service: WorkerRuntimeService, model: common_pb2.ModelSpe
 
 
 def test_embed_returns_stable_vectors_for_loaded_embedding_models() -> None:
-    runtime_service, inference_service = build_services()
+    _, runtime_service, inference_service = build_services()
     model_handle = load_model(runtime_service, WorkerModelCatalog.dev_embedding_model())
 
     first = inference_service.Embed(
@@ -66,7 +69,7 @@ def test_embed_returns_stable_vectors_for_loaded_embedding_models() -> None:
 
 
 def test_embed_rejects_missing_and_wrong_model_kinds() -> None:
-    runtime_service, inference_service = build_services()
+    _, runtime_service, inference_service = build_services()
     text_handle = load_model(runtime_service, WorkerModelCatalog.dev_text_model())
 
     missing = inference_service.Embed(
@@ -88,3 +91,80 @@ def test_embed_rejects_missing_and_wrong_model_kinds() -> None:
 
     assert missing.error.code == "not_found"
     assert wrong_kind.error.code == "invalid_argument"
+
+
+def test_load_model_exposes_embedding_backend_metadata_for_bert_and_xlmr() -> None:
+    registry, runtime_service, _ = build_services()
+    bert_handle = load_model(runtime_service, WorkerModelCatalog.dev_embedding_model())
+    xlmr_model = WorkerModelCatalog.dev_embedding_model(
+        environment={"MELIX_DEV_EMBED_BACKEND_ID": "xlmr-v1"}
+    )
+    xlmr_model.model_id = "melix-dev-embed-xlmr"
+    xlmr_handle = load_model(runtime_service, xlmr_model)
+
+    bert_loaded = registry.get_loaded_model(bert_handle)
+    xlmr_loaded = registry.get_loaded_model(xlmr_handle)
+
+    assert bert_loaded is not None
+    assert xlmr_loaded is not None
+    assert bert_loaded.runtime_model["embedding_backend_id"] == "bert-v1"
+    assert bert_loaded.runtime_model["embedding_family_id"] == "bert"
+    assert xlmr_loaded.runtime_model["embedding_backend_id"] == "xlmr-v1"
+    assert xlmr_loaded.runtime_model["embedding_family_id"] == "xlmr"
+
+
+def test_embed_returns_distinct_vectors_for_xlmr_backend_selection() -> None:
+    _, runtime_service, inference_service = build_services()
+    bert_handle = load_model(runtime_service, WorkerModelCatalog.dev_embedding_model())
+    xlmr_model = WorkerModelCatalog.dev_embedding_model(
+        environment={"MELIX_DEV_EMBED_BACKEND_ID": "xlmr-v1"}
+    )
+    xlmr_model.model_id = "melix-dev-embed-xlmr"
+    xlmr_handle = load_model(runtime_service, xlmr_model)
+
+    bert = inference_service.Embed(
+        inference_pb2.EmbedRequest(
+            id=common_pb2.RequestIdentity(request_id="embed-bert"),
+            model_handle=bert_handle,
+            inputs=["Straße"],
+        ),
+        context=None,
+    )
+    xlmr = inference_service.Embed(
+        inference_pb2.EmbedRequest(
+            id=common_pb2.RequestIdentity(request_id="embed-xlmr"),
+            model_handle=xlmr_handle,
+            inputs=["Straße"],
+        ),
+        context=None,
+    )
+
+    assert bert.error.code == ""
+    assert xlmr.error.code == ""
+    assert bert.embeddings[0].values != xlmr.embeddings[0].values
+
+
+def test_embed_runtime_resolves_backend_from_loaded_model_metadata() -> None:
+    runtime = DeterministicEmbeddingRuntime()
+
+    vectors = runtime.embed_inputs(
+        {
+            "model_id": "melix-dev-embed-xlmr",
+            "dimensions": 8,
+            "embedding_backend_id": "xlmr-v1",
+        },
+        ["Straße"],
+    )
+
+    assert len(vectors) == 1
+    assert len(vectors[0]) == 8
+
+
+def test_load_model_rejects_unsupported_embedding_backend() -> None:
+    runtime = DeterministicEmbeddingRuntime()
+    model = WorkerModelCatalog.dev_embedding_model(
+        environment={"MELIX_DEV_EMBED_BACKEND_ID": "unsupported-v1"}
+    )
+
+    with pytest.raises(ValueError, match="Unsupported embedding backend"):
+        runtime.load_model(model)
