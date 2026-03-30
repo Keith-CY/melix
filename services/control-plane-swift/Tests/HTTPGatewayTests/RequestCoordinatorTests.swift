@@ -763,6 +763,32 @@ struct RequestCoordinatorTests {
         cacheStats.stats.l2RestoreHitRate = 1.0
         cacheStats.stats.compressionRatio = 0.25
         cacheStats.stats.activeMode = .hybrid
+        var scope = Melix_Worker_V1_CacheScope()
+        scope.modelID = "melix-dev-text"
+        scope.multimodalAdapterHash = "image-hash-hot"
+        scope.scopeID = "scope-hot"
+
+        var hotCacheKey = Melix_Worker_V1_CacheKey()
+        hotCacheKey.prefixHash = Data("prefix-hot".utf8)
+        hotCacheKey.fingerprintHash = Data("fingerprint-hot".utf8)
+        hotCacheKey.scopeID = "scope-hot"
+
+        var hotPrefix = Melix_Worker_V1_PrefixRef()
+        hotPrefix.prefixID = "prefix-hot"
+        hotPrefix.cacheKey = hotCacheKey
+        hotPrefix.scope = scope
+        hotPrefix.tokenLength = 4
+        hotPrefix.tier = "l1"
+        hotPrefix.pinned = true
+        cacheStats.snapshot.hotPrefixes = [hotPrefix]
+
+        var scopeSummary = Melix_Worker_V1_CacheScopeSummary()
+        scopeSummary.scopeID = "scope-hot"
+        scopeSummary.scope = scope
+        scopeSummary.l1Bytes = 2_048
+        scopeSummary.blockCount = 1
+        scopeSummary.prefixCount = 1
+        cacheStats.snapshot.scopes = [scopeSummary]
         await workerClient.setCacheStatsResponse(cacheStats)
 
         let sessionGraphStore = SessionGraphStore(nowUnixMs: { 11_000 })
@@ -825,6 +851,8 @@ struct RequestCoordinatorTests {
 
         let metrics = await metricsStore.snapshot()
         let cacheSummary = await cacheMetadataStore.cacheSummary()
+        let cacheSnapshot = await cacheMetadataStore.cacheSnapshot()
+        let sessionState = await sessionGraphStore.state(for: "session-hot")
 
         #expect(metrics.values["scheduler.prefix_affinity_hit_rate"] == 100)
         #expect(metrics.values["scheduler.warm_route_preference_rate"] == 100)
@@ -838,6 +866,12 @@ struct RequestCoordinatorTests {
         #expect(cacheSummary.l1Bytes == 2_048)
         #expect(cacheSummary.l2Bytes == 4_096)
         #expect(cacheSummary.activeMode == .hybrid)
+        #expect(cacheSnapshot.hotPrefixes.first?.cacheKey.fingerprintHash == Data("fingerprint-hot".utf8))
+        #expect(cacheSnapshot.hotPrefixes.first?.cacheKey.scope.multimodalAdapterHash == "image-hash-hot")
+        #expect(cacheSnapshot.hotPrefixes.first?.cacheKey.scope.scopeID == "scope-hot")
+        #expect(cacheSnapshot.scopes.first?.scope.multimodalAdapterHash == "image-hash-hot")
+        #expect(sessionState?.branches.first?.headCacheKey.fingerprintHash == Data("fingerprint-req-hot".utf8))
+        #expect(sessionState?.branches.first?.headCacheKey.scope.scopeID == "scope-req-hot")
     }
 
     @Test("partial restore plans are recorded in scheduler metrics and cache metadata")
@@ -1923,6 +1957,10 @@ private actor PhaseAwareWorkerClient:
         response.lifecyclePhase = .executionPrefilling
         response.admissionState = .admissionAdmitted
         response.restoredSnapshotID = request.execution.cacheHints.restoreSnapshotID
+        response.blockTable.cacheKey.prefixHash = Data("prefix-\(request.execution.id.requestID)".utf8)
+        response.blockTable.cacheKey.fingerprintHash = Data("fingerprint-\(request.execution.id.requestID)".utf8)
+        response.blockTable.cacheKey.scopeID = "scope-\(request.execution.id.requestID)"
+        response.blockTable.scopeID = "scope-\(request.execution.id.requestID)"
         if request.execution.cacheHints.restoreSnapshotID == "snap-partial" {
             var snapshot = Melix_Worker_V1_SnapshotRef()
             snapshot.snapshotID = "snap-partial"
@@ -1934,6 +1972,7 @@ private actor PhaseAwareWorkerClient:
             var cacheKey = Melix_Worker_V1_CacheKey()
             cacheKey.scopeID = "scope-partial"
             cacheKey.prefixHash = Data("partial-prefix".utf8)
+            cacheKey.fingerprintHash = Data("partial-fingerprint".utf8)
 
             var block = Melix_Worker_V1_BlockRef()
             block.blockID = "blk-partial-0"

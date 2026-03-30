@@ -1496,7 +1496,9 @@ public actor RequestCoordinator {
 
         var key = Melix_Controlplane_V1_CacheKey()
         key.prefixHash = blockTable.cacheKey.prefixHash
+        key.fingerprintHash = blockTable.cacheKey.fingerprintHash
         key.scope.modelID = modelID
+        key.scope.scopeID = blockTable.scopeID.isEmpty ? blockTable.cacheKey.scopeID : blockTable.scopeID
 
         _ = await sessionGraphStore.recordSnapshotHydration(
             sessionID: requestIdentity.sessionID,
@@ -1691,6 +1693,7 @@ private func controlPlaneCacheKey(
 ) -> Melix_Controlplane_V1_CacheKey {
     var key = Melix_Controlplane_V1_CacheKey()
     key.prefixHash = workerKey.prefixHash
+    key.fingerprintHash = workerKey.fingerprintHash
     key.scope = controlPlaneCacheScopeKey(from: scope)
     return key
 }
@@ -1706,6 +1709,8 @@ private func controlPlaneCacheScopeKey(
     scope.promptTemplateHash = workerScope.promptTemplateHash
     scope.parserMode = workerScope.parserMode
     scope.reasoningMode = workerScope.reasoningMode
+    scope.multimodalAdapterHash = workerScope.multimodalAdapterHash
+    scope.scopeID = workerScope.scopeID
     return scope
 }
 

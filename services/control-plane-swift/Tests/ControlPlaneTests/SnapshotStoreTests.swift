@@ -295,6 +295,7 @@ struct SnapshotStoreTests {
     func controlPlaneRestoreMetadataBridgesWorkerPlans() throws {
         var cacheKey = Melix_Worker_V1_CacheKey()
         cacheKey.prefixHash = Data([0xAA, 0xBB])
+        cacheKey.fingerprintHash = Data([0x10, 0x20, 0x30])
         cacheKey.scopeID = "scope-worker"
 
         var block = Melix_Worker_V1_BlockRef()
@@ -348,8 +349,10 @@ struct SnapshotStoreTests {
         #expect(decoded.planID == "restore-bt-1")
         #expect(decoded.boundary.snapshot.snapshotID == "snap-1")
         #expect(decoded.boundary.scopeID == "scope-worker")
+        #expect(decoded.boundary.fingerprintHash == Data([0x10, 0x20, 0x30]))
         #expect(decoded.blockTable.blockTableID == "bt-1")
         #expect(decoded.blockTable.pages.first?.pageID == "page-0")
+        #expect(decoded.blockTable.fingerprintHash == Data([0x10, 0x20, 0x30]))
         #expect(decoded.blockTable.totalTokenCount == 16)
         #expect(decoded.tier == "l2")
     }

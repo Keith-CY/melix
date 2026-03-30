@@ -653,11 +653,14 @@ message CacheScopeKey {
   string prompt_template_hash = 5;
   string parser_mode = 6;
   string reasoning_mode = 7;
+  string multimodal_adapter_hash = 8;
+  string scope_id = 9;
 }
 
 message CacheKey {
   bytes prefix_hash = 1;
   CacheScopeKey scope = 2;
+  bytes fingerprint_hash = 3;
 }
 
 message CacheBlockRef {
@@ -681,6 +684,7 @@ message BlockTable {
   bytes prefix_hash = 4;
   string scope_id = 5;
   uint32 total_token_count = 6;
+  bytes fingerprint_hash = 7;
 }
 
 message PrefixRef {
@@ -705,6 +709,7 @@ message CacheRestoreBoundary {
   bytes prefix_hash = 2;
   string scope_id = 3;
   string boundary_kind = 4;
+  bytes fingerprint_hash = 5;
 }
 
 message CacheRestorePlan {

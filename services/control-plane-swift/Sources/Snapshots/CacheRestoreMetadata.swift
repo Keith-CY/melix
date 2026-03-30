@@ -24,8 +24,9 @@ func makeControlPlaneRestoreBoundary(
     var boundary = Melix_Controlplane_V1_CacheRestoreBoundary()
     boundary.snapshot = makeControlPlaneSnapshotRef(from: workerBoundary.snapshot)
     boundary.prefixHash = workerBoundary.cacheKey.prefixHash
-    boundary.scopeID = workerBoundary.scopeID
+    boundary.scopeID = workerBoundary.scopeID.isEmpty ? workerBoundary.cacheKey.scopeID : workerBoundary.scopeID
     boundary.boundaryKind = workerBoundary.boundaryKind
+    boundary.fingerprintHash = workerBoundary.cacheKey.fingerprintHash
     return boundary
 }
 
@@ -39,6 +40,7 @@ func makeControlPlaneBlockTable(
     table.pages = workerTable.pages.map(makeControlPlanePageRef(from:))
     table.prefixHash = workerTable.cacheKey.prefixHash
     table.scopeID = workerTable.scopeID.isEmpty ? workerTable.cacheKey.scopeID : workerTable.scopeID
+    table.fingerprintHash = workerTable.cacheKey.fingerprintHash
     table.totalTokenCount = workerTable.totalTokenCount
     return table
 }
