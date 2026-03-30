@@ -70,7 +70,8 @@ actor WorkerRuntimeRegistry {
         self.modelCatalog = modelCatalog
         self.runtime = runtime
         self.cacheStore = cacheStore ?? HotCacheStore(
-            diskStore: DiskCacheStore(rootPath: configuration.cacheRootPath)
+            diskStore: DiskCacheStore(rootPath: configuration.cacheRootPath),
+            initialCacheBlocks: configuration.initialCacheBlocks
         )
         self.loadedModels = [:]
         self.activeRequests = 0
@@ -129,7 +130,9 @@ actor WorkerRuntimeRegistry {
         let existingResidentBytes = loadedModels.values.reduce(0) { $0 + $1.estimatedResidentBytes }
         let projectedResidentBytes = existingResidentBytes &+ loaded.estimatedResidentBytes
         let requiredProcessBytes = projectedResidentBytes &+ configuration.modelLoadHeadroomBytes
-        if configuration.processMemoryBudgetBytes > 0, requiredProcessBytes > configuration.processMemoryBudgetBytes {
+        if configuration.memoryEnforcementEnabled,
+           configuration.processMemoryBudgetBytes > 0,
+           requiredProcessBytes > configuration.processMemoryBudgetBytes {
             await runtime.unloadModel(loaded.model)
             throw WorkerRuntimeRegistryError.memoryBudgetExceeded(
                 budgetBytes: configuration.processMemoryBudgetBytes,
@@ -140,7 +143,9 @@ actor WorkerRuntimeRegistry {
         }
 
         let requiredRequestBytes = loaded.estimatedResidentBytes &+ configuration.modelLoadHeadroomBytes
-        if memoryBudgetBytes > 0, requiredRequestBytes > memoryBudgetBytes {
+        if configuration.memoryEnforcementEnabled,
+           memoryBudgetBytes > 0,
+           requiredRequestBytes > memoryBudgetBytes {
             await runtime.unloadModel(loaded.model)
             throw WorkerRuntimeRegistryError.memoryBudgetExceeded(
                 budgetBytes: memoryBudgetBytes,
@@ -461,7 +466,7 @@ actor WorkerRuntimeRegistry {
         stats.cacheResidentBytes = cacheResidentBytes
         stats.kvCacheBytes = kvCacheBytes
         stats.peakAllocationBytes = 0
-        stats.memoryHeadroomBytes = configuration.modelLoadHeadroomBytes
+        stats.memoryHeadroomBytes = configuration.memoryEnforcementEnabled ? configuration.modelLoadHeadroomBytes : 0
         stats.residentBytes = modelResidentBytes &+ cacheResidentBytes &+ kvCacheBytes
         stats.activeRequests = activeRequests
         stats.activePrefills = activePrefills
@@ -653,7 +658,9 @@ actor WorkerRuntimeRegistry {
         let existingResidentBytes = loadedModels.values.reduce(0) { $0 + $1.estimatedResidentBytes }
         let projectedResidentBytes = existingResidentBytes &+ estimatedPrefillBytes
         let requiredBytes = projectedResidentBytes &+ configuration.prefillMemoryHeadroomBytes
-        if configuration.processMemoryBudgetBytes > 0, requiredBytes > configuration.processMemoryBudgetBytes {
+        if configuration.memoryEnforcementEnabled,
+           configuration.processMemoryBudgetBytes > 0,
+           requiredBytes > configuration.processMemoryBudgetBytes {
             throw WorkerRuntimeRegistryError.prefillMemoryGuardExceeded(
                 budgetBytes: configuration.processMemoryBudgetBytes,
                 headroomBytes: configuration.prefillMemoryHeadroomBytes,

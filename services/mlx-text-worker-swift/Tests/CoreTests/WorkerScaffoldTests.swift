@@ -25,10 +25,12 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(configuration.backendMode, "swift")
         XCTAssertEqual(configuration.runtimeVersion, "melix-swift-text-worker/dev")
         XCTAssertEqual(configuration.cacheRootPath, ".runtime/swift-text-worker-cache")
+        XCTAssertFalse(configuration.memoryEnforcementDisabled)
         XCTAssertEqual(configuration.processMemoryBudgetBytes, 0)
         XCTAssertEqual(configuration.modelLoadHeadroomBytes, 0)
         XCTAssertEqual(configuration.prefillMemoryHeadroomBytes, 0)
         XCTAssertEqual(configuration.prefillQuadraticGuardTokenThreshold, 0)
+        XCTAssertEqual(configuration.initialCacheBlocks, 0)
     }
 
     func testConfigurationReadsEnvironmentOverrides() {
@@ -39,10 +41,12 @@ final class WorkerScaffoldTests: XCTestCase {
             "MELIX_SWIFT_TEXT_WORKER_RUNTIME_VERSION": "melix-swift-text-worker/test",
             "MELIX_SWIFT_TEXT_WORKER_METRICS_PATH": "/tmp/melix-swift-text-worker-metrics.json",
             "MELIX_SWIFT_TEXT_WORKER_CACHE_ROOT": "/tmp/melix-swift-text-worker-cache",
+            "MELIX_SWIFT_TEXT_WORKER_DISABLE_MEMORY_ENFORCEMENT": "true",
             "MELIX_SWIFT_TEXT_WORKER_PROCESS_MEMORY_BUDGET_BYTES": "65536",
             "MELIX_SWIFT_TEXT_WORKER_MODEL_LOAD_HEADROOM_BYTES": "2048",
             "MELIX_SWIFT_TEXT_WORKER_PREFILL_MEMORY_HEADROOM_BYTES": "4096",
             "MELIX_SWIFT_TEXT_WORKER_PREFILL_QUADRATIC_GUARD_TOKEN_THRESHOLD": "1024",
+            "MELIX_SWIFT_TEXT_WORKER_INITIAL_CACHE_BLOCKS": "4",
         ])
 
         XCTAssertEqual(configuration.workerID, "swift-text-worker-dev")
@@ -51,16 +55,27 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(configuration.runtimeVersion, "melix-swift-text-worker/test")
         XCTAssertEqual(configuration.metricsExportPath, "/tmp/melix-swift-text-worker-metrics.json")
         XCTAssertEqual(configuration.cacheRootPath, "/tmp/melix-swift-text-worker-cache")
+        XCTAssertTrue(configuration.memoryEnforcementDisabled)
         XCTAssertEqual(configuration.processMemoryBudgetBytes, 65_536)
         XCTAssertEqual(configuration.modelLoadHeadroomBytes, 2_048)
         XCTAssertEqual(configuration.prefillMemoryHeadroomBytes, 4_096)
         XCTAssertEqual(configuration.prefillQuadraticGuardTokenThreshold, 1_024)
+        XCTAssertEqual(configuration.initialCacheBlocks, 4)
     }
 
     func testConfigurationFallsBackToDefaultsForEmptyEnvironment() {
         let configuration = WorkerConfiguration.fromEnvironment([:])
 
         XCTAssertEqual(configuration, WorkerConfiguration())
+    }
+
+    func testConfigurationTreatsUnknownDisableFlagValuesAsFalse() {
+        let configuration = WorkerConfiguration.fromEnvironment([
+            "MELIX_SWIFT_TEXT_WORKER_DISABLE_MEMORY_ENFORCEMENT": "disabled",
+        ])
+
+        XCTAssertFalse(configuration.memoryEnforcementDisabled)
+        XCTAssertTrue(configuration.memoryEnforcementEnabled)
     }
 
     func testAbortRegistryTracksRequestLifecycle() {
@@ -98,6 +113,16 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(counters["swift_text.unimplemented_rpc_count"], 1)
         XCTAssertEqual(counters["swift_text.custom_counter"], 3)
         XCTAssertEqual(counters["swift_text.runtime_stats_ms"], 12)
+    }
+
+    func testWorkerServicesPublishMemoryEnforcementAndInitialCacheMetrics() {
+        let services = makeServices(environment: [
+            "MELIX_SWIFT_TEXT_WORKER_DISABLE_MEMORY_ENFORCEMENT": "1",
+            "MELIX_SWIFT_TEXT_WORKER_INITIAL_CACHE_BLOCKS": "4",
+        ])
+
+        XCTAssertEqual(services.metrics.counters["swift_text.memory_enforcement_disabled"], 1)
+        XCTAssertEqual(services.metrics.counters["swift_text.cache_initial_block_target"], 4)
     }
 
     func testMetricsStoreExportsCountersWhenConfigured() throws {
@@ -1150,6 +1175,74 @@ final class WorkerScaffoldTests: XCTestCase {
         }
     }
 
+    func testRuntimeRegistryAllowsPrefillWhenMemoryEnforcementIsDisabled() async throws {
+        let registry = WorkerRuntimeRegistry(
+            configuration: WorkerConfiguration(
+                memoryEnforcementDisabled: true,
+                processMemoryBudgetBytes: 4_500,
+                prefillMemoryHeadroomBytes: 1_024
+            ),
+            modelCatalog: WorkerModelCatalog(environment: [
+                "MELIX_DEV_TEXT_MODEL_PATH": "mlx-community/melix-dev-text-4bit"
+            ]),
+            runtime: TextRuntime(backend: FakeRuntimeBackend())
+        )
+
+        var loadRequest = Melix_Worker_V1_ModelSpec()
+        loadRequest.modelID = "melix-dev-text"
+        let loaded = try await registry.loadModel(loadRequest)
+
+        var acceleration = Melix_Worker_V1_AccelerationPolicy()
+        acceleration.mode = .baseline
+
+        let result = try await registry.prefill(
+            requestID: "req-prefill-memory-enforcement-disabled",
+            modelHandle: loaded.handle,
+            messages: [makeUserMessage(repeatingTokenPrompt(count: 2))],
+            prefillStepSize: 8,
+            returnDecodeHandle: true,
+            resumeHint: "memory-enforcement-disabled",
+            acceleration: acceleration,
+            shouldAbort: { false }
+        )
+
+        XCTAssertFalse(result.decodeHandle.isEmpty)
+    }
+
+    func testRuntimeRegistryUsesConfiguredInitialCacheBlockTarget() async throws {
+        let registry = WorkerRuntimeRegistry(
+            configuration: WorkerConfiguration(initialCacheBlocks: 4),
+            modelCatalog: WorkerModelCatalog(environment: [
+                "MELIX_DEV_TEXT_MODEL_PATH": "mlx-community/melix-dev-text-4bit"
+            ]),
+            runtime: TextRuntime(backend: FakeRuntimeBackend())
+        )
+
+        var loadRequest = Melix_Worker_V1_ModelSpec()
+        loadRequest.modelID = "melix-dev-text"
+        let loaded = try await registry.loadModel(loadRequest)
+
+        var acceleration = Melix_Worker_V1_AccelerationPolicy()
+        acceleration.mode = .baseline
+
+        let messages = (0..<80).map { _ in makeUserMessage("token") }
+        let result = try await registry.prefill(
+            requestID: "req-prefill-initial-cache-blocks",
+            modelHandle: loaded.handle,
+            messages: messages,
+            prefillStepSize: 8,
+            returnDecodeHandle: true,
+            resumeHint: "initial-cache-blocks",
+            acceleration: acceleration,
+            shouldAbort: { false }
+        )
+        let cacheResponse = await registry.cacheStatsResponse()
+
+        XCTAssertEqual(result.promptTokens, 80)
+        XCTAssertEqual(result.blockTable.blocks.count, 4)
+        XCTAssertEqual(cacheResponse.stats.blockCount, 4)
+    }
+
     func testRuntimeRegistryCountsNameOnlyPromptTokensForContextGuard() async throws {
         let registry = WorkerRuntimeRegistry(
             configuration: WorkerConfiguration(),
@@ -1458,6 +1551,53 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(loadResponse.error.details["required_bytes"], "5120")
         let loadedModelCount = await services.registry.loadedModelCount()
         XCTAssertEqual(loadedModelCount, 0)
+    }
+
+    func testRuntimeLifecycleAllowsModelLoadsWhenMemoryEnforcementIsExplicitlyDisabled() async throws {
+        let services = makeServices(
+            environment: [
+                "MELIX_SWIFT_TEXT_WORKER_DISABLE_MEMORY_ENFORCEMENT": "yes",
+                "MELIX_SWIFT_TEXT_WORKER_PROCESS_MEMORY_BUDGET_BYTES": "4500",
+                "MELIX_SWIFT_TEXT_WORKER_MODEL_LOAD_HEADROOM_BYTES": "1024",
+            ],
+            backend: FakeRuntimeBackend(),
+            residentMemorySamples: [1_000, 5_096]
+        )
+
+        let loadResponse = try await withTestServerContextRPCCancellationHandle { handle in
+            var request = Melix_Worker_V1_LoadModelRequest()
+            request.model.modelID = "melix-dev-text"
+            request.memoryBudgetBytes = 4_500
+            return try await services.runtime.loadModel(
+                request: request,
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_RuntimeService.Method.LoadModel.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
+        let runtimeStats = try await withTestServerContextRPCCancellationHandle { handle in
+            try await services.runtime.getRuntimeStats(
+                request: Melix_Worker_V1_GetRuntimeStatsRequest(),
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_RuntimeService.Method.GetRuntimeStats.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
+        XCTAssertTrue(loadResponse.ok)
+        XCTAssertEqual(loadResponse.modelHandle, "melix-dev-text::1")
+        XCTAssertEqual(runtimeStats.stats.memoryHeadroomBytes, 0)
+        XCTAssertEqual(runtimeStats.stats.modelResidentBytes, 4_096)
+        XCTAssertEqual(services.metrics.counters["swift_text.memory_enforcement_disabled"], 1)
+        let loadedModelCount = await services.registry.loadedModelCount()
+        XCTAssertEqual(loadedModelCount, 1)
     }
 
     func testWorkerRuntimeRegistryErrorSupportsMemoryBudgetDescriptionsAndEquality() {
@@ -1772,6 +1912,56 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(metrics["swift_text.cache_block_count"], 1)
         XCTAssertEqual(metrics["swift_text.cache_prefix_count"], 1)
         XCTAssertNotNil(metrics["swift_text.prefill_ms"])
+    }
+
+    func testPrefillHonorsPreferredBlockSizeAheadOfInitialBlockTarget() async throws {
+        let services = makeServices(
+            environment: [
+                "MELIX_SWIFT_TEXT_WORKER_INITIAL_CACHE_BLOCKS": "4",
+                "MELIX_DEV_TEXT_MODEL_PATH": "mlx-community/melix-dev-text-4bit",
+            ],
+            backend: FakeRuntimeBackend()
+        )
+
+        let loadResponse = try await withTestServerContextRPCCancellationHandle { handle in
+            var request = Melix_Worker_V1_LoadModelRequest()
+            request.model.modelID = "melix-dev-text"
+            return try await services.runtime.loadModel(
+                request: request,
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_RuntimeService.Method.LoadModel.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
+        let messages = (0..<80).map { _ in makeUserMessage("token") }
+        let response = try await withTestServerContextRPCCancellationHandle { handle in
+            var request = Melix_Worker_V1_PrefillRequest()
+            request.execution.id.requestID = "req-prefill-preferred-block-size"
+            request.execution.modelHandle = loadResponse.modelHandle
+            request.execution.cacheHints.preferredBlockSize = 32
+            request.returnDecodeHandle = true
+            request.prefillStepSize = 32
+            request.execution.acceleration.mode = .baseline
+            request.messages = messages
+
+            return try await services.inference.prefill(
+                request: request,
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_InferenceService.Method.Prefill.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
+        XCTAssertTrue(response.ok)
+        XCTAssertEqual(response.promptTokens, 80)
+        XCTAssertEqual(response.blockTable.blocks.count, 3)
     }
 
     func testPrefillReturnsAcceleratedPrefillMetricsAndStoredAppliedPolicy() async throws {

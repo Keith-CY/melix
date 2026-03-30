@@ -6,31 +6,39 @@ Allow memory enforcement to be fully disabled when explicitly configured and mak
 
 ## Scope
 
-- add an explicit full-disable enforcement mode
-- add configurable initial cache-block sizing
-- document the interaction between enforcement, cache initialization, and residency behavior
+- add an explicit full-disable memory-enforcement mode in the Swift text worker
+- add configurable initial cache-block targeting for prefill block-table creation
+- expose both controls through startup metrics and runtime behavior
 
 ## Files
 
-- update `packages/protocol/schema/controlplane/v1/`
-- update `packages/protocol/schema/worker/v1/`
-- update `services/control-plane-swift/Sources/ModelCatalog/`
-- update `services/mlx-text-worker-swift/Sources/Core/`
-- update `services/mlx-worker-python/worker/registry.py`
+- update `services/mlx-text-worker-swift/Sources/Core/HotCacheStore.swift`
+- update `services/mlx-text-worker-swift/Sources/Core/MetricsStore.swift`
+- update `services/mlx-text-worker-swift/Sources/Core/WorkerConfiguration.swift`
+- update `services/mlx-text-worker-swift/Sources/Core/WorkerRuntimeRegistry.swift`
+- update `services/mlx-text-worker-swift/Sources/Core/WorkerServices.swift`
+- update `services/mlx-text-worker-swift/Tests/CoreTests/WorkerScaffoldTests.swift`
 
 ## Implementation Notes
 
-- enforcement disable should be explicit and easy to audit
-- initial cache-block configuration should affect both cold-start and reload behavior
-- configuration should remain compatible with future platform packaging flows
+- use explicit environment variables:
+  - `MELIX_SWIFT_TEXT_WORKER_DISABLE_MEMORY_ENFORCEMENT`
+  - `MELIX_SWIFT_TEXT_WORKER_INITIAL_CACHE_BLOCKS`
+- disabling enforcement should bypass model-load and prefill memory-budget checks without disabling context-limit validation
+- initial cache-block targeting should shape persisted block tables so the choice survives cache save and restore paths
+- publish startup metrics for:
+  - `swift_text.memory_enforcement_disabled`
+  - `swift_text.cache_initial_block_target`
 
 ## Verification
 
-- `make proto`
-- `make swift-test`
-- `make py-test`
+- `swift test --package-path services/mlx-text-worker-swift --filter WorkerScaffoldTests`
+- `swift test --package-path services/mlx-text-worker-swift --enable-code-coverage --filter WorkerScaffoldTests`
+- `python3 scripts/swift_changed_line_coverage.py --binary services/mlx-text-worker-swift/.build/arm64-apple-macosx/debug/MelixTextWorkerSwiftPackageTests.xctest/Contents/MacOS/MelixTextWorkerSwiftPackageTests --profdata services/mlx-text-worker-swift/.build/arm64-apple-macosx/debug/codecov/default.profdata services/mlx-text-worker-swift/Sources/Core/HotCacheStore.swift services/mlx-text-worker-swift/Sources/Core/MetricsStore.swift services/mlx-text-worker-swift/Sources/Core/WorkerConfiguration.swift services/mlx-text-worker-swift/Sources/Core/WorkerRuntimeRegistry.swift services/mlx-text-worker-swift/Sources/Core/WorkerServices.swift`
+- `git diff --check`
 
 ## Acceptance
 
-- operators can disable enforcement explicitly
-- initial cache-block sizing is configurable and visible through runtime state or metrics
+- operators can explicitly disable memory enforcement and see that state reflected in startup metrics
+- disabled enforcement allows oversized load and prefill requests to proceed while preserving context-limit checks
+- initial cache-block targeting changes block-table sizing and is visible through metrics and cache stats

@@ -19,14 +19,19 @@ private struct StoredHotPrefix: Sendable {
 
 actor HotCacheStore {
     private let diskStore: DiskCacheStore
+    private let initialCacheBlocks: UInt32
     private var prefixesByID: [String: StoredHotPrefix] = [:]
     private var prefixIDByKey: [String: String] = [:]
     private var totalLookups: UInt64 = 0
     private var totalHits: UInt64 = 0
     private var totalReusedBlocks: UInt64 = 0
 
-    init(diskStore: DiskCacheStore = DiskCacheStore(rootPath: ".runtime/swift-text-worker-cache")) {
+    init(
+        diskStore: DiskCacheStore = DiskCacheStore(rootPath: ".runtime/swift-text-worker-cache"),
+        initialCacheBlocks: UInt32 = 0
+    ) {
         self.diskStore = diskStore
+        self.initialCacheBlocks = initialCacheBlocks
     }
 
     func registerPrefill(
@@ -70,7 +75,8 @@ actor HotCacheStore {
             scopeID: resolvedScope.scopeID,
             decodeHandle: decodeHandle,
             promptTokens: promptTokens,
-            preferredBlockSize: execution.cacheHints.preferredBlockSize
+            preferredBlockSize: execution.cacheHints.preferredBlockSize,
+            initialCacheBlocks: initialCacheBlocks
         )
 
         var prefix = Melix_Worker_V1_PrefixRef()
@@ -381,12 +387,25 @@ private func makeBlockTable(
     scopeID: String,
     decodeHandle: String,
     promptTokens: Int,
-    preferredBlockSize: UInt32
+    preferredBlockSize: UInt32,
+    initialCacheBlocks: UInt32
 ) -> Melix_Worker_V1_BlockTable {
     let tokenCount = max(promptTokens, 1)
-    let blockSize = max(Int(preferredBlockSize), 16)
+    let blockSize: Int
+    if preferredBlockSize > 0 {
+        blockSize = max(Int(preferredBlockSize), 16)
+    } else if initialCacheBlocks > 0 {
+        let targetBlocks = max(Int(initialCacheBlocks), 1)
+        let suggestedBlockSize = Int(ceil(Double(tokenCount) / Double(targetBlocks)))
+        blockSize = max(suggestedBlockSize, 16)
+    } else {
+        blockSize = 16
+    }
 
     var blocks: [Melix_Worker_V1_BlockRef] = []
+    if initialCacheBlocks > 0 {
+        blocks.reserveCapacity(Int(initialCacheBlocks))
+    }
     var start = 0
     var index = 0
     while start < tokenCount {

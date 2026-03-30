@@ -49,6 +49,8 @@ final class MetricsStore: @unchecked Sendable {
         "swift_text.tokens_per_second": 0,
         "swift_text.abort_ms": 0,
         "swift_text.stream_event_count": 0,
+        "swift_text.memory_enforcement_disabled": 0,
+        "swift_text.cache_initial_block_target": 0,
         "swift_text.peak_resident_bytes": 0,
         "swift_text.loaded_model_count": 0,
         "swift_text.rpc_error_count": 0,

@@ -22,6 +22,8 @@ struct WorkerServices: Sendable {
         self.registry = registry
         self.abortRegistry = abortRegistry
         self.metrics = metrics
+        metrics.set("swift_text.memory_enforcement_disabled", value: configuration.memoryEnforcementDisabled ? 1 : 0)
+        metrics.set("swift_text.cache_initial_block_target", value: Int(clamping: configuration.initialCacheBlocks))
         self.runtime = RuntimeRPCService(configuration: configuration, registry: registry, metrics: metrics)
         self.inference = InferenceRPCService(
             configuration: configuration,
