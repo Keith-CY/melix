@@ -118,6 +118,39 @@ struct PythonBridgeWorkerClientTests {
         #expect(aborted)
     }
 
+    @Test("runtime and cache stats decode unary payloads from the bridge")
+    func runtimeAndCacheStatsDecodeUnaryPayloadsFromTheBridge() async throws {
+        var runtimeResponse = Melix_Worker_V1_GetRuntimeStatsResponse()
+        runtimeResponse.stats.workerState = "idle"
+        runtimeResponse.stats.l1CacheBytes = 2_048
+        runtimeResponse.stats.l1HitRate = 0.5
+
+        var cacheResponse = Melix_Worker_V1_GetCacheStatsResponse()
+        cacheResponse.stats.l1Bytes = 2_048
+        cacheResponse.stats.blockCount = 1
+        cacheResponse.stats.l1HitRate = 0.5
+
+        let runner = ScriptedBridgeRunner()
+        await runner.setUnaryResponse(
+            .getRuntimeStats,
+            line: bridgeMessageLine(message: try runtimeResponse.serializedData())
+        )
+        await runner.setUnaryResponse(
+            .getCacheStats,
+            line: bridgeMessageLine(message: try cacheResponse.serializedData())
+        )
+
+        let client = PythonBridgeWorkerClient(socketPath: "/tmp/melix-test.sock", runner: runner)
+        let runtimeStats = try await client.runtimeStats()
+        let cacheStats = try await client.cacheStats()
+
+        #expect(runtimeStats.stats.l1CacheBytes == 2_048)
+        #expect(runtimeStats.stats.l1HitRate == 0.5)
+        #expect(cacheStats.stats.l1Bytes == 2_048)
+        #expect(cacheStats.stats.blockCount == 1)
+        #expect(cacheStats.stats.l1HitRate == 0.5)
+    }
+
     @Test("embed and rerank decode unary payloads from the bridge")
     func embedAndRerankDecodeUnaryPayloadsFromTheBridge() async throws {
         var embedRequest = Melix_Worker_V1_EmbedRequest()

@@ -8,6 +8,8 @@ from pathlib import Path
 import grpc
 
 from packages.protocol.python.worker.v1 import (
+    cache_pb2,
+    cache_pb2_grpc,
     inference_pb2,
     inference_pb2_grpc,
     maintenance_pb2,
@@ -26,6 +28,7 @@ def main() -> None:
             "load-model",
             "unload-model",
             "get-runtime-stats",
+            "get-cache-stats",
             "generate",
             "abort",
             "embed",
@@ -65,6 +68,10 @@ def main() -> None:
                 stub = runtime_pb2_grpc.RuntimeServiceStub(channel)
                 request = runtime_pb2.GetRuntimeStatsRequest.FromString(request_bytes)
                 emit_message(stub.GetRuntimeStats(request).SerializeToString())
+            elif args.command == "get-cache-stats":
+                stub = cache_pb2_grpc.CacheServiceStub(channel)
+                request = cache_pb2.GetCacheStatsRequest.FromString(request_bytes)
+                emit_message(stub.GetCacheStats(request).SerializeToString())
             elif args.command == "generate":
                 stub = inference_pb2_grpc.InferenceServiceStub(channel)
                 request = inference_pb2.GenerateRequest.FromString(request_bytes)

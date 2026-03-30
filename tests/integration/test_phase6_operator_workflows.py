@@ -147,6 +147,33 @@ def test_multimodal_operator_smoke_records_phase6_metrics() -> None:
         assert b"Image content: phase6 vision fixture" in vlm_payload
         assert b"Prompt: Summarize the image." in vlm_payload
 
+        repeated_vlm_status, repeated_vlm_payload = _post_json(
+            stack.chat_url(),
+            {
+                "model": "melix-dev-vlm",
+                "stream": True,
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": "Summarize the image."},
+                            {
+                                "type": "input_image",
+                                "input_image": {
+                                    "data": inline_image,
+                                    "mime_type": "image/png",
+                                    "format": "png",
+                                    "filename": "vlm-fixture.png",
+                                },
+                            },
+                        ],
+                    }
+                ],
+            },
+        )
+        assert repeated_vlm_status == 200
+        assert b"Image content: phase6 vision fixture" in repeated_vlm_payload
+
         transcription_status, transcription_payload = _post_json(
             f"http://127.0.0.1:{stack.http_port}/v1/audio/transcriptions",
             {
@@ -176,6 +203,10 @@ def test_multimodal_operator_smoke_records_phase6_metrics() -> None:
         assert values["vision.ocr_latency_ms"] >= 0
         assert values["vision.vlm_first_token_ms"] >= 0
         assert values["vision.preprocess_peak_memory_bytes"] > 0
+        assert values["vision.cache_memory_bytes"] > 0
+        assert values["vision.cache_hit_rate"] > 0
+        assert values["cache.memory_bytes"] > 0
+        assert values["cache.hit_rate"] > 0
         assert values["audio.transcription_latency_ms"] >= 0
         assert values["audio.speech_latency_ms"] >= 0
         assert values["audio.speech_output_bytes"] > 0

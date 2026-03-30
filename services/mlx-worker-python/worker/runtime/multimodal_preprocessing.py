@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 from pathlib import Path
 from time import perf_counter
@@ -18,6 +19,7 @@ class PreparedImageInput:
     mime_type: str
     format: str
     filename: str
+    sha256_hex: str
 
     @property
     def byte_length(self) -> int:
@@ -34,6 +36,8 @@ class PreparedVisionRequest:
     preprocess_latency_ms: float
     preprocess_input_bytes: int
     preprocess_peak_memory_bytes: int
+    prompt_hash_hex: str = ""
+    multimodal_hash_hex: str = ""
 
 
 def prepare_vision_request(messages) -> PreparedVisionRequest:
@@ -58,12 +62,16 @@ def prepare_vision_request(messages) -> PreparedVisionRequest:
 
     prompt_text = "\n".join(prompt_segments).strip()
     latency_ms = max(0.0, (perf_counter() - started_at) * 1000.0)
+    prompt_hash_hex = _sha256_hex(prompt_text.encode("utf-8"))
+    multimodal_hash_hex = _vision_request_hash(prompt_hash_hex, images)
     return PreparedVisionRequest(
         prompt_text=prompt_text,
         images=images,
         preprocess_latency_ms=latency_ms,
         preprocess_input_bytes=input_bytes,
         preprocess_peak_memory_bytes=input_bytes,
+        prompt_hash_hex=prompt_hash_hex,
+        multimodal_hash_hex=multimodal_hash_hex,
     )
 
 
@@ -74,24 +82,28 @@ def _prepare_image_part(part) -> PreparedImageInput:
     filename = getattr(media, "filename", "")
 
     if part.image_bytes:
+        bytes_data = bytes(part.image_bytes)
         return PreparedImageInput(
-            bytes_data=bytes(part.image_bytes),
+            bytes_data=bytes_data,
             source_kind="inline",
             reference="inline:image",
             mime_type=mime_type,
             format=format_name,
             filename=filename or "inline-image",
+            sha256_hex=_sha256_hex(bytes_data),
         )
 
     if part.image_uri:
         path = _path_from_uri(part.image_uri)
+        bytes_data = path.read_bytes()
         return PreparedImageInput(
-            bytes_data=path.read_bytes(),
+            bytes_data=bytes_data,
             source_kind="uri",
             reference=part.image_uri,
             mime_type=mime_type,
             format=format_name or path.suffix.lstrip("."),
             filename=filename or path.name,
+            sha256_hex=_sha256_hex(bytes_data),
         )
 
     raise MultimodalPreprocessError("No image input provided.")
@@ -108,3 +120,15 @@ def _path_from_uri(uri: str) -> Path:
             raise MultimodalPreprocessError(f"Missing local image input: {uri}")
         return candidate
     raise MultimodalPreprocessError(f"Unsupported image URI scheme: {parsed.scheme}")
+
+
+def _sha256_hex(payload: bytes) -> str:
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _vision_request_hash(prompt_hash_hex: str, images: list[PreparedImageInput]) -> str:
+    digest = hashlib.sha256()
+    digest.update(prompt_hash_hex.encode("ascii"))
+    for image in images:
+        digest.update(image.sha256_hex.encode("ascii"))
+    return digest.hexdigest()

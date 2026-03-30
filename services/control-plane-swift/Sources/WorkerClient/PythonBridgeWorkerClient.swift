@@ -9,6 +9,7 @@ public enum BridgeCommandKind: String, Sendable {
     case loadModel = "load-model"
     case unloadModel = "unload-model"
     case getRuntimeStats = "get-runtime-stats"
+    case getCacheStats = "get-cache-stats"
     case generate = "generate"
     case abort = "abort"
     case embed = "embed"
@@ -43,6 +44,7 @@ public protocol WorkerBridgeRunning: Sendable {
 public struct PythonBridgeWorkerClient:
     WorkerRoutingClient,
     NonTextInferenceWorkerClientProtocol,
+    CacheIntrospectingWorkerClientProtocol,
     RuntimeIntrospectingWorkerClientProtocol,
     ModelOperationsWorkerClientProtocol,
     Sendable
@@ -146,6 +148,14 @@ public struct PythonBridgeWorkerClient:
             kind: .getRuntimeStats,
             request: Melix_Worker_V1_GetRuntimeStatsRequest(),
             as: Melix_Worker_V1_GetRuntimeStatsResponse.self
+        )
+    }
+
+    public func cacheStats() async throws -> Melix_Worker_V1_GetCacheStatsResponse {
+        try await sendUnary(
+            kind: .getCacheStats,
+            request: Melix_Worker_V1_GetCacheStatsRequest(),
+            as: Melix_Worker_V1_GetCacheStatsResponse.self
         )
     }
 

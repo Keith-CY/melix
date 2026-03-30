@@ -257,6 +257,50 @@ def test_registry_capabilities_and_request_lifecycle() -> None:
     assert registry.runtime_stats().active_multimodal_requests == 0
 
 
+def test_registry_runtime_stats_include_vlm_cache_bytes_after_generation() -> None:
+    registry, runtime_service, inference_service = build_services()
+    load_response = runtime_service.LoadModel(
+        runtime_pb2.LoadModelRequest(model=WorkerModelCatalog.dev_vlm_model()),
+        context=None,
+    )
+    assert load_response.ok is True
+
+    request = inference_pb2.GenerateRequest(
+        execution=inference_pb2.ExecutionMetadata(
+            id=common_pb2.RequestIdentity(request_id="req-vlm-cache"),
+            model_handle=load_response.model_handle,
+        ),
+        messages=[
+            common_pb2.ChatMessage(
+                role="user",
+                parts=[
+                    common_pb2.MessagePart(text="Summarize the image."),
+                    common_pb2.MessagePart(
+                        image_bytes=b"runtime-cache-image",
+                        media=common_pb2.MediaMetadata(
+                            media_type=common_pb2.MEDIA_TYPE_IMAGE,
+                            source_kind=common_pb2.MEDIA_SOURCE_INLINE_BYTES,
+                        ),
+                    ),
+                ],
+            )
+        ],
+        sampling=common_pb2.SamplingConfig(max_output_tokens=16),
+        stream=True,
+        return_usage=True,
+    )
+
+    list(inference_service.Generate(request, context=None))
+
+    cache_stats = registry.cache_stats_response()
+    runtime_stats = registry.runtime_stats()
+
+    assert cache_stats.stats.l1_bytes > 0
+    assert runtime_stats.l1_cache_bytes == cache_stats.stats.l1_bytes
+    assert runtime_stats.cache_resident_bytes == cache_stats.stats.l1_bytes
+    assert runtime_stats.l1_hit_rate == cache_stats.stats.l1_hit_rate
+
+
 def test_deterministic_multimodal_delay_prefers_specific_keys_and_shared_fallback() -> None:
     assert configured_delay_ms("transcription", {}) == 0.0
     assert configured_delay_ms("transcription", {"MELIX_DETERMINISTIC_MULTIMODAL_DELAY_MS": "25"}) == 25.0
@@ -446,11 +490,12 @@ def test_build_server_and_main_bootstrap(monkeypatch, tmp_path: Path) -> None:
     assert isinstance(runtime_service, WorkerRuntimeService)
     assert isinstance(inference_service, WorkerInferenceService)
     assert seen_build == {
-        "handlers": 3,
+        "handlers": 4,
         "registered_services": [
             ("melix.worker.v1.RuntimeService", 8),
             ("melix.worker.v1.InferenceService", 10),
             ("melix.worker.v1.MaintenanceService", 4),
+            ("melix.worker.v1.CacheService", 6),
         ],
         "address": f"unix://{Path('/tmp/melix-test.sock').resolve()}",
         "stopped": 0,

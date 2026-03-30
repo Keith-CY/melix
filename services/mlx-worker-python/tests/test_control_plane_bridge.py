@@ -6,7 +6,7 @@ import sys
 
 import grpc
 
-from packages.protocol.python.worker.v1 import common_pb2, inference_pb2, runtime_pb2
+from packages.protocol.python.worker.v1 import cache_pb2, common_pb2, inference_pb2, runtime_pb2
 
 from worker import control_plane_bridge
 from worker.model_registry.catalog import WorkerModelCatalog
@@ -49,6 +49,17 @@ class FakeRuntimeStub:
         )
 
 
+class FakeCacheStub:
+    def GetCacheStats(self, request):
+        return cache_pb2.GetCacheStatsResponse(
+            stats=cache_pb2.CacheStats(
+                l1_bytes=1024,
+                block_count=1,
+                l1_hit_rate=0.5,
+            )
+        )
+
+
 class FakeInferenceStub:
     def Generate(self, request):
         yield inference_pb2.ExecuteEvent(
@@ -82,6 +93,7 @@ class FakeRpcError(grpc.RpcError):
 def test_bridge_helper_handles_health_load_and_generate(monkeypatch, capsys) -> None:
     monkeypatch.setattr(control_plane_bridge.grpc, "insecure_channel", lambda target: FakeChannel())
     monkeypatch.setattr(control_plane_bridge.runtime_pb2_grpc, "RuntimeServiceStub", lambda channel: FakeRuntimeStub())
+    monkeypatch.setattr(control_plane_bridge.cache_pb2_grpc, "CacheServiceStub", lambda channel: FakeCacheStub())
     monkeypatch.setattr(control_plane_bridge.inference_pb2_grpc, "InferenceServiceStub", lambda channel: FakeInferenceStub())
 
     handshake = runtime_pb2.HandshakeRequest(
@@ -167,6 +179,25 @@ def test_bridge_helper_handles_health_load_and_generate(monkeypatch, capsys) -> 
     assert runtime_stats_payload.stats.worker_state == "idle"
     assert runtime_stats_payload.stats.active_multimodal_requests == 2
     assert runtime_stats_payload.stats.last_probe_kind == "transcription"
+
+    cache_stats_request = cache_pb2.GetCacheStatsRequest()
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "control_plane_bridge.py",
+            "get-cache-stats",
+            "--socket-path",
+            "/tmp/unused.sock",
+            "--request-b64",
+            base64.b64encode(cache_stats_request.SerializeToString()).decode("ascii"),
+        ],
+    )
+    control_plane_bridge.main()
+    cache_stats_line = json.loads(capsys.readouterr().out.strip())
+    cache_stats_payload = cache_pb2.GetCacheStatsResponse.FromString(base64.b64decode(cache_stats_line["message_b64"]))
+    assert cache_stats_payload.stats.l1_bytes == 1024
+    assert cache_stats_payload.stats.l1_hit_rate == 0.5
 
     generate_request = inference_pb2.GenerateRequest(
         execution=inference_pb2.ExecutionMetadata(

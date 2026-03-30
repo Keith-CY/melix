@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from threading import Lock
 from typing import Any
 
-from packages.protocol.python.worker.v1 import common_pb2, runtime_pb2
+from packages.protocol.python.worker.v1 import cache_pb2, common_pb2, runtime_pb2
 
 from worker.engine.request_state import RequestState
 from worker.model_registry.catalog import WorkerModelCatalog
@@ -211,13 +211,14 @@ class WorkerRegistry:
         return True
 
     def runtime_stats(self) -> runtime_pb2.RuntimeStats:
+        cache_stats = self.cache_stats_response().stats
         with self._lock:
             active_requests = len(self._requests)
             active_multimodal_requests = sum(
                 1 for state in self._requests.values() if state.runtime_kind in {"ocr", "vlm", "transcription", "speech", "image"}
             )
             model_resident_bytes = sum(item.estimated_resident_bytes for item in self._loaded_models.values())
-            cache_resident_bytes = 0
+            cache_resident_bytes = cache_stats.l1_bytes + cache_stats.l2_bytes
             kv_cache_bytes = 0
             peak_allocation_bytes = 0
             memory_headroom_bytes = self._memory_headroom_bytes
@@ -242,10 +243,10 @@ class WorkerRegistry:
             active_requests=active_requests,
             active_prefills=0,
             active_decodes=0,
-            l1_cache_bytes=0,
-            l2_cache_bytes=0,
-            l1_hit_rate=0.0,
-            l2_hit_rate=0.0,
+            l1_cache_bytes=cache_stats.l1_bytes,
+            l2_cache_bytes=cache_stats.l2_bytes,
+            l1_hit_rate=cache_stats.l1_hit_rate,
+            l2_hit_rate=cache_stats.l2_hit_rate,
             active_multimodal_requests=active_multimodal_requests,
             last_probe_kind=last_probe_kind,
             last_preprocess_latency_ms=last_preprocess_latency_ms,
@@ -268,6 +269,15 @@ class WorkerRegistry:
         stats.peak_allocation_bytes = peak_allocation_bytes
         stats.memory_headroom_bytes = memory_headroom_bytes
         return stats
+
+    def cache_stats_response(self) -> cache_pb2.GetCacheStatsResponse:
+        response = cache_pb2.GetCacheStatsResponse()
+        runtime = self.vlm_runtime
+        if hasattr(runtime, "cache_stats_response"):
+            runtime_response = runtime.cache_stats_response()
+            if isinstance(runtime_response, cache_pb2.GetCacheStatsResponse):
+                return runtime_response
+        return response
 
     def set_draining(self, draining: bool) -> None:
         with self._lock:

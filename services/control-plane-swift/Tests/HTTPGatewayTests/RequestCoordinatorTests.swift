@@ -343,6 +343,16 @@ struct RequestCoordinatorTests {
             response.stats.lastPreprocessLatencyMs = 12
             response.stats.lastPreprocessPeakMemoryBytes = 8192
             response.stats.lastFirstTokenLatencyMs = 5
+            response.stats.l1CacheBytes = 1024
+            response.stats.l1HitRate = 0.25
+            return response
+        }())
+        await workerClient.setCacheStatsResponse({
+            var response = Melix_Worker_V1_GetCacheStatsResponse()
+            response.stats.l1Bytes = 1024
+            response.stats.blockCount = 1
+            response.stats.l1HitRate = 0.25
+            response.stats.activeMode = .tiered
             return response
         }())
         let schedulerReadModel = SchedulerReadModel()
@@ -377,6 +387,8 @@ struct RequestCoordinatorTests {
         #expect(metrics.values["vision.preprocess_latency_ms", default: -1] == 12)
         #expect(metrics.values["vision.preprocess_peak_memory_bytes", default: -1] == 8192)
         #expect(metrics.values["vision.ocr_latency_ms", default: -1] == 5)
+        #expect(metrics.values["vision.cache_memory_bytes", default: -1] == 1024)
+        #expect(metrics.values["vision.cache_hit_rate", default: -1] == 25)
     }
 
     @Test("vlm requests publish vision preprocessing and first-token metrics")
@@ -388,6 +400,16 @@ struct RequestCoordinatorTests {
             response.stats.lastPreprocessLatencyMs = 18
             response.stats.lastPreprocessPeakMemoryBytes = 16384
             response.stats.lastFirstTokenLatencyMs = 9
+            response.stats.l1CacheBytes = 2048
+            response.stats.l1HitRate = 0.5
+            return response
+        }())
+        await workerClient.setCacheStatsResponse({
+            var response = Melix_Worker_V1_GetCacheStatsResponse()
+            response.stats.l1Bytes = 2048
+            response.stats.blockCount = 1
+            response.stats.l1HitRate = 0.5
+            response.stats.activeMode = .tiered
             return response
         }())
         let schedulerReadModel = SchedulerReadModel()
@@ -422,6 +444,9 @@ struct RequestCoordinatorTests {
         #expect(metrics.values["vision.preprocess_latency_ms", default: -1] == 18)
         #expect(metrics.values["vision.preprocess_peak_memory_bytes", default: -1] == 16384)
         #expect(metrics.values["vision.vlm_first_token_ms", default: -1] == 9)
+        #expect(metrics.values["vision.cache_memory_bytes", default: -1] == 2048)
+        #expect(metrics.values["vision.cache_hit_rate", default: -1] == 50)
+        #expect(metrics.values["cache.memory_bytes", default: -1] == 2048)
     }
 
     @Test("worker unavailable requests are rejected before dispatch")

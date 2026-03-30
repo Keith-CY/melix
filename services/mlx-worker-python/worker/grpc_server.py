@@ -12,6 +12,8 @@ from typing import Any
 import grpc
 
 from packages.protocol.python.worker.v1 import (
+    cache_pb2,
+    cache_pb2_grpc,
     common_pb2,
     inference_pb2,
     inference_pb2_grpc,
@@ -226,6 +228,44 @@ class WorkerMaintenanceService(maintenance_pb2_grpc.MaintenanceServiceServicer):
         yield from self._core.bench_events(request)
 
 
+class WorkerCacheService(cache_pb2_grpc.CacheServiceServicer):
+    def __init__(self, registry: WorkerRegistry) -> None:
+        self._registry = registry
+
+    def GetCacheStats(self, request, context):
+        return self._registry.cache_stats_response()
+
+    def PinPrefix(self, request, context):
+        return cache_pb2.PinPrefixResponse(
+            ok=False,
+            error=common_pb2.ErrorStatus(code="unimplemented", message="Pinning is deferred in phase 0."),
+        )
+
+    def UnpinPrefix(self, request, context):
+        return cache_pb2.UnpinPrefixResponse(
+            ok=False,
+            error=common_pb2.ErrorStatus(code="unimplemented", message="Unpinning is deferred in phase 0."),
+        )
+
+    def SaveBoundarySnapshot(self, request, context):
+        return cache_pb2.SaveBoundarySnapshotResponse(
+            ok=False,
+            error=common_pb2.ErrorStatus(code="unimplemented", message="Boundary snapshots are deferred in phase 0."),
+        )
+
+    def RestoreBoundarySnapshot(self, request, context):
+        return cache_pb2.RestoreBoundarySnapshotResponse(
+            ok=False,
+            error=common_pb2.ErrorStatus(code="unimplemented", message="Boundary restore is deferred in phase 0."),
+        )
+
+    def PurgeCache(self, request, context):
+        return cache_pb2.PurgeCacheResponse(
+            ok=False,
+            error=common_pb2.ErrorStatus(code="unimplemented", message="Cache purge is deferred in phase 0."),
+        )
+
+
 def build_registry_for_backend(backend_mode: str) -> WorkerRegistry:
     process_memory_budget_bytes = max(0, int(os.environ.get("MELIX_PYTHON_WORKER_PROCESS_MEMORY_BUDGET_BYTES", "0")))
     memory_headroom_bytes = max(0, int(os.environ.get("MELIX_PYTHON_WORKER_MODEL_LOAD_HEADROOM_BYTES", "0")))
@@ -265,9 +305,11 @@ def build_server(
     runtime_service = WorkerRuntimeService(registry)
     inference_service = WorkerInferenceService(registry)
     maintenance_service = WorkerMaintenanceService(registry)
+    cache_service = WorkerCacheService(registry)
     runtime_pb2_grpc.add_RuntimeServiceServicer_to_server(runtime_service, server)
     inference_pb2_grpc.add_InferenceServiceServicer_to_server(inference_service, server)
     maintenance_pb2_grpc.add_MaintenanceServiceServicer_to_server(maintenance_service, server)
+    cache_pb2_grpc.add_CacheServiceServicer_to_server(cache_service, server)
     server.add_insecure_port(f"unix://{socket_path}")
     if metrics_exporter is not None:
         metrics_exporter.set_milliseconds(

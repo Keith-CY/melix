@@ -1277,6 +1277,8 @@ public actor RequestCoordinator {
                 forKey: "vision.preprocess_peak_memory_bytes"
             )
             await metricsStore.set(stats.lastFirstTokenLatencyMs, forKey: "vision.ocr_latency_ms")
+            await metricsStore.set(Double(stats.l1CacheBytes), forKey: "vision.cache_memory_bytes")
+            await metricsStore.set(stats.l1HitRate * 100, forKey: "vision.cache_hit_rate")
         case .pythonVLM:
             await metricsStore.set(stats.lastPreprocessLatencyMs, forKey: "vision.preprocess_latency_ms")
             await metricsStore.set(
@@ -1284,6 +1286,8 @@ public actor RequestCoordinator {
                 forKey: "vision.preprocess_peak_memory_bytes"
             )
             await metricsStore.set(stats.lastFirstTokenLatencyMs, forKey: "vision.vlm_first_token_ms")
+            await metricsStore.set(Double(stats.l1CacheBytes), forKey: "vision.cache_memory_bytes")
+            await metricsStore.set(stats.l1HitRate * 100, forKey: "vision.cache_hit_rate")
         case .pythonTranscription:
             await metricsStore.set(stats.lastPreprocessLatencyMs, forKey: "audio.preprocess_latency_ms")
             await metricsStore.set(
