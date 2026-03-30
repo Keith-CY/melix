@@ -143,6 +143,45 @@ def test_generate_streams_vlm_response_from_file_image_uri(tmp_path: Path) -> No
     assert model_info.supported_tasks == ["vlm", "generate"]
 
 
+def test_generate_streams_vlm_response_from_image_only_prompt(tmp_path: Path) -> None:
+    runtime_service, inference_service, _ = build_services()
+    model_handle = load_model(runtime_service, WorkerModelCatalog.dev_vlm_model())
+    image_path = tmp_path / "image-only.txt"
+    image_path.write_text("standalone image")
+
+    request = inference_pb2.GenerateRequest(
+        execution=inference_pb2.ExecutionMetadata(
+            id=common_pb2.RequestIdentity(request_id="vlm-image-only"),
+            model_handle=model_handle,
+        ),
+        messages=[
+            common_pb2.ChatMessage(
+                role="user",
+                parts=[
+                    common_pb2.MessagePart(
+                        image_uri=image_path.as_uri(),
+                        media=common_pb2.MediaMetadata(
+                            media_type=common_pb2.MEDIA_TYPE_IMAGE,
+                            source_kind=common_pb2.MEDIA_SOURCE_URI,
+                            filename=image_path.name,
+                        ),
+                    )
+                ],
+            )
+        ],
+        sampling=common_pb2.SamplingConfig(max_output_tokens=64),
+        stream=True,
+        return_usage=True,
+    )
+
+    events = list(inference_service.Generate(request, context=None))
+    token_text = "".join(event.token_delta.text for event in events if event.HasField("token_delta"))
+    completed = next(event.completed for event in events if event.HasField("completed"))
+
+    assert token_text == "Image content: standalone image\nPrompt: Describe the image."
+    assert completed.assistant_text == token_text
+
+
 def test_generate_streams_vlm_response_from_multi_image_prompt(tmp_path: Path) -> None:
     runtime_service, inference_service, _ = build_services()
     model_handle = load_model(runtime_service, WorkerModelCatalog.dev_vlm_model())
@@ -324,6 +363,44 @@ def test_prepare_vision_request_accepts_plain_local_paths(tmp_path: Path) -> Non
     assert len(request.multimodal_hash_hex) == 64
     assert request.preprocess_input_bytes == len(b"diagram text")
     assert request.preprocess_peak_memory_bytes == len(b"diagram text")
+
+
+def test_generate_streams_ocr_text_from_image_only_prompt() -> None:
+    runtime_service, inference_service, _ = build_services()
+    model_handle = load_model(runtime_service, WorkerModelCatalog.dev_ocr_model())
+
+    request = inference_pb2.GenerateRequest(
+        execution=inference_pb2.ExecutionMetadata(
+            id=common_pb2.RequestIdentity(request_id="ocr-image-only"),
+            model_handle=model_handle,
+        ),
+        messages=[
+            common_pb2.ChatMessage(
+                role="user",
+                parts=[
+                    common_pb2.MessagePart(
+                        image_bytes=b"image only ocr",
+                        media=common_pb2.MediaMetadata(
+                            media_type=common_pb2.MEDIA_TYPE_IMAGE,
+                            mime_type="image/png",
+                            source_kind=common_pb2.MEDIA_SOURCE_INLINE_BYTES,
+                            filename="image-only.png",
+                        ),
+                    )
+                ],
+            )
+        ],
+        sampling=common_pb2.SamplingConfig(max_output_tokens=32),
+        stream=True,
+        return_usage=True,
+    )
+
+    events = list(inference_service.Generate(request, context=None))
+    token_text = "".join(event.token_delta.text for event in events if event.HasField("token_delta"))
+    completed = next(event.completed for event in events if event.HasField("completed"))
+
+    assert token_text == "image only ocr"
+    assert completed.assistant_text == "image only ocr"
 
 
 def test_prepare_vision_request_accepts_remote_http_inputs(monkeypatch: pytest.MonkeyPatch) -> None:

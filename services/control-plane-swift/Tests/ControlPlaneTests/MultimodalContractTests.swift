@@ -175,6 +175,41 @@ struct MultimodalContractTests {
         #expect(normalized[0].parts[2].media.filename == "second-image.png")
     }
 
+    @Test("multimodal request normalizer accepts image-only payloads")
+    func imageOnlyPayloadsNormalizeWithoutSyntheticText() throws {
+        let decoder = JSONDecoder()
+        let messages = try decoder.decode(
+            [OpenAIMultimodalMessage].self,
+            from: Data(
+                """
+                [
+                  {
+                    "role": "user",
+                    "content": [
+                      {
+                        "type": "input_image",
+                        "input_image": {
+                          "data": "aGVsbG8=",
+                          "mime_type": "image/png",
+                          "filename": "image-only.png"
+                        }
+                      }
+                    ]
+                  }
+                ]
+                """.utf8
+            )
+        )
+
+        let normalized = try MultimodalRequestNormalizer().normalize(messages)
+
+        #expect(normalized.count == 1)
+        #expect(normalized[0].parts.count == 1)
+        #expect(normalized[0].parts[0].imageBytes == Data("hello".utf8))
+        #expect(normalized[0].parts[0].media.sourceKind == .mediaSourceInlineBytes)
+        #expect(normalized[0].parts[0].media.filename == "image-only.png")
+    }
+
     @Test("multimodal request normalizer rejects invalid inline base64 payloads")
     func invalidInlineBase64PayloadsAreRejected() {
         let part = OpenAIMultimodalContentPart(

@@ -352,3 +352,65 @@ def test_multimodal_chat_preserves_multi_image_order(tmp_path: Path) -> None:
         assert b"Prompt: Compare the images." in payload
     finally:
         stack.stop()
+
+
+def test_multimodal_chat_accepts_image_only_requests() -> None:
+    stack = LiveMelixStack(Path(__file__).resolve().parents[2])
+    inline_image = base64.b64encode(b"phase6 image only").decode("ascii")
+
+    try:
+        stack.start()
+        stack.wait_for_models(["melix-dev-ocr", "melix-dev-vlm"])
+
+        ocr_status, ocr_payload = _post_json(
+            stack.chat_url(),
+            {
+                "model": "melix-dev-ocr",
+                "stream": True,
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "input_image",
+                                "input_image": {
+                                    "data": inline_image,
+                                    "mime_type": "image/png",
+                                    "filename": "ocr-image-only.png",
+                                },
+                            }
+                        ],
+                    }
+                ],
+            },
+        )
+        assert ocr_status == 200
+        assert b"phase6 image only" in ocr_payload
+
+        vlm_status, vlm_payload = _post_json(
+            stack.chat_url(),
+            {
+                "model": "melix-dev-vlm",
+                "stream": True,
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "input_image",
+                                "input_image": {
+                                    "data": inline_image,
+                                    "mime_type": "image/png",
+                                    "filename": "vlm-image-only.png",
+                                },
+                            }
+                        ],
+                    }
+                ],
+            },
+        )
+        assert vlm_status == 200
+        assert b"Image content: phase6 image only" in vlm_payload
+        assert b"Prompt: Describe the image." in vlm_payload
+    finally:
+        stack.stop()

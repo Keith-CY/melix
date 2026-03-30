@@ -554,6 +554,47 @@ struct TextEndpointContractTests {
         #expect(message.parts[1].media.filename == "fixture.png")
     }
 
+    @Test("chat request contracts accept image-only multimodal content")
+    func chatRequestContractsDecodeImageOnlyMultimodalContent() throws {
+        let decoder = JSONDecoder()
+        let translator = ChatRequestTranslator()
+
+        let request = try decoder.decode(
+            OpenAIChatCompletionsRequest.self,
+            from: Data(
+                """
+                {
+                  "model": "melix-dev-vlm",
+                  "stream": true,
+                  "messages": [
+                    {
+                      "role": "user",
+                      "content": [
+                        {
+                          "type": "input_image",
+                          "input_image": {
+                            "data": "aGVsbG8=",
+                            "mime_type": "image/png",
+                            "filename": "image-only.png"
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+                """.utf8
+            )
+        )
+
+        let normalized = try translator.normalizeMultimodalChat(request)
+        let message = try #require(normalized.messages.first)
+
+        #expect(message.parts.count == 1)
+        #expect(message.content.isEmpty)
+        #expect(message.parts[0].imageBytes == Data("hello".utf8))
+        #expect(message.parts[0].media.filename == "image-only.png")
+    }
+
     @Test("chat request messages round-trip text and multimodal content payloads")
     func chatRequestMessagesRoundTripTextAndMultimodalContentPayloads() throws {
         let encoder = JSONEncoder()
