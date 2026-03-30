@@ -144,6 +144,72 @@ def test_embed_returns_distinct_vectors_for_xlmr_backend_selection() -> None:
     assert bert.embeddings[0].values != xlmr.embeddings[0].values
 
 
+def test_load_model_exposes_embedding_family_metadata_for_bge_and_mxbai() -> None:
+    registry, runtime_service, _ = build_services()
+    bge_model = WorkerModelCatalog.dev_embedding_model(
+        environment={"MELIX_DEV_EMBED_FAMILY_ID": "bge-m3"}
+    )
+    bge_model.model_id = "melix-dev-embed-bge"
+    mxbai_model = WorkerModelCatalog.dev_embedding_model(
+        environment={"MELIX_DEV_EMBED_FAMILY_ID": "mxbai-embed"}
+    )
+    mxbai_model.model_id = "melix-dev-embed-mxbai"
+
+    bge_handle = load_model(runtime_service, bge_model)
+    mxbai_handle = load_model(runtime_service, mxbai_model)
+
+    bge_loaded = registry.get_loaded_model(bge_handle)
+    mxbai_loaded = registry.get_loaded_model(mxbai_handle)
+
+    assert bge_loaded is not None
+    assert mxbai_loaded is not None
+    assert bge_loaded.runtime_model["embedding_backend_id"] == "bert-v1"
+    assert bge_loaded.runtime_model["embedding_family_id"] == "bge-m3"
+    assert bge_loaded.runtime_model["embedding_pooling_mode"] == "cls"
+    assert bge_loaded.runtime_model["dimensions"] == 8
+    assert mxbai_loaded.runtime_model["embedding_backend_id"] == "bert-v1"
+    assert mxbai_loaded.runtime_model["embedding_family_id"] == "mxbai-embed"
+    assert mxbai_loaded.runtime_model["embedding_pooling_mode"] == "mean"
+    assert mxbai_loaded.runtime_model["dimensions"] == 10
+
+
+def test_embed_returns_family_specific_dimensions_for_mxbai() -> None:
+    _, runtime_service, inference_service = build_services()
+    bge_model = WorkerModelCatalog.dev_embedding_model(
+        environment={"MELIX_DEV_EMBED_FAMILY_ID": "bge-m3"}
+    )
+    bge_model.model_id = "melix-dev-embed-bge"
+    mxbai_model = WorkerModelCatalog.dev_embedding_model(
+        environment={"MELIX_DEV_EMBED_FAMILY_ID": "mxbai-embed"}
+    )
+    mxbai_model.model_id = "melix-dev-embed-mxbai"
+
+    bge_handle = load_model(runtime_service, bge_model)
+    mxbai_handle = load_model(runtime_service, mxbai_model)
+
+    bge = inference_service.Embed(
+        inference_pb2.EmbedRequest(
+            id=common_pb2.RequestIdentity(request_id="embed-bge"),
+            model_handle=bge_handle,
+            inputs=["query text"],
+        ),
+        context=None,
+    )
+    mxbai = inference_service.Embed(
+        inference_pb2.EmbedRequest(
+            id=common_pb2.RequestIdentity(request_id="embed-mxbai"),
+            model_handle=mxbai_handle,
+            inputs=["query text"],
+        ),
+        context=None,
+    )
+
+    assert bge.error.code == ""
+    assert mxbai.error.code == ""
+    assert len(bge.embeddings[0].values) == 8
+    assert len(mxbai.embeddings[0].values) == 10
+
+
 def test_embed_runtime_resolves_backend_from_loaded_model_metadata() -> None:
     runtime = DeterministicEmbeddingRuntime()
 
@@ -167,4 +233,14 @@ def test_load_model_rejects_unsupported_embedding_backend() -> None:
     )
 
     with pytest.raises(ValueError, match="Unsupported embedding backend"):
+        runtime.load_model(model)
+
+
+def test_load_model_rejects_unsupported_embedding_family() -> None:
+    runtime = DeterministicEmbeddingRuntime()
+    model = WorkerModelCatalog.dev_embedding_model(
+        environment={"MELIX_DEV_EMBED_FAMILY_ID": "unsupported-family"}
+    )
+
+    with pytest.raises(ValueError, match="Unsupported embedding family"):
         runtime.load_model(model)

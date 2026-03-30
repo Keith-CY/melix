@@ -333,6 +333,11 @@ public actor ModelCatalog {
         model.features = ["embeddings"]
         model.settings.alias = "Melix Dev Embed"
         model.settings.memoryPolicy = .memoryResidencyEvictable
+        model.settings.ext["embedding_backend_id"] = "bert-v1"
+        model.settings.ext["embedding_family_id"] = "bert"
+        model.settings.ext["embedding_pooling_mode"] = "cls"
+        model.settings.ext["embedding_normalization"] = "l2"
+        model.settings.ext["embedding_dimensions"] = "8"
         return withSynchronizedResidency(model)
     }
 

@@ -45,12 +45,21 @@ class WorkerModelCatalog:
             "MELIX_DEV_EMBED_FAMILY_ID",
             "xlmr" if backend_id == "xlmr-v1" else "bert",
         ).strip() or ("xlmr" if backend_id == "xlmr-v1" else "bert")
+        default_pooling_mode = {
+            "bert": "cls",
+            "xlmr": "mean",
+            "bge-m3": "cls",
+            "mxbai-embed": "mean",
+        }.get(family_id, "cls")
         pooling_mode = environment.get(
             "MELIX_DEV_EMBED_POOLING_MODE",
-            "mean" if family_id == "xlmr" else "cls",
-        ).strip() or ("mean" if family_id == "xlmr" else "cls")
+            default_pooling_mode,
+        ).strip() or default_pooling_mode
         normalization = environment.get("MELIX_DEV_EMBED_NORMALIZATION", "l2").strip() or "l2"
-        dimensions = environment.get("MELIX_DEV_EMBED_DIMENSIONS", "8").strip() or "8"
+        default_dimensions = {
+            "mxbai-embed": "10",
+        }.get(family_id, "8")
+        dimensions = environment.get("MELIX_DEV_EMBED_DIMENSIONS", default_dimensions).strip() or default_dimensions
         return common_pb2.ModelSpec(
             model_id="melix-dev-embed",
             model_path=environment.get("MELIX_DEV_EMBED_MODEL_PATH", "models/melix-dev-embed"),

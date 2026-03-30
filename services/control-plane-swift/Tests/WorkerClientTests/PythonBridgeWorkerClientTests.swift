@@ -786,6 +786,25 @@ struct PythonBridgeWorkerClientTests {
         #expect(spec.ext["melix.multimodal_adapter_hash"] == "vision-family-paligemma-v1")
     }
 
+    @Test("bootstrap worker preparation carries embedding family metadata into worker model specs")
+    func bootstrapWorkerPreparationCarriesEmbeddingFamilyMetadataIntoWorkerModelSpecs() throws {
+        var summary = ModelCatalog.devEmbeddingModel()
+        summary.settings.ext["embedding_backend_id"] = "bert-v1"
+        summary.settings.ext["embedding_family_id"] = "mxbai-embed"
+        summary.settings.ext["embedding_pooling_mode"] = "mean"
+        summary.settings.ext["embedding_normalization"] = "l2"
+        summary.settings.ext["embedding_dimensions"] = "10"
+
+        let spec = try #require(BootstrapWorkerPreparation.modelSpec(for: summary))
+
+        #expect(spec.modelID == "melix-dev-embed")
+        #expect(spec.ext["embedding_backend_id"] == "bert-v1")
+        #expect(spec.ext["embedding_family_id"] == "mxbai-embed")
+        #expect(spec.ext["embedding_pooling_mode"] == "mean")
+        #expect(spec.ext["embedding_normalization"] == "l2")
+        #expect(spec.ext["embedding_dimensions"] == "10")
+    }
+
     @Test("bridge client treats helper errors as unavailable")
     func bridgeClientTreatsHelperErrorsAsUnavailable() async throws {
         let runner = ScriptedBridgeRunner()

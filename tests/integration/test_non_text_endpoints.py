@@ -68,6 +68,40 @@ def test_embeddings_endpoint_supports_xlmr_backend_override() -> None:
     assert bert_payload["data"][0]["embedding"] != xlmr_payload["data"][0]["embedding"]
 
 
+def test_embeddings_endpoint_supports_bge_and_mxbai_family_overrides() -> None:
+    repo_root = Path(__file__).resolve().parents[2]
+    bge_stack = LiveMelixStack(
+        repo_root,
+        environment_overrides={"MELIX_DEV_EMBED_FAMILY_ID": "bge-m3"},
+    )
+    mxbai_stack = LiveMelixStack(
+        repo_root,
+        environment_overrides={"MELIX_DEV_EMBED_FAMILY_ID": "mxbai-embed"},
+    )
+
+    try:
+        bge_stack.start()
+        bge_stack.wait_for_models(["melix-dev-embed"])
+        bge_status, bge_payload = _post_embeddings(bge_stack, "melix-dev-embed", ["query text"])
+    finally:
+        bge_stack.stop()
+
+    try:
+        mxbai_stack.start()
+        mxbai_stack.wait_for_models(["melix-dev-embed"])
+        mxbai_status, mxbai_payload = _post_embeddings(mxbai_stack, "melix-dev-embed", ["query text"])
+    finally:
+        mxbai_stack.stop()
+
+    assert bge_status == 200
+    assert mxbai_status == 200
+    assert bge_payload["model"] == "melix-dev-embed"
+    assert mxbai_payload["model"] == "melix-dev-embed"
+    assert len(bge_payload["data"][0]["embedding"]) == 8
+    assert len(mxbai_payload["data"][0]["embedding"]) == 10
+    assert bge_payload["data"][0]["embedding"] != mxbai_payload["data"][0]["embedding"]
+
+
 def test_rerank_endpoint_returns_ranked_items() -> None:
     stack = LiveMelixStack(Path(__file__).resolve().parents[2])
 

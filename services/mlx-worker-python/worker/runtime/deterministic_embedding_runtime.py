@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-from worker.runtime.embedding_backends import resolve_embedding_backend
+from worker.runtime.embedding_backends import (
+    resolve_embedding_backend,
+    resolve_embedding_family,
+)
 
 
 class DeterministicEmbeddingRuntime:
@@ -11,7 +14,10 @@ class DeterministicEmbeddingRuntime:
 
     def load_model(self, model_spec):
         backend = resolve_embedding_backend(model_spec.ext.get("embedding_backend_id", "bert-v1"))
-        metadata = backend.metadata(self.dimensions)
+        family = resolve_embedding_family(model_spec.ext.get("embedding_family_id", ""), backend)
+        dimensions = family.dimensions(model_spec.ext.get("embedding_dimensions", self.dimensions))
+        metadata = backend.metadata(dimensions)
+        metadata.update(family.metadata(dimensions))
         return {
             "model_id": model_spec.model_id,
             **metadata,
@@ -26,4 +32,7 @@ class DeterministicEmbeddingRuntime:
         backend = loaded_model.get("embedding_backend")
         if backend is None:
             backend = resolve_embedding_backend(loaded_model.get("embedding_backend_id", "bert-v1"))
-        return [backend.embed_text(text, dimensions) for text in inputs]
+        family = loaded_model.get("embedding_family_adapter")
+        if family is None:
+            family = resolve_embedding_family(loaded_model.get("embedding_family_id", ""), backend)
+        return [family.embed_text(backend, text, dimensions) for text in inputs]

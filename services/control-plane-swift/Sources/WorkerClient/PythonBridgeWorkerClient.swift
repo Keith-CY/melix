@@ -301,6 +301,13 @@ public enum BootstrapWorkerPreparation {
         "vision_supports_tool_calls",
         "melix.multimodal_adapter_hash",
     ]
+    private static let embeddingExtKeys = [
+        "embedding_backend_id",
+        "embedding_family_id",
+        "embedding_pooling_mode",
+        "embedding_normalization",
+        "embedding_dimensions",
+    ]
 
     public static func modelSpec(for modelID: String) -> Melix_Worker_V1_ModelSpec? {
         switch modelID {
@@ -338,6 +345,11 @@ public enum BootstrapWorkerPreparation {
             }
         }
         for key in vlmExtKeys {
+            if let value = summary.settings.ext[key], !value.isEmpty {
+                spec.ext[key] = value
+            }
+        }
+        for key in embeddingExtKeys {
             if let value = summary.settings.ext[key], !value.isEmpty {
                 spec.ext[key] = value
             }
@@ -494,6 +506,11 @@ public enum BootstrapWorkerPreparation {
         model.parserMode = "text"
         model.reasoningMode = "off"
         model.maxContext = 8192
+        model.ext["embedding_backend_id"] = "bert-v1"
+        model.ext["embedding_family_id"] = "bert"
+        model.ext["embedding_pooling_mode"] = "cls"
+        model.ext["embedding_normalization"] = "l2"
+        model.ext["embedding_dimensions"] = "8"
         return model
     }
 

@@ -15,6 +15,14 @@ class EmbeddingBackendDescriptor:
     estimated_resident_bytes: int
 
 
+@dataclass(frozen=True)
+class EmbeddingFamilyDescriptor:
+    family_id: str
+    pooling_mode: str
+    normalization: str
+    default_dimensions: int
+
+
 class DeterministicEmbeddingBackend:
     descriptor: EmbeddingBackendDescriptor
 
@@ -55,6 +63,43 @@ class DeterministicEmbeddingBackend:
         return " ".join(text.split())
 
 
+class DeterministicEmbeddingFamilyAdapter:
+    descriptor: EmbeddingFamilyDescriptor
+
+    def metadata(self, dimensions: int) -> dict[str, object]:
+        return {
+            "embedding_family_id": self.descriptor.family_id,
+            "embedding_pooling_mode": self.descriptor.pooling_mode,
+            "embedding_normalization": self.descriptor.normalization,
+            "dimensions": dimensions,
+            "embedding_family_adapter": self,
+        }
+
+    def dimensions(self, configured_dimensions: object | None) -> int:
+        return _coerce_dimensions(configured_dimensions, self.descriptor.default_dimensions)
+
+    def embed_text(
+        self,
+        backend: DeterministicEmbeddingBackend,
+        text: str,
+        dimensions: int,
+    ) -> list[float]:
+        raise NotImplementedError
+
+
+class DefaultEmbeddingFamilyAdapter(DeterministicEmbeddingFamilyAdapter):
+    def __init__(self, descriptor: EmbeddingFamilyDescriptor) -> None:
+        self.descriptor = descriptor
+
+    def embed_text(
+        self,
+        backend: DeterministicEmbeddingBackend,
+        text: str,
+        dimensions: int,
+    ) -> list[float]:
+        return backend.embed_text(text, dimensions)
+
+
 class BERTEmbeddingBackend(DeterministicEmbeddingBackend):
     descriptor = EmbeddingBackendDescriptor(
         backend_id="bert-v1",
@@ -84,6 +129,46 @@ class XLMREmbeddingBackend(DeterministicEmbeddingBackend):
         return self._project_digest(f"xlmr::{canonical}", dimensions)
 
 
+class BGEEmbeddingFamilyAdapter(DeterministicEmbeddingFamilyAdapter):
+    descriptor = EmbeddingFamilyDescriptor(
+        family_id="bge-m3",
+        pooling_mode="cls",
+        normalization="l2",
+        default_dimensions=8,
+    )
+
+    def embed_text(
+        self,
+        backend: DeterministicEmbeddingBackend,
+        text: str,
+        dimensions: int,
+    ) -> list[float]:
+        return backend.embed_text(
+            f"Represent this sentence for retrieval: {text}",
+            dimensions,
+        )
+
+
+class MXBAIEmbeddingFamilyAdapter(DeterministicEmbeddingFamilyAdapter):
+    descriptor = EmbeddingFamilyDescriptor(
+        family_id="mxbai-embed",
+        pooling_mode="mean",
+        normalization="l2",
+        default_dimensions=10,
+    )
+
+    def embed_text(
+        self,
+        backend: DeterministicEmbeddingBackend,
+        text: str,
+        dimensions: int,
+    ) -> list[float]:
+        return backend.embed_text(
+            f"Represent this paragraph for retrieval: {text}",
+            dimensions,
+        )
+
+
 def resolve_embedding_backend(backend_id: str) -> DeterministicEmbeddingBackend:
     normalized = backend_id.strip().lower()
     if normalized == "" or normalized == "bert-v1":
@@ -91,3 +176,36 @@ def resolve_embedding_backend(backend_id: str) -> DeterministicEmbeddingBackend:
     if normalized == "xlmr-v1":
         return XLMREmbeddingBackend()
     raise ValueError(f"Unsupported embedding backend: {backend_id}")
+
+
+def resolve_embedding_family(
+    family_id: str,
+    backend: DeterministicEmbeddingBackend,
+) -> DeterministicEmbeddingFamilyAdapter:
+    normalized = family_id.strip().lower()
+    if normalized == "" or normalized == backend.descriptor.family_id:
+        return DefaultEmbeddingFamilyAdapter(
+            EmbeddingFamilyDescriptor(
+                family_id=backend.descriptor.family_id,
+                pooling_mode=backend.descriptor.pooling_mode,
+                normalization=backend.descriptor.normalization,
+                default_dimensions=8,
+            )
+        )
+    if normalized == "bge-m3":
+        return BGEEmbeddingFamilyAdapter()
+    if normalized == "mxbai-embed":
+        return MXBAIEmbeddingFamilyAdapter()
+    raise ValueError(f"Unsupported embedding family: {family_id}")
+
+
+def _coerce_dimensions(value: object | None, default_dimensions: int) -> int:
+    if isinstance(value, int):
+        return value if value > 0 else default_dimensions
+    if isinstance(value, str):
+        stripped = value.strip()
+        if stripped.isdigit():
+            parsed = int(stripped)
+            if parsed > 0:
+                return parsed
+    return default_dimensions

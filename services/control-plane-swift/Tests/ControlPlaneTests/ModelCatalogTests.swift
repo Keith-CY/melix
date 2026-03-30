@@ -22,6 +22,10 @@ struct ModelCatalogTests {
         #expect(models.first(where: { $0.modelID == "melix-dev-text" })?.settings.adaptiveThinking.mode == "adaptive")
         #expect(models.first(where: { $0.modelID == "melix-dev-text" })?.settings.adaptiveThinking.budgetTokens == 192)
         #expect(models.first(where: { $0.modelID == "melix-dev-embed" })?.routeClass == .workerRoutePythonEmbedding)
+        #expect(models.first(where: { $0.modelID == "melix-dev-embed" })?.settings.ext["embedding_backend_id"] == "bert-v1")
+        #expect(models.first(where: { $0.modelID == "melix-dev-embed" })?.settings.ext["embedding_family_id"] == "bert")
+        #expect(models.first(where: { $0.modelID == "melix-dev-embed" })?.settings.ext["embedding_pooling_mode"] == "cls")
+        #expect(models.first(where: { $0.modelID == "melix-dev-embed" })?.settings.ext["embedding_dimensions"] == "8")
         #expect(models.first(where: { $0.modelID == "melix-dev-rerank" })?.routeClass == .workerRoutePythonRerank)
         #expect(models.first(where: { $0.modelID == "melix-dev-model-ops" })?.routeClass == .workerRoutePythonModelOperations)
     }
