@@ -1,3 +1,4 @@
+import Foundation
 import MelixWorkerProtocol
 
 func resolvedRestoreSnapshotID(
@@ -11,13 +12,14 @@ func resolvedRestoreSnapshotID(
 
 func makeRestoreBoundaryRef(
     snapshot: Melix_Worker_V1_SnapshotRef,
-    blockTable: Melix_Worker_V1_BlockTable
+    blockTable: Melix_Worker_V1_BlockTable,
+    boundaryKind: String = "boundary_snapshot"
 ) -> Melix_Worker_V1_RestoreBoundaryRef {
     var boundary = Melix_Worker_V1_RestoreBoundaryRef()
     boundary.snapshot = snapshot
     boundary.cacheKey = blockTable.cacheKey
     boundary.scopeID = effectiveScopeID(for: blockTable)
-    boundary.boundaryKind = "boundary_snapshot"
+    boundary.boundaryKind = boundaryKind
     return boundary
 }
 
@@ -26,13 +28,18 @@ func makeCacheRestorePlan(
     blockTableID: String,
     blockTable: Melix_Worker_V1_BlockTable,
     tier: String,
-    partial: Bool = false
+    partial: Bool = false,
+    boundaryKind: String = "boundary_snapshot"
 ) -> Melix_Worker_V1_CacheRestorePlan {
     let normalizedTable = normalizedBlockTable(blockTable)
 
     var plan = Melix_Worker_V1_CacheRestorePlan()
     plan.planID = blockTableID.isEmpty ? "restore-\(snapshot.snapshotID)" : "restore-\(blockTableID)"
-    plan.boundary = makeRestoreBoundaryRef(snapshot: snapshot, blockTable: normalizedTable)
+    plan.boundary = makeRestoreBoundaryRef(
+        snapshot: snapshot,
+        blockTable: normalizedTable,
+        boundaryKind: boundaryKind
+    )
     plan.blockTableID = blockTableID
     plan.blockTable = normalizedTable
     plan.pages = normalizedTable.pages
@@ -40,6 +47,67 @@ func makeCacheRestorePlan(
     plan.partial = partial
     plan.tier = tier
     return plan
+}
+
+func makeWalkedBackCacheRestorePlan(
+    snapshot: Melix_Worker_V1_SnapshotRef,
+    blockTableID: String,
+    blockTable: Melix_Worker_V1_BlockTable,
+    cachedMessages: [Melix_Worker_V1_ChatMessage],
+    requestMessages: [Melix_Worker_V1_ChatMessage],
+    tier: String
+) -> Melix_Worker_V1_CacheRestorePlan? {
+    let normalizedTable = normalizedBlockTable(blockTable)
+    if requestMessages.isEmpty {
+        return makeCacheRestorePlan(
+            snapshot: snapshot,
+            blockTableID: blockTableID,
+            blockTable: normalizedTable,
+            tier: tier
+        )
+    }
+
+    let sharedPromptTokens = sharedReusablePromptTokens(
+        cachedMessages: cachedMessages,
+        requestMessages: requestMessages
+    )
+    guard sharedPromptTokens > 0 else {
+        return nil
+    }
+
+    let safeBoundary = safeReusableTokenBoundary(
+        in: normalizedTable,
+        sharedPromptTokens: sharedPromptTokens
+    )
+    guard safeBoundary > 0 else {
+        return nil
+    }
+
+    if safeBoundary >= normalizedTable.totalTokenCount {
+        return makeCacheRestorePlan(
+            snapshot: snapshot,
+            blockTableID: blockTableID,
+            blockTable: normalizedTable,
+            tier: tier
+        )
+    }
+
+    let truncatedTable = truncatedBlockTable(
+        normalizedTable,
+        throughTokenBoundary: safeBoundary
+    )
+    guard !truncatedTable.pages.isEmpty else {
+        return nil
+    }
+
+    return makeCacheRestorePlan(
+        snapshot: snapshot,
+        blockTableID: "\(blockTableID)::walkback-\(safeBoundary)",
+        blockTable: truncatedTable,
+        tier: tier,
+        partial: true,
+        boundaryKind: "partial_prefix_walk_back"
+    )
 }
 
 func normalizedBlockTable(
@@ -81,4 +149,114 @@ private func effectiveScopeID(
         return blockTable.scopeID
     }
     return blockTable.cacheKey.scopeID
+}
+
+private func safeReusableTokenBoundary(
+    in blockTable: Melix_Worker_V1_BlockTable,
+    sharedPromptTokens: UInt32
+) -> UInt32 {
+    let normalizedTable = normalizedBlockTable(blockTable)
+    if sharedPromptTokens >= normalizedTable.totalTokenCount {
+        return normalizedTable.totalTokenCount
+    }
+
+    let reusablePages = normalizedTable.pages
+        .sorted { lhs, rhs in
+            if lhs.tokenEnd == rhs.tokenEnd {
+                return lhs.pageID < rhs.pageID
+            }
+            return lhs.tokenEnd < rhs.tokenEnd
+        }
+        .filter { $0.tokenEnd <= sharedPromptTokens }
+
+    return reusablePages.last?.tokenEnd ?? 0
+}
+
+private func truncatedBlockTable(
+    _ blockTable: Melix_Worker_V1_BlockTable,
+    throughTokenBoundary tokenBoundary: UInt32
+) -> Melix_Worker_V1_BlockTable {
+    let normalizedTable = normalizedBlockTable(blockTable)
+    let pages = normalizedTable.pages.filter { $0.tokenEnd <= tokenBoundary }
+    let allowedBlockIDs = Set(pages.flatMap(\.blockIds))
+
+    var truncated = normalizedTable
+    truncated.pages = pages
+    truncated.blocks = normalizedTable.blocks.filter { allowedBlockIDs.contains($0.blockID) }
+    truncated.totalTokenCount = pages.last?.tokenEnd ?? 0
+    return truncated
+}
+
+private func sharedReusablePromptTokens(
+    cachedMessages: [Melix_Worker_V1_ChatMessage],
+    requestMessages: [Melix_Worker_V1_ChatMessage]
+) -> UInt32 {
+    let cachedFragments = promptReuseFragments(from: cachedMessages)
+    let requestFragments = promptReuseFragments(from: requestMessages)
+
+    var sharedTokens: UInt32 = 0
+    for (cached, request) in zip(cachedFragments, requestFragments) {
+        guard cached == request else {
+            break
+        }
+        sharedTokens += cached.tokenCount
+    }
+    return sharedTokens
+}
+
+private enum PromptReuseFragment: Equatable {
+    case role(String)
+    case nameToken(String)
+    case textToken(String)
+    case imageURI(String)
+    case imageBytes(Data)
+    case audioURI(String)
+    case audioBytes(Data)
+
+    var tokenCount: UInt32 {
+        switch self {
+        case .role:
+            return 0
+        case .nameToken, .textToken:
+            return 1
+        case .imageURI, .imageBytes, .audioURI, .audioBytes:
+            return 256
+        }
+    }
+}
+
+private func promptReuseFragments(
+    from messages: [Melix_Worker_V1_ChatMessage]
+) -> [PromptReuseFragment] {
+    messages.flatMap { message in
+        var fragments: [PromptReuseFragment] = [.role(message.role)]
+        fragments += tokenFragments(from: message.name, kind: PromptReuseFragment.nameToken)
+        for part in message.parts {
+            switch part.part {
+            case .text(let text):
+                fragments += tokenFragments(from: text, kind: PromptReuseFragment.textToken)
+            case .imageUri(let uri):
+                fragments.append(.imageURI(uri))
+            case .imageBytes(let bytes):
+                fragments.append(.imageBytes(Data(bytes)))
+            case .audioUri(let uri):
+                fragments.append(.audioURI(uri))
+            case .audioBytes(let bytes):
+                fragments.append(.audioBytes(Data(bytes)))
+            case nil:
+                continue
+            }
+        }
+        return fragments
+    }
+}
+
+private func tokenFragments(
+    from text: String,
+    kind: (String) -> PromptReuseFragment
+) -> [PromptReuseFragment] {
+    text
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+        .split(whereSeparator: \.isWhitespace)
+        .map { kind(String($0)) }
 }

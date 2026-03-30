@@ -35,6 +35,7 @@ struct WorkerPrefillResult: Sendable {
     let activeKVQuantizationRatio: Int
     let cacheStats: Melix_Worker_V1_CacheStats
     let hotPrefixCount: Int
+    let restorePlan: Melix_Worker_V1_CacheRestorePlan?
 }
 
 struct WorkerDecodeSession: @unchecked Sendable {
@@ -253,49 +254,61 @@ actor WorkerRuntimeRegistry {
         if !execution.cacheHints.restoreSnapshotID.isEmpty {
             let restored = try await restoreBoundarySnapshotRecord(snapshotID: execution.cacheHints.restoreSnapshotID)
             let requestMessages = messages.isEmpty ? restored.messages : messages
-            let restoreResumeHint = restored.snapshot.snapshotID.isEmpty
-                ? restored.resumeHint
-                : "snapshot-restore:\(restored.snapshot.snapshotID)"
-            let runtimePrefill = try await runtime.prefill(
-                model: loaded.runtimeModel,
-                messages: requestMessages,
-                prefillStepSize: 0,
-                resumeHint: restoreResumeHint,
-                acceleration: normalizedAccelerationPolicy(restored.acceleration),
-                shouldAbort: shouldAbort
-            )
-
-            let decodeHandle = "\(modelHandle)::decode::\(nextDecodeHandle)"
-            nextDecodeHandle += 1
-            prefillContexts[decodeHandle] = StoredPrefillContext(
-                decodeHandle: decodeHandle,
-                modelHandle: loaded.handle,
-                requestID: restored.snapshot.requestID.isEmpty ? requestID : restored.snapshot.requestID,
-                promptTokens: restored.promptTokens,
-                messages: requestMessages,
-                resumeHint: restored.resumeHint,
-                acceleration: restored.acceleration,
-                activeKVQuantizationRatio: activeKVQuantizationRatio(from: restored.acceleration),
+            if let restorePlan = makeWalkedBackCacheRestorePlan(
+                snapshot: restored.snapshot,
                 blockTableID: restored.blockTableID,
                 blockTable: restored.blockTable,
-                restoredSnapshotID: restored.snapshot.snapshotID,
-                prefix: await cacheStore.lookupPrefix(for: restored.blockTable.cacheKey),
-                context: runtimePrefill.context
-            )
+                cachedMessages: restored.messages,
+                requestMessages: requestMessages,
+                tier: "l2"
+            ) {
+                let restoreResumeHint = restoreResumeHint(
+                    snapshotID: restored.snapshot.snapshotID,
+                    restorePlan: restorePlan,
+                    fallback: restored.resumeHint
+                )
+                let runtimePrefill = try await runtime.prefill(
+                    model: loaded.runtimeModel,
+                    messages: requestMessages,
+                    prefillStepSize: 0,
+                    resumeHint: restoreResumeHint,
+                    acceleration: normalizedAccelerationPolicy(restored.acceleration),
+                    shouldAbort: shouldAbort
+                )
 
-            let cacheSnapshot = await cacheStore.snapshot()
-            return WorkerPrefillResult(
-                decodeHandle: decodeHandle,
-                blockTableID: restored.blockTableID,
-                blockTable: restored.blockTable,
-                promptTokens: restored.promptTokens,
-                restoredSnapshotID: restored.snapshot.snapshotID,
-                appliedAcceleration: restored.acceleration,
-                acceleratedPrefillGainPct: 0,
-                activeKVQuantizationRatio: activeKVQuantizationRatio(from: restored.acceleration),
-                cacheStats: cacheSnapshot.stats,
-                hotPrefixCount: cacheSnapshot.hotPrefixes.count
-            )
+                let decodeHandle = "\(modelHandle)::decode::\(nextDecodeHandle)"
+                nextDecodeHandle += 1
+                prefillContexts[decodeHandle] = StoredPrefillContext(
+                    decodeHandle: decodeHandle,
+                    modelHandle: loaded.handle,
+                    requestID: requestID,
+                    promptTokens: runtimePrefill.promptTokens,
+                    messages: requestMessages,
+                    resumeHint: restoreResumeHint,
+                    acceleration: runtimePrefill.appliedAcceleration,
+                    activeKVQuantizationRatio: runtimePrefill.activeKVQuantizationRatio,
+                    blockTableID: restorePlan.blockTableID,
+                    blockTable: restorePlan.blockTable,
+                    restoredSnapshotID: restored.snapshot.snapshotID,
+                    prefix: await cacheStore.lookupPrefix(for: restorePlan.blockTable.cacheKey),
+                    context: runtimePrefill.context
+                )
+
+                let cacheSnapshot = await cacheStore.snapshot()
+                return WorkerPrefillResult(
+                    decodeHandle: decodeHandle,
+                    blockTableID: restorePlan.blockTableID,
+                    blockTable: restorePlan.blockTable,
+                    promptTokens: runtimePrefill.promptTokens,
+                    restoredSnapshotID: restored.snapshot.snapshotID,
+                    appliedAcceleration: runtimePrefill.appliedAcceleration,
+                    acceleratedPrefillGainPct: runtimePrefill.acceleratedPrefillGainPct,
+                    activeKVQuantizationRatio: runtimePrefill.activeKVQuantizationRatio,
+                    cacheStats: cacheSnapshot.stats,
+                    hotPrefixCount: cacheSnapshot.hotPrefixes.count,
+                    restorePlan: restorePlan
+                )
+            }
         }
 
         let result = try await runtime.prefill(
@@ -352,7 +365,8 @@ actor WorkerRuntimeRegistry {
             acceleratedPrefillGainPct: result.acceleratedPrefillGainPct,
             activeKVQuantizationRatio: result.activeKVQuantizationRatio,
             cacheStats: cacheSnapshot.stats,
-            hotPrefixCount: cacheSnapshot.hotPrefixes.count
+            hotPrefixCount: cacheSnapshot.hotPrefixes.count,
+            restorePlan: nil
         )
     }
 
@@ -940,6 +954,20 @@ enum WorkerRuntimeRegistryError: Error, LocalizedError, Equatable {
             return false
         }
     }
+}
+
+func restoreResumeHint(
+    snapshotID: String,
+    restorePlan: Melix_Worker_V1_CacheRestorePlan,
+    fallback: String
+) -> String {
+    guard !snapshotID.isEmpty else {
+        return fallback
+    }
+    if restorePlan.partial {
+        return "snapshot-restore:\(snapshotID):partial:\(restorePlan.restoredTokenCount)"
+    }
+    return "snapshot-restore:\(snapshotID)"
 }
 
 func accelerationModeName(_ mode: Melix_Worker_V1_AccelerationMode) -> String {

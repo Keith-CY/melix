@@ -37,6 +37,33 @@ struct SnapshotStoreTests {
         #expect(updated.summary.quantizedBytes == 64)
     }
 
+    @Test("cache metadata store preserves restore plans across replacements and trims appended plans")
+    func cacheMetadataStorePreservesAndTrimsRestorePlans() async {
+        var existingSnapshot = Melix_Controlplane_V1_CacheSnapshot()
+        existingSnapshot.recentRestorePlans = (0..<10).map { index in
+            var plan = Melix_Controlplane_V1_CacheRestorePlan()
+            plan.planID = "existing-\(index)"
+            plan.restoredTokenCount = UInt32(index)
+            return plan
+        }
+        let store = CacheMetadataStore(snapshot: existingSnapshot)
+
+        var replacement = Melix_Controlplane_V1_CacheSnapshot()
+        replacement.summary.blockCount = 4
+        await store.replace(snapshot: replacement)
+
+        var latest = Melix_Controlplane_V1_CacheRestorePlan()
+        latest.planID = "latest"
+        latest.restoredTokenCount = 99
+        await store.appendRecentRestorePlan(latest)
+
+        let snapshot = await store.cacheSnapshot()
+        #expect(snapshot.summary.blockCount == 4)
+        #expect(snapshot.recentRestorePlans.count == 10)
+        #expect(snapshot.recentRestorePlans.first?.planID == "latest")
+        #expect(snapshot.recentRestorePlans.last?.planID == "existing-8")
+    }
+
     @Test("session graph store exposes sorted summaries and session state")
     func sessionGraphStoreExposesSortedSummaries() async {
         let store = SessionGraphStore(sessions: [makeSessionState(id: "session-b"), makeSessionState(id: "session-a")])

@@ -654,11 +654,30 @@ public actor RequestCoordinator {
                         return
                     }
 
+                    let effectiveRestorePlan = prefillResponse.hasRestorePlan
+                        ? prefillResponse.restorePlan
+                        : nil
+                    let effectiveBlockTableID = effectiveRestorePlan?.blockTableID.isEmpty == false
+                        ? effectiveRestorePlan?.blockTableID ?? prefillResponse.blockTableID
+                        : prefillResponse.blockTableID
+                    let effectiveBlockTable = effectiveRestorePlan?.blockTable ?? prefillResponse.blockTable
+
                     await self.hydrateHeadCacheKey(
                         requestIdentity: request.execution.id,
                         modelID: modelID,
-                        blockTable: prefillResponse.blockTable
+                        blockTable: effectiveBlockTable
                     )
+                    if let effectiveRestorePlan {
+                        await self.recordRestorePlanMetrics(
+                            effectiveRestorePlan,
+                            promptTokens: prefillResponse.promptTokens
+                        )
+                        if let cacheMetadataStore = self.cacheMetadataStore {
+                            await cacheMetadataStore.appendRecentRestorePlan(
+                                makeControlPlaneRestorePlan(from: effectiveRestorePlan)
+                            )
+                        }
+                    }
 
                     var prefillEvent = makePrefillStartedEvent(
                         request: request,
@@ -672,7 +691,7 @@ public actor RequestCoordinator {
                         var cacheDecisionEvent = makeCacheDecisionEvent(
                             requestID: request.execution.id.requestID,
                             lane: prefillLane,
-                            blockTableID: prefillResponse.blockTableID,
+                            blockTableID: effectiveBlockTableID,
                             restoredSnapshotID: prefillResponse.restoredSnapshotID,
                             accelerationMode: prefillResponse.appliedAcceleration.mode
                         )
@@ -876,6 +895,34 @@ public actor RequestCoordinator {
             plan.cacheRouteClass == .cold ? 0 : 1,
             forKey: "scheduler.warm_route_preferred"
         )
+    }
+
+    private func recordRestorePlanMetrics(
+        _ restorePlan: Melix_Worker_V1_CacheRestorePlan,
+        promptTokens: UInt32
+    ) async {
+        await metricsStore.set(
+            Double(restorePlan.restoredTokenCount),
+            forKey: "scheduler.restore_plan_restored_tokens"
+        )
+        await metricsStore.set(
+            Double(promptTokens),
+            forKey: "scheduler.restore_plan_total_tokens"
+        )
+        let ratioPct = promptTokens > 0
+            ? (Double(restorePlan.restoredTokenCount) / Double(promptTokens) * 100.0)
+            : 0
+        await metricsStore.set(
+            ratioPct,
+            forKey: "scheduler.restore_plan_ratio_pct"
+        )
+        if restorePlan.partial {
+            await metricsStore.increment("scheduler.partial_restore_walk_back_count")
+            await metricsStore.set(
+                ratioPct,
+                forKey: "scheduler.partial_restore_last_ratio_pct"
+            )
+        }
     }
 
     private func recordTTFTMetrics(requestID: String, ttftMs: Double) async {

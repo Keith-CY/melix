@@ -16,7 +16,24 @@ public actor CacheMetadataStore {
     }
 
     public func replace(snapshot: Melix_Controlplane_V1_CacheSnapshot) {
-        self.snapshot = snapshot
+        var next = snapshot
+        if next.recentRestorePlans.isEmpty, !self.snapshot.recentRestorePlans.isEmpty {
+            next.recentRestorePlans = self.snapshot.recentRestorePlans
+        }
+        self.snapshot = next
+    }
+
+    public func appendRecentRestorePlan(
+        _ plan: Melix_Controlplane_V1_CacheRestorePlan,
+        limit: Int = 10
+    ) {
+        var next = snapshot
+        next.recentRestorePlans.removeAll { $0.planID == plan.planID }
+        next.recentRestorePlans.insert(plan, at: 0)
+        if next.recentRestorePlans.count > limit {
+            next.recentRestorePlans = Array(next.recentRestorePlans.prefix(limit))
+        }
+        snapshot = next
     }
 
     public static func emptySnapshot() -> Melix_Controlplane_V1_CacheSnapshot {

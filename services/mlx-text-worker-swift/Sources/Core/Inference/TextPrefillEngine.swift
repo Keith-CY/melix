@@ -66,6 +66,29 @@ struct TextPrefillEngine: Sendable {
                     value: elapsedMilliseconds(since: startedAt)
                 )
             }
+            if let restorePlan = result.restorePlan {
+                metrics.set(
+                    "swift_text.partial_restore_restored_tokens",
+                    value: Int(clamping: restorePlan.restoredTokenCount)
+                )
+                metrics.set(
+                    "swift_text.partial_restore_total_tokens",
+                    value: result.promptTokens
+                )
+                metrics.set(
+                    "swift_text.partial_restore_last_ratio_pct",
+                    value: result.promptTokens > 0
+                        ? Int(
+                            (Double(restorePlan.restoredTokenCount)
+                                / Double(result.promptTokens) * 100.0
+                            ).rounded()
+                        )
+                        : 0
+                )
+                if restorePlan.partial {
+                    metrics.increment("swift_text.partial_restore_walk_back_count")
+                }
+            }
 
             var response = Melix_Worker_V1_PrefillResponse()
             response.ok = true
@@ -77,6 +100,9 @@ struct TextPrefillEngine: Sendable {
             response.lifecyclePhase = .executionPrefilling
             response.admissionState = .admissionAdmitted
             response.appliedAcceleration = result.appliedAcceleration
+            if let restorePlan = result.restorePlan {
+                response.restorePlan = restorePlan
+            }
             return response
         } catch let error as WorkerRuntimeRegistryError where error == .unknownModelHandle {
             metrics.increment("swift_text.rpc_error_count")

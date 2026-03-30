@@ -693,6 +693,66 @@ struct RequestCoordinatorTests {
         #expect(cacheSummary.l2Bytes == 4_096)
     }
 
+    @Test("partial restore plans are recorded in scheduler metrics and cache metadata")
+    func partialRestorePlansRecordWalkBackMetricsAndMetadata() async throws {
+        let workerClient = PhaseAwareWorkerClient()
+        let schedulerReadModel = SchedulerReadModel()
+        let metricsStore = MetricsStore()
+        let cacheMetadataStore = CacheMetadataStore()
+        let sessionGraphStore = SessionGraphStore(nowUnixMs: { 13_000 })
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(defaultTextClient: workerClient),
+            abortRegistry: AbortRegistry(),
+            schedulerReadModel: schedulerReadModel,
+            metricsStore: metricsStore,
+            sessionGraphStore: sessionGraphStore,
+            cacheMetadataStore: cacheMetadataStore
+        )
+
+        let execution = try await coordinator.startChatCompletion(
+            makeTranslatedChatRequest(
+                requestID: "req-partial-restore",
+                sessionID: "session-partial-restore",
+                branchID: "branch-main",
+                restoreSnapshotID: "snap-partial",
+                saveBoundarySnapshot: true,
+                preferHotPrefix: true
+            )
+        )
+        let consumer = Task {
+            do {
+                for try await _ in execution.stream {
+                }
+            } catch {
+            }
+        }
+        defer { consumer.cancel() }
+
+        let admittedProgress = await waitForProgress(
+            schedulerReadModel: schedulerReadModel,
+            requestID: "req-partial-restore",
+            phase: .requestAdmitted
+        )
+        #expect(admittedProgress?.lane == "text.prefill.hot")
+
+        _ = try #require(await waitForDecodeRequest(workerClient: workerClient))
+        await workerClient.emitDecodeStarted(requestID: "req-partial-restore", decodeHandle: "decode-req-partial-restore")
+        await workerClient.emitToken(requestID: "req-partial-restore", text: "partial")
+        await workerClient.finishDecode(requestID: "req-partial-restore")
+        _ = await consumer.result
+
+        let metrics = await metricsStore.snapshot()
+        let cacheSnapshot = await cacheMetadataStore.cacheSnapshot()
+
+        #expect(metrics.values["scheduler.partial_restore_walk_back_count"] == 1)
+        #expect(metrics.values["scheduler.restore_plan_restored_tokens"] == 2)
+        #expect(metrics.values["scheduler.restore_plan_total_tokens"] == 4)
+        #expect(metrics.values["scheduler.partial_restore_last_ratio_pct"] == 50)
+        #expect(cacheSnapshot.recentRestorePlans.count == 1)
+        #expect(cacheSnapshot.recentRestorePlans[0].partial)
+        #expect(cacheSnapshot.recentRestorePlans[0].restoredTokenCount == 2)
+    }
+
     @Test("cold session requests prefer background prefill lanes before reuse exists")
     func coldSessionRequestsPreferBackgroundPrefillLanesBeforeReuseExists() async throws {
         let workerClient = PhaseAwareWorkerClient()
@@ -1410,6 +1470,58 @@ private actor PhaseAwareWorkerClient:
         response.lifecyclePhase = .executionPrefilling
         response.admissionState = .admissionAdmitted
         response.restoredSnapshotID = request.execution.cacheHints.restoreSnapshotID
+        if request.execution.cacheHints.restoreSnapshotID == "snap-partial" {
+            var snapshot = Melix_Worker_V1_SnapshotRef()
+            snapshot.snapshotID = "snap-partial"
+            snapshot.requestID = "req-parent"
+            snapshot.sessionID = request.execution.id.sessionID
+            snapshot.branchID = request.execution.id.branchID
+            snapshot.tokenBoundary = 2
+
+            var cacheKey = Melix_Worker_V1_CacheKey()
+            cacheKey.scopeID = "scope-partial"
+            cacheKey.prefixHash = Data("partial-prefix".utf8)
+
+            var block = Melix_Worker_V1_BlockRef()
+            block.blockID = "blk-partial-0"
+            block.tokenStart = 0
+            block.tokenEnd = 2
+            block.bytes = 256
+
+            var blockTable = Melix_Worker_V1_BlockTable()
+            blockTable.cacheKey = cacheKey
+            blockTable.scopeID = "scope-partial"
+            blockTable.blocks = [block]
+            blockTable.pages = {
+                var page = Melix_Worker_V1_PageRef()
+                page.pageID = "page-partial-0"
+                page.blockIds = [block.blockID]
+                page.tokenStart = 0
+                page.tokenEnd = 2
+                page.bytes = 256
+                return [page]
+            }()
+            blockTable.totalTokenCount = 2
+
+            response.blockTableID = "block-\(request.execution.id.requestID)::walkback-2"
+            response.blockTable = blockTable
+            var boundary = Melix_Worker_V1_RestoreBoundaryRef()
+            boundary.snapshot = snapshot
+            boundary.cacheKey = cacheKey
+            boundary.scopeID = "scope-partial"
+            boundary.boundaryKind = "partial_prefix_walk_back"
+
+            var restorePlan = Melix_Worker_V1_CacheRestorePlan()
+            restorePlan.planID = "restore-\(response.blockTableID)"
+            restorePlan.boundary = boundary
+            restorePlan.blockTableID = response.blockTableID
+            restorePlan.blockTable = blockTable
+            restorePlan.pages = blockTable.pages
+            restorePlan.restoredTokenCount = 2
+            restorePlan.partial = true
+            restorePlan.tier = "l2"
+            response.restorePlan = restorePlan
+        }
         if response.appliedAcceleration.mode == .unspecified {
             response.appliedAcceleration.mode = .baseline
         }

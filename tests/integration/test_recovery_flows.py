@@ -10,19 +10,20 @@ from pathlib import Path
 from tests.integration.helpers import LiveMelixStack, get_cache_stats, read_metrics_export
 
 
-def test_session_followup_restores_latest_branch_snapshot_through_control_plane() -> None:
+def test_session_followup_replays_prompt_and_restores_latest_branch_snapshot_through_control_plane() -> None:
     stack = LiveMelixStack(Path(__file__).resolve().parents[2])
     stack.start()
 
     try:
         session_id = f"session-{uuid.uuid4().hex[:8]}"
+        source_prompt = "capture a reusable recovery snapshot"
         initial = stream_chat_completion(
             stack,
             {
                 "model": "melix-dev-text",
                 "stream": True,
                 "session_id": session_id,
-                "messages": [{"role": "user", "content": "capture a reusable recovery snapshot"}],
+                "messages": [{"role": "user", "content": source_prompt}],
             },
         )
         assert initial["status"] == 200
@@ -39,7 +40,7 @@ def test_session_followup_restores_latest_branch_snapshot_through_control_plane(
                 "stream": True,
                 "session_id": session_id,
                 "parent_request_id": initial["request_id"],
-                "messages": [{"role": "user", "content": "resume from the previous branch snapshot"}],
+                "messages": [{"role": "user", "content": source_prompt}],
             },
         )
         assert follow_up["status"] == 200
@@ -67,6 +68,7 @@ def test_boundary_snapshots_restore_after_swift_worker_restart_with_persisted_ca
     repo_root = Path(__file__).resolve().parents[2]
     with tempfile.TemporaryDirectory(prefix="melix-recovery-cache-") as cache_root_str:
         cache_root = Path(cache_root_str)
+        source_prompt = "persist a restart-safe boundary snapshot"
 
         first_stack = LiveMelixStack(repo_root, swift_cache_root=cache_root)
         first_stack.start()
@@ -76,7 +78,7 @@ def test_boundary_snapshots_restore_after_swift_worker_restart_with_persisted_ca
                 {
                     "model": "melix-dev-text",
                     "stream": True,
-                    "messages": [{"role": "user", "content": "persist a restart-safe boundary snapshot"}],
+                    "messages": [{"role": "user", "content": source_prompt}],
                     "save_boundary_snapshot": True,
                 },
             )
@@ -99,7 +101,7 @@ def test_boundary_snapshots_restore_after_swift_worker_restart_with_persisted_ca
                     "model": "melix-dev-text",
                     "stream": True,
                     "restore_snapshot_id": snapshot_id,
-                    "messages": [{"role": "user", "content": "resume after worker restart"}],
+                    "messages": [{"role": "user", "content": source_prompt}],
                 },
             )
             assert restored["status"] == 200
@@ -121,6 +123,61 @@ def test_boundary_snapshots_restore_after_swift_worker_restart_with_persisted_ca
             assert swift_values["swift_text.cache_snapshot_restore_ms"] >= 1
         finally:
             second_stack.stop()
+
+
+def test_partial_prefix_followup_walks_back_to_safe_boundary_and_reports_metrics() -> None:
+    stack = LiveMelixStack(Path(__file__).resolve().parents[2])
+    stack.start()
+
+    try:
+        session_id = f"session-{uuid.uuid4().hex[:8]}"
+        source_prompt = " ".join(f"token{i}" for i in range(1, 25))
+        diverged_prompt = " ".join(f"token{i}" for i in range(1, 21)) + " tail-x tail-y"
+
+        initial = stream_chat_completion(
+            stack,
+            {
+                "model": "melix-dev-text",
+                "stream": True,
+                "session_id": session_id,
+                "messages": [{"role": "user", "content": source_prompt}],
+            },
+        )
+        assert initial["status"] == 200
+        assert initial["request_id"]
+
+        follow_up = stream_chat_completion(
+            stack,
+            {
+                "model": "melix-dev-text",
+                "stream": True,
+                "session_id": session_id,
+                "parent_request_id": initial["request_id"],
+                "messages": [{"role": "user", "content": diverged_prompt}],
+            },
+        )
+        assert follow_up["status"] == 200
+        assert follow_up["request_id"]
+
+        control_values = wait_for_metric(
+            stack.control_plane_metrics_path,
+            "scheduler.partial_restore_walk_back_count",
+            minimum=1,
+        )
+        swift_values = wait_for_metric(
+            stack.swift_text_worker_metrics_path,
+            "swift_text.partial_restore_walk_back_count",
+            minimum=1,
+        )
+
+        assert control_values["scheduler.partial_restore_walk_back_count"] >= 1
+        assert control_values["scheduler.restore_plan_restored_tokens"] >= 16
+        assert control_values["scheduler.restore_plan_total_tokens"] >= 22
+        assert swift_values["swift_text.partial_restore_walk_back_count"] >= 1
+        assert swift_values["swift_text.partial_restore_restored_tokens"] >= 16
+        assert swift_values["swift_text.partial_restore_total_tokens"] >= 22
+    finally:
+        stack.stop()
 
 
 def test_warm_followup_prefers_hot_route_and_reduces_ttft_against_cold_baseline() -> None:

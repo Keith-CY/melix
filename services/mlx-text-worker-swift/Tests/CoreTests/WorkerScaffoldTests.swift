@@ -205,6 +205,153 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(decoded.tier, "l2")
     }
 
+    func testCacheRestoreMetadataWalkBackReturnsFullPlanForEmptyRequestMessages() throws {
+        let cacheKey = makeCacheKey(
+            scopeID: "scope-worker",
+            prefixSeed: "prefix-empty-request",
+            fingerprintSeed: "fingerprint-empty-request"
+        )
+        let snapshot = makeSnapshotRef(snapshotID: "snap-empty-request")
+        let blockTable = normalizedBlockTable(
+            makeBlockTable(
+                scopeID: "scope-worker",
+                cacheKey: cacheKey,
+                blockIDs: ["blk-0", "blk-1"],
+                bytes: [512, 512]
+            )
+        )
+
+        let plan = try XCTUnwrap(
+            makeWalkedBackCacheRestorePlan(
+                snapshot: snapshot,
+                blockTableID: "bt-empty-request",
+                blockTable: blockTable,
+                cachedMessages: [makeUserMessage("alpha beta gamma delta")],
+                requestMessages: [],
+                tier: "l2"
+            )
+        )
+
+        XCTAssertFalse(plan.partial)
+        XCTAssertEqual(plan.blockTableID, "bt-empty-request")
+        XCTAssertEqual(plan.restoredTokenCount, blockTable.totalTokenCount)
+    }
+
+    func testCacheRestoreMetadataWalkBackAccountsForMediaPrefixesAndIgnoresNilParts() throws {
+        let cacheKey = makeCacheKey(
+            scopeID: "scope-worker",
+            prefixSeed: "prefix-media",
+            fingerprintSeed: "fingerprint-media"
+        )
+        let snapshot = makeSnapshotRef(snapshotID: "snap-media")
+
+        var firstBlock = Melix_Worker_V1_BlockRef()
+        firstBlock.blockID = "blk-media-a"
+        firstBlock.tokenStart = 0
+        firstBlock.tokenEnd = 256
+        firstBlock.bytes = 256
+
+        var secondBlock = Melix_Worker_V1_BlockRef()
+        secondBlock.blockID = "blk-media-b"
+        secondBlock.tokenStart = 256
+        secondBlock.tokenEnd = 256
+        secondBlock.bytes = 256
+
+        var thirdBlock = Melix_Worker_V1_BlockRef()
+        thirdBlock.blockID = "blk-media-c"
+        thirdBlock.tokenStart = 256
+        thirdBlock.tokenEnd = 1024
+        thirdBlock.bytes = 768
+
+        var fullBlock = Melix_Worker_V1_BlockRef()
+        fullBlock.blockID = "blk-media-full"
+        fullBlock.tokenStart = 1024
+        fullBlock.tokenEnd = 2048
+        fullBlock.bytes = 1024
+
+        var firstPage = Melix_Worker_V1_PageRef()
+        firstPage.pageID = "page-z"
+        firstPage.blockIds = ["blk-media-a"]
+        firstPage.tokenStart = 0
+        firstPage.tokenEnd = 256
+        firstPage.bytes = 256
+
+        var secondPage = Melix_Worker_V1_PageRef()
+        secondPage.pageID = "page-a"
+        secondPage.blockIds = ["blk-media-b"]
+        secondPage.tokenStart = 256
+        secondPage.tokenEnd = 256
+        secondPage.bytes = 256
+
+        var thirdPage = Melix_Worker_V1_PageRef()
+        thirdPage.pageID = "page-c"
+        thirdPage.blockIds = ["blk-media-c"]
+        thirdPage.tokenStart = 256
+        thirdPage.tokenEnd = 1024
+        thirdPage.bytes = 768
+
+        var fullPage = Melix_Worker_V1_PageRef()
+        fullPage.pageID = "page-full"
+        fullPage.blockIds = ["blk-media-full"]
+        fullPage.tokenStart = 1024
+        fullPage.tokenEnd = 2048
+        fullPage.bytes = 1024
+
+        var blockTable = Melix_Worker_V1_BlockTable()
+        blockTable.scopeID = "scope-worker"
+        blockTable.cacheKey = cacheKey
+        blockTable.blocks = [firstBlock, secondBlock, thirdBlock, fullBlock]
+        blockTable.pages = [firstPage, secondPage, thirdPage, fullPage]
+        blockTable.totalTokenCount = 2048
+
+        let cachedMessage = makeMediaRichMessage()
+        let requestMessage = makeMediaRichMessage()
+        let plan = try XCTUnwrap(
+            makeWalkedBackCacheRestorePlan(
+                snapshot: snapshot,
+                blockTableID: "bt-media",
+                blockTable: blockTable,
+                cachedMessages: [cachedMessage],
+                requestMessages: [requestMessage],
+                tier: "l2"
+            )
+        )
+
+        XCTAssertTrue(plan.partial)
+        XCTAssertEqual(plan.restoredTokenCount, 1024)
+        XCTAssertEqual(plan.blockTable.totalTokenCount, 1024)
+        XCTAssertEqual(plan.boundary.boundaryKind, "partial_prefix_walk_back")
+        XCTAssertEqual(plan.pages.count, 3)
+    }
+
+    func testCacheRestoreMetadataWalkBackRejectsUnsafeBoundaries() {
+        let cacheKey = makeCacheKey(
+            scopeID: "scope-worker",
+            prefixSeed: "prefix-unsafe",
+            fingerprintSeed: "fingerprint-unsafe"
+        )
+        let snapshot = makeSnapshotRef(snapshotID: "snap-unsafe")
+
+        let unsafeTable = normalizedBlockTable(
+            makeBlockTable(
+                scopeID: "scope-worker",
+                cacheKey: cacheKey,
+                blockIDs: ["blk-0", "blk-1"],
+                bytes: [256, 256]
+            )
+        )
+        let unsafePlan = makeWalkedBackCacheRestorePlan(
+            snapshot: snapshot,
+            blockTableID: "bt-unsafe",
+            blockTable: unsafeTable,
+            cachedMessages: [makeUserMessage("alpha beta gamma delta epsilon zeta eta theta")],
+            requestMessages: [makeUserMessage("alpha beta diverged now")],
+            tier: "l2"
+        )
+
+        XCTAssertNil(unsafePlan)
+    }
+
     func testRestoreBoundarySnapshotRequestResolvesStructuredBoundaryFallback() {
         var request = Melix_Worker_V1_RestoreBoundarySnapshotRequest()
         request.restoreBoundary.snapshot.snapshotID = "snap-boundary"
@@ -3600,9 +3747,201 @@ final class WorkerScaffoldTests: XCTestCase {
             XCTAssertEqual(restoreResponse.restoredSnapshotID, savedSnapshot.snapshotID)
             XCTAssertEqual(restoreResponse.blockTableID, initialPrefillResponse.blockTableID)
             XCTAssertFalse(restoreResponse.decodeHandle.isEmpty)
+            XCTAssertTrue(restoreResponse.hasRestorePlan)
+            XCTAssertFalse(restoreResponse.restorePlan.partial)
             let restoredContext = await services.registry.prefillContext(for: restoreResponse.decodeHandle)
             XCTAssertEqual(restoredContext?.restoredSnapshotID, savedSnapshot.snapshotID)
         }
+    }
+
+    func testPrefillRestoreWalksBackPartialPrefixesToSafeBoundary() async throws {
+        try await withTemporaryCacheRoot { cacheRoot in
+            let environment = ["MELIX_SWIFT_TEXT_WORKER_CACHE_ROOT": cacheRoot.path]
+            let services = makeServices(
+                environment: environment,
+                backend: DeterministicTextBackend(tokenDelayNanos: 0)
+            )
+
+            let loadResponse = try await withTestServerContextRPCCancellationHandle { handle in
+                var request = Melix_Worker_V1_LoadModelRequest()
+                request.model.modelID = "melix-dev-text"
+                return try await services.runtime.loadModel(
+                    request: request,
+                    context: ServerContext(
+                        descriptor: Melix_Worker_V1_RuntimeService.Method.LoadModel.descriptor,
+                        remotePeer: "in-process:test",
+                        localPeer: "in-process:test",
+                        cancellation: handle
+                    )
+                )
+            }
+
+            let sourcePrompt = (1...24).map { "token\($0)" }.joined(separator: " ")
+            let divergedPrompt = (1...20).map { "token\($0)" }.joined(separator: " ") + " tail-x tail-y"
+
+            var sourcePrefill = Melix_Worker_V1_PrefillRequest()
+            sourcePrefill.execution.id.requestID = "req-partial-source"
+            sourcePrefill.execution.modelHandle = loadResponse.modelHandle
+            sourcePrefill.execution.cacheHints.allowL2 = true
+            sourcePrefill.execution.cacheHints.persistL2 = true
+            sourcePrefill.returnDecodeHandle = true
+            sourcePrefill.messages = [makeUserMessage(sourcePrompt)]
+            let sourcePrefillResponse = try await withTestServerContextRPCCancellationHandle { handle in
+                try await services.inference.prefill(
+                    request: sourcePrefill,
+                    context: ServerContext(
+                        descriptor: Melix_Worker_V1_InferenceService.Method.Prefill.descriptor,
+                        remotePeer: "in-process:test",
+                        localPeer: "in-process:test",
+                        cancellation: handle
+                    )
+                )
+            }
+
+            let savedSnapshot = try await withTestServerContextRPCCancellationHandle { handle in
+                var request = Melix_Worker_V1_SaveBoundarySnapshotRequest()
+                request.requestID = "req-partial-source"
+                request.decodeHandle = sourcePrefillResponse.decodeHandle
+                request.tokenBoundary = sourcePrefillResponse.promptTokens
+                return try await services.cache.saveBoundarySnapshot(
+                    request: request,
+                    context: ServerContext(
+                        descriptor: Melix_Worker_V1_CacheService.Method.SaveBoundarySnapshot.descriptor,
+                        remotePeer: "in-process:test",
+                        localPeer: "in-process:test",
+                        cancellation: handle
+                    )
+                )
+            }
+
+            var restorePrefill = Melix_Worker_V1_PrefillRequest()
+            restorePrefill.execution.id.requestID = "req-partial-target"
+            restorePrefill.execution.modelHandle = loadResponse.modelHandle
+            restorePrefill.execution.cacheHints.restoreSnapshotID = savedSnapshot.snapshotID
+            restorePrefill.returnDecodeHandle = true
+            restorePrefill.messages = [makeUserMessage(divergedPrompt)]
+            let restoreResponse = try await withTestServerContextRPCCancellationHandle { handle in
+                try await services.inference.prefill(
+                    request: restorePrefill,
+                    context: ServerContext(
+                        descriptor: Melix_Worker_V1_InferenceService.Method.Prefill.descriptor,
+                        remotePeer: "in-process:test",
+                        localPeer: "in-process:test",
+                        cancellation: handle
+                    )
+                )
+            }
+
+            XCTAssertTrue(restoreResponse.ok)
+            XCTAssertEqual(restoreResponse.restoredSnapshotID, savedSnapshot.snapshotID)
+            XCTAssertTrue(restoreResponse.hasRestorePlan)
+            XCTAssertTrue(restoreResponse.restorePlan.partial)
+            XCTAssertEqual(restoreResponse.restorePlan.restoredTokenCount, 16)
+            XCTAssertEqual(restoreResponse.restorePlan.blockTable.totalTokenCount, 16)
+            XCTAssertTrue(restoreResponse.blockTableID.contains("walkback-16"))
+            XCTAssertEqual(restoreResponse.promptTokens, 22)
+
+            let restoredContext = await services.registry.prefillContext(for: restoreResponse.decodeHandle)
+            XCTAssertEqual(restoredContext?.restoredSnapshotID, savedSnapshot.snapshotID)
+            XCTAssertEqual(restoredContext?.blockTable.totalTokenCount, 16)
+        }
+    }
+
+    func testPrefillRestoreFallsBackToColdPathWhenNoSafeBoundaryExists() async throws {
+        try await withTemporaryCacheRoot { cacheRoot in
+            let environment = ["MELIX_SWIFT_TEXT_WORKER_CACHE_ROOT": cacheRoot.path]
+            let services = makeServices(
+                environment: environment,
+                backend: DeterministicTextBackend(tokenDelayNanos: 0)
+            )
+
+            let loadResponse = try await withTestServerContextRPCCancellationHandle { handle in
+                var request = Melix_Worker_V1_LoadModelRequest()
+                request.model.modelID = "melix-dev-text"
+                return try await services.runtime.loadModel(
+                    request: request,
+                    context: ServerContext(
+                        descriptor: Melix_Worker_V1_RuntimeService.Method.LoadModel.descriptor,
+                        remotePeer: "in-process:test",
+                        localPeer: "in-process:test",
+                        cancellation: handle
+                    )
+                )
+            }
+
+            var sourcePrefill = Melix_Worker_V1_PrefillRequest()
+            sourcePrefill.execution.id.requestID = "req-cold-fallback-source"
+            sourcePrefill.execution.modelHandle = loadResponse.modelHandle
+            sourcePrefill.execution.cacheHints.allowL2 = true
+            sourcePrefill.execution.cacheHints.persistL2 = true
+            sourcePrefill.returnDecodeHandle = true
+            sourcePrefill.messages = [makeUserMessage("alpha beta gamma delta epsilon zeta eta theta")]
+            let sourcePrefillResponse = try await withTestServerContextRPCCancellationHandle { handle in
+                try await services.inference.prefill(
+                    request: sourcePrefill,
+                    context: ServerContext(
+                        descriptor: Melix_Worker_V1_InferenceService.Method.Prefill.descriptor,
+                        remotePeer: "in-process:test",
+                        localPeer: "in-process:test",
+                        cancellation: handle
+                    )
+                )
+            }
+
+            let savedSnapshot = try await withTestServerContextRPCCancellationHandle { handle in
+                var request = Melix_Worker_V1_SaveBoundarySnapshotRequest()
+                request.requestID = "req-cold-fallback-source"
+                request.decodeHandle = sourcePrefillResponse.decodeHandle
+                request.tokenBoundary = sourcePrefillResponse.promptTokens
+                return try await services.cache.saveBoundarySnapshot(
+                    request: request,
+                    context: ServerContext(
+                        descriptor: Melix_Worker_V1_CacheService.Method.SaveBoundarySnapshot.descriptor,
+                        remotePeer: "in-process:test",
+                        localPeer: "in-process:test",
+                        cancellation: handle
+                    )
+                )
+            }
+
+            var restorePrefill = Melix_Worker_V1_PrefillRequest()
+            restorePrefill.execution.id.requestID = "req-cold-fallback-target"
+            restorePrefill.execution.modelHandle = loadResponse.modelHandle
+            restorePrefill.execution.cacheHints.restoreSnapshotID = savedSnapshot.snapshotID
+            restorePrefill.returnDecodeHandle = true
+            restorePrefill.messages = [makeUserMessage("totally different prompt with no shared prefix")]
+            let restoreResponse = try await withTestServerContextRPCCancellationHandle { handle in
+                try await services.inference.prefill(
+                    request: restorePrefill,
+                    context: ServerContext(
+                        descriptor: Melix_Worker_V1_InferenceService.Method.Prefill.descriptor,
+                        remotePeer: "in-process:test",
+                        localPeer: "in-process:test",
+                        cancellation: handle
+                    )
+                )
+            }
+
+            XCTAssertTrue(restoreResponse.ok)
+            XCTAssertEqual(restoreResponse.restoredSnapshotID, "")
+            XCTAssertFalse(restoreResponse.hasRestorePlan)
+            XCTAssertNotEqual(restoreResponse.blockTableID, sourcePrefillResponse.blockTableID)
+        }
+    }
+
+    func testRestoreResumeHintFallsBackWhenSnapshotIdentifierIsEmpty() {
+        var restorePlan = Melix_Worker_V1_CacheRestorePlan()
+        restorePlan.partial = true
+        restorePlan.restoredTokenCount = 8
+
+        XCTAssertEqual(
+            restoreResumeHint(
+                snapshotID: "",
+                restorePlan: restorePlan,
+                fallback: "runtime-resume"
+            ),
+            "runtime-resume"
+        )
     }
 
     func testDecodeStreamingRpcEmitsRecoveryEventsForRestoredSnapshots() async throws {
@@ -4823,6 +5162,38 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(stored["active_kv_quant_ratio"], "50")
     }
 
+    func testDeterministicBackendPartialRestoreResumeHintFlowsThroughDecodeEvents() async throws {
+        let backend = DeterministicTextBackend(tokenDelayNanos: 40_000_000)
+        var spec = Melix_Worker_V1_ModelSpec()
+        spec.modelID = "melix-dev-text"
+        let loaded = try await backend.loadModel(spec: spec)
+
+        let prefill = try await backend.prefill(
+            model: loaded,
+            messages: [makeUserMessage("alpha beta gamma delta")],
+            prefillStepSize: 4,
+            resumeHint: "snapshot-restore:snap-1:partial:16",
+            acceleration: Melix_Worker_V1_AccelerationPolicy(),
+            shouldAbort: { false }
+        )
+
+        let events = try await collectTextGenerationEvents(
+            from: try await backend.decodeEvents(
+                model: loaded,
+                context: prefill.context,
+                sampling: Melix_Worker_V1_SamplingConfig(),
+                maxOutputTokens: 8,
+                decodeStepSize: 1,
+                prefillToken: "",
+                acceleration: Melix_Worker_V1_AccelerationPolicy(),
+                shouldAbort: { false }
+            )
+        )
+
+        XCTAssertEqual(renderedTokenChunks(from: events), ["Decoded: ", "alpha ", "beta ", "gamma ", "delta"])
+        XCTAssertEqual(renderedSummary(from: events)?.completionTokens, 5)
+    }
+
     func testAutoSwiftMLXBackendDefaultPrefillRejectsNonMLXContainers() async {
         let backend = AutoSwiftMLXBackend()
 
@@ -5243,6 +5614,28 @@ private func makeUserMessage(
     }
 
     message.parts = parts
+    return message
+}
+
+@available(macOS 15.0, *)
+private func makeMediaRichMessage() -> Melix_Worker_V1_ChatMessage {
+    var message = Melix_Worker_V1_ChatMessage()
+    message.role = "user"
+
+    var imageURI = Melix_Worker_V1_MessagePart()
+    imageURI.imageUri = "file:///tmp/image.png"
+
+    var imageBytes = Melix_Worker_V1_MessagePart()
+    imageBytes.imageBytes = Data([0x01, 0x02, 0x03])
+
+    var audioURI = Melix_Worker_V1_MessagePart()
+    audioURI.audioUri = "file:///tmp/audio.wav"
+
+    var audioBytes = Melix_Worker_V1_MessagePart()
+    audioBytes.audioBytes = Data([0x04, 0x05, 0x06])
+
+    let empty = Melix_Worker_V1_MessagePart()
+    message.parts = [imageURI, imageBytes, audioURI, audioBytes, empty]
     return message
 }
 

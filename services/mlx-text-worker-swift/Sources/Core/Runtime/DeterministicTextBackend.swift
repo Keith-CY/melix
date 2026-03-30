@@ -267,6 +267,9 @@ private func deterministicDecodeDelay(
     let storage = context.storage as? [String: String]
     let resumeHint = storage?["resume_hint"]?.lowercased() ?? ""
     if resumeHint.contains("snapshot-restore:") {
+        if resumeHint.contains(":partial:") {
+            return max(baselineDelay / 4, 1_000_000)
+        }
         return max(baselineDelay / 8, 1_000_000)
     }
     let prefillMode = storage?["prefill_acceleration_mode"]?.lowercased() ?? ""
@@ -290,6 +293,9 @@ private func deterministicPrefillDelay(
 ) -> UInt64 {
     let normalized = normalizedAccelerationPolicy(policy)
     if resumeHint.lowercased().contains("snapshot-restore:") {
+        if resumeHint.lowercased().contains(":partial:") {
+            return max(baselineDelay / 4, 1_000_000)
+        }
         return max(baselineDelay / 8, 1_000_000)
     }
     guard normalized.mode == .acceleratedPrefill else {
