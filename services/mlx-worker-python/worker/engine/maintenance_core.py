@@ -61,6 +61,7 @@ class MaintenanceCore:
         self._job_registry = job_registry or ModelOpsJobRegistry()
         self._quantization_pipeline = OQQuantizationPipeline(registry)
         self._operation_locks = ModelOpsConflictRegistry()
+        self._benchmark_store = None
 
     @staticmethod
     def _worker_quant_profile(profile) -> maintenance_pb2.QuantizationProfile:
@@ -403,6 +404,12 @@ class MaintenanceCore:
         self,
         request: maintenance_pb2.RunBenchRequest,
     ) -> Iterator[maintenance_pb2.RunBenchEvent]:
+        from worker.productization.benchmark_schemas import (
+            build_serving_benchmark_job,
+            build_serving_benchmark_results,
+        )
+        from worker.productization.benchmark_store import BenchmarkStore
+
         suites = list(request.suites) or ["smoke"]
         output_dir = (self._jobs_root / "bench").resolve()
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -429,6 +436,28 @@ class MaintenanceCore:
 
         report_path = output_dir / "bench-report.md"
         report_path.write_text(self._render_bench_report(request, metrics), encoding="utf-8")
+        job_record = build_serving_benchmark_job(
+            job_id=job.job_id,
+            model_id=(request.model_handle or "runtime").split("::", 1)[0],
+            suites=tuple(suites),
+            parameters={},
+            status="completed",
+            output_dir=str(output_dir),
+        )
+        result_records = build_serving_benchmark_results(
+            job_id=job.job_id,
+            metrics={metric.name: metric.value for metric in metrics},
+            units={metric.name: metric.unit for metric in metrics},
+            report_path=str(report_path),
+            report_markdown=report_path.read_text(encoding="utf-8"),
+        )
+        if self._benchmark_store is None:
+            self._benchmark_store = BenchmarkStore()
+        self._benchmark_store.persist_serving_benchmark(
+            jobs_root=output_dir,
+            job=job_record,
+            results=result_records,
+        )
         self._job_registry.complete(job.job_id, str(report_path))
         yield maintenance_pb2.RunBenchEvent(
             completed=maintenance_pb2.BenchCompleted(report_path=str(report_path))

@@ -9,6 +9,10 @@ from packages.protocol.python.worker.v1 import maintenance_pb2
 
 from worker.grpc_server import WorkerMaintenanceService
 from worker.model_ops.job_registry import ModelOpsJob, ModelOpsJobRegistry
+from worker.productization.benchmark_schemas import (
+    build_serving_benchmark_job,
+    build_serving_benchmark_results,
+)
 from worker.model_registry.catalog import WorkerModelCatalog
 from worker.registry import WorkerRegistry
 from worker.engine.maintenance_core import MaintenanceCore
@@ -654,6 +658,67 @@ def test_doctor_and_bench_return_deterministic_reports(tmp_path: Path) -> None:
     report = Path(bench_events[-1].completed.report_path).read_text(encoding="utf-8")
     assert "# Melix Bench" in report
     assert "bench.smoke.ttft_ms" in report
+
+
+def test_run_bench_persists_job_manifest_and_per_suite_results(tmp_path: Path) -> None:
+    service = build_service(tmp_path)
+
+    events = list(
+        service.RunBench(
+            maintenance_pb2.RunBenchRequest(
+                model_handle="melix-dev-text::1",
+                suites=["smoke", "latency"],
+            ),
+            context=None,
+        )
+    )
+
+    report_path = Path(events[-1].completed.report_path)
+    job_manifest = report_path.with_name("bench-job.json")
+    smoke_result = report_path.with_name("bench-result-smoke.json")
+    latency_result = report_path.with_name("bench-result-latency.json")
+
+    assert job_manifest.exists() is True
+    assert smoke_result.exists() is True
+    assert latency_result.exists() is True
+
+    job_payload = json.loads(job_manifest.read_text(encoding="utf-8"))
+    smoke_payload = json.loads(smoke_result.read_text(encoding="utf-8"))
+    latency_payload = json.loads(latency_result.read_text(encoding="utf-8"))
+    report_markdown = report_path.read_text(encoding="utf-8")
+    expected_metrics = {
+        event.metric.name: event.metric.value
+        for event in events
+        if event.HasField("metric")
+    }
+    expected_units = {
+        event.metric.name: event.metric.unit
+        for event in events
+        if event.HasField("metric")
+    }
+
+    expected_job = build_serving_benchmark_job(
+        job_id=events[0].started.job_id,
+        model_id="melix-dev-text",
+        suites=("smoke", "latency"),
+        parameters={},
+        status="completed",
+        output_dir=str(report_path.parent),
+    )
+    expected_results = {
+        result.suite: result.to_dict()
+        for result in build_serving_benchmark_results(
+            job_id=events[0].started.job_id,
+            metrics=expected_metrics,
+            units=expected_units,
+            report_path=str(report_path),
+            report_markdown=report_markdown,
+        )
+    }
+
+    assert job_payload == expected_job.to_dict()
+    assert smoke_payload == expected_results["smoke"]
+    assert latency_payload == expected_results["latency"]
 
 
 def test_doctor_reports_detected_and_overridden_model_identity(tmp_path: Path) -> None:
