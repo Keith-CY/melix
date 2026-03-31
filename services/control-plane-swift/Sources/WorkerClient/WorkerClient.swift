@@ -132,6 +132,10 @@ public protocol ModelOperationsWorkerClientProtocol: WorkerClient {
     func runBench(
         request: Melix_Worker_V1_RunBenchRequest
     ) async throws -> AsyncThrowingStream<Melix_Worker_V1_RunBenchEvent, Error>
+
+    func runEvaluation(
+        request: Melix_Worker_V1_RunEvaluationRequest
+    ) async throws -> Melix_Worker_V1_RunEvaluationResponse
 }
 
 public struct NullWorkerClient: WorkerRoutingClient {

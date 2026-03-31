@@ -41,6 +41,7 @@ class EvaluationCore:
         suite_id: str,
         dataset_root: Path,
         sample_size: int,
+        parameters: dict[str, str] | None = None,
     ) -> EvaluationRun:
         dataset_root = Path(dataset_root).resolve()
         if suite_id not in _SUPPORTED_SUITE_IDS:
@@ -60,6 +61,9 @@ class EvaluationCore:
         selected = samples[: max(sample_size, 0)]
         correct = sum(1 for sample in selected if self._sample_is_correct(sample))
         accuracy = round(correct / max(len(selected), 1), 2)
+        job_parameters = {"dataset_root": str(dataset_root)}
+        if parameters:
+            job_parameters.update(parameters)
 
         report_path = self._result_path(dataset_root)
         job = build_evaluation_job(
@@ -69,7 +73,7 @@ class EvaluationCore:
             dataset_id=manifest["dataset_id"],
             sample_size=len(selected),
             scoring_mode="deterministic_accuracy",
-            parameters={"dataset_root": str(dataset_root)},
+            parameters=job_parameters,
             status="completed",
         )
         result = build_evaluation_result(

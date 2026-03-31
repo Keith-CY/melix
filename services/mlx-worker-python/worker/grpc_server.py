@@ -228,6 +228,57 @@ class WorkerMaintenanceService(maintenance_pb2_grpc.MaintenanceServiceServicer):
     def RunBench(self, request, context):
         yield from self._core.bench_events(request)
 
+    def RunEvaluation(self, request, context):
+        try:
+            run = self._evaluation_core.run_local_suite(
+                model_id=request.model_handle.split("::", 1)[0] if request.model_handle else "melix-dev-text",
+                suite_id=request.suite_id,
+                dataset_root=Path(request.dataset_root) if request.dataset_root else self._default_dataset_root(request.dataset_id),
+                sample_size=request.sample_size,
+                parameters=dict(request.parameters),
+            )
+        except Exception as exc:
+            return maintenance_pb2.RunEvaluationResponse(
+                ok=False,
+                error=common_pb2.ErrorStatus(code="evaluation_failed", message=str(exc)),
+            )
+
+        response = maintenance_pb2.RunEvaluationResponse(ok=True)
+        response.job.schema_version = run.job.schema_version
+        response.job.job_id = run.job.job_id
+        response.job.model_id = run.job.model_id
+        response.job.suite_id = run.job.suite_id
+        response.job.dataset_id = run.job.dataset_id
+        response.job.sample_size = run.job.sample_size
+        response.job.scoring_mode = run.job.scoring_mode
+        response.job.parameters.update(run.job.parameters)
+        response.job.status = run.job.status
+
+        result = response.results.add()
+        result.schema_version = run.result.schema_version
+        result.job_id = run.result.job_id
+        result.suite_id = run.result.suite_id
+        result.dataset_id = run.result.dataset_id
+        result.sample_size = run.result.sample_size
+        result.report_path = run.result.report_path
+        for metric in run.result.metrics:
+            metric_message = result.metrics.add()
+            metric_message.name = metric.name
+            metric_message.value = metric.value
+            metric_message.unit = metric.unit
+        return response
+
+    @staticmethod
+    def _default_dataset_root(dataset_id: str) -> Path:
+        return (
+            Path.cwd()
+            / "services"
+            / "mlx-worker-python"
+            / "fixtures"
+            / "evaluation"
+            / dataset_id
+        ).resolve()
+
 
 class WorkerCacheService(cache_pb2_grpc.CacheServiceServicer):
     def __init__(self, registry: WorkerRegistry) -> None:

@@ -72,12 +72,26 @@ public enum Melix_Worker_V1_MaintenanceService: Sendable {
                 type: .serverStreaming
             )
         }
+        /// Namespace for "RunEvaluation" metadata.
+        public enum RunEvaluation: Sendable {
+            /// Request type for "RunEvaluation".
+            public typealias Input = Melix_Worker_V1_RunEvaluationRequest
+            /// Response type for "RunEvaluation".
+            public typealias Output = Melix_Worker_V1_RunEvaluationResponse
+            /// Descriptor for "RunEvaluation".
+            public static let descriptor = GRPCCore.MethodDescriptor(
+                service: GRPCCore.ServiceDescriptor(fullyQualifiedService: "melix.worker.v1.MaintenanceService"),
+                method: "RunEvaluation",
+                type: .unary
+            )
+        }
         /// Descriptors for all methods in the "melix.worker.v1.MaintenanceService" service.
         public static let descriptors: [GRPCCore.MethodDescriptor] = [
             ConvertModel.descriptor,
             GetModelInfo.descriptor,
             RunDoctor.descriptor,
-            RunBench.descriptor
+            RunBench.descriptor,
+            RunEvaluation.descriptor
         ]
     }
 }
@@ -158,6 +172,20 @@ extension Melix_Worker_V1_MaintenanceService {
             request: GRPCCore.StreamingServerRequest<Melix_Worker_V1_RunBenchRequest>,
             context: GRPCCore.ServerContext
         ) async throws -> GRPCCore.StreamingServerResponse<Melix_Worker_V1_RunBenchEvent>
+
+        /// Handle the "RunEvaluation" method.
+        ///
+        /// - Parameters:
+        ///   - request: A streaming request of `Melix_Worker_V1_RunEvaluationRequest` messages.
+        ///   - context: Context providing information about the RPC.
+        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
+        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
+        ///     to an internal error.
+        /// - Returns: A streaming response of `Melix_Worker_V1_RunEvaluationResponse` messages.
+        func runEvaluation(
+            request: GRPCCore.StreamingServerRequest<Melix_Worker_V1_RunEvaluationRequest>,
+            context: GRPCCore.ServerContext
+        ) async throws -> GRPCCore.StreamingServerResponse<Melix_Worker_V1_RunEvaluationResponse>
     }
 
     /// Service protocol for the "melix.worker.v1.MaintenanceService" service.
@@ -223,6 +251,20 @@ extension Melix_Worker_V1_MaintenanceService {
             request: GRPCCore.ServerRequest<Melix_Worker_V1_RunBenchRequest>,
             context: GRPCCore.ServerContext
         ) async throws -> GRPCCore.StreamingServerResponse<Melix_Worker_V1_RunBenchEvent>
+
+        /// Handle the "RunEvaluation" method.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Melix_Worker_V1_RunEvaluationRequest` message.
+        ///   - context: Context providing information about the RPC.
+        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
+        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
+        ///     to an internal error.
+        /// - Returns: A response containing a single `Melix_Worker_V1_RunEvaluationResponse` message.
+        func runEvaluation(
+            request: GRPCCore.ServerRequest<Melix_Worker_V1_RunEvaluationRequest>,
+            context: GRPCCore.ServerContext
+        ) async throws -> GRPCCore.ServerResponse<Melix_Worker_V1_RunEvaluationResponse>
     }
 
     /// Simple service protocol for the "melix.worker.v1.MaintenanceService" service.
@@ -288,6 +330,20 @@ extension Melix_Worker_V1_MaintenanceService {
             response: GRPCCore.RPCWriter<Melix_Worker_V1_RunBenchEvent>,
             context: GRPCCore.ServerContext
         ) async throws
+
+        /// Handle the "RunEvaluation" method.
+        ///
+        /// - Parameters:
+        ///   - request: A `Melix_Worker_V1_RunEvaluationRequest` message.
+        ///   - context: Context providing information about the RPC.
+        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
+        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
+        ///     to an internal error.
+        /// - Returns: A `Melix_Worker_V1_RunEvaluationResponse` to respond with.
+        func runEvaluation(
+            request: Melix_Worker_V1_RunEvaluationRequest,
+            context: GRPCCore.ServerContext
+        ) async throws -> Melix_Worker_V1_RunEvaluationResponse
     }
 }
 
@@ -334,6 +390,17 @@ extension Melix_Worker_V1_MaintenanceService.StreamingServiceProtocol {
             serializer: GRPCProtobuf.ProtobufSerializer<Melix_Worker_V1_RunBenchEvent>(),
             handler: { request, context in
                 try await self.runBench(
+                    request: request,
+                    context: context
+                )
+            }
+        )
+        router.registerHandler(
+            forMethod: Melix_Worker_V1_MaintenanceService.Method.RunEvaluation.descriptor,
+            deserializer: GRPCProtobuf.ProtobufDeserializer<Melix_Worker_V1_RunEvaluationRequest>(),
+            serializer: GRPCProtobuf.ProtobufSerializer<Melix_Worker_V1_RunEvaluationResponse>(),
+            handler: { request, context in
+                try await self.runEvaluation(
                     request: request,
                     context: context
                 )
@@ -387,6 +454,17 @@ extension Melix_Worker_V1_MaintenanceService.ServiceProtocol {
             context: context
         )
         return response
+    }
+
+    public func runEvaluation(
+        request: GRPCCore.StreamingServerRequest<Melix_Worker_V1_RunEvaluationRequest>,
+        context: GRPCCore.ServerContext
+    ) async throws -> GRPCCore.StreamingServerResponse<Melix_Worker_V1_RunEvaluationResponse> {
+        let response = try await self.runEvaluation(
+            request: GRPCCore.ServerRequest(stream: request),
+            context: context
+        )
+        return GRPCCore.StreamingServerResponse(single: response)
     }
 }
 
@@ -450,6 +528,19 @@ extension Melix_Worker_V1_MaintenanceService.SimpleServiceProtocol {
                 )
                 return [:]
             }
+        )
+    }
+
+    public func runEvaluation(
+        request: GRPCCore.ServerRequest<Melix_Worker_V1_RunEvaluationRequest>,
+        context: GRPCCore.ServerContext
+    ) async throws -> GRPCCore.ServerResponse<Melix_Worker_V1_RunEvaluationResponse> {
+        return GRPCCore.ServerResponse<Melix_Worker_V1_RunEvaluationResponse>(
+            message: try await self.runEvaluation(
+                request: request.message,
+                context: context
+            ),
+            metadata: [:]
         )
     }
 }
@@ -537,6 +628,25 @@ extension Melix_Worker_V1_MaintenanceService {
             deserializer: some GRPCCore.MessageDeserializer<Melix_Worker_V1_RunBenchEvent>,
             options: GRPCCore.CallOptions,
             onResponse handleResponse: @Sendable @escaping (GRPCCore.StreamingClientResponse<Melix_Worker_V1_RunBenchEvent>) async throws -> Result
+        ) async throws -> Result where Result: Sendable
+
+        /// Call the "RunEvaluation" method.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Melix_Worker_V1_RunEvaluationRequest` message.
+        ///   - serializer: A serializer for `Melix_Worker_V1_RunEvaluationRequest` messages.
+        ///   - deserializer: A deserializer for `Melix_Worker_V1_RunEvaluationResponse` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response, the result of which is
+        ///       returned to the caller. Returning from the closure will cancel the RPC if it
+        ///       hasn't already finished.
+        /// - Returns: The result of `handleResponse`.
+        func runEvaluation<Result>(
+            request: GRPCCore.ClientRequest<Melix_Worker_V1_RunEvaluationRequest>,
+            serializer: some GRPCCore.MessageSerializer<Melix_Worker_V1_RunEvaluationRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Melix_Worker_V1_RunEvaluationResponse>,
+            options: GRPCCore.CallOptions,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Melix_Worker_V1_RunEvaluationResponse>) async throws -> Result
         ) async throws -> Result where Result: Sendable
     }
 
@@ -671,6 +781,36 @@ extension Melix_Worker_V1_MaintenanceService {
                 onResponse: handleResponse
             )
         }
+
+        /// Call the "RunEvaluation" method.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Melix_Worker_V1_RunEvaluationRequest` message.
+        ///   - serializer: A serializer for `Melix_Worker_V1_RunEvaluationRequest` messages.
+        ///   - deserializer: A deserializer for `Melix_Worker_V1_RunEvaluationResponse` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response, the result of which is
+        ///       returned to the caller. Returning from the closure will cancel the RPC if it
+        ///       hasn't already finished.
+        /// - Returns: The result of `handleResponse`.
+        public func runEvaluation<Result>(
+            request: GRPCCore.ClientRequest<Melix_Worker_V1_RunEvaluationRequest>,
+            serializer: some GRPCCore.MessageSerializer<Melix_Worker_V1_RunEvaluationRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Melix_Worker_V1_RunEvaluationResponse>,
+            options: GRPCCore.CallOptions = .defaults,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Melix_Worker_V1_RunEvaluationResponse>) async throws -> Result = { response in
+                try response.message
+            }
+        ) async throws -> Result where Result: Sendable {
+            try await self.client.unary(
+                request: request,
+                descriptor: Melix_Worker_V1_MaintenanceService.Method.RunEvaluation.descriptor,
+                serializer: serializer,
+                deserializer: deserializer,
+                options: options,
+                onResponse: handleResponse
+            )
+        }
     }
 }
 
@@ -768,6 +908,31 @@ extension Melix_Worker_V1_MaintenanceService.ClientProtocol {
             request: request,
             serializer: GRPCProtobuf.ProtobufSerializer<Melix_Worker_V1_RunBenchRequest>(),
             deserializer: GRPCProtobuf.ProtobufDeserializer<Melix_Worker_V1_RunBenchEvent>(),
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
+    /// Call the "RunEvaluation" method.
+    ///
+    /// - Parameters:
+    ///   - request: A request containing a single `Melix_Worker_V1_RunEvaluationRequest` message.
+    ///   - options: Options to apply to this RPC.
+    ///   - handleResponse: A closure which handles the response, the result of which is
+    ///       returned to the caller. Returning from the closure will cancel the RPC if it
+    ///       hasn't already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func runEvaluation<Result>(
+        request: GRPCCore.ClientRequest<Melix_Worker_V1_RunEvaluationRequest>,
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Melix_Worker_V1_RunEvaluationResponse>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        try await self.runEvaluation(
+            request: request,
+            serializer: GRPCProtobuf.ProtobufSerializer<Melix_Worker_V1_RunEvaluationRequest>(),
+            deserializer: GRPCProtobuf.ProtobufDeserializer<Melix_Worker_V1_RunEvaluationResponse>(),
             options: options,
             onResponse: handleResponse
         )
@@ -883,6 +1048,35 @@ extension Melix_Worker_V1_MaintenanceService.ClientProtocol {
             metadata: metadata
         )
         return try await self.runBench(
+            request: request,
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
+    /// Call the "RunEvaluation" method.
+    ///
+    /// - Parameters:
+    ///   - message: request message to send.
+    ///   - metadata: Additional metadata to send, defaults to empty.
+    ///   - options: Options to apply to this RPC, defaults to `.defaults`.
+    ///   - handleResponse: A closure which handles the response, the result of which is
+    ///       returned to the caller. Returning from the closure will cancel the RPC if it
+    ///       hasn't already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func runEvaluation<Result>(
+        _ message: Melix_Worker_V1_RunEvaluationRequest,
+        metadata: GRPCCore.Metadata = [:],
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Melix_Worker_V1_RunEvaluationResponse>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        let request = GRPCCore.ClientRequest<Melix_Worker_V1_RunEvaluationRequest>(
+            message: message,
+            metadata: metadata
+        )
+        return try await self.runEvaluation(
             request: request,
             options: options,
             onResponse: handleResponse

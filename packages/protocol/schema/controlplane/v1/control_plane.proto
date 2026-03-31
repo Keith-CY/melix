@@ -142,9 +142,10 @@ message OpsCommand {
     TailLogs tail_logs = 1;
     RunDoctor run_doctor = 2;
     RunBench run_bench = 3;
-    ExportDiagnostics export_bundle = 4;
-    GetMetricsSnapshot get_metrics = 5;
-    CancelRequest cancel_request = 6;
+    RunEvaluation run_evaluation = 4;
+    ExportDiagnostics export_bundle = 5;
+    GetMetricsSnapshot get_metrics = 6;
+    CancelRequest cancel_request = 7;
   }
 }
 
@@ -313,6 +314,12 @@ message RunDoctor {}
 message RunBench {
   repeated string suites = 1;
   map<string, string> parameters = 2;
+}
+message RunEvaluation {
+  string suite_id = 1;
+  string dataset_id = 2;
+  uint32 sample_size = 3;
+  map<string, string> parameters = 4;
 }
 message ExportDiagnostics {}
 message GetMetricsSnapshot {}

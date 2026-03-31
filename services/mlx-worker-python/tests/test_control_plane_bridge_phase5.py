@@ -108,6 +108,28 @@ class FakeMaintenanceStub:
             completed=maintenance_pb2.BenchCompleted(report_path="/tmp/model-ops/bench-report.md")
         )
 
+    def RunEvaluation(self, request):
+        response = maintenance_pb2.RunEvaluationResponse(ok=True)
+        response.job.schema_version = "melix.evaluation_job.v1"
+        response.job.job_id = "eval-1"
+        response.job.model_id = request.model_handle.split("::", 1)[0] if request.model_handle else "melix-dev-text"
+        response.job.suite_id = request.suite_id
+        response.job.dataset_id = request.dataset_id
+        response.job.sample_size = request.sample_size
+        response.job.parameters.update(request.parameters)
+        response.job.status = "completed"
+        result = response.results.add()
+        result.schema_version = "melix.evaluation_result.v1"
+        result.job_id = "eval-1"
+        result.suite_id = request.suite_id
+        result.dataset_id = request.dataset_id
+        result.sample_size = request.sample_size
+        metric = result.metrics.add()
+        metric.name = f"eval.{request.suite_id}.accuracy"
+        metric.value = 1.0
+        result.report_path = "/tmp/model-ops/evaluation-result.json"
+        return response
+
 
 def test_bridge_helper_forwards_phase5_unary_and_streaming_commands(monkeypatch, capsys) -> None:
     monkeypatch.setattr(control_plane_bridge.grpc, "insecure_channel", lambda target: FakeChannel())
@@ -241,6 +263,33 @@ def test_bridge_helper_forwards_phase5_unary_and_streaming_commands(monkeypatch,
     bench_completed = maintenance_pb2.RunBenchEvent.FromString(base64.b64decode(bench_lines[-1]["message_b64"]))
     assert bench_started.started.job_id == "bench-1"
     assert bench_completed.completed.report_path == "/tmp/model-ops/bench-report.md"
+
+    evaluation_request = maintenance_pb2.RunEvaluationRequest(
+        model_handle="melix-dev-text::1",
+        suite_id="mmlu",
+        dataset_id="qa_smoke.dev.v1",
+        sample_size=8,
+        parameters={"judge": "deterministic"},
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "control_plane_bridge.py",
+            "run-evaluation",
+            "--socket-path",
+            "/tmp/unused.sock",
+            "--request-b64",
+            base64.b64encode(evaluation_request.SerializeToString()).decode("ascii"),
+        ],
+    )
+    control_plane_bridge.main()
+    eval_line = json.loads(capsys.readouterr().out.strip())
+    eval_payload = maintenance_pb2.RunEvaluationResponse.FromString(base64.b64decode(eval_line["message_b64"]))
+    assert eval_payload.ok is True
+    assert eval_payload.job.suite_id == "mmlu"
+    assert eval_payload.job.dataset_id == "qa_smoke.dev.v1"
+    assert eval_payload.results[0].metrics[0].name == "eval.mmlu.accuracy"
 
 
 def test_bridge_helper_forwards_phase6_audio_unary_commands(monkeypatch, capsys) -> None:

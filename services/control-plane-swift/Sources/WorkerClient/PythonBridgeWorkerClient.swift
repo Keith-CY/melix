@@ -24,6 +24,7 @@ public enum BridgeCommandKind: String, Sendable {
     case convertModel = "convert-model"
     case runDoctor = "run-doctor"
     case runBench = "run-bench"
+    case runEvaluation = "run-evaluation"
 }
 
 public struct BridgeCommand: Sendable {
@@ -216,6 +217,16 @@ public struct PythonBridgeWorkerClient:
         request: Melix_Worker_V1_RunBenchRequest
     ) async throws -> AsyncThrowingStream<Melix_Worker_V1_RunBenchEvent, Error> {
         try await sendStream(kind: .runBench, request: request, as: Melix_Worker_V1_RunBenchEvent.self)
+    }
+
+    public func runEvaluation(
+        request: Melix_Worker_V1_RunEvaluationRequest
+    ) async throws -> Melix_Worker_V1_RunEvaluationResponse {
+        try await sendUnary(
+            kind: .runEvaluation,
+            request: request,
+            as: Melix_Worker_V1_RunEvaluationResponse.self
+        )
     }
 
     private func sendStream<Request: SwiftProtobuf.Message, Response: SwiftProtobuf.Message>(

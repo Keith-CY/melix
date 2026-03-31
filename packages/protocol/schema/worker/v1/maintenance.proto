@@ -9,6 +9,7 @@ service MaintenanceService {
   rpc GetModelInfo(GetModelInfoRequest) returns (GetModelInfoResponse);
   rpc RunDoctor(RunDoctorRequest) returns (RunDoctorResponse);
   rpc RunBench(RunBenchRequest) returns (stream RunBenchEvent);
+  rpc RunEvaluation(RunEvaluationRequest) returns (RunEvaluationResponse);
 }
 
 message ConvertModelRequest {
@@ -141,4 +142,48 @@ message BenchCompleted {
 
 message BenchFailed {
   ErrorStatus error = 1;
+}
+
+message RunEvaluationRequest {
+  string model_handle = 1;
+  string suite_id = 2;
+  string dataset_id = 3;
+  string dataset_root = 4;
+  uint32 sample_size = 5;
+  map<string, string> parameters = 6;
+}
+
+message EvaluationMetricValue {
+  string name = 1;
+  double value = 2;
+  string unit = 3;
+}
+
+message WorkerEvaluationJob {
+  string schema_version = 1;
+  string job_id = 2;
+  string model_id = 3;
+  string suite_id = 4;
+  string dataset_id = 5;
+  uint32 sample_size = 6;
+  string scoring_mode = 7;
+  map<string, string> parameters = 8;
+  string status = 9;
+}
+
+message WorkerEvaluationResult {
+  string schema_version = 1;
+  string job_id = 2;
+  string suite_id = 3;
+  string dataset_id = 4;
+  uint32 sample_size = 5;
+  repeated EvaluationMetricValue metrics = 6;
+  string report_path = 7;
+}
+
+message RunEvaluationResponse {
+  bool ok = 1;
+  ErrorStatus error = 2;
+  WorkerEvaluationJob job = 3;
+  repeated WorkerEvaluationResult results = 4;
 }

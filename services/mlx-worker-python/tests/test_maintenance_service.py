@@ -660,6 +660,128 @@ def test_doctor_and_bench_return_deterministic_reports(tmp_path: Path) -> None:
     assert "bench.smoke.ttft_ms" in report
 
 
+def test_run_evaluation_returns_typed_job_and_result(tmp_path: Path) -> None:
+    service = build_service(tmp_path)
+    dataset_root = tmp_path / "datasets" / "qa_smoke.dev.v1"
+    dataset_root.mkdir(parents=True)
+    (dataset_root / "manifest.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "melix.evaluation_dataset_package.v1",
+                "dataset_id": "qa_smoke.dev.v1",
+                "suite_id": "mmlu",
+                "version": "2026-03-31",
+                "sample_count": 2,
+                "split": "validation",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (dataset_root / "samples.jsonl").write_text(
+        "\n".join(
+            [
+                json.dumps({"prompt": "2+2?", "expected": "4"}),
+                json.dumps({"prompt": "3+3?", "expected": "6"}),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    response = service.RunEvaluation(
+        maintenance_pb2.RunEvaluationRequest(
+            model_handle="melix-dev-text::1",
+            suite_id="mmlu",
+            dataset_id="qa_smoke.dev.v1",
+            dataset_root=str(dataset_root),
+            sample_size=2,
+            parameters={"judge": "deterministic"},
+        ),
+        context=None,
+    )
+
+    assert response.ok is True
+    assert response.job.schema_version == "melix.evaluation_job.v1"
+    assert response.job.model_id == "melix-dev-text"
+    assert response.job.dataset_id == "qa_smoke.dev.v1"
+    assert response.job.parameters["judge"] == "deterministic"
+    assert len(response.results) == 1
+    assert response.results[0].schema_version == "melix.evaluation_result.v1"
+    assert response.results[0].dataset_id == "qa_smoke.dev.v1"
+    assert response.results[0].metrics[0].name == "eval.mmlu.accuracy"
+    assert response.results[0].metrics[0].value == 1.0
+
+
+def test_run_evaluation_uses_default_dataset_root_when_dataset_root_is_omitted(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    service = build_service(tmp_path)
+    dataset_root = (
+        tmp_path
+        / "services"
+        / "mlx-worker-python"
+        / "fixtures"
+        / "evaluation"
+        / "qa_smoke.dev.v1"
+    )
+    dataset_root.mkdir(parents=True)
+    (dataset_root / "manifest.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "melix.evaluation_dataset_package.v1",
+                "dataset_id": "qa_smoke.dev.v1",
+                "suite_id": "mmlu",
+                "version": "2026-03-31",
+                "sample_count": 1,
+                "split": "validation",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (dataset_root / "samples.jsonl").write_text(
+        json.dumps({"prompt": "2+2?", "expected": "4"}) + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+
+    response = service.RunEvaluation(
+        maintenance_pb2.RunEvaluationRequest(
+            model_handle="melix-dev-text::1",
+            suite_id="mmlu",
+            dataset_id="qa_smoke.dev.v1",
+            sample_size=1,
+            parameters={"judge": "deterministic"},
+        ),
+        context=None,
+    )
+
+    assert response.ok is True
+    assert response.job.dataset_id == "qa_smoke.dev.v1"
+    assert response.results[0].metrics[0].value == 1.0
+
+
+def test_run_evaluation_returns_typed_error_for_invalid_suite(tmp_path: Path) -> None:
+    service = build_service(tmp_path)
+
+    response = service.RunEvaluation(
+        maintenance_pb2.RunEvaluationRequest(
+            model_handle="melix-dev-text::1",
+            suite_id="unsupported-suite",
+            dataset_id="qa_smoke.dev.v1",
+            dataset_root=str(tmp_path / "missing"),
+            sample_size=1,
+        ),
+        context=None,
+    )
+
+    assert response.ok is False
+    assert response.error.code == "evaluation_failed"
+    assert "Unsupported evaluation suite" in response.error.message
+
+
 def test_run_bench_persists_job_manifest_and_per_suite_results(tmp_path: Path) -> None:
     service = build_service(tmp_path)
 

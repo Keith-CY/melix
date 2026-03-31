@@ -43,6 +43,7 @@ def main() -> None:
             "convert-model",
             "run-doctor",
             "run-bench",
+            "run-evaluation",
         ],
     )
     parser.add_argument("--socket-path", required=True)
@@ -130,6 +131,10 @@ def main() -> None:
                 request = maintenance_pb2.RunBenchRequest.FromString(request_bytes)
                 for event in stub.RunBench(request):
                     emit_message(event.SerializeToString())
+            elif args.command == "run-evaluation":
+                stub = maintenance_pb2_grpc.MaintenanceServiceStub(channel)
+                request = maintenance_pb2.RunEvaluationRequest.FromString(request_bytes)
+                emit_message(stub.RunEvaluation(request).SerializeToString())
             else:
                 stub = inference_pb2_grpc.InferenceServiceStub(channel)
                 request = inference_pb2.AbortRequest.FromString(request_bytes)

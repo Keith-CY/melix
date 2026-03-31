@@ -412,6 +412,8 @@ public actor ControlPlaneService {
             return await handleRunDoctor(request: request, command: runDoctor)
         case .runBench(let runBench):
             return await handleRunBench(request: request, command: runBench)
+        case .runEvaluation(let runEvaluation):
+            return await handleRunEvaluation(request: request, command: runEvaluation)
         case .cancelRequest(let cancelRequest):
             return await handleCancelRequest(request: request, command: cancelRequest)
         default:
@@ -559,6 +561,43 @@ public actor ControlPlaneService {
             return okResponse(for: request, ops: reply)
         } catch {
             return errorResponse(for: request, code: "unavailable", message: "Bench worker request failed: \(error)")
+        }
+    }
+
+    private func handleRunEvaluation(
+        request: Melix_Controlplane_V1_ControlPlaneRequest,
+        command: Melix_Controlplane_V1_RunEvaluation
+    ) async -> Melix_Controlplane_V1_ControlPlaneResponse {
+        guard
+            let workerRegistry,
+            let workerClient = await workerRegistry.client(for: .pythonModelOperations) as? any ModelOperationsWorkerClientProtocol
+        else {
+            return errorResponse(for: request, code: "unavailable", message: "Model operations worker is unavailable.")
+        }
+
+        var workerRequest = Melix_Worker_V1_RunEvaluationRequest()
+        workerRequest.modelHandle = await preferredModelOperationsHandle()
+        workerRequest.suiteID = command.suiteID
+        workerRequest.datasetID = command.datasetID
+        workerRequest.sampleSize = command.sampleSize
+        workerRequest.parameters = command.parameters
+
+        do {
+            let workerResponse = try await workerClient.runEvaluation(request: workerRequest)
+            guard workerResponse.ok else {
+                return errorResponse(
+                    for: request,
+                    code: workerResponse.error.code.isEmpty ? "unknown" : workerResponse.error.code,
+                    message: workerResponse.error.message.isEmpty ? "Evaluation request failed." : workerResponse.error.message
+                )
+            }
+
+            var reply = Melix_Controlplane_V1_OpsReply()
+            reply.evaluationJob = makeEvaluationJobSummary(from: workerResponse.job)
+            reply.evaluationResults = workerResponse.results.map(makeEvaluationResultSummary)
+            return okResponse(for: request, ops: reply)
+        } catch {
+            return errorResponse(for: request, code: "unavailable", message: "Evaluation worker request failed: \(error)")
         }
     }
 
@@ -1231,6 +1270,42 @@ public actor ControlPlaneService {
             result.reportMarkdown = reportMarkdown
             return result
         }
+    }
+
+    private func makeEvaluationJobSummary(
+        from job: Melix_Worker_V1_WorkerEvaluationJob
+    ) -> Melix_Controlplane_V1_EvaluationJobSummary {
+        var summary = Melix_Controlplane_V1_EvaluationJobSummary()
+        summary.schemaVersion = job.schemaVersion
+        summary.jobID = job.jobID
+        summary.modelID = job.modelID
+        summary.suiteID = job.suiteID
+        summary.datasetID = job.datasetID
+        summary.sampleSize = job.sampleSize
+        summary.scoringMode = job.scoringMode
+        summary.parameters = job.parameters
+        summary.status = job.status
+        return summary
+    }
+
+    private func makeEvaluationResultSummary(
+        from result: Melix_Worker_V1_WorkerEvaluationResult
+    ) -> Melix_Controlplane_V1_EvaluationResultSummary {
+        var summary = Melix_Controlplane_V1_EvaluationResultSummary()
+        summary.schemaVersion = result.schemaVersion
+        summary.jobID = result.jobID
+        summary.suiteID = result.suiteID
+        summary.datasetID = result.datasetID
+        summary.sampleSize = result.sampleSize
+        summary.reportPath = result.reportPath
+        summary.metrics = result.metrics.map { metric in
+            var value = Melix_Controlplane_V1_BenchmarkMetricValue()
+            value.name = metric.name
+            value.value = metric.value
+            value.unit = metric.unit
+            return value
+        }
+        return summary
     }
 
     private func benchmarkSuiteName(for metricName: String) -> String {

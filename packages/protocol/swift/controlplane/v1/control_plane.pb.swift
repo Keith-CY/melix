@@ -1616,6 +1616,14 @@ public struct Melix_Controlplane_V1_OpsCommand: Sendable {
     set {kind = .runBench(newValue)}
   }
 
+  public var runEvaluation: Melix_Controlplane_V1_RunEvaluation {
+    get {
+      if case .runEvaluation(let v)? = kind {return v}
+      return Melix_Controlplane_V1_RunEvaluation()
+    }
+    set {kind = .runEvaluation(newValue)}
+  }
+
   public var exportBundle: Melix_Controlplane_V1_ExportDiagnostics {
     get {
       if case .exportBundle(let v)? = kind {return v}
@@ -1646,6 +1654,7 @@ public struct Melix_Controlplane_V1_OpsCommand: Sendable {
     case tailLogs(Melix_Controlplane_V1_TailLogs)
     case runDoctor(Melix_Controlplane_V1_RunDoctor)
     case runBench(Melix_Controlplane_V1_RunBench)
+    case runEvaluation(Melix_Controlplane_V1_RunEvaluation)
     case exportBundle(Melix_Controlplane_V1_ExportDiagnostics)
     case getMetrics(Melix_Controlplane_V1_GetMetricsSnapshot)
     case cancelRequest(Melix_Controlplane_V1_CancelRequest)
@@ -2366,6 +2375,24 @@ public struct Melix_Controlplane_V1_RunBench: Sendable {
   // methods supported on all messages.
 
   public var suites: [String] = []
+
+  public var parameters: Dictionary<String,String> = [:]
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public struct Melix_Controlplane_V1_RunEvaluation: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var suiteID: String = String()
+
+  public var datasetID: String = String()
+
+  public var sampleSize: UInt32 = 0
 
   public var parameters: Dictionary<String,String> = [:]
 
@@ -5659,7 +5686,7 @@ extension Melix_Controlplane_V1_SessionCommand: SwiftProtobuf.Message, SwiftProt
 
 extension Melix_Controlplane_V1_OpsCommand: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".OpsCommand"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}tail_logs\0\u{3}run_doctor\0\u{3}run_bench\0\u{3}export_bundle\0\u{3}get_metrics\0\u{3}cancel_request\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}tail_logs\0\u{3}run_doctor\0\u{3}run_bench\0\u{3}run_evaluation\0\u{3}export_bundle\0\u{3}get_metrics\0\u{3}cancel_request\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -5707,6 +5734,19 @@ extension Melix_Controlplane_V1_OpsCommand: SwiftProtobuf.Message, SwiftProtobuf
         }
       }()
       case 4: try {
+        var v: Melix_Controlplane_V1_RunEvaluation?
+        var hadOneofValue = false
+        if let current = self.kind {
+          hadOneofValue = true
+          if case .runEvaluation(let m) = current {v = m}
+        }
+        try decoder.decodeSingularMessageField(value: &v)
+        if let v = v {
+          if hadOneofValue {try decoder.handleConflictingOneOf()}
+          self.kind = .runEvaluation(v)
+        }
+      }()
+      case 5: try {
         var v: Melix_Controlplane_V1_ExportDiagnostics?
         var hadOneofValue = false
         if let current = self.kind {
@@ -5719,7 +5759,7 @@ extension Melix_Controlplane_V1_OpsCommand: SwiftProtobuf.Message, SwiftProtobuf
           self.kind = .exportBundle(v)
         }
       }()
-      case 5: try {
+      case 6: try {
         var v: Melix_Controlplane_V1_GetMetricsSnapshot?
         var hadOneofValue = false
         if let current = self.kind {
@@ -5732,7 +5772,7 @@ extension Melix_Controlplane_V1_OpsCommand: SwiftProtobuf.Message, SwiftProtobuf
           self.kind = .getMetrics(v)
         }
       }()
-      case 6: try {
+      case 7: try {
         var v: Melix_Controlplane_V1_CancelRequest?
         var hadOneofValue = false
         if let current = self.kind {
@@ -5768,17 +5808,21 @@ extension Melix_Controlplane_V1_OpsCommand: SwiftProtobuf.Message, SwiftProtobuf
       guard case .runBench(let v)? = self.kind else { preconditionFailure() }
       try visitor.visitSingularMessageField(value: v, fieldNumber: 3)
     }()
+    case .runEvaluation?: try {
+      guard case .runEvaluation(let v)? = self.kind else { preconditionFailure() }
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 4)
+    }()
     case .exportBundle?: try {
       guard case .exportBundle(let v)? = self.kind else { preconditionFailure() }
-      try visitor.visitSingularMessageField(value: v, fieldNumber: 4)
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 5)
     }()
     case .getMetrics?: try {
       guard case .getMetrics(let v)? = self.kind else { preconditionFailure() }
-      try visitor.visitSingularMessageField(value: v, fieldNumber: 5)
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 6)
     }()
     case .cancelRequest?: try {
       guard case .cancelRequest(let v)? = self.kind else { preconditionFailure() }
-      try visitor.visitSingularMessageField(value: v, fieldNumber: 6)
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 7)
     }()
     case nil: break
     }
@@ -7276,6 +7320,51 @@ extension Melix_Controlplane_V1_RunBench: SwiftProtobuf.Message, SwiftProtobuf._
 
   public static func ==(lhs: Melix_Controlplane_V1_RunBench, rhs: Melix_Controlplane_V1_RunBench) -> Bool {
     if lhs.suites != rhs.suites {return false}
+    if lhs.parameters != rhs.parameters {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+extension Melix_Controlplane_V1_RunEvaluation: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".RunEvaluation"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}suite_id\0\u{3}dataset_id\0\u{3}sample_size\0\u{1}parameters\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.suiteID) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.datasetID) }()
+      case 3: try { try decoder.decodeSingularUInt32Field(value: &self.sampleSize) }()
+      case 4: try { try decoder.decodeMapField(fieldType: SwiftProtobuf._ProtobufMap<SwiftProtobuf.ProtobufString,SwiftProtobuf.ProtobufString>.self, value: &self.parameters) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.suiteID.isEmpty {
+      try visitor.visitSingularStringField(value: self.suiteID, fieldNumber: 1)
+    }
+    if !self.datasetID.isEmpty {
+      try visitor.visitSingularStringField(value: self.datasetID, fieldNumber: 2)
+    }
+    if self.sampleSize != 0 {
+      try visitor.visitSingularUInt32Field(value: self.sampleSize, fieldNumber: 3)
+    }
+    if !self.parameters.isEmpty {
+      try visitor.visitMapField(fieldType: SwiftProtobuf._ProtobufMap<SwiftProtobuf.ProtobufString,SwiftProtobuf.ProtobufString>.self, value: self.parameters, fieldNumber: 4)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Melix_Controlplane_V1_RunEvaluation, rhs: Melix_Controlplane_V1_RunEvaluation) -> Bool {
+    if lhs.suiteID != rhs.suiteID {return false}
+    if lhs.datasetID != rhs.datasetID {return false}
+    if lhs.sampleSize != rhs.sampleSize {return false}
     if lhs.parameters != rhs.parameters {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true

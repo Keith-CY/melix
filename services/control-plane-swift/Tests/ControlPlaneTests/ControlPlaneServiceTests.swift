@@ -909,6 +909,68 @@ struct ControlPlaneServiceTests {
         #expect(snapshot.ops.metrics.values["bench.smoke.ttft_ms"] == 24.45)
     }
 
+    @Test("execute handles ops.run_evaluation through the model-operations worker")
+    func executeHandlesOpsRunEvaluationThroughTheModelOperationsWorker() async throws {
+        let modelOpsClient = ScriptedModelOperationsWorkerClient()
+        await modelOpsClient.setEvaluationResponse({
+            var response = Melix_Worker_V1_RunEvaluationResponse()
+            response.ok = true
+            response.job.schemaVersion = "melix.evaluation_job.v1"
+            response.job.jobID = "eval-123"
+            response.job.modelID = "melix-dev-text"
+            response.job.suiteID = "qa_smoke"
+            response.job.datasetID = "qa_smoke.dev.v1"
+            response.job.sampleSize = 8
+            response.job.scoringMode = "deterministic_accuracy"
+            response.job.parameters = ["judge": "deterministic"]
+            response.job.status = "completed"
+            var result = Melix_Worker_V1_WorkerEvaluationResult()
+            result.schemaVersion = "melix.evaluation_result.v1"
+            result.jobID = "eval-123"
+            result.suiteID = "qa_smoke"
+            result.datasetID = "qa_smoke.dev.v1"
+            result.sampleSize = 8
+            var metric = Melix_Worker_V1_EvaluationMetricValue()
+            metric.name = "eval.qa_smoke.accuracy"
+            metric.value = 1.0
+            result.metrics = [metric]
+            result.reportPath = "/tmp/melix-evaluation.json"
+            response.results = [result]
+            return response
+        }())
+        let service = ControlPlaneService(
+            modelCatalog: ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels()),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                modelOperationsClient: modelOpsClient
+            )
+        )
+
+        let response = try await service.execute(makeRunEvaluationRequest())
+        let lastRequest = try #require(await modelOpsClient.lastEvaluationRequest)
+
+        #expect(response.ok)
+        #expect(lastRequest.suiteID == "qa_smoke")
+        #expect(lastRequest.datasetID == "qa_smoke.dev.v1")
+        #expect(lastRequest.sampleSize == 8)
+        #expect(lastRequest.parameters["judge"] == "deterministic")
+        #expect(response.ops.evaluationJob.schemaVersion == "melix.evaluation_job.v1")
+        #expect(response.ops.evaluationJob.jobID == "eval-123")
+        #expect(response.ops.evaluationJob.suiteID == "qa_smoke")
+        #expect(response.ops.evaluationJob.datasetID == "qa_smoke.dev.v1")
+        #expect(response.ops.evaluationJob.sampleSize == 8)
+        #expect(response.ops.evaluationJob.parameters["judge"] == "deterministic")
+        #expect(response.ops.evaluationResults.count == 1)
+        #expect(response.ops.evaluationResults[0].schemaVersion == "melix.evaluation_result.v1")
+        #expect(response.ops.evaluationResults[0].jobID == "eval-123")
+        #expect(response.ops.evaluationResults[0].suiteID == "qa_smoke")
+        #expect(response.ops.evaluationResults[0].datasetID == "qa_smoke.dev.v1")
+        #expect(response.ops.evaluationResults[0].sampleSize == 8)
+        #expect(response.ops.evaluationResults[0].metrics.count == 1)
+        #expect(response.ops.evaluationResults[0].metrics[0].name == "eval.qa_smoke.accuracy")
+        #expect(response.ops.evaluationResults[0].metrics[0].value == 1.0)
+    }
+
     @Test("execute handles image.generate through the image worker and records the image job")
     func executeHandlesImageGenerateThroughTheImageWorker() async throws {
         let modelCatalog = ModelCatalog(seedModels: ModelCatalog.phaseSevenContractSeedModels())
@@ -2601,6 +2663,19 @@ struct ControlPlaneServiceTests {
         return request
     }
 
+    private func makeRunEvaluationRequest() -> Melix_Controlplane_V1_ControlPlaneRequest {
+        var request = Melix_Controlplane_V1_ControlPlaneRequest()
+        request.requestID = "req-ops-evaluation"
+        request.commandType = "ops.run_evaluation"
+        request.ops = Melix_Controlplane_V1_OpsCommand()
+        request.ops.runEvaluation = Melix_Controlplane_V1_RunEvaluation()
+        request.ops.runEvaluation.suiteID = "qa_smoke"
+        request.ops.runEvaluation.datasetID = "qa_smoke.dev.v1"
+        request.ops.runEvaluation.sampleSize = 8
+        request.ops.runEvaluation.parameters = ["judge": "deterministic"]
+        return request
+    }
+
     private func makeCancelRequest(
         requestID targetRequestID: String
     ) -> Melix_Controlplane_V1_ControlPlaneRequest {
@@ -3446,14 +3521,17 @@ private actor ScriptedModelOperationsWorkerClient: WorkerRoutingClient, ModelOpe
     private(set) var lastConvertRequest: Melix_Worker_V1_ConvertModelRequest?
     private(set) var lastDoctorRequest: Melix_Worker_V1_RunDoctorRequest?
     private(set) var lastBenchRequest: Melix_Worker_V1_RunBenchRequest?
+    private(set) var lastEvaluationRequest: Melix_Worker_V1_RunEvaluationRequest?
     private var infoResponse = Melix_Worker_V1_GetModelInfoResponse()
     private var convertEvents: [Melix_Worker_V1_ConvertModelEvent] = []
     private var doctorResponse = Melix_Worker_V1_RunDoctorResponse()
     private var benchEvents: [Melix_Worker_V1_RunBenchEvent] = []
+    private var evaluationResponse = Melix_Worker_V1_RunEvaluationResponse()
     private var infoError: Error?
     private var convertError: Error?
     private var doctorError: Error?
     private var benchError: Error?
+    private var evaluationError: Error?
 
     func setInfoResponse(_ response: Melix_Worker_V1_GetModelInfoResponse) {
         infoResponse = response
@@ -3471,6 +3549,10 @@ private actor ScriptedModelOperationsWorkerClient: WorkerRoutingClient, ModelOpe
         benchEvents = events
     }
 
+    func setEvaluationResponse(_ response: Melix_Worker_V1_RunEvaluationResponse) {
+        evaluationResponse = response
+    }
+
     func setInfoError(_ error: Error?) {
         infoError = error
     }
@@ -3485,6 +3567,10 @@ private actor ScriptedModelOperationsWorkerClient: WorkerRoutingClient, ModelOpe
 
     func setBenchError(_ error: Error?) {
         benchError = error
+    }
+
+    func setEvaluationError(_ error: Error?) {
+        evaluationError = error
     }
 
     func canDispatchRequests() async -> Bool {
@@ -3560,6 +3646,16 @@ private actor ScriptedModelOperationsWorkerClient: WorkerRoutingClient, ModelOpe
             }
             continuation.finish()
         }
+    }
+
+    func runEvaluation(
+        request: Melix_Worker_V1_RunEvaluationRequest
+    ) async throws -> Melix_Worker_V1_RunEvaluationResponse {
+        lastEvaluationRequest = request
+        if let evaluationError {
+            throw evaluationError
+        }
+        return evaluationResponse
     }
 }
 
