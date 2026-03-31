@@ -49,14 +49,20 @@ from worker.productization.build_metadata import (
 )
 from worker.productization.benchmark_schemas import (
     BenchmarkMetricValue,
-    EvaluationJob,
-    EvaluationResult,
     ServingBenchmarkJob,
     ServingBenchmarkResult,
     build_evaluation_job,
     build_evaluation_result,
     build_serving_benchmark_job,
     build_serving_benchmark_results,
+)
+from worker.productization.evaluation_schemas import (
+    EvaluationDatasetPackageManifest,
+    EvaluationJob,
+    EvaluationResult,
+    build_dataset_package_manifest,
+    build_evaluation_job_record,
+    build_evaluation_result_record,
 )
 
 
@@ -90,12 +96,16 @@ __all__ = [
     "compute_benchmark_regression_pct",
     "compute_install_success_rate",
     "compute_release_smoke_pass_rate",
+    "EvaluationDatasetPackageManifest",
     "EvaluationJob",
     "EvaluationResult",
     "evaluate_release_gate",
     "evaluate_quantization_gate",
+    "build_dataset_package_manifest",
     "build_evaluation_job",
     "build_evaluation_result",
+    "build_evaluation_job_record",
+    "build_evaluation_result_record",
     "build_serving_benchmark_job",
     "build_serving_benchmark_results",
     "load_release_gate_policy",

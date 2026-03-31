@@ -3,11 +3,16 @@ from __future__ import annotations
 from collections import defaultdict
 from dataclasses import dataclass
 
+from worker.productization.evaluation_schemas import (
+    EvaluationJob,
+    EvaluationResult,
+    build_evaluation_job_record,
+    build_evaluation_result_record,
+)
+
 
 _SERVING_BENCHMARK_JOB_SCHEMA_VERSION = "melix.serving_benchmark_job.v1"
 _SERVING_BENCHMARK_RESULT_SCHEMA_VERSION = "melix.serving_benchmark_result.v1"
-_EVALUATION_JOB_SCHEMA_VERSION = "melix.evaluation_job.v1"
-_EVALUATION_RESULT_SCHEMA_VERSION = "melix.evaluation_result.v1"
 
 
 @dataclass(frozen=True)
@@ -67,54 +72,6 @@ class ServingBenchmarkResult:
             "metrics": [metric.to_dict() for metric in self.metrics],
             "report_path": self.report_path,
             "report_markdown": self.report_markdown,
-        }
-
-
-@dataclass(frozen=True)
-class EvaluationJob:
-    schema_version: str
-    job_id: str
-    model_id: str
-    suite_id: str
-    dataset_id: str
-    sample_size: int
-    scoring_mode: str
-    parameters: dict[str, str]
-    status: str
-
-    def to_dict(self) -> dict[str, object]:
-        return {
-            "schema_version": self.schema_version,
-            "job_id": self.job_id,
-            "model_id": self.model_id,
-            "suite_id": self.suite_id,
-            "dataset_id": self.dataset_id,
-            "sample_size": self.sample_size,
-            "scoring_mode": self.scoring_mode,
-            "parameters": dict(self.parameters),
-            "status": self.status,
-        }
-
-
-@dataclass(frozen=True)
-class EvaluationResult:
-    schema_version: str
-    job_id: str
-    suite_id: str
-    dataset_id: str
-    sample_size: int
-    metrics: tuple[BenchmarkMetricValue, ...]
-    report_path: str
-
-    def to_dict(self) -> dict[str, object]:
-        return {
-            "schema_version": self.schema_version,
-            "job_id": self.job_id,
-            "suite_id": self.suite_id,
-            "dataset_id": self.dataset_id,
-            "sample_size": self.sample_size,
-            "metrics": [metric.to_dict() for metric in self.metrics],
-            "report_path": self.report_path,
         }
 
 
@@ -180,15 +137,14 @@ def build_evaluation_job(
     parameters: dict[str, str],
     status: str,
 ) -> EvaluationJob:
-    return EvaluationJob(
-        schema_version=_EVALUATION_JOB_SCHEMA_VERSION,
+    return build_evaluation_job_record(
         job_id=job_id,
         model_id=model_id,
         suite_id=suite_id,
         dataset_id=dataset_id,
         sample_size=sample_size,
         scoring_mode=scoring_mode,
-        parameters=dict(parameters),
+        parameters=parameters,
         status=status,
     )
 
@@ -202,17 +158,12 @@ def build_evaluation_result(
     metrics: dict[str, float],
     report_path: str,
 ) -> EvaluationResult:
-    ordered_metrics = tuple(
-        BenchmarkMetricValue(name=name, value=float(value), unit="")
-        for name, value in sorted(metrics.items())
-    )
-    return EvaluationResult(
-        schema_version=_EVALUATION_RESULT_SCHEMA_VERSION,
+    return build_evaluation_result_record(
         job_id=job_id,
         suite_id=suite_id,
         dataset_id=dataset_id,
         sample_size=sample_size,
-        metrics=ordered_metrics,
+        metrics=metrics,
         report_path=report_path,
     )
 
