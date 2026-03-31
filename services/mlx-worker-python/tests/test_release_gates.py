@@ -41,6 +41,10 @@ def test_collect_benchmark_evidence_returns_required_metrics(tmp_path: Path) -> 
     assert evidence["metrics"]["bench.smoke.ttft_ms"] == 24.45
     assert evidence["metrics"]["bench.smoke.tokens_per_second"] == 47.08
     assert evidence["metrics"]["bench.latency.p95_ms"] == 44.72
+    assert evidence["job"]["schema_version"] == "melix.serving_benchmark_job.v1"
+    assert evidence["job"]["job_id"] == "model-ops-0001"
+    assert evidence["job"]["suites"] == ["smoke", "latency"]
+    assert [row["suite"] for row in evidence["results"]] == ["latency", "smoke"]
 
 
 def test_collect_quantization_benchmark_evidence_returns_profile_metrics(tmp_path: Path) -> None:

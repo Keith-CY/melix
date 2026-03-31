@@ -47,6 +47,17 @@ from worker.productization.build_metadata import (
     infer_git_sha,
     sanitize_ref_name,
 )
+from worker.productization.benchmark_schemas import (
+    BenchmarkMetricValue,
+    EvaluationJob,
+    EvaluationResult,
+    ServingBenchmarkJob,
+    ServingBenchmarkResult,
+    build_evaluation_job,
+    build_evaluation_result,
+    build_serving_benchmark_job,
+    build_serving_benchmark_results,
+)
 
 
 def build_family_support_matrix():
@@ -69,6 +80,7 @@ __all__ = [
     "build_local_product_layout",
     "build_macos_app_bundle_layout",
     "BuildMetadata",
+    "BenchmarkMetricValue",
     "compute_build_metadata",
     "collect_benchmark_evidence",
     "collect_install_evidence",
@@ -78,8 +90,14 @@ __all__ = [
     "compute_benchmark_regression_pct",
     "compute_install_success_rate",
     "compute_release_smoke_pass_rate",
+    "EvaluationJob",
+    "EvaluationResult",
     "evaluate_release_gate",
     "evaluate_quantization_gate",
+    "build_evaluation_job",
+    "build_evaluation_result",
+    "build_serving_benchmark_job",
+    "build_serving_benchmark_results",
     "load_release_gate_policy",
     "load_quantization_gate_policy",
     "infer_git_ref_name",
@@ -91,6 +109,8 @@ __all__ = [
     "resolve_python_runtime_root",
     "resolve_site_packages_root",
     "sanitize_ref_name",
+    "ServingBenchmarkJob",
+    "ServingBenchmarkResult",
     "write_unsigned_macos_app_bundle",
     "write_local_product_artifacts",
 ]

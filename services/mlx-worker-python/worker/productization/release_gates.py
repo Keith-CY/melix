@@ -10,6 +10,10 @@ from typing import Any
 from packages.protocol.python.worker.v1 import maintenance_pb2
 
 from worker.engine.maintenance_core import MaintenanceCore
+from worker.productization.benchmark_schemas import (
+    build_serving_benchmark_job,
+    build_serving_benchmark_results,
+)
 from worker.productization.quantization_gates import (
     DEFAULT_QUANTIZATION_GATE_POLICY,
     collect_quantization_benchmark_evidence,
@@ -100,12 +104,37 @@ def collect_benchmark_evidence(
         for event in events
         if event.HasField("metric")
     }
+    metric_units = {
+        event.metric.name: event.metric.unit
+        for event in events
+        if event.HasField("metric")
+    }
+    started_event = next((event.started for event in events if event.HasField("started")), None)
+    job_id = started_event.job_id if started_event is not None else "bench-unknown"
     report_path = next(
         event.completed.report_path
         for event in events
         if event.HasField("completed")
     )
+    report_markdown = Path(report_path).read_text(encoding="utf-8")
+    job = build_serving_benchmark_job(
+        job_id=job_id,
+        model_id=str("melix-dev-text::1").split("::", 1)[0],
+        suites=("smoke", "latency"),
+        parameters={},
+        status="completed",
+        output_dir=str(Path(report_path).parent),
+    )
+    results = build_serving_benchmark_results(
+        job_id=job_id,
+        metrics=metrics,
+        units=metric_units,
+        report_path=report_path,
+        report_markdown=report_markdown,
+    )
     report = {
+        "job": job.to_dict(),
+        "results": [result.to_dict() for result in results],
         "metrics": metrics,
         "report_path": report_path,
         "report_exists": Path(report_path).exists(),

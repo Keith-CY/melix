@@ -1857,29 +1857,63 @@ public struct Melix_Controlplane_V1_SessionReply: Sendable {
   fileprivate var _session: Melix_Controlplane_V1_SessionState? = nil
 }
 
-public struct Melix_Controlplane_V1_OpsReply: Sendable {
+public struct Melix_Controlplane_V1_OpsReply: @unchecked Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
-  public var reportPath: String = String()
+  public var reportPath: String {
+    get {_storage._reportPath}
+    set {_uniqueStorage()._reportPath = newValue}
+  }
 
-  public var reportMarkdown: String = String()
+  public var reportMarkdown: String {
+    get {_storage._reportMarkdown}
+    set {_uniqueStorage()._reportMarkdown = newValue}
+  }
 
   public var metrics: Melix_Controlplane_V1_MetricsSummary {
-    get {_metrics ?? Melix_Controlplane_V1_MetricsSummary()}
-    set {_metrics = newValue}
+    get {_storage._metrics ?? Melix_Controlplane_V1_MetricsSummary()}
+    set {_uniqueStorage()._metrics = newValue}
   }
   /// Returns true if `metrics` has been explicitly set.
-  public var hasMetrics: Bool {self._metrics != nil}
+  public var hasMetrics: Bool {_storage._metrics != nil}
   /// Clears the value of `metrics`. Subsequent reads from it will return its default value.
-  public mutating func clearMetrics() {self._metrics = nil}
+  public mutating func clearMetrics() {_uniqueStorage()._metrics = nil}
+
+  public var benchmarkJob: Melix_Controlplane_V1_BenchmarkJobSummary {
+    get {_storage._benchmarkJob ?? Melix_Controlplane_V1_BenchmarkJobSummary()}
+    set {_uniqueStorage()._benchmarkJob = newValue}
+  }
+  /// Returns true if `benchmarkJob` has been explicitly set.
+  public var hasBenchmarkJob: Bool {_storage._benchmarkJob != nil}
+  /// Clears the value of `benchmarkJob`. Subsequent reads from it will return its default value.
+  public mutating func clearBenchmarkJob() {_uniqueStorage()._benchmarkJob = nil}
+
+  public var benchmarkResults: [Melix_Controlplane_V1_BenchmarkResultSummary] {
+    get {_storage._benchmarkResults}
+    set {_uniqueStorage()._benchmarkResults = newValue}
+  }
+
+  public var evaluationJob: Melix_Controlplane_V1_EvaluationJobSummary {
+    get {_storage._evaluationJob ?? Melix_Controlplane_V1_EvaluationJobSummary()}
+    set {_uniqueStorage()._evaluationJob = newValue}
+  }
+  /// Returns true if `evaluationJob` has been explicitly set.
+  public var hasEvaluationJob: Bool {_storage._evaluationJob != nil}
+  /// Clears the value of `evaluationJob`. Subsequent reads from it will return its default value.
+  public mutating func clearEvaluationJob() {_uniqueStorage()._evaluationJob = nil}
+
+  public var evaluationResults: [Melix_Controlplane_V1_EvaluationResultSummary] {
+    get {_storage._evaluationResults}
+    set {_uniqueStorage()._evaluationResults = newValue}
+  }
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
 
-  fileprivate var _metrics: Melix_Controlplane_V1_MetricsSummary? = nil
+  fileprivate var _storage = _StorageClass.defaultInstance
 }
 
 public struct Melix_Controlplane_V1_PresetReply: Sendable {
@@ -2331,6 +2365,10 @@ public struct Melix_Controlplane_V1_RunBench: Sendable {
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
+  public var suites: [String] = []
+
+  public var parameters: Dictionary<String,String> = [:]
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -2362,6 +2400,124 @@ public struct Melix_Controlplane_V1_CancelRequest: Sendable {
   // methods supported on all messages.
 
   public var requestID: String = String()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public struct Melix_Controlplane_V1_BenchmarkMetricValue: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var name: String = String()
+
+  public var value: Double = 0
+
+  public var unit: String = String()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public struct Melix_Controlplane_V1_BenchmarkJobSummary: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var schemaVersion: String = String()
+
+  public var jobID: String = String()
+
+  public var modelID: String = String()
+
+  public var suites: [String] = []
+
+  public var parameters: Dictionary<String,String> = [:]
+
+  public var status: String = String()
+
+  public var outputDir: String = String()
+
+  public var createdAtUnixMs: Int64 = 0
+
+  public var updatedAtUnixMs: Int64 = 0
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public struct Melix_Controlplane_V1_BenchmarkResultSummary: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var schemaVersion: String = String()
+
+  public var jobID: String = String()
+
+  public var suite: String = String()
+
+  public var metrics: [Melix_Controlplane_V1_BenchmarkMetricValue] = []
+
+  public var reportPath: String = String()
+
+  public var reportMarkdown: String = String()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public struct Melix_Controlplane_V1_EvaluationJobSummary: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var schemaVersion: String = String()
+
+  public var jobID: String = String()
+
+  public var modelID: String = String()
+
+  public var suiteID: String = String()
+
+  public var datasetID: String = String()
+
+  public var sampleSize: UInt32 = 0
+
+  public var scoringMode: String = String()
+
+  public var parameters: Dictionary<String,String> = [:]
+
+  public var status: String = String()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public struct Melix_Controlplane_V1_EvaluationResultSummary: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var schemaVersion: String = String()
+
+  public var jobID: String = String()
+
+  public var suiteID: String = String()
+
+  public var datasetID: String = String()
+
+  public var sampleSize: UInt32 = 0
+
+  public var metrics: [Melix_Controlplane_V1_BenchmarkMetricValue] = []
+
+  public var reportPath: String = String()
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -5962,43 +6118,111 @@ extension Melix_Controlplane_V1_SessionReply: SwiftProtobuf.Message, SwiftProtob
 
 extension Melix_Controlplane_V1_OpsReply: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".OpsReply"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}report_path\0\u{3}report_markdown\0\u{1}metrics\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}report_path\0\u{3}report_markdown\0\u{1}metrics\0\u{3}benchmark_job\0\u{3}benchmark_results\0\u{3}evaluation_job\0\u{3}evaluation_results\0")
+
+  fileprivate class _StorageClass {
+    var _reportPath: String = String()
+    var _reportMarkdown: String = String()
+    var _metrics: Melix_Controlplane_V1_MetricsSummary? = nil
+    var _benchmarkJob: Melix_Controlplane_V1_BenchmarkJobSummary? = nil
+    var _benchmarkResults: [Melix_Controlplane_V1_BenchmarkResultSummary] = []
+    var _evaluationJob: Melix_Controlplane_V1_EvaluationJobSummary? = nil
+    var _evaluationResults: [Melix_Controlplane_V1_EvaluationResultSummary] = []
+
+      // This property is used as the initial default value for new instances of the type.
+      // The type itself is protecting the reference to its storage via CoW semantics.
+      // This will force a copy to be made of this reference when the first mutation occurs;
+      // hence, it is safe to mark this as `nonisolated(unsafe)`.
+      static nonisolated(unsafe) let defaultInstance = _StorageClass()
+
+    private init() {}
+
+    init(copying source: _StorageClass) {
+      _reportPath = source._reportPath
+      _reportMarkdown = source._reportMarkdown
+      _metrics = source._metrics
+      _benchmarkJob = source._benchmarkJob
+      _benchmarkResults = source._benchmarkResults
+      _evaluationJob = source._evaluationJob
+      _evaluationResults = source._evaluationResults
+    }
+  }
+
+  fileprivate mutating func _uniqueStorage() -> _StorageClass {
+    if !isKnownUniquelyReferenced(&_storage) {
+      _storage = _StorageClass(copying: _storage)
+    }
+    return _storage
+  }
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
-    while let fieldNumber = try decoder.nextFieldNumber() {
-      // The use of inline closures is to circumvent an issue where the compiler
-      // allocates stack space for every case branch when no optimizations are
-      // enabled. https://github.com/apple/swift-protobuf/issues/1034
-      switch fieldNumber {
-      case 1: try { try decoder.decodeSingularStringField(value: &self.reportPath) }()
-      case 2: try { try decoder.decodeSingularStringField(value: &self.reportMarkdown) }()
-      case 3: try { try decoder.decodeSingularMessageField(value: &self._metrics) }()
-      default: break
+    _ = _uniqueStorage()
+    try withExtendedLifetime(_storage) { (_storage: _StorageClass) in
+      while let fieldNumber = try decoder.nextFieldNumber() {
+        // The use of inline closures is to circumvent an issue where the compiler
+        // allocates stack space for every case branch when no optimizations are
+        // enabled. https://github.com/apple/swift-protobuf/issues/1034
+        switch fieldNumber {
+        case 1: try { try decoder.decodeSingularStringField(value: &_storage._reportPath) }()
+        case 2: try { try decoder.decodeSingularStringField(value: &_storage._reportMarkdown) }()
+        case 3: try { try decoder.decodeSingularMessageField(value: &_storage._metrics) }()
+        case 4: try { try decoder.decodeSingularMessageField(value: &_storage._benchmarkJob) }()
+        case 5: try { try decoder.decodeRepeatedMessageField(value: &_storage._benchmarkResults) }()
+        case 6: try { try decoder.decodeSingularMessageField(value: &_storage._evaluationJob) }()
+        case 7: try { try decoder.decodeRepeatedMessageField(value: &_storage._evaluationResults) }()
+        default: break
+        }
       }
     }
   }
 
   public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
-    // The use of inline closures is to circumvent an issue where the compiler
-    // allocates stack space for every if/case branch local when no optimizations
-    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
-    // https://github.com/apple/swift-protobuf/issues/1182
-    if !self.reportPath.isEmpty {
-      try visitor.visitSingularStringField(value: self.reportPath, fieldNumber: 1)
+    try withExtendedLifetime(_storage) { (_storage: _StorageClass) in
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every if/case branch local when no optimizations
+      // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+      // https://github.com/apple/swift-protobuf/issues/1182
+      if !_storage._reportPath.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._reportPath, fieldNumber: 1)
+      }
+      if !_storage._reportMarkdown.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._reportMarkdown, fieldNumber: 2)
+      }
+      try { if let v = _storage._metrics {
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 3)
+      } }()
+      try { if let v = _storage._benchmarkJob {
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 4)
+      } }()
+      if !_storage._benchmarkResults.isEmpty {
+        try visitor.visitRepeatedMessageField(value: _storage._benchmarkResults, fieldNumber: 5)
+      }
+      try { if let v = _storage._evaluationJob {
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 6)
+      } }()
+      if !_storage._evaluationResults.isEmpty {
+        try visitor.visitRepeatedMessageField(value: _storage._evaluationResults, fieldNumber: 7)
+      }
     }
-    if !self.reportMarkdown.isEmpty {
-      try visitor.visitSingularStringField(value: self.reportMarkdown, fieldNumber: 2)
-    }
-    try { if let v = self._metrics {
-      try visitor.visitSingularMessageField(value: v, fieldNumber: 3)
-    } }()
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: Melix_Controlplane_V1_OpsReply, rhs: Melix_Controlplane_V1_OpsReply) -> Bool {
-    if lhs.reportPath != rhs.reportPath {return false}
-    if lhs.reportMarkdown != rhs.reportMarkdown {return false}
-    if lhs._metrics != rhs._metrics {return false}
+    if lhs._storage !== rhs._storage {
+      let storagesAreEqual: Bool = withExtendedLifetime((lhs._storage, rhs._storage)) { (_args: (_StorageClass, _StorageClass)) in
+        let _storage = _args.0
+        let rhs_storage = _args.1
+        if _storage._reportPath != rhs_storage._reportPath {return false}
+        if _storage._reportMarkdown != rhs_storage._reportMarkdown {return false}
+        if _storage._metrics != rhs_storage._metrics {return false}
+        if _storage._benchmarkJob != rhs_storage._benchmarkJob {return false}
+        if _storage._benchmarkResults != rhs_storage._benchmarkResults {return false}
+        if _storage._evaluationJob != rhs_storage._evaluationJob {return false}
+        if _storage._evaluationResults != rhs_storage._evaluationResults {return false}
+        return true
+      }
+      if !storagesAreEqual {return false}
+    }
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -7025,18 +7249,34 @@ extension Melix_Controlplane_V1_RunDoctor: SwiftProtobuf.Message, SwiftProtobuf.
 
 extension Melix_Controlplane_V1_RunBench: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".RunBench"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap()
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}suites\0\u{1}parameters\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
-    // Load everything into unknown fields
-    while try decoder.nextFieldNumber() != nil {}
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeRepeatedStringField(value: &self.suites) }()
+      case 2: try { try decoder.decodeMapField(fieldType: SwiftProtobuf._ProtobufMap<SwiftProtobuf.ProtobufString,SwiftProtobuf.ProtobufString>.self, value: &self.parameters) }()
+      default: break
+      }
+    }
   }
 
   public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.suites.isEmpty {
+      try visitor.visitRepeatedStringField(value: self.suites, fieldNumber: 1)
+    }
+    if !self.parameters.isEmpty {
+      try visitor.visitMapField(fieldType: SwiftProtobuf._ProtobufMap<SwiftProtobuf.ProtobufString,SwiftProtobuf.ProtobufString>.self, value: self.parameters, fieldNumber: 2)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: Melix_Controlplane_V1_RunBench, rhs: Melix_Controlplane_V1_RunBench) -> Bool {
+    if lhs.suites != rhs.suites {return false}
+    if lhs.parameters != rhs.parameters {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -7105,6 +7345,301 @@ extension Melix_Controlplane_V1_CancelRequest: SwiftProtobuf.Message, SwiftProto
 
   public static func ==(lhs: Melix_Controlplane_V1_CancelRequest, rhs: Melix_Controlplane_V1_CancelRequest) -> Bool {
     if lhs.requestID != rhs.requestID {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+extension Melix_Controlplane_V1_BenchmarkMetricValue: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".BenchmarkMetricValue"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}name\0\u{1}value\0\u{1}unit\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.name) }()
+      case 2: try { try decoder.decodeSingularDoubleField(value: &self.value) }()
+      case 3: try { try decoder.decodeSingularStringField(value: &self.unit) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.name.isEmpty {
+      try visitor.visitSingularStringField(value: self.name, fieldNumber: 1)
+    }
+    if self.value.bitPattern != 0 {
+      try visitor.visitSingularDoubleField(value: self.value, fieldNumber: 2)
+    }
+    if !self.unit.isEmpty {
+      try visitor.visitSingularStringField(value: self.unit, fieldNumber: 3)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Melix_Controlplane_V1_BenchmarkMetricValue, rhs: Melix_Controlplane_V1_BenchmarkMetricValue) -> Bool {
+    if lhs.name != rhs.name {return false}
+    if lhs.value != rhs.value {return false}
+    if lhs.unit != rhs.unit {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+extension Melix_Controlplane_V1_BenchmarkJobSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".BenchmarkJobSummary"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}schema_version\0\u{3}job_id\0\u{3}model_id\0\u{1}suites\0\u{1}parameters\0\u{1}status\0\u{3}output_dir\0\u{3}created_at_unix_ms\0\u{3}updated_at_unix_ms\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.schemaVersion) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.jobID) }()
+      case 3: try { try decoder.decodeSingularStringField(value: &self.modelID) }()
+      case 4: try { try decoder.decodeRepeatedStringField(value: &self.suites) }()
+      case 5: try { try decoder.decodeMapField(fieldType: SwiftProtobuf._ProtobufMap<SwiftProtobuf.ProtobufString,SwiftProtobuf.ProtobufString>.self, value: &self.parameters) }()
+      case 6: try { try decoder.decodeSingularStringField(value: &self.status) }()
+      case 7: try { try decoder.decodeSingularStringField(value: &self.outputDir) }()
+      case 8: try { try decoder.decodeSingularInt64Field(value: &self.createdAtUnixMs) }()
+      case 9: try { try decoder.decodeSingularInt64Field(value: &self.updatedAtUnixMs) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.schemaVersion.isEmpty {
+      try visitor.visitSingularStringField(value: self.schemaVersion, fieldNumber: 1)
+    }
+    if !self.jobID.isEmpty {
+      try visitor.visitSingularStringField(value: self.jobID, fieldNumber: 2)
+    }
+    if !self.modelID.isEmpty {
+      try visitor.visitSingularStringField(value: self.modelID, fieldNumber: 3)
+    }
+    if !self.suites.isEmpty {
+      try visitor.visitRepeatedStringField(value: self.suites, fieldNumber: 4)
+    }
+    if !self.parameters.isEmpty {
+      try visitor.visitMapField(fieldType: SwiftProtobuf._ProtobufMap<SwiftProtobuf.ProtobufString,SwiftProtobuf.ProtobufString>.self, value: self.parameters, fieldNumber: 5)
+    }
+    if !self.status.isEmpty {
+      try visitor.visitSingularStringField(value: self.status, fieldNumber: 6)
+    }
+    if !self.outputDir.isEmpty {
+      try visitor.visitSingularStringField(value: self.outputDir, fieldNumber: 7)
+    }
+    if self.createdAtUnixMs != 0 {
+      try visitor.visitSingularInt64Field(value: self.createdAtUnixMs, fieldNumber: 8)
+    }
+    if self.updatedAtUnixMs != 0 {
+      try visitor.visitSingularInt64Field(value: self.updatedAtUnixMs, fieldNumber: 9)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Melix_Controlplane_V1_BenchmarkJobSummary, rhs: Melix_Controlplane_V1_BenchmarkJobSummary) -> Bool {
+    if lhs.schemaVersion != rhs.schemaVersion {return false}
+    if lhs.jobID != rhs.jobID {return false}
+    if lhs.modelID != rhs.modelID {return false}
+    if lhs.suites != rhs.suites {return false}
+    if lhs.parameters != rhs.parameters {return false}
+    if lhs.status != rhs.status {return false}
+    if lhs.outputDir != rhs.outputDir {return false}
+    if lhs.createdAtUnixMs != rhs.createdAtUnixMs {return false}
+    if lhs.updatedAtUnixMs != rhs.updatedAtUnixMs {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+extension Melix_Controlplane_V1_BenchmarkResultSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".BenchmarkResultSummary"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}schema_version\0\u{3}job_id\0\u{1}suite\0\u{1}metrics\0\u{3}report_path\0\u{3}report_markdown\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.schemaVersion) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.jobID) }()
+      case 3: try { try decoder.decodeSingularStringField(value: &self.suite) }()
+      case 4: try { try decoder.decodeRepeatedMessageField(value: &self.metrics) }()
+      case 5: try { try decoder.decodeSingularStringField(value: &self.reportPath) }()
+      case 6: try { try decoder.decodeSingularStringField(value: &self.reportMarkdown) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.schemaVersion.isEmpty {
+      try visitor.visitSingularStringField(value: self.schemaVersion, fieldNumber: 1)
+    }
+    if !self.jobID.isEmpty {
+      try visitor.visitSingularStringField(value: self.jobID, fieldNumber: 2)
+    }
+    if !self.suite.isEmpty {
+      try visitor.visitSingularStringField(value: self.suite, fieldNumber: 3)
+    }
+    if !self.metrics.isEmpty {
+      try visitor.visitRepeatedMessageField(value: self.metrics, fieldNumber: 4)
+    }
+    if !self.reportPath.isEmpty {
+      try visitor.visitSingularStringField(value: self.reportPath, fieldNumber: 5)
+    }
+    if !self.reportMarkdown.isEmpty {
+      try visitor.visitSingularStringField(value: self.reportMarkdown, fieldNumber: 6)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Melix_Controlplane_V1_BenchmarkResultSummary, rhs: Melix_Controlplane_V1_BenchmarkResultSummary) -> Bool {
+    if lhs.schemaVersion != rhs.schemaVersion {return false}
+    if lhs.jobID != rhs.jobID {return false}
+    if lhs.suite != rhs.suite {return false}
+    if lhs.metrics != rhs.metrics {return false}
+    if lhs.reportPath != rhs.reportPath {return false}
+    if lhs.reportMarkdown != rhs.reportMarkdown {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+extension Melix_Controlplane_V1_EvaluationJobSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".EvaluationJobSummary"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}schema_version\0\u{3}job_id\0\u{3}model_id\0\u{3}suite_id\0\u{3}dataset_id\0\u{3}sample_size\0\u{3}scoring_mode\0\u{1}parameters\0\u{1}status\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.schemaVersion) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.jobID) }()
+      case 3: try { try decoder.decodeSingularStringField(value: &self.modelID) }()
+      case 4: try { try decoder.decodeSingularStringField(value: &self.suiteID) }()
+      case 5: try { try decoder.decodeSingularStringField(value: &self.datasetID) }()
+      case 6: try { try decoder.decodeSingularUInt32Field(value: &self.sampleSize) }()
+      case 7: try { try decoder.decodeSingularStringField(value: &self.scoringMode) }()
+      case 8: try { try decoder.decodeMapField(fieldType: SwiftProtobuf._ProtobufMap<SwiftProtobuf.ProtobufString,SwiftProtobuf.ProtobufString>.self, value: &self.parameters) }()
+      case 9: try { try decoder.decodeSingularStringField(value: &self.status) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.schemaVersion.isEmpty {
+      try visitor.visitSingularStringField(value: self.schemaVersion, fieldNumber: 1)
+    }
+    if !self.jobID.isEmpty {
+      try visitor.visitSingularStringField(value: self.jobID, fieldNumber: 2)
+    }
+    if !self.modelID.isEmpty {
+      try visitor.visitSingularStringField(value: self.modelID, fieldNumber: 3)
+    }
+    if !self.suiteID.isEmpty {
+      try visitor.visitSingularStringField(value: self.suiteID, fieldNumber: 4)
+    }
+    if !self.datasetID.isEmpty {
+      try visitor.visitSingularStringField(value: self.datasetID, fieldNumber: 5)
+    }
+    if self.sampleSize != 0 {
+      try visitor.visitSingularUInt32Field(value: self.sampleSize, fieldNumber: 6)
+    }
+    if !self.scoringMode.isEmpty {
+      try visitor.visitSingularStringField(value: self.scoringMode, fieldNumber: 7)
+    }
+    if !self.parameters.isEmpty {
+      try visitor.visitMapField(fieldType: SwiftProtobuf._ProtobufMap<SwiftProtobuf.ProtobufString,SwiftProtobuf.ProtobufString>.self, value: self.parameters, fieldNumber: 8)
+    }
+    if !self.status.isEmpty {
+      try visitor.visitSingularStringField(value: self.status, fieldNumber: 9)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Melix_Controlplane_V1_EvaluationJobSummary, rhs: Melix_Controlplane_V1_EvaluationJobSummary) -> Bool {
+    if lhs.schemaVersion != rhs.schemaVersion {return false}
+    if lhs.jobID != rhs.jobID {return false}
+    if lhs.modelID != rhs.modelID {return false}
+    if lhs.suiteID != rhs.suiteID {return false}
+    if lhs.datasetID != rhs.datasetID {return false}
+    if lhs.sampleSize != rhs.sampleSize {return false}
+    if lhs.scoringMode != rhs.scoringMode {return false}
+    if lhs.parameters != rhs.parameters {return false}
+    if lhs.status != rhs.status {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+extension Melix_Controlplane_V1_EvaluationResultSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".EvaluationResultSummary"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}schema_version\0\u{3}job_id\0\u{3}suite_id\0\u{3}dataset_id\0\u{3}sample_size\0\u{1}metrics\0\u{3}report_path\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.schemaVersion) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.jobID) }()
+      case 3: try { try decoder.decodeSingularStringField(value: &self.suiteID) }()
+      case 4: try { try decoder.decodeSingularStringField(value: &self.datasetID) }()
+      case 5: try { try decoder.decodeSingularUInt32Field(value: &self.sampleSize) }()
+      case 6: try { try decoder.decodeRepeatedMessageField(value: &self.metrics) }()
+      case 7: try { try decoder.decodeSingularStringField(value: &self.reportPath) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.schemaVersion.isEmpty {
+      try visitor.visitSingularStringField(value: self.schemaVersion, fieldNumber: 1)
+    }
+    if !self.jobID.isEmpty {
+      try visitor.visitSingularStringField(value: self.jobID, fieldNumber: 2)
+    }
+    if !self.suiteID.isEmpty {
+      try visitor.visitSingularStringField(value: self.suiteID, fieldNumber: 3)
+    }
+    if !self.datasetID.isEmpty {
+      try visitor.visitSingularStringField(value: self.datasetID, fieldNumber: 4)
+    }
+    if self.sampleSize != 0 {
+      try visitor.visitSingularUInt32Field(value: self.sampleSize, fieldNumber: 5)
+    }
+    if !self.metrics.isEmpty {
+      try visitor.visitRepeatedMessageField(value: self.metrics, fieldNumber: 6)
+    }
+    if !self.reportPath.isEmpty {
+      try visitor.visitSingularStringField(value: self.reportPath, fieldNumber: 7)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Melix_Controlplane_V1_EvaluationResultSummary, rhs: Melix_Controlplane_V1_EvaluationResultSummary) -> Bool {
+    if lhs.schemaVersion != rhs.schemaVersion {return false}
+    if lhs.jobID != rhs.jobID {return false}
+    if lhs.suiteID != rhs.suiteID {return false}
+    if lhs.datasetID != rhs.datasetID {return false}
+    if lhs.sampleSize != rhs.sampleSize {return false}
+    if lhs.metrics != rhs.metrics {return false}
+    if lhs.reportPath != rhs.reportPath {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

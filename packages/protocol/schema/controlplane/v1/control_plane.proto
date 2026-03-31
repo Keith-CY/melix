@@ -188,6 +188,10 @@ message OpsReply {
   string report_path = 1;
   string report_markdown = 2;
   MetricsSummary metrics = 3;
+  BenchmarkJobSummary benchmark_job = 4;
+  repeated BenchmarkResultSummary benchmark_results = 5;
+  EvaluationJobSummary evaluation_job = 6;
+  repeated EvaluationResultSummary evaluation_results = 7;
 }
 
 message PresetReply {
@@ -306,11 +310,63 @@ message ResumeAfterTool {
 
 message TailLogs {}
 message RunDoctor {}
-message RunBench {}
+message RunBench {
+  repeated string suites = 1;
+  map<string, string> parameters = 2;
+}
 message ExportDiagnostics {}
 message GetMetricsSnapshot {}
 message CancelRequest {
   string request_id = 1;
+}
+
+message BenchmarkMetricValue {
+  string name = 1;
+  double value = 2;
+  string unit = 3;
+}
+
+message BenchmarkJobSummary {
+  string schema_version = 1;
+  string job_id = 2;
+  string model_id = 3;
+  repeated string suites = 4;
+  map<string, string> parameters = 5;
+  string status = 6;
+  string output_dir = 7;
+  int64 created_at_unix_ms = 8;
+  int64 updated_at_unix_ms = 9;
+}
+
+message BenchmarkResultSummary {
+  string schema_version = 1;
+  string job_id = 2;
+  string suite = 3;
+  repeated BenchmarkMetricValue metrics = 4;
+  string report_path = 5;
+  string report_markdown = 6;
+}
+
+message EvaluationJobSummary {
+  string schema_version = 1;
+  string job_id = 2;
+  string model_id = 3;
+  string suite_id = 4;
+  string dataset_id = 5;
+  uint32 sample_size = 6;
+  string scoring_mode = 7;
+  map<string, string> parameters = 8;
+  string status = 9;
+}
+
+message EvaluationResultSummary {
+  string schema_version = 1;
+  string job_id = 2;
+  string suite_id = 3;
+  string dataset_id = 4;
+  uint32 sample_size = 5;
+  repeated BenchmarkMetricValue metrics = 6;
+  string report_path = 7;
 }
 
 message ListPresets {}

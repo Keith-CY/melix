@@ -465,7 +465,7 @@ public actor ControlPlaneService {
 
     private func handleRunBench(
         request: Melix_Controlplane_V1_ControlPlaneRequest,
-        command _: Melix_Controlplane_V1_RunBench
+        command: Melix_Controlplane_V1_RunBench
     ) async -> Melix_Controlplane_V1_ControlPlaneResponse {
         let startedAt = Date()
         guard
@@ -476,31 +476,68 @@ public actor ControlPlaneService {
         }
 
         var workerRequest = Melix_Worker_V1_RunBenchRequest()
-        workerRequest.modelHandle = await preferredModelOperationsHandle()
-        workerRequest.suites = ["smoke", "latency"]
+        let modelHandle = await preferredModelOperationsHandle()
+        let requestedSuites = command.suites.isEmpty ? ["smoke", "latency"] : Array(command.suites)
+        workerRequest.modelHandle = modelHandle
+        workerRequest.suites = requestedSuites
 
         do {
             let stream = try await workerClient.runBench(request: workerRequest)
             var reply = Melix_Controlplane_V1_OpsReply()
             var benchJobID = ""
+            var metricUnits: [String: String] = [:]
             var failedError: Melix_Controlplane_V1_ErrorStatus?
 
             for try await event in stream {
                 switch event.payload {
                 case .started(let started):
                     benchJobID = started.jobID
+                    reply.benchmarkJob = makeBenchmarkJobSummary(
+                        jobID: started.jobID,
+                        modelHandle: modelHandle,
+                        suites: requestedSuites,
+                        parameters: command.parameters,
+                        status: "running",
+                        outputDir: ""
+                    )
                 case .progress(let progress):
                     await publishBenchProgress(jobID: benchJobID, suite: progress.suite, pct: progress.pct)
                 case .metric(let metric):
                     reply.metrics.values[metric.name] = metric.value
+                    metricUnits[metric.name] = metric.unit
                     await metricsStore.set(metric.value, forKey: metric.name)
                 case .completed(let completed):
                     reply.reportPath = completed.reportPath
                     if let markdown = try? String(contentsOfFile: completed.reportPath, encoding: .utf8) {
                         reply.reportMarkdown = markdown
                     }
+                    let resolvedJobID = benchJobID.isEmpty ? "bench-unknown" : benchJobID
+                    reply.benchmarkJob = makeBenchmarkJobSummary(
+                        jobID: resolvedJobID,
+                        modelHandle: modelHandle,
+                        suites: requestedSuites,
+                        parameters: command.parameters,
+                        status: "completed",
+                        outputDir: URL(fileURLWithPath: completed.reportPath).deletingLastPathComponent().path
+                    )
+                    reply.benchmarkResults = makeBenchmarkResultSummaries(
+                        jobID: resolvedJobID,
+                        metrics: reply.metrics.values,
+                        metricUnits: metricUnits,
+                        reportPath: reply.reportPath,
+                        reportMarkdown: reply.reportMarkdown
+                    )
                 case .failed(let failed):
                     failedError = makeErrorStatus(from: failed.error)
+                    let resolvedJobID = benchJobID.isEmpty ? "bench-unknown" : benchJobID
+                    reply.benchmarkJob = makeBenchmarkJobSummary(
+                        jobID: resolvedJobID,
+                        modelHandle: modelHandle,
+                        suites: requestedSuites,
+                        parameters: command.parameters,
+                        status: "failed",
+                        outputDir: ""
+                    )
                 case nil:
                     break
                 }
@@ -1145,6 +1182,63 @@ public actor ControlPlaneService {
         event.benchProgress.suite = suite
         event.benchProgress.pct = Double(pct)
         await eventHub.publish(event)
+    }
+
+    private func makeBenchmarkJobSummary(
+        jobID: String,
+        modelHandle: String,
+        suites: [String],
+        parameters: [String: String],
+        status: String,
+        outputDir: String
+    ) -> Melix_Controlplane_V1_BenchmarkJobSummary {
+        var summary = Melix_Controlplane_V1_BenchmarkJobSummary()
+        summary.schemaVersion = "melix.serving_benchmark_job.v1"
+        summary.jobID = jobID
+        let derivedModelID = modelHandle.components(separatedBy: "::").first(where: { !$0.isEmpty }) ?? ""
+        summary.modelID = derivedModelID.isEmpty ? "melix-dev-text" : derivedModelID
+        summary.suites = suites
+        summary.parameters = parameters
+        summary.status = status
+        summary.outputDir = outputDir
+        return summary
+    }
+
+    private func makeBenchmarkResultSummaries(
+        jobID: String,
+        metrics: [String: Double],
+        metricUnits: [String: String],
+        reportPath: String,
+        reportMarkdown: String
+    ) -> [Melix_Controlplane_V1_BenchmarkResultSummary] {
+        var grouped: [String: [Melix_Controlplane_V1_BenchmarkMetricValue]] = [:]
+
+        for name in metrics.keys.sorted() {
+            var metric = Melix_Controlplane_V1_BenchmarkMetricValue()
+            metric.name = name
+            metric.value = metrics[name] ?? 0
+            metric.unit = metricUnits[name] ?? ""
+            grouped[benchmarkSuiteName(for: name), default: []].append(metric)
+        }
+
+        return grouped.keys.sorted().map { suite in
+            var result = Melix_Controlplane_V1_BenchmarkResultSummary()
+            result.schemaVersion = "melix.serving_benchmark_result.v1"
+            result.jobID = jobID
+            result.suite = suite
+            result.metrics = grouped[suite] ?? []
+            result.reportPath = reportPath
+            result.reportMarkdown = reportMarkdown
+            return result
+        }
+    }
+
+    private func benchmarkSuiteName(for metricName: String) -> String {
+        let parts = metricName.split(separator: ".")
+        guard parts.count >= 3, parts.first == "bench" else {
+            return "summary"
+        }
+        return String(parts[1])
     }
 
     private func recordTrainingMetrics(from manifestJSON: String) async {
