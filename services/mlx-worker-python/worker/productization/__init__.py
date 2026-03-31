@@ -64,6 +64,10 @@ from worker.productization.evaluation_schemas import (
     build_evaluation_job_record,
     build_evaluation_result_record,
 )
+from worker.productization.benchmark_queue import (
+    BenchmarkQueueRecord,
+    BenchmarkQueueStore,
+)
 
 
 def build_family_support_matrix():
@@ -87,6 +91,8 @@ __all__ = [
     "build_macos_app_bundle_layout",
     "BuildMetadata",
     "BenchmarkMetricValue",
+    "BenchmarkQueueRecord",
+    "BenchmarkQueueStore",
     "compute_build_metadata",
     "collect_benchmark_evidence",
     "collect_install_evidence",
