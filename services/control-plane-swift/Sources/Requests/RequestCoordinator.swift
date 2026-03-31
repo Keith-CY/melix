@@ -252,11 +252,13 @@ public actor RequestCoordinator {
     }
 
     public func startChatCompletion(
-        _ translatedRequest: TranslatedChatRequest
+        _ translatedRequest: TranslatedChatRequest,
+        requestStartedAt: Date? = nil
     ) async throws -> CoordinatedChatExecution {
         guard !translatedRequest.modelID.isEmpty else {
             throw RequestCoordinatorError.workerUnavailable
         }
+        let requestMetricStartedAt = requestStartedAt ?? now()
         let plan = await resolvedSchedulingPlan(translatedRequest)
         let request = plan.translatedRequest
         requestPlans[request.requestID] = plan
@@ -457,11 +459,15 @@ public actor RequestCoordinator {
                                 if !firstDeltaRecorded, case .tokenDelta = outputEvent.payload {
                                     firstDeltaRecorded = true
                                     let ttftMs = now().timeIntervalSince(dispatchStartedAt) * 1000
+                                    let followupTTFTMs = now().timeIntervalSince(requestMetricStartedAt) * 1000
                                     await metricsStore.set(
                                         ttftMs,
                                         forKey: "http.ttfd_ms"
                                     )
-                                    await self.recordTTFTMetrics(requestID: requestID, ttftMs: ttftMs)
+                                    await self.recordTTFTMetrics(
+                                        requestID: requestID,
+                                        ttftMs: followupTTFTMs
+                                    )
                                 }
                                 switch outputEvent.payload {
                                 case .reasoningDelta:

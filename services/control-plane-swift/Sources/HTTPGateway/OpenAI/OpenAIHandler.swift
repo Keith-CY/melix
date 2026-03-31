@@ -202,6 +202,7 @@ public struct OpenAIHandler: Sendable {
     }
 
     private func handleChatCompletions(_ request: HTTPRequest) async throws -> HTTPResponse {
+        let requestStartedAt = Date()
         do {
             let chatRequest = try decoder.decode(OpenAIChatCompletionsRequest.self, from: request.body)
             let normalized = if chatRequest.messages.contains(where: \.hasMultimodalContent) {
@@ -212,7 +213,8 @@ public struct OpenAIHandler: Sendable {
             let translated = try await translatedRequest(normalized)
             return try await streamResponse(
                 translated: translated,
-                shape: .chatCompletions
+                shape: .chatCompletions,
+                requestStartedAt: requestStartedAt
             )
         } catch let error as MultimodalRequestNormalizationError {
             return invalidArgumentResponse(message: error.operatorMessage)
@@ -228,10 +230,15 @@ public struct OpenAIHandler: Sendable {
     }
 
     private func handleCompletions(_ request: HTTPRequest) async throws -> HTTPResponse {
+        let requestStartedAt = Date()
         do {
             let completionsRequest = try decoder.decode(OpenAICompletionsRequest.self, from: request.body)
             let normalized = try translator.normalize(completionsRequest)
-            return try await streamNormalizedTextRequest(normalized, shape: .completions)
+            return try await streamNormalizedTextRequest(
+                normalized,
+                shape: .completions,
+                requestStartedAt: requestStartedAt
+            )
         } catch let error as StructuredOutputFormatError {
             return invalidArgumentResponse(message: error.operatorMessage)
         } catch let error as ToolParserConfigurationError {
@@ -244,10 +251,15 @@ public struct OpenAIHandler: Sendable {
     }
 
     private func handleResponses(_ request: HTTPRequest) async throws -> HTTPResponse {
+        let requestStartedAt = Date()
         do {
             let responsesRequest = try decoder.decode(OpenAIResponsesRequest.self, from: request.body)
             let normalized = try translator.normalize(responsesRequest)
-            return try await streamNormalizedTextRequest(normalized, shape: .responses)
+            return try await streamNormalizedTextRequest(
+                normalized,
+                shape: .responses,
+                requestStartedAt: requestStartedAt
+            )
         } catch let error as StructuredOutputFormatError {
             return invalidArgumentResponse(message: error.operatorMessage)
         } catch let error as ToolParserConfigurationError {
@@ -260,13 +272,15 @@ public struct OpenAIHandler: Sendable {
     }
 
     private func handleMessages(_ request: HTTPRequest) async throws -> HTTPResponse {
+        let requestStartedAt = Date()
         do {
             let messagesRequest = try decoder.decode(MelixMessagesRequest.self, from: request.body)
             let normalized = try translator.normalize(messagesRequest)
             return try await streamNormalizedTextRequest(
                 normalized,
                 shape: .messages,
-                headers: request.headers
+                headers: request.headers,
+                requestStartedAt: requestStartedAt
             )
         } catch let error as StructuredOutputFormatError {
             return invalidArgumentResponse(message: error.operatorMessage)
@@ -282,7 +296,8 @@ public struct OpenAIHandler: Sendable {
     private func streamNormalizedTextRequest(
         _ normalized: NormalizedTextRequest,
         shape: SSEStreamWriter.StreamShape,
-        headers: [String: String] = [:]
+        headers: [String: String] = [:],
+        requestStartedAt: Date
     ) async throws -> HTTPResponse {
         do {
             var translated = try await translatedRequest(normalized)
@@ -296,7 +311,11 @@ public struct OpenAIHandler: Sendable {
                     stream: translated.stream
                 )
             }
-            return try await streamResponse(translated: translated, shape: shape)
+            return try await streamResponse(
+                translated: translated,
+                shape: shape,
+                requestStartedAt: requestStartedAt
+            )
         } catch let error as HTTPRequestHandlingError {
             return httpErrorResponse(for: error)
         }
@@ -941,12 +960,16 @@ public struct OpenAIHandler: Sendable {
 
     private func streamResponse(
         translated: TranslatedChatRequest,
-        shape: SSEStreamWriter.StreamShape
+        shape: SSEStreamWriter.StreamShape,
+        requestStartedAt: Date
     ) async throws -> HTTPResponse {
         let execution: CoordinatedChatExecution
 
         do {
-            execution = try await requestCoordinator.startChatCompletion(translated)
+            execution = try await requestCoordinator.startChatCompletion(
+                translated,
+                requestStartedAt: requestStartedAt
+            )
         } catch let error as RequestCoordinatorError {
             return jsonResponse(statusCode: error.statusCode, payload: [
                 "error": [

@@ -115,6 +115,7 @@ Make the follow-up speed benefit measurable and reproducible.
 
 - record cold TTFT baselines per session and branch
 - record warm or restored TTFT and compute `session.followup_ttft_delta_ms`
+- measure the follow-up delta from request-coordination start rather than dispatch-only timing so warm-path gains that happen before worker dispatch remain visible
 - make deterministic restore paths faster than cold baselines in a stable, explicit way
 - add integration evidence for warm-route preference and measurable follow-up gain
 
