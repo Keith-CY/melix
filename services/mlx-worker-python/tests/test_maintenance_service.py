@@ -211,6 +211,107 @@ def test_quantize_job_conflict_lock_blocks_parallel_quantization_on_same_scope(t
     assert "quantization lock" in second_events[-1].failed.error.message
 
 
+def test_quantize_job_conflict_lock_blocks_upload_on_same_linked_quantization_scope(
+    tmp_path: Path,
+) -> None:
+    registry = WorkerRegistry(model_catalog=WorkerModelCatalog())
+    service = WorkerMaintenanceService(registry, jobs_root=tmp_path / "model-ops")
+
+    completed_quantize = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "quantize-ready"),
+                weight_quant="q4",
+                kv_quant="q8",
+                generate_manifest=True,
+                run_smoke_test=True,
+                ext={"operation": "quantize"},
+            ),
+            context=None,
+        )
+    )
+    bundle_path = Path(completed_quantize[-1].completed.output_path)
+
+    first_events: list[maintenance_pb2.ConvertModelEvent] = []
+
+    def run_held_quantize() -> None:
+        nonlocal first_events
+        first_events = list(
+            service.ConvertModel(
+                maintenance_pb2.ConvertModelRequest(
+                    source_model="melix-dev-text",
+                    output_dir=str(tmp_path / "quantize-held"),
+                    weight_quant="q4",
+                    kv_quant="q8",
+                    ext={"operation": "quantize", "test_hold_ms": "150"},
+                ),
+                context=None,
+            )
+        )
+
+    worker = threading.Thread(target=run_held_quantize)
+    worker.start()
+    time.sleep(0.03)
+
+    upload_events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "upload"),
+                generate_manifest=True,
+                ext={
+                    "operation": "upload",
+                    "artifact_kind": "model",
+                    "artifact_path": str(bundle_path),
+                    "target_repo": "melix/models/melix-dev-text-q4",
+                },
+            ),
+            context=None,
+        )
+    )
+    worker.join()
+
+    assert first_events[-1].HasField("completed")
+    assert upload_events[-1].HasField("failed")
+    assert upload_events[-1].failed.error.code == "resource_locked"
+    assert "quantization lock" in upload_events[-1].failed.error.message
+
+
+def test_lock_scope_falls_back_to_linked_quantization_source_model_when_scope_is_missing(
+    tmp_path: Path,
+) -> None:
+    registry = WorkerRegistry(model_catalog=WorkerModelCatalog())
+    core = MaintenanceCore(registry, jobs_root=tmp_path / "model-ops")
+
+    artifact_dir = tmp_path / "quantized-artifact"
+    artifact_dir.mkdir()
+    (artifact_dir / "manifest.json").write_text(
+        json.dumps(
+            {
+                "artifact_kind": "quantized_model_bundle",
+                "source_model": "melix-dev-text",
+                "quant_profile": {"quant_profile_id": "q4"},
+                "calibration": {"sample_count": 64},
+                "compatibility": {"smoke_test_passed": True},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    request = maintenance_pb2.ConvertModelRequest(
+        source_model="melix-dev-text",
+        ext={
+            "operation": "upload",
+            "artifact_kind": "model",
+            "artifact_path": str(artifact_dir),
+        },
+    )
+
+    assert core._lock_scope("upload", request) == "model-family:melix-dev-text"
+
+
 def test_linked_quantization_metadata_rejects_missing_invalid_and_non_bundle_manifests(tmp_path: Path) -> None:
     empty_request = maintenance_pb2.ConvertModelRequest()
     assert MaintenanceCore._linked_quantization_metadata(empty_request) is None

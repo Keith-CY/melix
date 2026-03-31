@@ -209,6 +209,18 @@ def collect_direct_phase_two_metrics(
                 allow_baseline_fallback=True,
             ),
         )
+        prefill_sparse = measure_prefill_probe(
+            inference_stub,
+            stack.swift_worker_metrics_path,
+            model_handle=model_handle,
+            prompt=queue_prompt,
+            label="prefill_sparse",
+            policy=common_pb2.AccelerationPolicy(
+                mode=common_pb2.ACCELERATION_MODE_SPARSE_PREFILL,
+                profile_id="structured-user",
+                allow_baseline_fallback=True,
+            ),
+        )
         decode_baseline = measure_decode_probe(
             inference_stub,
             stack.swift_worker_metrics_path,
@@ -263,7 +275,7 @@ def collect_direct_phase_two_metrics(
         "swift_worker_direct": {
             "load_model_ms": load_model_ms,
             "resident_bytes": int(max(load_response.estimated_resident_bytes, stats.stats.resident_bytes)),
-            "prefill": [prefill_baseline, prefill_accelerated],
+            "prefill": [prefill_baseline, prefill_accelerated, prefill_sparse],
             "decode": [decode_baseline, decode_speculative, decode_active_kv],
             "abort": abort_probe,
         }
@@ -432,6 +444,9 @@ def measure_prefill_probe(
         "decode_handle": response.decode_handle or None,
         "accelerated_prefill_gain_pct": exported.get("swift_text.accelerated_prefill_gain_pct"),
         "active_kv_quantization_ratio": exported.get("swift_text.active_kv_quantization_ratio"),
+        "sparse_prefill_accepted_skip_count": exported.get("swift_text.sparse_prefill_accepted_skip_count"),
+        "sparse_prefill_rejected_opportunity_count": exported.get("swift_text.sparse_prefill_rejected_opportunity_count"),
+        "sparse_prefill_protected_region_count": exported.get("swift_text.sparse_prefill_protected_region_count"),
         "worker_prefill_ms": exported.get("swift_text.prefill_ms"),
     }
 
@@ -723,7 +738,18 @@ def render_report(report: dict[str, Any]) -> str:
         "Swift Worker Prefill",
         format_table(
             report["swift_worker_direct"]["prefill"],
-            ["label", "mode", "total_ms", "worker_prefill_ms", "prompt_tokens", "accelerated_prefill_gain_pct", "active_kv_quantization_ratio"],
+            [
+                "label",
+                "mode",
+                "total_ms",
+                "worker_prefill_ms",
+                "prompt_tokens",
+                "accelerated_prefill_gain_pct",
+                "active_kv_quantization_ratio",
+                "sparse_prefill_accepted_skip_count",
+                "sparse_prefill_rejected_opportunity_count",
+                "sparse_prefill_protected_region_count",
+            ],
         ),
         "",
         "Swift Worker Decode",

@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from hashlib import sha256
 
-from packages.protocol.python.worker.v1 import maintenance_pb2
+from packages.protocol.python.worker.v1 import common_pb2, maintenance_pb2
 
 _SUPPORTED_OQ_PROFILE_IDS = ("q2", "q3", "q3.5", "q4", "q5", "q6", "q7", "q8")
 _CALIBRATION_SAMPLE_COUNTS = {
@@ -210,3 +210,47 @@ def compensation_metadata_for_request(
         "quant_algorithm": ext.get("quant_algorithm", "oq"),
         "hessian_aware": "hessian" in mode,
     }
+
+
+def protected_scope_for_request(
+    request: maintenance_pb2.ConvertModelRequest,
+    *,
+    source_model_spec: common_pb2.ModelSpec | None = None,
+) -> str:
+    ext = dict(request.ext)
+    explicit_scope = ext.get("protected_scope", "").strip()
+    if explicit_scope:
+        return explicit_scope
+
+    candidate_values: list[str] = []
+    if source_model_spec is not None:
+        spec_ext = dict(source_model_spec.ext)
+        candidate_values.extend(
+            [
+                spec_ext.get("embedding_family_id", ""),
+                spec_ext.get("rerank_family_id", ""),
+                spec_ext.get("vision_family_id", ""),
+                spec_ext.get("detected_family_id", ""),
+                spec_ext.get("model_architecture", ""),
+                source_model_spec.model_id,
+            ]
+        )
+
+    candidate_values.extend(
+        [
+            ext.get("family_id", ""),
+            ext.get("embedding_family_id", ""),
+            ext.get("rerank_family_id", ""),
+            ext.get("vision_family_id", ""),
+            ext.get("detected_family_id", ""),
+            ext.get("model_architecture", ""),
+            ext.get("architecture_class", ""),
+            request.source_model,
+        ]
+    )
+
+    for value in candidate_values:
+        normalized = (value or "").strip()
+        if normalized:
+            return f"model-family:{normalized}"
+    return ""

@@ -41,9 +41,11 @@ Add an experimental sparse-prefill acceleration mode behind a feature flag while
 
 - `make swift-test`
 - `make integration-test`
-- touched-scope benchmark command for sparse prefill
+- `PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" UV_CACHE_DIR="$(pwd)/.uv-cache" uv run --project services/mlx-worker-python python scripts/phase2_metrics_report.py --json`
+- inspect `swift_worker_direct.prefill[]` for `label = "prefill_sparse"`
 
 ## Acceptance
 
 - sparse-prefill acceleration can be enabled and disabled explicitly
 - protected prompt regions remain correct and test-covered
+- sparse-prefill benchmark evidence is repository-visible and reproducible

@@ -11,6 +11,7 @@ from packages.protocol.python.worker.v1 import common_pb2, maintenance_pb2
 from worker.model_ops.job_registry import ModelOpsJobRegistry
 from worker.model_ops.operation_locks import ModelOpsConflictRegistry
 from worker.model_ops.quantization_pipeline import OQQuantizationPipeline
+from worker.model_ops.quantization_profiles import protected_scope_for_request
 from worker.registry import WorkerRegistry
 
 _CAPABILITY_SUPPORTED_MODALITIES_KEY = "melix.capability.supported_modalities"
@@ -445,8 +446,25 @@ class MaintenanceCore:
         }[operation]
         return output_dir / filename
 
-    @staticmethod
-    def _lock_scope(operation: str, request: maintenance_pb2.ConvertModelRequest) -> str:
+    def _lock_scope(self, operation: str, request: maintenance_pb2.ConvertModelRequest) -> str:
+        if operation in {"quantize", "upload"}:
+            linked_quantization = self._linked_quantization_metadata(request)
+            if linked_quantization is not None:
+                linked_scope = str(linked_quantization.get("protected_scope", "")).strip()
+                if linked_scope:
+                    return linked_scope
+                linked_source_model = str(linked_quantization.get("source_model", "")).strip()
+                if linked_source_model:
+                    return f"model-family:{linked_source_model}"
+
+            source_model_spec = self._registry.model_catalog.get(request.source_model)
+            protected_scope = protected_scope_for_request(
+                request,
+                source_model_spec=source_model_spec,
+            )
+            if protected_scope:
+                return protected_scope
+
         if operation == "upload":
             return request.ext.get("artifact_path", "") or request.source_model or operation
         return request.source_model or operation
@@ -479,6 +497,8 @@ class MaintenanceCore:
             "artifact_kind": manifest.get("artifact_kind", ""),
             "artifact_path": str(artifact_path),
             "manifest_path": str(manifest_path),
+            "source_model": manifest.get("source_model", ""),
+            "protected_scope": manifest.get("protected_scope", ""),
             "quant_profile_id": quant_profile.get("quant_profile_id", ""),
             "calibration_sample_count": calibration.get("sample_count", 0),
             "smoke_test_passed": compatibility.get("smoke_test_passed", False),

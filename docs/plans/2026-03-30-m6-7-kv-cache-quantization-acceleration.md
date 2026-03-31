@@ -27,7 +27,8 @@ Add feature-flagged KV-cache quantization acceleration so memory pressure can be
 
 - `make swift-test`
 - `make integration-test`
-- touched-scope benchmark command for the acceleration slice
+- `PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" UV_CACHE_DIR="$(pwd)/.uv-cache" uv run --project services/mlx-worker-python python scripts/phase2_metrics_report.py --json`
+- inspect `swift_worker_direct.decode[]` for `label = "decode_active_kv_quantized"`
 
 ## Acceptance
 

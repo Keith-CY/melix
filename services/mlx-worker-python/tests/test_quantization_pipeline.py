@@ -6,6 +6,7 @@ from pathlib import Path
 from packages.protocol.python.worker.v1 import maintenance_pb2
 
 from worker.grpc_server import WorkerMaintenanceService
+from worker.model_ops.quantization_profiles import protected_scope_for_request
 from worker.model_registry.catalog import WorkerModelCatalog
 from worker.registry import WorkerRegistry
 
@@ -294,3 +295,14 @@ def test_quantize_job_selects_moe_or_dense_strategy(tmp_path: Path) -> None:
     assert dense_payload["strategy"]["planner"] == "dense-layerwise"
     assert moe_payload["strategy"]["family"] == "moe"
     assert moe_payload["strategy"]["planner"] == "expert-aware"
+
+
+def test_protected_scope_prefers_explicit_scope_and_can_be_empty() -> None:
+    explicit_request = maintenance_pb2.ConvertModelRequest(
+        source_model="melix-dev-text",
+        ext={"protected_scope": "model-family:custom-explicit"},
+    )
+    assert protected_scope_for_request(explicit_request) == "model-family:custom-explicit"
+
+    empty_request = maintenance_pb2.ConvertModelRequest()
+    assert protected_scope_for_request(empty_request) == ""

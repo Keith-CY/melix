@@ -80,6 +80,7 @@ Current phase-status and planning documents:
 - `plans/2026-03-29-p8-m6-release-runbooks-product-acceptance.md`
 - `plans/2026-03-30-full-capability-roadmap.md`
 - `plans/2026-03-30-full-capability-roadmap-execution-index.md`
+- `plans/2026-03-31-m6-completion-closure.md`
 - `plans/2026-03-31-m10-session-lifecycle-and-power-management.md`
 - `plans/2026-03-31-m11-disk-streaming-memory-budgeting-and-cache-policy.md`
 - `plans/2026-03-31-m12-model-registry-family-coverage-and-model-tools.md`
@@ -148,6 +149,7 @@ Recent decision records:
 
 Current runbooks:
 
+- `runbooks/m6-acceleration-benchmarks.md`
 - `runbooks/model-family-support-matrix.md`
 - `runbooks/phase-1-local-stack.md`
 - `runbooks/phase-2-queue-pressure.md`

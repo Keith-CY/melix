@@ -15,6 +15,7 @@ from worker.model_ops.quantization_profiles import (
     hybrid_layout_metadata_for_request,
     normalize_quantization_profile,
     planning_metadata_for_request,
+    protected_scope_for_request,
     source_format_metadata_for_request,
     strategy_metadata_for_request,
 )
@@ -210,6 +211,10 @@ class OQQuantizationPipeline:
                 "smoke_test_requested": request.run_smoke_test,
                 "smoke_test_passed": smoke_test_passed,
             },
+            "protected_scope": protected_scope_for_request(
+                request,
+                source_model_spec=source_model,
+            ),
             "ext": dict(request.ext),
         }
         if hybrid_layout is not None:
