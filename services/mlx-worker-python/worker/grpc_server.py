@@ -26,6 +26,7 @@ from packages.protocol.python.worker.v1 import (
 from worker.engine.embedding_core import EmbeddingCore
 from worker.engine.image_edit_core import ImageEditCore
 from worker.engine.engine_core import EngineCore
+from worker.engine.evaluation_core import EvaluationCore
 from worker.engine.image_generation_core import ImageGenerationCore
 from worker.engine.maintenance_core import MaintenanceCore
 from worker.engine.rerank_core import RerankCore
@@ -201,9 +202,19 @@ class WorkerInferenceService(inference_pb2_grpc.InferenceServiceServicer):
 
 
 class WorkerMaintenanceService(maintenance_pb2_grpc.MaintenanceServiceServicer):
-    def __init__(self, registry: WorkerRegistry, jobs_root: Path | str | None = None) -> None:
+    def __init__(
+        self,
+        registry: WorkerRegistry,
+        jobs_root: Path | str | None = None,
+        evaluation_jobs_root: Path | str | None = None,
+        evaluation_core: EvaluationCore | None = None,
+    ) -> None:
         root = Path(jobs_root or ".runtime/model-ops")
         self._core = MaintenanceCore(registry, jobs_root=root)
+        self._evaluation_jobs_root = Path(evaluation_jobs_root or root / "evaluation").resolve()
+        # Stage the evaluation runner at service construction time so the later RPC path
+        # can reuse the same file-backed jobs root without additional wiring changes.
+        self._evaluation_core = evaluation_core or EvaluationCore(jobs_root=self._evaluation_jobs_root)
 
     def ConvertModel(self, request, context):
         yield from self._core.convert_model(request)
