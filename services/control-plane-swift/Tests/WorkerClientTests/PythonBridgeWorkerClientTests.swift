@@ -1088,6 +1088,24 @@ struct PythonBridgeWorkerClientTests {
         }
     }
 
+    @Test("process bridge runner supports direct python executable override")
+    func processBridgeRunnerSupportsDirectPythonExecutableOverride() async throws {
+        let fixtureRoot = try makeProcessBridgeFixtureRepo()
+        let environment = ProcessInfo.processInfo.environment.merging([
+            "MELIX_PYTHON_BRIDGE_EXECUTABLE": "/usr/bin/python3",
+        ]) { _, new in new }
+        let runner = ProcessWorkerBridgeRunner(
+            repoRoot: fixtureRoot.path,
+            environment: environment
+        )
+
+        let unaryLine = try await runner.runUnary(
+            command: BridgeCommand(kind: .handshake, socketPath: "/tmp/unused.sock", requestData: Data("hello".utf8))
+        )
+
+        #expect(unaryLine.contains("\"kind\""))
+    }
+
     @Test("process bridge runner cancels hanging streams without leaking the child process")
     func processBridgeRunnerCancelsHangingStreamsWithoutLeakingTheChildProcess() async throws {
         let fixtureRoot = try makeProcessBridgeFixtureRepo()

@@ -237,7 +237,7 @@ def write_local_product_artifacts(
         spec.plist_path.write_text(render_launch_agent_plist(spec))
         plist_paths[spec.label] = str(spec.plist_path)
 
-    layout.environment_script_path.write_text(_environment_script(layout))
+    layout.environment_script_path.write_text(render_environment_script(layout))
     manifest = {
         "repo_root": str(layout.repo_root),
         "app_support_dir": str(layout.app_support_dir),
@@ -262,7 +262,7 @@ def write_local_product_artifacts(
     return manifest
 
 
-def _environment_script(layout: LocalProductLayout) -> str:
+def render_environment_script(layout: LocalProductLayout) -> str:
     exports = {
         "MELIX_APP_SUPPORT_DIR": str(layout.app_support_dir),
         "MELIX_RUNTIME_DIR": str(layout.runtime_dir),

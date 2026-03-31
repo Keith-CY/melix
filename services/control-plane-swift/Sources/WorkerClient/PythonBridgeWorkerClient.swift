@@ -805,20 +805,32 @@ public struct ProcessWorkerBridgeRunner: WorkerBridgeRunning, Sendable {
         let process = Process()
         let terminationState = ProcessTerminationState()
         process.currentDirectoryURL = URL(fileURLWithPath: repoRoot, isDirectory: true)
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        process.arguments = [
-            "uv",
-            "run",
-            "--project",
-            "\(repoRoot)/services/mlx-worker-python",
-            "python",
-            "\(repoRoot)/services/mlx-worker-python/worker/control_plane_bridge.py",
-            command.kind.rawValue,
-            "--socket-path",
-            command.socketPath,
-            "--request-b64",
-            command.requestData.base64EncodedString(),
-        ]
+        if let pythonExecutable = environment["MELIX_PYTHON_BRIDGE_EXECUTABLE"], !pythonExecutable.isEmpty {
+            process.executableURL = URL(fileURLWithPath: pythonExecutable)
+            process.arguments = [
+                "\(repoRoot)/services/mlx-worker-python/worker/control_plane_bridge.py",
+                command.kind.rawValue,
+                "--socket-path",
+                command.socketPath,
+                "--request-b64",
+                command.requestData.base64EncodedString(),
+            ]
+        } else {
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+            process.arguments = [
+                "uv",
+                "run",
+                "--project",
+                "\(repoRoot)/services/mlx-worker-python",
+                "python",
+                "\(repoRoot)/services/mlx-worker-python/worker/control_plane_bridge.py",
+                command.kind.rawValue,
+                "--socket-path",
+                command.socketPath,
+                "--request-b64",
+                command.requestData.base64EncodedString(),
+            ]
+        }
         process.environment = mergedEnvironment()
         process.terminationHandler = { terminatedProcess in
             Task {
