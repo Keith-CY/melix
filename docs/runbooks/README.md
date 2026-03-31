@@ -14,6 +14,7 @@ A runbook should let a new contributor or agent diagnose and recover a known cla
 
 Current runbooks:
 
+- `m7-benchmark-and-evaluation-foundation.md`
 - `m6-acceleration-benchmarks.md`
 - `model-family-support-matrix.md`
 - `phase-1-local-stack.md`
