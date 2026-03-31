@@ -1012,6 +1012,13 @@ public actor RequestCoordinator {
                     }
                     let restoreStage = self.restoreStageLabel(for: effectiveRestorePlan)
                     let cachePressure = await self.refreshWorkerCacheObservability(using: client) ?? 0
+                    let decodeRequest = makeDecodeRequest(
+                        from: request,
+                        prefillResponse: prefillResponse
+                    )
+                    // Start decode before surfacing prefill progress so direct worker aborts do not
+                    // observe a false-negative gap between prefill cleanup and decode registration.
+                    let upstream = try await client.decode(request: decodeRequest)
 
                     var prefillEvent = makePrefillStartedEvent(
                         request: request,
@@ -1070,11 +1077,6 @@ public actor RequestCoordinator {
                         continuation.yield(cacheDecisionEvent)
                     }
 
-                    let decodeRequest = makeDecodeRequest(
-                        from: request,
-                        prefillResponse: prefillResponse
-                    )
-                    let upstream = try await client.decode(request: decodeRequest)
                     for try await upstreamEvent in upstream {
                         var event = upstreamEvent
                         event.seq = nextSeq

@@ -49,6 +49,7 @@
 
 - Allow cancellation before a worker has been bound to a live request.
 - Distinguish queued, prefill, and decode abort metrics.
+- Preserve abort continuity across phase-aware prefill-to-decode handoff so a live request does not expose a false-negative abort gap while decode admission is starting.
 - Keep existing public behavior stable for admitted and streaming requests.
 
 ### Task 4: Add red-green coverage for queued, prefill, and decode observability
@@ -72,4 +73,5 @@ git diff --check
 
 - Scheduler snapshots expose queued, admitted, prefill, decode, and terminal request evidence.
 - Cancellation succeeds both before and after worker binding, with phase-specific metrics recorded.
+- Phase-aware text requests remain abortable through the prefill-to-decode transition without relying on client-side retries.
 - The changed control-plane scope remains at or above `95%` measured coverage.

@@ -223,18 +223,22 @@ public struct GRPCSwiftTextWorkerRunner: SwiftTextWorkerRPCRunning, Sendable {
         socketPath: String,
         request: Melix_Worker_V1_DecodeRequest
     ) async throws -> AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error> {
-        AsyncThrowingStream { continuation in
+        let startupLatch = StreamStartupLatch()
+        let stream = AsyncThrowingStream { continuation in
             let task = Task {
                 do {
                     try await withRPCClients(socketPath: socketPath) { _, inferenceClient, _ in
                         try await inferenceClient.decode(request) { response in
+                            await startupLatch.markReady()
                             for try await event in response.messages {
                                 continuation.yield(event)
                             }
                         }
                     }
+                    await startupLatch.markReady()
                     continuation.finish()
                 } catch {
+                    await startupLatch.markFailed(WorkerClientError.unavailable)
                     continuation.finish(throwing: WorkerClientError.unavailable)
                 }
             }
@@ -243,6 +247,8 @@ public struct GRPCSwiftTextWorkerRunner: SwiftTextWorkerRPCRunning, Sendable {
                 task.cancel()
             }
         }
+        try await startupLatch.waitUntilReady()
+        return stream
     }
 
     public func abort(
@@ -277,5 +283,47 @@ public struct GRPCSwiftTextWorkerRunner: SwiftTextWorkerRPCRunning, Sendable {
         } catch {
             throw WorkerClientError.unavailable
         }
+    }
+}
+
+actor StreamStartupLatch {
+    private enum State {
+        case pending
+        case ready
+        case failed(Error)
+    }
+
+    private var state: State = .pending
+    private var waiter: CheckedContinuation<Void, Error>?
+
+    func waitUntilReady() async throws {
+        switch state {
+        case .ready:
+            return
+        case .failed(let error):
+            throw error
+        case .pending:
+            try await withCheckedThrowingContinuation { continuation in
+                waiter = continuation
+            }
+        }
+    }
+
+    func markReady() {
+        guard case .pending = state else {
+            return
+        }
+        state = .ready
+        waiter?.resume()
+        waiter = nil
+    }
+
+    func markFailed(_ error: Error) {
+        guard case .pending = state else {
+            return
+        }
+        state = .failed(error)
+        waiter?.resume(throwing: error)
+        waiter = nil
     }
 }

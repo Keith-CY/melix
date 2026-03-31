@@ -167,6 +167,41 @@ struct SwiftTextWorkerClientTests {
         }
     }
 
+    @Test("grpc decode startup failures are surfaced before a stream is returned")
+    func grpcDecodeStartupFailuresAreSurfacedBeforeAStreamIsReturned() async throws {
+        let socketPath = "/tmp/melix-swift-missing-\(UUID().uuidString).sock"
+        let client = SwiftTextWorkerClient(socketPath: socketPath)
+
+        do {
+            _ = try await client.decode(request: makeDecodeRequest(requestID: "req-missing-decode"))
+            Issue.record("Expected decode startup to fail.")
+        } catch let error as WorkerClientError {
+            #expect(error == .unavailable)
+        }
+    }
+
+    @Test("stream startup latch returns immediately after ready state is recorded")
+    func streamStartupLatchReturnsImmediatelyAfterReadyStateIsRecorded() async throws {
+        let latch = StreamStartupLatch()
+
+        await latch.markReady()
+        try await latch.waitUntilReady()
+    }
+
+    @Test("stream startup latch rethrows failures to later waiters")
+    func streamStartupLatchRethrowsFailuresToLaterWaiters() async throws {
+        let latch = StreamStartupLatch()
+
+        await latch.markFailed(WorkerClientError.unavailable)
+
+        do {
+            try await latch.waitUntilReady()
+            Issue.record("Expected the latch to rethrow the startup failure.")
+        } catch let error as WorkerClientError {
+            #expect(error == .unavailable)
+        }
+    }
+
     @Test("grpc runner bridges phase 1 worker RPCs over a unix domain socket")
     func grpcRunnerBridgesPhase1WorkerRPCsOverAUnixDomainSocket() async throws {
         let fixture = try await LiveSwiftWorkerFixture.start(
