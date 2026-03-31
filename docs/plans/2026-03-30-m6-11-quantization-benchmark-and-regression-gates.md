@@ -27,6 +27,8 @@ Close the quantization milestone with benchmark evidence and regression gates th
 
 - touched-scope benchmark command for quantization
 - touched-scope release-gate command for quantization regressions
+- `PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" UV_CACHE_DIR="$(pwd)/.uv-cache" uv run --project services/mlx-worker-python python scripts/quantization_benchmarks.py --json`
+- `PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" UV_CACHE_DIR="$(pwd)/.uv-cache" uv run --project services/mlx-worker-python python scripts/quantization_release_gate.py --json`
 
 ## Acceptance
 

@@ -184,12 +184,26 @@ struct ControlPlaneXPCClientTests {
                 var event = Melix_Worker_V1_ConvertModelEvent()
                 event.manifest = Melix_Worker_V1_ConvertManifest()
                 event.manifest.manifestJson = #"{"operation":"upload"}"#
+                event.manifest.artifact = Melix_Worker_V1_QuantizedArtifact()
+                event.manifest.artifact.schemaVersion = "melix.quantized_bundle.v1"
+                event.manifest.artifact.artifactKind = "upload_receipt"
+                event.manifest.artifact.manifestPath = "/tmp/melix-upload/upload.receipt.json"
+                event.manifest.artifact.bundlePath = "/tmp/melix-upload/upload.receipt.json"
+                event.manifest.artifact.artifactBytes = 64
+                event.manifest.artifact.manifestBytes = 32
                 return event
             }(),
             {
                 var event = Melix_Worker_V1_ConvertModelEvent()
                 event.completed = Melix_Worker_V1_ConvertCompleted()
                 event.completed.outputPath = "/tmp/melix-upload/upload.receipt.json"
+                event.completed.artifact = Melix_Worker_V1_QuantizedArtifact()
+                event.completed.artifact.schemaVersion = "melix.quantized_bundle.v1"
+                event.completed.artifact.artifactKind = "upload_receipt"
+                event.completed.artifact.manifestPath = "/tmp/melix-upload/upload.receipt.json"
+                event.completed.artifact.bundlePath = "/tmp/melix-upload/upload.receipt.json"
+                event.completed.artifact.artifactBytes = 64
+                event.completed.artifact.manifestBytes = 32
                 return event
             }(),
         ])
@@ -206,6 +220,7 @@ struct ControlPlaneXPCClientTests {
             modelID: "melix-dev-text",
             operation: "upload",
             outputDir: "/tmp/melix-upload",
+            quantProfileID: "",
             weightQuant: "",
             kvQuant: "",
             ext: ["target_repo": "melix/upload-target"]
@@ -217,6 +232,10 @@ struct ControlPlaneXPCClientTests {
         #expect(result.stage == "write_artifact")
         #expect(result.outputPath == "/tmp/melix-upload/upload.receipt.json")
         #expect(result.manifestJson == #"{"operation":"upload"}"#)
+        #expect(result.artifact.artifactKind == "upload_receipt")
+        #expect(result.artifact.bundlePath == "/tmp/melix-upload/upload.receipt.json")
+        #expect(result.artifact.artifactBytes == 64)
+        #expect(result.artifact.manifestBytes == 32)
     }
 
     @Test("local client runs doctor and bench through control-plane execute")
@@ -569,6 +588,7 @@ private struct DefaultImagelessControlPlaneXPCClient: ControlPlaneXPCClient {
         modelID: String,
         operation: String,
         outputDir: String,
+        quantProfileID: String,
         weightQuant: String,
         kvQuant: String,
         ext: [String: String]
@@ -576,6 +596,7 @@ private struct DefaultImagelessControlPlaneXPCClient: ControlPlaneXPCClient {
         _ = modelID
         _ = operation
         _ = outputDir
+        _ = quantProfileID
         _ = weightQuant
         _ = kvQuant
         _ = ext

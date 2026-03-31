@@ -40,6 +40,137 @@
       "min": 100.0
     }
   },
+  "quantization": {
+    "summary": {
+      "profile_count": {
+        "min": 7.0
+      },
+      "smoke_pass_rate": {
+        "min": 100.0
+      }
+    },
+    "profiles": {
+      "q2": {
+        "job_ms": {
+          "max": 50.0
+        },
+        "artifact_bytes": {
+          "max": 4096.0
+        },
+        "manifest_bytes": {
+          "max": 4096.0
+        },
+        "calibration_sample_count": {
+          "min": 16.0
+        },
+        "smoke_test_passed": {
+          "min": 1.0
+        }
+      },
+      "q3": {
+        "job_ms": {
+          "max": 50.0
+        },
+        "artifact_bytes": {
+          "max": 4096.0
+        },
+        "manifest_bytes": {
+          "max": 4096.0
+        },
+        "calibration_sample_count": {
+          "min": 16.0
+        },
+        "smoke_test_passed": {
+          "min": 1.0
+        }
+      },
+      "q4": {
+        "job_ms": {
+          "max": 50.0
+        },
+        "artifact_bytes": {
+          "max": 4096.0
+        },
+        "manifest_bytes": {
+          "max": 4096.0
+        },
+        "calibration_sample_count": {
+          "min": 16.0
+        },
+        "smoke_test_passed": {
+          "min": 1.0
+        }
+      },
+      "q5": {
+        "job_ms": {
+          "max": 50.0
+        },
+        "artifact_bytes": {
+          "max": 4096.0
+        },
+        "manifest_bytes": {
+          "max": 4096.0
+        },
+        "calibration_sample_count": {
+          "min": 16.0
+        },
+        "smoke_test_passed": {
+          "min": 1.0
+        }
+      },
+      "q6": {
+        "job_ms": {
+          "max": 50.0
+        },
+        "artifact_bytes": {
+          "max": 4096.0
+        },
+        "manifest_bytes": {
+          "max": 4096.0
+        },
+        "calibration_sample_count": {
+          "min": 16.0
+        },
+        "smoke_test_passed": {
+          "min": 1.0
+        }
+      },
+      "q7": {
+        "job_ms": {
+          "max": 50.0
+        },
+        "artifact_bytes": {
+          "max": 4096.0
+        },
+        "manifest_bytes": {
+          "max": 4096.0
+        },
+        "calibration_sample_count": {
+          "min": 16.0
+        },
+        "smoke_test_passed": {
+          "min": 1.0
+        }
+      },
+      "q8": {
+        "job_ms": {
+          "max": 50.0
+        },
+        "artifact_bytes": {
+          "max": 4096.0
+        },
+        "manifest_bytes": {
+          "max": 4096.0
+        },
+        "calibration_sample_count": {
+          "min": 16.0
+        },
+        "smoke_test_passed": {
+          "min": 1.0
+        }
+      }
+    }
+  },
   "training": {
     "adapter_publish_ms": {
       "max": 150.0

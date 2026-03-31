@@ -789,7 +789,8 @@ public actor RequestCoordinator {
     private func resolvedSchedulingPlan(
         _ translatedRequest: TranslatedChatRequest
     ) async -> SchedulingPlan {
-        let request = await resolvedRecoveryRequest(translatedRequest)
+        let recoveredRequest = await resolvedRecoveryRequest(translatedRequest)
+        let request = await resolvedModelAccelerationRequest(recoveredRequest)
         let routeKind = await workerRegistry.route(forModelID: request.modelID) ?? .swiftText
         if routeKind.isMultimodalBackgroundRoute {
             let lane = routeKind.defaultSchedulingLane
@@ -912,6 +913,49 @@ public actor RequestCoordinator {
                 )
                 : "",
             batchMaxSize: continuousBatchEligible ? continuousBatchTargetSize : 1
+        )
+    }
+
+    private func resolvedModelAccelerationRequest(
+        _ translatedRequest: TranslatedChatRequest
+    ) async -> TranslatedChatRequest {
+        guard
+            let modelCatalog,
+            let model = await modelCatalog.model(id: translatedRequest.modelID)
+        else {
+            return translatedRequest
+        }
+
+        var workerRequest = translatedRequest.workerRequest
+        if workerRequest.execution.acceleration.mode == .unspecified {
+            workerRequest.execution.acceleration.mode = workerAccelerationMode(
+                from: model.settings.defaultAccelerationMode
+            )
+        }
+
+        if workerRequest.execution.acceleration.profileID.isEmpty,
+           !model.settings.accelerationProfileID.isEmpty {
+            workerRequest.execution.acceleration.profileID = model.settings.accelerationProfileID
+        }
+
+        switch workerRequest.execution.acceleration.mode {
+        case .activeKvQuantized:
+            if workerRequest.execution.acceleration.activeKvQuantProfile.isEmpty {
+                workerRequest.execution.acceleration.activeKvQuantProfile = model.settings.accelerationProfileID
+            }
+        case .acceleratedPrefill, .sparsePrefill:
+            if workerRequest.execution.acceleration.prefillHint.isEmpty {
+                workerRequest.execution.acceleration.prefillHint = model.settings.accelerationProfileID
+            }
+        default:
+            break
+        }
+
+        return TranslatedChatRequest(
+            requestID: translatedRequest.requestID,
+            modelID: translatedRequest.modelID,
+            workerRequest: workerRequest,
+            stream: translatedRequest.stream
         )
     }
 
@@ -1734,10 +1778,33 @@ private func controlPlaneAccelerationMode(
         return .speculativeDecode
     case .acceleratedPrefill:
         return .acceleratedPrefill
+    case .sparsePrefill:
+        return .sparsePrefill
     case .activeKvQuantized:
         return .activeKvQuantized
     case .UNRECOGNIZED:
         return nil
+    }
+}
+
+private func workerAccelerationMode(
+    from controlPlaneMode: Melix_Controlplane_V1_AccelerationMode
+) -> Melix_Worker_V1_AccelerationMode {
+    switch controlPlaneMode {
+    case .unspecified:
+        return .unspecified
+    case .baseline:
+        return .baseline
+    case .speculativeDecode:
+        return .speculativeDecode
+    case .acceleratedPrefill:
+        return .acceleratedPrefill
+    case .sparsePrefill:
+        return .sparsePrefill
+    case .activeKvQuantized:
+        return .activeKvQuantized
+    case .UNRECOGNIZED:
+        return .unspecified
     }
 }
 

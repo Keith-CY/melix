@@ -379,7 +379,7 @@ struct CoreUtilityTests {
         #expect(model.kind == "text")
         #expect(model.quantProfileID == "dev-q4")
         #expect(model.maxContext == 8192)
-        #expect(model.features == ["chat"])
+        #expect(model.features == ["chat", "adaptive_thinking"])
     }
 
     @Test("server snapshot builder exposes Phase 7 lane identities")

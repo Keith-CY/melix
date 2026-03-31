@@ -811,6 +811,7 @@ private actor EmptyToolsSnapshotControlPlaneXPCClient: ControlPlaneXPCClient {
         modelID: String,
         operation: String,
         outputDir: String,
+        quantProfileID: String,
         weightQuant: String,
         kvQuant: String,
         ext: [String: String]
@@ -818,6 +819,7 @@ private actor EmptyToolsSnapshotControlPlaneXPCClient: ControlPlaneXPCClient {
         _ = modelID
         _ = operation
         _ = outputDir
+        _ = quantProfileID
         _ = weightQuant
         _ = kvQuant
         _ = ext

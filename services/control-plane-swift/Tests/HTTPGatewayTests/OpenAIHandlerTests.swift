@@ -76,6 +76,57 @@ struct OpenAIHandlerTests {
         #expect(payload.contains("data: [DONE]"))
     }
 
+    @Test("model sparse-prefill policy is applied to generated worker requests")
+    func modelSparsePrefillPolicyIsAppliedToGeneratedWorkerRequests() async throws {
+        var model = warmModel()
+        model.settings.defaultAccelerationMode = .sparsePrefill
+        model.settings.accelerationProfileID = "structured-user"
+        let catalog = ModelCatalog(seedModels: [model])
+        let workerClient = ScriptedWorkerClient(events: [
+            makeCompletedEvent(requestID: "req-sparse-prefill", seq: 1, finishReason: "stop", assistantText: "done"),
+        ])
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(defaultTextClient: workerClient),
+            abortRegistry: AbortRegistry(),
+            modelCatalog: catalog
+        )
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: coordinator,
+            translator: ChatRequestTranslator(requestIDGenerator: { "req-sparse-prefill" }),
+            sseWriter: SSEStreamWriter(now: { Date(timeIntervalSince1970: 123) })
+        )
+
+        let body = try #require(
+            """
+            {
+              "model": "melix-dev-text",
+              "stream": true,
+              "messages": [
+                { "role": "system", "content": "Protect system instructions." },
+                { "role": "user", "content": "{\\"kind\\":\\"structured\\"}\\n{\\"kind\\":\\"structured\\"}" }
+              ]
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/chat/completions",
+                headers: ["content-type": "application/json"],
+                body: body
+            )
+        )
+
+        let request = try #require(await workerClient.lastGenerateRequest)
+
+        #expect(response.statusCode == 200)
+        #expect(request.execution.acceleration.mode == .sparsePrefill)
+        #expect(request.execution.acceleration.profileID == "structured-user")
+        #expect(request.execution.acceleration.prefillHint == "structured-user")
+    }
+
     @Test("POST /v1/chat/completions omits usage frames unless stream options opt in")
     func postChatCompletionsOmitUsageFramesUnlessRequested() async throws {
         let catalog = ModelCatalog(seedModels: [warmModel()])

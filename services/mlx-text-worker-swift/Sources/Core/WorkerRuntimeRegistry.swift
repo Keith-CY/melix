@@ -109,6 +109,10 @@ actor WorkerRuntimeRegistry {
         acceleratedPrefill.name = "accelerated_prefill"
         acceleratedPrefill.metadata = ["value": supportsAcceleratedPrefill() ? "yes" : "no"]
 
+        var sparsePrefill = Melix_Worker_V1_Capability()
+        sparsePrefill.name = "sparse_prefill"
+        sparsePrefill.metadata = ["value": supportsSparsePrefill() ? "yes" : "no"]
+
         var activeKV = Melix_Worker_V1_Capability()
         activeKV.name = "active_kv_quantized"
         activeKV.metadata = [
@@ -116,7 +120,7 @@ actor WorkerRuntimeRegistry {
             "profiles": "q4,q8"
         ]
 
-        capabilities.ext = [ext, acceleratedPrefill, activeKV]
+        capabilities.ext = [ext, acceleratedPrefill, sparsePrefill, activeKV]
 
         return capabilities
     }
@@ -464,6 +468,10 @@ actor WorkerRuntimeRegistry {
         true
     }
 
+    func supportsSparsePrefill() -> Bool {
+        true
+    }
+
     func supportsActiveKVQuantization() -> Bool {
         true
     }
@@ -774,7 +782,7 @@ actor WorkerRuntimeRegistry {
     }
 
     private func usesQuadraticPrefillPath(_ acceleration: Melix_Worker_V1_AccelerationPolicy) -> Bool {
-        acceleration.mode != .acceleratedPrefill
+        acceleration.mode != .acceleratedPrefill && acceleration.mode != .sparsePrefill
     }
 }
 
@@ -985,6 +993,8 @@ func accelerationModeName(_ mode: Melix_Worker_V1_AccelerationMode) -> String {
         return "baseline"
     case .acceleratedPrefill:
         return "accelerated_prefill"
+    case .sparsePrefill:
+        return "sparse_prefill"
     case .speculativeDecode:
         return "speculative_decode"
     case .activeKvQuantized:

@@ -12,10 +12,21 @@ enum MenuBarTestEnvironment {
 }
 
 actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
+    struct RecordedModelOperationRequest: Equatable, Sendable {
+        let modelID: String
+        let operation: String
+        let outputDir: String
+        let quantProfileID: String
+        let weightQuant: String
+        let kvQuant: String
+        let ext: [String: String]
+    }
+
     private var streamContinuations: [AsyncStream<Melix_Controlplane_V1_ControlPlaneEvent>.Continuation] = []
     private var nextEventSequence: UInt64 = 1
 
     private(set) var recordedActions: [String] = []
+    private(set) var recordedModelOperationRequests: [RecordedModelOperationRequest] = []
     private(set) var handshakeCount = 0
     private(set) var subscriptionRequests: [UInt64] = []
     private var modelState: Melix_Controlplane_V1_ModelState = .modelDiscovered
@@ -232,6 +243,7 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
             modelSettings.defaultAccelerationMode = switch accelerationMode.lowercased() {
             case "speculative_decode": .speculativeDecode
             case "accelerated_prefill": .acceleratedPrefill
+            case "sparse_prefill": .sparsePrefill
             case "active_kv_quantized": .activeKvQuantized
             default: .baseline
             }
@@ -254,11 +266,23 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
         modelID: String,
         operation: String,
         outputDir: String,
+        quantProfileID: String,
         weightQuant: String,
         kvQuant: String,
         ext: [String: String]
     ) async throws -> Melix_Controlplane_V1_ModelOperationResult {
         recordedActions.append("operation:\(operation):\(modelID)")
+        recordedModelOperationRequests.append(
+            RecordedModelOperationRequest(
+                modelID: modelID,
+                operation: operation,
+                outputDir: outputDir,
+                quantProfileID: quantProfileID,
+                weightQuant: weightQuant,
+                kvQuant: kvQuant,
+                ext: ext
+            )
+        )
         if let modelOperationError {
             throw modelOperationError
         }
@@ -268,7 +292,15 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
         if !hasNamedOverride, !outputDir.isEmpty {
             response.outputPath = outputDir + "/" + operation + ".artifact"
         }
-        if !weightQuant.isEmpty || !kvQuant.isEmpty || !ext.isEmpty {
+        if !quantProfileID.isEmpty, !response.hasQuantProfile {
+            response.quantProfile = Melix_Controlplane_V1_QuantizationProfile()
+            response.quantProfile.algorithm = "oq"
+            response.quantProfile.schemaVersion = "melix.quant_profile.v1"
+            response.quantProfile.quantProfileID = quantProfileID
+            response.quantProfile.weightQuant = quantProfileID
+            response.quantProfile.kvQuant = kvQuant
+        }
+        if !weightQuant.isEmpty || !kvQuant.isEmpty || !ext.isEmpty || !quantProfileID.isEmpty {
             response.stage = response.stage.isEmpty ? "write_artifact" : response.stage
         }
         return response

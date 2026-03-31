@@ -3,11 +3,14 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
+import time
 from typing import Iterator
 
 from packages.protocol.python.worker.v1 import common_pb2, maintenance_pb2
 
 from worker.model_ops.job_registry import ModelOpsJobRegistry
+from worker.model_ops.operation_locks import ModelOpsConflictRegistry
+from worker.model_ops.quantization_pipeline import OQQuantizationPipeline
 from worker.registry import WorkerRegistry
 
 _CAPABILITY_SUPPORTED_MODALITIES_KEY = "melix.capability.supported_modalities"
@@ -55,6 +58,44 @@ class MaintenanceCore:
         self._registry = registry
         self._jobs_root = Path(jobs_root)
         self._job_registry = job_registry or ModelOpsJobRegistry()
+        self._quantization_pipeline = OQQuantizationPipeline(registry)
+        self._operation_locks = ModelOpsConflictRegistry()
+
+    @staticmethod
+    def _worker_quant_profile(profile) -> maintenance_pb2.QuantizationProfile:
+        message = maintenance_pb2.QuantizationProfile(
+            algorithm=profile.algorithm,
+            schema_version=profile.schema_version,
+            quant_profile_id=profile.quant_profile_id,
+            weight_quant=profile.weight_quant,
+            kv_quant=profile.kv_quant,
+        )
+        if profile.ext:
+            message.ext.update(profile.ext)
+        return message
+
+    @staticmethod
+    def _worker_quantized_artifact(
+        *,
+        bundle_path: Path,
+        manifest_path: Path,
+        artifact_bytes: int,
+        manifest_bytes: int,
+        smoke_test_requested: bool,
+        smoke_test_passed: bool,
+    ) -> maintenance_pb2.QuantizedArtifact:
+        return maintenance_pb2.QuantizedArtifact(
+            schema_version="melix.quantized_bundle.v1",
+            artifact_kind="quantized_model_bundle",
+            manifest_path=str(manifest_path),
+            bundle_path=str(bundle_path),
+            artifact_bytes=artifact_bytes,
+            manifest_bytes=manifest_bytes,
+            serving_compatible=True,
+            smoke_test_requested=smoke_test_requested,
+            smoke_test_passed=smoke_test_passed,
+            runtime="mlx_text",
+        )
 
     def convert_model(
         self,
@@ -75,69 +116,159 @@ class MaintenanceCore:
             )
             return
 
+        if operation == "quantize" and self._registry.runtime_stats().active_requests > 0:
+            yield maintenance_pb2.ConvertModelEvent(
+                failed=maintenance_pb2.ConvertFailed(
+                    error=common_pb2.ErrorStatus(
+                        code="resource_locked",
+                        message="Quantization is blocked while active inference is running.",
+                    )
+                )
+            )
+            return
+
+        lock_scope = self._lock_scope(operation, request)
+        held_by = self._operation_locks.try_acquire(lock_scope, operation)
+        if held_by is not None:
+            yield maintenance_pb2.ConvertModelEvent(
+                failed=maintenance_pb2.ConvertFailed(
+                    error=common_pb2.ErrorStatus(
+                        code="resource_locked",
+                        message=f"Operation blocked by active quantization lock on {lock_scope} held by {held_by}.",
+                    )
+                )
+            )
+            return
+
         output_dir = Path(request.output_dir or self._jobs_root / operation).resolve()
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        job = self._job_registry.start(operation, request.source_model, str(output_dir))
-        yield maintenance_pb2.ConvertModelEvent(
-            started=maintenance_pb2.ConvertStarted(job_id=job.job_id)
-        )
+        try:
+            job = self._job_registry.start(operation, request.source_model, str(output_dir))
+            yield maintenance_pb2.ConvertModelEvent(
+                started=maintenance_pb2.ConvertStarted(job_id=job.job_id)
+            )
 
-        self._job_registry.progress(job.job_id, "prepare", 0.25)
-        yield maintenance_pb2.ConvertModelEvent(
-            progress=maintenance_pb2.ConvertProgress(stage="prepare", pct=0.25)
-        )
+            if operation == "quantize":
+                stage_sequence = [
+                    ("resolve_source", 0.1),
+                    ("normalize_profile", 0.25),
+                    ("quantize_weights", 0.5),
+                    ("write_bundle", 0.75),
+                    ("write_manifest", 0.9),
+                ]
+                for stage, pct in stage_sequence:
+                    self._job_registry.progress(job.job_id, stage, pct)
+                    yield maintenance_pb2.ConvertModelEvent(
+                        progress=maintenance_pb2.ConvertProgress(stage=stage, pct=pct)
+                    )
+                if hold_ms := int(request.ext.get("test_hold_ms", "0") or "0"):
+                    time.sleep(hold_ms / 1000.0)
 
-        artifact_path = self._artifact_path(operation, output_dir)
-        if operation == "registry_snapshot":
-            manifest_payload = self._job_registry.snapshot(exclude_job_ids={job.job_id})
-            manifest_payload.update(
-                {
+                result = self._quantization_pipeline.run(
+                    request,
+                    job_id=job.job_id,
+                    output_dir=output_dir,
+                )
+                manifest_payload = dict(result.manifest_payload)
+                manifest_payload["job_id"] = job.job_id
+                manifest_payload["artifact_bytes"] = result.artifact_bytes
+                manifest_payload["manifest_bytes"] = result.manifest_bytes
+                manifest_payload["manifest_path"] = str(result.manifest_path)
+                manifest_payload["artifact_path"] = str(result.bundle_path)
+                manifest_json = json.dumps(manifest_payload, sort_keys=True)
+                artifact_path = result.bundle_path
+                worker_profile = self._worker_quant_profile(result.profile)
+                worker_artifact = self._worker_quantized_artifact(
+                    bundle_path=result.bundle_path,
+                    manifest_path=result.manifest_path,
+                    artifact_bytes=result.artifact_bytes,
+                    manifest_bytes=result.manifest_bytes,
+                    smoke_test_requested=request.run_smoke_test,
+                    smoke_test_passed=result.smoke_test_passed,
+                )
+                if request.generate_manifest:
+                    self._job_registry.attach_manifest(job.job_id, manifest_json)
+                    yield maintenance_pb2.ConvertModelEvent(
+                        manifest=maintenance_pb2.ConvertManifest(
+                            manifest_json=manifest_json,
+                            quant_profile=worker_profile,
+                            artifact=worker_artifact,
+                        )
+                    )
+                self._job_registry.complete(job.job_id, str(artifact_path))
+                yield maintenance_pb2.ConvertModelEvent(
+                    completed=maintenance_pb2.ConvertCompleted(
+                        output_path=str(artifact_path),
+                        quant_profile=worker_profile,
+                        artifact=worker_artifact,
+                    )
+                )
+                return
+
+            self._job_registry.progress(job.job_id, "prepare", 0.25)
+            yield maintenance_pb2.ConvertModelEvent(
+                progress=maintenance_pb2.ConvertProgress(stage="prepare", pct=0.25)
+            )
+
+            artifact_path = self._artifact_path(operation, output_dir)
+            if operation == "registry_snapshot":
+                manifest_payload = self._job_registry.snapshot(exclude_job_ids={job.job_id})
+                manifest_payload.update(
+                    {
+                        "job_id": job.job_id,
+                        "operation": operation,
+                        "source_model": request.source_model,
+                        "output_dir": str(output_dir),
+                    }
+                )
+            else:
+                manifest_payload = {
                     "job_id": job.job_id,
                     "operation": operation,
                     "source_model": request.source_model,
                     "output_dir": str(output_dir),
+                    "weight_quant": request.weight_quant,
+                    "kv_quant": request.kv_quant,
+                    "artifact_kind": request.ext.get("artifact_kind", ""),
+                    "artifact_path": request.ext.get("artifact_path", ""),
+                    "target_repo": request.ext.get("target_repo", ""),
+                    "ext": dict(request.ext),
                 }
-            )
-        else:
-            manifest_payload = {
-                "job_id": job.job_id,
-                "operation": operation,
-                "source_model": request.source_model,
-                "output_dir": str(output_dir),
-                "weight_quant": request.weight_quant,
-                "kv_quant": request.kv_quant,
-                "target_repo": request.ext.get("target_repo", ""),
-                "ext": dict(request.ext),
-            }
-        if operation == "train_lora":
-            manifest_payload.update(
-                {
-                    "adapter_name": request.ext.get("adapter_name", "melix-dev-adapter"),
-                    "dataset_uri": request.ext.get("dataset_uri", "datasets/melix-dev"),
-                    "training_duration_ms": 1_420.0,
-                    "adapter_publish_ms": 118.0,
-                }
-            )
+                if operation == "upload":
+                    linked_quantization = self._linked_quantization_metadata(request)
+                    if linked_quantization is not None:
+                        manifest_payload["linked_quantization"] = linked_quantization
+            if operation == "train_lora":
+                manifest_payload.update(
+                    {
+                        "adapter_name": request.ext.get("adapter_name", "melix-dev-adapter"),
+                        "dataset_uri": request.ext.get("dataset_uri", "datasets/melix-dev"),
+                        "training_duration_ms": 1_420.0,
+                        "adapter_publish_ms": 118.0,
+                    }
+                )
 
-        artifact_path.write_text(json.dumps(manifest_payload, indent=2) + "\n")
+            artifact_path.write_text(json.dumps(manifest_payload, indent=2) + "\n")
 
-        self._job_registry.progress(job.job_id, "write_artifact", 0.75)
-        yield maintenance_pb2.ConvertModelEvent(
-            progress=maintenance_pb2.ConvertProgress(stage="write_artifact", pct=0.75)
-        )
-
-        if request.generate_manifest:
-            manifest_json = json.dumps(manifest_payload, sort_keys=True)
-            self._job_registry.attach_manifest(job.job_id, manifest_json)
+            self._job_registry.progress(job.job_id, "write_artifact", 0.75)
             yield maintenance_pb2.ConvertModelEvent(
-                manifest=maintenance_pb2.ConvertManifest(manifest_json=manifest_json)
+                progress=maintenance_pb2.ConvertProgress(stage="write_artifact", pct=0.75)
             )
 
-        self._job_registry.complete(job.job_id, str(artifact_path))
-        yield maintenance_pb2.ConvertModelEvent(
-            completed=maintenance_pb2.ConvertCompleted(output_path=str(artifact_path))
-        )
+            if request.generate_manifest:
+                manifest_json = json.dumps(manifest_payload, sort_keys=True)
+                self._job_registry.attach_manifest(job.job_id, manifest_json)
+                yield maintenance_pb2.ConvertModelEvent(
+                    manifest=maintenance_pb2.ConvertManifest(manifest_json=manifest_json)
+                )
+
+            self._job_registry.complete(job.job_id, str(artifact_path))
+            yield maintenance_pb2.ConvertModelEvent(
+                completed=maintenance_pb2.ConvertCompleted(output_path=str(artifact_path))
+            )
+        finally:
+            self._operation_locks.release(lock_scope)
 
     def get_model_info(
         self,
@@ -313,6 +444,45 @@ class MaintenanceCore:
             "registry_snapshot": "registry_snapshot.json",
         }[operation]
         return output_dir / filename
+
+    @staticmethod
+    def _lock_scope(operation: str, request: maintenance_pb2.ConvertModelRequest) -> str:
+        if operation == "upload":
+            return request.ext.get("artifact_path", "") or request.source_model or operation
+        return request.source_model or operation
+
+    @staticmethod
+    def _linked_quantization_metadata(
+        request: maintenance_pb2.ConvertModelRequest,
+    ) -> dict[str, object] | None:
+        artifact_path_raw = request.ext.get("artifact_path", "") or request.source_model
+        if not artifact_path_raw:
+            return None
+        artifact_path = Path(artifact_path_raw)
+        manifest_path = artifact_path / "manifest.json" if artifact_path.is_dir() else Path(
+            request.ext.get("quantization_manifest_path", "")
+        )
+        if not manifest_path.is_file():
+            return None
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            return None
+        if not isinstance(manifest, dict):
+            return None
+        if manifest.get("artifact_kind") != "quantized_model_bundle":
+            return None
+        calibration = manifest.get("calibration", {}) if isinstance(manifest.get("calibration"), dict) else {}
+        compatibility = manifest.get("compatibility", {}) if isinstance(manifest.get("compatibility"), dict) else {}
+        quant_profile = manifest.get("quant_profile", {}) if isinstance(manifest.get("quant_profile"), dict) else {}
+        return {
+            "artifact_kind": manifest.get("artifact_kind", ""),
+            "artifact_path": str(artifact_path),
+            "manifest_path": str(manifest_path),
+            "quant_profile_id": quant_profile.get("quant_profile_id", ""),
+            "calibration_sample_count": calibration.get("sample_count", 0),
+            "smoke_test_passed": compatibility.get("smoke_test_passed", False),
+        }
 
     @staticmethod
     def _bench_metrics_for_suite(suite: str) -> list[BenchMetricSpec]:

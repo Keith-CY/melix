@@ -13,6 +13,11 @@ from worker.productization.release_gates import (
     evaluate_release_gate,
     load_release_gate_policy,
 )
+from worker.productization.quantization_gates import (
+    collect_quantization_benchmark_evidence,
+    evaluate_quantization_gate,
+    load_quantization_gate_policy,
+)
 from worker.productization import release_gates as release_gates_module
 
 
@@ -36,6 +41,49 @@ def test_collect_benchmark_evidence_returns_required_metrics(tmp_path: Path) -> 
     assert evidence["metrics"]["bench.smoke.ttft_ms"] == 24.45
     assert evidence["metrics"]["bench.smoke.tokens_per_second"] == 47.08
     assert evidence["metrics"]["bench.latency.p95_ms"] == 44.72
+
+
+def test_collect_quantization_benchmark_evidence_returns_profile_metrics(tmp_path: Path) -> None:
+    evidence = collect_quantization_benchmark_evidence(tmp_path / "jobs")
+
+    assert evidence["summary"]["profile_count"] == 7
+    assert evidence["summary"]["smoke_pass_rate"] == 100.0
+    assert evidence["profiles"]["q2"]["quant_profile_id"] == "q2"
+    assert evidence["profiles"]["q8"]["quant_profile_id"] == "q8"
+    assert evidence["profiles"]["q4"]["calibration_sample_count"] == 64
+    assert evidence["profiles"]["q8"]["calibration_sample_count"] == 16
+    assert evidence["profiles"]["q2"]["artifact_bytes"] > 0
+    assert evidence["profiles"]["q2"]["manifest_bytes"] > 0
+    assert evidence["profiles"]["q2"]["job_ms"] >= 0.0
+
+
+def test_evaluate_quantization_gate_reports_regressions() -> None:
+    policy = load_quantization_gate_policy()
+    report = {
+        "summary": {
+            "profile_count": 2,
+            "smoke_pass_rate": 50.0,
+        },
+        "profiles": {
+            "q2": {
+                "job_ms": 99.0,
+                "artifact_bytes": 99999,
+                "manifest_bytes": 99999,
+                "calibration_sample_count": 4,
+                "smoke_test_passed": False,
+            }
+        },
+    }
+
+    failures = evaluate_quantization_gate(report, policy)
+
+    assert "summary.profile_count=2.00 fell below minimum 7.00" in failures
+    assert "summary.smoke_pass_rate=50.00 fell below minimum 100.00" in failures
+    assert "profiles.q2.job_ms=99.00 exceeded maximum 50.00" in failures
+    assert "profiles.q2.artifact_bytes=99999.00 exceeded maximum 4096.00" in failures
+    assert "profiles.q2.manifest_bytes=99999.00 exceeded maximum 4096.00" in failures
+    assert "profiles.q2.calibration_sample_count=4.00 fell below minimum 16.00" in failures
+    assert "profiles.q2.smoke_test_passed=0.00 fell below minimum 1.00" in failures
 
 
 def test_collect_benchmark_evidence_includes_cache_recovery_report_when_repo_root_is_supplied(
@@ -186,6 +234,7 @@ def test_evaluate_release_gate_fails_closed_for_missing_or_regressed_evidence() 
     assert "multi_model_request_success_rate=66.00 fell below minimum 100.00" in failures
     assert "prefill_memory_guard_rejection_count=0.00 fell below minimum 1.00" in failures
     assert "prefill_memory_guard_success_rate=0.00 fell below minimum 100.00" in failures
+    assert "quantization evidence is missing" in failures
 
 
 def test_build_release_gate_report_passes_with_supplied_recovery_evidence(
@@ -203,6 +252,23 @@ def test_build_release_gate_report_passes_with_supplied_recovery_evidence(
                 "bench.recovery.cold_l2_hit_rate": 100.0,
                 "bench.recovery.partial_restore_ratio_pct": 80.0,
             }
+        },
+    )
+    monkeypatch.setattr(
+        release_gates_module,
+        "collect_quantization_benchmark_evidence",
+        lambda jobs_root: {
+            "summary": {"profile_count": 7, "smoke_pass_rate": 100.0},
+            "profiles": {
+                profile_id: {
+                    "job_ms": 1.0,
+                    "artifact_bytes": 670,
+                    "manifest_bytes": 1747,
+                    "calibration_sample_count": 16 if profile_id == "q8" else 32,
+                    "smoke_test_passed": True,
+                }
+                for profile_id in ("q2", "q3", "q4", "q5", "q6", "q7", "q8")
+            },
         },
     )
 
@@ -261,6 +327,23 @@ def test_build_release_gate_report_uses_temp_jobs_root_and_reports_type_errors(
             }
         },
     )
+    monkeypatch.setattr(
+        release_gates_module,
+        "collect_quantization_benchmark_evidence",
+        lambda jobs_root: {
+            "summary": {"profile_count": 7, "smoke_pass_rate": 100.0},
+            "profiles": {
+                profile_id: {
+                    "job_ms": 1.0,
+                    "artifact_bytes": 670,
+                    "manifest_bytes": 1747,
+                    "calibration_sample_count": 16 if profile_id == "q8" else 32,
+                    "smoke_test_passed": True,
+                }
+                for profile_id in ("q2", "q3", "q4", "q5", "q6", "q7", "q8")
+            },
+        },
+    )
 
     report = build_release_gate_report(
         repo_root,
@@ -309,6 +392,21 @@ def test_build_release_gate_report_uses_temp_jobs_root_and_reports_type_errors(
                 "prefill_memory_guard_rejection_count": 1.0,
                 "prefill_memory_guard_success_rate": 100.0,
             },
+            "quantization": {
+                "summary": {
+                    "profile_count": 7,
+                    "smoke_pass_rate": 100.0,
+                },
+                "profiles": {
+                    "q2": {
+                        "job_ms": "fast",
+                        "artifact_bytes": 670.0,
+                        "manifest_bytes": 1747.0,
+                        "calibration_sample_count": 96.0,
+                        "smoke_test_passed": 1.0,
+                    }
+                },
+            },
         },
         load_release_gate_policy(),
     )
@@ -316,6 +414,7 @@ def test_build_release_gate_report_uses_temp_jobs_root_and_reports_type_errors(
     assert "checks.environment_script_exists is missing" in failures
     assert "bench.smoke.ttft_ms must be numeric" in failures
     assert "multi_model_ready_count must be numeric" in failures
+    assert "profiles.q2.job_ms is missing" in failures
 
 
 def test_evaluate_release_gate_requires_runtime_core_evidence() -> None:
@@ -345,6 +444,22 @@ def test_evaluate_release_gate_requires_runtime_core_evidence() -> None:
             "recovery": {
                 "restart_recovery_ms": 420.0,
                 "restart_recovery_success_rate": 100.0,
+            },
+            "quantization": {
+                "summary": {
+                    "profile_count": 7,
+                    "smoke_pass_rate": 100.0,
+                },
+                "profiles": {
+                    profile_id: {
+                        "job_ms": 1.0,
+                        "artifact_bytes": 670.0,
+                        "manifest_bytes": 1747.0,
+                        "calibration_sample_count": 16.0,
+                        "smoke_test_passed": 1.0,
+                    }
+                    for profile_id in ("q2", "q3", "q4", "q5", "q6", "q7", "q8")
+                },
             },
         },
         load_release_gate_policy(),

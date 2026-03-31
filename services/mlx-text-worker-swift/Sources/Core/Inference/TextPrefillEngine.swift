@@ -55,6 +55,22 @@ struct TextPrefillEngine: Sendable {
             )
             metrics.set("swift_text.prefill_context_count", value: await registry.prefillContextCount())
             metrics.set("swift_text.accelerated_prefill_gain_pct", value: result.acceleratedPrefillGainPct)
+            let sparsePrefill = sparsePrefillPlan(
+                for: request.messages,
+                policy: result.appliedAcceleration
+            )
+            metrics.set(
+                "swift_text.sparse_prefill_accepted_skip_count",
+                value: sparsePrefill.acceptedSkipCount
+            )
+            metrics.set(
+                "swift_text.sparse_prefill_rejected_opportunity_count",
+                value: sparsePrefill.rejectedOpportunityCount
+            )
+            metrics.set(
+                "swift_text.sparse_prefill_protected_region_count",
+                value: sparsePrefill.protectedRegionCount
+            )
             metrics.set("swift_text.active_kv_quantization_ratio", value: result.activeKVQuantizationRatio)
             metrics.set("swift_text.cache_l1_bytes", value: Int(clamping: result.cacheStats.l1Bytes))
             metrics.set("swift_text.cache_block_count", value: Int(clamping: result.cacheStats.blockCount))

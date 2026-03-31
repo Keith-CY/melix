@@ -467,7 +467,7 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertFalse(response.capabilities.execution.supportsSpeculativeDecoding)
         XCTAssertEqual(
             response.capabilities.ext.map { $0.name },
-            ["engine_family", "accelerated_prefill", "active_kv_quantized"]
+            ["engine_family", "accelerated_prefill", "sparse_prefill", "active_kv_quantized"]
         )
     }
 
@@ -2090,6 +2090,7 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(WorkerRuntimeRegistryError.snapshotModelNotLoaded.saveRestoreErrorCode, "failed_precondition")
         XCTAssertEqual(accelerationModeName(.baseline), "baseline")
         XCTAssertEqual(accelerationModeName(.acceleratedPrefill), "accelerated_prefill")
+        XCTAssertEqual(accelerationModeName(.sparsePrefill), "sparse_prefill")
         XCTAssertEqual(accelerationModeName(.speculativeDecode), "speculative_decode")
         XCTAssertEqual(accelerationModeName(.activeKvQuantized), "active_kv_quantized")
         XCTAssertEqual(accelerationModeName(.UNRECOGNIZED(999)), "unspecified")
@@ -2435,6 +2436,56 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(metrics["swift_text.active_kv_quantization_ratio"], 25)
         XCTAssertEqual(stored?.acceleration.mode, .activeKvQuantized)
         XCTAssertEqual(stored?.acceleration.activeKvQuantProfile, "q4")
+    }
+
+    func testPrefillTracksSparsePrefillProtectionAndSkipMetrics() async throws {
+        let services = makeServices(
+            environment: ["MELIX_DEV_TEXT_MODEL_PATH": "mlx-community/melix-dev-text-4bit"],
+            backend: FakeRuntimeBackend()
+        )
+
+        let loadResponse = try await withTestServerContextRPCCancellationHandle { handle in
+            var request = Melix_Worker_V1_LoadModelRequest()
+            request.model.modelID = "melix-dev-text"
+            return try await services.runtime.loadModel(
+                request: request,
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_RuntimeService.Method.LoadModel.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
+        let response = try await withTestServerContextRPCCancellationHandle { handle in
+            var request = Melix_Worker_V1_PrefillRequest()
+            request.execution.id.requestID = "req-prefill-sparse"
+            request.execution.modelHandle = loadResponse.modelHandle
+            request.execution.acceleration.mode = .sparsePrefill
+            request.returnDecodeHandle = true
+            request.messages = [
+                makeSystemMessage("{\"guard\":\"always\"}\n{\"rules\":[1,2,3]}"),
+                makeUserMessage("{\"kind\":\"structured\"}", extraText: "{\"kind\":\"structured\"}")
+            ]
+            return try await services.inference.prefill(
+                request: request,
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_InferenceService.Method.Prefill.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
+        let metrics = services.metrics.counters
+
+        XCTAssertTrue(response.ok)
+        XCTAssertEqual(response.appliedAcceleration.mode, .sparsePrefill)
+        XCTAssertEqual(metrics["swift_text.sparse_prefill_accepted_skip_count"], 1)
+        XCTAssertEqual(metrics["swift_text.sparse_prefill_rejected_opportunity_count"], 1)
+        XCTAssertEqual(metrics["swift_text.sparse_prefill_protected_region_count"], 1)
     }
 
     func testPrefillSurfacesActivePrefillInRuntimeStatsWhileRunning() async throws {
@@ -5508,6 +5559,77 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(result.activeKVQuantizationRatio, 50)
         XCTAssertEqual(stored["active_kv_quant_profile"], "q8")
         XCTAssertEqual(stored["active_kv_quant_ratio"], "50")
+    }
+
+    func testDeterministicBackendSparsePrefillStructuredPromptReportsGainAndHint() async throws {
+        let backend = DeterministicTextBackend(tokenDelayNanos: 24_000_000)
+        var spec = Melix_Worker_V1_ModelSpec()
+        spec.modelID = "melix-dev-text"
+        let loaded = try await backend.loadModel(spec: spec)
+        var acceleration = Melix_Worker_V1_AccelerationPolicy()
+        acceleration.mode = .sparsePrefill
+
+        let result = try await backend.prefill(
+            model: loaded,
+            messages: [makeUserMessage("{\"kind\":\"structured\"}", extraText: "{\"kind\":\"structured\"}")],
+            prefillStepSize: 8,
+            resumeHint: "",
+            acceleration: acceleration,
+            shouldAbort: { false }
+        )
+
+        XCTAssertEqual(result.appliedAcceleration.mode, .sparsePrefill)
+        XCTAssertEqual(result.appliedAcceleration.prefillHint, "sparse-prefill:structured")
+        XCTAssertGreaterThan(result.acceleratedPrefillGainPct, 0)
+    }
+
+    func testDeterministicBackendSparsePrefillFallsBackForPlainPrompt() async throws {
+        let backend = DeterministicTextBackend(tokenDelayNanos: 24_000_000)
+        var spec = Melix_Worker_V1_ModelSpec()
+        spec.modelID = "melix-dev-text"
+        let loaded = try await backend.loadModel(spec: spec)
+        var acceleration = Melix_Worker_V1_AccelerationPolicy()
+        acceleration.mode = .sparsePrefill
+
+        let result = try await backend.prefill(
+            model: loaded,
+            messages: [makeUserMessage("plain prompt")],
+            prefillStepSize: 8,
+            resumeHint: "",
+            acceleration: acceleration,
+            shouldAbort: { false }
+        )
+
+        XCTAssertEqual(result.appliedAcceleration.mode, .sparsePrefill)
+        XCTAssertEqual(result.appliedAcceleration.prefillHint, "sparse-prefill")
+        XCTAssertEqual(result.acceleratedPrefillGainPct, 0)
+    }
+
+    func testSparsePrefillPlanCountsAcceptedRejectedProtectedAndRepeatedLines() {
+        var developer = Melix_Worker_V1_ChatMessage()
+        developer.role = "developer"
+        var developerPart = Melix_Worker_V1_MessagePart()
+        developerPart.text = "repeat\nrepeat\nrepeat"
+        developer.parts = [developerPart]
+
+        let plan = sparsePrefillPlan(
+            for: [
+                makeSystemMessage("{\"guard\":\"always\"}\n{\"schema\":true}"),
+                developer,
+                makeUserMessage("repeat\nrepeat\nrepeat"),
+                makeUserMessage("   ")
+            ],
+            policy: makeAccelerationPolicy(mode: .sparsePrefill)
+        )
+
+        XCTAssertEqual(plan.acceptedSkipCount, 1)
+        XCTAssertEqual(plan.rejectedOpportunityCount, 2)
+        XCTAssertEqual(plan.protectedRegionCount, 2)
+        XCTAssertTrue(promptLooksStructuredForPrefill("{\"kind\":\"json\"}\n{\"kind\":\"json\"}"))
+        XCTAssertFalse(promptLooksStructuredForPrefill("plain text"))
+        XCTAssertFalse(sparsePrefillEligibleText("   "))
+        XCTAssertTrue(promptContainsSparseRepeats("echo\necho\necho"))
+        XCTAssertFalse(promptContainsSparseRepeats("alpha\nbeta"))
     }
 
     func testDeterministicBackendPartialRestoreResumeHintFlowsThroughDecodeEvents() async throws {

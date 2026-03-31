@@ -66,6 +66,12 @@ public struct RuntimeModelOperationState: Equatable, Sendable {
     public let pct: Float
     public let outputPath: String
     public let manifestJson: String
+    public let quantProfileID: String
+    public let artifactKind: String
+    public let manifestPath: String
+    public let artifactBytes: UInt64
+    public let smokeTestPassed: Bool
+    public let calibrationSampleCount: Int
 }
 
 public struct RuntimeDoctorReportState: Equatable, Sendable {
@@ -183,6 +189,8 @@ public final class RuntimeViewModel {
     public var imageSize = "1024x1024"
     public var imageVariantCount: UInt32 = 1
     public var selectedImageModelID = "melix-dev-image"
+    public let availableQuantizationProfileIDs = ["q2", "q3", "q4", "q5", "q6", "q7", "q8"]
+    public var selectedQuantizationProfileID = "q4"
 
     public var onStateChanged: (@MainActor @Sendable () -> Void)?
 
@@ -265,7 +273,7 @@ public final class RuntimeViewModel {
             await startSubscription(lastSeenSeq: lastSeenSeq, isReconnect: false)
         } catch {
             await transitionConnectionState(to: "Degraded", detail: "Handshake failed")
-            lastError = String(describing: error)
+            lastError = startupFailureMessage(error)
             statusTitle = "Melix Error"
             notifyStateChanged()
         }
@@ -674,6 +682,7 @@ public final class RuntimeViewModel {
         modelID: String,
         operation: String,
         outputDir: String,
+        quantProfileID: String = "",
         weightQuant: String = "",
         kvQuant: String = "",
         ext: [String: String] = [:],
@@ -685,6 +694,7 @@ public final class RuntimeViewModel {
                 modelID: modelID,
                 operation: operation,
                 outputDir: outputDir,
+                quantProfileID: quantProfileID,
                 weightQuant: weightQuant,
                 kvQuant: kvQuant,
                 ext: ext
@@ -700,7 +710,13 @@ public final class RuntimeViewModel {
                 stage: result.stage,
                 pct: result.pct,
                 outputPath: result.outputPath,
-                manifestJson: result.manifestJson
+                manifestJson: result.manifestJson,
+                quantProfileID: result.hasQuantProfile ? result.quantProfile.quantProfileID : "",
+                artifactKind: result.hasArtifact ? result.artifact.artifactKind : "",
+                manifestPath: result.hasArtifact ? result.artifact.manifestPath : "",
+                artifactBytes: result.hasArtifact ? result.artifact.artifactBytes : 0,
+                smokeTestPassed: result.hasArtifact && result.artifact.smokeTestPassed,
+                calibrationSampleCount: calibrationSampleCount(from: result.manifestJson)
             )
             if refreshProductToolingState {
                 await refreshModelOpsProductState(modelID: modelID, notify: false)
@@ -719,7 +735,8 @@ public final class RuntimeViewModel {
             modelID: modelID,
             operation: "quantize",
             outputDir: "/tmp/melix-quantize",
-            weightQuant: "q4",
+            quantProfileID: selectedQuantizationProfileID,
+            weightQuant: selectedQuantizationProfileID,
             kvQuant: "q8"
         )
     }
@@ -739,11 +756,12 @@ public final class RuntimeViewModel {
         guard let modelID = primaryModel?.modelID else {
             return
         }
+        let linkedQuantizationExt = latestQuantizedArtifactUploadExt()
         await runModelOperation(
             modelID: modelID,
             operation: "upload",
             outputDir: "/tmp/melix-upload",
-            ext: ["target_repo": "melix/upload-target"]
+            ext: linkedQuantizationExt.merging(["target_repo": "melix/upload-target"]) { current, _ in current }
         )
     }
 
@@ -788,6 +806,43 @@ public final class RuntimeViewModel {
             ],
             refreshProductToolingState: true
         )
+    }
+
+    private func calibrationSampleCount(from manifestJSON: String) -> Int {
+        guard
+            let data = manifestJSON.data(using: .utf8),
+            let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let calibration = payload["calibration"] as? [String: Any],
+            let sampleCount = calibration["sample_count"] as? Int
+        else {
+            return 0
+        }
+        return sampleCount
+    }
+
+    private func latestQuantizedArtifactUploadExt() -> [String: String] {
+        guard
+            let lastModelOperation,
+            lastModelOperation.operation == "quantize",
+            lastModelOperation.artifactKind == "quantized_model_bundle"
+        else {
+            return [:]
+        }
+        var ext: [String: String] = [
+            "artifact_kind": "model",
+            "artifact_path": lastModelOperation.outputPath,
+        ]
+        if !lastModelOperation.manifestPath.isEmpty {
+            ext["quantization_manifest_path"] = lastModelOperation.manifestPath
+        }
+        if !lastModelOperation.quantProfileID.isEmpty {
+            ext["quant_profile_id"] = lastModelOperation.quantProfileID
+        }
+        return ext
+    }
+
+    private func startupFailureMessage(_ error: Error) -> String {
+        "Startup failed: \(error). Open Melix Console for details."
     }
 
     public func runDoctor() async {
@@ -836,6 +891,7 @@ public final class RuntimeViewModel {
                 modelID: modelID,
                 operation: "registry_snapshot",
                 outputDir: "/tmp/melix-model-ops-registry",
+                quantProfileID: "",
                 weightQuant: "",
                 kvQuant: "",
                 ext: [:]
@@ -1656,6 +1712,8 @@ private func runtimeAccelerationModeText(_ mode: Melix_Controlplane_V1_Accelerat
         return "Speculative Decode"
     case .acceleratedPrefill:
         return "Accelerated Prefill"
+    case .sparsePrefill:
+        return "Sparse Prefill"
     case .activeKvQuantized:
         return "Active KV Quantized"
     case .baseline:

@@ -679,12 +679,46 @@ struct ControlPlaneServiceTests {
                 var event = Melix_Worker_V1_ConvertModelEvent()
                 event.manifest = Melix_Worker_V1_ConvertManifest()
                 event.manifest.manifestJson = #"{"operation":"quantize"}"#
+                event.manifest.quantProfile = Melix_Worker_V1_QuantizationProfile()
+                event.manifest.quantProfile.algorithm = "oq"
+                event.manifest.quantProfile.schemaVersion = "melix.quant_profile.v1"
+                event.manifest.quantProfile.quantProfileID = "q4"
+                event.manifest.quantProfile.weightQuant = "q4"
+                event.manifest.quantProfile.kvQuant = "q8"
+                event.manifest.artifact = Melix_Worker_V1_QuantizedArtifact()
+                event.manifest.artifact.schemaVersion = "melix.quantized_bundle.v1"
+                event.manifest.artifact.artifactKind = "quantized_model_bundle"
+                event.manifest.artifact.manifestPath = "/tmp/melix-ops/quantize.artifact/manifest.json"
+                event.manifest.artifact.bundlePath = "/tmp/melix-ops/quantize.artifact"
+                event.manifest.artifact.artifactBytes = 256
+                event.manifest.artifact.manifestBytes = 128
+                event.manifest.artifact.servingCompatible = true
+                event.manifest.artifact.smokeTestRequested = true
+                event.manifest.artifact.smokeTestPassed = true
+                event.manifest.artifact.runtime = "mlx_text"
                 return event
             }(),
             {
                 var event = Melix_Worker_V1_ConvertModelEvent()
                 event.completed = Melix_Worker_V1_ConvertCompleted()
                 event.completed.outputPath = "/tmp/melix-ops/quantize.artifact"
+                event.completed.quantProfile = Melix_Worker_V1_QuantizationProfile()
+                event.completed.quantProfile.algorithm = "oq"
+                event.completed.quantProfile.schemaVersion = "melix.quant_profile.v1"
+                event.completed.quantProfile.quantProfileID = "q4"
+                event.completed.quantProfile.weightQuant = "q4"
+                event.completed.quantProfile.kvQuant = "q8"
+                event.completed.artifact = Melix_Worker_V1_QuantizedArtifact()
+                event.completed.artifact.schemaVersion = "melix.quantized_bundle.v1"
+                event.completed.artifact.artifactKind = "quantized_model_bundle"
+                event.completed.artifact.manifestPath = "/tmp/melix-ops/quantize.artifact/manifest.json"
+                event.completed.artifact.bundlePath = "/tmp/melix-ops/quantize.artifact"
+                event.completed.artifact.artifactBytes = 256
+                event.completed.artifact.manifestBytes = 128
+                event.completed.artifact.servingCompatible = true
+                event.completed.artifact.smokeTestRequested = true
+                event.completed.artifact.smokeTestPassed = true
+                event.completed.artifact.runtime = "mlx_text"
                 return event
             }(),
         ])
@@ -713,6 +747,11 @@ struct ControlPlaneServiceTests {
         #expect(lastRequest.ext["operation"] == "quantize")
         #expect(lastRequest.weightQuant == "q4")
         #expect(lastRequest.kvQuant == "q8")
+        #expect(lastRequest.quantProfile.algorithm == "oq")
+        #expect(lastRequest.quantProfile.schemaVersion == "melix.quant_profile.v1")
+        #expect(lastRequest.quantProfile.quantProfileID == "q4")
+        #expect(lastRequest.quantProfile.weightQuant == "q4")
+        #expect(lastRequest.quantProfile.kvQuant == "q8")
         #expect(lastRequest.ext["target_repo"] == "melix/upload-target")
         #expect(response.model.operation.ok)
         #expect(response.model.operation.operation == "quantize")
@@ -720,6 +759,60 @@ struct ControlPlaneServiceTests {
         #expect(response.model.operation.stage == "write_artifact")
         #expect(response.model.operation.outputPath == "/tmp/melix-ops/quantize.artifact")
         #expect(response.model.operation.manifestJson == #"{"operation":"quantize"}"#)
+        #expect(response.model.operation.quantProfile.algorithm == "oq")
+        #expect(response.model.operation.quantProfile.quantProfileID == "q4")
+        #expect(response.model.operation.quantProfile.kvQuant == "q8")
+        #expect(response.model.operation.artifact.artifactKind == "quantized_model_bundle")
+        #expect(response.model.operation.artifact.manifestPath == "/tmp/melix-ops/quantize.artifact/manifest.json")
+        #expect(response.model.operation.artifact.bundlePath == "/tmp/melix-ops/quantize.artifact")
+        #expect(response.model.operation.artifact.artifactBytes == 256)
+        #expect(response.model.operation.artifact.manifestBytes == 128)
+        #expect(response.model.operation.artifact.smokeTestRequested)
+        #expect(response.model.operation.artifact.smokeTestPassed)
+    }
+
+    @Test("execute prefers explicit quant profile selection for quantize operations")
+    func executePrefersExplicitQuantProfileSelectionForQuantizeOperations() async throws {
+        let modelOpsClient = ScriptedModelOperationsWorkerClient()
+        await modelOpsClient.setConvertEvents([
+            {
+                var event = Melix_Worker_V1_ConvertModelEvent()
+                event.started = Melix_Worker_V1_ConvertStarted()
+                event.started.jobID = "job-q6"
+                return event
+            }(),
+            {
+                var event = Melix_Worker_V1_ConvertModelEvent()
+                event.completed = Melix_Worker_V1_ConvertCompleted()
+                event.completed.outputPath = "/tmp/melix-ops/quantize.artifact"
+                return event
+            }(),
+        ])
+        let service = ControlPlaneService(
+            modelCatalog: ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels()),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                modelOperationsClient: modelOpsClient
+            )
+        )
+
+        let response = try await service.execute(
+            makeRunModelOperationRequest(
+                modelID: "melix-dev-text",
+                operation: "quantize",
+                outputDir: "/tmp/melix-ops",
+                quantProfileID: "q6",
+                weightQuant: "",
+                kvQuant: "q8"
+            )
+        )
+        let lastRequest = try #require(await modelOpsClient.lastConvertRequest)
+
+        #expect(response.ok)
+        #expect(lastRequest.quantProfile.quantProfileID == "q6")
+        #expect(lastRequest.quantProfile.weightQuant == "q6")
+        #expect(lastRequest.quantProfile.kvQuant == "q8")
+        #expect(lastRequest.weightQuant.isEmpty)
     }
 
     @Test("execute handles ops.run_doctor through the model-operations worker")
@@ -1966,6 +2059,25 @@ struct ControlPlaneServiceTests {
         #expect(response.model.model.settings.ext["custom_hint"] == "prefetch")
     }
 
+    @Test("execute maps sparse prefill model policy values")
+    func executeMapsSparsePrefillModelPolicyValues() async throws {
+        let service = ControlPlaneService(modelCatalog: ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels()))
+
+        let response = try await service.execute(
+            makeSetModelPolicyRequest(
+                modelID: "melix-dev-text",
+                values: [
+                    "default_acceleration_mode": "sparse_prefill",
+                    "acceleration_profile_id": "structured-user",
+                ]
+            )
+        )
+
+        #expect(response.ok)
+        #expect(response.model.model.settings.defaultAccelerationMode == .sparsePrefill)
+        #expect(response.model.model.settings.accelerationProfileID == "structured-user")
+    }
+
     @Test("execute surfaces structured errors for missing or unavailable model tools")
     func executeSurfacesStructuredErrorsForMissingOrUnavailableModelTools() async throws {
         let unavailableService = ControlPlaneService(
@@ -2637,6 +2749,7 @@ struct ControlPlaneServiceTests {
         modelID: String,
         operation: String,
         outputDir: String,
+        quantProfileID: String = "",
         weightQuant: String,
         kvQuant: String,
         ext: [String: String] = [:]
@@ -2654,6 +2767,14 @@ struct ControlPlaneServiceTests {
         request.model.runOperation.generateManifest = true
         request.model.runOperation.runSmokeTest = true
         request.model.runOperation.ext = ext
+        if !quantProfileID.isEmpty {
+            request.model.runOperation.quantProfile = Melix_Controlplane_V1_QuantizationProfile()
+            request.model.runOperation.quantProfile.algorithm = "oq"
+            request.model.runOperation.quantProfile.schemaVersion = "melix.quant_profile.v1"
+            request.model.runOperation.quantProfile.quantProfileID = quantProfileID
+            request.model.runOperation.quantProfile.weightQuant = quantProfileID
+            request.model.runOperation.quantProfile.kvQuant = kvQuant
+        }
         return request
     }
 

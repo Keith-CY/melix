@@ -953,6 +953,9 @@ public actor ControlPlaneService {
         if workerRequest.ext["operation"] == nil {
             workerRequest.ext["operation"] = command.operation
         }
+        if let quantProfile = normalizedWorkerQuantProfile(for: command) {
+            workerRequest.quantProfile = quantProfile
+        }
 
         do {
             let stream = try await workerClient.convertModel(request: workerRequest)
@@ -969,11 +972,23 @@ public actor ControlPlaneService {
                     operation.pct = progress.pct
                 case .manifest(let manifest):
                     operation.manifestJson = manifest.manifestJson
+                    if manifest.hasQuantProfile {
+                        operation.quantProfile = controlPlaneQuantProfile(from: manifest.quantProfile)
+                    }
+                    if manifest.hasArtifact {
+                        operation.artifact = controlPlaneArtifact(from: manifest.artifact)
+                    }
                     if command.operation == "train_lora" {
                         await recordTrainingMetrics(from: manifest.manifestJson)
                     }
                 case .completed(let completed):
                     operation.outputPath = completed.outputPath
+                    if completed.hasQuantProfile {
+                        operation.quantProfile = controlPlaneQuantProfile(from: completed.quantProfile)
+                    }
+                    if completed.hasArtifact {
+                        operation.artifact = controlPlaneArtifact(from: completed.artifact)
+                    }
                 case .failed(let failed):
                     operation.ok = false
                     operation.error = makeErrorStatus(from: failed.error)
@@ -1001,6 +1016,71 @@ public actor ControlPlaneService {
         } catch {
             return errorResponse(for: request, code: "unavailable", message: "Model operation worker request failed: \(error)")
         }
+    }
+
+    private func normalizedWorkerQuantProfile(
+        for command: Melix_Controlplane_V1_RunModelOperation
+    ) -> Melix_Worker_V1_QuantizationProfile? {
+        guard command.operation == "quantize" || command.hasQuantProfile else {
+            return nil
+        }
+
+        var profile = Melix_Worker_V1_QuantizationProfile()
+        if command.hasQuantProfile {
+            profile.algorithm = command.quantProfile.algorithm
+            profile.schemaVersion = command.quantProfile.schemaVersion
+            profile.quantProfileID = command.quantProfile.quantProfileID
+            profile.weightQuant = command.quantProfile.weightQuant
+            profile.kvQuant = command.quantProfile.kvQuant
+            profile.ext = command.quantProfile.ext
+        }
+
+        if profile.algorithm.isEmpty {
+            profile.algorithm = "oq"
+        }
+        if profile.schemaVersion.isEmpty {
+            profile.schemaVersion = "melix.quant_profile.v1"
+        }
+        if profile.quantProfileID.isEmpty {
+            profile.quantProfileID = command.weightQuant.isEmpty ? "q4" : command.weightQuant
+        }
+        if profile.weightQuant.isEmpty {
+            profile.weightQuant = command.weightQuant.isEmpty ? profile.quantProfileID : command.weightQuant
+        }
+        if profile.kvQuant.isEmpty {
+            profile.kvQuant = command.kvQuant
+        }
+        return profile
+    }
+
+    private func controlPlaneQuantProfile(
+        from profile: Melix_Worker_V1_QuantizationProfile
+    ) -> Melix_Controlplane_V1_QuantizationProfile {
+        var message = Melix_Controlplane_V1_QuantizationProfile()
+        message.algorithm = profile.algorithm
+        message.schemaVersion = profile.schemaVersion
+        message.quantProfileID = profile.quantProfileID
+        message.weightQuant = profile.weightQuant
+        message.kvQuant = profile.kvQuant
+        message.ext = profile.ext
+        return message
+    }
+
+    private func controlPlaneArtifact(
+        from artifact: Melix_Worker_V1_QuantizedArtifact
+    ) -> Melix_Controlplane_V1_ModelOperationArtifact {
+        var message = Melix_Controlplane_V1_ModelOperationArtifact()
+        message.schemaVersion = artifact.schemaVersion
+        message.artifactKind = artifact.artifactKind
+        message.manifestPath = artifact.manifestPath
+        message.bundlePath = artifact.bundlePath
+        message.artifactBytes = artifact.artifactBytes
+        message.manifestBytes = artifact.manifestBytes
+        message.servingCompatible = artifact.servingCompatible
+        message.smokeTestRequested = artifact.smokeTestRequested
+        message.smokeTestPassed = artifact.smokeTestPassed
+        message.runtime = artifact.runtime
+        return message
     }
 
     private func applyModelPolicy(
@@ -1100,6 +1180,8 @@ public actor ControlPlaneService {
             return .speculativeDecode
         case "accelerated_prefill":
             return .acceleratedPrefill
+        case "sparse_prefill":
+            return .sparsePrefill
         case "active_kv_quantized":
             return .activeKvQuantized
         default:

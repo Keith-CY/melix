@@ -45,7 +45,7 @@ struct StatusMenuTests {
 
         let content = try #require(renderer.lastContent)
         #expect(content.title == "Melix Error")
-        #expect(content.items.contains(.error("menu handshake failed")))
+        #expect(content.items.contains(.error("Startup failed: menu handshake failed. Open Melix Console for details.")))
     }
 
     @Test("perform routes primary model actions to the view model")

@@ -298,12 +298,18 @@ private func deterministicPrefillDelay(
         }
         return max(baselineDelay / 8, 1_000_000)
     }
+    if normalized.mode == .sparsePrefill {
+        guard promptLooksStructuredForPrefill(prompt) else {
+            return baselineDelay
+        }
+        return max(baselineDelay / 6, 1_000_000)
+    }
     guard normalized.mode == .acceleratedPrefill else {
         return baselineDelay
     }
 
     let hint = normalized.prefillHint.lowercased()
-    let isStructured = deterministicPromptLooksStructured(prompt)
+    let isStructured = promptLooksStructuredForPrefill(prompt)
     if hint.contains("lookup") || hint.contains("schema") || isStructured {
         return max(baselineDelay / 5, 1_000_000)
     }
@@ -317,19 +323,13 @@ private func resolveDeterministicPrefillAcceleration(
     var normalized = normalizedAccelerationPolicy(policy)
     if normalized.mode == .acceleratedPrefill,
        normalized.prefillHint.isEmpty,
-       deterministicPromptLooksStructured(prompt) {
+       promptLooksStructuredForPrefill(prompt) {
         normalized.prefillHint = "structured-reuse"
     }
-    return normalized
-}
-
-private func deterministicPromptLooksStructured(_ prompt: String) -> Bool {
-    let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !trimmed.isEmpty else {
-        return false
+    if normalized.mode == .sparsePrefill,
+       normalized.prefillHint == "sparse-prefill",
+       promptLooksStructuredForPrefill(prompt) {
+        normalized.prefillHint = "sparse-prefill:structured"
     }
-
-    let newlineCount = trimmed.filter { $0 == "\n" }.count
-    let punctuationCount = trimmed.filter { "{}[]():,\"".contains($0) }.count
-    return newlineCount >= 2 || punctuationCount >= max(4, trimmed.count / 12)
+    return normalized
 }

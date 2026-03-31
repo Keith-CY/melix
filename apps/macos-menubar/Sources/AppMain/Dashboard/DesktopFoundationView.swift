@@ -244,6 +244,24 @@ struct DesktopToolsTabView: View {
                             .font(.headline)
                         Text(primaryModel.alias.isEmpty ? primaryModel.kind : primaryModel.alias)
                             .foregroundStyle(.secondary)
+                        HStack(spacing: 8) {
+                            Text("Quant Profile")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Picker(
+                                "Quant Profile",
+                                selection: Binding(
+                                    get: { viewModel.selectedQuantizationProfileID },
+                                    set: { viewModel.selectedQuantizationProfileID = $0 }
+                                )
+                            ) {
+                                ForEach(viewModel.availableQuantizationProfileIDs, id: \.self) { profileID in
+                                    Text(profileID).tag(profileID)
+                                }
+                            }
+                            .pickerStyle(.menu)
+                            .frame(maxWidth: 120)
+                        }
                         HStack {
                             Button("Inspect") {
                                 Task { await inspectPrimaryModel() }
@@ -313,6 +331,27 @@ struct DesktopToolsTabView: View {
                             .font(.headline)
                         Text("job \(operation.jobID)")
                         Text("stage \(operation.stage) • \(String(format: "%.0f%%", operation.pct * 100))")
+                        if !operation.quantProfileID.isEmpty {
+                            Text("quant profile \(operation.quantProfileID)")
+                                .foregroundStyle(.secondary)
+                        }
+                        if !operation.artifactKind.isEmpty {
+                            Text("artifact \(operation.artifactKind) • \(operation.artifactBytes) bytes")
+                                .foregroundStyle(.secondary)
+                        }
+                        if operation.calibrationSampleCount > 0 {
+                            Text("calibration samples \(operation.calibrationSampleCount)")
+                                .foregroundStyle(.secondary)
+                        }
+                        if !operation.manifestPath.isEmpty {
+                            Text(operation.manifestPath)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        if operation.smokeTestPassed {
+                            Text("smoke validation passed")
+                                .foregroundStyle(.secondary)
+                        }
                         Text(operation.outputPath)
                             .font(.caption)
                             .foregroundStyle(.secondary)

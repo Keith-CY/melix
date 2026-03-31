@@ -10,6 +10,11 @@ from typing import Any
 from packages.protocol.python.worker.v1 import maintenance_pb2
 
 from worker.engine.maintenance_core import MaintenanceCore
+from worker.productization.quantization_gates import (
+    DEFAULT_QUANTIZATION_GATE_POLICY,
+    collect_quantization_benchmark_evidence,
+    evaluate_quantization_gate,
+)
 from worker.model_registry.catalog import WorkerModelCatalog
 from worker.productization.install_assets import (
     build_local_product_layout,
@@ -41,6 +46,7 @@ DEFAULT_RELEASE_GATE_POLICY: dict[str, Any] = {
         "prefill_memory_guard_rejection_count": {"min": 1.0},
         "prefill_memory_guard_success_rate": {"min": 100.0},
     },
+    "quantization": copy.deepcopy(DEFAULT_QUANTIZATION_GATE_POLICY),
 }
 
 
@@ -172,6 +178,7 @@ def build_release_gate_report(
         "install": collect_install_evidence(repo_root),
         "benchmarks": collect_benchmark_evidence(jobs_root, repo_root=repo_root),
         "training": collect_training_evidence(jobs_root),
+        "quantization": collect_quantization_benchmark_evidence(Path(jobs_root) / "quantization"),
     }
     if recovery is not None:
         report["recovery"] = recovery
@@ -214,6 +221,14 @@ def evaluate_release_gate(report: dict[str, Any], policy: dict[str, Any]) -> lis
         failures.append("runtime_core evidence is missing")
     else:
         failures.extend(_evaluate_section_metrics(runtime_core, policy.get("runtime_core", {})))
+
+    quantization = report.get("quantization")
+    if not isinstance(quantization, dict):
+        failures.append("quantization evidence is missing")
+    else:
+        failures.extend(
+            evaluate_quantization_gate(quantization, policy.get("quantization", {}))
+        )
 
     return failures
 

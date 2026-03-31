@@ -96,6 +96,7 @@ public protocol ControlPlaneXPCClient: Sendable {
         modelID: String,
         operation: String,
         outputDir: String,
+        quantProfileID: String,
         weightQuant: String,
         kvQuant: String,
         ext: [String: String]
@@ -244,6 +245,7 @@ public actor LocalControlPlaneXPCClient: ControlPlaneXPCClient {
         modelID: String,
         operation: String,
         outputDir: String,
+        quantProfileID: String = "",
         weightQuant: String,
         kvQuant: String,
         ext: [String: String] = [:]
@@ -253,6 +255,7 @@ public actor LocalControlPlaneXPCClient: ControlPlaneXPCClient {
                 modelID: modelID,
                 operation: operation,
                 outputDir: outputDir,
+                quantProfileID: quantProfileID,
                 weightQuant: weightQuant,
                 kvQuant: kvQuant,
                 ext: ext
@@ -371,6 +374,7 @@ public actor LocalControlPlaneXPCClient: ControlPlaneXPCClient {
         modelID: String,
         operation: String,
         outputDir: String,
+        quantProfileID: String,
         weightQuant: String,
         kvQuant: String,
         ext: [String: String]
@@ -388,6 +392,15 @@ public actor LocalControlPlaneXPCClient: ControlPlaneXPCClient {
         request.model.runOperation.generateManifest = true
         request.model.runOperation.runSmokeTest = true
         request.model.runOperation.ext = ext
+        if operation == "quantize" || !quantProfileID.isEmpty || !weightQuant.isEmpty || !kvQuant.isEmpty {
+            request.model.runOperation.quantProfile = Melix_Controlplane_V1_QuantizationProfile()
+            request.model.runOperation.quantProfile.algorithm = "oq"
+            request.model.runOperation.quantProfile.schemaVersion = "melix.quant_profile.v1"
+            let resolvedProfileID = quantProfileID.isEmpty ? (weightQuant.isEmpty ? "q4" : weightQuant) : quantProfileID
+            request.model.runOperation.quantProfile.quantProfileID = resolvedProfileID
+            request.model.runOperation.quantProfile.weightQuant = weightQuant.isEmpty ? resolvedProfileID : weightQuant
+            request.model.runOperation.quantProfile.kvQuant = kvQuant
+        }
         return request
     }
 

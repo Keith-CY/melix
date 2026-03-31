@@ -238,6 +238,7 @@ message RunModelOperation {
   bool generate_manifest = 6;
   bool run_smoke_test = 7;
   map<string, string> ext = 8;
+  QuantizationProfile quant_profile = 9;
 }
 
 message GenerateImage {
@@ -429,6 +430,7 @@ enum AccelerationMode {
   ACCELERATION_MODE_SPECULATIVE_DECODE = 2;
   ACCELERATION_MODE_ACCELERATED_PREFILL = 3;
   ACCELERATION_MODE_ACTIVE_KV_QUANTIZED = 4;
+  ACCELERATION_MODE_SPARSE_PREFILL = 5;
 }
 
 message ModelSettings {
@@ -596,6 +598,30 @@ message ModelOperationResult {
   string output_path = 6;
   string manifest_json = 7;
   ErrorStatus error = 8;
+  QuantizationProfile quant_profile = 9;
+  ModelOperationArtifact artifact = 10;
+}
+
+message QuantizationProfile {
+  string algorithm = 1;
+  string schema_version = 2;
+  string quant_profile_id = 3;
+  string weight_quant = 4;
+  string kv_quant = 5;
+  map<string, string> ext = 6;
+}
+
+message ModelOperationArtifact {
+  string schema_version = 1;
+  string artifact_kind = 2;
+  string manifest_path = 3;
+  string bundle_path = 4;
+  uint64 artifact_bytes = 5;
+  uint64 manifest_bytes = 6;
+  bool serving_compatible = 7;
+  bool smoke_test_requested = 8;
+  bool smoke_test_passed = 9;
+  string runtime = 10;
 }
 
 message QueueSummary {

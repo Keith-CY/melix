@@ -17,6 +17,16 @@ def build_service(root: Path) -> WorkerMaintenanceService:
     return WorkerMaintenanceService(registry, jobs_root=root)
 
 
+def artifact_size(path: Path) -> int:
+    if path.is_dir():
+        return sum(
+            child.stat().st_size
+            for child in path.rglob("*")
+            if child.is_file()
+        )
+    return path.stat().st_size
+
+
 def main() -> None:
     with TemporaryDirectory(prefix="melix-model-ops-") as tmpdir:
         root = Path(tmpdir)
@@ -34,6 +44,7 @@ def main() -> None:
                     weight_quant="q4" if operation == "quantize" else "",
                     kv_quant="q8" if operation == "quantize" else "",
                     generate_manifest=operation in {"convert", "quantize"},
+                    run_smoke_test=operation == "quantize",
                     ext={"operation": operation, "target_repo": "melix/upload-target"},
                 )
 
@@ -43,9 +54,20 @@ def main() -> None:
                 samples.append(elapsed_ms)
 
                 completed = events[-1].completed
-                artifact_bytes = Path(completed.output_path).stat().st_size
+                artifact_path = Path(completed.output_path)
+                artifact_bytes = (
+                    int(completed.artifact.artifact_bytes)
+                    if completed.HasField("artifact") and completed.artifact.artifact_bytes > 0
+                    else artifact_size(artifact_path)
+                )
                 manifest = next((event.manifest for event in events if event.HasField("manifest")), None)
-                manifest_bytes = len(manifest.manifest_json.encode("utf-8")) if manifest else 0
+                manifest_bytes = 0
+                if manifest is not None:
+                    manifest_bytes = (
+                        int(manifest.artifact.manifest_bytes)
+                        if manifest.HasField("artifact") and manifest.artifact.manifest_bytes > 0
+                        else len(manifest.manifest_json.encode("utf-8"))
+                    )
 
             average_ms = mean(samples)
             print(

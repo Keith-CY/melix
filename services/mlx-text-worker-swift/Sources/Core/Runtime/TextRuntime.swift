@@ -30,6 +30,18 @@ struct RuntimePrefillResult: Sendable {
     let activeKVQuantizationRatio: Int
 }
 
+struct SparsePrefillPlan: Sendable {
+    let acceptedSkipCount: Int
+    let rejectedOpportunityCount: Int
+    let protectedRegionCount: Int
+
+    static let zero = SparsePrefillPlan(
+        acceptedSkipCount: 0,
+        rejectedOpportunityCount: 0,
+        protectedRegionCount: 0
+    )
+}
+
 struct TextGenerationSummary: Sendable {
     let promptTokens: Int
     let completionTokens: Int
@@ -263,6 +275,11 @@ func normalizedAccelerationPolicy(
         normalized.activeKvQuantProfile = "q4"
     }
 
+    if normalized.mode == .sparsePrefill,
+       normalized.prefillHint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        normalized.prefillHint = "sparse-prefill"
+    }
+
     return normalized
 }
 
@@ -290,4 +307,83 @@ func gainPercent(
     }
 
     return max(0, min(100, Int(((baseline - effective) * 100) / baseline)))
+}
+
+func sparsePrefillPlan(
+    for messages: [Melix_Worker_V1_ChatMessage],
+    policy: Melix_Worker_V1_AccelerationPolicy
+) -> SparsePrefillPlan {
+    let normalized = normalizedAccelerationPolicy(policy)
+    guard normalized.mode == .sparsePrefill else {
+        return .zero
+    }
+
+    var acceptedSkipCount = 0
+    var rejectedOpportunityCount = 0
+    var protectedRegionCount = 0
+
+    for message in messages {
+        let content = ((try? flattenTextContent(from: message)) ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !content.isEmpty else {
+            continue
+        }
+
+        let protectedRole = isProtectedSparsePrefillRole(message.role)
+        if protectedRole {
+            protectedRegionCount += 1
+        }
+        guard sparsePrefillEligibleText(content) else {
+            continue
+        }
+        if protectedRole {
+            rejectedOpportunityCount += 1
+        } else {
+            acceptedSkipCount += 1
+        }
+    }
+
+    return SparsePrefillPlan(
+        acceptedSkipCount: acceptedSkipCount,
+        rejectedOpportunityCount: rejectedOpportunityCount,
+        protectedRegionCount: protectedRegionCount
+    )
+}
+
+func promptLooksStructuredForPrefill(_ prompt: String) -> Bool {
+    let newlineCount = prompt.filter { $0 == "\n" }.count
+    let punctuationCount = prompt.filter { "{}[]():,\"".contains($0) }.count
+    return newlineCount >= 2 || punctuationCount >= max(4, prompt.count / 12)
+}
+
+func sparsePrefillEligibleText(_ text: String) -> Bool {
+    let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else {
+        return false
+    }
+    if promptLooksStructuredForPrefill(trimmed) {
+        return true
+    }
+    return promptContainsSparseRepeats(trimmed)
+}
+
+private func isProtectedSparsePrefillRole(_ rawRole: String) -> Bool {
+    switch rawRole.lowercased() {
+    case "system", "developer":
+        return true
+    default:
+        return false
+    }
+}
+
+func promptContainsSparseRepeats(_ prompt: String) -> Bool {
+    let lines = prompt
+        .lowercased()
+        .split(separator: "\n")
+        .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
+        .filter { !$0.isEmpty }
+    guard lines.count >= 3 else {
+        return false
+    }
+    return Set(lines).count < lines.count
 }

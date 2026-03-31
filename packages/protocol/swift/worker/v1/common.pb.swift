@@ -598,6 +598,7 @@ public enum Melix_Worker_V1_AccelerationMode: SwiftProtobuf.Enum, Swift.CaseIter
   case speculativeDecode // = 2
   case acceleratedPrefill // = 3
   case activeKvQuantized // = 4
+  case sparsePrefill // = 5
   case UNRECOGNIZED(Int)
 
   public init() {
@@ -611,6 +612,7 @@ public enum Melix_Worker_V1_AccelerationMode: SwiftProtobuf.Enum, Swift.CaseIter
     case 2: self = .speculativeDecode
     case 3: self = .acceleratedPrefill
     case 4: self = .activeKvQuantized
+    case 5: self = .sparsePrefill
     default: self = .UNRECOGNIZED(rawValue)
     }
   }
@@ -622,6 +624,7 @@ public enum Melix_Worker_V1_AccelerationMode: SwiftProtobuf.Enum, Swift.CaseIter
     case .speculativeDecode: return 2
     case .acceleratedPrefill: return 3
     case .activeKvQuantized: return 4
+    case .sparsePrefill: return 5
     case .UNRECOGNIZED(let i): return i
     }
   }
@@ -633,6 +636,7 @@ public enum Melix_Worker_V1_AccelerationMode: SwiftProtobuf.Enum, Swift.CaseIter
     .speculativeDecode,
     .acceleratedPrefill,
     .activeKvQuantized,
+    .sparsePrefill,
   ]
 
 }
@@ -1627,7 +1631,7 @@ extension Melix_Worker_V1_ExecutionPhase: SwiftProtobuf._ProtoNameProviding {
 }
 
 extension Melix_Worker_V1_AccelerationMode: SwiftProtobuf._ProtoNameProviding {
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0ACCELERATION_MODE_UNSPECIFIED\0\u{1}ACCELERATION_MODE_BASELINE\0\u{1}ACCELERATION_MODE_SPECULATIVE_DECODE\0\u{1}ACCELERATION_MODE_ACCELERATED_PREFILL\0\u{1}ACCELERATION_MODE_ACTIVE_KV_QUANTIZED\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0ACCELERATION_MODE_UNSPECIFIED\0\u{1}ACCELERATION_MODE_BASELINE\0\u{1}ACCELERATION_MODE_SPECULATIVE_DECODE\0\u{1}ACCELERATION_MODE_ACCELERATED_PREFILL\0\u{1}ACCELERATION_MODE_ACTIVE_KV_QUANTIZED\0\u{1}ACCELERATION_MODE_SPARSE_PREFILL\0")
 }
 
 extension Melix_Worker_V1_ErrorStatus: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {

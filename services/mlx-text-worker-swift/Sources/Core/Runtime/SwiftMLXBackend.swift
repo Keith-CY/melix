@@ -152,11 +152,12 @@ struct AutoSwiftMLXBackend: TextRuntimeBackend {
         acceleration: Melix_Worker_V1_AccelerationPolicy,
         shouldAbort: @escaping @Sendable () -> Bool
     ) async throws -> RuntimePrefillResult {
-        let appliedAcceleration = resolveSwiftPrefillAcceleration(acceleration)
+        let appliedAcceleration = resolveSwiftPrefillAcceleration(acceleration, messages: messages)
         let baseWindowSize = Int(max(prefillStepSize, 1))
         let effectiveWindowSize = acceleratedPrefillWindowSize(
             baseWindowSize: baseWindowSize,
-            policy: appliedAcceleration
+            policy: appliedAcceleration,
+            messages: messages
         )
         let prepared = try await makePreparedPromptContext(
             model: model,
@@ -429,7 +430,8 @@ private func makePreparedPromptContext(
     let userInput = UserInput(chat: chat)
     let effectiveWindowSize = acceleratedPrefillWindowSize(
         baseWindowSize: Int(max(prefillStepSize, 1)),
-        policy: acceleration
+        policy: acceleration,
+        messages: messages
     )
     let preparedState = try await container.perform { context in
         let input = try await context.processor.prepare(input: userInput)
@@ -464,16 +466,30 @@ private func makePreparedPromptContext(
 }
 
 private func resolveSwiftPrefillAcceleration(
-    _ acceleration: Melix_Worker_V1_AccelerationPolicy
+    _ acceleration: Melix_Worker_V1_AccelerationPolicy,
+    messages: [Melix_Worker_V1_ChatMessage]
 ) -> Melix_Worker_V1_AccelerationPolicy {
-    normalizedAccelerationPolicy(acceleration)
+    var normalized = normalizedAccelerationPolicy(acceleration)
+    if normalized.mode == .sparsePrefill {
+        let plan = sparsePrefillPlan(for: messages, policy: normalized)
+        normalized.prefillHint = "sparse-prefill:accepted=\(plan.acceptedSkipCount)"
+    }
+    return normalized
 }
 
 private func acceleratedPrefillWindowSize(
     baseWindowSize: Int,
-    policy: Melix_Worker_V1_AccelerationPolicy
+    policy: Melix_Worker_V1_AccelerationPolicy,
+    messages: [Melix_Worker_V1_ChatMessage]
 ) -> Int {
     let normalized = normalizedAccelerationPolicy(policy)
+    if normalized.mode == .sparsePrefill {
+        let plan = sparsePrefillPlan(for: messages, policy: normalized)
+        guard plan.acceptedSkipCount > 0 else {
+            return baseWindowSize
+        }
+        return max(baseWindowSize, 16 + (plan.acceptedSkipCount * 16))
+    }
     guard normalized.mode == .acceleratedPrefill else {
         return baseWindowSize
     }

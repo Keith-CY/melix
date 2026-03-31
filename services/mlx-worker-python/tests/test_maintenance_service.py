@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import threading
+import time
 
 from packages.protocol.python.worker.v1 import maintenance_pb2
 
@@ -9,6 +11,7 @@ from worker.grpc_server import WorkerMaintenanceService
 from worker.model_ops.job_registry import ModelOpsJob, ModelOpsJobRegistry
 from worker.model_registry.catalog import WorkerModelCatalog
 from worker.registry import WorkerRegistry
+from worker.engine.maintenance_core import MaintenanceCore
 
 
 def build_service(tmp_path: Path) -> WorkerMaintenanceService:
@@ -83,6 +86,156 @@ def test_convert_model_supports_download_and_upload_jobs(tmp_path: Path) -> None
 
     assert download_events[-1].completed.output_path.endswith("download.artifact")
     assert upload_events[-1].completed.output_path.endswith("upload.receipt.json")
+
+
+def test_upload_job_links_quantized_artifact_metadata(tmp_path: Path) -> None:
+    service = build_service(tmp_path)
+
+    quantize_events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "quantize"),
+                weight_quant="q6",
+                kv_quant="q8",
+                generate_manifest=True,
+                run_smoke_test=True,
+                ext={"operation": "quantize", "quant_profile_id": "q6"},
+            ),
+            context=None,
+        )
+    )
+    bundle_path = Path(quantize_events[-1].completed.output_path)
+
+    upload_events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "upload"),
+                generate_manifest=True,
+                ext={
+                    "operation": "upload",
+                    "artifact_kind": "model",
+                    "artifact_path": str(bundle_path),
+                    "target_repo": "melix/models/melix-dev-text-q6",
+                },
+            ),
+            context=None,
+        )
+    )
+    manifest = next(event.manifest for event in upload_events if event.HasField("manifest"))
+    payload = json.loads(manifest.manifest_json)
+
+    assert upload_events[-1].completed.output_path.endswith("upload.receipt.json")
+    assert payload["operation"] == "upload"
+    assert payload["artifact_path"] == str(bundle_path)
+    assert payload["artifact_kind"] == "model"
+    assert payload["target_repo"] == "melix/models/melix-dev-text-q6"
+    assert payload["linked_quantization"]["artifact_kind"] == "quantized_model_bundle"
+    assert payload["linked_quantization"]["artifact_path"] == str(bundle_path)
+    assert payload["linked_quantization"]["quant_profile_id"] == "q6"
+    assert payload["linked_quantization"]["calibration_sample_count"] == 32
+    assert payload["linked_quantization"]["smoke_test_passed"] is True
+
+
+def test_quantize_job_fails_when_active_requests_hold_the_same_model(tmp_path: Path) -> None:
+    registry = WorkerRegistry(model_catalog=WorkerModelCatalog())
+    registry.start_request("req-active", runtime_kind="text")
+    service = WorkerMaintenanceService(registry, jobs_root=tmp_path / "model-ops")
+
+    events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "quantize"),
+                weight_quant="q4",
+                kv_quant="q8",
+                ext={"operation": "quantize"},
+            ),
+            context=None,
+        )
+    )
+
+    assert events[-1].HasField("failed")
+    assert events[-1].failed.error.code == "resource_locked"
+    assert "active inference" in events[-1].failed.error.message
+
+
+def test_quantize_job_conflict_lock_blocks_parallel_quantization_on_same_scope(tmp_path: Path) -> None:
+    registry = WorkerRegistry(model_catalog=WorkerModelCatalog())
+    service = WorkerMaintenanceService(registry, jobs_root=tmp_path / "model-ops")
+    started = threading.Event()
+    first_events: list[maintenance_pb2.ConvertModelEvent] = []
+
+    def run_first_job() -> None:
+        nonlocal first_events
+        first_events = list(
+            service.ConvertModel(
+                maintenance_pb2.ConvertModelRequest(
+                    source_model="melix-dev-text",
+                    output_dir=str(tmp_path / "quantize-a"),
+                    weight_quant="q4",
+                    kv_quant="q8",
+                    generate_manifest=True,
+                    ext={
+                        "operation": "quantize",
+                        "test_hold_ms": "150",
+                    },
+                ),
+                context=None,
+            )
+        )
+        started.set()
+
+    worker = threading.Thread(target=run_first_job)
+    worker.start()
+    time.sleep(0.03)
+
+    second_events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "quantize-b"),
+                weight_quant="q4",
+                kv_quant="q8",
+                ext={"operation": "quantize"},
+            ),
+            context=None,
+        )
+    )
+    worker.join()
+
+    assert first_events[-1].HasField("completed")
+    assert second_events[-1].HasField("failed")
+    assert second_events[-1].failed.error.code == "resource_locked"
+    assert "quantization lock" in second_events[-1].failed.error.message
+
+
+def test_linked_quantization_metadata_rejects_missing_invalid_and_non_bundle_manifests(tmp_path: Path) -> None:
+    empty_request = maintenance_pb2.ConvertModelRequest()
+    assert MaintenanceCore._linked_quantization_metadata(empty_request) is None
+
+    artifact_dir = tmp_path / "artifact"
+    artifact_dir.mkdir()
+    manifest_path = artifact_dir / "manifest.json"
+
+    invalid_request = maintenance_pb2.ConvertModelRequest()
+    invalid_request.source_model = "melix-dev-text"
+    invalid_request.ext["artifact_path"] = str(artifact_dir)
+    manifest_path.write_text("{not-json", encoding="utf-8")
+    assert MaintenanceCore._linked_quantization_metadata(invalid_request) is None
+
+    non_dict_request = maintenance_pb2.ConvertModelRequest()
+    non_dict_request.source_model = "melix-dev-text"
+    non_dict_request.ext["artifact_path"] = str(artifact_dir)
+    manifest_path.write_text("[]", encoding="utf-8")
+    assert MaintenanceCore._linked_quantization_metadata(non_dict_request) is None
+
+    wrong_kind_request = maintenance_pb2.ConvertModelRequest()
+    wrong_kind_request.source_model = "melix-dev-text"
+    wrong_kind_request.ext["artifact_path"] = str(artifact_dir)
+    manifest_path.write_text(json.dumps({"artifact_kind": "plain_model"}) + "\n", encoding="utf-8")
+    assert MaintenanceCore._linked_quantization_metadata(wrong_kind_request) is None
 
 
 def test_convert_model_supports_train_lora_jobs(tmp_path: Path) -> None:

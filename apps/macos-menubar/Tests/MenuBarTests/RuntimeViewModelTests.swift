@@ -70,6 +70,8 @@ struct RuntimeViewModelTests {
         await viewModel.start()
 
         #expect(viewModel.statusTitle == "Melix Error")
+        #expect(viewModel.connectionDetailText == "Handshake failed")
+        #expect(viewModel.lastError?.contains("Startup failed:") == true)
         #expect(viewModel.lastError?.contains("handshake failed") == true)
     }
 
@@ -817,6 +819,84 @@ struct RuntimeViewModelTests {
         #expect(viewModel.lastError?.contains("operation failed") == true)
     }
 
+    @Test("quantize action stores typed quantization summary")
+    @MainActor
+    func quantizeActionStoresTypedQuantizationSummary() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(client: client)
+        await client.configureModelOperation(
+            makeNamedModelOperationResult(
+                operation: "quantize",
+                outputPath: "/tmp/melix-quantize/model-ops-0001/quantize.artifact",
+                manifestJSON: #"""
+                {
+                  "operation": "quantize",
+                  "calibration": {
+                    "sample_count": 32
+                  }
+                }
+                """#,
+                quantProfileID: "q6",
+                artifactKind: "quantized_model_bundle",
+                manifestPath: "/tmp/melix-quantize/model-ops-0001/quantize.artifact/manifest.json",
+                artifactBytes: 256,
+                smokeTestPassed: true
+            ),
+            forNamedOperation: "quantize"
+        )
+
+        await viewModel.start()
+        viewModel.selectedQuantizationProfileID = "q6"
+        await viewModel.quantizePrimaryModel()
+
+        #expect(viewModel.lastModelOperation?.operation == "quantize")
+        #expect(viewModel.lastModelOperation?.quantProfileID == "q6")
+        #expect(viewModel.lastModelOperation?.artifactKind == "quantized_model_bundle")
+        #expect(viewModel.lastModelOperation?.manifestPath == "/tmp/melix-quantize/model-ops-0001/quantize.artifact/manifest.json")
+        #expect(viewModel.lastModelOperation?.artifactBytes == 256)
+        #expect(viewModel.lastModelOperation?.smokeTestPassed == true)
+        #expect(viewModel.lastModelOperation?.calibrationSampleCount == 32)
+    }
+
+    @Test("upload action links the latest quantized artifact when available")
+    @MainActor
+    func uploadActionLinksLatestQuantizedArtifact() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(client: client)
+        await client.configureModelOperation(
+            makeNamedModelOperationResult(
+                operation: "quantize",
+                outputPath: "/tmp/melix-quantize/model-ops-0001/quantize.artifact",
+                manifestJSON: #"""
+                {
+                  "operation": "quantize",
+                  "calibration": {
+                    "sample_count": 48
+                  }
+                }
+                """#,
+                quantProfileID: "q5",
+                artifactKind: "quantized_model_bundle",
+                manifestPath: "/tmp/melix-quantize/model-ops-0001/quantize.artifact/manifest.json",
+                artifactBytes: 256,
+                smokeTestPassed: true
+            ),
+            forNamedOperation: "quantize"
+        )
+
+        await viewModel.start()
+        await viewModel.quantizePrimaryModel()
+        await viewModel.uploadPrimaryModel()
+
+        let uploadRequest = try #require(await client.recordedModelOperationRequests.last)
+        #expect(uploadRequest.operation == "upload")
+        #expect(uploadRequest.ext["artifact_kind"] == "model")
+        #expect(uploadRequest.ext["artifact_path"] == "/tmp/melix-quantize/model-ops-0001/quantize.artifact")
+        #expect(uploadRequest.ext["quantization_manifest_path"] == "/tmp/melix-quantize/model-ops-0001/quantize.artifact/manifest.json")
+        #expect(uploadRequest.ext["quant_profile_id"] == "q5")
+        #expect(uploadRequest.ext["target_repo"] == "melix/upload-target")
+    }
+
     @Test("model tooling refresh surfaces parse failures and publish no-ops without adapters")
     @MainActor
     func modelToolingRefreshSurfacesParseFailuresAndPublishNoopsWithoutAdapters() async throws {
@@ -1432,6 +1512,7 @@ private actor EmptySnapshotControlPlaneXPCClient: ControlPlaneXPCClient {
         modelID: String,
         operation: String,
         outputDir: String,
+        quantProfileID: String,
         weightQuant: String,
         kvQuant: String,
         ext: [String: String]
@@ -1439,6 +1520,7 @@ private actor EmptySnapshotControlPlaneXPCClient: ControlPlaneXPCClient {
         _ = modelID
         _ = operation
         _ = outputDir
+        _ = quantProfileID
         _ = weightQuant
         _ = kvQuant
         _ = ext
@@ -1506,6 +1588,7 @@ private actor SnapshotControlPlaneXPCClient: ControlPlaneXPCClient {
         modelID: String,
         operation: String,
         outputDir: String,
+        quantProfileID: String,
         weightQuant: String,
         kvQuant: String,
         ext: [String: String]
@@ -1513,6 +1596,7 @@ private actor SnapshotControlPlaneXPCClient: ControlPlaneXPCClient {
         _ = modelID
         _ = operation
         _ = outputDir
+        _ = quantProfileID
         _ = weightQuant
         _ = kvQuant
         _ = ext
@@ -1586,6 +1670,7 @@ private actor EventingSnapshotControlPlaneXPCClient: ControlPlaneXPCClient {
         modelID: String,
         operation: String,
         outputDir: String,
+        quantProfileID: String,
         weightQuant: String,
         kvQuant: String,
         ext: [String: String]
@@ -1593,6 +1678,7 @@ private actor EventingSnapshotControlPlaneXPCClient: ControlPlaneXPCClient {
         _ = modelID
         _ = operation
         _ = outputDir
+        _ = quantProfileID
         _ = weightQuant
         _ = kvQuant
         _ = ext
@@ -1698,7 +1784,12 @@ private func makeRuntimeModelRow(state: Melix_Controlplane_V1_ModelState) -> Run
 private func makeNamedModelOperationResult(
     operation: String,
     outputPath: String,
-    manifestJSON: String
+    manifestJSON: String,
+    quantProfileID: String = "",
+    artifactKind: String = "",
+    manifestPath: String = "",
+    artifactBytes: UInt64 = 0,
+    smokeTestPassed: Bool = false
 ) -> Melix_Controlplane_V1_ModelOperationResult {
     var result = Melix_Controlplane_V1_ModelOperationResult()
     result.ok = true
@@ -1708,6 +1799,27 @@ private func makeNamedModelOperationResult(
     result.pct = 1
     result.outputPath = outputPath
     result.manifestJson = manifestJSON
+    if !quantProfileID.isEmpty {
+        result.quantProfile = Melix_Controlplane_V1_QuantizationProfile()
+        result.quantProfile.algorithm = "oq"
+        result.quantProfile.schemaVersion = "melix.quant_profile.v1"
+        result.quantProfile.quantProfileID = quantProfileID
+        result.quantProfile.weightQuant = quantProfileID
+        result.quantProfile.kvQuant = "q8"
+    }
+    if !artifactKind.isEmpty {
+        result.artifact = Melix_Controlplane_V1_ModelOperationArtifact()
+        result.artifact.schemaVersion = "melix.quantized_bundle.v1"
+        result.artifact.artifactKind = artifactKind
+        result.artifact.bundlePath = outputPath
+        result.artifact.manifestPath = manifestPath
+        result.artifact.artifactBytes = artifactBytes
+        result.artifact.manifestBytes = UInt64(manifestJSON.utf8.count)
+        result.artifact.servingCompatible = true
+        result.artifact.smokeTestRequested = true
+        result.artifact.smokeTestPassed = smokeTestPassed
+        result.artifact.runtime = "mlx_text"
+    }
     return result
 }
 

@@ -19,6 +19,7 @@ message ConvertModelRequest {
   bool generate_manifest = 5;
   bool run_smoke_test = 6;
   map<string, string> ext = 7;
+  QuantizationProfile quant_profile = 8;
 }
 
 message ConvertModelEvent {
@@ -42,14 +43,40 @@ message ConvertProgress {
 
 message ConvertManifest {
   string manifest_json = 1;
+  QuantizationProfile quant_profile = 2;
+  QuantizedArtifact artifact = 3;
 }
 
 message ConvertCompleted {
   string output_path = 1;
+  QuantizationProfile quant_profile = 2;
+  QuantizedArtifact artifact = 3;
 }
 
 message ConvertFailed {
   ErrorStatus error = 1;
+}
+
+message QuantizationProfile {
+  string algorithm = 1;
+  string schema_version = 2;
+  string quant_profile_id = 3;
+  string weight_quant = 4;
+  string kv_quant = 5;
+  map<string, string> ext = 6;
+}
+
+message QuantizedArtifact {
+  string schema_version = 1;
+  string artifact_kind = 2;
+  string manifest_path = 3;
+  string bundle_path = 4;
+  uint64 artifact_bytes = 5;
+  uint64 manifest_bytes = 6;
+  bool serving_compatible = 7;
+  bool smoke_test_requested = 8;
+  bool smoke_test_passed = 9;
+  string runtime = 10;
 }
 
 message GetModelInfoRequest {
