@@ -843,6 +843,31 @@ def test_run_bench_persists_job_manifest_and_per_suite_results(tmp_path: Path) -
     assert latency_payload == expected_results["latency"]
 
 
+def test_run_bench_persists_completed_queue_state(tmp_path: Path) -> None:
+    service = build_service(tmp_path)
+
+    events = list(
+        service.RunBench(
+            maintenance_pb2.RunBenchRequest(
+                model_handle="melix-dev-text::1",
+                suites=["smoke", "latency"],
+            ),
+            context=None,
+        )
+    )
+
+    job_id = events[0].started.job_id
+    queue_record = tmp_path / "model-ops" / "bench" / "queue" / f"{job_id}.json"
+    payload = json.loads(queue_record.read_text(encoding="utf-8"))
+
+    assert payload["job_kind"] == "benchmark"
+    assert payload["status"] == "completed"
+    assert payload["model_id"] == "melix-dev-text"
+    assert payload["suite_ids"] == ["smoke", "latency"]
+    assert payload["started_at_unix_ms"] > 0
+    assert payload["completed_at_unix_ms"] > 0
+
+
 def test_doctor_reports_detected_and_overridden_model_identity(tmp_path: Path) -> None:
     environment = {
         "MELIX_DEV_RERANK_MODEL_PATH": "models/jina-v3-reranker",

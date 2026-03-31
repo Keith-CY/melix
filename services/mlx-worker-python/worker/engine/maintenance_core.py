@@ -12,6 +12,7 @@ from worker.model_ops.job_registry import ModelOpsJobRegistry
 from worker.model_ops.operation_locks import ModelOpsConflictRegistry
 from worker.model_ops.quantization_pipeline import OQQuantizationPipeline
 from worker.model_ops.quantization_profiles import protected_scope_for_request
+from worker.productization.benchmark_queue import BenchmarkQueueRecord, BenchmarkQueueStore
 from worker.registry import WorkerRegistry
 
 _CAPABILITY_SUPPORTED_MODALITIES_KEY = "melix.capability.supported_modalities"
@@ -62,6 +63,7 @@ class MaintenanceCore:
         self._quantization_pipeline = OQQuantizationPipeline(registry)
         self._operation_locks = ModelOpsConflictRegistry()
         self._benchmark_store = None
+        self._benchmark_queue_store = BenchmarkQueueStore()
 
     @staticmethod
     def _worker_quant_profile(profile) -> maintenance_pb2.QuantizationProfile:
@@ -415,7 +417,27 @@ class MaintenanceCore:
         output_dir.mkdir(parents=True, exist_ok=True)
 
         job = self._job_registry.start("bench", request.model_handle or "runtime", str(output_dir))
+        queued_at = int(time.time() * 1000)
+        self._benchmark_queue_store.enqueue(
+            queue_root=output_dir / "queue",
+            record=BenchmarkQueueRecord(
+                queue_item_id=job.job_id,
+                job_kind="benchmark",
+                model_id=(request.model_handle or "runtime").split("::", 1)[0],
+                suite_ids=tuple(suites),
+                parameters={},
+                status="queued",
+                created_at_unix_ms=queued_at,
+                updated_at_unix_ms=queued_at,
+            ),
+        )
         yield maintenance_pb2.RunBenchEvent(started=maintenance_pb2.BenchStarted(job_id=job.job_id))
+        self._benchmark_queue_store.transition(
+            queue_root=output_dir / "queue",
+            queue_item_id=job.job_id,
+            status="running",
+            updated_at_unix_ms=queued_at + 1,
+        )
 
         metrics: list[BenchMetricSpec] = []
         for index, suite in enumerate(suites, start=1):
@@ -459,6 +481,12 @@ class MaintenanceCore:
             results=result_records,
         )
         self._job_registry.complete(job.job_id, str(report_path))
+        self._benchmark_queue_store.transition(
+            queue_root=output_dir / "queue",
+            queue_item_id=job.job_id,
+            status="completed",
+            updated_at_unix_ms=int(time.time() * 1000),
+        )
         yield maintenance_pb2.RunBenchEvent(
             completed=maintenance_pb2.BenchCompleted(report_path=str(report_path))
         )

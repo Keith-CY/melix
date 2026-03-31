@@ -15,6 +15,7 @@ class BenchmarkQueueRecord:
     status: str
     created_at_unix_ms: int
     updated_at_unix_ms: int
+    started_at_unix_ms: int = 0
     completed_at_unix_ms: int = 0
 
     def to_dict(self) -> dict[str, object]:
@@ -27,6 +28,7 @@ class BenchmarkQueueRecord:
             "status": self.status,
             "created_at_unix_ms": self.created_at_unix_ms,
             "updated_at_unix_ms": self.updated_at_unix_ms,
+            "started_at_unix_ms": self.started_at_unix_ms,
             "completed_at_unix_ms": self.completed_at_unix_ms,
         }
 
@@ -41,6 +43,7 @@ class BenchmarkQueueRecord:
             status=str(payload["status"]),
             created_at_unix_ms=int(payload["created_at_unix_ms"]),
             updated_at_unix_ms=int(payload["updated_at_unix_ms"]),
+            started_at_unix_ms=int(payload.get("started_at_unix_ms", 0)),
             completed_at_unix_ms=int(payload.get("completed_at_unix_ms", 0)),
         )
 
@@ -77,6 +80,9 @@ class BenchmarkQueueStore:
         path = self._record_path(queue_root=queue_root, queue_item_id=queue_item_id)
         payload = json.loads(path.read_text(encoding="utf-8"))
         record = BenchmarkQueueRecord.from_dict(payload)
+        started_at_unix_ms = record.started_at_unix_ms
+        if status == "running" and started_at_unix_ms == 0:
+            started_at_unix_ms = updated_at_unix_ms
         completed_at_unix_ms = updated_at_unix_ms if status in {"completed", "failed"} else 0
         updated = BenchmarkQueueRecord(
             queue_item_id=record.queue_item_id,
@@ -87,6 +93,7 @@ class BenchmarkQueueStore:
             status=status,
             created_at_unix_ms=record.created_at_unix_ms,
             updated_at_unix_ms=updated_at_unix_ms,
+            started_at_unix_ms=started_at_unix_ms,
             completed_at_unix_ms=completed_at_unix_ms,
         )
         self._write_record(queue_root=queue_root, record=updated)

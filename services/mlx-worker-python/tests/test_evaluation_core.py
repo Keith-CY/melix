@@ -39,6 +39,13 @@ def test_run_local_suite_executes_packaged_dataset_and_persists_result(tmp_path:
     assert json.loads(run.persisted_paths["job"].read_text(encoding="utf-8")) == run.job.to_dict()
     assert json.loads(run.persisted_paths["result"].read_text(encoding="utf-8")) == run.result.to_dict()
 
+    queue_payload = json.loads((jobs_root / "queue" / f"{run.job.job_id}.json").read_text(encoding="utf-8"))
+    assert queue_payload["job_kind"] == "evaluation"
+    assert queue_payload["status"] == "completed"
+    assert queue_payload["parameters"]["sample_size"] == "2"
+    assert queue_payload["started_at_unix_ms"] > 0
+    assert queue_payload["completed_at_unix_ms"] > 0
+
 
 def test_run_local_suite_respects_sample_size_for_deterministic_accuracy(tmp_path: Path) -> None:
     dataset_root = _write_dataset_package(

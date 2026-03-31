@@ -4,7 +4,9 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 import re
+import time
 
+from worker.productization.benchmark_queue import BenchmarkQueueRecord, BenchmarkQueueStore
 from worker.productization.evaluation_schemas import EvaluationJob, EvaluationResult
 from worker.productization.evaluation_store import EvaluationStore
 from worker.productization.benchmark_schemas import (
@@ -30,9 +32,11 @@ class EvaluationCore:
         *,
         jobs_root: Path | None = None,
         store: EvaluationStore | None = None,
+        queue_store: BenchmarkQueueStore | None = None,
     ) -> None:
         self._jobs_root = Path(jobs_root).resolve() if jobs_root is not None else None
         self._store = store or EvaluationStore()
+        self._queue_store = queue_store or BenchmarkQueueStore()
 
     def run_local_suite(
         self,
@@ -64,6 +68,7 @@ class EvaluationCore:
         job_parameters = {"dataset_root": str(dataset_root)}
         if parameters:
             job_parameters.update(parameters)
+        job_parameters.setdefault("sample_size", str(len(selected)))
 
         report_path = self._result_path(dataset_root)
         job = build_evaluation_job(
@@ -84,15 +89,40 @@ class EvaluationCore:
             metrics={f"eval.{suite_id}.accuracy": accuracy},
             report_path=str(report_path),
         )
-        persisted_paths = (
-            self._store.persist_result(
+        persisted_paths: dict[str, Path] = {}
+        if self._jobs_root is not None:
+            queue_root = self._jobs_root / "queue"
+            queued_at = int(time.time() * 1000)
+            self._queue_store.enqueue(
+                queue_root=queue_root,
+                record=BenchmarkQueueRecord(
+                    queue_item_id=job.job_id,
+                    job_kind="evaluation",
+                    model_id=model_id,
+                    suite_ids=(suite_id,),
+                    parameters=job_parameters,
+                    status="queued",
+                    created_at_unix_ms=queued_at,
+                    updated_at_unix_ms=queued_at,
+                ),
+            )
+            self._queue_store.transition(
+                queue_root=queue_root,
+                queue_item_id=job.job_id,
+                status="running",
+                updated_at_unix_ms=queued_at + 1,
+            )
+            persisted_paths = self._store.persist_result(
                 jobs_root=self._jobs_root,
                 job=job,
                 result=result,
             )
-            if self._jobs_root is not None
-            else {}
-        )
+            self._queue_store.transition(
+                queue_root=queue_root,
+                queue_item_id=job.job_id,
+                status="completed",
+                updated_at_unix_ms=int(time.time() * 1000),
+            )
         return EvaluationRun(job=job, result=result, persisted_paths=persisted_paths)
 
     def _result_path(self, dataset_root: Path) -> Path:
