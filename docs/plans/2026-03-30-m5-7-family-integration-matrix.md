@@ -23,6 +23,20 @@ Close the embedding, rerank, and family-expansion milestone with a repository-ow
 - support declarations should match registry metadata and integration evidence
 - keep the matrix machine-readable where practical
 
+## Implementation Slice
+
+- add a repository-owned family integration matrix builder under `services/mlx-worker-python/worker/productization/`
+- derive contract rows from `WorkerModelCatalog` family-specific metadata instead of duplicating supported tasks or modalities in docs
+- record live-path evidence as integration test node references and operator runbook pointers
+- mark families without live verification as `contract_only` so support drift stays explicit
+- keep the matrix discoverable from both `docs/README.md` and `docs/runbooks/README.md`
+
+## Measurement Points
+
+- number of contract-supported embedding and rerank families represented in the matrix
+- number of matrix rows with live-path verification evidence versus `contract_only`
+- drift detection point: matrix-supported tasks and modalities must match catalog capability metadata for each family row
+
 ## Verification
 
 - `make py-test`

@@ -24,10 +24,17 @@ from worker.productization.release_gates import (
     load_release_gate_policy,
 )
 
+
+def build_family_support_matrix():
+    from worker.productization.family_support_matrix import build_family_support_matrix as _impl
+
+    return _impl()
+
 __all__ = [
     "DEFAULT_RELEASE_GATE_POLICY",
     "LaunchAgentSpec",
     "LocalProductLayout",
+    "build_family_support_matrix",
     "build_phase6_vision_metrics_report",
     "build_phase8_metrics_report",
     "build_release_gate_report",

@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from worker.productization import (
+    build_family_support_matrix,
     build_phase6_vision_metrics_report as exported_build_phase6_vision_metrics_report,
 )
 from worker.productization.acceptance_metrics import (
@@ -106,6 +107,38 @@ def test_build_phase6_vision_metrics_report_defaults_missing_values() -> None:
     assert metrics["vision.preprocess_peak_memory_bytes"] == 0.0
     assert metrics["vision.cache_memory_bytes"] == 0.0
     assert metrics["vision.cache_hit_rate"] == 0.0
+
+
+def test_build_family_support_matrix_exposes_contract_rows_and_live_path_evidence() -> None:
+    matrix = build_family_support_matrix()
+    rows = {
+        (row["capability"], row["family_id"]): row
+        for row in matrix["families"]
+    }
+
+    assert matrix["summary"]["family_count"] == 7
+    assert matrix["summary"]["live_verified_count"] == 6
+    assert matrix["summary"]["contract_only_count"] == 1
+
+    bge = rows[("embedding", "bge-m3")]
+    assert bge["contract"]["route_kind"] == "python_embedding"
+    assert bge["contract"]["supported_tasks"] == ["embed"]
+    assert bge["contract"]["supported_modalities"] == ["text"]
+    assert bge["live_path"]["status"] == "verified"
+    assert (
+        "tests/integration/test_non_text_endpoints.py::"
+        "test_embeddings_endpoint_supports_bge_and_mxbai_family_overrides"
+    ) in bge["live_path"]["integration_tests"]
+
+    basic = rows[("rerank", "basic")]
+    assert basic["contract"]["route_kind"] == "python_rerank"
+    assert basic["contract"]["supported_tasks"] == ["rerank"]
+    assert basic["live_path"]["status"] == "contract_only"
+
+    causal = rows[("rerank", "causal-lm")]
+    assert causal["contract"]["architecture"] == "causal-lm"
+    assert causal["contract"]["scoring_mode"] == "yes-no-logits"
+    assert causal["live_path"]["status"] == "verified"
 
 
 def test_compute_install_success_rate_returns_percentage() -> None:

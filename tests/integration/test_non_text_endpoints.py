@@ -5,6 +5,8 @@ import json
 from pathlib import Path
 import urllib.request
 
+from worker.productization import build_family_support_matrix
+
 from tests.integration.helpers import LiveMelixStack
 
 
@@ -330,3 +332,66 @@ def test_audio_speech_endpoint_returns_audio_bytes() -> None:
         assert payload == b"VOICE=alloy\nFORMAT=wav\nTEXT=hello speech"
     finally:
         stack.stop()
+
+
+def test_family_support_matrix_tracks_live_verified_family_overrides() -> None:
+    rows = {
+        (row["capability"], row["family_id"]): row
+        for row in build_family_support_matrix()["families"]
+    }
+
+    assert rows[("embedding", "bge-m3")]["live_path"]["status"] == "verified"
+    assert rows[("embedding", "mxbai-embed")]["live_path"]["status"] == "verified"
+    assert rows[("rerank", "causal-lm")]["live_path"]["status"] == "verified"
+    assert rows[("rerank", "basic")]["live_path"]["status"] == "contract_only"
+
+    repo_root = Path(__file__).resolve().parents[2]
+    bge_stack = LiveMelixStack(
+        repo_root,
+        environment_overrides={"MELIX_DEV_EMBED_FAMILY_ID": "bge-m3"},
+    )
+    mxbai_stack = LiveMelixStack(
+        repo_root,
+        environment_overrides={"MELIX_DEV_EMBED_FAMILY_ID": "mxbai-embed"},
+    )
+    causal_stack = LiveMelixStack(
+        repo_root,
+        environment_overrides={"MELIX_DEV_RERANK_FAMILY_ID": "causal-lm"},
+    )
+
+    try:
+        bge_stack.start()
+        bge_stack.wait_for_models(["melix-dev-embed"])
+        bge_status, bge_payload = _post_embeddings(bge_stack, "melix-dev-embed", ["query text"])
+        assert bge_status == 200
+        assert len(bge_payload["data"][0]["embedding"]) == 8
+    finally:
+        bge_stack.stop()
+
+    try:
+        mxbai_stack.start()
+        mxbai_stack.wait_for_models(["melix-dev-embed"])
+        mxbai_status, mxbai_payload = _post_embeddings(
+            mxbai_stack,
+            "melix-dev-embed",
+            ["query text"],
+        )
+        assert mxbai_status == 200
+        assert len(mxbai_payload["data"][0]["embedding"]) == 10
+    finally:
+        mxbai_stack.stop()
+
+    try:
+        causal_stack.start()
+        causal_stack.wait_for_models(["melix-dev-rerank"])
+        causal_status, causal_payload = _post_rerank(
+            causal_stack,
+            "melix-dev-rerank",
+            "swift runtime",
+            ["swift runtime is available", "python packaging release"],
+            2,
+        )
+        assert causal_status == 200
+        assert [item["index"] for item in causal_payload["data"]] == [0, 1]
+    finally:
+        causal_stack.stop()

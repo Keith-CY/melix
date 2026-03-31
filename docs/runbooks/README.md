@@ -14,6 +14,7 @@ A runbook should let a new contributor or agent diagnose and recover a known cla
 
 Current runbooks:
 
+- `model-family-support-matrix.md`
 - `phase-1-local-stack.md`
 - `phase-2-queue-pressure.md`
 - `phase-8-cache-recovery-benchmarks.md`

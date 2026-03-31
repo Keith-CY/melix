@@ -148,6 +148,7 @@ Recent decision records:
 
 Current runbooks:
 
+- `runbooks/model-family-support-matrix.md`
 - `runbooks/phase-1-local-stack.md`
 - `runbooks/phase-2-queue-pressure.md`
 - `runbooks/phase-6-chat-panel.md`
