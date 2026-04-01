@@ -171,6 +171,11 @@
       }
     }
   },
+  "evaluation": {
+    "eval.mmlu.accuracy": {
+      "min": 0.5
+    }
+  },
   "training": {
     "adapter_publish_ms": {
       "max": 150.0

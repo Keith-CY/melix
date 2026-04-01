@@ -1,0 +1,8 @@
+{
+  "schema_version": "melix.evaluation_dataset_package.v1",
+  "dataset_id": "mmlu.dev.v1",
+  "suite_id": "mmlu",
+  "version": "2026-04-01",
+  "sample_count": 8,
+  "split": "validation"
+}

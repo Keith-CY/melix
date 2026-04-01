@@ -5372,6 +5372,42 @@ final class WorkerScaffoldTests: XCTestCase {
             )
         }
 
+        let evaluationResponse = try await withTestServerContextRPCCancellationHandle { handle in
+            try await services.maintenance.runEvaluation(
+                request: Melix_Worker_V1_RunEvaluationRequest(),
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_MaintenanceService.Method.RunEvaluation.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
+        let exportResponse = try await withTestServerContextRPCCancellationHandle { handle in
+            try await services.maintenance.exportResults(
+                request: Melix_Worker_V1_ExportResultsRequest(),
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_MaintenanceService.Method.ExportResults.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
+        let submitResponse = try await withTestServerContextRPCCancellationHandle { handle in
+            try await services.maintenance.submitResults(
+                request: Melix_Worker_V1_SubmitResultsRequest(),
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_MaintenanceService.Method.SubmitResults.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
         try await withTestServerContextRPCCancellationHandle { handle in
             try await services.maintenance.runBench(
                 request: Melix_Worker_V1_RunBenchRequest(),
@@ -5394,6 +5430,12 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(infoResponse.error.code, "unimplemented")
         XCTAssertFalse(doctorResponse.ok)
         XCTAssertEqual(doctorResponse.error.code, "unimplemented")
+        XCTAssertFalse(evaluationResponse.ok)
+        XCTAssertEqual(evaluationResponse.error.code, "unimplemented")
+        XCTAssertFalse(exportResponse.ok)
+        XCTAssertEqual(exportResponse.error.code, "unimplemented")
+        XCTAssertFalse(submitResponse.ok)
+        XCTAssertEqual(submitResponse.error.code, "unimplemented")
         XCTAssertEqual(benchEvents.count, 1)
         XCTAssertEqual(benchEvents[0].failed.error.code, "unimplemented")
     }

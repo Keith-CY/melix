@@ -37,6 +37,9 @@ from worker.runtime.deterministic_embedding_runtime import DeterministicEmbeddin
 from worker.runtime.deterministic_backend import DeterministicTextBackend
 from worker.runtime.deterministic_rerank_runtime import DeterministicRerankRuntime
 from worker.runtime.mlx_text_runtime import MLXTextRuntime
+from worker.productization.benchmark_export import write_export_bundle
+from worker.productization.device_identity import collect_device_identity
+from worker.productization.submission_builder import build_submission_payload
 
 
 class BootstrapMetricsExporter:
@@ -269,17 +272,15 @@ class WorkerMaintenanceService(maintenance_pb2_grpc.MaintenanceServiceServicer):
         return response
 
     def ExportResults(self, request, context):
-        from worker.productization.benchmark_export import build_export_bundle
-
         try:
             jobs_root = Path(request.output_dir) if request.output_dir else self._evaluation_jobs_root.parent
-            bundle = build_export_bundle(jobs_root)
-            import json
-            export_json = json.dumps(bundle, indent=2)
+            export_path = jobs_root / "export-bundle.json"
+            bundle_path = write_export_bundle(jobs_root, export_path)
+            export_json = bundle_path.read_text(encoding="utf-8")
             return maintenance_pb2.ExportResultsResponse(
                 ok=True,
                 export_json=export_json,
-                export_path=str(jobs_root / "export-bundle.json"),
+                export_path=str(bundle_path),
             )
         except Exception as exc:
             return maintenance_pb2.ExportResultsResponse(
@@ -288,14 +289,13 @@ class WorkerMaintenanceService(maintenance_pb2_grpc.MaintenanceServiceServicer):
             )
 
     def SubmitResults(self, request, context):
-        from worker.productization.benchmark_export import build_export_bundle
-
         try:
             jobs_root = Path(request.output_dir) if request.output_dir else self._evaluation_jobs_root.parent
-            bundle = build_export_bundle(jobs_root)
-            bundle["device_metadata"] = dict(request.device_metadata)
-            import json
-            submission_json = json.dumps(bundle, indent=2)
+            submission = build_submission_payload(
+                jobs_root,
+                _device_identity_from_metadata(request.device_metadata),
+            )
+            submission_json = json.dumps(submission.to_dict(), indent=2)
             return maintenance_pb2.SubmitResultsResponse(
                 ok=True,
                 submission_json=submission_json,
@@ -316,6 +316,26 @@ class WorkerMaintenanceService(maintenance_pb2_grpc.MaintenanceServiceServicer):
             / "evaluation"
             / dataset_id
         ).resolve()
+
+
+def _device_identity_from_metadata(metadata: dict[str, str]) -> Any:
+    return collect_device_identity(
+        chip=metadata.get("chip") or None,
+        memory_gb=_parse_optional_float(metadata.get("memory_gb")),
+        os_version=metadata.get("os_version") or None,
+        os_build=metadata.get("os_build") or None,
+        hostname_hash=metadata.get("hostname_hash") or None,
+        melix_version=metadata.get("melix_version", "0.0.0-dev"),
+    )
+
+
+def _parse_optional_float(raw_value: str | None) -> float | None:
+    if raw_value in (None, ""):
+        return None
+    try:
+        return float(raw_value)
+    except ValueError:
+        return None
 
 
 class WorkerCacheService(cache_pb2_grpc.CacheServiceServicer):

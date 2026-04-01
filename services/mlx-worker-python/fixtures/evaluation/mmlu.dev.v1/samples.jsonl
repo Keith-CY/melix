@@ -1,0 +1,8 @@
+{"prompt": "3 + 4 ?", "expected": "7"}
+{"prompt": "7 + 2 ?", "expected": "9"}
+{"prompt": "10 - 5 ?", "expected": "5"}
+{"prompt": "12 - 8 ?", "expected": "4"}
+{"prompt": "6 + 3 ?", "expected": "9"}
+{"prompt": "9 - 1 ?", "expected": "8"}
+{"prompt": "15 - 7 ?", "expected": "8"}
+{"prompt": "20 - 11 ?", "expected": "9"}

@@ -19,7 +19,8 @@ Add queueing and parameterization controls for benchmark and evaluation jobs so 
 
 ## Implementation Notes
 
-- queue state should remain visible through both desktop and machine-readable surfaces
+- queue state should remain visible through machine-readable control-plane surfaces for this closure;
+  a richer dedicated desktop queue workflow can follow later without changing queue truth
 - parameter choices should be stored with the result for reproducibility
 - avoid benchmark execution that cannot be replayed because parameters were implicit
 

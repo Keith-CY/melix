@@ -763,6 +763,34 @@ def test_run_evaluation_uses_default_dataset_root_when_dataset_root_is_omitted(
     assert response.results[0].metrics[0].value == 1.0
 
 
+def test_run_evaluation_uses_checked_in_repo_fixture_when_dataset_root_is_omitted(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    service = build_service(tmp_path)
+    repo_root = Path(__file__).resolve().parents[3]
+    fixture_root = repo_root / "services" / "mlx-worker-python" / "fixtures" / "evaluation" / "mmlu.dev.v1"
+
+    assert fixture_root.exists() is True
+    monkeypatch.chdir(repo_root)
+
+    response = service.RunEvaluation(
+        maintenance_pb2.RunEvaluationRequest(
+            model_handle="melix-dev-text::1",
+            suite_id="mmlu",
+            dataset_id="mmlu.dev.v1",
+            sample_size=2,
+            parameters={"judge": "deterministic"},
+        ),
+        context=None,
+    )
+
+    assert response.ok is True
+    assert response.job.dataset_id == "mmlu.dev.v1"
+    assert response.results[0].metrics[0].name == "eval.mmlu.accuracy"
+    assert response.results[0].metrics[0].value == 1.0
+
+
 def test_run_evaluation_returns_typed_error_for_invalid_suite(tmp_path: Path) -> None:
     service = build_service(tmp_path)
 
@@ -915,6 +943,131 @@ def test_bench_events_forwards_parameters_to_queue_record(tmp_path: Path) -> Non
     payload = json.loads(queue_record.read_text(encoding="utf-8"))
     assert payload["parameters"]["sample_size"] == "32"
     assert payload["parameters"]["batch_factor"] == "2"
+
+
+def test_export_results_writes_bundle_and_collects_model_ops_artifacts(tmp_path: Path) -> None:
+    service = build_service(tmp_path)
+    dataset_root = tmp_path / "datasets" / "qa_smoke.dev.v1"
+    dataset_root.mkdir(parents=True)
+    (dataset_root / "manifest.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "melix.evaluation_dataset_package.v1",
+                "dataset_id": "qa_smoke.dev.v1",
+                "suite_id": "mmlu",
+                "version": "2026-03-31",
+                "sample_count": 1,
+                "split": "validation",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (dataset_root / "samples.jsonl").write_text(
+        json.dumps({"prompt": "2+2?", "expected": "4"}) + "\n",
+        encoding="utf-8",
+    )
+
+    _ = list(
+        service.RunBench(
+            maintenance_pb2.RunBenchRequest(
+                model_handle="melix-dev-text::1",
+                suites=["smoke", "latency"],
+            ),
+            context=None,
+        )
+    )
+    evaluation = service.RunEvaluation(
+        maintenance_pb2.RunEvaluationRequest(
+            model_handle="melix-dev-text::1",
+            suite_id="mmlu",
+            dataset_id="qa_smoke.dev.v1",
+            dataset_root=str(dataset_root),
+            sample_size=1,
+        ),
+        context=None,
+    )
+    assert evaluation.ok is True
+
+    response = service.ExportResults(
+        maintenance_pb2.ExportResultsRequest(),
+        context=None,
+    )
+
+    assert response.ok is True
+    assert Path(response.export_path).exists() is True
+    payload = json.loads(response.export_json)
+    assert len(payload["benchmark_jobs"]) == 1
+    assert len(payload["evaluation_jobs"]) == 1
+    assert json.loads(Path(response.export_path).read_text(encoding="utf-8")) == payload
+
+
+def test_submit_results_returns_typed_submission_payload(tmp_path: Path) -> None:
+    service = build_service(tmp_path)
+    dataset_root = tmp_path / "datasets" / "qa_smoke.dev.v1"
+    dataset_root.mkdir(parents=True)
+    (dataset_root / "manifest.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "melix.evaluation_dataset_package.v1",
+                "dataset_id": "qa_smoke.dev.v1",
+                "suite_id": "mmlu",
+                "version": "2026-03-31",
+                "sample_count": 1,
+                "split": "validation",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (dataset_root / "samples.jsonl").write_text(
+        json.dumps({"prompt": "2+2?", "expected": "4"}) + "\n",
+        encoding="utf-8",
+    )
+
+    _ = list(
+        service.RunBench(
+            maintenance_pb2.RunBenchRequest(
+                model_handle="melix-dev-text::1",
+                suites=["smoke"],
+            ),
+            context=None,
+        )
+    )
+    evaluation = service.RunEvaluation(
+        maintenance_pb2.RunEvaluationRequest(
+            model_handle="melix-dev-text::1",
+            suite_id="mmlu",
+            dataset_id="qa_smoke.dev.v1",
+            dataset_root=str(dataset_root),
+            sample_size=1,
+        ),
+        context=None,
+    )
+    assert evaluation.ok is True
+
+    response = service.SubmitResults(
+        maintenance_pb2.SubmitResultsRequest(
+            device_metadata={
+                "chip": "Apple M4",
+                "memory_gb": "48.0",
+                "os_version": "15.0",
+                "os_build": "24A335",
+                "hostname_hash": "test-host",
+                "melix_version": "0.1.0",
+            }
+        ),
+        context=None,
+    )
+
+    assert response.ok is True
+    payload = json.loads(response.submission_json)
+    assert payload["schema_version"] == "melix.submission.v1"
+    assert payload["device"]["chip"] == "Apple M4"
+    assert payload["device"]["memory_gb"] == 48.0
+    assert payload["device"]["melix_version"] == "0.1.0"
+    assert len(payload["benchmark_jobs"]) == 1
+    assert len(payload["evaluation_jobs"]) == 1
 
 
 def test_doctor_reports_detected_and_overridden_model_identity(tmp_path: Path) -> None:

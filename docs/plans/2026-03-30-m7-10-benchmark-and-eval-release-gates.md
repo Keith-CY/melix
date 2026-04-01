@@ -31,4 +31,5 @@ Feed benchmark and evaluation outputs into release-gate automation so model-qual
 ## Acceptance
 
 - release gates can fail closed on benchmark or evaluation regressions
-- benchmark and evaluation evidence are first-class release inputs
+- benchmark and evaluation evidence are first-class release inputs in the checked-in policy and
+  local release-gate entrypoints

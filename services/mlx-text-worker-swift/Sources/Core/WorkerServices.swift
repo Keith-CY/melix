@@ -571,6 +571,42 @@ final class MaintenanceRPCService: Melix_Worker_V1_MaintenanceService.SimpleServ
         event.failed = failed
         try await response.write(event)
     }
+
+    func runEvaluation(
+        request: Melix_Worker_V1_RunEvaluationRequest,
+        context: GRPCCore.ServerContext
+    ) async throws -> Melix_Worker_V1_RunEvaluationResponse {
+        metrics.increment("swift_text.unimplemented_rpc_count")
+
+        var response = Melix_Worker_V1_RunEvaluationResponse()
+        response.ok = false
+        response.error = makeUnimplementedStatus("RunEvaluation is handled by the Python worker family.")
+        return response
+    }
+
+    func exportResults(
+        request: Melix_Worker_V1_ExportResultsRequest,
+        context: GRPCCore.ServerContext
+    ) async throws -> Melix_Worker_V1_ExportResultsResponse {
+        metrics.increment("swift_text.unimplemented_rpc_count")
+
+        var response = Melix_Worker_V1_ExportResultsResponse()
+        response.ok = false
+        response.error = makeUnimplementedStatus("ExportResults is handled by the Python worker family.")
+        return response
+    }
+
+    func submitResults(
+        request: Melix_Worker_V1_SubmitResultsRequest,
+        context: GRPCCore.ServerContext
+    ) async throws -> Melix_Worker_V1_SubmitResultsResponse {
+        metrics.increment("swift_text.unimplemented_rpc_count")
+
+        var response = Melix_Worker_V1_SubmitResultsResponse()
+        response.ok = false
+        response.error = makeUnimplementedStatus("SubmitResults is handled by the Python worker family.")
+        return response
+    }
 }
 
 private func saveRestoreErrorCode(for error: WorkerRuntimeRegistryError) -> String {

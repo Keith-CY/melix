@@ -95,6 +95,21 @@ def test_build_export_bundle_combines_benchmark_and_evaluation_artifacts(tmp_pat
     assert len(bundle["evaluation_jobs"]) == 1
 
 
+def test_build_export_bundle_collects_benchmark_and_evaluation_from_model_ops_root(
+    tmp_path: Path,
+) -> None:
+    jobs_root = tmp_path / "model-ops"
+    _write_bench_fixtures(jobs_root / "bench")
+    _write_eval_fixtures(jobs_root / "evaluation")
+
+    bundle = build_export_bundle(jobs_root)
+
+    assert len(bundle["benchmark_jobs"]) == 1
+    assert len(bundle["benchmark_results"]) == 1
+    assert len(bundle["evaluation_jobs"]) == 1
+    assert len(bundle["evaluation_results"]) == 1
+
+
 def test_write_export_bundle_persists_structured_json(tmp_path: Path) -> None:
     _write_bench_fixtures(tmp_path)
     output = tmp_path / "export" / "bundle.json"

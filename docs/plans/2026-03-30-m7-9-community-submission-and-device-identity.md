@@ -21,6 +21,8 @@ Add a submission path for benchmark and evaluation results with stable device id
 
 - device identity should be stable enough for comparison while remaining explicit and auditable
 - submission should remain a productized action rather than a side effect of local benchmarking
+- operator visibility for this closure may remain a control-plane or XPC mediated payload plus
+  runbook flow rather than a dedicated desktop submission screen
 - keep the payload shape compatible with later community-facing surfaces
 
 ## Verification

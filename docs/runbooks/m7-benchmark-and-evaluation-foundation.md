@@ -7,6 +7,7 @@ Run the repository-owned verification flow for the first executable M7 benchmark
 - typed serving benchmark persistence
 - offline packaged evaluation execution
 - control-plane evaluation command wiring
+- export and submission payload shaping over persisted artifacts
 
 ## Preconditions
 
@@ -36,23 +37,53 @@ Expected outcomes:
 - release-gate benchmark evidence remains compatible
 - packaged dataset execution is deterministic
 - `RunEvaluation` returns typed worker job and result payloads
+- `ExportResults` writes a machine-readable bundle to the reported path
+- `SubmitResults` returns a typed `melix.submission.v1` payload
 - the Python control-plane bridge forwards `run-evaluation`
+
+## Checked-In Offline Dataset
+
+The repository-owned default evaluation fixture lives at:
+
+```bash
+services/mlx-worker-python/fixtures/evaluation/mmlu.dev.v1/
+```
+
+It contains:
+
+- `manifest.json`
+- `samples.jsonl`
+
+When the control-plane or worker `RunEvaluation` path uses `dataset_id = "mmlu.dev.v1"` and omits
+`dataset_root`, the worker resolves this checked-in fixture from the repository checkout.
 
 ## Swift Verification
 
-Run the focused control-plane evaluation command test using a scratch build path:
+Run the focused control-plane benchmark or evaluation command tests using a scratch build path:
 
 ```bash
 HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/.build/ModuleCache.noindex" \
 swift test --package-path services/control-plane-swift \
   --scratch-path /tmp/melix-control-plane-m7-3-5-test \
-  --filter 'ControlPlaneServiceTests/executeHandlesOpsRunEvaluationThroughTheModelOperationsWorker'
+  --filter 'ControlPlaneServiceTests/executeHandlesOpsRunEvaluationThroughTheModelOperationsWorker|ControlPlaneServiceTests/executeHandlesOpsExportResultsThroughTheModelOperationsWorker|ControlPlaneServiceTests/executeHandlesOpsSubmitResultsThroughTheModelOperationsWorker'
 ```
 
 Expected outcomes:
 
 - `ops.run_evaluation` maps to the model-operations worker
 - typed `evaluationJob` and `evaluationResults` fields are populated on `OpsReply`
+- `ops.export_results` surfaces `exportBundleJson`
+- `ops.submit_results` surfaces `submissionJson`
+
+## Export And Submit Semantics
+
+- `ExportResults` reads persisted benchmark artifacts from `model-ops/bench/` and persisted
+  evaluation artifacts from `model-ops/evaluation/`, then writes `export-bundle.json` at the
+  reported `export_path`.
+- `SubmitResults` uses the same persisted artifact roots and returns a typed
+  `melix.submission.v1` payload with stable device identity fields under `device`.
+- For this M7 closure, operator visibility is via machine-readable control-plane/XPC payloads and
+  this runbook rather than a dedicated desktop comparison or submission workflow.
 
 ## Coverage
 
@@ -90,4 +121,5 @@ Expected outcome:
 - evaluation dataset packages run locally without network fetches
 - evaluation jobs and results are persisted and machine-readable
 - control-plane evaluation command returns typed payloads
+- export and submission payloads are repository-owned and machine-readable
 - verification commands are repository-owned and reproducible

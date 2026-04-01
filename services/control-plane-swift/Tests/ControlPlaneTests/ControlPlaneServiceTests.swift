@@ -971,6 +971,62 @@ struct ControlPlaneServiceTests {
         #expect(response.ops.evaluationResults[0].metrics[0].value == 1.0)
     }
 
+    @Test("execute handles ops.export_results through the model-operations worker")
+    func executeHandlesOpsExportResultsThroughTheModelOperationsWorker() async throws {
+        let modelOpsClient = ScriptedModelOperationsWorkerClient()
+        await modelOpsClient.setExportResponse({
+            var response = Melix_Worker_V1_ExportResultsResponse()
+            response.ok = true
+            response.exportJson = """
+            {"export_schema_version":"melix.benchmark_export.v1","benchmark_jobs":[{"job_id":"bench-123"}]}
+            """
+            response.exportPath = "/tmp/melix-export-bundle.json"
+            return response
+        }())
+        let service = ControlPlaneService(
+            modelCatalog: ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels()),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                modelOperationsClient: modelOpsClient
+            )
+        )
+
+        let response = try await service.execute(makeExportResultsRequest())
+        let lastRequest = try #require(await modelOpsClient.lastExportRequest)
+
+        #expect(response.ok)
+        #expect(lastRequest.outputDir == "/tmp/melix-export")
+        #expect(response.ops.exportBundleJson.contains("\"export_schema_version\":\"melix.benchmark_export.v1\""))
+    }
+
+    @Test("execute handles ops.submit_results through the model-operations worker")
+    func executeHandlesOpsSubmitResultsThroughTheModelOperationsWorker() async throws {
+        let modelOpsClient = ScriptedModelOperationsWorkerClient()
+        await modelOpsClient.setSubmitResponse({
+            var response = Melix_Worker_V1_SubmitResultsResponse()
+            response.ok = true
+            response.submissionJson = """
+            {"schema_version":"melix.submission.v1","device":{"chip":"Apple M4"}}
+            """
+            return response
+        }())
+        let service = ControlPlaneService(
+            modelCatalog: ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels()),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                modelOperationsClient: modelOpsClient
+            )
+        )
+
+        let response = try await service.execute(makeSubmitResultsRequest())
+        let lastRequest = try #require(await modelOpsClient.lastSubmitRequest)
+
+        #expect(response.ok)
+        #expect(lastRequest.outputDir == "/tmp/melix-export")
+        #expect(lastRequest.deviceMetadata["melix_version"] == "0.1.0")
+        #expect(response.ops.submissionJson.contains("\"schema_version\":\"melix.submission.v1\""))
+    }
+
     @Test("execute handles image.generate through the image worker and records the image job")
     func executeHandlesImageGenerateThroughTheImageWorker() async throws {
         let modelCatalog = ModelCatalog(seedModels: ModelCatalog.phaseSevenContractSeedModels())
@@ -2675,6 +2731,29 @@ struct ControlPlaneServiceTests {
         request.ops.runEvaluation.sampleSize = 8
         request.ops.runEvaluation.parameters = [
             "judge": "deterministic",
+        ]
+        return request
+    }
+
+    private func makeExportResultsRequest() -> Melix_Controlplane_V1_ControlPlaneRequest {
+        var request = Melix_Controlplane_V1_ControlPlaneRequest()
+        request.requestID = "req-ops-export"
+        request.commandType = "ops.export_results"
+        request.ops = Melix_Controlplane_V1_OpsCommand()
+        request.ops.exportResults = Melix_Controlplane_V1_ExportResults()
+        request.ops.exportResults.outputDir = "/tmp/melix-export"
+        return request
+    }
+
+    private func makeSubmitResultsRequest() -> Melix_Controlplane_V1_ControlPlaneRequest {
+        var request = Melix_Controlplane_V1_ControlPlaneRequest()
+        request.requestID = "req-ops-submit"
+        request.commandType = "ops.submit_results"
+        request.ops = Melix_Controlplane_V1_OpsCommand()
+        request.ops.submitResults = Melix_Controlplane_V1_SubmitResults()
+        request.ops.submitResults.outputDir = "/tmp/melix-export"
+        request.ops.submitResults.deviceMetadata = [
+            "melix_version": "0.1.0",
         ]
         return request
     }

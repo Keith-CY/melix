@@ -480,6 +480,15 @@ def test_default_policy_includes_evaluation_section() -> None:
     assert DEFAULT_RELEASE_GATE_POLICY["evaluation"]["eval.mmlu.accuracy"]["min"] == 0.5
 
 
+def test_checked_in_release_gate_policy_includes_evaluation_thresholds() -> None:
+    repo_root = Path(__file__).resolve().parents[3]
+
+    policy = load_release_gate_policy(repo_root / "infra" / "release" / "phase8-release-gate-policy.json")
+
+    assert "evaluation" in policy
+    assert policy["evaluation"]["eval.mmlu.accuracy"]["min"] == 0.5
+
+
 def test_collect_evaluation_evidence_returns_metrics(tmp_path: Path) -> None:
     evidence = collect_evaluation_evidence(tmp_path / "jobs")
 

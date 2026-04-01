@@ -8,7 +8,7 @@ _EXPORT_SCHEMA_VERSION = "melix.benchmark_export.v1"
 
 
 def collect_benchmark_artifacts(jobs_root: Path) -> dict[str, object]:
-    jobs_root = Path(jobs_root)
+    jobs_root = _resolve_artifact_root(Path(jobs_root), fallback_dir="bench", job_filename="bench-job.json")
     jobs: list[dict[str, object]] = []
     results: list[dict[str, object]] = []
 
@@ -24,7 +24,11 @@ def collect_benchmark_artifacts(jobs_root: Path) -> dict[str, object]:
 
 
 def collect_evaluation_artifacts(jobs_root: Path) -> dict[str, object]:
-    jobs_root = Path(jobs_root)
+    jobs_root = _resolve_artifact_root(
+        Path(jobs_root),
+        fallback_dir="evaluation",
+        job_filename="evaluation-job.json",
+    )
     jobs: list[dict[str, object]] = []
     results: list[dict[str, object]] = []
 
@@ -125,3 +129,12 @@ def _find_metric_value(
             if metric.get("name") == metric_name:
                 return float(metric["value"])
     return None
+
+
+def _resolve_artifact_root(jobs_root: Path, *, fallback_dir: str, job_filename: str) -> Path:
+    direct_job = jobs_root / job_filename
+    fallback_root = jobs_root / fallback_dir
+    fallback_job = fallback_root / job_filename
+    if direct_job.is_file() or not fallback_job.is_file():
+        return jobs_root
+    return fallback_root

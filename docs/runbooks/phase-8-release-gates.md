@@ -24,6 +24,7 @@ The release gate checks:
 
 - install asset generation
 - benchmark thresholds
+- evaluation thresholds
 - cache recovery benchmark evidence
 - restart recovery
 - training sanity
@@ -60,6 +61,9 @@ infra/release/phase8-release-gate-policy.json
 ```
 
 Update the policy in the same change as any intentional benchmark or release-threshold adjustment.
+
+The checked-in policy now includes an `evaluation` section for deterministic suite metrics such as
+`eval.mmlu.accuracy`. Treat benchmark and evaluation regressions as first-class release inputs.
 
 ## CI Workflow
 

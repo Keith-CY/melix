@@ -21,6 +21,8 @@ Allow benchmark and evaluation results to be exported in raw form and compared i
 
 - export should preserve the underlying structured result model without lossy formatting
 - comparison tables should operate on persisted results rather than transient UI state
+- operator visibility for this closure may remain machine-readable through control-plane or XPC
+  payloads and runbooks rather than a dedicated desktop comparison table workflow
 - keep serving and evaluation results distinguishable in exports and tables
 
 ## Verification
