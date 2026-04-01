@@ -467,9 +467,11 @@ struct RuntimeViewModelTests {
         await viewModel.refreshDesktopFoundation()
 
         let foundation = viewModel.desktopFoundationState
+        let hasSessionCard = foundation.dashboardCards.contains { $0.id == "sessions" && $0.value == "1" }
+        let hasWarmModel = foundation.models.contains { $0.modelID == "melix-dev-text" && $0.stateText == "Warm" }
         #expect(viewModel.statusTitle == "Melix Degraded")
-        #expect(foundation.dashboardCards.contains(where: { $0.id == "sessions" && $0.value == "1" }))
-        #expect(foundation.models.contains(where: { $0.modelID == "melix-dev-text" && $0.stateText == "Warm" }))
+        #expect(hasSessionCard)
+        #expect(hasWarmModel)
         #expect(await metrics.snapshot()["menu.foundation_refresh_ms"] != nil)
         #expect(await client.recordedActions.contains("snapshot"))
     }
@@ -537,11 +539,14 @@ struct RuntimeViewModelTests {
         }
 
         let foundation = viewModel.desktopFoundationState
+        let hasSessionCard = foundation.dashboardCards.contains { $0.id == "sessions" && $0.value == "1" }
+        let hasCacheCard = foundation.dashboardCards.contains { $0.id == "cache" && $0.detail == "L1 / L2" }
+        let hasMemoryCard = foundation.dashboardCards.contains { $0.id == "memory" && $0.detail.contains("8") }
         #expect(viewModel.statusTitle == "Melix Draining")
         #expect(viewModel.lastError == "thermal pressure")
-        #expect(foundation.dashboardCards.contains(where: { $0.id == "sessions" && $0.value == "1" }))
-        #expect(foundation.dashboardCards.contains(where: { $0.id == "cache" && $0.detail == "L1 / L2" }))
-        #expect(foundation.dashboardCards.contains(where: { $0.id == "memory" && $0.detail.contains("8") }))
+        #expect(hasSessionCard)
+        #expect(hasCacheCard)
+        #expect(hasMemoryCard)
         #expect(foundation.logs.contains(where: { $0.message == "Session session-42 updated" }))
         #expect(foundation.logs.contains(where: { $0.message == "Cache summary updated" }))
         #expect(foundation.logs.contains(where: { $0.message == "Resource pressure in metal" && $0.level == "warning" }))
@@ -690,8 +695,26 @@ struct RuntimeViewModelTests {
                 operation: "registry_snapshot",
                 outputPath: "/tmp/melix-model-ops-registry/registry_snapshot.json",
                 manifestJSON: makeRegistrySnapshotManifest(
+                    publishedRepo: "",
+                    targetRepo: "melix/adapters/melix-dev-adapter",
+                    activationStatus: "activated",
+                    derivedModelID: "melix-dev-text-lora-adapter",
+                    derivedModelPath: "/tmp/melix-derived/model"
+                )
+            ),
+            forNamedOperation: "registry_snapshot"
+        )
+        await viewModel.activateLatestAdapter()
+        await client.configureModelOperation(
+            makeNamedModelOperationResult(
+                operation: "registry_snapshot",
+                outputPath: "/tmp/melix-model-ops-registry/registry_snapshot.json",
+                manifestJSON: makeRegistrySnapshotManifest(
                     publishedRepo: "melix/adapters/melix-dev-adapter",
-                    targetRepo: "melix/adapters/melix-dev-adapter"
+                    targetRepo: "melix/adapters/melix-dev-adapter",
+                    activationStatus: "activated",
+                    derivedModelID: "melix-dev-text-lora-adapter",
+                    derivedModelPath: "/tmp/melix-derived/model"
                 )
             ),
             forNamedOperation: "registry_snapshot"
@@ -703,6 +726,7 @@ struct RuntimeViewModelTests {
         #expect(await client.recordedActions.contains("bench"))
         #expect(await client.recordedActions.contains("operation:quantize:melix-dev-text"))
         #expect(await client.recordedActions.contains("operation:train_lora:melix-dev-text"))
+        #expect(await client.recordedActions.contains("operation:activate_adapter:melix-dev-text"))
         #expect(await client.recordedActions.contains("operation:upload:melix-dev-text"))
         #expect(await client.recordedActions.contains("operation:registry_snapshot:melix-dev-text"))
         #expect(viewModel.selectedModelInfo?.modelKind == "text")
@@ -713,6 +737,10 @@ struct RuntimeViewModelTests {
         #expect(viewModel.lastModelOperation?.operation == "upload")
         #expect(viewModel.lastModelOperation?.outputPath.contains("/tmp/melix-upload-adapter") == true)
         #expect(viewModel.adapterPackages.first?.adapterName == "melix-dev-adapter")
+        #expect(viewModel.adapterPackages.first?.statusText == "Published")
+        #expect(viewModel.adapterPackages.first?.activationStatusText == "Activated")
+        #expect(viewModel.adapterPackages.first?.derivedModelID == "melix-dev-text-lora-adapter")
+        #expect(viewModel.adapterPackages.first?.responseOnlyEnabled == true)
         #expect(viewModel.adapterPackages.first?.publishedRepo == "melix/adapters/melix-dev-adapter")
         #expect(viewModel.trainingHistory.first?.datasetURI == "datasets/melix-dev")
         #expect(await metrics.snapshot()["menu.model_info_ms"] != nil)
@@ -943,7 +971,10 @@ struct RuntimeViewModelTests {
 
         #expect(adapter.adapterName == "pending-adapter")
         #expect(adapter.statusText == "Queued for publish")
+        #expect(adapter.activationStatusText == "Pending activation")
         #expect(adapter.targetRepo.isEmpty)
+        #expect(adapter.responseOnlyEnabled)
+        #expect(adapter.gradientCheckpointingEnabled)
         #expect(adapter.trainingDurationText == "950ms")
         #expect(adapter.publishDurationText == "n/a")
         #expect(trainingJob.adapterName == "pending-adapter")
@@ -1825,7 +1856,11 @@ private func makeNamedModelOperationResult(
 
 private func makeRegistrySnapshotManifest(
     publishedRepo: String,
-    targetRepo: String
+    targetRepo: String,
+    activationStatus: String = "pending_activation",
+    derivedModelID: String = "",
+    derivedModelPath: String = "",
+    status: String? = nil
 ) -> String {
     #"""
     {
@@ -1854,11 +1889,29 @@ private func makeRegistrySnapshotManifest(
           "source_model": "melix-dev-text",
           "dataset_uri": "datasets/melix-dev",
           "output_path": "/tmp/melix-train-lora/train_lora.adapter.json",
+          "activation_status": "\#(activationStatus)",
+          "derived_model_id": "\#(derivedModelID)",
+          "derived_model_path": "\#(derivedModelPath)",
+          "exportable_state": "ready",
+          "published_state": "\#(publishedRepo.isEmpty ? "not_published" : "published")",
           "target_repo": "\#(targetRepo)",
           "published_repo": "\#(publishedRepo)",
-          "status": "\#(publishedRepo.isEmpty ? "completed" : "published")",
+          "status": "\#(status ?? (publishedRepo.isEmpty ? (activationStatus == "activated" ? "activated" : "completed") : "published"))",
+          "response_only": true,
+          "gradient_checkpointing": false,
           "training_duration_ms": 1420.0,
+          "activation_duration_ms": \#(derivedModelID.isEmpty ? "0.0" : "321.0"),
           "adapter_publish_ms": 118.0
+        }
+      ],
+      "derived_models": [
+        {
+          "model_id": "\#(derivedModelID)",
+          "model_path": "\#(derivedModelPath)",
+          "adapter_set_hash": "\#(derivedModelID.isEmpty ? "" : "adapter-alpha")",
+          "source_model": "melix-dev-text",
+          "activation_mode": "\#(derivedModelID.isEmpty ? "" : "fused_derived_model")",
+          "status": "\#(derivedModelID.isEmpty ? "" : "activated")"
         }
       ]
     }
@@ -1903,13 +1956,22 @@ private func makePendingRegistrySnapshotManifest() -> String {
           "source_model": "melix-dev-text",
           "dataset_uri": "datasets/pending",
           "output_path": "/tmp/melix-train-lora/pending.adapter.json",
+          "activation_status": "pending_activation",
+          "derived_model_id": "",
+          "derived_model_path": "",
+          "exportable_state": "ready",
+          "published_state": "not_published",
           "target_repo": "",
           "published_repo": "",
           "status": "queued_for_publish",
+          "response_only": true,
+          "gradient_checkpointing": true,
           "training_duration_ms": 950,
+          "activation_duration_ms": 0,
           "adapter_publish_ms": 0
         }
-      ]
+      ],
+      "derived_models": []
     }
     """#
 }

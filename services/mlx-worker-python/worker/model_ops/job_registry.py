@@ -71,6 +71,7 @@ class ModelOpsJobRegistry:
         return {
             "jobs": jobs,
             "adapters": self._adapter_registry(jobs),
+            "derived_models": self._derived_model_registry(jobs),
         }
 
     @staticmethod
@@ -117,6 +118,8 @@ class ModelOpsJobRegistry:
     def _adapter_registry(jobs: list[dict[str, Any]]) -> list[dict[str, Any]]:
         publish_by_name: dict[str, dict[str, Any]] = {}
         publish_by_path: dict[str, dict[str, Any]] = {}
+        activation_by_hash: dict[str, dict[str, Any]] = {}
+        activation_by_path: dict[str, dict[str, Any]] = {}
 
         for job in jobs:
             if job["operation"] != "upload" or job["status"] != "completed":
@@ -138,6 +141,24 @@ class ModelOpsJobRegistry:
             if artifact_path:
                 publish_by_path[artifact_path] = publish
 
+        for job in jobs:
+            if job["operation"] != "activate_adapter" or job["status"] != "completed":
+                continue
+            manifest = job.get("manifest") or {}
+            activation = {
+                "job_id": job["job_id"],
+                "derived_model_id": str(manifest.get("derived_model_id", "")),
+                "derived_model_path": str(manifest.get("derived_model_path", "")),
+                "activation_duration_ms": float(manifest.get("activation_duration_ms", 0.0)),
+                "status": "activated",
+            }
+            adapter_set_hash = str(manifest.get("adapter_set_hash", ""))
+            adapter_manifest_path = str(manifest.get("adapter_manifest_path", ""))
+            if adapter_set_hash:
+                activation_by_hash[adapter_set_hash] = activation
+            if adapter_manifest_path:
+                activation_by_path[adapter_manifest_path] = activation
+
         adapters: list[dict[str, Any]] = []
         for job in jobs:
             if job["operation"] != "train_lora" or job["status"] != "completed":
@@ -146,7 +167,16 @@ class ModelOpsJobRegistry:
             manifest = job.get("manifest") or {}
             adapter_name = str(manifest.get("adapter_name", ""))
             output_path = str(job.get("output_path", ""))
+            adapter_set_hash = str(manifest.get("adapter_set_hash", ""))
             publish = publish_by_path.get(output_path) or publish_by_name.get(adapter_name)
+            activation = activation_by_path.get(output_path) or activation_by_hash.get(adapter_set_hash)
+
+            if publish:
+                status = "published"
+            elif activation:
+                status = "activated"
+            else:
+                status = job["status"]
 
             adapters.append(
                 {
@@ -156,13 +186,43 @@ class ModelOpsJobRegistry:
                     "source_model": job["source_model"],
                     "dataset_uri": str(manifest.get("dataset_uri", "")),
                     "output_path": output_path,
+                    "adapter_set_hash": adapter_set_hash,
                     "target_repo": str(manifest.get("target_repo", "")),
                     "published_repo": publish["target_repo"] if publish else "",
                     "publish_job_id": publish["job_id"] if publish else "",
-                    "status": "published" if publish else job["status"],
+                    "status": status,
+                    "activation_status": activation["status"] if activation else "pending_activation",
+                    "derived_model_id": activation["derived_model_id"] if activation else "",
+                    "derived_model_path": activation["derived_model_path"] if activation else "",
+                    "activation_job_id": activation["job_id"] if activation else "",
+                    "activation_duration_ms": activation["activation_duration_ms"] if activation else 0.0,
+                    "exportable_state": "ready",
+                    "published_state": "published" if publish else "not_published",
+                    "response_only": bool(manifest.get("response_only", False)),
+                    "gradient_checkpointing": bool(manifest.get("gradient_checkpointing", False)),
                     "training_duration_ms": float(manifest.get("training_duration_ms", 0.0)),
                     "adapter_publish_ms": float(manifest.get("adapter_publish_ms", 0.0)),
                 }
             )
 
         return adapters
+
+    @staticmethod
+    def _derived_model_registry(jobs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        derived_models: list[dict[str, Any]] = []
+        for job in jobs:
+            if job["operation"] != "activate_adapter" or job["status"] != "completed":
+                continue
+            manifest = job.get("manifest") or {}
+            derived_models.append(
+                {
+                    "job_id": job["job_id"],
+                    "model_id": str(manifest.get("derived_model_id", "")),
+                    "model_path": str(manifest.get("derived_model_path", "")),
+                    "adapter_set_hash": str(manifest.get("adapter_set_hash", "")),
+                    "source_model": str(manifest.get("source_model", "")),
+                    "activation_mode": str(manifest.get("activation_mode", "")),
+                    "status": "activated",
+                }
+            )
+        return derived_models

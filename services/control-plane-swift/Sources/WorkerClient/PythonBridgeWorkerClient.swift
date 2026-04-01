@@ -357,6 +357,17 @@ public enum BootstrapWorkerPreparation {
         "tool_parser_namespaces",
         "tool_parser_xml_fallback",
     ]
+    private static let genericTextExtKeys = [
+        "melix.model_path",
+        "melix.model_revision",
+        "melix.tokenizer_hash",
+        "melix.parser_mode",
+        "melix.reasoning_mode",
+        "melix.derived_from_adapter",
+        "melix.derived_from_model_id",
+        "melix.derived_from_model_revision",
+        "melix.activation_mode",
+    ]
 
     public static func modelSpec(for modelID: String) -> Melix_Worker_V1_ModelSpec? {
         switch modelID {
@@ -384,7 +395,15 @@ public enum BootstrapWorkerPreparation {
     public static func modelSpec(
         for summary: Melix_Controlplane_V1_ModelSummary
     ) -> Melix_Worker_V1_ModelSpec? {
-        guard var spec = modelSpec(for: summary.modelID) else { return nil }
+        let baseSpec: Melix_Worker_V1_ModelSpec
+        if let builtIn = modelSpec(for: summary.modelID) {
+            baseSpec = builtIn
+        } else if let generic = genericTextModel(from: summary) {
+            baseSpec = generic
+        } else {
+            return nil
+        }
+        var spec = baseSpec
         applyExtOverride(for: adapterSetHashExtKey, from: summary, to: &spec)
         for key in ocrExtKeys {
             applyExtOverride(for: key, from: summary, to: &spec)
@@ -401,6 +420,9 @@ public enum BootstrapWorkerPreparation {
         for key in capabilityExtKeys {
             applyExtOverride(for: key, from: summary, to: &spec)
         }
+        for key in genericTextExtKeys {
+            applyExtOverride(for: key, from: summary, to: &spec)
+        }
         let adaptiveThinkingMode = summary.settings.adaptiveThinking.mode
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
@@ -411,6 +433,31 @@ public enum BootstrapWorkerPreparation {
             spec.ext["melix.adaptive_thinking.budget_tokens"] = String(summary.settings.adaptiveThinking.budgetTokens)
         }
         return spec
+    }
+
+    private static func genericTextModel(
+        from summary: Melix_Controlplane_V1_ModelSummary
+    ) -> Melix_Worker_V1_ModelSpec? {
+        guard summary.kind == "text" else {
+            return nil
+        }
+        let modelPath = summary.settings.ext["melix.model_path"]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !modelPath.isEmpty else {
+            return nil
+        }
+
+        var model = Melix_Worker_V1_ModelSpec()
+        model.modelID = summary.modelID
+        model.modelPath = modelPath
+        model.modelKind = "text"
+        model.revision = summary.settings.ext["melix.model_revision"] ?? "derived"
+        model.tokenizerHash = summary.settings.ext["melix.tokenizer_hash"] ?? "tok-derived"
+        model.quantProfileID = summary.quantProfileID
+        model.parserMode = summary.settings.ext["melix.parser_mode"] ?? "text"
+        model.reasoningMode = summary.settings.ext["melix.reasoning_mode"] ?? "off"
+        model.maxContext = summary.maxContext
+        model.ext.merge(summary.settings.ext) { _, new in new }
+        return model
     }
 
     private static func applyExtOverride(

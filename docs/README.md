@@ -75,6 +75,7 @@ Current phase-status and planning documents:
 - `plans/2026-03-29-p8-m1-native-operator-shell-completion.md`
 - `plans/2026-03-29-p8-m2-diagnostics-bench-training.md`
 - `plans/2026-03-29-p8-m3-adapter-training-tooling.md`
+- `plans/2026-04-01-real-lora-closed-loop.md`
 - `plans/2026-03-29-p8-m4-packaging-startup-automation.md`
 - `plans/2026-03-29-p8-m5-release-gate-automation.md`
 - `plans/2026-03-29-p8-m6-release-runbooks-product-acceptance.md`
@@ -158,6 +159,7 @@ Current runbooks:
 - `runbooks/phase-6-multimodal-ops.md`
 - `runbooks/phase-7-image-ops.md`
 - `runbooks/phase-8-local-install.md`
+- `runbooks/phase-8-lora-adapter-workflow.md`
 - `runbooks/phase-8-release-gates.md`
 - `runbooks/phase-8-product-acceptance.md`
 

@@ -186,6 +186,26 @@ struct ModelCatalogTests {
         #expect(reloaded == updated)
     }
 
+    @Test("registerModel inserts derived text models as discovered catalog entries")
+    func registerModelInsertsDerivedTextModelsAsDiscoveredCatalogEntries() async throws {
+        let catalog = ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels())
+        var model = ModelCatalog.devTextModel()
+        model.modelID = "melix-dev-text-lora-abcd1234"
+        model.settings.alias = "Derived Adapter"
+        model.settings.ext["melix.model_path"] = "/tmp/melix-derived/model"
+        model.settings.ext["melix.adapter_set_hash"] = "adapter-derived"
+        model.settings.ext["melix.derived_from_adapter"] = "true"
+
+        let registered = await catalog.registerModel(model, reason: "test_registration")
+        let loaded = try #require(await catalog.model(id: "melix-dev-text-lora-abcd1234"))
+
+        #expect(registered.modelID == "melix-dev-text-lora-abcd1234")
+        #expect(registered.state == .modelDiscovered)
+        #expect(registered.residency.state == .discovered)
+        #expect(loaded.settings.ext["melix.model_path"] == "/tmp/melix-derived/model")
+        #expect(loaded.settings.ext["melix.adapter_set_hash"] == "adapter-derived")
+    }
+
     @Test("residency summary follows seed defaults and load-unload transitions")
     func residencySummaryFollowsSeedDefaultsAndLoadUnloadTransitions() async throws {
         let catalog = ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels())

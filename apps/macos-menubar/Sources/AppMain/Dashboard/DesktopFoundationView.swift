@@ -281,6 +281,10 @@ struct DesktopToolsTabView: View {
                             Button("Train LoRA") {
                                 Task { await trainPrimaryModel() }
                             }
+                            Button("Activate Adapter") {
+                                Task { await activateLatestAdapter() }
+                            }
+                            .disabled(viewModel.latestAdapterPackage == nil)
                             Button("Publish Adapter") {
                                 Task { await publishLatestAdapter() }
                             }
@@ -382,10 +386,24 @@ struct DesktopToolsTabView: View {
                                 } else if !adapter.targetRepo.isEmpty {
                                     Text("target repo \(adapter.targetRepo)")
                                 }
+                                if !adapter.derivedModelID.isEmpty {
+                                    Text("derived model \(adapter.derivedModelID)")
+                                }
                                 Text(adapter.outputPath)
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
-                                Text("train \(adapter.trainingDurationText) • publish \(adapter.publishDurationText)")
+                                if !adapter.derivedModelPath.isEmpty {
+                                    Text(adapter.derivedModelPath)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                                Text("activation \(adapter.activationStatusText) • export \(adapter.exportabilityText) • publish \(adapter.publishedStateText)")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                Text("response-only \(adapter.responseOnlyEnabled ? "on" : "off") • grad ckpt \(adapter.gradientCheckpointingEnabled ? "on" : "off")")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                Text("train \(adapter.trainingDurationText) • activate \(adapter.activationDurationText) • publish \(adapter.publishDurationText)")
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                             }
@@ -477,6 +495,10 @@ struct DesktopToolsTabView: View {
 
     func trainPrimaryModel() async {
         await viewModel.trainPrimaryModel()
+    }
+
+    func activateLatestAdapter() async {
+        await viewModel.activateLatestAdapter()
     }
 
     func publishLatestAdapter() async {

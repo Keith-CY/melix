@@ -1,0 +1,281 @@
+from __future__ import annotations
+
+import math
+from dataclasses import dataclass
+from typing import Iterable
+
+from packages.protocol.python.worker.v1 import common_pb2
+
+from worker.model_ops.errors import ModelOperationError
+
+
+@dataclass(frozen=True)
+class LoRATrainingConfig:
+    training_mode: str
+    family_id: str
+    rank: int
+    alpha: float
+    dropout: float
+    target_modules: list[str]
+    expanded_target_modules: list[str]
+    backend_target_modules: list[str]
+    selected_layer_indices: list[int]
+    total_layer_count: int
+    num_layers: int
+    learning_rate: float
+    batch_size: int
+    epochs: int
+    iters: int
+    response_only: bool
+    gradient_checkpointing: bool
+    mask_prompt: bool
+    max_seq_length: int
+    steps_per_report: int
+    steps_per_eval: int
+    steps_per_save: int
+    adapter_name: str
+    target_repo: str
+
+
+_FAMILY_PROFILES: dict[str, dict[str, object]] = {
+    "llama": {
+        "default_total_layers": 2,
+        "default_target_modules": [
+            "q_proj",
+            "k_proj",
+            "v_proj",
+            "o_proj",
+            "gate_proj",
+            "up_proj",
+            "down_proj",
+        ],
+        "module_templates": {
+            "q_proj": "model.layers.{layer}.self_attn.q_proj",
+            "k_proj": "model.layers.{layer}.self_attn.k_proj",
+            "v_proj": "model.layers.{layer}.self_attn.v_proj",
+            "o_proj": "model.layers.{layer}.self_attn.o_proj",
+            "gate_proj": "model.layers.{layer}.mlp.gate_proj",
+            "up_proj": "model.layers.{layer}.mlp.up_proj",
+            "down_proj": "model.layers.{layer}.mlp.down_proj",
+        },
+    },
+    "mixtral": {
+        "default_total_layers": 2,
+        "default_target_modules": [
+            "q_proj",
+            "k_proj",
+            "v_proj",
+            "o_proj",
+            "gate_proj",
+            "up_proj",
+            "down_proj",
+        ],
+        "module_templates": {
+            "q_proj": "model.layers.{layer}.self_attn.q_proj",
+            "k_proj": "model.layers.{layer}.self_attn.k_proj",
+            "v_proj": "model.layers.{layer}.self_attn.v_proj",
+            "o_proj": "model.layers.{layer}.self_attn.o_proj",
+            "gate_proj": "model.layers.{layer}.block_sparse_moe.experts.*.w1",
+            "up_proj": "model.layers.{layer}.block_sparse_moe.experts.*.w3",
+            "down_proj": "model.layers.{layer}.block_sparse_moe.experts.*.w2",
+        },
+    },
+}
+
+
+def normalize_training_config(
+    *,
+    source_model: common_pb2.ModelSpec,
+    ext: dict[str, str],
+    dataset_format: str,
+    response_only_supported: bool,
+    sample_count: int,
+) -> LoRATrainingConfig:
+    if source_model.model_kind != "text":
+        raise ModelOperationError(
+            code="unsupported_model_family",
+            message="LoRA training is only supported for text models in v1.",
+            details={"model_kind": source_model.model_kind},
+        )
+
+    training_mode = ext.get("training_mode", "lora").strip().lower() or "lora"
+    if training_mode == "qlora":
+        raise ModelOperationError(
+            code="unsupported_training_mode",
+            message="training_mode=qlora is reserved but not implemented in v1.",
+        )
+    if training_mode != "lora":
+        raise ModelOperationError(
+            code="unsupported_training_mode",
+            message=f"Unsupported training_mode: {training_mode}",
+        )
+
+    family_id = _resolve_family_id(source_model)
+    profile = _FAMILY_PROFILES.get(family_id)
+    if profile is None:
+        raise ModelOperationError(
+            code="unsupported_model_family",
+            message=f"Unsupported LoRA family: {family_id}",
+        )
+
+    total_layer_count = _int_value(
+        ext.get("total_layers", ""),
+        default=_int_value(
+            source_model.ext.get("text_layer_count", ""),
+            default=int(profile["default_total_layers"]),
+            minimum=1,
+            field_name="text_layer_count",
+        ),
+        minimum=1,
+        field_name="total_layers",
+    )
+    requested_num_layers = _int_value(
+        ext.get("num_layers", ""),
+        default=total_layer_count,
+        minimum=1,
+        field_name="num_layers",
+    )
+    num_layers = min(requested_num_layers, total_layer_count)
+    selected_layer_indices = list(range(total_layer_count - num_layers, total_layer_count))
+
+    configured_targets = [
+        item.strip()
+        for item in ext.get("target_modules", "").split(",")
+        if item.strip()
+    ] or list(profile["default_target_modules"])
+
+    templates = profile["module_templates"]
+    expanded_target_modules: list[str] = []
+    for target_module in configured_targets:
+        if target_module not in templates:
+            raise ModelOperationError(
+                code="unsupported_lora_target_module",
+                message=f"Unsupported LoRA target module {target_module} for family {family_id}.",
+                details={"family_id": family_id, "target_module": target_module},
+            )
+        template = str(templates[target_module])
+        expanded_target_modules.extend(
+            template.format(layer=layer_index)
+            for layer_index in selected_layer_indices
+        )
+
+    backend_target_modules = _backend_target_modules(expanded_target_modules)
+
+    response_only = _bool_value(
+        ext.get("response_only", ""),
+        default=dataset_format == "chat_messages",
+    )
+    if response_only and not response_only_supported:
+        raise ModelOperationError(
+            code="invalid_dataset_package",
+            message="This dataset format cannot produce response-only supervision.",
+            details={"format": dataset_format},
+        )
+
+    gradient_checkpointing = _bool_value(ext.get("gradient_checkpointing", ""), default=False)
+    mask_prompt = _bool_value(ext.get("mask_prompt", ""), default=response_only)
+    batch_size = min(
+        max(
+            1,
+            _int_value(ext.get("batch_size", ""), default=min(4, max(sample_count, 1)), minimum=1, field_name="batch_size"),
+        ),
+        max(sample_count, 1),
+    )
+    epochs = _int_value(ext.get("epochs", ""), default=1, minimum=1, field_name="epochs")
+    iters = max(1, math.ceil(sample_count * epochs / batch_size))
+    max_seq_length = _int_value(
+        ext.get("max_seq_length", ""),
+        default=min(int(source_model.max_context or 2048), 2048),
+        minimum=1,
+        field_name="max_seq_length",
+    )
+    steps_per_report = min(max(1, iters), 10)
+    steps_per_eval = max(iters, 1)
+    steps_per_save = max(iters, 1)
+
+    return LoRATrainingConfig(
+        training_mode=training_mode,
+        family_id=family_id,
+        rank=_int_value(ext.get("rank", ""), default=8, minimum=1, field_name="rank"),
+        alpha=_float_value(ext.get("alpha", ""), default=20.0, minimum=0.0, field_name="alpha"),
+        dropout=_float_value(ext.get("dropout", ""), default=0.0, minimum=0.0, field_name="dropout"),
+        target_modules=configured_targets,
+        expanded_target_modules=expanded_target_modules,
+        backend_target_modules=backend_target_modules,
+        selected_layer_indices=selected_layer_indices,
+        total_layer_count=total_layer_count,
+        num_layers=num_layers,
+        learning_rate=_float_value(ext.get("learning_rate", ""), default=1e-5, minimum=0.0, field_name="learning_rate"),
+        batch_size=batch_size,
+        epochs=epochs,
+        iters=iters,
+        response_only=response_only,
+        gradient_checkpointing=gradient_checkpointing,
+        mask_prompt=mask_prompt,
+        max_seq_length=max_seq_length,
+        steps_per_report=steps_per_report,
+        steps_per_eval=steps_per_eval,
+        steps_per_save=steps_per_save,
+        adapter_name=ext.get("adapter_name", "melix-adapter").strip() or "melix-adapter",
+        target_repo=ext.get("target_repo", "").strip(),
+    )
+
+
+def _resolve_family_id(source_model: common_pb2.ModelSpec) -> str:
+    explicit = source_model.ext.get("text_family_id", "").strip().lower()
+    if explicit:
+        return explicit
+
+    model_path = source_model.model_path.lower()
+    model_id = source_model.model_id.lower()
+    if "mixtral" in model_path or "mixtral" in model_id:
+        return "mixtral"
+    if any(token in model_path for token in ("mistral", "llama", "qwen", "text")):
+        return "llama"
+    return "llama"
+
+
+def _backend_target_modules(expanded_target_modules: Iterable[str]) -> list[str]:
+    backend_modules: list[str] = []
+    seen: set[str] = set()
+    for module_path in expanded_target_modules:
+        _, _, suffix = module_path.partition(".self_attn.")
+        if suffix:
+            backend_module = f"self_attn.{suffix}"
+        else:
+            prefix = "model.layers."
+            if module_path.startswith(prefix):
+                remaining = module_path[len(prefix):]
+                _, _, backend_module = remaining.partition(".")
+            else:
+                backend_module = module_path
+        if backend_module not in seen:
+            seen.add(backend_module)
+            backend_modules.append(backend_module)
+    return backend_modules
+
+
+def _int_value(raw_value: str, *, default: int, minimum: int, field_name: str) -> int:
+    value = default if not raw_value else int(raw_value)
+    if value < minimum:
+        raise ModelOperationError(
+            code="invalid_argument",
+            message=f"{field_name} must be at least {minimum}.",
+        )
+    return value
+
+
+def _float_value(raw_value: str, *, default: float, minimum: float, field_name: str) -> float:
+    value = default if not raw_value else float(raw_value)
+    if value < minimum:
+        raise ModelOperationError(
+            code="invalid_argument",
+            message=f"{field_name} must be at least {minimum}.",
+        )
+    return value
+
+
+def _bool_value(raw_value: str, *, default: bool) -> bool:
+    if not raw_value:
+        return default
+    return raw_value.strip().lower() in {"1", "true", "yes", "on"}

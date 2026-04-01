@@ -46,6 +46,8 @@ This verifies:
 - runtime-core memory-guard evidence
 - training sanity
 
+For the manual LoRA operator workflow, use `docs/runbooks/phase-8-lora-adapter-workflow.md`.
+
 ## Final Metrics Report
 
 Generate the final product metrics report:

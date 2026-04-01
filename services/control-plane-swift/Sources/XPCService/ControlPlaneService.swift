@@ -1124,8 +1124,8 @@ public actor ControlPlaneService {
                     if manifest.hasArtifact {
                         operation.artifact = controlPlaneArtifact(from: manifest.artifact)
                     }
-                    if command.operation == "train_lora" {
-                        await recordTrainingMetrics(from: manifest.manifestJson)
+                    if command.operation == "train_lora" || command.operation == "activate_adapter" {
+                        await recordModelOperationMetrics(from: manifest.manifestJson, operation: command.operation)
                     }
                 case .completed(let completed):
                     operation.outputPath = completed.outputPath
@@ -1154,6 +1154,10 @@ public actor ControlPlaneService {
                     code: operation.error.code.isEmpty ? "unknown" : operation.error.code,
                     message: operation.error.message.isEmpty ? "Model operation failed." : operation.error.message
                 )
+            }
+
+            if command.operation == "activate_adapter" {
+                await registerActivatedDerivedModel(from: operation.manifestJson)
             }
 
             var reply = Melix_Controlplane_V1_ModelReply()
@@ -1386,7 +1390,7 @@ public actor ControlPlaneService {
         return String(parts[1])
     }
 
-    private func recordTrainingMetrics(from manifestJSON: String) async {
+    private func recordModelOperationMetrics(from manifestJSON: String, operation: String) async {
         guard
             let data = manifestJSON.data(using: .utf8),
             let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
@@ -1394,12 +1398,82 @@ public actor ControlPlaneService {
             return
         }
 
-        if let duration = payload["training_duration_ms"] as? Double {
-            await metricsStore.set(duration, forKey: "training.job_duration_ms")
+        if operation == "train_lora" {
+            if let duration = payload["training_duration_ms"] as? Double {
+                await metricsStore.set(duration, forKey: "training.job_duration_ms")
+            }
+            if let tokensSeen = payload["tokens_seen"] as? Double {
+                await metricsStore.set(tokensSeen, forKey: "training.tokens_seen")
+            }
+            if let lossFinal = payload["loss_final"] as? Double {
+                await metricsStore.set(lossFinal, forKey: "training.loss_final")
+            }
+            if let publish = payload["adapter_publish_ms"] as? Double {
+                await metricsStore.set(publish, forKey: "training.adapter_publish_ms")
+            }
+            return
         }
-        if let publish = payload["adapter_publish_ms"] as? Double {
-            await metricsStore.set(publish, forKey: "training.adapter_publish_ms")
+
+        if let duration = payload["activation_duration_ms"] as? Double {
+            await metricsStore.set(duration, forKey: "activation.job_duration_ms")
         }
+    }
+
+    private func registerActivatedDerivedModel(from manifestJSON: String) async {
+        guard
+            let data = manifestJSON.data(using: .utf8),
+            let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            (payload["schema_version"] as? String) == "melix.derived_text_model.v1",
+            (payload["activation_mode"] as? String) == "fused_derived_model",
+            let modelID = payload["derived_model_id"] as? String,
+            !modelID.isEmpty,
+            let modelPath = payload["derived_model_path"] as? String,
+            !modelPath.isEmpty
+        else {
+            return
+        }
+
+        let sourceModelID = (payload["source_model"] as? String) ?? "melix-dev-text"
+        let sourceModel = await modelCatalog.model(id: sourceModelID)
+
+        var model = sourceModel ?? ModelCatalog.devTextModel()
+        model.modelID = modelID
+        model.kind = "text"
+        model.state = .modelDiscovered
+        model.pinned = false
+        model.inflightRequests = 0
+        model.estimatedBytes = 0
+        model.capabilityClass = .modelCapabilityText
+        model.routeClass = .workerRouteSwiftText
+        model.supportedModalities = ["text"]
+        model.supportedTasks = ["generate"]
+        if let sourceModel {
+            model.features = sourceModel.features
+            model.maxContext = sourceModel.maxContext
+            model.quantProfileID = sourceModel.quantProfileID
+            model.settings = sourceModel.settings
+        } else {
+            model.features = ["chat"]
+            model.maxContext = 8192
+            model.quantProfileID = "q4"
+        }
+
+        let adapterName = (payload["adapter_name"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        model.settings.alias = adapterName.isEmpty ? modelID : "\(adapterName) Activated"
+        model.settings.pinOnLoad = false
+        model.settings.ext["melix.model_path"] = modelPath
+        model.settings.ext["melix.model_revision"] = (payload["source_model_revision"] as? String) ?? "derived"
+        model.settings.ext["melix.parser_mode"] = "text"
+        model.settings.ext["melix.reasoning_mode"] = "off"
+        model.settings.ext["melix.derived_from_adapter"] = "true"
+        model.settings.ext["melix.derived_from_model_id"] = sourceModelID
+        model.settings.ext["melix.derived_from_model_revision"] = (payload["source_model_revision"] as? String) ?? ""
+        model.settings.ext["melix.activation_mode"] = "fused_derived_model"
+        if let adapterSetHash = payload["adapter_set_hash"] as? String, !adapterSetHash.isEmpty {
+            model.settings.ext["melix.adapter_set_hash"] = adapterSetHash
+        }
+
+        _ = await modelCatalog.registerModel(model, reason: "adapter_activation")
     }
 
     private func memoryPolicy(for rawValue: String) -> Melix_Controlplane_V1_MemoryResidencyPolicy {

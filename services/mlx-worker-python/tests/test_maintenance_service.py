@@ -8,7 +8,18 @@ import time
 from packages.protocol.python.worker.v1 import maintenance_pb2
 
 from worker.grpc_server import WorkerMaintenanceService
+from worker.model_ops.adapter_activation_pipeline import AdapterActivationPipeline
 from worker.model_ops.job_registry import ModelOpsJob, ModelOpsJobRegistry
+from worker.model_ops.lora_training_pipeline import LoRATrainingPipeline
+from worker.model_ops.mlx_lm_runner import (
+    ActivationMetrics,
+    ActivationRequest,
+    ActivationResult,
+    MLXLMRunner,
+    TrainingMetrics,
+    TrainingRequest,
+    TrainingResult,
+)
 from worker.productization.benchmark_schemas import (
     build_serving_benchmark_job,
     build_serving_benchmark_results,
@@ -18,9 +29,111 @@ from worker.registry import WorkerRegistry
 from worker.engine.maintenance_core import MaintenanceCore
 
 
-def build_service(tmp_path: Path) -> WorkerMaintenanceService:
+class DeterministicLoRARunner(MLXLMRunner):
+    def train_native(self, request: TrainingRequest) -> TrainingResult:
+        request.adapter_output_dir.mkdir(parents=True, exist_ok=True)
+        weights_path = request.adapter_output_dir / "adapters.safetensors"
+        adapter_config_path = request.adapter_output_dir / "adapter_config.json"
+        weights_path.write_bytes(b"melix-test-adapter")
+        adapter_config_path.write_text(
+            json.dumps(
+                {
+                    "fine_tune_type": "lora",
+                    "num_layers": request.config.num_layers,
+                    "lora_parameters": {
+                        "rank": request.config.rank,
+                        "dropout": request.config.dropout,
+                        "scale": request.config.alpha,
+                        "keys": request.config.expanded_target_modules,
+                    },
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        return TrainingResult(
+            weights_path=weights_path,
+            adapter_config_path=adapter_config_path,
+            metrics=TrainingMetrics(
+                job_duration_ms=1234.0,
+                tokens_seen=1024,
+                examples_seen=2,
+                loss_final=0.42,
+                loss_best=0.33,
+                learning_rate_final=1e-4,
+            ),
+            execution_backend="native",
+        )
+
+    def activate_native(self, request: ActivationRequest) -> ActivationResult:
+        request.derived_model_dir.mkdir(parents=True, exist_ok=True)
+        manifest_path = request.derived_model_dir / "manifest.json"
+        manifest_path.write_text(
+            json.dumps({"schema_version": "melix.derived_text_model.v1"}) + "\n",
+            encoding="utf-8",
+        )
+        return ActivationResult(
+            derived_model_dir=request.derived_model_dir,
+            manifest_path=manifest_path,
+            metrics=ActivationMetrics(job_duration_ms=321.0),
+            execution_backend="native",
+        )
+
+
+def _write_training_dataset_package(tmp_path: Path, *, dataset_id: str = "melix-dev") -> Path:
+    dataset_dir = tmp_path / "dataset"
+    dataset_dir.mkdir(parents=True, exist_ok=True)
+    (dataset_dir / "manifest.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "melix.training_dataset_package.v1",
+                "dataset_id": dataset_id,
+                "format": "chat_messages",
+                "sample_count": 2,
+                "version": "1",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (dataset_dir / "samples.jsonl").write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "messages": [
+                            {"role": "user", "content": "Say hi."},
+                            {"role": "assistant", "content": "Hi there."},
+                        ]
+                    }
+                ),
+                json.dumps(
+                    {
+                        "messages": [
+                            {"role": "user", "content": "Say bye."},
+                            {"role": "assistant", "content": "Bye."},
+                        ]
+                    }
+                ),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return dataset_dir
+
+
+def build_service(tmp_path: Path, runner: MLXLMRunner | None = None) -> WorkerMaintenanceService:
     registry = WorkerRegistry(model_catalog=WorkerModelCatalog())
-    return WorkerMaintenanceService(registry, jobs_root=tmp_path / "model-ops")
+    service = WorkerMaintenanceService(registry, jobs_root=tmp_path / "model-ops")
+    if runner is not None:
+        service._core = MaintenanceCore(
+            registry,
+            jobs_root=tmp_path / "model-ops",
+            lora_training_pipeline=LoRATrainingPipeline(runner=runner),
+            adapter_activation_pipeline=AdapterActivationPipeline(runner=runner),
+        )
+    return service
 
 
 def test_convert_model_supports_convert_and_quantize_jobs(tmp_path: Path) -> None:
@@ -344,7 +457,8 @@ def test_linked_quantization_metadata_rejects_missing_invalid_and_non_bundle_man
 
 
 def test_convert_model_supports_train_lora_jobs(tmp_path: Path) -> None:
-    service = build_service(tmp_path)
+    dataset_dir = _write_training_dataset_package(tmp_path)
+    service = build_service(tmp_path, runner=DeterministicLoRARunner())
 
     events = list(
         service.ConvertModel(
@@ -355,7 +469,7 @@ def test_convert_model_supports_train_lora_jobs(tmp_path: Path) -> None:
                 ext={
                     "operation": "train_lora",
                     "adapter_name": "melix-dev-adapter",
-                    "dataset_uri": "datasets/melix-dev",
+                    "dataset_uri": str(dataset_dir),
                 },
             ),
             context=None,
@@ -367,15 +481,17 @@ def test_convert_model_supports_train_lora_jobs(tmp_path: Path) -> None:
 
     assert events[0].started.job_id == "model-ops-0001"
     assert events[-1].completed.output_path.endswith("train_lora.adapter.json")
+    assert payload["schema_version"] == "melix.lora_adapter_package.v1"
     assert payload["operation"] == "train_lora"
     assert payload["adapter_name"] == "melix-dev-adapter"
-    assert payload["dataset_uri"] == "datasets/melix-dev"
-    assert payload["training_duration_ms"] == 1420.0
-    assert payload["adapter_publish_ms"] == 118.0
+    assert payload["dataset_uri"] == str(dataset_dir)
+    assert payload["training_duration_ms"] == 1234.0
+    assert payload["adapter_artifact_bytes"] > 0
 
 
 def test_registry_snapshot_returns_training_history_and_adapter_registry(tmp_path: Path) -> None:
-    service = build_service(tmp_path)
+    dataset_dir = _write_training_dataset_package(tmp_path)
+    service = build_service(tmp_path, runner=DeterministicLoRARunner())
     train_dir = tmp_path / "train"
     train_events = list(
         service.ConvertModel(
@@ -386,7 +502,7 @@ def test_registry_snapshot_returns_training_history_and_adapter_registry(tmp_pat
                 ext={
                     "operation": "train_lora",
                     "adapter_name": "melix-dev-adapter",
-                    "dataset_uri": "datasets/melix-dev",
+                    "dataset_uri": str(dataset_dir),
                     "target_repo": "melix/adapters/melix-dev-adapter",
                 },
             ),

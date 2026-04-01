@@ -236,6 +236,33 @@ public actor ModelCatalog {
         return model
     }
 
+    @discardableResult
+    public func registerModel(
+        _ source: Melix_Controlplane_V1_ModelSummary,
+        reason: String = "catalog_registered"
+    ) -> Melix_Controlplane_V1_ModelSummary {
+        let now = nowUnixMs()
+        if residencyLedger[source.modelID] == nil {
+            nextAccessOrdinal += 1
+            residencyLedger[source.modelID] = ResidencyLedger(
+                lastAccessOrdinal: nextAccessOrdinal,
+                lastAccessUnixMs: now,
+                transitionReason: reason
+            )
+        } else {
+            touchModel(id: source.modelID, transitionReason: reason)
+        }
+
+        let model = synchronized(source)
+        models[source.modelID] = model
+        if model.state == .modelWarm || model.state == .modelPinned {
+            dispatchHandles[source.modelID] = dispatchHandles[source.modelID] ?? ModelCatalog.defaultDispatchHandle(for: source.modelID)
+        } else {
+            dispatchHandles.removeValue(forKey: source.modelID)
+        }
+        return model
+    }
+
     public func evictionPlanForLoad(id targetID: String) -> EvictionPlan {
         guard let targetModel = models[targetID] else {
             return EvictionPlan()

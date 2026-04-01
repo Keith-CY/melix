@@ -751,6 +751,29 @@ struct PythonBridgeWorkerClientTests {
         #expect(spec.ext["melix.adaptive_thinking.budget_tokens"] == "192")
     }
 
+    @Test("bootstrap worker preparation builds generic text specs for activated derived models")
+    func bootstrapWorkerPreparationBuildsGenericTextSpecsForActivatedDerivedModels() throws {
+        var summary = ModelCatalog.devTextModel()
+        summary.modelID = "melix-dev-text-lora-abcd1234"
+        summary.settings.alias = "Melix Dev Adapter Activated"
+        summary.settings.ext["melix.model_path"] = "/tmp/melix-derived/model"
+        summary.settings.ext["melix.model_revision"] = "derived"
+        summary.settings.ext["melix.parser_mode"] = "text"
+        summary.settings.ext["melix.reasoning_mode"] = "off"
+        summary.settings.ext["melix.adapter_set_hash"] = "adapter-derived-alpha"
+        summary.settings.ext["melix.derived_from_adapter"] = "true"
+        summary.settings.ext["melix.derived_from_model_id"] = "melix-dev-text"
+
+        let spec = try #require(BootstrapWorkerPreparation.modelSpec(for: summary))
+
+        #expect(spec.modelID == "melix-dev-text-lora-abcd1234")
+        #expect(spec.modelPath == "/tmp/melix-derived/model")
+        #expect(spec.modelKind == "text")
+        #expect(spec.ext["melix.adapter_set_hash"] == "adapter-derived-alpha")
+        #expect(spec.ext["melix.derived_from_adapter"] == "true")
+        #expect(spec.ext["melix.derived_from_model_id"] == "melix-dev-text")
+    }
+
     @Test("bootstrap worker preparation carries OCR profile metadata into worker model specs")
     func bootstrapWorkerPreparationCarriesOCRProfileMetadataIntoWorkerModelSpecs() throws {
         let summary = ModelCatalog.devOCRModel()

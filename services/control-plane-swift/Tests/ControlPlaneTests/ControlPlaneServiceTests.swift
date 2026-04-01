@@ -815,6 +815,64 @@ struct ControlPlaneServiceTests {
         #expect(lastRequest.weightQuant.isEmpty)
     }
 
+    @Test("execute registers activated derived models into the catalog")
+    func executeRegistersActivatedDerivedModelsIntoTheCatalog() async throws {
+        let manifestJSON = """
+        {"schema_version":"melix.derived_text_model.v1","activation_mode":"fused_derived_model","source_model":"melix-dev-text","source_model_revision":"dev","adapter_name":"melix-dev-adapter","adapter_set_hash":"adapter-alpha","derived_model_id":"melix-dev-text-lora-adapter","derived_model_path":"/tmp/melix-derived/model"}
+        """
+
+        let modelOpsClient = ScriptedModelOperationsWorkerClient()
+        await modelOpsClient.setConvertEvents([
+            {
+                var event = Melix_Worker_V1_ConvertModelEvent()
+                event.started = Melix_Worker_V1_ConvertStarted()
+                event.started.jobID = "job-activate-123"
+                return event
+            }(),
+            {
+                var event = Melix_Worker_V1_ConvertModelEvent()
+                event.manifest = Melix_Worker_V1_ConvertManifest()
+                event.manifest.manifestJson = manifestJSON
+                return event
+            }(),
+            {
+                var event = Melix_Worker_V1_ConvertModelEvent()
+                event.completed = Melix_Worker_V1_ConvertCompleted()
+                event.completed.outputPath = "/tmp/melix-derived/model/manifest.json"
+                return event
+            }(),
+        ])
+
+        let catalog = ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels())
+        let service = ControlPlaneService(
+            modelCatalog: catalog,
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                modelOperationsClient: modelOpsClient
+            )
+        )
+
+        let response = try await service.execute(
+            makeRunModelOperationRequest(
+                modelID: "melix-dev-text",
+                operation: "activate_adapter",
+                outputDir: "/tmp/melix-derived",
+                ext: ["artifact_path": "/tmp/melix-train/train_lora.adapter.json"]
+            )
+        )
+        let derived = try #require(await catalog.model(id: "melix-dev-text-lora-adapter"))
+
+        #expect(response.ok)
+        #expect(response.model.operation.operation == "activate_adapter")
+        #expect(response.model.operation.manifestJson == manifestJSON)
+        #expect(derived.routeClass == .workerRouteSwiftText)
+        #expect(derived.capabilityClass == .modelCapabilityText)
+        #expect(derived.settings.ext["melix.model_path"] == "/tmp/melix-derived/model")
+        #expect(derived.settings.ext["melix.adapter_set_hash"] == "adapter-alpha")
+        #expect(derived.settings.ext["melix.derived_from_adapter"] == "true")
+        #expect(derived.settings.ext["melix.derived_from_model_id"] == "melix-dev-text")
+    }
+
     @Test("execute handles ops.run_doctor through the model-operations worker")
     func executeHandlesOpsRunDoctorThroughTheModelOperationsWorker() async throws {
         let modelOpsClient = ScriptedModelOperationsWorkerClient()
@@ -2920,8 +2978,8 @@ struct ControlPlaneServiceTests {
         operation: String,
         outputDir: String,
         quantProfileID: String = "",
-        weightQuant: String,
-        kvQuant: String,
+        weightQuant: String = "",
+        kvQuant: String = "",
         ext: [String: String] = [:]
     ) -> Melix_Controlplane_V1_ControlPlaneRequest {
         var request = Melix_Controlplane_V1_ControlPlaneRequest()

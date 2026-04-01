@@ -84,10 +84,18 @@ public struct RuntimeAdapterPackageState: Identifiable, Equatable, Sendable {
     public let sourceModel: String
     public let datasetURI: String
     public let statusText: String
+    public let activationStatusText: String
+    public let exportabilityText: String
+    public let publishedStateText: String
     public let outputPath: String
+    public let derivedModelID: String
+    public let derivedModelPath: String
     public let targetRepo: String
     public let publishedRepo: String
+    public let responseOnlyEnabled: Bool
+    public let gradientCheckpointingEnabled: Bool
     public let trainingDurationText: String
+    public let activationDurationText: String
     public let publishDurationText: String
 }
 
@@ -777,6 +785,22 @@ public final class RuntimeViewModel {
                 "adapter_name": "melix-dev-adapter",
                 "dataset_uri": "datasets/melix-dev",
                 "target_repo": "melix/adapters/melix-dev-adapter",
+            ],
+            refreshProductToolingState: true
+        )
+    }
+
+    public func activateLatestAdapter() async {
+        guard let modelID = primaryModel?.modelID, let adapter = latestAdapterPackage, !adapter.outputPath.isEmpty else {
+            return
+        }
+
+        await runModelOperation(
+            modelID: modelID,
+            operation: "activate_adapter",
+            outputDir: "/tmp/melix-activate-adapter",
+            ext: [
+                "artifact_path": adapter.outputPath,
             ],
             refreshProductToolingState: true
         )
@@ -1527,16 +1551,38 @@ public final class RuntimeViewModel {
     }
 
     private static func makeAdapterPackageState(from payload: [String: Any]) -> RuntimeAdapterPackageState {
-        RuntimeAdapterPackageState(
+        let activationStatus = stringValue("activation_status", from: payload)
+        let publishedState = stringValue("published_state", from: payload)
+        let baseStatus = stringValue("status", from: payload)
+        let statusText: String
+        if publishedState == "published" || baseStatus == "published" {
+            statusText = "Published"
+        } else if activationStatus == "activated" || baseStatus == "activated" {
+            statusText = "Activated"
+        } else if baseStatus == "completed" && activationStatus == "pending_activation" {
+            statusText = "Pending activation"
+        } else {
+            statusText = humanizeStatus(baseStatus)
+        }
+
+        return RuntimeAdapterPackageState(
             id: stringValue("adapter_id", from: payload),
             adapterName: stringValue("adapter_name", from: payload),
             sourceModel: stringValue("source_model", from: payload),
             datasetURI: stringValue("dataset_uri", from: payload),
-            statusText: humanizeStatus(stringValue("status", from: payload)),
+            statusText: statusText,
+            activationStatusText: humanizeStatus(activationStatus),
+            exportabilityText: humanizeStatus(stringValue("exportable_state", from: payload)),
+            publishedStateText: humanizeStatus(publishedState),
             outputPath: stringValue("output_path", from: payload),
+            derivedModelID: stringValue("derived_model_id", from: payload),
+            derivedModelPath: stringValue("derived_model_path", from: payload),
             targetRepo: stringValue("target_repo", from: payload),
             publishedRepo: stringValue("published_repo", from: payload),
+            responseOnlyEnabled: boolValue("response_only", from: payload),
+            gradientCheckpointingEnabled: boolValue("gradient_checkpointing", from: payload),
             trainingDurationText: formatDuration(milliseconds: doubleValue("training_duration_ms", from: payload)),
+            activationDurationText: formatDuration(milliseconds: doubleValue("activation_duration_ms", from: payload)),
             publishDurationText: formatDuration(milliseconds: doubleValue("adapter_publish_ms", from: payload))
         )
     }
@@ -1567,6 +1613,19 @@ public final class RuntimeViewModel {
             return number.doubleValue
         }
         return 0
+    }
+
+    private static func boolValue(_ key: String, from payload: [String: Any]) -> Bool {
+        if let value = payload[key] as? Bool {
+            return value
+        }
+        if let number = payload[key] as? NSNumber {
+            return number.boolValue
+        }
+        if let value = payload[key] as? String {
+            return ["1", "true", "yes", "on"].contains(value.lowercased())
+        }
+        return false
     }
 
     private static func humanizeStatus(_ status: String) -> String {

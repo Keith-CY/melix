@@ -8,7 +8,10 @@ from typing import Iterator
 
 from packages.protocol.python.worker.v1 import common_pb2, maintenance_pb2
 
+from worker.model_ops.adapter_activation_pipeline import AdapterActivationPipeline
+from worker.model_ops.errors import ModelOperationError
 from worker.model_ops.job_registry import ModelOpsJobRegistry
+from worker.model_ops.lora_training_pipeline import LoRATrainingPipeline
 from worker.model_ops.operation_locks import ModelOpsConflictRegistry
 from worker.model_ops.quantization_pipeline import OQQuantizationPipeline
 from worker.model_ops.quantization_profiles import protected_scope_for_request
@@ -56,11 +59,15 @@ class MaintenanceCore:
         registry: WorkerRegistry,
         jobs_root: Path,
         job_registry: ModelOpsJobRegistry | None = None,
+        lora_training_pipeline: LoRATrainingPipeline | None = None,
+        adapter_activation_pipeline: AdapterActivationPipeline | None = None,
     ) -> None:
         self._registry = registry
         self._jobs_root = Path(jobs_root)
         self._job_registry = job_registry or ModelOpsJobRegistry()
         self._quantization_pipeline = OQQuantizationPipeline(registry)
+        self._lora_training_pipeline = lora_training_pipeline or LoRATrainingPipeline()
+        self._adapter_activation_pipeline = adapter_activation_pipeline or AdapterActivationPipeline()
         self._operation_locks = ModelOpsConflictRegistry()
         self._benchmark_store = None
         self._benchmark_queue_store = BenchmarkQueueStore()
@@ -109,7 +116,7 @@ class MaintenanceCore:
         if not operation:
             operation = "quantize" if request.weight_quant or request.kv_quant else "convert"
 
-        if operation not in {"convert", "quantize", "download", "upload", "train_lora", "registry_snapshot"}:
+        if operation not in {"convert", "quantize", "download", "upload", "train_lora", "activate_adapter", "registry_snapshot"}:
             yield maintenance_pb2.ConvertModelEvent(
                 failed=maintenance_pb2.ConvertFailed(
                     error=common_pb2.ErrorStatus(
@@ -207,6 +214,59 @@ class MaintenanceCore:
                         quant_profile=worker_profile,
                         artifact=worker_artifact,
                     )
+                )
+                return
+
+            if operation in {"train_lora", "activate_adapter"}:
+                try:
+                    pipeline_result, progress_events = self._run_specialized_model_operation(
+                        operation=operation,
+                        job_id=job.job_id,
+                        request=request,
+                        output_dir=output_dir,
+                    )
+                except ModelOperationError as exc:
+                    self._job_registry.fail(job.job_id, exc.code, exc.message)
+                    yield maintenance_pb2.ConvertModelEvent(
+                        failed=maintenance_pb2.ConvertFailed(
+                            error=common_pb2.ErrorStatus(
+                                code=exc.code,
+                                message=exc.message,
+                                retriable=exc.retriable,
+                                details=exc.details,
+                            )
+                        )
+                    )
+                    return
+                except Exception as exc:
+                    error_code = "activation_failure" if operation == "activate_adapter" else "backend_training_failure"
+                    self._job_registry.fail(job.job_id, error_code, str(exc))
+                    yield maintenance_pb2.ConvertModelEvent(
+                        failed=maintenance_pb2.ConvertFailed(
+                            error=common_pb2.ErrorStatus(
+                                code=error_code,
+                                message=str(exc),
+                            )
+                        )
+                    )
+                    return
+
+                for stage, pct in progress_events:
+                    self._job_registry.progress(job.job_id, stage, pct)
+                    yield maintenance_pb2.ConvertModelEvent(
+                        progress=maintenance_pb2.ConvertProgress(stage=stage, pct=pct)
+                    )
+
+                manifest_json = json.dumps(pipeline_result.manifest, sort_keys=True)
+                self._job_registry.attach_manifest(job.job_id, manifest_json)
+                if request.generate_manifest:
+                    yield maintenance_pb2.ConvertModelEvent(
+                        manifest=maintenance_pb2.ConvertManifest(manifest_json=manifest_json)
+                    )
+
+                self._job_registry.complete(job.job_id, str(pipeline_result.manifest_path))
+                yield maintenance_pb2.ConvertModelEvent(
+                    completed=maintenance_pb2.ConvertCompleted(output_path=str(pipeline_result.manifest_path))
                 )
                 return
 
@@ -507,6 +567,7 @@ class MaintenanceCore:
             "download": "download.artifact",
             "upload": "upload.receipt.json",
             "train_lora": "train_lora.adapter.json",
+            "activate_adapter": "activate_adapter.derived_model.json",
             "registry_snapshot": "registry_snapshot.json",
         }[operation]
         return output_dir / filename
@@ -532,7 +593,49 @@ class MaintenanceCore:
 
         if operation == "upload":
             return request.ext.get("artifact_path", "") or request.source_model or operation
+        if operation == "activate_adapter":
+            return request.ext.get("artifact_path", "") or request.source_model or operation
         return request.source_model or operation
+
+    def _run_specialized_model_operation(
+        self,
+        *,
+        operation: str,
+        job_id: str,
+        request: maintenance_pb2.ConvertModelRequest,
+        output_dir: Path,
+    ):
+        source_model = self._registry.model_catalog.get(request.source_model)
+        if source_model is None:
+            raise ModelOperationError(
+                code="unsupported_model_family",
+                message="Unknown source model for model operation.",
+                details={"source_model": request.source_model},
+            )
+
+        progress_events: list[tuple[str, float]] = []
+
+        def record_progress(stage: str, pct: float) -> None:
+            progress_events.append((stage, pct))
+
+        if operation == "train_lora":
+            result = self._lora_training_pipeline.run(
+                job_id=job_id,
+                request_ext=dict(request.ext),
+                source_model=source_model,
+                output_dir=output_dir,
+                progress=record_progress,
+            )
+            return result, progress_events
+
+        result = self._adapter_activation_pipeline.run(
+            job_id=job_id,
+            request_ext=dict(request.ext),
+            source_model=source_model,
+            output_dir=output_dir,
+            progress=record_progress,
+        )
+        return result, progress_events
 
     @staticmethod
     def _linked_quantization_metadata(
