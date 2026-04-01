@@ -10,6 +10,8 @@ service MaintenanceService {
   rpc RunDoctor(RunDoctorRequest) returns (RunDoctorResponse);
   rpc RunBench(RunBenchRequest) returns (stream RunBenchEvent);
   rpc RunEvaluation(RunEvaluationRequest) returns (RunEvaluationResponse);
+  rpc ExportResults(ExportResultsRequest) returns (ExportResultsResponse);
+  rpc SubmitResults(SubmitResultsRequest) returns (SubmitResultsResponse);
 }
 
 message ConvertModelRequest {
@@ -109,6 +111,7 @@ message RunDoctorResponse {
 message RunBenchRequest {
   string model_handle = 1;
   repeated string suites = 2;
+  map<string, string> parameters = 3;
 }
 
 message RunBenchEvent {
@@ -186,4 +189,26 @@ message RunEvaluationResponse {
   ErrorStatus error = 2;
   WorkerEvaluationJob job = 3;
   repeated WorkerEvaluationResult results = 4;
+}
+
+message ExportResultsRequest {
+  string output_dir = 1;
+}
+
+message ExportResultsResponse {
+  bool ok = 1;
+  ErrorStatus error = 2;
+  string export_json = 3;
+  string export_path = 4;
+}
+
+message SubmitResultsRequest {
+  string output_dir = 1;
+  map<string, string> device_metadata = 2;
+}
+
+message SubmitResultsResponse {
+  bool ok = 1;
+  ErrorStatus error = 2;
+  string submission_json = 3;
 }

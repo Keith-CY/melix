@@ -268,6 +268,44 @@ class WorkerMaintenanceService(maintenance_pb2_grpc.MaintenanceServiceServicer):
             metric_message.unit = metric.unit
         return response
 
+    def ExportResults(self, request, context):
+        from worker.productization.benchmark_export import build_export_bundle
+
+        try:
+            jobs_root = Path(request.output_dir) if request.output_dir else self._evaluation_jobs_root.parent
+            bundle = build_export_bundle(jobs_root)
+            import json
+            export_json = json.dumps(bundle, indent=2)
+            return maintenance_pb2.ExportResultsResponse(
+                ok=True,
+                export_json=export_json,
+                export_path=str(jobs_root / "export-bundle.json"),
+            )
+        except Exception as exc:
+            return maintenance_pb2.ExportResultsResponse(
+                ok=False,
+                error=common_pb2.ErrorStatus(code="export_failed", message=str(exc)),
+            )
+
+    def SubmitResults(self, request, context):
+        from worker.productization.benchmark_export import build_export_bundle
+
+        try:
+            jobs_root = Path(request.output_dir) if request.output_dir else self._evaluation_jobs_root.parent
+            bundle = build_export_bundle(jobs_root)
+            bundle["device_metadata"] = dict(request.device_metadata)
+            import json
+            submission_json = json.dumps(bundle, indent=2)
+            return maintenance_pb2.SubmitResultsResponse(
+                ok=True,
+                submission_json=submission_json,
+            )
+        except Exception as exc:
+            return maintenance_pb2.SubmitResultsResponse(
+                ok=False,
+                error=common_pb2.ErrorStatus(code="submit_failed", message=str(exc)),
+            )
+
     @staticmethod
     def _default_dataset_root(dataset_id: str) -> Path:
         return (

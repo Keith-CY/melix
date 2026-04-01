@@ -136,6 +136,14 @@ public protocol ModelOperationsWorkerClientProtocol: WorkerClient {
     func runEvaluation(
         request: Melix_Worker_V1_RunEvaluationRequest
     ) async throws -> Melix_Worker_V1_RunEvaluationResponse
+
+    func exportResults(
+        request: Melix_Worker_V1_ExportResultsRequest
+    ) async throws -> Melix_Worker_V1_ExportResultsResponse
+
+    func submitResults(
+        request: Melix_Worker_V1_SubmitResultsRequest
+    ) async throws -> Melix_Worker_V1_SubmitResultsResponse
 }
 
 public struct NullWorkerClient: WorkerRoutingClient {

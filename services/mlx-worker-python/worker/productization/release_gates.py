@@ -51,6 +51,9 @@ DEFAULT_RELEASE_GATE_POLICY: dict[str, Any] = {
         "prefill_memory_guard_success_rate": {"min": 100.0},
     },
     "quantization": copy.deepcopy(DEFAULT_QUANTIZATION_GATE_POLICY),
+    "evaluation": {
+        "eval.mmlu.accuracy": {"min": 0.5},
+    },
 }
 
 
@@ -152,6 +155,54 @@ def collect_benchmark_evidence(
     return report
 
 
+def collect_evaluation_evidence(jobs_root: str | Path) -> dict[str, Any]:
+    from worker.engine.evaluation_core import EvaluationCore
+
+    eval_root = Path(jobs_root) / "evaluation"
+    eval_root.mkdir(parents=True, exist_ok=True)
+    dataset_root = _ensure_evaluation_dataset(eval_root)
+
+    core = EvaluationCore(jobs_root=eval_root)
+    run = core.run_local_suite(
+        model_id="melix-dev-text",
+        suite_id="mmlu",
+        dataset_root=dataset_root,
+        sample_size=8,
+        parameters={"judge": "deterministic"},
+    )
+    metrics: dict[str, float] = {}
+    for metric in run.result.metrics:
+        metrics[metric.name] = metric.value
+    return {
+        "job": run.job.to_dict(),
+        "result": run.result.to_dict(),
+        "metrics": metrics,
+    }
+
+
+def _ensure_evaluation_dataset(eval_root: Path) -> Path:
+    dataset_root = eval_root / "datasets" / "mmlu-dev"
+    dataset_root.mkdir(parents=True, exist_ok=True)
+    manifest_path = dataset_root / "manifest.json"
+    samples_path = dataset_root / "samples.jsonl"
+    if not manifest_path.exists():
+        manifest_path.write_text(
+            json.dumps({
+                "suite_id": "mmlu",
+                "dataset_id": "mmlu.dev.v1",
+                "schema_version": "melix.evaluation_dataset_manifest.v1",
+                "sample_count": 8,
+            }, indent=2) + "\n",
+            encoding="utf-8",
+        )
+    if not samples_path.exists():
+        lines = []
+        for a, b in [(3, 4), (7, 2), (10, 5), (12, 8), (6, 3), (9, 1), (15, 7), (20, 11)]:
+            lines.append(json.dumps({"prompt": f"{a} + {b} ?", "expected": str(a + b)}))
+        samples_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return dataset_root
+
+
 def collect_training_evidence(jobs_root: str | Path) -> dict[str, Any]:
     core = _build_maintenance_core(jobs_root)
     events = list(
@@ -208,6 +259,7 @@ def build_release_gate_report(
         "benchmarks": collect_benchmark_evidence(jobs_root, repo_root=repo_root),
         "training": collect_training_evidence(jobs_root),
         "quantization": collect_quantization_benchmark_evidence(Path(jobs_root) / "quantization"),
+        "evaluation": collect_evaluation_evidence(jobs_root),
     }
     if recovery is not None:
         report["recovery"] = recovery
@@ -257,6 +309,12 @@ def evaluate_release_gate(report: dict[str, Any], policy: dict[str, Any]) -> lis
     else:
         failures.extend(
             evaluate_quantization_gate(quantization, policy.get("quantization", {}))
+        )
+
+    evaluation = report.get("evaluation")
+    if isinstance(evaluation, dict):
+        failures.extend(
+            _evaluate_section_metrics(evaluation.get("metrics", {}), policy.get("evaluation", {}))
         )
 
     return failures

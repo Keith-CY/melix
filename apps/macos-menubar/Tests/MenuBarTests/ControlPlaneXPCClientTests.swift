@@ -955,4 +955,25 @@ private actor XPCScriptedModelOperationsWorkerClient: WorkerRoutingClient, Model
             continuation.finish()
         }
     }
+
+    func runEvaluation(
+        request: Melix_Worker_V1_RunEvaluationRequest
+    ) async throws -> Melix_Worker_V1_RunEvaluationResponse {
+        _ = request
+        throw WorkerClientError.unavailable
+    }
+
+    func exportResults(
+        request: Melix_Worker_V1_ExportResultsRequest
+    ) async throws -> Melix_Worker_V1_ExportResultsResponse {
+        _ = request
+        throw WorkerClientError.unavailable
+    }
+
+    func submitResults(
+        request: Melix_Worker_V1_SubmitResultsRequest
+    ) async throws -> Melix_Worker_V1_SubmitResultsResponse {
+        _ = request
+        throw WorkerClientError.unavailable
+    }
 }

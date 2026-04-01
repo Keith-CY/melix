@@ -413,6 +413,8 @@ class MaintenanceCore:
         from worker.productization.benchmark_store import BenchmarkStore
 
         suites = list(request.suites) or ["smoke"]
+        raw_parameters = getattr(request, "parameters", None)
+        parameters = dict(raw_parameters) if raw_parameters else {}
         output_dir = (self._jobs_root / "bench").resolve()
         output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -425,7 +427,7 @@ class MaintenanceCore:
                 job_kind="benchmark",
                 model_id=(request.model_handle or "runtime").split("::", 1)[0],
                 suite_ids=tuple(suites),
-                parameters={},
+                parameters=parameters,
                 status="queued",
                 created_at_unix_ms=queued_at,
                 updated_at_unix_ms=queued_at,
@@ -439,6 +441,7 @@ class MaintenanceCore:
             updated_at_unix_ms=queued_at + 1,
         )
 
+        benchmark_mode = parameters.get("benchmark_mode", "text")
         metrics: list[BenchMetricSpec] = []
         for index, suite in enumerate(suites, start=1):
             pct = index / max(len(suites), 1)
@@ -446,7 +449,12 @@ class MaintenanceCore:
             yield maintenance_pb2.RunBenchEvent(
                 progress=maintenance_pb2.BenchProgress(suite=suite, pct=pct)
             )
-            for metric in self._bench_metrics_for_suite(suite):
+            suite_metrics = (
+                self._bench_metrics_for_vlm_suite(suite)
+                if benchmark_mode == "vlm"
+                else self._bench_metrics_for_suite(suite)
+            )
+            for metric in suite_metrics:
                 metrics.append(metric)
                 yield maintenance_pb2.RunBenchEvent(
                     metric=maintenance_pb2.BenchMetric(
@@ -462,7 +470,7 @@ class MaintenanceCore:
             job_id=job.job_id,
             model_id=(request.model_handle or "runtime").split("::", 1)[0],
             suites=tuple(suites),
-            parameters={},
+            parameters=parameters,
             status="completed",
             output_dir=str(output_dir),
         )
@@ -579,15 +587,36 @@ class MaintenanceCore:
         ]
 
     @staticmethod
+    def _bench_metrics_for_vlm_suite(suite: str) -> list[BenchMetricSpec]:
+        if suite == "latency":
+            return [
+                BenchMetricSpec(suite=suite, name="bench.latency.image_p50_ms", value=62.35, unit="ms"),
+                BenchMetricSpec(suite=suite, name="bench.latency.image_p95_ms", value=89.44, unit="ms"),
+            ]
+        return [
+            BenchMetricSpec(suite=suite, name=f"bench.{suite}.image_ttft_ms", value=48.90, unit="ms"),
+            BenchMetricSpec(
+                suite=suite,
+                name=f"bench.{suite}.vlm_tokens_per_second",
+                value=23.54,
+                unit="tok/s",
+            ),
+        ]
+
+    @staticmethod
     def _render_bench_report(
         request: maintenance_pb2.RunBenchRequest,
         metrics: list[BenchMetricSpec],
     ) -> str:
+        raw_parameters = getattr(request, "parameters", None)
+        parameters = dict(raw_parameters) if raw_parameters else {}
+        benchmark_mode = parameters.get("benchmark_mode", "text")
         lines = [
             "# Melix Bench",
             "",
             f"- model_handle: {request.model_handle or 'runtime'}",
             f"- suites: {', '.join(request.suites) if request.suites else 'smoke'}",
+            f"- benchmark_mode: {benchmark_mode}",
             "",
         ]
         for metric in metrics:

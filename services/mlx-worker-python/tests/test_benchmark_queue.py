@@ -81,6 +81,61 @@ def test_list_records_is_stable_by_created_time_then_id(tmp_path: Path) -> None:
     assert [record.queue_item_id for record in records] == ["queue-a", "queue-b", "queue-c"]
 
 
+def test_queue_snapshot_returns_counts_and_records_by_status(tmp_path: Path) -> None:
+    store = BenchmarkQueueStore()
+    queue_root = tmp_path / "queue"
+
+    store.enqueue(
+        queue_root=queue_root,
+        record=BenchmarkQueueRecord(
+            queue_item_id="queue-1",
+            job_kind="benchmark",
+            model_id="melix-dev-text",
+            suite_ids=("smoke",),
+            parameters={"sample_size": "32"},
+            status="queued",
+            created_at_unix_ms=100,
+            updated_at_unix_ms=100,
+        ),
+    )
+    store.enqueue(
+        queue_root=queue_root,
+        record=BenchmarkQueueRecord(
+            queue_item_id="queue-2",
+            job_kind="evaluation",
+            model_id="melix-dev-text",
+            suite_ids=("mmlu",),
+            parameters={"sample_size": "8"},
+            status="queued",
+            created_at_unix_ms=200,
+            updated_at_unix_ms=200,
+        ),
+    )
+    store.transition(
+        queue_root=queue_root,
+        queue_item_id="queue-1",
+        status="running",
+        updated_at_unix_ms=150,
+    )
+    store.transition(
+        queue_root=queue_root,
+        queue_item_id="queue-1",
+        status="completed",
+        updated_at_unix_ms=300,
+    )
+
+    snapshot = store.queue_snapshot(queue_root=queue_root)
+
+    assert snapshot["total"] == 2
+    assert snapshot["by_status"] == {"completed": 1, "queued": 1}
+    assert len(snapshot["records"]) == 2
+    assert snapshot["records"][0]["queue_item_id"] == "queue-1"
+    assert snapshot["records"][0]["status"] == "completed"
+    assert snapshot["records"][0]["parameters"] == {"sample_size": "32"}
+    assert snapshot["records"][1]["queue_item_id"] == "queue-2"
+    assert snapshot["records"][1]["status"] == "queued"
+
+
 def test_transition_updates_state_and_terminal_timestamp(tmp_path: Path) -> None:
     store = BenchmarkQueueStore()
     queue_root = tmp_path / "queue"

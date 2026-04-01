@@ -146,6 +146,8 @@ message OpsCommand {
     ExportDiagnostics export_bundle = 5;
     GetMetricsSnapshot get_metrics = 6;
     CancelRequest cancel_request = 7;
+    ExportResults export_results = 8;
+    SubmitResults submit_results = 9;
   }
 }
 
@@ -193,6 +195,8 @@ message OpsReply {
   repeated BenchmarkResultSummary benchmark_results = 5;
   EvaluationJobSummary evaluation_job = 6;
   repeated EvaluationResultSummary evaluation_results = 7;
+  string export_bundle_json = 8;
+  string submission_json = 9;
 }
 
 message PresetReply {
@@ -322,6 +326,13 @@ message RunEvaluation {
   map<string, string> parameters = 4;
 }
 message ExportDiagnostics {}
+message ExportResults {
+  string output_dir = 1;
+}
+message SubmitResults {
+  string output_dir = 1;
+  map<string, string> device_metadata = 2;
+}
 message GetMetricsSnapshot {}
 message CancelRequest {
   string request_id = 1;

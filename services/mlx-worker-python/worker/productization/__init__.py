@@ -18,6 +18,7 @@ from worker.productization.release_gates import (
     DEFAULT_RELEASE_GATE_POLICY,
     build_release_gate_report,
     collect_benchmark_evidence,
+    collect_evaluation_evidence,
     collect_install_evidence,
     collect_training_evidence,
     evaluate_release_gate,
@@ -68,6 +69,22 @@ from worker.productization.benchmark_queue import (
     BenchmarkQueueRecord,
     BenchmarkQueueStore,
 )
+from worker.productization.benchmark_export import (
+    build_comparison_table,
+    build_export_bundle,
+    collect_benchmark_artifacts,
+    collect_evaluation_artifacts,
+    write_export_bundle,
+)
+from worker.productization.device_identity import (
+    DeviceIdentity,
+    collect_device_identity,
+    hash_hostname,
+)
+from worker.productization.submission_builder import (
+    SubmissionPayload,
+    build_submission_payload,
+)
 
 
 def build_family_support_matrix():
@@ -95,6 +112,7 @@ __all__ = [
     "BenchmarkQueueStore",
     "compute_build_metadata",
     "collect_benchmark_evidence",
+    "collect_evaluation_evidence",
     "collect_install_evidence",
     "collect_operator_action_evidence",
     "collect_quantization_benchmark_evidence",
@@ -129,4 +147,14 @@ __all__ = [
     "ServingBenchmarkResult",
     "write_unsigned_macos_app_bundle",
     "write_local_product_artifacts",
+    "build_comparison_table",
+    "build_export_bundle",
+    "collect_benchmark_artifacts",
+    "collect_evaluation_artifacts",
+    "write_export_bundle",
+    "DeviceIdentity",
+    "collect_device_identity",
+    "hash_hostname",
+    "SubmissionPayload",
+    "build_submission_payload",
 ]

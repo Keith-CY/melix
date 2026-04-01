@@ -868,6 +868,55 @@ def test_run_bench_persists_completed_queue_state(tmp_path: Path) -> None:
     assert payload["completed_at_unix_ms"] > 0
 
 
+def test_bench_events_vlm_mode_produces_vlm_metrics(tmp_path: Path) -> None:
+    registry = WorkerRegistry(model_catalog=WorkerModelCatalog())
+    core = MaintenanceCore(registry, jobs_root=tmp_path / "model-ops")
+
+    events = list(
+        core.bench_events(
+            maintenance_pb2.RunBenchRequest(
+                model_handle="melix-dev-text::1",
+                suites=["smoke"],
+                parameters={"benchmark_mode": "vlm"},
+            )
+        )
+    )
+
+    metric_names = [
+        event.metric.name
+        for event in events
+        if event.HasField("metric")
+    ]
+    assert "bench.smoke.image_ttft_ms" in metric_names
+    assert "bench.smoke.vlm_tokens_per_second" in metric_names
+    assert "bench.smoke.ttft_ms" not in metric_names
+
+    report_event = next(event for event in events if event.HasField("completed"))
+    report_content = Path(report_event.completed.report_path).read_text(encoding="utf-8")
+    assert "benchmark_mode: vlm" in report_content
+
+
+def test_bench_events_forwards_parameters_to_queue_record(tmp_path: Path) -> None:
+    registry = WorkerRegistry(model_catalog=WorkerModelCatalog())
+    core = MaintenanceCore(registry, jobs_root=tmp_path / "model-ops")
+
+    events = list(
+        core.bench_events(
+            maintenance_pb2.RunBenchRequest(
+                model_handle="melix-dev-text::1",
+                suites=["smoke"],
+                parameters={"sample_size": "32", "batch_factor": "2"},
+            )
+        )
+    )
+
+    job_id = events[0].started.job_id
+    queue_record = tmp_path / "model-ops" / "bench" / "queue" / f"{job_id}.json"
+    payload = json.loads(queue_record.read_text(encoding="utf-8"))
+    assert payload["parameters"]["sample_size"] == "32"
+    assert payload["parameters"]["batch_factor"] == "2"
+
+
 def test_doctor_reports_detected_and_overridden_model_identity(tmp_path: Path) -> None:
     environment = {
         "MELIX_DEV_RERANK_MODEL_PATH": "models/jina-v3-reranker",

@@ -106,6 +106,17 @@ class BenchmarkQueueStore:
             encoding="utf-8",
         )
 
+    def queue_snapshot(self, *, queue_root: Path) -> dict[str, object]:
+        records = self.list_records(queue_root=queue_root)
+        by_status: dict[str, int] = {}
+        for record in records:
+            by_status[record.status] = by_status.get(record.status, 0) + 1
+        return {
+            "total": len(records),
+            "by_status": by_status,
+            "records": [record.to_dict() for record in records],
+        }
+
     @staticmethod
     def _record_path(*, queue_root: Path, queue_item_id: str) -> Path:
         return queue_root / f"{queue_item_id}.json"

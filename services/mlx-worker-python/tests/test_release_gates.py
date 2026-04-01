@@ -6,8 +6,10 @@ from pathlib import Path
 
 from packages.protocol.python.worker.v1 import maintenance_pb2
 from worker.productization.release_gates import (
+    DEFAULT_RELEASE_GATE_POLICY,
     build_release_gate_report,
     collect_benchmark_evidence,
+    collect_evaluation_evidence,
     collect_install_evidence,
     collect_training_evidence,
     evaluate_release_gate,
@@ -470,3 +472,137 @@ def test_evaluate_release_gate_requires_runtime_core_evidence() -> None:
     )
 
     assert "runtime_core evidence is missing" in failures
+
+
+def test_default_policy_includes_evaluation_section() -> None:
+    assert "evaluation" in DEFAULT_RELEASE_GATE_POLICY
+    assert "eval.mmlu.accuracy" in DEFAULT_RELEASE_GATE_POLICY["evaluation"]
+    assert DEFAULT_RELEASE_GATE_POLICY["evaluation"]["eval.mmlu.accuracy"]["min"] == 0.5
+
+
+def test_collect_evaluation_evidence_returns_metrics(tmp_path: Path) -> None:
+    evidence = collect_evaluation_evidence(tmp_path / "jobs")
+
+    assert "metrics" in evidence
+    assert evidence["metrics"]["eval.mmlu.accuracy"] == 1.0
+    assert evidence["job"]["suite_id"] == "mmlu"
+    assert evidence["result"]["suite_id"] == "mmlu"
+
+
+def test_evaluate_release_gate_fails_on_low_eval_accuracy() -> None:
+    policy = load_release_gate_policy()
+    report = {
+        "install": {
+            "generated_asset_count": 5,
+            "bootstrap_command_count": 3,
+            "checks": {
+                "manifest_exists": True,
+                "environment_script_exists": True,
+                "all_plists_exist": True,
+            },
+        },
+        "benchmarks": {
+            "report_exists": True,
+            "metrics": {
+                "bench.smoke.ttft_ms": 24.45,
+                "bench.smoke.tokens_per_second": 47.08,
+                "bench.latency.p95_ms": 44.72,
+            },
+        },
+        "training": {
+            "training_duration_ms": 1420.0,
+            "adapter_publish_ms": 118.0,
+        },
+        "recovery": {
+            "restart_recovery_ms": 420.0,
+            "restart_recovery_success_rate": 100.0,
+        },
+        "runtime_core": {
+            "multi_model_ready_count": 3.0,
+            "multi_model_request_success_rate": 100.0,
+            "prefill_memory_guard_rejection_count": 1.0,
+            "prefill_memory_guard_success_rate": 100.0,
+        },
+        "quantization": {
+            "summary": {"profile_count": 7, "smoke_pass_rate": 100.0},
+            "profiles": {
+                pid: {
+                    "job_ms": 1.0,
+                    "artifact_bytes": 670.0,
+                    "manifest_bytes": 1747.0,
+                    "calibration_sample_count": 32.0,
+                    "smoke_test_passed": 1.0,
+                }
+                for pid in ("q2", "q3", "q4", "q5", "q6", "q7", "q8")
+            },
+        },
+        "evaluation": {
+            "metrics": {
+                "eval.mmlu.accuracy": 0.3,
+            },
+        },
+    }
+
+    failures = evaluate_release_gate(report, policy)
+
+    assert "eval.mmlu.accuracy=0.30 fell below minimum 0.50" in failures
+
+
+def test_evaluate_release_gate_passes_with_sufficient_eval_accuracy() -> None:
+    policy = load_release_gate_policy()
+    report = {
+        "install": {
+            "generated_asset_count": 5,
+            "bootstrap_command_count": 3,
+            "checks": {
+                "manifest_exists": True,
+                "environment_script_exists": True,
+                "all_plists_exist": True,
+            },
+        },
+        "benchmarks": {
+            "report_exists": True,
+            "metrics": {
+                "bench.smoke.ttft_ms": 24.45,
+                "bench.smoke.tokens_per_second": 47.08,
+                "bench.latency.p95_ms": 44.72,
+            },
+        },
+        "training": {
+            "training_duration_ms": 1420.0,
+            "adapter_publish_ms": 118.0,
+        },
+        "recovery": {
+            "restart_recovery_ms": 420.0,
+            "restart_recovery_success_rate": 100.0,
+        },
+        "runtime_core": {
+            "multi_model_ready_count": 3.0,
+            "multi_model_request_success_rate": 100.0,
+            "prefill_memory_guard_rejection_count": 1.0,
+            "prefill_memory_guard_success_rate": 100.0,
+        },
+        "quantization": {
+            "summary": {"profile_count": 7, "smoke_pass_rate": 100.0},
+            "profiles": {
+                pid: {
+                    "job_ms": 1.0,
+                    "artifact_bytes": 670.0,
+                    "manifest_bytes": 1747.0,
+                    "calibration_sample_count": 32.0,
+                    "smoke_test_passed": 1.0,
+                }
+                for pid in ("q2", "q3", "q4", "q5", "q6", "q7", "q8")
+            },
+        },
+        "evaluation": {
+            "metrics": {
+                "eval.mmlu.accuracy": 0.75,
+            },
+        },
+    }
+
+    failures = evaluate_release_gate(report, policy)
+
+    eval_failures = [f for f in failures if "eval." in f]
+    assert eval_failures == []

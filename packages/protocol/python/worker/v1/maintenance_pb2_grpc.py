@@ -59,6 +59,16 @@ class MaintenanceServiceStub(object):
                 request_serializer=worker_dot_v1_dot_maintenance__pb2.RunEvaluationRequest.SerializeToString,
                 response_deserializer=worker_dot_v1_dot_maintenance__pb2.RunEvaluationResponse.FromString,
                 _registered_method=True)
+        self.ExportResults = channel.unary_unary(
+                '/melix.worker.v1.MaintenanceService/ExportResults',
+                request_serializer=worker_dot_v1_dot_maintenance__pb2.ExportResultsRequest.SerializeToString,
+                response_deserializer=worker_dot_v1_dot_maintenance__pb2.ExportResultsResponse.FromString,
+                _registered_method=True)
+        self.SubmitResults = channel.unary_unary(
+                '/melix.worker.v1.MaintenanceService/SubmitResults',
+                request_serializer=worker_dot_v1_dot_maintenance__pb2.SubmitResultsRequest.SerializeToString,
+                response_deserializer=worker_dot_v1_dot_maintenance__pb2.SubmitResultsResponse.FromString,
+                _registered_method=True)
 
 
 class MaintenanceServiceServicer(object):
@@ -94,6 +104,18 @@ class MaintenanceServiceServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def ExportResults(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def SubmitResults(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_MaintenanceServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -121,6 +143,16 @@ def add_MaintenanceServiceServicer_to_server(servicer, server):
                     servicer.RunEvaluation,
                     request_deserializer=worker_dot_v1_dot_maintenance__pb2.RunEvaluationRequest.FromString,
                     response_serializer=worker_dot_v1_dot_maintenance__pb2.RunEvaluationResponse.SerializeToString,
+            ),
+            'ExportResults': grpc.unary_unary_rpc_method_handler(
+                    servicer.ExportResults,
+                    request_deserializer=worker_dot_v1_dot_maintenance__pb2.ExportResultsRequest.FromString,
+                    response_serializer=worker_dot_v1_dot_maintenance__pb2.ExportResultsResponse.SerializeToString,
+            ),
+            'SubmitResults': grpc.unary_unary_rpc_method_handler(
+                    servicer.SubmitResults,
+                    request_deserializer=worker_dot_v1_dot_maintenance__pb2.SubmitResultsRequest.FromString,
+                    response_serializer=worker_dot_v1_dot_maintenance__pb2.SubmitResultsResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -258,6 +290,60 @@ class MaintenanceService(object):
             '/melix.worker.v1.MaintenanceService/RunEvaluation',
             worker_dot_v1_dot_maintenance__pb2.RunEvaluationRequest.SerializeToString,
             worker_dot_v1_dot_maintenance__pb2.RunEvaluationResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def ExportResults(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/melix.worker.v1.MaintenanceService/ExportResults',
+            worker_dot_v1_dot_maintenance__pb2.ExportResultsRequest.SerializeToString,
+            worker_dot_v1_dot_maintenance__pb2.ExportResultsResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def SubmitResults(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/melix.worker.v1.MaintenanceService/SubmitResults',
+            worker_dot_v1_dot_maintenance__pb2.SubmitResultsRequest.SerializeToString,
+            worker_dot_v1_dot_maintenance__pb2.SubmitResultsResponse.FromString,
             options,
             channel_credentials,
             insecure,

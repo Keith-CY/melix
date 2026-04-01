@@ -2660,6 +2660,7 @@ struct ControlPlaneServiceTests {
         request.commandType = "ops.run_bench"
         request.ops = Melix_Controlplane_V1_OpsCommand()
         request.ops.runBench = Melix_Controlplane_V1_RunBench()
+        request.ops.runBench.suites = ["smoke", "latency"]
         return request
     }
 
@@ -2672,7 +2673,9 @@ struct ControlPlaneServiceTests {
         request.ops.runEvaluation.suiteID = "qa_smoke"
         request.ops.runEvaluation.datasetID = "qa_smoke.dev.v1"
         request.ops.runEvaluation.sampleSize = 8
-        request.ops.runEvaluation.parameters = ["judge": "deterministic"]
+        request.ops.runEvaluation.parameters = [
+            "judge": "deterministic",
+        ]
         return request
     }
 
@@ -3522,11 +3525,15 @@ private actor ScriptedModelOperationsWorkerClient: WorkerRoutingClient, ModelOpe
     private(set) var lastDoctorRequest: Melix_Worker_V1_RunDoctorRequest?
     private(set) var lastBenchRequest: Melix_Worker_V1_RunBenchRequest?
     private(set) var lastEvaluationRequest: Melix_Worker_V1_RunEvaluationRequest?
+    private(set) var lastExportRequest: Melix_Worker_V1_ExportResultsRequest?
+    private(set) var lastSubmitRequest: Melix_Worker_V1_SubmitResultsRequest?
     private var infoResponse = Melix_Worker_V1_GetModelInfoResponse()
     private var convertEvents: [Melix_Worker_V1_ConvertModelEvent] = []
     private var doctorResponse = Melix_Worker_V1_RunDoctorResponse()
     private var benchEvents: [Melix_Worker_V1_RunBenchEvent] = []
     private var evaluationResponse = Melix_Worker_V1_RunEvaluationResponse()
+    private var exportResponse = Melix_Worker_V1_ExportResultsResponse()
+    private var submitResponse = Melix_Worker_V1_SubmitResultsResponse()
     private var infoError: Error?
     private var convertError: Error?
     private var doctorError: Error?
@@ -3571,6 +3578,14 @@ private actor ScriptedModelOperationsWorkerClient: WorkerRoutingClient, ModelOpe
 
     func setEvaluationError(_ error: Error?) {
         evaluationError = error
+    }
+
+    func setExportResponse(_ response: Melix_Worker_V1_ExportResultsResponse) {
+        exportResponse = response
+    }
+
+    func setSubmitResponse(_ response: Melix_Worker_V1_SubmitResultsResponse) {
+        submitResponse = response
     }
 
     func canDispatchRequests() async -> Bool {
@@ -3656,6 +3671,20 @@ private actor ScriptedModelOperationsWorkerClient: WorkerRoutingClient, ModelOpe
             throw evaluationError
         }
         return evaluationResponse
+    }
+
+    func exportResults(
+        request: Melix_Worker_V1_ExportResultsRequest
+    ) async throws -> Melix_Worker_V1_ExportResultsResponse {
+        lastExportRequest = request
+        return exportResponse
+    }
+
+    func submitResults(
+        request: Melix_Worker_V1_SubmitResultsRequest
+    ) async throws -> Melix_Worker_V1_SubmitResultsResponse {
+        lastSubmitRequest = request
+        return submitResponse
     }
 }
 

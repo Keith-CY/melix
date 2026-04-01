@@ -494,7 +494,7 @@ def test_build_server_and_main_bootstrap(monkeypatch, tmp_path: Path) -> None:
         "registered_services": [
             ("melix.worker.v1.RuntimeService", 8),
             ("melix.worker.v1.InferenceService", 10),
-            ("melix.worker.v1.MaintenanceService", 4),
+            ("melix.worker.v1.MaintenanceService", 7),
             ("melix.worker.v1.CacheService", 6),
         ],
         "address": f"unix://{Path('/tmp/melix-test.sock').resolve()}",

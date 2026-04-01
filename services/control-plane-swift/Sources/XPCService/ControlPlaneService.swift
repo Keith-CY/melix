@@ -416,6 +416,10 @@ public actor ControlPlaneService {
             return await handleRunEvaluation(request: request, command: runEvaluation)
         case .cancelRequest(let cancelRequest):
             return await handleCancelRequest(request: request, command: cancelRequest)
+        case .exportResults(let exportResults):
+            return await handleExportResults(request: request, command: exportResults)
+        case .submitResults(let submitResults):
+            return await handleSubmitResults(request: request, command: submitResults)
         default:
             return errorResponse(
                 for: request,
@@ -482,6 +486,7 @@ public actor ControlPlaneService {
         let requestedSuites = command.suites.isEmpty ? ["smoke", "latency"] : Array(command.suites)
         workerRequest.modelHandle = modelHandle
         workerRequest.suites = requestedSuites
+        workerRequest.parameters = command.parameters
 
         do {
             let stream = try await workerClient.runBench(request: workerRequest)
@@ -598,6 +603,71 @@ public actor ControlPlaneService {
             return okResponse(for: request, ops: reply)
         } catch {
             return errorResponse(for: request, code: "unavailable", message: "Evaluation worker request failed: \(error)")
+        }
+    }
+
+    private func handleExportResults(
+        request: Melix_Controlplane_V1_ControlPlaneRequest,
+        command: Melix_Controlplane_V1_ExportResults
+    ) async -> Melix_Controlplane_V1_ControlPlaneResponse {
+        guard
+            let workerRegistry,
+            let workerClient = await workerRegistry.client(for: .pythonModelOperations) as? any ModelOperationsWorkerClientProtocol
+        else {
+            return errorResponse(for: request, code: "unavailable", message: "Model operations worker is unavailable.")
+        }
+
+        var workerRequest = Melix_Worker_V1_ExportResultsRequest()
+        workerRequest.outputDir = command.outputDir
+
+        do {
+            let workerResponse = try await workerClient.exportResults(request: workerRequest)
+            guard workerResponse.ok else {
+                return errorResponse(
+                    for: request,
+                    code: workerResponse.error.code.isEmpty ? "unknown" : workerResponse.error.code,
+                    message: workerResponse.error.message.isEmpty ? "Export request failed." : workerResponse.error.message
+                )
+            }
+
+            var reply = Melix_Controlplane_V1_OpsReply()
+            reply.exportBundleJson = workerResponse.exportJson
+            return okResponse(for: request, ops: reply)
+        } catch {
+            return errorResponse(for: request, code: "unavailable", message: "Export worker request failed: \(error)")
+        }
+    }
+
+    private func handleSubmitResults(
+        request: Melix_Controlplane_V1_ControlPlaneRequest,
+        command: Melix_Controlplane_V1_SubmitResults
+    ) async -> Melix_Controlplane_V1_ControlPlaneResponse {
+        guard
+            let workerRegistry,
+            let workerClient = await workerRegistry.client(for: .pythonModelOperations) as? any ModelOperationsWorkerClientProtocol
+        else {
+            return errorResponse(for: request, code: "unavailable", message: "Model operations worker is unavailable.")
+        }
+
+        var workerRequest = Melix_Worker_V1_SubmitResultsRequest()
+        workerRequest.outputDir = command.outputDir
+        workerRequest.deviceMetadata = command.deviceMetadata
+
+        do {
+            let workerResponse = try await workerClient.submitResults(request: workerRequest)
+            guard workerResponse.ok else {
+                return errorResponse(
+                    for: request,
+                    code: workerResponse.error.code.isEmpty ? "unknown" : workerResponse.error.code,
+                    message: workerResponse.error.message.isEmpty ? "Submit request failed." : workerResponse.error.message
+                )
+            }
+
+            var reply = Melix_Controlplane_V1_OpsReply()
+            reply.submissionJson = workerResponse.submissionJson
+            return okResponse(for: request, ops: reply)
+        } catch {
+            return errorResponse(for: request, code: "unavailable", message: "Submit worker request failed: \(error)")
         }
     }
 
