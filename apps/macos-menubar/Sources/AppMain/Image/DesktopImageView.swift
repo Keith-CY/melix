@@ -4,6 +4,9 @@ import SwiftUI
 
 struct DesktopImageTabView: View {
     let viewModel: RuntimeViewModel
+    @State private var showsSidebar = true
+    @State private var showsInspector = true
+    @State private var selectedMode: DesktopImageWorkspaceMode = .generate
 
     @MainActor
     func cancelSelectedJob() {
@@ -14,30 +17,114 @@ struct DesktopImageTabView: View {
 
     var body: some View {
         HSplitView {
+            if showsSidebar {
+                DesktopImageJobsSidebar(viewModel: viewModel)
+                    .frame(minWidth: 250, idealWidth: 270)
+            }
+
+            DesktopImageWorkspace(
+                viewModel: viewModel,
+                selectedMode: $selectedMode,
+                showsSidebar: $showsSidebar,
+                showsInspector: $showsInspector
+            )
+
+            if showsInspector {
+                DesktopImageInspector(viewModel: viewModel, cancelSelectedJob: cancelSelectedJob)
+                    .frame(minWidth: 300, idealWidth: 320)
+            }
+        }
+    }
+}
+
+enum DesktopImageWorkspaceMode: String, CaseIterable, Identifiable {
+    case generate = "Generate"
+    case edit = "Edit"
+
+    var id: String { rawValue }
+}
+
+struct DesktopImageJobsSidebar: View {
+    let viewModel: RuntimeViewModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Image Jobs")
+                .font(.headline)
+
+            if viewModel.imageJobs.isEmpty {
+                ContentUnavailableView(
+                    "No image jobs yet",
+                    systemImage: "photo.on.rectangle.angled",
+                    description: Text("Submit a generation or edit request to track image artifacts and progress.")
+                )
+            } else {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 10) {
+                        ForEach(viewModel.imageJobs, id: \.jobID) { job in
+                            Button {
+                                viewModel.selectImageJob(jobID: job.jobID)
+                            } label: {
+                                DesktopImageJobRowView(
+                                    job: job,
+                                    isSelected: viewModel.selectedImageJobID == job.jobID
+                                )
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+            }
+
+            Spacer()
+        }
+        .padding(20)
+    }
+}
+
+struct DesktopImageWorkspace: View {
+    let viewModel: RuntimeViewModel
+    @Binding var selectedMode: DesktopImageWorkspaceMode
+    @Binding var showsSidebar: Bool
+    @Binding var showsInspector: Bool
+
+    var body: some View {
+        ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 HStack {
                     Text("Image")
-                        .font(.largeTitle)
-                        .bold()
-
+                        .font(.largeTitle.weight(.semibold))
                     Spacer()
-
-                    Picker(
-                        "Model",
-                        selection: Binding(
-                            get: { viewModel.selectedImageModelID },
-                            set: { viewModel.selectedImageModelID = $0 }
-                        )
-                    ) {
-                        ForEach(viewModel.imageModels, id: \.modelID) { model in
-                            Text(model.modelID).tag(model.modelID)
-                        }
+                    Button(showsSidebar ? "Hide List" : "Show List") {
+                        showsSidebar.toggle()
                     }
-                    .frame(width: 220)
+                    Button(showsInspector ? "Hide Inspector" : "Show Inspector") {
+                        showsInspector.toggle()
+                    }
                 }
 
-                GroupBox("Prompt") {
-                    VStack(alignment: .leading, spacing: 8) {
+                Picker("Workflow", selection: $selectedMode) {
+                    ForEach(DesktopImageWorkspaceMode.allCases) { mode in
+                        Text(mode.rawValue).tag(mode)
+                    }
+                }
+                .pickerStyle(.segmented)
+
+                Picker(
+                    "Model",
+                    selection: Binding(
+                        get: { viewModel.selectedImageModelID },
+                        set: { viewModel.selectedImageModelID = $0 }
+                    )
+                ) {
+                    ForEach(viewModel.imageModels, id: \.modelID) { model in
+                        Text(model.modelID).tag(model.modelID)
+                    }
+                }
+                .frame(maxWidth: 320)
+
+                GroupBox(selectedMode.rawValue) {
+                    VStack(alignment: .leading, spacing: 10) {
                         TextEditor(
                             text: Binding(
                                 get: { viewModel.imagePromptText },
@@ -56,6 +143,7 @@ struct DesktopImageTabView: View {
                                 )
                             )
                             .textFieldStyle(.roundedBorder)
+
                             Stepper(
                                 "Variants \(viewModel.imageVariantCount)",
                                 value: Binding(
@@ -65,126 +153,126 @@ struct DesktopImageTabView: View {
                                 in: 1...4
                             )
                         }
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                }
 
-                GroupBox("Edit Sources") {
-                    VStack(alignment: .leading, spacing: 8) {
-                        TextField(
-                            "Source image URI",
-                            text: Binding(
-                                get: { viewModel.imageEditSourceURL },
-                                set: { viewModel.imageEditSourceURL = $0 }
+                        if selectedMode == .edit {
+                            TextField(
+                                "Source image URI",
+                                text: Binding(
+                                    get: { viewModel.imageEditSourceURL },
+                                    set: { viewModel.imageEditSourceURL = $0 }
+                                )
                             )
-                        )
-                        .textFieldStyle(.roundedBorder)
+                            .textFieldStyle(.roundedBorder)
 
-                        TextField(
-                            "Mask URI (optional)",
-                            text: Binding(
-                                get: { viewModel.imageEditMaskURL },
-                                set: { viewModel.imageEditMaskURL = $0 }
+                            TextField(
+                                "Mask URI (optional)",
+                                text: Binding(
+                                    get: { viewModel.imageEditMaskURL },
+                                    set: { viewModel.imageEditMaskURL = $0 }
+                                )
                             )
-                        )
-                        .textFieldStyle(.roundedBorder)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                }
+                            .textFieldStyle(.roundedBorder)
+                        }
 
-                HStack {
-                    Text(viewModel.imageStatusText)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                    Button("Generate") {
-                        Task { await viewModel.submitImageGeneration() }
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(viewModel.imagePromptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                    Button("Edit") {
-                        Task { await viewModel.submitImageEdit() }
-                    }
-                    .buttonStyle(.bordered)
-                    .disabled(viewModel.imageEditSourceURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                }
-
-                GroupBox("Jobs") {
-                    if viewModel.imageJobs.isEmpty {
-                        ContentUnavailableView(
-                            "No image jobs yet",
-                            systemImage: "photo.on.rectangle.angled",
-                            description: Text("Submit a generation or edit request to track image artifacts and progress through the control plane.")
-                        )
-                    } else {
-                        ScrollView {
-                            LazyVStack(alignment: .leading, spacing: 10) {
-                                ForEach(viewModel.imageJobs, id: \.jobID) { job in
-                                    Button {
-                                        viewModel.selectImageJob(jobID: job.jobID)
-                                    } label: {
-                                        DesktopImageJobRowView(
-                                            job: job,
-                                            isSelected: viewModel.selectedImageJobID == job.jobID
-                                        )
+                        HStack {
+                            Text(viewModel.imageStatusText)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                            Button("Run") {
+                                Task {
+                                    if selectedMode == .generate {
+                                        await viewModel.submitImageGeneration()
+                                    } else {
+                                        await viewModel.submitImageEdit()
                                     }
-                                    .buttonStyle(.plain)
                                 }
                             }
+                            .buttonStyle(.borderedProminent)
+                            .disabled(isActionDisabled)
                         }
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
 
-                Spacer()
-            }
-            .padding(20)
-
-            VStack(alignment: .leading, spacing: 16) {
-                GroupBox("Selected Job") {
-                    if let job = viewModel.selectedImageJob {
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text(job.jobID)
-                                .font(.headline)
-                            Text("\(job.operation) • \(job.modelID)")
-                                .foregroundStyle(.secondary)
-                            Text("\(job.progress.stage) • \(String(format: "%.0f%%", job.progress.pct * 100))")
-                                .font(.caption.monospacedDigit())
-                                .foregroundStyle(.secondary)
-                            HStack {
-                                Spacer()
-                                Button("Cancel", action: cancelSelectedJob)
-                                .disabled(job.cancelable == false)
-                            }
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    } else {
-                        Text("Select an image job to inspect artifacts.")
-                            .foregroundStyle(.secondary)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                }
-
-                GroupBox("Artifacts") {
+                GroupBox("Results") {
                     if let job = viewModel.selectedImageJob, job.artifacts.isEmpty == false {
-                        ScrollView {
-                            LazyVGrid(columns: [GridItem(.adaptive(minimum: 220), spacing: 12)], spacing: 12) {
-                                ForEach(job.artifacts, id: \.artifactID) { artifact in
-                                    DesktopImageArtifactCardView(artifact: artifact)
-                                }
+                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 220), spacing: 12)], spacing: 12) {
+                            ForEach(job.artifacts, id: \.artifactID) { artifact in
+                                DesktopImageArtifactCardView(artifact: artifact)
                             }
                         }
                     } else {
-                        Text("No artifacts available yet.")
+                        Text("Select a job to review generated artifacts.")
                             .foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
                 }
-
-                Spacer()
             }
-            .frame(minWidth: 320, idealWidth: 420)
             .padding(20)
         }
+    }
+
+    private var isActionDisabled: Bool {
+        switch selectedMode {
+        case .generate:
+            return viewModel.imagePromptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        case .edit:
+            return viewModel.imageEditSourceURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+    }
+}
+
+struct DesktopImageInspector: View {
+    let viewModel: RuntimeViewModel
+    let cancelSelectedJob: @MainActor () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            GroupBox("Selected Job") {
+                if let job = viewModel.selectedImageJob {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(job.jobID)
+                            .font(.headline)
+                        Text("\(job.operation) • \(job.modelID)")
+                            .foregroundStyle(.secondary)
+                        Text("\(job.progress.stage) • \(String(format: "%.0f%%", job.progress.pct * 100))")
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                        HStack {
+                            Spacer()
+                            Button("Cancel", action: cancelSelectedJob)
+                                .disabled(job.cancelable == false)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                } else {
+                    Text("Select an image job to inspect metadata.")
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+
+            GroupBox("Artifacts") {
+                if let job = viewModel.selectedImageJob, job.artifacts.isEmpty == false {
+                    VStack(alignment: .leading, spacing: 8) {
+                        ForEach(job.artifacts, id: \.artifactID) { artifact in
+                            Text(artifact.storageUri)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                } else {
+                    Text("No artifacts available yet.")
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+
+            Spacer()
+        }
+        .padding(20)
     }
 }
 

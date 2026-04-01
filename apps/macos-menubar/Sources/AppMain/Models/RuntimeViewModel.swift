@@ -168,7 +168,11 @@ public final class RuntimeViewModel {
     public private(set) var serverStateText = "Starting"
     public private(set) var connectionStateText = "Connecting"
     public private(set) var connectionDetailText = "Awaiting handshake"
+    public var selectedSurface: DesktopSurface = .chat
+    public var selectedToolSection: DesktopToolSection = .modelsLibrary
     public private(set) var models: [RuntimeModelRow] = []
+    public private(set) var serverSessions: [DesktopServerSessionState] = []
+    public private(set) var chatSessions: [DesktopChatSessionState] = []
     public private(set) var lastError: String?
     public private(set) var protocolVersion = "melix.controlplane.v1"
     public private(set) var serverVersion = "0.1.0"
@@ -199,6 +203,7 @@ public final class RuntimeViewModel {
     public var selectedImageModelID = "melix-dev-image"
     public let availableQuantizationProfileIDs = ["q2", "q3", "q4", "q5", "q6", "q7", "q8"]
     public var selectedQuantizationProfileID = "q4"
+    public var openCommandCenterAction: (@MainActor @Sendable () -> Void)?
 
     public var onStateChanged: (@MainActor @Sendable () -> Void)?
 
@@ -222,8 +227,305 @@ public final class RuntimeViewModel {
         self.metrics = metrics
     }
 
+    public func selectSurface(_ surface: DesktopSurface) {
+        selectedSurface = surface
+        notifyStateChanged()
+    }
+
+    public func selectToolSection(_ section: DesktopToolSection) {
+        selectedSurface = .tools
+        selectedToolSection = section
+        notifyStateChanged()
+    }
+
+    public func openCommandCenter() {
+        openCommandCenterAction?()
+    }
+
+    public func createServerSession() {
+        let modelID = models.first(where: { $0.kind == "text" })?.modelID ?? selectedChatModelID
+        let nextIndex = serverSessions.count + 1
+        let session = DesktopServerSessionState(
+            id: "server-session-\(UUID().uuidString)",
+            title: nextIndex == 1 ? "Primary Server" : "Server \(nextIndex)",
+            modelID: modelID,
+            port: 8080 + max(0, serverSessions.count),
+            lifecycle: .draft
+        )
+        serverSessions.append(session)
+        selectedServerSessionID = session.id
+        selectedSurface = .server
+        if chatSessions.isEmpty {
+            createChatSession()
+        }
+        notifyStateChanged()
+    }
+
+    public func selectServerSession(id: String) {
+        guard serverSessions.contains(where: { $0.id == id }) else {
+            return
+        }
+        selectedServerSessionID = id
+        selectedChatModelID = selectedServerSession?.modelID ?? selectedChatModelID
+        notifyStateChanged()
+    }
+
+    public func updateSelectedServerSessionModelID(_ modelID: String) {
+        updateSelectedServerSession { session in
+            session.modelID = modelID
+            session.updatedAt = Date()
+        }
+        if selectedChatSession == nil {
+            selectedChatModelID = modelID
+        }
+    }
+
+    public func updateSelectedServerSessionHost(_ host: String) {
+        updateSelectedServerSession { session in
+            session.host = host
+            session.updatedAt = Date()
+        }
+    }
+
+    public func updateSelectedServerSessionPort(_ port: Int) {
+        updateSelectedServerSession { session in
+            session.port = max(1, port)
+            session.updatedAt = Date()
+        }
+    }
+
+    public func updateSelectedServerSessionAuthMode(_ authMode: DesktopServerAuthMode) {
+        updateSelectedServerSession { session in
+            session.authMode = authMode
+            session.updatedAt = Date()
+        }
+    }
+
+    public func updateSelectedServerSessionAuthTokenHint(_ value: String) {
+        updateSelectedServerSession { session in
+            session.authTokenHint = value
+            session.updatedAt = Date()
+        }
+    }
+
+    public func updateSelectedServerSessionRateLimit(_ value: Int) {
+        updateSelectedServerSession { session in
+            session.rateLimitPerMinute = max(1, value)
+            session.updatedAt = Date()
+        }
+    }
+
+    public func updateSelectedServerSessionTimeout(_ value: Int) {
+        updateSelectedServerSession { session in
+            session.timeoutSeconds = max(1, value)
+            session.updatedAt = Date()
+        }
+    }
+
+    public func updateSelectedServerSessionTemperature(_ value: Double) {
+        updateSelectedServerSession { session in
+            session.servingDefaults.temperature = max(0, value)
+            session.updatedAt = Date()
+        }
+    }
+
+    public func updateSelectedServerSessionTopP(_ value: Double) {
+        updateSelectedServerSession { session in
+            session.servingDefaults.topP = max(0, min(1, value))
+            session.updatedAt = Date()
+        }
+    }
+
+    public func updateSelectedServerSessionMaxTokens(_ value: Int) {
+        updateSelectedServerSession { session in
+            session.servingDefaults.maxTokens = max(1, value)
+            session.updatedAt = Date()
+        }
+    }
+
+    public func updateSelectedServerSessionMaxConcurrentRequests(_ value: Int) {
+        updateSelectedServerSession { session in
+            session.servingDefaults.maxConcurrentRequests = max(1, value)
+            session.updatedAt = Date()
+        }
+    }
+
+    public func startSelectedServerSession() async {
+        guard let serverSession = selectedServerSession else {
+            return
+        }
+        replaceServerSession(id: serverSession.id) { session in
+            session.lifecycle = .starting
+            session.lastError = ""
+            session.updatedAt = Date()
+        }
+        notifyStateChanged()
+        await loadModel(modelID: serverSession.modelID)
+    }
+
+    public func stopSelectedServerSession() async {
+        guard let serverSession = selectedServerSession else {
+            return
+        }
+        replaceServerSession(id: serverSession.id) { session in
+            session.lifecycle = .stopping
+            session.updatedAt = Date()
+        }
+        notifyStateChanged()
+        await unloadModel(modelID: serverSession.modelID)
+        replaceServerSession(id: serverSession.id) { session in
+            session.lifecycle = .stopped
+            session.updatedAt = Date()
+        }
+        notifyStateChanged()
+    }
+
+    public func createChatSession() {
+        guard let serverSession = selectedServerSession ?? serverSessions.first else {
+            lastError = "Create a Server Session before opening chat."
+            chatStatusText = "No Server Session"
+            selectedSurface = .server
+            notifyStateChanged()
+            return
+        }
+
+        let nextIndex = chatSessions.count + 1
+        let session = DesktopChatSessionState(
+            id: "chat-session-\(UUID().uuidString)",
+            title: nextIndex == 1 ? "Chat 1" : "Chat \(nextIndex)",
+            serverSessionID: serverSession.id
+        )
+        chatSessions.append(session)
+        loadChatSession(session)
+        selectedSurface = .chat
+        notifyStateChanged()
+    }
+
+    public func forkSelectedChatSession() {
+        guard let source = selectedChatSession else {
+            createChatSession()
+            return
+        }
+
+        let nextIndex = chatSessions.count + 1
+        let forked = DesktopChatSessionState(
+            id: "chat-session-\(UUID().uuidString)",
+            title: "\(source.title) Fork",
+            serverSessionID: source.serverSessionID,
+            branchID: "branch-\(nextIndex)",
+            branchTitle: "Branch \(nextIndex)",
+            transcript: source.transcript,
+            statusText: source.statusText,
+            usageText: source.usageText,
+            requestID: source.requestID,
+            isStreaming: false,
+            exportPath: source.exportPath
+        )
+        chatSessions.append(forked)
+        loadChatSession(forked)
+        selectedSurface = .chat
+        notifyStateChanged()
+    }
+
+    public func selectChatSession(id: String) {
+        guard let session = chatSessions.first(where: { $0.id == id }) else {
+            return
+        }
+        loadChatSession(session)
+        notifyStateChanged()
+    }
+
+    @discardableResult
+    public func exportSelectedChatSession() -> String? {
+        guard let session = selectedChatSession else {
+            return nil
+        }
+        let sanitizedName = session.title.replacingOccurrences(of: " ", with: "-").lowercased()
+        let exportURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(sanitizedName)-export.md")
+        let lines = session.transcript.map { entry in
+            "## \(entry.title)\n\n\(entry.body)\n"
+        }
+        let payload = """
+        # \(session.title)
+
+        - Server Session: \(session.serverSessionID)
+        - Branch: \(session.branchTitle)
+        - Status: \(session.statusText)
+
+        \(lines.joined(separator: "\n"))
+        """
+
+        do {
+            try payload.write(to: exportURL, atomically: true, encoding: .utf8)
+            replaceChatSession(id: session.id) { chat in
+                chat.exportPath = exportURL.path
+                chat.updatedAt = Date()
+            }
+            if selectedChatSessionID == session.id {
+                lastChatRequestID = session.requestID
+            }
+            notifyStateChanged()
+            return exportURL.path
+        } catch {
+            recordLocalError("Chat export failed: \(error)")
+            notifyStateChanged()
+            return nil
+        }
+    }
+
+    public func serverSession(id: String) -> DesktopServerSessionState? {
+        serverSessions.first(where: { $0.id == id })
+    }
+
     public var primaryModel: RuntimeModelRow? {
         models.first { $0.modelID == "melix-dev-text" } ?? models.first
+    }
+
+    public var selectedServerSession: DesktopServerSessionState? {
+        guard !selectedServerSessionID.isEmpty else {
+            return serverSessions.first
+        }
+        return serverSessions.first(where: { $0.id == selectedServerSessionID }) ?? serverSessions.first
+    }
+
+    public var selectedChatSession: DesktopChatSessionState? {
+        guard !selectedChatSessionID.isEmpty else {
+            return chatSessions.first
+        }
+        return chatSessions.first(where: { $0.id == selectedChatSessionID }) ?? chatSessions.first
+    }
+
+    public var selectedChatServerSession: DesktopServerSessionState? {
+        guard let selectedChatSession else {
+            return selectedServerSession
+        }
+        return serverSession(id: selectedChatSession.serverSessionID) ?? selectedServerSession
+    }
+
+    public var desktopBannerState: DesktopBannerState? {
+        if serverStateText == "Failed" || connectionStateText == "Degraded" {
+            return DesktopBannerState(
+                title: "Operator Attention Required",
+                detail: lastError ?? connectionDetailText,
+                severity: .critical
+            )
+        }
+        if serverStateText == "Degraded" || serverStateText == "Draining" || connectionStateText == "Reconnecting" {
+            return DesktopBannerState(
+                title: "Runtime Needs Monitoring",
+                detail: connectionDetailText,
+                severity: .warning
+            )
+        }
+        if let failingServer = serverSessions.first(where: { $0.lifecycle == .error }) {
+            return DesktopBannerState(
+                title: "\(failingServer.title) Needs Recovery",
+                detail: failingServer.lastError,
+                severity: .critical
+            )
+        }
+        return nil
     }
 
     public var latestAdapterPackage: RuntimeAdapterPackageState? {
@@ -256,6 +558,9 @@ public final class RuntimeViewModel {
             recentEvents: recentEvents
         )
     }
+
+    private var selectedServerSessionID = ""
+    private var selectedChatSessionID = ""
 
     public func start() async {
         await transitionConnectionState(to: "Connecting", detail: "Awaiting handshake")
@@ -317,6 +622,7 @@ public final class RuntimeViewModel {
             )
             upsert(model: model)
         } catch {
+            markServerSessions(for: modelID, lifecycle: .error, error: String(describing: error))
             recordLocalError(String(describing: error))
         }
         notifyStateChanged()
@@ -328,6 +634,21 @@ public final class RuntimeViewModel {
             return
         }
         guard !isChatStreaming else {
+            return
+        }
+
+        guard let serverSession = selectedChatServerSession else {
+            chatStatusText = "No Server Session"
+            lastError = "Create and start a Server Session before sending chat prompts."
+            selectedSurface = .server
+            notifyStateChanged()
+            return
+        }
+        guard serverSession.isRunning else {
+            chatStatusText = "No Server Session"
+            lastError = "Start a running Server Session before sending chat prompts."
+            selectedSurface = .chat
+            notifyStateChanged()
             return
         }
 
@@ -465,6 +786,13 @@ public final class RuntimeViewModel {
         activeAssistantEntryID = nil
         activeReasoningEntryID = nil
         activeToolEntryIDs.removeAll()
+        replaceChatSession(id: selectedChatSessionID) { session in
+            session.transcript = []
+            session.statusText = "Idle"
+            session.usageText = ""
+            session.requestID = ""
+            session.updatedAt = Date()
+        }
         notifyStateChanged()
     }
 
@@ -597,6 +925,7 @@ public final class RuntimeViewModel {
             )
             upsert(model: model)
         } catch {
+            markServerSessions(for: modelID, lifecycle: .error, error: String(describing: error))
             recordLocalError(String(describing: error))
         }
         notifyStateChanged()
@@ -950,6 +1279,194 @@ public final class RuntimeViewModel {
             .map(Self.makeTrainingHistoryEntryState)
     }
 
+    private func updateSelectedServerSession(
+        _ update: (inout DesktopServerSessionState) -> Void
+    ) {
+        replaceServerSession(id: selectedServerSessionID, update)
+        notifyStateChanged()
+    }
+
+    private func replaceServerSession(
+        id: String,
+        _ update: (inout DesktopServerSessionState) -> Void
+    ) {
+        guard let index = serverSessions.firstIndex(where: { $0.id == id }) else {
+            return
+        }
+        var session = serverSessions[index]
+        update(&session)
+        serverSessions[index] = session
+    }
+
+    private func replaceChatSession(
+        id: String,
+        _ update: (inout DesktopChatSessionState) -> Void
+    ) {
+        guard let index = chatSessions.firstIndex(where: { $0.id == id }) else {
+            return
+        }
+        var session = chatSessions[index]
+        update(&session)
+        chatSessions[index] = session
+    }
+
+    private func loadChatSession(_ session: DesktopChatSessionState) {
+        selectedChatSessionID = session.id
+        if selectedServerSessionID.isEmpty || serverSession(id: session.serverSessionID) != nil {
+            selectedServerSessionID = session.serverSessionID
+        }
+        chatTranscript = session.transcript
+        chatStatusText = session.statusText
+        lastChatUsageText = session.usageText
+        lastChatRequestID = session.requestID
+        isChatStreaming = session.isStreaming
+        chatConversationMessages = session.transcript.compactMap { entry in
+            switch entry.kind {
+            case .user:
+                return ControlPlaneChatRequest.Message(role: "user", content: entry.body)
+            case .assistant:
+                return ControlPlaneChatRequest.Message(role: "assistant", content: entry.body)
+            default:
+                return nil
+            }
+        }
+        if let boundServer = serverSession(id: session.serverSessionID) {
+            selectedChatModelID = boundServer.modelID
+        }
+    }
+
+    private func ensureChatSessionsBoundToServerSessions() {
+        if serverSessions.isEmpty {
+            chatSessions = []
+            selectedChatSessionID = ""
+            return
+        }
+
+        if selectedServerSession == nil {
+            selectedServerSessionID = serverSessions.first?.id ?? ""
+        }
+
+        if chatSessions.isEmpty, let serverSession = selectedServerSession {
+            let session = DesktopChatSessionState(
+                id: "chat-session-\(UUID().uuidString)",
+                title: "Chat 1",
+                serverSessionID: serverSession.id
+            )
+            chatSessions = [session]
+            loadChatSession(session)
+            return
+        }
+
+        chatSessions = chatSessions.map { session in
+            guard serverSession(id: session.serverSessionID) == nil else {
+                return session
+            }
+            var rebound = session
+            rebound.serverSessionID = serverSessions.first?.id ?? rebound.serverSessionID
+            rebound.updatedAt = Date()
+            return rebound
+        }
+
+        if selectedChatSession == nil, let first = chatSessions.first {
+            loadChatSession(first)
+        } else if let selectedChatSession {
+            loadChatSession(selectedChatSession)
+        }
+    }
+
+    private func syncServerSessionsWithModels() {
+        let textModels = models.filter { row in
+            row.kind == "text" || latestSnapshot.models.first(where: { $0.modelID == row.modelID })?.features.contains("chat") == true
+        }
+
+        if serverSessions.isEmpty, let firstTextModel = textModels.first {
+            let seeded = makeServerSession(for: firstTextModel, title: "Primary Server", port: 8080)
+            serverSessions = [seeded]
+            selectedServerSessionID = seeded.id
+        }
+
+        guard serverSessions.isEmpty == false else {
+            return
+        }
+
+        serverSessions = serverSessions.enumerated().map { offset, session in
+            var updated = session
+            updated.updatedAt = Date()
+            if let model = models.first(where: { $0.modelID == session.modelID }) {
+                updated.lastKnownModelStateText = model.stateText
+                switch session.lifecycle {
+                case .draft, .running, .stopped, .error, .unavailable:
+                    updated.lifecycle = session.lifecycle
+                case .starting:
+                    updated.lifecycle = model.isLoaded ? .running : .starting
+                case .stopping:
+                    updated.lifecycle = model.isLoaded ? .stopping : .stopped
+                }
+            } else if let fallbackModel = textModels.first {
+                updated.modelID = fallbackModel.modelID
+                updated.lastKnownModelStateText = fallbackModel.stateText
+                updated.lifecycle = session.lifecycle == .stopped ? .stopped : .running
+            } else {
+                updated.lifecycle = .unavailable
+                updated.lastKnownModelStateText = "Unavailable"
+            }
+            if updated.title.isEmpty {
+                updated.title = offset == 0 ? "Primary Server" : "Server \(offset + 1)"
+            }
+            return updated
+        }
+
+        if selectedServerSession == nil {
+            selectedServerSessionID = serverSessions.first?.id ?? ""
+        }
+    }
+
+    private func makeServerSession(
+        for model: RuntimeModelRow,
+        title: String,
+        port: Int
+    ) -> DesktopServerSessionState {
+        DesktopServerSessionState(
+            id: "server-session-\(UUID().uuidString)",
+            title: title,
+            modelID: model.modelID,
+            port: port,
+            lifecycle: .running,
+            lastKnownModelStateText: model.stateText
+        )
+    }
+
+    private func markServerSessions(
+        for modelID: String,
+        lifecycle: DesktopServerSessionLifecycle,
+        error: String
+    ) {
+        serverSessions = serverSessions.map { session in
+            guard session.modelID == modelID else {
+                return session
+            }
+            var updated = session
+            updated.lifecycle = lifecycle
+            updated.lastError = error
+            updated.updatedAt = Date()
+            return updated
+        }
+    }
+
+    private func persistSelectedChatSessionState() {
+        guard let session = selectedChatSession else {
+            return
+        }
+        replaceChatSession(id: session.id) { current in
+            current.transcript = chatTranscript
+            current.statusText = chatStatusText
+            current.usageText = lastChatUsageText
+            current.requestID = lastChatRequestID
+            current.isStreaming = isChatStreaming
+            current.updatedAt = Date()
+        }
+    }
+
     private func consume(event: Melix_Controlplane_V1_ControlPlaneEvent) async {
         handle(event: event)
     }
@@ -1007,6 +1524,8 @@ public final class RuntimeViewModel {
         models = snapshot.models
             .sorted { $0.modelID < $1.modelID }
             .map(makeRuntimeModelRow)
+        syncServerSessionsWithModels()
+        ensureChatSessionsBoundToServerSessions()
         refreshImageState()
         refreshChatCapabilities()
         notifyStateChanged()
@@ -1030,6 +1549,8 @@ public final class RuntimeViewModel {
             models.append(row)
             models.sort { $0.modelID < $1.modelID }
         }
+        syncServerSessionsWithModels()
+        ensureChatSessionsBoundToServerSessions()
         refreshImageState()
         refreshChatCapabilities()
     }
@@ -1104,6 +1625,11 @@ public final class RuntimeViewModel {
     }
 
     private func resolvedChatModelID() -> String {
+        if let serverModelID = selectedChatServerSession?.modelID,
+           models.contains(where: { $0.modelID == serverModelID }) {
+            selectedChatModelID = serverModelID
+            return serverModelID
+        }
         if models.contains(where: { $0.modelID == selectedChatModelID && $0.kind == "text" }) {
             return selectedChatModelID
         }
@@ -1150,10 +1676,11 @@ public final class RuntimeViewModel {
     }
 
     private func refreshChatCapabilities() {
-        if models.contains(where: { $0.modelID == selectedChatModelID }) == false {
-            if let textModel = models.first(where: { $0.kind == "text" }) {
-                selectedChatModelID = textModel.modelID
-            }
+        if let serverModelID = selectedChatServerSession?.modelID {
+            selectedChatModelID = serverModelID
+        } else if models.contains(where: { $0.modelID == selectedChatModelID }) == false,
+                  let textModel = models.first(where: { $0.kind == "text" }) {
+            selectedChatModelID = textModel.modelID
         }
 
         let capabilitySpecs: [(String, String, [String])] = [
@@ -1391,6 +1918,7 @@ public final class RuntimeViewModel {
     }
 
     private func notifyStateChanged() {
+        persistSelectedChatSessionState()
         onStateChanged?()
     }
 

@@ -20,8 +20,272 @@ struct RuntimeViewModelTests {
         #expect(viewModel.primaryModel?.modelID == "melix-dev-text")
         #expect(viewModel.primaryModel?.stateText == "Discovered")
         #expect(viewModel.primaryModel?.actionTitle == "Load")
+        #expect(viewModel.selectedSurface == .chat)
+        #expect(viewModel.selectedToolSection == .modelsLibrary)
+        #expect(viewModel.serverSessions.isEmpty == false)
+        #expect(viewModel.selectedServerSession?.modelID == "melix-dev-text")
         #expect(await metrics.snapshot()["menu.handshake_ms"] != nil)
         #expect(await metrics.snapshot()["menu.hydration_ms"] != nil)
+    }
+
+    @Test("chat requires a running server session before sending prompts")
+    @MainActor
+    func chatRequiresRunningServerSession() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+        viewModel.chatComposerText = "hello"
+        await viewModel.stopSelectedServerSession()
+        await viewModel.submitChatPrompt()
+
+        let actions = await client.recordedActions
+        #expect(actions.contains(where: { $0.hasPrefix("chat:") }) == false)
+        #expect(viewModel.chatStatusText == "No Server Session")
+        #expect(viewModel.lastError?.contains("Server Session") == true)
+    }
+
+    @Test("creating a chat session binds it to the selected server session")
+    @MainActor
+    func creatingChatSessionBindsSelectedServerSession() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+        let originalServerID = try #require(viewModel.selectedServerSession?.id)
+
+        viewModel.createChatSession()
+
+        #expect(viewModel.chatSessions.count == 2)
+        #expect(viewModel.selectedChatSession?.serverSessionID == originalServerID)
+    }
+
+    @Test("surface selection command center and server session controls update shell state")
+    @MainActor
+    func shellStateSelectionAndServerSessionControlsUpdateState() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(client: client)
+        var stateChangeCount = 0
+        var commandCenterOpenCount = 0
+        viewModel.onStateChanged = { stateChangeCount += 1 }
+        viewModel.openCommandCenterAction = { commandCenterOpenCount += 1 }
+
+        await viewModel.start()
+
+        viewModel.selectSurface(.api)
+        #expect(viewModel.selectedSurface == .api)
+
+        viewModel.selectToolSection(.diagnostics)
+        #expect(viewModel.selectedSurface == .tools)
+        #expect(viewModel.selectedToolSection == .diagnostics)
+
+        viewModel.openCommandCenter()
+        #expect(commandCenterOpenCount == 1)
+
+        let originalServerID = try #require(viewModel.selectedServerSession?.id)
+        viewModel.createServerSession()
+
+        let createdServer = try #require(viewModel.selectedServerSession)
+        #expect(createdServer.id != originalServerID)
+        #expect(createdServer.title == "Server 2")
+        #expect(createdServer.lifecycle == .draft)
+        #expect(viewModel.selectedSurface == .server)
+
+        viewModel.selectServerSession(id: "missing-server")
+        #expect(viewModel.selectedServerSession?.id == createdServer.id)
+
+        viewModel.selectServerSession(id: originalServerID)
+        #expect(viewModel.selectedServerSession?.id == originalServerID)
+
+        viewModel.selectServerSession(id: createdServer.id)
+        viewModel.updateSelectedServerSessionModelID("melix-dev-text")
+        viewModel.updateSelectedServerSessionHost("0.0.0.0")
+        viewModel.updateSelectedServerSessionPort(0)
+        viewModel.updateSelectedServerSessionAuthMode(.bearerToken)
+        viewModel.updateSelectedServerSessionAuthTokenHint("dev-token")
+        viewModel.updateSelectedServerSessionRateLimit(0)
+        viewModel.updateSelectedServerSessionTimeout(0)
+        viewModel.updateSelectedServerSessionTemperature(-1)
+        viewModel.updateSelectedServerSessionTopP(5)
+        viewModel.updateSelectedServerSessionMaxTokens(0)
+        viewModel.updateSelectedServerSessionMaxConcurrentRequests(0)
+
+        let configuredServer = try #require(viewModel.selectedServerSession)
+        #expect(configuredServer.host == "0.0.0.0")
+        #expect(configuredServer.port == 1)
+        #expect(configuredServer.authMode == .bearerToken)
+        #expect(configuredServer.authTokenHint == "dev-token")
+        #expect(configuredServer.rateLimitPerMinute == 1)
+        #expect(configuredServer.timeoutSeconds == 1)
+        #expect(configuredServer.servingDefaults.temperature == 0)
+        #expect(configuredServer.servingDefaults.topP == 1)
+        #expect(configuredServer.servingDefaults.maxTokens == 1)
+        #expect(configuredServer.servingDefaults.maxConcurrentRequests == 1)
+
+        await viewModel.startSelectedServerSession()
+        #expect(await client.recordedActions.contains("load:melix-dev-text"))
+        #expect(viewModel.selectedServerSession?.lifecycle == .running)
+
+        await viewModel.stopSelectedServerSession()
+        #expect(await client.recordedActions.contains("unload:melix-dev-text"))
+        #expect(viewModel.selectedServerSession?.lifecycle == .stopped)
+        #expect(stateChangeCount > 0)
+    }
+
+    @Test("empty workspace routes chat creation to server and server creation seeds the first chat session")
+    @MainActor
+    func emptyWorkspaceRoutesChatCreationToServerAndSeedsServerBoundChat() async throws {
+        let client = EmptySnapshotControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+        #expect(viewModel.serverSessions.isEmpty)
+        #expect(viewModel.chatSessions.isEmpty)
+
+        viewModel.createChatSession()
+        #expect(viewModel.chatStatusText == "No Server Session")
+        #expect(viewModel.lastError == "Create a Server Session before opening chat.")
+        #expect(viewModel.selectedSurface == .server)
+
+        viewModel.createServerSession()
+
+        let seededServer = try #require(viewModel.selectedServerSession)
+        let seededChat = try #require(viewModel.selectedChatSession)
+        #expect(viewModel.serverSessions.count == 1)
+        #expect(viewModel.chatSessions.count == 1)
+        #expect(seededServer.title == "Primary Server")
+        #expect(seededServer.modelID == "melix-dev-text")
+        #expect(seededServer.port == 8080)
+        #expect(seededChat.serverSessionID == seededServer.id)
+        #expect(viewModel.selectedSurface == .chat)
+    }
+
+    @Test("chat sessions can be exported forked and reselected without losing server bindings")
+    @MainActor
+    func chatSessionsCanBeExportedForkedAndReselected() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+        viewModel.chatComposerText = "Export this chat session"
+        await viewModel.submitChatPrompt()
+
+        let originalSession = try #require(viewModel.selectedChatSession)
+        let exportPath = try #require(viewModel.exportSelectedChatSession())
+        #expect(FileManager.default.fileExists(atPath: exportPath))
+        #expect(viewModel.selectedChatSession?.exportPath == exportPath)
+
+        viewModel.forkSelectedChatSession()
+
+        let forkedSession = try #require(viewModel.selectedChatSession)
+        #expect(viewModel.chatSessions.count == 2)
+        #expect(forkedSession.title == "\(originalSession.title) Fork")
+        #expect(forkedSession.serverSessionID == originalSession.serverSessionID)
+        #expect(forkedSession.branchID == "branch-2")
+        #expect(forkedSession.branchTitle == "Branch 2")
+        #expect(forkedSession.transcript == originalSession.transcript)
+        #expect(forkedSession.exportPath == exportPath)
+
+        viewModel.selectChatSession(id: originalSession.id)
+        #expect(viewModel.selectedChatSession?.id == originalSession.id)
+
+        viewModel.selectChatSession(id: "missing-chat-session")
+        #expect(viewModel.selectedChatSession?.id == originalSession.id)
+    }
+
+    @Test("guarded server and chat actions no-op safely before hydration")
+    @MainActor
+    func guardedServerAndChatActionsNoOpSafelyBeforeHydration() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(client: client)
+
+        viewModel.chatComposerText = "hello from a cold start"
+        await viewModel.startSelectedServerSession()
+        await viewModel.stopSelectedServerSession()
+        viewModel.clearChatTranscript()
+        viewModel.forkSelectedChatSession()
+        let exportPath = viewModel.exportSelectedChatSession()
+        await viewModel.submitChatPrompt()
+
+        #expect(exportPath == nil)
+        #expect(await client.recordedActions.isEmpty)
+        #expect(viewModel.chatStatusText == "No Server Session")
+        #expect(viewModel.lastError?.contains("Server Session") == true)
+        #expect(viewModel.selectedSurface == .server)
+    }
+
+    @Test("server session sync and banner state cover fallback unavailable warning and recovery paths")
+    @MainActor
+    func serverSessionSyncAndBannerStateCoverFallbackAndRecoveryPaths() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+        viewModel.updateSelectedServerSessionModelID("missing-model")
+
+        let alternateTextSnapshot = makeSnapshot(
+            serverState: .serverReady,
+            models: [makeModelSummary(modelID: "melix-alt-text", state: .modelWarm)]
+        )
+        await client.configureSnapshot(alternateTextSnapshot)
+        await viewModel.refreshDesktopFoundation()
+
+        #expect(viewModel.selectedServerSession?.modelID == "melix-alt-text")
+        #expect(viewModel.selectedServerSession?.lastKnownModelStateText == "Warm")
+        #expect(viewModel.selectedChatServerSession?.modelID == "melix-alt-text")
+
+        var drainingEvent = Melix_Controlplane_V1_ServerStateChanged()
+        drainingEvent.state = .serverDraining
+        await client.sendServerStateChanged(state: .serverDraining)
+        try await waitForRuntimeViewModelCondition("warning banner should surface draining runtime state") {
+            viewModel.desktopBannerState?.severity == .warning
+        }
+        #expect(viewModel.desktopBannerState?.title == "Runtime Needs Monitoring")
+
+        let imageOnlySnapshot = makeSnapshot(
+            serverState: .serverReady,
+            models: [makeCapabilityModelSummary(
+                modelID: "melix-dev-image",
+                kind: "image",
+                state: .modelWarm,
+                features: ["image_generate"]
+            )]
+        )
+        await client.configureSnapshot(imageOnlySnapshot)
+        await viewModel.refreshDesktopFoundation()
+
+        #expect(viewModel.selectedServerSession?.lifecycle == .unavailable)
+        #expect(viewModel.selectedServerSession?.lastKnownModelStateText == "Unavailable")
+
+        let failingClient = FakeControlPlaneXPCClient()
+        await failingClient.configureErrors(load: MenuBarTestError(description: "load failed"))
+        let failingViewModel = RuntimeViewModel(client: failingClient)
+        await failingViewModel.start()
+        failingViewModel.createServerSession()
+        await failingViewModel.startSelectedServerSession()
+
+        let failingBanner = try #require(failingViewModel.desktopBannerState)
+        #expect(failingBanner.severity == .critical)
+        #expect(failingBanner.title.contains("Needs Recovery"))
+        #expect(failingBanner.detail.contains("load failed"))
+    }
+
+    @Test("critical banner surfaces failed runtime state")
+    @MainActor
+    func criticalBannerSurfacesFailedRuntimeState() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+        await client.sendServerStateChanged(state: .serverFailed)
+
+        try await waitForRuntimeViewModelCondition("critical banner should surface failed runtime state") {
+            viewModel.desktopBannerState?.severity == .critical
+        }
+
+        let banner = try #require(viewModel.desktopBannerState)
+        #expect(banner.title == "Operator Attention Required")
+        #expect(banner.detail == viewModel.connectionDetailText)
     }
 
     @Test("load and unload actions dispatch through the client and refresh app state")
@@ -467,11 +731,15 @@ struct RuntimeViewModelTests {
         await viewModel.refreshDesktopFoundation()
 
         let foundation = viewModel.desktopFoundationState
-        let hasSessionCard = foundation.dashboardCards.contains { $0.id == "sessions" && $0.value == "1" }
-        let hasWarmModel = foundation.models.contains { $0.modelID == "melix-dev-text" && $0.stateText == "Warm" }
+        let hasSessionsCard = foundation.dashboardCards.contains { card in
+            card.id == "sessions" && card.value == "1"
+        }
+        let hasWarmTextModel = foundation.models.contains { model in
+            model.modelID == "melix-dev-text" && model.stateText == "Warm"
+        }
         #expect(viewModel.statusTitle == "Melix Degraded")
-        #expect(hasSessionCard)
-        #expect(hasWarmModel)
+        #expect(hasSessionsCard)
+        #expect(hasWarmTextModel)
         #expect(await metrics.snapshot()["menu.foundation_refresh_ms"] != nil)
         #expect(await client.recordedActions.contains("snapshot"))
     }
@@ -539,12 +807,18 @@ struct RuntimeViewModelTests {
         }
 
         let foundation = viewModel.desktopFoundationState
-        let hasSessionCard = foundation.dashboardCards.contains { $0.id == "sessions" && $0.value == "1" }
-        let hasCacheCard = foundation.dashboardCards.contains { $0.id == "cache" && $0.detail == "L1 / L2" }
-        let hasMemoryCard = foundation.dashboardCards.contains { $0.id == "memory" && $0.detail.contains("8") }
+        let hasSessionsCard = foundation.dashboardCards.contains { card in
+            card.id == "sessions" && card.value == "1"
+        }
+        let hasCacheCard = foundation.dashboardCards.contains { card in
+            card.id == "cache" && card.detail == "L1 / L2"
+        }
+        let hasMemoryCard = foundation.dashboardCards.contains { card in
+            card.id == "memory" && card.detail.contains("8")
+        }
         #expect(viewModel.statusTitle == "Melix Draining")
         #expect(viewModel.lastError == "thermal pressure")
-        #expect(hasSessionCard)
+        #expect(hasSessionsCard)
         #expect(hasCacheCard)
         #expect(hasMemoryCard)
         #expect(foundation.logs.contains(where: { $0.message == "Session session-42 updated" }))
@@ -1469,7 +1743,7 @@ struct RuntimeViewModelTests {
 @MainActor
 private func waitForRuntimeViewModelCondition(
     _ description: String,
-    timeout: Duration = .milliseconds(500),
+    timeout: Duration = .seconds(2),
     pollInterval: Duration = .milliseconds(10),
     condition: @escaping @MainActor () -> Bool
 ) async throws {

@@ -18,6 +18,25 @@ struct DesktopFoundationViewTests {
         let view = hostView(DesktopFoundationRootView(viewModel: viewModel))
 
         #expect(view.subviews.isEmpty == false)
+        #expect(viewModel.selectedSurface == .chat)
+    }
+
+    @Test("command center view renders global operator summaries")
+    @MainActor
+    func commandCenterViewRendersGlobalOperatorSummaries() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+
+        let view = hostView(
+            DesktopCommandCenterView(
+                foundation: viewModel.desktopFoundationState,
+                chatSessions: viewModel.chatSessions,
+                serverSessions: viewModel.serverSessions
+            )
+        )
+
+        #expect(view.subviews.isEmpty == false)
     }
 
     @Test("models tab renders model actions and settings")
@@ -375,6 +394,44 @@ struct DesktopFoundationViewTests {
         #expect(viewModel.chatStatusText == "Failed • runtime_error")
     }
 
+    @Test("chat session sidebar renders the empty state when no chat sessions exist")
+    @MainActor
+    func chatSessionSidebarRendersTheEmptyStateWhenNoChatSessionsExist() async throws {
+        let client = EmptyToolsSnapshotControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+
+        let view = hostView(DesktopChatSessionSidebar(viewModel: viewModel))
+
+        #expect(view.subviews.isEmpty == false)
+        #expect(viewModel.chatSessions.isEmpty)
+    }
+
+    @Test("chat session workspace renders the server required state when no server is running")
+    @MainActor
+    func chatSessionWorkspaceRendersTheServerRequiredStateWhenNoServerIsRunning() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+        await viewModel.stopSelectedServerSession()
+        viewModel.chatComposerText = "Need a running server"
+        await viewModel.submitChatPrompt()
+
+        let view = hostView(
+            DesktopChatSessionWorkspace(
+                viewModel: viewModel,
+                showsSidebar: .constant(true),
+                showsInspector: .constant(true)
+            )
+        )
+
+        #expect(view.subviews.isEmpty == false)
+        #expect(viewModel.selectedChatServerSession?.isRunning == false)
+        #expect(viewModel.chatStatusText == "No Server Session")
+    }
+
     @Test("image tab renders image jobs and artifact previews")
     @MainActor
     func imageTabRendersImageJobsAndArtifacts() async throws {
@@ -409,6 +466,63 @@ struct DesktopFoundationViewTests {
         #expect(view.subviews.isEmpty == false)
         #expect(viewModel.imageJobs.count == 1)
         #expect(viewModel.selectedImageJob?.artifacts.first?.storageUri == "/tmp/preview.png")
+    }
+
+    @Test("chat session inspector renders export metadata when a session has been exported")
+    @MainActor
+    func chatSessionInspectorRendersExportMetadataWhenASessionHasBeenExported() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+        viewModel.chatComposerText = "Export the transcript"
+        await viewModel.submitChatPrompt()
+        let exportPath = try #require(viewModel.exportSelectedChatSession())
+
+        let view = hostView(DesktopChatSessionInspector(viewModel: viewModel))
+
+        #expect(view.subviews.isEmpty == false)
+        #expect(FileManager.default.fileExists(atPath: exportPath))
+        #expect(viewModel.selectedChatSession?.exportPath == exportPath)
+    }
+
+    @Test("image workspace renders edit mode fields directly")
+    @MainActor
+    func imageWorkspaceRendersEditModeFieldsDirectly() async throws {
+        let client = FakeControlPlaneXPCClient()
+        var snapshot = Melix_Controlplane_V1_ServerSnapshot()
+        snapshot.serverState = .serverReady
+        snapshot.models = [
+            {
+                var model = Melix_Controlplane_V1_ModelSummary()
+                model.modelID = "melix-dev-text"
+                model.kind = "text"
+                model.state = .modelWarm
+                model.features = ["chat"]
+                return model
+            }(),
+            makeMenuBarImageModelSummary(),
+        ]
+        await client.configureSnapshot(snapshot)
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+        viewModel.imagePromptText = "Edit a cover"
+        viewModel.imageEditSourceURL = "file:///tmp/source.png"
+        viewModel.imageEditMaskURL = "file:///tmp/mask.png"
+
+        let view = hostView(
+            DesktopImageWorkspace(
+                viewModel: viewModel,
+                selectedMode: .constant(.edit),
+                showsSidebar: .constant(true),
+                showsInspector: .constant(true)
+            )
+        )
+
+        #expect(view.subviews.isEmpty == false)
+        #expect(viewModel.imageEditSourceURL == "file:///tmp/source.png")
+        #expect(viewModel.imageEditMaskURL == "file:///tmp/mask.png")
     }
 
     @Test("image tab dispatches generate and edit actions through the view model")

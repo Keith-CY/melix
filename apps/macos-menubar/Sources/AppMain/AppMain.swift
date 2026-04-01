@@ -45,6 +45,7 @@ public struct LiveMenuBarApplication: MenuBarApplicationLifecycle {
 public final class MelixMenuBarBootstrap {
     private let viewModel: RuntimeViewModel
     private let desktopFoundationPresenter: any DesktopFoundationPresenting
+    private let commandCenterPresenter: any DesktopFoundationPresenting
     private let statusMenu: any StatusMenuInstalling
 
     public init(
@@ -56,6 +57,12 @@ public final class MelixMenuBarBootstrap {
         ) -> any DesktopFoundationPresenting = { viewModel, metrics in
             DesktopFoundationPresenter(viewModel: viewModel, metrics: metrics)
         },
+        commandCenterPresenterFactory: @MainActor @escaping (
+            RuntimeViewModel,
+            MenuBarMetricsStore
+        ) -> any DesktopFoundationPresenting = { viewModel, metrics in
+            CommandCenterPresenter(viewModel: viewModel, metrics: metrics)
+        },
         statusMenuFactory: @MainActor @escaping (
             RuntimeViewModel,
             @escaping @MainActor @Sendable () -> Void
@@ -65,8 +72,13 @@ public final class MelixMenuBarBootstrap {
     ) {
         let viewModel = RuntimeViewModel(client: client, metrics: metrics)
         let desktopFoundationPresenter = desktopFoundationPresenterFactory(viewModel, metrics)
+        let commandCenterPresenter = commandCenterPresenterFactory(viewModel, metrics)
+        viewModel.openCommandCenterAction = {
+            commandCenterPresenter.show()
+        }
         self.viewModel = viewModel
         self.desktopFoundationPresenter = desktopFoundationPresenter
+        self.commandCenterPresenter = commandCenterPresenter
         self.statusMenu = statusMenuFactory(viewModel) {
             desktopFoundationPresenter.show()
         }

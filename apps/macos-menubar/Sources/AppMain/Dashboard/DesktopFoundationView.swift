@@ -9,54 +9,7 @@ public struct DesktopFoundationRootView: View {
     }
 
     public var body: some View {
-        let foundation = viewModel.desktopFoundationState
-
-        TabView {
-            DesktopDashboardTabView(foundation: foundation)
-                .tabItem {
-                    Label("Dashboard", systemImage: "gauge.with.dots.needle.67percent")
-                }
-
-            DesktopModelsTabView(foundation: foundation, viewModel: viewModel)
-                .tabItem {
-                    Label("Models", systemImage: "cube.transparent")
-                }
-
-            DesktopToolsTabView(viewModel: viewModel)
-                .tabItem {
-                    Label("Tools", systemImage: "wrench.and.screwdriver")
-                }
-
-            DesktopSettingsTabView(foundation: foundation)
-                .tabItem {
-                    Label("Settings", systemImage: "slider.horizontal.3")
-                }
-
-            DesktopLogsTabView(foundation: foundation)
-                .tabItem {
-                    Label("Logs", systemImage: "doc.text.magnifyingglass")
-                }
-
-            DesktopBenchTabView(foundation: foundation)
-                .tabItem {
-                    Label("Bench", systemImage: "speedometer")
-                }
-
-            DesktopChatTabView(viewModel: viewModel)
-                .tabItem {
-                    Label("Chat", systemImage: "message")
-                }
-
-            DesktopImageTabView(viewModel: viewModel)
-                .tabItem {
-                    Label("Image", systemImage: "photo.on.rectangle")
-                }
-
-            DesktopAPIReferenceTabView(foundation: foundation)
-                .tabItem {
-                    Label("API", systemImage: "chevron.left.forwardslash.chevron.right")
-                }
-        }
+        DesktopWorkspaceShellView(viewModel: viewModel)
         .frame(minWidth: 980, minHeight: 680)
         .toolbar {
             ToolbarItem(placement: .primaryAction) {

@@ -125,6 +125,38 @@ struct AppMainBootstrapTests {
         #expect(presenter.showCount == 1)
     }
 
+    @Test("bootstrap wires the command center presenter into the view model action")
+    @MainActor
+    func bootstrapWiresCommandCenterPresenter() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let metrics = MenuBarMetricsStore()
+        let menu = RecordingInstallStatusMenu()
+        let desktopPresenter = RecordingDesktopFoundationPresenter()
+        let commandCenterPresenter = RecordingDesktopFoundationPresenter()
+        var capturedViewModel: RuntimeViewModel?
+        let bootstrap = MelixMenuBarBootstrap(
+            client: client,
+            metrics: metrics,
+            desktopFoundationPresenterFactory: { viewModel, _ in
+                capturedViewModel = viewModel
+                return desktopPresenter
+            },
+            commandCenterPresenterFactory: { viewModel, _ in
+                capturedViewModel = viewModel
+                return commandCenterPresenter
+            },
+            statusMenuFactory: { _, _ in menu }
+        )
+
+        bootstrap.start()
+        try await Task.sleep(for: .milliseconds(20))
+        capturedViewModel?.openCommandCenter()
+
+        #expect(menu.installCount == 1)
+        #expect(desktopPresenter.showCount == 0)
+        #expect(commandCenterPresenter.showCount == 1)
+    }
+
     @Test("bootstrap environment honors explicit overrides")
     @MainActor
     func bootstrapEnvironmentHonorsExplicitOverrides() {
