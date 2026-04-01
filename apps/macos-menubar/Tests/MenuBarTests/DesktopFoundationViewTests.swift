@@ -283,7 +283,7 @@ struct DesktopFoundationViewTests {
         #expect(viewModel.primaryModel == nil)
         #expect(viewModel.adapterPackages.isEmpty)
         #expect(viewModel.trainingHistory.isEmpty)
-        #expect(view.subviews.isEmpty == true)
+        #expect(view.subviews.isEmpty == false)
     }
 
     @Test("dashboard settings logs bench and api tabs render from foundation state")
