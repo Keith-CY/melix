@@ -142,6 +142,26 @@ Expected publish behavior:
 - the adapter row becomes `published`
 - the local fused derived model remains a local serving artifact and is not uploaded as the adapter payload
 
+## Hub Discovery Backend
+
+Melix now exposes backend-owned Hugging Face discovery surfaces for operator tooling before any UI-specific parsing layer:
+
+- `OpsCommand(search_hub_models)` accepts `query`, `page_size`, `cursor`, and `mlx_only`
+- `OpsCommand(get_hub_model_card)` accepts `repo_id`
+
+Search response normalization guarantees:
+
+- every row includes `repo_id`, `author`, `model_name`, `pipeline_tag`, `tags`, `downloads`, `likes`, `library_name`, `sibling_files`, and `last_modified`
+- `next_cursor` is preserved from the Hub `Link: rel="next"` header so paging remains deterministic
+- `mlx_only = true` only returns rows marked `mlx_compatible = true`
+- discovery metadata remains separate from local registry metadata; Hub rows are not registered as local Melix models until a later download or install flow completes
+
+Model-card normalization guarantees:
+
+- the card payload includes `repo_id`, `author`, `model_name`, `license`, `pipeline_tag`, `tags`, `downloads`, `likes`, `library_name`, `sibling_files`, `base_models`, and `last_modified`
+- base-model metadata is normalized to a repeated string field even when the upstream Hub card stores a single scalar
+- missing descriptive text is normalized to an empty string instead of leaking raw upstream payload structure into clients
+
 ## Inspect Or Remove Derived Local Models
 
 Inspect:

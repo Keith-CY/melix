@@ -461,6 +461,9 @@ def test_inference_service_covers_error_and_unimplemented_paths() -> None:
 def test_build_server_and_main_bootstrap(monkeypatch, tmp_path: Path) -> None:
     registry = build_registry()
     seen_build = {}
+    maintenance_method_count = len(
+        maintenance_pb2.DESCRIPTOR.services_by_name["MaintenanceService"].methods
+    )
 
     class FakeBoundServer:
         def add_generic_rpc_handlers(self, handlers) -> None:
@@ -491,12 +494,12 @@ def test_build_server_and_main_bootstrap(monkeypatch, tmp_path: Path) -> None:
     assert isinstance(inference_service, WorkerInferenceService)
     assert seen_build == {
         "handlers": 4,
-        "registered_services": [
-            ("melix.worker.v1.RuntimeService", 8),
-            ("melix.worker.v1.InferenceService", 10),
-            ("melix.worker.v1.MaintenanceService", 7),
-            ("melix.worker.v1.CacheService", 6),
-        ],
+            "registered_services": [
+                ("melix.worker.v1.RuntimeService", 8),
+                ("melix.worker.v1.InferenceService", 10),
+                ("melix.worker.v1.MaintenanceService", maintenance_method_count),
+                ("melix.worker.v1.CacheService", 6),
+            ],
         "address": f"unix://{Path('/tmp/melix-test.sock').resolve()}",
         "stopped": 0,
     }

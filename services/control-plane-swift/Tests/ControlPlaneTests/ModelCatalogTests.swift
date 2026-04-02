@@ -206,6 +206,148 @@ struct ModelCatalogTests {
         #expect(loaded.settings.ext["melix.adapter_set_hash"] == "adapter-derived")
     }
 
+    @Test("syncRegistryModels replaces prior registry-discovered entries while preserving seed models")
+    func syncRegistryModelsReplacesPriorRegistryDiscoveredEntriesWhilePreservingSeedModels() async throws {
+        let catalog = ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels())
+
+        var firstDiscovered = Melix_Controlplane_V1_ModelSummary()
+        firstDiscovered.modelID = "mlx-community/Qwen2.5-7B-Instruct/4bit"
+        firstDiscovered.kind = "text"
+        firstDiscovered.state = .modelDiscovered
+        firstDiscovered.capabilityClass = .modelCapabilityText
+        firstDiscovered.routeClass = .workerRouteSwiftText
+        firstDiscovered.quantProfileID = "q4"
+        firstDiscovered.maxContext = 16384
+        firstDiscovered.settings.alias = "Qwen 4bit"
+        firstDiscovered.settings.memoryPolicy = .memoryResidencyEvictable
+        firstDiscovered.settings.ext["melix.registry_root_id"] = "root-1"
+        firstDiscovered.settings.ext["melix.registry_root_path"] = "/tmp/root-1"
+        firstDiscovered.settings.ext["melix.registry_relative_path"] = "mlx-community/Qwen2.5-7B-Instruct/4bit"
+        firstDiscovered.settings.ext["melix.model_path"] = "/tmp/root-1/mlx-community/Qwen2.5-7B-Instruct/4bit"
+
+        var secondDiscovered = Melix_Controlplane_V1_ModelSummary()
+        secondDiscovered.modelID = "mlx-community/Qwen2.5-14B-Instruct/8bit"
+        secondDiscovered.kind = "text"
+        secondDiscovered.state = .modelDiscovered
+        secondDiscovered.capabilityClass = .modelCapabilityText
+        secondDiscovered.routeClass = .workerRouteSwiftText
+        secondDiscovered.quantProfileID = "q8"
+        secondDiscovered.maxContext = 32768
+        secondDiscovered.settings.alias = "Qwen 14B 8bit"
+        secondDiscovered.settings.memoryPolicy = .memoryResidencyEvictable
+        secondDiscovered.settings.ext["melix.registry_root_id"] = "root-2"
+        secondDiscovered.settings.ext["melix.registry_root_path"] = "/tmp/root-2"
+        secondDiscovered.settings.ext["melix.registry_relative_path"] = "mlx-community/Qwen2.5-14B-Instruct/8bit"
+        secondDiscovered.settings.ext["melix.model_path"] = "/tmp/root-2/mlx-community/Qwen2.5-14B-Instruct/8bit"
+
+        await catalog.syncRegistryModels([firstDiscovered], reason: "worker_registry_sync")
+        await catalog.syncRegistryModels([secondDiscovered], reason: "worker_registry_sync")
+
+        let models = await catalog.listModels()
+        let synced = try #require(models.first(where: { $0.modelID == secondDiscovered.modelID }))
+
+        #expect(models.contains(where: { $0.modelID == "melix-dev-text" }))
+        #expect(!models.contains(where: { $0.modelID == firstDiscovered.modelID }))
+        #expect(synced.maxContext == 32768)
+        #expect(synced.settings.ext["melix.registry_root_id"] == "root-2")
+        #expect(synced.settings.ext["melix.model_path"] == "/tmp/root-2/mlx-community/Qwen2.5-14B-Instruct/8bit")
+    }
+
+    @Test("syncRegistryModels merges refreshed registry metadata into existing discovered entries")
+    func syncRegistryModelsMergesRefreshedRegistryMetadataIntoExistingDiscoveredEntries() async throws {
+        let catalog = ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels())
+
+        var initial = Melix_Controlplane_V1_ModelSummary()
+        initial.modelID = "mlx-community/Qwen2.5-7B-Instruct/4bit"
+        initial.kind = "text"
+        initial.state = .modelDiscovered
+        initial.capabilityClass = .modelCapabilityText
+        initial.routeClass = .workerRouteSwiftText
+        initial.quantProfileID = "q4"
+        initial.maxContext = 16384
+        initial.settings.memoryPolicy = .memoryResidencyEvictable
+        initial.settings.ext["melix.registry_root_id"] = "root-1"
+
+        await catalog.syncRegistryModels([initial], reason: "worker_registry_sync")
+        _ = await catalog.loadModel(id: initial.modelID, dispatchHandle: "registry::existing")
+
+        var refreshed = initial
+        refreshed.kind = "embedding"
+        refreshed.quantProfileID = "q8"
+        refreshed.maxContext = 32768
+        refreshed.features = ["embeddings"]
+        refreshed.capabilityClass = .modelCapabilityEmbedding
+        refreshed.routeClass = .workerRoutePythonEmbedding
+        refreshed.supportedModalities = ["text"]
+        refreshed.supportedTasks = ["embed"]
+        refreshed.settings.alias = "Registry Embed"
+        refreshed.settings.typeOverride = "embedding_override"
+        refreshed.settings.ttlSeconds = 60
+        refreshed.settings.pinOnLoad = true
+        refreshed.settings.memoryPolicy = .memoryResidencyPinned
+        refreshed.settings.defaultAccelerationMode = .activeKvQuantized
+        refreshed.settings.accelerationProfileID = "embed-q8"
+        refreshed.settings.adaptiveThinking.mode = "adaptive"
+        refreshed.settings.adaptiveThinking.budgetTokens = 256
+        refreshed.settings.ext["melix.registry_root_id"] = "root-2"
+        refreshed.settings.ext["embedding_family_id"] = "mxbai-embed"
+
+        await catalog.syncRegistryModels([refreshed], reason: "worker_registry_sync")
+
+        let merged = try #require(await catalog.model(id: initial.modelID))
+
+        #expect(merged.state == .modelWarm)
+        #expect(merged.kind == "embedding")
+        #expect(merged.quantProfileID == "q8")
+        #expect(merged.maxContext == 32768)
+        #expect(merged.features == ["embeddings"])
+        #expect(merged.capabilityClass == .modelCapabilityEmbedding)
+        #expect(merged.routeClass == .workerRoutePythonEmbedding)
+        #expect(merged.supportedModalities == ["text"])
+        #expect(merged.supportedTasks == ["embed"])
+        #expect(merged.settings.alias == "Registry Embed")
+        #expect(merged.settings.typeOverride == "embedding_override")
+        #expect(merged.settings.ttlSeconds == 60)
+        #expect(merged.settings.pinOnLoad)
+        #expect(merged.settings.memoryPolicy == .memoryResidencyPinned)
+        #expect(merged.settings.defaultAccelerationMode == .activeKvQuantized)
+        #expect(merged.settings.accelerationProfileID == "embed-q8")
+        #expect(merged.settings.adaptiveThinking.mode == "adaptive")
+        #expect(merged.settings.adaptiveThinking.budgetTokens == 256)
+        #expect(merged.settings.ext["melix.registry_root_id"] == "root-2")
+        #expect(merged.settings.ext["embedding_family_id"] == "mxbai-embed")
+        #expect(await catalog.dispatchHandle(for: initial.modelID) == "registry::existing")
+    }
+
+    @Test("syncRegistryModels preserves structured registry identity metadata from worker snapshots")
+    func syncRegistryModelsPreservesStructuredRegistryIdentityMetadataFromWorkerSnapshots() async throws {
+        let catalog = ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels())
+
+        var discovered = Melix_Controlplane_V1_ModelSummary()
+        discovered.modelID = "mlx-community/Qwen2.5-7B-Instruct/4bit"
+        discovered.kind = "text"
+        discovered.state = .modelDiscovered
+        discovered.capabilityClass = .modelCapabilityText
+        discovered.routeClass = .workerRouteSwiftText
+        discovered.settings.memoryPolicy = .memoryResidencyEvictable
+        discovered.settings.ext["melix.registry_root_id"] = "root-1"
+        discovered.settings.ext["melix.registry_relative_path"] = "huggingface/mlx-community/Qwen2.5-7B-Instruct/4bit"
+        discovered.settings.ext["melix.registry_provider_id"] = "hf-mirror"
+        discovered.settings.ext["melix.registry_organization_id"] = "mlx-community"
+        discovered.settings.ext["melix.registry_model_name"] = "Qwen2.5-7B-Instruct"
+        discovered.settings.ext["melix.registry_variant_id"] = "q4f16"
+
+        await catalog.syncRegistryModels([discovered], reason: "worker_registry_sync")
+
+        let synced = try #require(await catalog.model(id: discovered.modelID))
+
+        #expect(synced.settings.ext["melix.registry_provider_id"] == "hf-mirror")
+        #expect(synced.settings.ext["melix.registry_organization_id"] == "mlx-community")
+        #expect(synced.settings.ext["melix.registry_model_name"] == "Qwen2.5-7B-Instruct")
+        #expect(synced.settings.ext["melix.registry_variant_id"] == "q4f16")
+        #expect(synced.settings.ext["melix.registry_relative_path"] == "huggingface/mlx-community/Qwen2.5-7B-Instruct/4bit")
+    }
+
     @Test("residency summary follows seed defaults and load-unload transitions")
     func residencySummaryFollowsSeedDefaultsAndLoadUnloadTransitions() async throws {
         let catalog = ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels())

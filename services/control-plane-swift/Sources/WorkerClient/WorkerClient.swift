@@ -129,6 +129,14 @@ public protocol ModelOperationsWorkerClientProtocol: WorkerClient {
         request: Melix_Worker_V1_RunDoctorRequest
     ) async throws -> Melix_Worker_V1_RunDoctorResponse
 
+    func searchHubModels(
+        request: Melix_Worker_V1_SearchHubModelsRequest
+    ) async throws -> Melix_Worker_V1_SearchHubModelsResponse
+
+    func getHubModelCard(
+        request: Melix_Worker_V1_GetHubModelCardRequest
+    ) async throws -> Melix_Worker_V1_GetHubModelCardResponse
+
     func runBench(
         request: Melix_Worker_V1_RunBenchRequest
     ) async throws -> AsyncThrowingStream<Melix_Worker_V1_RunBenchEvent, Error>

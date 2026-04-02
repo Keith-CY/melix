@@ -84,6 +84,33 @@ class FakeMaintenanceStub:
         )
 
     def ConvertModel(self, request):
+        if request.ext.get("operation") == "download":
+            yield maintenance_pb2.ConvertModelEvent(
+                started=maintenance_pb2.ConvertStarted(job_id="download-job-1")
+            )
+            yield maintenance_pb2.ConvertModelEvent(
+                progress=maintenance_pb2.ConvertProgress(stage="download", pct=0.5)
+            )
+            yield maintenance_pb2.ConvertModelEvent(
+                manifest=maintenance_pb2.ConvertManifest(
+                    manifest_json=json.dumps(
+                        {
+                            "schema_version": "melix.download_job.v1",
+                            "status": "running",
+                            "terminal_state": "running",
+                            "selected_mirror": "https://mirror.example/hf",
+                            "downloaded_bytes": 512,
+                            "total_bytes": 1024,
+                        },
+                        sort_keys=True,
+                    )
+                )
+            )
+            yield maintenance_pb2.ConvertModelEvent(
+                completed=maintenance_pb2.ConvertCompleted(output_path="/tmp/model-ops/download.artifact")
+            )
+            return
+
         yield maintenance_pb2.ConvertModelEvent(
             started=maintenance_pb2.ConvertStarted(job_id="job-1")
         )
@@ -128,6 +155,41 @@ class FakeMaintenanceStub:
         metric.name = f"eval.{request.suite_id}.accuracy"
         metric.value = 1.0
         result.report_path = "/tmp/model-ops/evaluation-result.json"
+        return response
+
+    def SearchHubModels(self, request):
+        response = maintenance_pb2.SearchHubModelsResponse(ok=True, next_cursor="cursor:page-2")
+        model = response.models.add()
+        model.repo_id = "mlx-community/Qwen2.5-7B-Instruct-4bit"
+        model.author = "mlx-community"
+        model.model_name = "Qwen2.5-7B-Instruct-4bit"
+        model.summary = f"query={request.query}"
+        model.pipeline_tag = "text-generation"
+        model.tags.extend(["mlx", "chat"])
+        model.downloads = 321
+        model.likes = 12
+        model.mlx_compatible = True
+        model.library_name = "transformers"
+        model.sibling_files.extend(["README.md", "config.json"])
+        model.last_modified = "2025-01-26T19:49:28Z"
+        return response
+
+    def GetHubModelCard(self, request):
+        response = maintenance_pb2.GetHubModelCardResponse(ok=True)
+        response.card.repo_id = request.repo_id
+        response.card.author = "mlx-community"
+        response.card.model_name = "Qwen2.5-7B-Instruct-4bit"
+        response.card.summary = "MLX text-generation build"
+        response.card.license = "apache-2.0"
+        response.card.pipeline_tag = "text-generation"
+        response.card.tags.extend(["mlx", "chat"])
+        response.card.downloads = 321
+        response.card.likes = 12
+        response.card.mlx_compatible = True
+        response.card.library_name = "transformers"
+        response.card.sibling_files.extend(["README.md", "config.json", "model.safetensors"])
+        response.card.base_models.extend(["Qwen/Qwen2.5-7B-Instruct"])
+        response.card.last_modified = "2025-01-26T19:49:28Z"
         return response
 
 
@@ -290,6 +352,92 @@ def test_bridge_helper_forwards_phase5_unary_and_streaming_commands(monkeypatch,
     assert eval_payload.job.suite_id == "mmlu"
     assert eval_payload.job.dataset_id == "qa_smoke.dev.v1"
     assert eval_payload.results[0].metrics[0].name == "eval.mmlu.accuracy"
+
+    search_request = maintenance_pb2.SearchHubModelsRequest(
+        query="qwen",
+        page_size=5,
+        cursor="cursor:page-1",
+        mlx_only=True,
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "control_plane_bridge.py",
+            "search-hub-models",
+            "--socket-path",
+            "/tmp/unused.sock",
+            "--request-b64",
+            base64.b64encode(search_request.SerializeToString()).decode("ascii"),
+        ],
+    )
+    control_plane_bridge.main()
+    search_line = json.loads(capsys.readouterr().out.strip())
+    search_payload = maintenance_pb2.SearchHubModelsResponse.FromString(base64.b64decode(search_line["message_b64"]))
+    assert search_payload.ok is True
+    assert search_payload.next_cursor == "cursor:page-2"
+    assert search_payload.models[0].repo_id == "mlx-community/Qwen2.5-7B-Instruct-4bit"
+    assert search_payload.models[0].summary == "query=qwen"
+
+    card_request = maintenance_pb2.GetHubModelCardRequest(
+        repo_id="mlx-community/Qwen2.5-7B-Instruct-4bit",
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "control_plane_bridge.py",
+            "get-hub-model-card",
+            "--socket-path",
+            "/tmp/unused.sock",
+            "--request-b64",
+            base64.b64encode(card_request.SerializeToString()).decode("ascii"),
+        ],
+    )
+    control_plane_bridge.main()
+    card_line = json.loads(capsys.readouterr().out.strip())
+    card_payload = maintenance_pb2.GetHubModelCardResponse.FromString(base64.b64decode(card_line["message_b64"]))
+    assert card_payload.ok is True
+    assert card_payload.card.repo_id == "mlx-community/Qwen2.5-7B-Instruct-4bit"
+    assert card_payload.card.license == "apache-2.0"
+    assert card_payload.card.base_models == ["Qwen/Qwen2.5-7B-Instruct"]
+
+
+def test_bridge_helper_forwards_download_stream_manifest_events(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(control_plane_bridge.grpc, "insecure_channel", lambda target: FakeChannel())
+    monkeypatch.setattr(control_plane_bridge.maintenance_pb2_grpc, "MaintenanceServiceStub", lambda channel: FakeMaintenanceStub())
+
+    convert_request = maintenance_pb2.ConvertModelRequest(
+        source_model="mlx-community/demo-repo",
+        output_dir="/tmp/model-ops",
+        generate_manifest=True,
+        ext={"operation": "download"},
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "control_plane_bridge.py",
+            "convert-model",
+            "--socket-path",
+            "/tmp/unused.sock",
+            "--request-b64",
+            base64.b64encode(convert_request.SerializeToString()).decode("ascii"),
+        ],
+    )
+
+    control_plane_bridge.main()
+    lines = [json.loads(line) for line in capsys.readouterr().out.splitlines() if line.strip()]
+    payloads = [
+        maintenance_pb2.ConvertModelEvent.FromString(base64.b64decode(line["message_b64"]))
+        for line in lines
+    ]
+    manifest_json = next(event.manifest.manifest_json for event in payloads if event.HasField("manifest"))
+
+    assert payloads[0].started.job_id == "download-job-1"
+    assert payloads[1].progress.stage == "download"
+    assert json.loads(manifest_json)["selected_mirror"] == "https://mirror.example/hf"
+    assert payloads[-1].completed.output_path == "/tmp/model-ops/download.artifact"
 
 
 def test_bridge_helper_forwards_phase6_audio_unary_commands(monkeypatch, capsys) -> None:

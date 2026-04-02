@@ -95,6 +95,8 @@ The control plane is the system coordinator and source of truth. It owns:
 
 This layer should remain Swift-first because it carries the longest-lived product logic.
 
+For model discovery, the control plane owns the typed `ModelCatalog` exposed to XPC and local HTTP clients, but it should synchronize registry-discovered entries from worker-owned snapshots instead of deriving registry state from scattered per-model environment variables.
+
 ### Worker Pool
 
 Workers are execution engines, not public servers. The worker plane may be implemented in multiple languages so long as it stays behind the shared worker RPC contract.
@@ -134,6 +136,8 @@ Python workers remain the broader execution layer. They should continue to own:
 - image and audio families
 - convert, quantize, upload, download, train, doctor, info, and bench flows
 - any text-compatible compatibility path retained during migration
+
+Python workers also own ordered multi-root on-disk registry scanning. The initial registry source is `MELIX_MODEL_ROOTS` plus sidecar `manifest.json` files under discovered model directories. Root order is significant, the first root wins on duplicate `model_id`, and invalid roots must not poison discovery from valid roots.
 
 ### Storage Ownership
 

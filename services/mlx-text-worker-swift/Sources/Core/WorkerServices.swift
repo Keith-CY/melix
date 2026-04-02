@@ -607,6 +607,30 @@ final class MaintenanceRPCService: Melix_Worker_V1_MaintenanceService.SimpleServ
         response.error = makeUnimplementedStatus("SubmitResults is handled by the Python worker family.")
         return response
     }
+
+    func searchHubModels(
+        request: Melix_Worker_V1_SearchHubModelsRequest,
+        context: GRPCCore.ServerContext
+    ) async throws -> Melix_Worker_V1_SearchHubModelsResponse {
+        metrics.increment("swift_text.unimplemented_rpc_count")
+
+        var response = Melix_Worker_V1_SearchHubModelsResponse()
+        response.ok = false
+        response.error = makeUnimplementedStatus("SearchHubModels is handled by the Python worker family.")
+        return response
+    }
+
+    func getHubModelCard(
+        request: Melix_Worker_V1_GetHubModelCardRequest,
+        context: GRPCCore.ServerContext
+    ) async throws -> Melix_Worker_V1_GetHubModelCardResponse {
+        metrics.increment("swift_text.unimplemented_rpc_count")
+
+        var response = Melix_Worker_V1_GetHubModelCardResponse()
+        response.ok = false
+        response.error = makeUnimplementedStatus("GetHubModelCard is handled by the Python worker family.")
+        return response
+    }
 }
 
 private func saveRestoreErrorCode(for error: WorkerRuntimeRegistryError) -> String {

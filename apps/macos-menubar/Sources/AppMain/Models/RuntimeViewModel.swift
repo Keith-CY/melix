@@ -161,6 +161,14 @@ public struct DesktopChatCapabilityRow: Identifiable, Equatable, Sendable {
     public let isReady: Bool
 }
 
+private struct GatewayAccessProjection: Equatable, Sendable {
+    let authMode: DesktopServerAuthMode
+    let authTokenHint: String
+    let sharedAccessState: DesktopSharedAccessState
+    let accessKeyCount: Int
+    let accessKeyHints: [String]
+}
+
 @MainActor
 @Observable
 public final class RuntimeViewModel {
@@ -186,6 +194,7 @@ public final class RuntimeViewModel {
     public private(set) var trainingHistory: [RuntimeTrainingHistoryEntryState] = []
     public private(set) var chatTranscript: [DesktopChatTranscriptEntry] = []
     public private(set) var chatCapabilities: [DesktopChatCapabilityRow] = []
+    public private(set) var agentIntegrationExports: [AgentIntegrationExport] = []
     public private(set) var chatStatusText = "Idle"
     public private(set) var lastChatUsageText = ""
     public private(set) var isChatStreaming = false
@@ -193,6 +202,7 @@ public final class RuntimeViewModel {
     public private(set) var imageJobs: [Melix_Controlplane_V1_ImageJobSummary] = []
     public private(set) var imageStatusText = "Idle"
     public private(set) var selectedImageJobID = ""
+    public private(set) var selectedAgentIntegrationTarget: AgentIntegrationExportTarget = .openAICompatible
     public var chatComposerText = ""
     public var selectedChatModelID = "melix-dev-text"
     public var imagePromptText = ""
@@ -242,6 +252,11 @@ public final class RuntimeViewModel {
         openCommandCenterAction?()
     }
 
+    public func selectAgentIntegrationTarget(_ target: AgentIntegrationExportTarget) {
+        selectedAgentIntegrationTarget = target
+        notifyStateChanged()
+    }
+
     public func createServerSession() {
         let modelID = models.first(where: { $0.kind == "text" })?.modelID ?? selectedChatModelID
         let nextIndex = serverSessions.count + 1
@@ -252,8 +267,11 @@ public final class RuntimeViewModel {
             port: 8080 + max(0, serverSessions.count),
             lifecycle: .draft
         )
-        serverSessions.append(session)
+        var projectedSession = session
+        applyGatewayAccessProjection(to: &projectedSession)
+        serverSessions.append(projectedSession)
         selectedServerSessionID = session.id
+        refreshAgentIntegrationExports()
         selectedSurface = .server
         if chatSessions.isEmpty {
             createChatSession()
@@ -267,6 +285,7 @@ public final class RuntimeViewModel {
         }
         selectedServerSessionID = id
         selectedChatModelID = selectedServerSession?.modelID ?? selectedChatModelID
+        refreshAgentIntegrationExports()
         notifyStateChanged()
     }
 
@@ -297,6 +316,11 @@ public final class RuntimeViewModel {
     public func updateSelectedServerSessionAuthMode(_ authMode: DesktopServerAuthMode) {
         updateSelectedServerSession { session in
             session.authMode = authMode
+            if authMode == .apiKeys {
+                session.sharedAccessState = .enabled
+            } else if session.sharedAccessState == .enabled {
+                session.sharedAccessState = .localOnly
+            }
             session.updatedAt = Date()
         }
     }
@@ -501,6 +525,11 @@ public final class RuntimeViewModel {
             return selectedServerSession
         }
         return serverSession(id: selectedChatSession.serverSessionID) ?? selectedServerSession
+    }
+
+    public var selectedAgentIntegrationExport: AgentIntegrationExport? {
+        agentIntegrationExports.first(where: { $0.target == selectedAgentIntegrationTarget })
+        ?? agentIntegrationExports.first
     }
 
     public var desktopBannerState: DesktopBannerState? {
@@ -1283,6 +1312,7 @@ public final class RuntimeViewModel {
         _ update: (inout DesktopServerSessionState) -> Void
     ) {
         replaceServerSession(id: selectedServerSessionID, update)
+        refreshAgentIntegrationExports()
         notifyStateChanged()
     }
 
@@ -1413,6 +1443,7 @@ public final class RuntimeViewModel {
             if updated.title.isEmpty {
                 updated.title = offset == 0 ? "Primary Server" : "Server \(offset + 1)"
             }
+            applyGatewayAccessProjection(to: &updated)
             return updated
         }
 
@@ -1426,7 +1457,7 @@ public final class RuntimeViewModel {
         title: String,
         port: Int
     ) -> DesktopServerSessionState {
-        DesktopServerSessionState(
+        var session = DesktopServerSessionState(
             id: "server-session-\(UUID().uuidString)",
             title: title,
             modelID: model.modelID,
@@ -1434,6 +1465,8 @@ public final class RuntimeViewModel {
             lifecycle: .running,
             lastKnownModelStateText: model.stateText
         )
+        applyGatewayAccessProjection(to: &session)
+        return session
     }
 
     private func markServerSessions(
@@ -1528,6 +1561,7 @@ public final class RuntimeViewModel {
         ensureChatSessionsBoundToServerSessions()
         refreshImageState()
         refreshChatCapabilities()
+        refreshAgentIntegrationExports()
         notifyStateChanged()
     }
 
@@ -1553,6 +1587,83 @@ public final class RuntimeViewModel {
         ensureChatSessionsBoundToServerSessions()
         refreshImageState()
         refreshChatCapabilities()
+        refreshAgentIntegrationExports()
+    }
+
+    private func refreshAgentIntegrationExports() {
+        let startedAt = Date()
+        guard let selectedServerSession else {
+            agentIntegrationExports = []
+            selectedAgentIntegrationTarget = .openAICompatible
+            Task {
+                await metrics.record(name: "integration.export_generation_ms", valueMs: 0)
+                await metrics.record(name: "integration.export_target_count", valueMs: 0)
+            }
+            return
+        }
+
+        agentIntegrationExports = AgentIntegrationExport.exports(from: selectedServerSession)
+
+        let elapsedMs = Date().timeIntervalSince(startedAt) * 1_000
+        let exportCount = Double(agentIntegrationExports.count)
+        Task {
+            await metrics.record(name: "integration.export_generation_ms", valueMs: elapsedMs)
+            await metrics.record(name: "integration.export_target_count", valueMs: exportCount)
+        }
+    }
+
+    private func applyGatewayAccessProjection(to session: inout DesktopServerSessionState) {
+        guard let projection = Self.gatewayAccessProjection(from: latestSnapshot) else {
+            return
+        }
+        session.authMode = projection.authMode
+        session.authTokenHint = projection.authTokenHint
+        session.sharedAccessState = projection.sharedAccessState
+        session.accessKeyCount = projection.accessKeyCount
+        session.accessKeyHints = projection.accessKeyHints
+    }
+
+    private static func gatewayAccessProjection(
+        from snapshot: Melix_Controlplane_V1_ServerSnapshot
+    ) -> GatewayAccessProjection? {
+        guard snapshot.hasGatewayAccess else {
+            return nil
+        }
+
+        let summary = snapshot.gatewayAccess
+        let keyHints = summary.keys.map(\.tokenHint).filter { !$0.isEmpty }
+
+        switch summary.mode {
+        case .none:
+            return GatewayAccessProjection(
+                authMode: .none,
+                authTokenHint: "",
+                sharedAccessState: .localOnly,
+                accessKeyCount: 0,
+                accessKeyHints: []
+            )
+        case .bearerToken:
+            return GatewayAccessProjection(
+                authMode: .bearerToken,
+                authTokenHint: keyHints.first ?? "melix-api-key",
+                sharedAccessState: .localOnly,
+                accessKeyCount: max(keyHints.count, 1),
+                accessKeyHints: keyHints
+            )
+        case .apiKeys:
+            let sharedState: DesktopSharedAccessState = summary.sharedAccessEnabled ? .enabled : .configuredDisabled
+            let effectiveAuthMode: DesktopServerAuthMode = summary.sharedAccessEnabled ? .apiKeys : .none
+            let keyCount = max(Int(summary.acceptedApiKeyCount), keyHints.count)
+            return GatewayAccessProjection(
+                authMode: effectiveAuthMode,
+                authTokenHint: keyHints.first ?? "",
+                sharedAccessState: sharedState,
+                accessKeyCount: keyCount,
+                accessKeyHints: keyHints
+            )
+        default:
+            return nil
+        }
     }
 
     private func upsert(session: Melix_Controlplane_V1_SessionState) {

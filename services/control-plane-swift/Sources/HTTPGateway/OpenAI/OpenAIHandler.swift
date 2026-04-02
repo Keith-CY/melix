@@ -58,6 +58,8 @@ public struct OpenAIHandler: Sendable {
     private let cacheMetadataStore: CacheMetadataStore?
     private let translator: ChatRequestTranslator
     private let sseWriter: SSEStreamWriter
+    private let mcpToolCatalog: MCPToolCatalog
+    private let gatewayAccessPolicy: GatewayAccessPolicy
     private let decoder: JSONDecoder
     private let encoder: JSONEncoder
 
@@ -71,7 +73,9 @@ public struct OpenAIHandler: Sendable {
         imageJobAdmissionController: (any ImageJobAdmissionControlling)? = nil,
         cacheMetadataStore: CacheMetadataStore? = nil,
         translator: ChatRequestTranslator = ChatRequestTranslator(),
-        sseWriter: SSEStreamWriter = SSEStreamWriter()
+        sseWriter: SSEStreamWriter = SSEStreamWriter(),
+        mcpToolCatalog: MCPToolCatalog = .empty,
+        gatewayAccessPolicy: GatewayAccessPolicy = .localTrust
     ) {
         self.modelCatalog = modelCatalog
         self.requestCoordinator = requestCoordinator
@@ -86,12 +90,18 @@ public struct OpenAIHandler: Sendable {
         self.cacheMetadataStore = cacheMetadataStore
         self.translator = translator
         self.sseWriter = sseWriter
+        self.mcpToolCatalog = mcpToolCatalog
+        self.gatewayAccessPolicy = gatewayAccessPolicy
         self.decoder = JSONDecoder()
         self.encoder = JSONEncoder()
         self.encoder.outputFormatting = [.sortedKeys]
     }
 
     public func handle(_ request: HTTPRequest) async throws -> HTTPResponse {
+        if let authorizationFailure = await authorizationFailureResponse(for: request) {
+            return authorizationFailure
+        }
+
         switch (request.method, request.path) {
         case (.get, "/v1/models"):
             return try await handleModels()
@@ -127,13 +137,47 @@ public struct OpenAIHandler: Sendable {
         }
     }
 
+    private func authorizationFailureResponse(for request: HTTPRequest) async -> HTTPResponse? {
+        guard request.path != "/health" else {
+            return nil
+        }
+
+        switch gatewayAccessPolicy.authorize(headers: request.headers) {
+        case .success(let outcome):
+            if case .authenticated = outcome, gatewayAccessPolicy.mode == .apiKeys, gatewayAccessPolicy.sharedAccessEnabled {
+                await metricsStore.increment("shared_access.accepted_client_count")
+            }
+            return nil
+        case .failure(let failure):
+            await metricsStore.increment("gateway.auth_validation_failures")
+            if gatewayAccessPolicy.mode == .apiKeys || hasNonEmptyHeader(named: "x-api-key", in: request.headers) {
+                await metricsStore.increment("shared_access.rejected_request_count")
+            }
+            return jsonResponse(
+                statusCode: failure.statusCode,
+                payload: [
+                    "error": [
+                        "code": failure.errorCode,
+                        "message": failure.message,
+                    ],
+                ]
+            )
+        }
+    }
+
     private func handleModels() async throws -> HTTPResponse {
+        await RegistrySnapshotSync.syncModelsIfAvailable(
+            modelCatalog: modelCatalog,
+            workerRegistry: workerRegistry,
+            metricsStore: metricsStore
+        )
         let models = await modelCatalog.listModels().map { model in
             OpenAIModelDescriptor(
                 id: model.modelID,
                 object: "model",
                 ownedBy: "melix",
-                melixState: model.state.melixString
+                melixState: model.state.melixString,
+                metadata: RegistrySnapshotSync.publicMetadata(from: model.settings.ext)
             )
         }
 
@@ -920,7 +964,8 @@ public struct OpenAIHandler: Sendable {
             modelHandle: modelHandle,
             modelToolParser: modelToolParser,
             modelChatTemplatePolicy: modelChatTemplatePolicy,
-            modelOCRPolicy: modelOCRPolicy
+            modelOCRPolicy: modelOCRPolicy,
+            mcpToolCatalog: mcpToolCatalog
         )
         await recordShapingMetrics(for: translated, startedAt: shapingStartedAt)
         return translated
@@ -949,6 +994,14 @@ public struct OpenAIHandler: Sendable {
         if let parserMode = translated.workerRequest.execution.ext["melix.tool_parser.mode"] {
             await metricsStore.increment("http.tool_parser_request_count")
             await metricsStore.increment("http.tool_parser_\(parserMode)_request_count")
+        }
+        if translated.workerRequest.execution.ext["melix.mcp.source_ids"] != nil {
+            await metricsStore.increment("mcp.tool_injection_count")
+            let namespaceCount = translated.workerRequest.execution.ext["melix.tool_parser.namespaces"]?
+                .split(separator: ",")
+                .count ?? 0
+            await metricsStore.set(Double(namespaceCount), forKey: "mcp.configured_tool_count")
+            await metricsStore.set(1, forKey: "mcp.tool_injection_success_rate")
         }
         if translated.workerRequest.execution.ext["melix.chat_template_kwargs.effective_json"] != nil {
             await metricsStore.increment("http.chat_template_kwargs_request_count")
@@ -1742,12 +1795,14 @@ private struct OpenAIModelDescriptor: Codable {
     let object: String
     let ownedBy: String
     let melixState: String
+    let metadata: [String: String]?
 
     enum CodingKeys: String, CodingKey {
         case id
         case object
         case ownedBy = "owned_by"
         case melixState = "melix_state"
+        case metadata
     }
 }
 

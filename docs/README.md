@@ -152,6 +152,8 @@ Current runbooks:
 
 - `runbooks/m7-benchmark-and-evaluation-foundation.md`
 - `runbooks/m6-acceleration-benchmarks.md`
+- `runbooks/external-agent-integrations.md`
+- `runbooks/shared-access.md`
 - `runbooks/model-family-support-matrix.md`
 - `runbooks/phase-1-local-stack.md`
 - `runbooks/phase-2-queue-pressure.md`

@@ -7,6 +7,231 @@ import MelixWorkerProtocol
 
 @Suite("OpenAI Handler")
 struct OpenAIHandlerTests {
+    @Test("GET /v1/models accepts configured shared-access API keys and records metrics")
+    func getModelsAcceptsConfiguredSharedAccessAPIKeysAndRecordsMetrics() async throws {
+        let metricsStore = MetricsStore()
+        let handler = OpenAIHandler(
+            modelCatalog: ModelCatalog(seedModels: [warmModel()]),
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: ScriptedWorkerClient(events: [])),
+                abortRegistry: AbortRegistry()
+            ),
+            metricsStore: metricsStore,
+            gatewayAccessPolicy: GatewayAccessPolicy(
+                mode: .apiKeys,
+                sharedAccessEnabled: true,
+                keys: [
+                    .init(keyID: "desktop-agent", label: "Desktop Agent", tokenHint: "desktop-agent", token: "sk-desktop"),
+                    .init(keyID: "codex", label: "Codex", tokenHint: "codex", token: "sk-codex"),
+                ]
+            )
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(
+                method: .get,
+                path: "/v1/models",
+                headers: ["x-api-key": "sk-codex"],
+                body: Data()
+            )
+        )
+        let payload = try await collectBody(response.body)
+
+        #expect(response.statusCode == 200)
+        #expect(payload.contains("\"id\":\"melix-dev-text\""))
+        #expect(await metricsStore.value(forKey: "shared_access.accepted_client_count") == 1)
+        #expect(await metricsStore.value(forKey: "gateway.auth_validation_failures") == 0)
+    }
+
+    @Test("GET /v1/models rejects unknown shared-access API keys with 401")
+    func getModelsRejectsUnknownSharedAccessAPIKeys() async throws {
+        let metricsStore = MetricsStore()
+        let handler = OpenAIHandler(
+            modelCatalog: ModelCatalog(seedModels: [warmModel()]),
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: ScriptedWorkerClient(events: [])),
+                abortRegistry: AbortRegistry()
+            ),
+            metricsStore: metricsStore,
+            gatewayAccessPolicy: GatewayAccessPolicy(
+                mode: .apiKeys,
+                sharedAccessEnabled: true,
+                keys: [
+                    .init(keyID: "desktop-agent", label: "Desktop Agent", tokenHint: "desktop-agent", token: "sk-desktop"),
+                ]
+            )
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(
+                method: .get,
+                path: "/v1/models",
+                headers: ["x-api-key": "sk-unknown"],
+                body: Data()
+            )
+        )
+        let payload = try await jsonObject(from: response.body)
+
+        #expect(response.statusCode == 401)
+        #expect(payload.errorCode == "invalid_api_key")
+        #expect(await metricsStore.value(forKey: "gateway.auth_validation_failures") == 1)
+        #expect(await metricsStore.value(forKey: "shared_access.rejected_request_count") == 1)
+    }
+
+    @Test("GET /v1/models rejects shared-access API keys while shared mode is disabled")
+    func getModelsRejectsSharedAccessAPIKeysWhileSharedModeIsDisabled() async throws {
+        let metricsStore = MetricsStore()
+        let handler = OpenAIHandler(
+            modelCatalog: ModelCatalog(seedModels: [warmModel()]),
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: ScriptedWorkerClient(events: [])),
+                abortRegistry: AbortRegistry()
+            ),
+            metricsStore: metricsStore,
+            gatewayAccessPolicy: GatewayAccessPolicy(
+                mode: .apiKeys,
+                sharedAccessEnabled: false,
+                keys: [
+                    .init(keyID: "desktop-agent", label: "Desktop Agent", tokenHint: "desktop-agent", token: "sk-desktop"),
+                ]
+            )
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(
+                method: .get,
+                path: "/v1/models",
+                headers: ["x-api-key": "sk-desktop"],
+                body: Data()
+            )
+        )
+        let payload = try await jsonObject(from: response.body)
+
+        #expect(response.statusCode == 403)
+        #expect(payload.errorCode == "shared_access_disabled")
+        #expect(await metricsStore.value(forKey: "gateway.auth_validation_failures") == 1)
+        #expect(await metricsStore.value(forKey: "shared_access.rejected_request_count") == 1)
+    }
+
+    @Test("GET /v1/models preserves unauthenticated local trust when shared access is configured but disabled")
+    func getModelsPreservesUnauthenticatedLocalTrustWhenSharedAccessIsConfiguredButDisabled() async throws {
+        let metricsStore = MetricsStore()
+        let handler = OpenAIHandler(
+            modelCatalog: ModelCatalog(seedModels: [warmModel()]),
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: ScriptedWorkerClient(events: [])),
+                abortRegistry: AbortRegistry()
+            ),
+            metricsStore: metricsStore,
+            gatewayAccessPolicy: GatewayAccessPolicy(
+                mode: .apiKeys,
+                sharedAccessEnabled: false,
+                keys: [
+                    .init(keyID: "desktop-agent", label: "Desktop Agent", tokenHint: "desktop-agent", token: "sk-desktop"),
+                ]
+            )
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(
+                method: .get,
+                path: "/v1/models",
+                headers: [:],
+                body: Data()
+            )
+        )
+
+        #expect(response.statusCode == 200)
+        #expect(await metricsStore.value(forKey: "shared_access.accepted_client_count") == 0)
+        #expect(await metricsStore.value(forKey: "gateway.auth_validation_failures") == 0)
+    }
+
+    @Test("GET /v1/models also accepts authorization bearer headers for shared API-key mode")
+    func getModelsAlsoAcceptsAuthorizationBearerHeadersForSharedAPIKeyMode() async throws {
+        let metricsStore = MetricsStore()
+        let handler = OpenAIHandler(
+            modelCatalog: ModelCatalog(seedModels: [warmModel()]),
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: ScriptedWorkerClient(events: [])),
+                abortRegistry: AbortRegistry()
+            ),
+            metricsStore: metricsStore,
+            gatewayAccessPolicy: GatewayAccessPolicy(
+                mode: .apiKeys,
+                sharedAccessEnabled: true,
+                keys: [
+                    .init(keyID: "codex", label: "Codex", tokenHint: "codex", token: "sk-codex"),
+                ]
+            )
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(
+                method: .get,
+                path: "/v1/models",
+                headers: ["Authorization": "Bearer sk-codex"],
+                body: Data()
+            )
+        )
+
+        #expect(response.statusCode == 200)
+        #expect(await metricsStore.value(forKey: "shared_access.accepted_client_count") == 1)
+        #expect(await metricsStore.value(forKey: "gateway.auth_validation_failures") == 0)
+    }
+
+    @Test("GET /v1/models enforces bearer-token gateway access and rejects disallowed headers")
+    func getModelsEnforcesBearerTokenGatewayAccessAndRejectsDisallowedHeaders() async throws {
+        let metricsStore = MetricsStore()
+        let handler = OpenAIHandler(
+            modelCatalog: ModelCatalog(seedModels: [warmModel()]),
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: ScriptedWorkerClient(events: [])),
+                abortRegistry: AbortRegistry()
+            ),
+            metricsStore: metricsStore,
+            gatewayAccessPolicy: GatewayAccessPolicy(
+                mode: .bearerToken,
+                keys: [
+                    .init(keyID: "primary-bearer", label: "Primary Bearer", tokenHint: "primary-bearer", token: "sk-bearer"),
+                ]
+            )
+        )
+
+        let authorizedResponse = try await handler.handle(
+            HTTPRequest(
+                method: .get,
+                path: "/v1/models",
+                headers: ["Authorization": "Bearer sk-bearer"],
+                body: Data()
+            )
+        )
+        let disallowedResponse = try await handler.handle(
+            HTTPRequest(
+                method: .get,
+                path: "/v1/models",
+                headers: ["x-api-key": "sk-bearer"],
+                body: Data()
+            )
+        )
+        let disallowedPayload = try await jsonObject(from: disallowedResponse.body)
+        let invalidResponse = try await handler.handle(
+            HTTPRequest(
+                method: .get,
+                path: "/v1/models",
+                headers: ["Authorization": "Bearer sk-invalid"],
+                body: Data()
+            )
+        )
+        let invalidPayload = try await jsonObject(from: invalidResponse.body)
+
+        #expect(authorizedResponse.statusCode == 200)
+        #expect(disallowedResponse.statusCode == 403)
+        #expect(disallowedPayload.errorCode == "auth_header_not_allowed")
+        #expect(invalidResponse.statusCode == 401)
+        #expect(invalidPayload.errorCode == "invalid_authorization")
+        #expect(await metricsStore.value(forKey: "gateway.auth_validation_failures") == 2)
+    }
+
     @Test("POST /v1/chat/completions translates into a worker generate request")
     func postChatCompletionsTranslatesAndStreams() async throws {
         let catalog = ModelCatalog(seedModels: [warmModel()])
@@ -1045,6 +1270,67 @@ struct OpenAIHandlerTests {
         #expect(metrics.values["http.tool_parser_qwen_request_count"] == 1)
     }
 
+    @Test("POST /v1/responses auto injects MCP tool namespaces and source ids")
+    func postResponsesAutoInjectsMCPToolNamespacesAndSourceIDs() async throws {
+        let workerClient = ScriptedWorkerClient(events: [])
+        let metricsStore = MetricsStore()
+        let catalog = MCPToolCatalog(
+            configPath: "/tmp/mcp-tools.json",
+            defaultParserMode: .json,
+            sources: [
+                .init(
+                    sourceID: "filesystem",
+                    enabled: true,
+                    namespaces: ["tools.fs.read", "tools.fs.write"]
+                ),
+                .init(
+                    sourceID: "disabled-search",
+                    enabled: false,
+                    namespaces: ["tools.search"]
+                ),
+            ]
+        )
+        let handler = OpenAIHandler(
+            modelCatalog: ModelCatalog(seedModels: [warmModel()]),
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: workerClient),
+                abortRegistry: AbortRegistry()
+            ),
+            metricsStore: metricsStore,
+            translator: ChatRequestTranslator(requestIDGenerator: { "resp-mcp-auto" }),
+            mcpToolCatalog: catalog
+        )
+
+        let body = try #require(
+            """
+            {
+              "model": "melix-dev-text",
+              "stream": true,
+              "input": "Call the configured tools."
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/responses",
+                headers: ["content-type": "application/json"],
+                body: body
+            )
+        )
+        let request = try #require(await workerClient.lastGenerateRequest)
+        let metrics = await metricsStore.snapshot()
+
+        #expect(response.statusCode == 200)
+        #expect(request.execution.ext["melix.tool_parser.mode"] == "json")
+        #expect(request.execution.ext["melix.tool_parser.source"] == "mcp")
+        #expect(request.execution.ext["melix.tool_parser.namespaces"] == "tools.fs.read,tools.fs.write")
+        #expect(request.execution.ext["melix.mcp.source_ids"] == "filesystem")
+        #expect(metrics.values["mcp.tool_injection_count"] == 1)
+        #expect(metrics.values["mcp.configured_tool_count"] == 2)
+    }
+
     @Test("responses requests default stream to true when omitted")
     func responsesRequestsDefaultStreamToTrue() async throws {
         let catalog = ModelCatalog(seedModels: [warmModel()])
@@ -1710,6 +1996,118 @@ struct OpenAIHandlerTests {
         #expect(body.contains("\"id\":\"melix-dev-text\""))
         #expect(body.contains("\"melix_state\":\"warm\""))
         #expect(body.contains("\"owned_by\":\"melix\""))
+    }
+
+    @Test("GET /v1/models syncs registry models and exposes structured registry identity metadata")
+    func getModelsSyncsRegistryModelsAndExposesStructuredRegistryIdentityMetadata() async throws {
+        let catalog = ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels())
+        let modelOpsClient = ScriptedRegistryModelOperationsWorkerClient()
+        let manifestJSON = try makeRegistrySnapshotManifestJSON(
+            models: [
+                [
+                    "model_id": "mlx-community/Qwen2.5-7B-Instruct/4bit",
+                    "model_path": "/tmp/registry-root/huggingface/mlx-community/Qwen2.5-7B-Instruct/4bit",
+                    "model_kind": "text",
+                    "quant_profile_id": "q4",
+                    "max_context": 16384,
+                    "ext": [
+                        "melix.registry_root_id": "root-1",
+                        "melix.registry_root_path": "/tmp/registry-root",
+                        "melix.registry_relative_path": "huggingface/mlx-community/Qwen2.5-7B-Instruct/4bit",
+                        "melix.registry_provider_id": "hf-mirror",
+                        "melix.registry_organization_id": "mlx-community",
+                        "melix.registry_model_name": "Qwen2.5-7B-Instruct",
+                        "melix.registry_variant_id": "q4f16",
+                        "melix.model_path": "/tmp/registry-root/huggingface/mlx-community/Qwen2.5-7B-Instruct/4bit",
+                    ],
+                ],
+            ]
+        )
+        await modelOpsClient.setConvertEvents([
+            {
+                var event = Melix_Worker_V1_ConvertModelEvent()
+                event.manifest = Melix_Worker_V1_ConvertManifest()
+                event.manifest.manifestJson = manifestJSON
+                return event
+            }(),
+        ])
+
+        let registry = WorkerRegistry(
+            defaultTextClient: NullWorkerClient(),
+            modelOperationsClient: modelOpsClient,
+            modelCatalog: catalog
+        )
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: registry,
+                abortRegistry: AbortRegistry(),
+                modelCatalog: catalog
+            ),
+            workerRegistry: registry
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(method: .get, path: "/v1/models", headers: [:], body: Data())
+        )
+
+        let request = try #require(await modelOpsClient.lastConvertRequest)
+        let body = try await collectBody(response.body)
+        let payload = try #require(
+            JSONSerialization.jsonObject(with: Data(body.utf8)) as? [String: Any]
+        )
+        let rows = try #require(payload["data"] as? [[String: Any]])
+        let discovered = try #require(
+            rows.first(where: { ($0["id"] as? String) == "mlx-community/Qwen2.5-7B-Instruct/4bit" })
+        )
+        let metadata = try #require(discovered["metadata"] as? [String: Any])
+
+        #expect(response.statusCode == 200)
+        #expect(request.ext["operation"] == "registry_snapshot")
+        #expect(request.generateManifest)
+        #expect(discovered["melix_state"] as? String == "discovered")
+        #expect(metadata["melix.registry_provider_id"] as? String == "hf-mirror")
+        #expect(metadata["melix.registry_organization_id"] as? String == "mlx-community")
+        #expect(metadata["melix.registry_model_name"] as? String == "Qwen2.5-7B-Instruct")
+        #expect(metadata["melix.registry_variant_id"] as? String == "q4f16")
+        #expect(metadata["melix.registry_relative_path"] as? String == "huggingface/mlx-community/Qwen2.5-7B-Instruct/4bit")
+    }
+
+    @Test("registry model-ops stub covers unavailable control paths")
+    func registryModelOpsStubCoversUnavailableControlPaths() async throws {
+        let client = ScriptedRegistryModelOperationsWorkerClient()
+
+        #expect(await client.canDispatchRequests())
+
+        let generateStream = try await client.generate(request: Melix_Worker_V1_GenerateRequest())
+        for try await _ in generateStream {}
+
+        #expect(try await client.abort(requestID: "req-registry-stub") == false)
+
+        let benchStream = try await client.runBench(request: Melix_Worker_V1_RunBenchRequest())
+        for try await _ in benchStream {}
+
+        await #expect(throws: WorkerClientError.unavailable) {
+            _ = try await client.getModelInfo(request: Melix_Worker_V1_GetModelInfoRequest())
+        }
+        await #expect(throws: WorkerClientError.unavailable) {
+            _ = try await client.runDoctor(request: Melix_Worker_V1_RunDoctorRequest())
+        }
+        await #expect(throws: WorkerClientError.unavailable) {
+            _ = try await client.runEvaluation(request: Melix_Worker_V1_RunEvaluationRequest())
+        }
+        await #expect(throws: WorkerClientError.unavailable) {
+            _ = try await client.exportResults(request: Melix_Worker_V1_ExportResultsRequest())
+        }
+        await #expect(throws: WorkerClientError.unavailable) {
+            _ = try await client.submitResults(request: Melix_Worker_V1_SubmitResultsRequest())
+        }
+        await #expect(throws: WorkerClientError.unavailable) {
+            _ = try await client.loadModel(request: Melix_Worker_V1_LoadModelRequest())
+        }
+        await #expect(throws: WorkerClientError.unavailable) {
+            _ = try await client.unloadModel(request: Melix_Worker_V1_UnloadModelRequest())
+        }
     }
 
     @Test("GET /v1/models renders all public Melix model states")
@@ -4214,6 +4612,30 @@ struct OpenAIHandlerTests {
     }
 }
 
+private func makeRegistrySnapshotManifestJSON(
+    models: [[String: Any]]
+) throws -> String {
+    let payload: [String: Any] = [
+        "operation": "registry_snapshot",
+        "model_registry": [
+            "scanned_at_unix_ms": 1_711_955_200_000,
+            "roots": [
+                [
+                    "root_id": "root-1",
+                    "root_path": "/tmp/registry-root",
+                    "accessible": true,
+                    "error_code": "",
+                    "error_message": "",
+                    "discovered_model_ids": models.compactMap { $0["model_id"] as? String },
+                ],
+            ],
+            "models": models,
+        ],
+    ]
+    let data = try JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])
+    return String(decoding: data, as: UTF8.self)
+}
+
 private actor ScriptedWorkerClient: WorkerRoutingClient, RuntimeIntrospectingWorkerClientProtocol {
     private let events: [Melix_Worker_V1_ExecuteEvent]
     private let loadModelHandle: String
@@ -4619,6 +5041,121 @@ private struct OpenAIHandlerTestError: Error, CustomStringConvertible {
     let description: String
 }
 
+private actor ScriptedRegistryModelOperationsWorkerClient:
+    WorkerRoutingClient,
+    ModelOperationsWorkerClientProtocol
+{
+    private var convertEvents: [Melix_Worker_V1_ConvertModelEvent] = []
+    private(set) var lastConvertRequest: Melix_Worker_V1_ConvertModelRequest?
+
+    func setConvertEvents(_ events: [Melix_Worker_V1_ConvertModelEvent]) {
+        convertEvents = events
+    }
+
+    func canDispatchRequests() async -> Bool {
+        true
+    }
+
+    func generate(
+        request: Melix_Worker_V1_GenerateRequest
+    ) async throws -> AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error> {
+        _ = request
+        return AsyncThrowingStream { continuation in
+            continuation.finish()
+        }
+    }
+
+    func abort(requestID: String) async throws -> Bool {
+        _ = requestID
+        return false
+    }
+
+    func getModelInfo(
+        request: Melix_Worker_V1_GetModelInfoRequest
+    ) async throws -> Melix_Worker_V1_GetModelInfoResponse {
+        _ = request
+        throw WorkerClientError.unavailable
+    }
+
+    func convertModel(
+        request: Melix_Worker_V1_ConvertModelRequest
+    ) async throws -> AsyncThrowingStream<Melix_Worker_V1_ConvertModelEvent, Error> {
+        lastConvertRequest = request
+        let events = convertEvents
+        return AsyncThrowingStream { continuation in
+            for event in events {
+                continuation.yield(event)
+            }
+            continuation.finish()
+        }
+    }
+
+    func runDoctor(
+        request: Melix_Worker_V1_RunDoctorRequest
+    ) async throws -> Melix_Worker_V1_RunDoctorResponse {
+        _ = request
+        throw WorkerClientError.unavailable
+    }
+
+    func searchHubModels(
+        request: Melix_Worker_V1_SearchHubModelsRequest
+    ) async throws -> Melix_Worker_V1_SearchHubModelsResponse {
+        _ = request
+        throw WorkerClientError.unavailable
+    }
+
+    func getHubModelCard(
+        request: Melix_Worker_V1_GetHubModelCardRequest
+    ) async throws -> Melix_Worker_V1_GetHubModelCardResponse {
+        _ = request
+        throw WorkerClientError.unavailable
+    }
+
+    func runBench(
+        request: Melix_Worker_V1_RunBenchRequest
+    ) async throws -> AsyncThrowingStream<Melix_Worker_V1_RunBenchEvent, Error> {
+        _ = request
+        return AsyncThrowingStream { continuation in
+            continuation.finish()
+        }
+    }
+
+    func runEvaluation(
+        request: Melix_Worker_V1_RunEvaluationRequest
+    ) async throws -> Melix_Worker_V1_RunEvaluationResponse {
+        _ = request
+        throw WorkerClientError.unavailable
+    }
+
+    func exportResults(
+        request: Melix_Worker_V1_ExportResultsRequest
+    ) async throws -> Melix_Worker_V1_ExportResultsResponse {
+        _ = request
+        throw WorkerClientError.unavailable
+    }
+
+    func submitResults(
+        request: Melix_Worker_V1_SubmitResultsRequest
+    ) async throws -> Melix_Worker_V1_SubmitResultsResponse {
+        _ = request
+        throw WorkerClientError.unavailable
+    }
+
+    func loadModel(
+        request: Melix_Worker_V1_LoadModelRequest
+    ) async throws -> Melix_Worker_V1_LoadModelResponse {
+        _ = request
+        throw WorkerClientError.unavailable
+    }
+
+    func unloadModel(
+        request: Melix_Worker_V1_UnloadModelRequest
+    ) async throws -> Melix_Worker_V1_UnloadModelResponse {
+        _ = request
+        throw WorkerClientError.unavailable
+    }
+}
+
 private actor UnavailableWorkerClient: WorkerRoutingClient {
     func canDispatchRequests() async -> Bool {
         false
@@ -4708,4 +5245,13 @@ private func collectBodyData(_ body: HTTPBody) async throws -> Data {
         }
         return data
     }
+}
+
+private func jsonObject(from body: HTTPBody) async throws -> (errorCode: String, errorMessage: String) {
+    let data = try await collectBodyData(body)
+    let object = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+    let error = try #require(object["error"] as? [String: Any])
+    let code = try #require(error["code"] as? String)
+    let message = try #require(error["message"] as? String)
+    return (code, message)
 }

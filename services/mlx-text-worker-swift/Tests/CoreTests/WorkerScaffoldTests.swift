@@ -5408,6 +5408,30 @@ final class WorkerScaffoldTests: XCTestCase {
             )
         }
 
+        let searchResponse = try await withTestServerContextRPCCancellationHandle { handle in
+            try await services.maintenance.searchHubModels(
+                request: Melix_Worker_V1_SearchHubModelsRequest(),
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_MaintenanceService.Method.SearchHubModels.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
+        let modelCardResponse = try await withTestServerContextRPCCancellationHandle { handle in
+            try await services.maintenance.getHubModelCard(
+                request: Melix_Worker_V1_GetHubModelCardRequest(),
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_MaintenanceService.Method.GetHubModelCard.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
         try await withTestServerContextRPCCancellationHandle { handle in
             try await services.maintenance.runBench(
                 request: Melix_Worker_V1_RunBenchRequest(),
@@ -5436,6 +5460,10 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(exportResponse.error.code, "unimplemented")
         XCTAssertFalse(submitResponse.ok)
         XCTAssertEqual(submitResponse.error.code, "unimplemented")
+        XCTAssertFalse(searchResponse.ok)
+        XCTAssertEqual(searchResponse.error.code, "unimplemented")
+        XCTAssertFalse(modelCardResponse.ok)
+        XCTAssertEqual(modelCardResponse.error.code, "unimplemented")
         XCTAssertEqual(benchEvents.count, 1)
         XCTAssertEqual(benchEvents[0].failed.error.code, "unimplemented")
     }

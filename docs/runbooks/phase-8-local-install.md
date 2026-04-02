@@ -26,6 +26,44 @@ This writes:
 - an install manifest under `~/Library/Application Support/Melix/install-manifest.json`
 - an environment export file under `~/Library/Application Support/Melix/melix-product-env.sh`
 
+## Registry Layout
+
+When `MELIX_MODEL_ROOTS` is set, the Python worker scans each root in order and discovers model sidecars from one of these directory shapes:
+
+- `<organization>/<model>/<variant>/manifest.json`
+- `<provider>/<organization>/<model>/<variant>/manifest.json`
+
+Sidecar manifests may override the path-derived identity with these optional fields:
+
+- `provider_id`
+- `organization_id`
+- `model_name`
+- `variant_id`
+
+Melix preserves the actual root-relative directory in `melix.registry_relative_path`, even when one of the identity fields is overridden. Artifacts outside the supported three-level or four-level directory depth are skipped during registry scans.
+
+## Download State
+
+Worker-owned download jobs now persist a machine-readable state file alongside the target artifact:
+
+- `download.artifact.partial` while bytes are still being copied or retried
+- `download.state.json` for the latest operator-visible transfer state
+- `download.artifact` after the terminal successful rename
+
+The JSON state snapshot records at least these fields:
+
+- `selected_mirror`
+- `downloaded_bytes`
+- `total_bytes`
+- `resume_used`
+- `resume_from_bytes`
+- `retry_count`
+- `stall_detection_count`
+- `stall_reason`
+- `terminal_state`
+
+This state is intended to remain stable enough for later desktop queue recovery and release-gate automation.
+
 ## Bootstrap
 
 Load the generated launch agents:
@@ -44,10 +82,24 @@ Probe the local control plane:
 curl -sS http://127.0.0.1:11434/v1/models
 ```
 
+Registry-discovered models are synchronized on demand before `/v1/models` is rendered. The response metadata includes the structured `melix.registry_*` identity fields plus `melix.model_path` for each discovered registry model.
+
 For deterministic install smoke without `launchctl`, validate asset generation only:
 
 ```bash
 python3 scripts/phase8_install_smoke.py --json
+```
+
+For deterministic download resume, retry, and stall smoke without network access:
+
+```bash
+PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" uv run --project services/mlx-worker-python python scripts/m8_download_smoke.py --json
+```
+
+For deterministic MCP tool-loading and auto-injection smoke:
+
+```bash
+PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" uv run --project services/mlx-worker-python python scripts/m9_mcp_smoke.py --json
 ```
 
 ## Uninstall

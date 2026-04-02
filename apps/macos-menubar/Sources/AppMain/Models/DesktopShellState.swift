@@ -60,10 +60,17 @@ public enum DesktopToolSection: String, CaseIterable, Identifiable, Sendable {
 public enum DesktopServerAuthMode: String, CaseIterable, Identifiable, Sendable {
     case none = "None"
     case bearerToken = "Bearer Token"
+    case apiKeys = "API Keys"
 
     public var id: String {
         rawValue
     }
+}
+
+public enum DesktopSharedAccessState: String, Sendable {
+    case localOnly = "Local Only"
+    case configuredDisabled = "Configured, Disabled"
+    case enabled = "Enabled"
 }
 
 public enum DesktopServerSessionLifecycle: String, Sendable {
@@ -103,6 +110,9 @@ public struct DesktopServerSessionState: Identifiable, Equatable, Sendable {
     public var port: Int
     public var authMode: DesktopServerAuthMode
     public var authTokenHint: String
+    public var sharedAccessState: DesktopSharedAccessState
+    public var accessKeyCount: Int
+    public var accessKeyHints: [String]
     public var rateLimitPerMinute: Int
     public var timeoutSeconds: Int
     public var servingDefaults: DesktopServerServingDefaultsState
@@ -120,6 +130,9 @@ public struct DesktopServerSessionState: Identifiable, Equatable, Sendable {
         port: Int = 8080,
         authMode: DesktopServerAuthMode = .none,
         authTokenHint: String = "",
+        sharedAccessState: DesktopSharedAccessState = .localOnly,
+        accessKeyCount: Int = 0,
+        accessKeyHints: [String] = [],
         rateLimitPerMinute: Int = 120,
         timeoutSeconds: Int = 120,
         servingDefaults: DesktopServerServingDefaultsState = DesktopServerServingDefaultsState(),
@@ -136,6 +149,9 @@ public struct DesktopServerSessionState: Identifiable, Equatable, Sendable {
         self.port = port
         self.authMode = authMode
         self.authTokenHint = authTokenHint
+        self.sharedAccessState = sharedAccessState
+        self.accessKeyCount = accessKeyCount
+        self.accessKeyHints = accessKeyHints
         self.rateLimitPerMinute = rateLimitPerMinute
         self.timeoutSeconds = timeoutSeconds
         self.servingDefaults = servingDefaults
@@ -148,6 +164,37 @@ public struct DesktopServerSessionState: Identifiable, Equatable, Sendable {
 
     public var baseURL: String {
         "http://\(host):\(port)/v1"
+    }
+
+    public var integrationAuthValue: String {
+        switch authMode {
+        case .none:
+            return "not-required"
+        case .bearerToken:
+            let placeholder = authTokenHint.isEmpty ? "melix-api-key" : authTokenHint
+            return "<\(placeholder)>"
+        case .apiKeys:
+            let placeholder = authTokenHint.isEmpty
+                ? (accessKeyHints.first ?? "melix-shared-key")
+                : authTokenHint
+            return "<\(placeholder)>"
+        }
+    }
+
+    public var accessKeyHintsText: String {
+        accessKeyHints.isEmpty ? "No key hints configured." : accessKeyHints.joined(separator: ", ")
+    }
+
+    public var sharedAccessSummaryText: String {
+        switch sharedAccessState {
+        case .localOnly:
+            return "Local trust only."
+        case .configuredDisabled:
+            return "Shared access is configured but disabled."
+        case .enabled:
+            let suffix = accessKeyCount == 1 ? "key" : "keys"
+            return "Shared access is enabled for \(accessKeyCount) \(suffix)."
+        }
     }
 
     public var listenerLabel: String {

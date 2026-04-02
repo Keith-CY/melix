@@ -1512,14 +1512,16 @@ public struct ChatRequestTranslator: Sendable {
         modelHandle: String,
         modelToolParser: ToolParserSelection? = nil,
         modelChatTemplatePolicy: ModelChatTemplatePolicy? = nil,
-        modelOCRPolicy: OCRExecutionPolicy? = nil
+        modelOCRPolicy: OCRExecutionPolicy? = nil,
+        mcpToolCatalog: MCPToolCatalog = .empty
     ) throws -> TranslatedChatRequest {
         let requestID = requestIDGenerator()
         let shapedRequest = requestShaper.shape(
             normalizedRequest,
             modelToolParser: modelToolParser,
             modelChatTemplatePolicy: modelChatTemplatePolicy,
-            modelOCRPolicy: modelOCRPolicy
+            modelOCRPolicy: modelOCRPolicy,
+            mcpToolCatalog: mcpToolCatalog
         )
 
         var generateRequest = Melix_Worker_V1_GenerateRequest()
@@ -1573,6 +1575,9 @@ public struct ChatRequestTranslator: Sendable {
             }
             if let fallbackMode = toolParser.fallbackMode {
                 generateRequest.execution.ext["melix.tool_parser.fallback_mode"] = fallbackMode.rawValue
+            }
+            if !toolParser.mcpSourceIDs.isEmpty {
+                generateRequest.execution.ext["melix.mcp.source_ids"] = toolParser.mcpSourceIDs.joined(separator: ",")
             }
         }
         if let chatTemplate = shapedRequest.chatTemplate,

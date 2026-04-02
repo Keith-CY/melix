@@ -196,7 +196,8 @@ public struct TextRequestShaper: Sendable {
         _ request: NormalizedTextRequest,
         modelToolParser: ToolParserSelection? = nil,
         modelChatTemplatePolicy: ModelChatTemplatePolicy? = nil,
-        modelOCRPolicy: OCRExecutionPolicy? = nil
+        modelOCRPolicy: OCRExecutionPolicy? = nil,
+        mcpToolCatalog: MCPToolCatalog = .empty
     ) -> ShapedTextRequest {
         let preset = request.presetID.flatMap { presets[$0] }
         let workflowKind = request.workflow ?? .interactive
@@ -234,7 +235,8 @@ public struct TextRequestShaper: Sendable {
         )
         let resolvedToolParser = toolParserRegistry.resolve(
             requested: request.toolParser,
-            modelDefault: modelToolParser
+            modelDefault: modelToolParser,
+            mcpToolCatalog: mcpToolCatalog
         )
         let resolvedChatTemplate = chatTemplatePolicyRegistry.resolve(
             requested: request.chatTemplate,

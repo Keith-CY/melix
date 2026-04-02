@@ -943,6 +943,20 @@ private actor XPCScriptedModelOperationsWorkerClient: WorkerRoutingClient, Model
         return doctorResponse
     }
 
+    func searchHubModels(
+        request: Melix_Worker_V1_SearchHubModelsRequest
+    ) async throws -> Melix_Worker_V1_SearchHubModelsResponse {
+        _ = request
+        throw WorkerClientError.unavailable
+    }
+
+    func getHubModelCard(
+        request: Melix_Worker_V1_GetHubModelCardRequest
+    ) async throws -> Melix_Worker_V1_GetHubModelCardResponse {
+        _ = request
+        throw WorkerClientError.unavailable
+    }
+
     func runBench(
         request: Melix_Worker_V1_RunBenchRequest
     ) async throws -> AsyncThrowingStream<Melix_Worker_V1_RunBenchEvent, Error> {

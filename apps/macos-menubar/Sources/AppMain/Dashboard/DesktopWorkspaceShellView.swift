@@ -472,28 +472,7 @@ private struct DesktopServerSessionEditor: View {
                                 .frame(maxWidth: 120)
                             }
 
-                            Picker(
-                                "Auth",
-                                selection: Binding(
-                                    get: { viewModel.selectedServerSession?.authMode ?? .none },
-                                    set: { viewModel.updateSelectedServerSessionAuthMode($0) }
-                                )
-                            ) {
-                                ForEach(DesktopServerAuthMode.allCases) { mode in
-                                    Text(mode.rawValue).tag(mode)
-                                }
-                            }
-
-                            if viewModel.selectedServerSession?.authMode == .bearerToken {
-                                TextField(
-                                    "Bearer token hint",
-                                    text: Binding(
-                                        get: { viewModel.selectedServerSession?.authTokenHint ?? "" },
-                                        set: { viewModel.updateSelectedServerSessionAuthTokenHint($0) }
-                                    )
-                                )
-                                .textFieldStyle(.roundedBorder)
-                            }
+                            DesktopServerGatewayAccessSummaryView(session: session)
 
                             HStack {
                                 TextField(
@@ -625,13 +604,14 @@ private struct DesktopServerSessionInspector: View {
                             Button("Copy URL") {
                                 copyToPasteboard(session.baseURL)
                             }
-                            Button("Copy cURL") {
-                                copyToPasteboard("curl \(session.baseURL)/responses -H 'Authorization: Bearer <token>'")
-                            }
                         }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
+
+                DesktopServerGatewayAccessSummaryView(session: session)
+
+                DesktopBoundAgentIntegrationPanel(viewModel: viewModel)
 
                 if !session.lastError.isEmpty {
                     GroupBox("Error") {
@@ -922,7 +902,146 @@ private struct DesktopDiagnosticsToolSectionView: View {
     }
 }
 
-private enum DesktopAPISection: String, CaseIterable, Identifiable {
+struct DesktopAgentIntegrationExportsPanel: View {
+    let exports: [AgentIntegrationExport]
+    @Binding var selectedTarget: AgentIntegrationExportTarget
+
+    var body: some View {
+        GroupBox("Agent Integrations") {
+            VStack(alignment: .leading, spacing: 12) {
+                if let export = selectedExport {
+                    Picker(
+                        "Target",
+                        selection: $selectedTarget
+                    ) {
+                        ForEach(exports) { item in
+                            Text(item.target.rawValue).tag(item.target)
+                        }
+                    }
+                    .pickerStyle(.menu)
+
+                    Text(export.instructions)
+                        .foregroundStyle(.secondary)
+
+                    HStack(spacing: 12) {
+                        Label(export.baseURL, systemImage: "network")
+                        Label(export.modelID, systemImage: "cube")
+                    }
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                    GroupBox(export.target.configTitle) {
+                        Text(export.configFragment)
+                            .font(.caption.monospaced())
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+
+                    GroupBox("Shell Snippet") {
+                        Text(export.shellSnippet)
+                            .font(.caption.monospaced())
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+
+                    DesktopAgentIntegrationCopyButtons(export: export)
+                } else {
+                    ContentUnavailableView(
+                        "No Integration Export",
+                        systemImage: "square.and.arrow.up.on.square",
+                        description: Text("Start or select a server session to render reproducible agent integration exports.")
+                    )
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private var selectedExport: AgentIntegrationExport? {
+        exports.first(where: { $0.target == selectedTarget }) ?? exports.first
+    }
+}
+
+struct DesktopBoundAgentIntegrationPanel: View {
+    let viewModel: RuntimeViewModel
+
+    var body: some View {
+        DesktopAgentIntegrationExportsPanel(
+            exports: viewModel.agentIntegrationExports,
+            selectedTarget: Binding(
+                get: { viewModel.selectedAgentIntegrationTarget },
+                set: { viewModel.selectAgentIntegrationTarget($0) }
+            )
+        )
+    }
+}
+
+struct DesktopAgentIntegrationCopyButtons: View {
+    let export: AgentIntegrationExport
+
+    var body: some View {
+        HStack {
+            Button("Copy Config", action: copyConfig)
+            Button("Copy Shell", action: copyShell)
+        }
+    }
+
+    private func copyConfig() {
+        copyToPasteboard(export.configFragment)
+    }
+
+    private func copyShell() {
+        copyToPasteboard(export.shellSnippet)
+    }
+}
+
+struct DesktopAPIAuthenticationReferenceView: View {
+    let referenceText: String
+
+    var body: some View {
+        GroupBox("Auth") {
+            Text(referenceText)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+}
+
+struct DesktopServerGatewayAccessSummaryView: View {
+    let session: DesktopServerSessionState
+
+    var body: some View {
+        GroupBox("Gateway Access") {
+            VStack(alignment: .leading, spacing: 8) {
+                Text(session.sharedAccessSummaryText)
+                    .font(.headline)
+                Text("Effective auth: \(session.authMode.rawValue)")
+                    .foregroundStyle(.secondary)
+                Text(gatewayAccessHeaderText(session))
+                    .foregroundStyle(.secondary)
+                if session.accessKeyCount > 0 {
+                    Text("Configured key hints (\(session.accessKeyCount)): \(session.accessKeyHintsText)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+}
+
+struct DesktopAPISelectedExportCopyButton: View {
+    let export: AgentIntegrationExport?
+
+    var body: some View {
+        Group {
+            if let export {
+                Button("Copy Selected Export", action: { copyToPasteboard(export.configFragment) })
+            }
+        }
+    }
+}
+
+enum DesktopAPISection: String, CaseIterable, Identifiable {
     case overview = "Overview"
     case authentication = "Authentication"
     case quickStarts = "Quick Starts"
@@ -931,12 +1050,22 @@ private enum DesktopAPISection: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
-private struct DesktopAPIWorkspaceView: View {
+struct DesktopAPIWorkspaceView: View {
     let viewModel: RuntimeViewModel
     let foundation: DesktopFoundationState
-    @State private var selectedSection: DesktopAPISection = .overview
+    @State private var selectedSection: DesktopAPISection
     @State private var showsSidebar = true
     @State private var showsInspector = true
+
+    init(
+        viewModel: RuntimeViewModel,
+        foundation: DesktopFoundationState,
+        initialSection: DesktopAPISection = .overview
+    ) {
+        self.viewModel = viewModel
+        self.foundation = foundation
+        _selectedSection = State(initialValue: initialSection)
+    }
 
     var body: some View {
         HSplitView {
@@ -987,12 +1116,14 @@ private struct DesktopAPIWorkspaceView: View {
                                 .frame(maxWidth: .infinity, alignment: .leading)
                         }
                     case .authentication:
-                        GroupBox("Auth") {
-                            Text("Use a bearer token when the target Server Session enables auth. Copy examples from the inspector; this page stays reference-only.")
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                        }
+                        DesktopAPIAuthenticationReferenceView(
+                            referenceText: desktopAPIAuthenticationReferenceText(
+                                selectedSession: viewModel.selectedServerSession,
+                                selectedExport: viewModel.selectedAgentIntegrationExport
+                            )
+                        )
                     case .quickStarts:
-                        DesktopAPIQuickStartsView(baseURL: defaultBaseURL)
+                        DesktopBoundAgentIntegrationPanel(viewModel: viewModel)
                     case .endpoints:
                         DesktopAPIReferenceTabView(foundation: foundation)
                     }
@@ -1011,6 +1142,7 @@ private struct DesktopAPIWorkspaceView: View {
                             Button("Copy Base URL") {
                                 copyToPasteboard(defaultBaseURL)
                             }
+                            DesktopAPISelectedExportCopyButton(export: viewModel.selectedAgentIntegrationExport)
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
                     }
@@ -1020,6 +1152,9 @@ private struct DesktopAPIWorkspaceView: View {
                                 Text(session.title)
                                     .font(.headline)
                                 Text(session.baseURL)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                Text(session.sharedAccessSummaryText)
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                             }
@@ -1042,48 +1177,52 @@ private struct DesktopAPIWorkspaceView: View {
     }
 }
 
-private struct DesktopAPIQuickStartsView: View {
-    let baseURL: String
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            GroupBox("curl") {
-                Text("""
-                curl \(baseURL)/responses \\
-                  -H "Authorization: Bearer <token>" \\
-                  -H "Content-Type: application/json" \\
-                  -d '{"model":"<server-model>","input":"Hello"}'
-                """)
-                .font(.caption.monospaced())
-                .textSelection(.enabled)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-
-            GroupBox("Python") {
-                Text("""
-                from openai import OpenAI
-                client = OpenAI(base_url="\(baseURL)", api_key="<token>")
-                response = client.responses.create(model="<server-model>", input="Hello")
-                print(response.output_text)
-                """)
-                .font(.caption.monospaced())
-                .textSelection(.enabled)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-
-            GroupBox("JavaScript") {
-                Text("""
-                import OpenAI from "openai";
-                const client = new OpenAI({ baseURL: "\(baseURL)", apiKey: "<token>" });
-                const response = await client.responses.create({ model: "<server-model>", input: "Hello" });
-                console.log(response.output_text);
-                """)
-                .font(.caption.monospaced())
-                .textSelection(.enabled)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-        }
+func desktopAPIAuthenticationReferenceText(
+    selectedSession: DesktopServerSessionState?,
+    selectedExport: AgentIntegrationExport?
+) -> String {
+    guard let selectedSession else {
+        return "Select a server session to render auth guidance."
     }
+
+    let exportLead = if let selectedExport {
+        "Selected target: \(selectedExport.target.rawValue). "
+    } else {
+        ""
+    }
+
+    switch selectedSession.sharedAccessState {
+    case .localOnly:
+        if selectedSession.authMode == .bearerToken {
+            return "\(exportLead)Use Authorization: Bearer \(selectedSession.integrationAuthValue) for \(selectedSession.baseURL)."
+        }
+        return "\(exportLead)Local trusted mode does not require authentication for \(selectedSession.baseURL)."
+    case .configuredDisabled:
+        return "\(exportLead)Shared access is configured but disabled. Local trusted clients can call \(selectedSession.baseURL) without auth. Prepared key hints: \(selectedSession.accessKeyHintsText)."
+    case .enabled:
+        return "\(exportLead)Shared access is enabled. Use x-api-key or Authorization: Bearer with \(selectedSession.integrationAuthValue) for \(selectedSession.baseURL). Key hints: \(selectedSession.accessKeyHintsText)."
+    }
+}
+
+private func gatewayAccessHeaderText(_ session: DesktopServerSessionState) -> String {
+    switch session.sharedAccessState {
+    case .localOnly:
+        if session.authMode == .bearerToken {
+            return "Header: Authorization: Bearer"
+        }
+        return "Header: not required"
+    case .configuredDisabled:
+        return "Header: not required until shared access is enabled"
+    case .enabled:
+        return "Headers: x-api-key or Authorization: Bearer"
+    }
+}
+
+func desktopAPIAuthenticationReferenceText(selectedExport: AgentIntegrationExport?) -> String {
+    if let export = selectedExport {
+        return "Selected target: \(export.target.rawValue). Use \(export.authPlaceholder) as the reproducible credential placeholder for \(export.baseURL)."
+    }
+    return "Select a server session to render auth guidance."
 }
 
 private func copyToPasteboard(_ value: String) {

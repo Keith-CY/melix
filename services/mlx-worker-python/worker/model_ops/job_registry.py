@@ -72,6 +72,7 @@ class ModelOpsJobRegistry:
             "jobs": jobs,
             "adapters": self._adapter_registry(jobs),
             "derived_models": self._derived_model_registry(jobs),
+            "downloads": self._download_registry(jobs),
         }
 
     @staticmethod
@@ -226,3 +227,33 @@ class ModelOpsJobRegistry:
                 }
             )
         return derived_models
+
+    @staticmethod
+    def _download_registry(jobs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        downloads: list[dict[str, Any]] = []
+        for job in jobs:
+            if job["operation"] != "download":
+                continue
+
+            manifest = job.get("manifest") or {}
+            downloads.append(
+                {
+                    "job_id": job["job_id"],
+                    "source_model": job["source_model"],
+                    "status": str(manifest.get("terminal_state", manifest.get("status", job["status"]))),
+                    "stage": str(manifest.get("stage", job["stage"])),
+                    "pct": float(manifest.get("pct", job["pct"])),
+                    "output_path": str(manifest.get("output_path", job["output_path"])),
+                    "partial_path": str(manifest.get("partial_path", "")),
+                    "state_path": str(manifest.get("state_path", "")),
+                    "selected_mirror": str(manifest.get("selected_mirror", "")),
+                    "downloaded_bytes": int(manifest.get("downloaded_bytes", 0)),
+                    "total_bytes": int(manifest.get("total_bytes", 0)),
+                    "resume_used": bool(manifest.get("resume_used", False)),
+                    "resume_from_bytes": int(manifest.get("resume_from_bytes", 0)),
+                    "retry_count": int(manifest.get("retry_count", 0)),
+                    "stall_detection_count": int(manifest.get("stall_detection_count", 0)),
+                    "stall_reason": str(manifest.get("stall_reason", "")),
+                }
+            )
+        return downloads

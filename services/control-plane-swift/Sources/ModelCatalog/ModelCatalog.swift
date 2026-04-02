@@ -35,6 +35,8 @@ public actor ModelCatalog {
     private var models: [String: Melix_Controlplane_V1_ModelSummary]
     private var dispatchHandles: [String: String]
     private var residencyLedger: [String: ResidencyLedger]
+    private let seedModelIDs: Set<String>
+    private var registryModelIDs: Set<String>
     private var nextAccessOrdinal: UInt64
     private let nowUnixMs: @Sendable () -> Int64
 
@@ -66,6 +68,8 @@ public actor ModelCatalog {
             }
         )
         self.residencyLedger = ledger
+        self.seedModelIDs = Set(normalizedSeedModels.map(\.modelID))
+        self.registryModelIDs = []
         self.nextAccessOrdinal = accessOrdinal
         self.nowUnixMs = nowUnixMs
     }
@@ -234,6 +238,30 @@ public actor ModelCatalog {
         model = synchronized(model)
         models[id] = model
         return model
+    }
+
+    public func syncRegistryModels(
+        _ discoveredModels: [Melix_Controlplane_V1_ModelSummary],
+        reason: String = "worker_registry_sync"
+    ) {
+        let discoveredByID = Dictionary(uniqueKeysWithValues: discoveredModels.map { ($0.modelID, $0) })
+        let discoveredIDs = Set(discoveredByID.keys).subtracting(seedModelIDs)
+
+        for staleID in registryModelIDs.subtracting(discoveredIDs) {
+            models.removeValue(forKey: staleID)
+            dispatchHandles.removeValue(forKey: staleID)
+            residencyLedger.removeValue(forKey: staleID)
+        }
+
+        for modelID in discoveredIDs.sorted() {
+            guard let source = discoveredByID[modelID] else {
+                continue
+            }
+            let merged = mergedRegistryModel(existing: models[modelID], source: source)
+            _ = registerModel(merged, reason: reason)
+        }
+
+        registryModelIDs = discoveredIDs
     }
 
     @discardableResult
@@ -886,6 +914,67 @@ public actor ModelCatalog {
 
     private static func defaultDispatchHandle(for id: String) -> String {
         "\(id)::local"
+    }
+
+    private func mergedRegistryModel(
+        existing: Melix_Controlplane_V1_ModelSummary?,
+        source: Melix_Controlplane_V1_ModelSummary
+    ) -> Melix_Controlplane_V1_ModelSummary {
+        guard let existing else {
+            return source
+        }
+
+        var merged = existing
+        if !source.kind.isEmpty {
+            merged.kind = source.kind
+        }
+        if !source.quantProfileID.isEmpty {
+            merged.quantProfileID = source.quantProfileID
+        }
+        if source.maxContext > 0 {
+            merged.maxContext = source.maxContext
+        }
+        if !source.features.isEmpty {
+            merged.features = source.features
+        }
+        if source.capabilityClass != .unspecified {
+            merged.capabilityClass = source.capabilityClass
+        }
+        if source.routeClass != .unspecified {
+            merged.routeClass = source.routeClass
+        }
+        if !source.supportedModalities.isEmpty {
+            merged.supportedModalities = source.supportedModalities
+        }
+        if !source.supportedTasks.isEmpty {
+            merged.supportedTasks = source.supportedTasks
+        }
+        if !source.settings.alias.isEmpty {
+            merged.settings.alias = source.settings.alias
+        }
+        if !source.settings.typeOverride.isEmpty {
+            merged.settings.typeOverride = source.settings.typeOverride
+        }
+        if source.settings.ttlSeconds > 0 {
+            merged.settings.ttlSeconds = source.settings.ttlSeconds
+        }
+        if source.settings.pinOnLoad {
+            merged.settings.pinOnLoad = true
+        }
+        if source.settings.memoryPolicy != .unspecified {
+            merged.settings.memoryPolicy = source.settings.memoryPolicy
+        }
+        if source.settings.defaultAccelerationMode != .unspecified {
+            merged.settings.defaultAccelerationMode = source.settings.defaultAccelerationMode
+        }
+        if !source.settings.accelerationProfileID.isEmpty {
+            merged.settings.accelerationProfileID = source.settings.accelerationProfileID
+        }
+        if !source.settings.adaptiveThinking.mode.isEmpty || source.settings.adaptiveThinking.budgetTokens > 0 {
+            merged.settings.adaptiveThinking = source.settings.adaptiveThinking
+        }
+        merged.settings.ext.merge(source.settings.ext) { _, new in new }
+        return merged
     }
 
     private func synchronized(

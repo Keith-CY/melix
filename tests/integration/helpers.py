@@ -183,6 +183,7 @@ class LiveMelixStack:
 
         wait_for_http_ready(
             self.http_port,
+            request_headers=self._gateway_request_headers(),
             swift_text_worker=self.swift_text_worker,
             swift_text_worker_stdout_path=self.swift_text_worker_stdout_path,
             swift_text_worker_stderr_path=self.swift_text_worker_stderr_path,
@@ -250,6 +251,7 @@ class LiveMelixStack:
         wait_for_http_model_states(
             self.http_port,
             required_states={model_id: "warm" for model_id in model_ids},
+            request_headers=self._gateway_request_headers(),
             swift_text_worker=self.swift_text_worker,
             swift_text_worker_stdout_path=self.swift_text_worker_stdout_path,
             swift_text_worker_stderr_path=self.swift_text_worker_stderr_path,
@@ -261,6 +263,32 @@ class LiveMelixStack:
             control_plane_stderr_path=self.control_plane_stderr_path,
             timeout_seconds=timeout_seconds,
         )
+
+    def _gateway_request_headers(self) -> dict[str, str]:
+        auth_mode = self.environment_overrides.get("MELIX_GATEWAY_AUTH_MODE", "").strip().lower()
+        if auth_mode == "bearer_token":
+            token = self.environment_overrides.get("MELIX_GATEWAY_BEARER_TOKEN", "").strip()
+            if token:
+                return {"Authorization": f"Bearer {token}"}
+            return {}
+
+        if auth_mode == "api_keys" and _parse_bool(self.environment_overrides.get("MELIX_GATEWAY_SHARED_ACCESS_ENABLED")):
+            raw_keys = self.environment_overrides.get("MELIX_GATEWAY_API_KEYS_JSON", "").strip()
+            if not raw_keys:
+                return {}
+            try:
+                values = json.loads(raw_keys)
+            except json.JSONDecodeError:
+                return {}
+            if not isinstance(values, list):
+                return {}
+            for value in values:
+                if not isinstance(value, dict):
+                    continue
+                token = str(value.get("token", "")).strip()
+                if token:
+                    return {"x-api-key": token}
+        return {}
 
     def _stop_process(self, name: str, process: subprocess.Popen[str] | None) -> None:
         if process is None:
@@ -307,9 +335,16 @@ def resolve_swift_product_binary(repo_root: Path, *, package_path: Path, product
     candidates = [build_root / "debug" / product_name]
     candidates.extend(sorted(build_root.glob(f"*/debug/{product_name}")))
 
-    for candidate in candidates:
-        if candidate.is_file() and os.access(candidate, os.X_OK):
-            return candidate
+    executable_candidates = [
+        candidate
+        for candidate in candidates
+        if candidate.is_file() and os.access(candidate, os.X_OK)
+    ]
+    if executable_candidates:
+        return max(
+            executable_candidates,
+            key=lambda candidate: (candidate.stat().st_mtime, len(candidate.parts)),
+        )
 
     raise AssertionError(
         "Required Swift product binary is missing. "
@@ -385,6 +420,7 @@ def wait_for_http_models(
 
 def wait_for_http_ready(
     port: int,
+    request_headers: dict[str, str] | None = None,
     swift_text_worker: subprocess.Popen[str] | None = None,
     swift_text_worker_stdout_path: Path | None = None,
     swift_text_worker_stderr_path: Path | None = None,
@@ -399,6 +435,7 @@ def wait_for_http_ready(
     wait_for_http_model_states(
         port,
         required_states={},
+        request_headers=request_headers,
         swift_text_worker=swift_text_worker,
         swift_text_worker_stdout_path=swift_text_worker_stdout_path,
         swift_text_worker_stderr_path=swift_text_worker_stderr_path,
@@ -416,6 +453,7 @@ def wait_for_http_model_states(
     port: int,
     *,
     required_states: dict[str, str],
+    request_headers: dict[str, str] | None = None,
     swift_text_worker: subprocess.Popen[str] | None = None,
     swift_text_worker_stdout_path: Path | None = None,
     swift_text_worker_stderr_path: Path | None = None,
@@ -456,7 +494,12 @@ def wait_for_http_model_states(
                 )
             )
         try:
-            with urllib.request.urlopen(f"http://127.0.0.1:{port}/v1/models", timeout=2) as response:
+            request = urllib.request.Request(
+                f"http://127.0.0.1:{port}/v1/models",
+                headers=request_headers or {},
+                method="GET",
+            )
+            with urllib.request.urlopen(request, timeout=2) as response:
                 payload = json.loads(response.read().decode("utf-8"))
                 states = {item["id"]: item["melix_state"] for item in payload["data"]}
                 if all(
@@ -507,3 +550,7 @@ def _model_state_satisfies(actual: str | None, expected: str) -> bool:
     if expected == "warm":
         return actual in {"warm", "pinned"}
     return actual == expected
+
+
+def _parse_bool(value: str | None) -> bool:
+    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}

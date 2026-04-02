@@ -23,6 +23,8 @@ public actor ControlPlaneService {
     private let workerRegistry: WorkerRegistry?
     private let requestCoordinator: RequestCoordinator?
     private let chatTranslator: ChatRequestTranslator
+    private let mcpToolCatalog: MCPToolCatalog
+    private let gatewayAccessPolicy: GatewayAccessPolicy
 
     public init(
         serverVersion: String = "0.1.0",
@@ -39,7 +41,9 @@ public actor ControlPlaneService {
         imageJobAdmissionController: (any ImageJobAdmissionControlling)? = nil,
         workerRegistry: WorkerRegistry? = nil,
         requestCoordinator: RequestCoordinator? = nil,
-        chatTranslator: ChatRequestTranslator = ChatRequestTranslator()
+        chatTranslator: ChatRequestTranslator = ChatRequestTranslator(),
+        mcpToolCatalog: MCPToolCatalog = .empty,
+        gatewayAccessPolicy: GatewayAccessPolicy = .localTrust
     ) {
         let resolvedSchedulerReadModel = schedulerReadModel ?? SchedulerReadModel(
             metricsStore: metricsStore,
@@ -81,6 +85,8 @@ public actor ControlPlaneService {
             )
         }
         self.chatTranslator = chatTranslator
+        self.mcpToolCatalog = mcpToolCatalog
+        self.gatewayAccessPolicy = gatewayAccessPolicy
     }
 
     public func handshake(
@@ -91,6 +97,9 @@ public actor ControlPlaneService {
         response.serverVersion = serverVersion
         response.daemonInstanceID = daemonInstanceID
         response.features = ["xpc", "models", "metrics", "cache-metadata", "session-graph", "image-jobs"]
+        if !mcpToolCatalog.sources.isEmpty || !mcpToolCatalog.configPath.isEmpty {
+            response.features.append("mcp-tools")
+        }
         response.snapshot = await buildSnapshot()
         return response
     }
@@ -176,7 +185,8 @@ public actor ControlPlaneService {
             modelHandle: modelHandle,
             modelToolParser: modelToolParser,
             modelChatTemplatePolicy: modelChatTemplatePolicy,
-            modelOCRPolicy: modelOCRPolicy
+            modelOCRPolicy: modelOCRPolicy,
+            mcpToolCatalog: mcpToolCatalog
         )
         let execution = try await requestCoordinator.startChatCompletion(translated)
 
@@ -235,6 +245,7 @@ public actor ControlPlaneService {
     ) async -> Melix_Controlplane_V1_ControlPlaneResponse {
         switch command.kind {
         case .list:
+            await syncRegistryModelsFromWorkerIfAvailable()
             var reply = Melix_Controlplane_V1_ModelReply()
             reply.models = await modelCatalog.listModels()
             return okResponse(for: request, model: reply)
@@ -410,6 +421,10 @@ public actor ControlPlaneService {
             return okResponse(for: request, ops: reply)
         case .runDoctor(let runDoctor):
             return await handleRunDoctor(request: request, command: runDoctor)
+        case .searchHubModels(let searchHubModels):
+            return await handleSearchHubModels(request: request, command: searchHubModels)
+        case .getHubModelCard(let getHubModelCard):
+            return await handleGetHubModelCard(request: request, command: getHubModelCard)
         case .runBench(let runBench):
             return await handleRunBench(request: request, command: runBench)
         case .runEvaluation(let runEvaluation):
@@ -466,6 +481,79 @@ public actor ControlPlaneService {
             return okResponse(for: request, ops: reply)
         } catch {
             return errorResponse(for: request, code: "unavailable", message: "Doctor worker request failed: \(error)")
+        }
+    }
+
+    private func handleSearchHubModels(
+        request: Melix_Controlplane_V1_ControlPlaneRequest,
+        command: Melix_Controlplane_V1_SearchHubModels
+    ) async -> Melix_Controlplane_V1_ControlPlaneResponse {
+        let startedAt = Date()
+        guard
+            let workerRegistry,
+            let workerClient = await workerRegistry.client(for: .pythonModelOperations) as? any ModelOperationsWorkerClientProtocol
+        else {
+            return errorResponse(for: request, code: "unavailable", message: "Model operations worker is unavailable.")
+        }
+
+        var workerRequest = Melix_Worker_V1_SearchHubModelsRequest()
+        workerRequest.query = command.query
+        workerRequest.pageSize = command.pageSize == 0 ? 20 : command.pageSize
+        workerRequest.cursor = command.cursor
+        workerRequest.mlxOnly = command.mlxOnly
+
+        do {
+            let workerResponse = try await workerClient.searchHubModels(request: workerRequest)
+            guard workerResponse.ok else {
+                return errorResponse(
+                    for: request,
+                    code: workerResponse.error.code.isEmpty ? "unknown" : workerResponse.error.code,
+                    message: workerResponse.error.message.isEmpty ? "Hub search failed." : workerResponse.error.message
+                )
+            }
+
+            await metricsStore.set(
+                Date().timeIntervalSince(startedAt) * 1000,
+                forKey: "hub.search_latency_ms"
+            )
+
+            var reply = Melix_Controlplane_V1_OpsReply()
+            reply.hubSearch = makeHubSearchResult(from: workerResponse)
+            return okResponse(for: request, ops: reply)
+        } catch {
+            return errorResponse(for: request, code: "unavailable", message: "Hub search worker request failed: \(error)")
+        }
+    }
+
+    private func handleGetHubModelCard(
+        request: Melix_Controlplane_V1_ControlPlaneRequest,
+        command: Melix_Controlplane_V1_GetHubModelCard
+    ) async -> Melix_Controlplane_V1_ControlPlaneResponse {
+        guard
+            let workerRegistry,
+            let workerClient = await workerRegistry.client(for: .pythonModelOperations) as? any ModelOperationsWorkerClientProtocol
+        else {
+            return errorResponse(for: request, code: "unavailable", message: "Model operations worker is unavailable.")
+        }
+
+        var workerRequest = Melix_Worker_V1_GetHubModelCardRequest()
+        workerRequest.repoID = command.repoID
+
+        do {
+            let workerResponse = try await workerClient.getHubModelCard(request: workerRequest)
+            guard workerResponse.ok else {
+                return errorResponse(
+                    for: request,
+                    code: workerResponse.error.code.isEmpty ? "unknown" : workerResponse.error.code,
+                    message: workerResponse.error.message.isEmpty ? "Hub model card request failed." : workerResponse.error.message
+                )
+            }
+
+            var reply = Melix_Controlplane_V1_OpsReply()
+            reply.hubModelCard = makeHubModelCard(from: workerResponse.card)
+            return okResponse(for: request, ops: reply)
+        } catch {
+            return errorResponse(for: request, code: "unavailable", message: "Hub model card worker request failed: \(error)")
         }
     }
 
@@ -702,7 +790,9 @@ public actor ControlPlaneService {
             queues: queues,
             cache: cache,
             sessions: sessions,
-            imageJobs: imageJobs
+            imageJobs: imageJobs,
+            mcpTools: mcpToolCatalog.summary(),
+            gatewayAccess: gatewayAccessPolicy.summary
         )
     }
 
@@ -1149,11 +1239,14 @@ public actor ControlPlaneService {
             )
 
             guard operation.ok else {
-                return errorResponse(
+                var response = errorResponse(
                     for: request,
                     code: operation.error.code.isEmpty ? "unknown" : operation.error.code,
                     message: operation.error.message.isEmpty ? "Model operation failed." : operation.error.message
                 )
+                response.model = Melix_Controlplane_V1_ModelReply()
+                response.model.operation = operation
+                return response
             }
 
             if command.operation == "activate_adapter" {
@@ -1166,6 +1259,14 @@ public actor ControlPlaneService {
         } catch {
             return errorResponse(for: request, code: "unavailable", message: "Model operation worker request failed: \(error)")
         }
+    }
+
+    private func syncRegistryModelsFromWorkerIfAvailable() async {
+        await RegistrySnapshotSync.syncModelsIfAvailable(
+            modelCatalog: modelCatalog,
+            workerRegistry: workerRegistry,
+            metricsStore: metricsStore
+        )
     }
 
     private func normalizedWorkerQuantProfile(
@@ -1380,6 +1481,55 @@ public actor ControlPlaneService {
             return value
         }
         return summary
+    }
+
+    private func makeHubSearchResult(
+        from response: Melix_Worker_V1_SearchHubModelsResponse
+    ) -> Melix_Controlplane_V1_HubSearchResult {
+        var result = Melix_Controlplane_V1_HubSearchResult()
+        result.nextCursor = response.nextCursor
+        result.models = response.models.map(makeHubModelSummary)
+        return result
+    }
+
+    private func makeHubModelSummary(
+        from model: Melix_Worker_V1_HubModelSummary
+    ) -> Melix_Controlplane_V1_HubModelSummary {
+        var summary = Melix_Controlplane_V1_HubModelSummary()
+        summary.repoID = model.repoID
+        summary.author = model.author
+        summary.modelName = model.modelName
+        summary.summary = model.summary
+        summary.pipelineTag = model.pipelineTag
+        summary.tags = model.tags
+        summary.downloads = model.downloads
+        summary.likes = model.likes
+        summary.mlxCompatible = model.mlxCompatible
+        summary.libraryName = model.libraryName
+        summary.siblingFiles = model.siblingFiles
+        summary.lastModified = model.lastModified
+        return summary
+    }
+
+    private func makeHubModelCard(
+        from card: Melix_Worker_V1_HubModelCard
+    ) -> Melix_Controlplane_V1_HubModelCard {
+        var result = Melix_Controlplane_V1_HubModelCard()
+        result.repoID = card.repoID
+        result.author = card.author
+        result.modelName = card.modelName
+        result.summary = card.summary
+        result.license = card.license
+        result.pipelineTag = card.pipelineTag
+        result.tags = card.tags
+        result.downloads = card.downloads
+        result.likes = card.likes
+        result.mlxCompatible = card.mlxCompatible
+        result.libraryName = card.libraryName
+        result.siblingFiles = card.siblingFiles
+        result.baseModels = card.baseModels
+        result.lastModified = card.lastModified
+        return result
     }
 
     private func benchmarkSuiteName(for metricName: String) -> String {

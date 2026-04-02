@@ -8,7 +8,25 @@ enum MelixControlPlaneBootstrap {
         let bootstrapStartedAt = Date()
         let modelCatalog = ModelCatalog(seedModels: ModelCatalog.phaseSevenContractSeedModels())
         let bootstrapEnvironment = BootstrapEnvironment(environment: ProcessInfo.processInfo.environment)
+        let mcpLoadStartedAt = Date()
+        let mcpToolCatalog = MCPToolCatalog.load(environment: ProcessInfo.processInfo.environment)
+        let gatewayAccessPolicy = GatewayAccessPolicy.load(environment: ProcessInfo.processInfo.environment)
         let metricsStore = MetricsStore(exportPath: bootstrapEnvironment.controlPlaneMetricsPath)
+        await metricsStore.set(
+            Date().timeIntervalSince(mcpLoadStartedAt) * 1000,
+            forKey: "mcp.config_load_latency_ms"
+        )
+        await metricsStore.set(
+            Double(mcpToolCatalog.sources.filter { !$0.enabled }.count),
+            forKey: "mcp.disabled_tool_source_count"
+        )
+        await metricsStore.set(gatewayAccessPolicy.metricModeCode, forKey: "gateway.auth_mode_code")
+        await metricsStore.set(Double(gatewayAccessPolicy.acceptedAPIKeyCount), forKey: "gateway.accepted_api_key_count")
+        await metricsStore.set(gatewayAccessPolicy.sharedAccessEnabled ? 1 : 0, forKey: "shared_access.enabled")
+        await metricsStore.set(gatewayAccessPolicy.sharedAccessReady ? 1 : 0, forKey: "shared_access.ready")
+        await metricsStore.set(0, forKey: "gateway.auth_validation_failures")
+        await metricsStore.set(0, forKey: "shared_access.accepted_client_count")
+        await metricsStore.set(0, forKey: "shared_access.rejected_request_count")
         let eventHub = EventSubscriptionHub()
         let sessionGraphStore = SessionGraphStore(metricsStore: metricsStore)
         let cacheMetadataStore = CacheMetadataStore()
@@ -49,7 +67,9 @@ enum MelixControlPlaneBootstrap {
             cacheMetadataStore: cacheMetadataStore,
             sessionGraphStore: sessionGraphStore,
             imageJobReadModel: imageJobReadModel,
-            imageJobAdmissionController: imageJobAdmissionController
+            imageJobAdmissionController: imageJobAdmissionController,
+            mcpToolCatalog: mcpToolCatalog,
+            gatewayAccessPolicy: gatewayAccessPolicy
         )
 
         let handler = OpenAIHandler(
@@ -68,7 +88,9 @@ enum MelixControlPlaneBootstrap {
             schedulerReadModel: schedulerReadModel,
             imageJobReadModel: imageJobReadModel,
             imageJobAdmissionController: imageJobAdmissionController,
-            cacheMetadataStore: cacheMetadataStore
+            cacheMetadataStore: cacheMetadataStore,
+            mcpToolCatalog: mcpToolCatalog,
+            gatewayAccessPolicy: gatewayAccessPolicy
         )
 
         let server = try BootstrapHTTPServer(
@@ -106,6 +128,7 @@ private struct BootstrapEnvironment {
     let pythonWorkerSocketPath: String
     let swiftTextWorkerSocketPath: String
     let controlPlaneMetricsPath: String?
+    let mcpConfigPath: String?
 
     init(environment: [String: String]) {
         if let repoRoot = environment["MELIX_REPO_ROOT"], !repoRoot.isEmpty {
@@ -117,6 +140,7 @@ private struct BootstrapEnvironment {
         self.swiftTextWorkerSocketPath =
             environment["MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH"] ?? "/var/run/melix/swift-text-worker.sock"
         self.controlPlaneMetricsPath = environment["MELIX_CONTROL_PLANE_METRICS_PATH"]
+        self.mcpConfigPath = environment["MELIX_MCP_CONFIG_PATH"]
     }
 
     private static func inferRepoRoot() -> String {

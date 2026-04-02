@@ -109,6 +109,163 @@ struct DesktopFoundationViewTests {
         #expect(actions.contains("load:melix-dev-text"))
     }
 
+    @Test("agent integration exports panel renders populated and empty states")
+    @MainActor
+    func agentIntegrationExportsPanelRendersPopulatedAndEmptyStates() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+
+        let populated = hostView(
+            DesktopAgentIntegrationExportsPanel(
+                exports: viewModel.agentIntegrationExports,
+                selectedTarget: Binding(
+                    get: { viewModel.selectedAgentIntegrationTarget },
+                    set: { viewModel.selectAgentIntegrationTarget($0) }
+                )
+            )
+        )
+        let empty = hostView(
+            DesktopAgentIntegrationExportsPanel(
+                exports: [],
+                selectedTarget: .constant(.openAICompatible)
+            )
+        )
+
+        #expect(populated.subviews.isEmpty == false)
+        #expect(empty.subviews.isEmpty == false)
+    }
+
+    @Test("server workspace renders the bound integration export panel")
+    @MainActor
+    func serverWorkspaceRendersTheBoundIntegrationExportPanel() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        viewModel.selectSurface(.server)
+
+        let view = hostView(DesktopWorkspaceShellView(viewModel: viewModel))
+        let selectedExport = try #require(viewModel.selectedAgentIntegrationExport)
+
+        #expect(view.subviews.isEmpty == false)
+        #expect(viewModel.agentIntegrationExports.isEmpty == false)
+        #expect(selectedExport.target == .openAICompatible)
+    }
+
+    @Test("api workspace renders authentication and quick-start integration references")
+    @MainActor
+    func apiWorkspaceRendersAuthenticationAndQuickStartIntegrationReferences() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        let foundation = viewModel.desktopFoundationState
+
+        let authentication = hostView(
+            DesktopAPIWorkspaceView(
+                viewModel: viewModel,
+                foundation: foundation,
+                initialSection: .authentication
+            )
+        )
+        let quickStarts = hostView(
+            DesktopAPIWorkspaceView(
+                viewModel: viewModel,
+                foundation: foundation,
+                initialSection: .quickStarts
+            )
+        )
+
+        #expect(authentication.subviews.isEmpty == false)
+        #expect(quickStarts.subviews.isEmpty == false)
+        #expect(
+            desktopAPIAuthenticationReferenceText(
+                selectedExport: viewModel.selectedAgentIntegrationExport
+            ).contains("Selected target:")
+        )
+    }
+
+    @Test("agent integration copy helper views render canonical actions")
+    @MainActor
+    func agentIntegrationCopyHelperViewsRenderCanonicalActions() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        let selectedExport = try #require(viewModel.selectedAgentIntegrationExport)
+
+        let copyButtons = hostView(DesktopAgentIntegrationCopyButtons(export: selectedExport))
+        let selectedExportButton = hostView(DesktopAPISelectedExportCopyButton(export: selectedExport))
+        let authentication = hostView(
+            DesktopAPIAuthenticationReferenceView(
+                referenceText: desktopAPIAuthenticationReferenceText(selectedExport: selectedExport)
+            )
+        )
+
+        #expect(copyButtons.subviews.isEmpty == false)
+        #expect(selectedExportButton.subviews.isEmpty == false)
+        #expect(authentication.subviews.isEmpty == false)
+    }
+
+    @Test("gateway access summary and auth guidance cover bearer disabled and enabled shared access")
+    @MainActor
+    func gatewayAccessSummaryAndAuthGuidanceCoverBearerDisabledAndEnabledStates() throws {
+        let bearerSession = DesktopServerSessionState(
+            id: "bearer-session",
+            title: "Bearer Session",
+            modelID: "melix-dev-text",
+            authMode: .bearerToken,
+            authTokenHint: "desktop-agent",
+            sharedAccessState: .localOnly,
+            accessKeyCount: 1,
+            accessKeyHints: ["desktop-agent"],
+            lifecycle: .running
+        )
+        let configuredDisabledSession = DesktopServerSessionState(
+            id: "disabled-session",
+            title: "Disabled Session",
+            modelID: "melix-dev-text",
+            sharedAccessState: .configuredDisabled,
+            accessKeyCount: 2,
+            accessKeyHints: ["desktop-agent", "codex"],
+            lifecycle: .running
+        )
+        let enabledSession = DesktopServerSessionState(
+            id: "enabled-session",
+            title: "Enabled Session",
+            modelID: "melix-dev-text",
+            authMode: .apiKeys,
+            authTokenHint: "desktop-agent",
+            sharedAccessState: .enabled,
+            accessKeyCount: 2,
+            accessKeyHints: ["desktop-agent", "codex"],
+            lifecycle: .running
+        )
+
+        let bearerView = hostView(DesktopServerGatewayAccessSummaryView(session: bearerSession))
+        let disabledView = hostView(DesktopServerGatewayAccessSummaryView(session: configuredDisabledSession))
+        let enabledView = hostView(DesktopServerGatewayAccessSummaryView(session: enabledSession))
+
+        #expect(bearerView.subviews.isEmpty == false)
+        #expect(disabledView.subviews.isEmpty == false)
+        #expect(enabledView.subviews.isEmpty == false)
+
+        #expect(
+            desktopAPIAuthenticationReferenceText(selectedSession: nil, selectedExport: nil)
+                == "Select a server session to render auth guidance."
+        )
+        #expect(
+            desktopAPIAuthenticationReferenceText(selectedSession: bearerSession, selectedExport: nil)
+                .contains("Authorization: Bearer <desktop-agent>")
+        )
+        #expect(
+            desktopAPIAuthenticationReferenceText(selectedSession: configuredDisabledSession, selectedExport: nil)
+                .contains("configured but disabled")
+        )
+        #expect(
+            desktopAPIAuthenticationReferenceText(selectedSession: enabledSession, selectedExport: nil)
+                .contains("x-api-key or Authorization: Bearer")
+        )
+    }
+
     @Test("tools tab renders model information and operations state")
     @MainActor
     func toolsTabRendersModelInformationAndOperationsState() async throws {

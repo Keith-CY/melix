@@ -23,6 +23,8 @@ public enum BridgeCommandKind: String, Sendable {
     case getModelInfo = "get-model-info"
     case convertModel = "convert-model"
     case runDoctor = "run-doctor"
+    case searchHubModels = "search-hub-models"
+    case getHubModelCard = "get-hub-model-card"
     case runBench = "run-bench"
     case runEvaluation = "run-evaluation"
     case exportResults = "export-results"
@@ -212,6 +214,26 @@ public struct PythonBridgeWorkerClient:
             kind: .runDoctor,
             request: request,
             as: Melix_Worker_V1_RunDoctorResponse.self
+        )
+    }
+
+    public func searchHubModels(
+        request: Melix_Worker_V1_SearchHubModelsRequest
+    ) async throws -> Melix_Worker_V1_SearchHubModelsResponse {
+        try await sendUnary(
+            kind: .searchHubModels,
+            request: request,
+            as: Melix_Worker_V1_SearchHubModelsResponse.self
+        )
+    }
+
+    public func getHubModelCard(
+        request: Melix_Worker_V1_GetHubModelCardRequest
+    ) async throws -> Melix_Worker_V1_GetHubModelCardResponse {
+        try await sendUnary(
+            kind: .getHubModelCard,
+            request: request,
+            as: Melix_Worker_V1_GetHubModelCardResponse.self
         )
     }
 

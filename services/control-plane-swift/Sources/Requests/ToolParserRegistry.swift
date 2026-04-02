@@ -34,21 +34,24 @@ public struct ToolParserSelection: Sendable, Equatable {
     public let namespaces: [String]
     public let source: String
     public let fallbackMode: ToolParserMode?
+    public let mcpSourceIDs: [String]
 
     public init(
         mode: ToolParserMode,
         namespaces: [String] = [],
         source: String,
-        fallbackMode: ToolParserMode? = nil
+        fallbackMode: ToolParserMode? = nil,
+        mcpSourceIDs: [String] = []
     ) {
         self.mode = mode
         self.namespaces = namespaces
         self.source = source
         self.fallbackMode = fallbackMode
+        self.mcpSourceIDs = mcpSourceIDs
     }
 
     public var isExplicit: Bool {
-        source != "default" || mode != .text || !namespaces.isEmpty || fallbackMode != nil
+        source != "default" || mode != .text || !namespaces.isEmpty || fallbackMode != nil || !mcpSourceIDs.isEmpty
     }
 
     init?(executionExt: [String: String]) {
@@ -64,12 +67,16 @@ public struct ToolParserSelection: Sendable, Equatable {
             .map { String($0) } ?? []
         let fallbackMode = executionExt["melix.tool_parser.fallback_mode"]
             .flatMap { ToolParserRegistry().mode(for: $0) }
+        let mcpSourceIDs = executionExt["melix.mcp.source_ids"]?
+            .split(separator: ",")
+            .map { String($0) } ?? []
 
         self.init(
             mode: mode,
             namespaces: namespaces,
             source: executionExt["melix.tool_parser.source"] ?? "request",
-            fallbackMode: fallbackMode
+            fallbackMode: fallbackMode,
+            mcpSourceIDs: mcpSourceIDs
         )
     }
 
@@ -181,6 +188,30 @@ public struct ToolParserRegistry: Sendable {
         return nil
     }
 
+    func resolve(
+        requested: ToolParserSelection?,
+        modelDefault: ToolParserSelection?,
+        mcpToolCatalog: MCPToolCatalog
+    ) -> ToolParserSelection? {
+        if let requested {
+            return mergeMCPCatalog(mcpToolCatalog, into: requested)
+        }
+        if let modelDefault {
+            return mergeMCPCatalog(mcpToolCatalog, into: modelDefault)
+        }
+
+        guard !mcpToolCatalog.resolvedNamespaces.isEmpty else {
+            return nil
+        }
+
+        return ToolParserSelection(
+            mode: mcpToolCatalog.defaultParserMode,
+            namespaces: mcpToolCatalog.resolvedNamespaces,
+            source: "mcp",
+            mcpSourceIDs: mcpToolCatalog.resolvedSourceIDs
+        )
+    }
+
     func selection(
         requestedMode: ToolParserMode,
         requestedNamespaces: [String],
@@ -223,5 +254,37 @@ public struct ToolParserRegistry: Sendable {
             }
         }
         return sanitized
+    }
+
+    private func mergeMCPCatalog(
+        _ mcpToolCatalog: MCPToolCatalog,
+        into base: ToolParserSelection
+    ) -> ToolParserSelection {
+        guard
+            !mcpToolCatalog.resolvedNamespaces.isEmpty,
+            base.mode != .text
+        else {
+            return base
+        }
+
+        var mergedNamespaces = base.namespaces
+        var seenNamespaces = Set(base.namespaces)
+        for namespace in mcpToolCatalog.resolvedNamespaces where seenNamespaces.insert(namespace).inserted {
+            mergedNamespaces.append(namespace)
+        }
+
+        var mergedSourceIDs = base.mcpSourceIDs
+        var seenSourceIDs = Set(base.mcpSourceIDs)
+        for sourceID in mcpToolCatalog.resolvedSourceIDs where seenSourceIDs.insert(sourceID).inserted {
+            mergedSourceIDs.append(sourceID)
+        }
+
+        return ToolParserSelection(
+            mode: base.mode,
+            namespaces: mergedNamespaces,
+            source: base.source,
+            fallbackMode: base.fallbackMode,
+            mcpSourceIDs: mergedSourceIDs
+        )
     }
 }

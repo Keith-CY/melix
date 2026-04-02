@@ -546,6 +546,39 @@ struct SSEStreamWriterTests {
         #expect(messagesPayload.contains("\"parser_mode\":\"mistral\""))
         #expect(messagesPayload.contains("\"parser_namespaces\":[\"tools.math\"]"))
     }
+
+    @Test("tool frames include MCP source identifiers when present")
+    func toolFramesIncludeMCPSourceIdentifiersWhenPresent() async throws {
+        let writer = SSEStreamWriter(now: { Date(timeIntervalSince1970: 789) })
+        let parser = ToolParserSelection(
+            mode: .json,
+            namespaces: ["tools.fs.read"],
+            source: "mcp",
+            mcpSourceIDs: ["filesystem", "math"]
+        )
+        let stream = AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error> { continuation in
+            continuation.yield(makeToolCallEvent(
+                requestID: "resp-mcp-delta",
+                seq: 1,
+                callID: "tool-1",
+                toolName: "read_file",
+                argumentsJSONFragment: "{\"path\":\"README.md\"}"
+            ))
+            continuation.finish()
+        }
+
+        let payload = try await collectChunks(
+            writer.encode(
+                stream: stream,
+                requestID: "resp-mcp-delta",
+                modelID: "melix-dev-text",
+                shape: .responses,
+                toolParser: parser
+            )
+        )
+
+        #expect(payload.contains("\"mcp_source_ids\":[\"filesystem\",\"math\"]"))
+    }
 }
 
 private actor DisconnectProbe {

@@ -183,6 +183,125 @@ struct ToolParserRegistryTests {
         #expect(shapedWithOverride.toolParser?.namespaces == ["tools.search"])
     }
 
+    @Test("mcp tool catalogs auto inject namespaces and default parser selection")
+    func mcpToolCatalogsAutoInjectNamespacesAndDefaultParserSelection() {
+        let shaper = TextRequestShaper()
+        let catalog = MCPToolCatalog(
+            configPath: "/tmp/mcp-tools.json",
+            defaultParserMode: .json,
+            sources: [
+                .init(
+                    sourceID: "filesystem",
+                    enabled: true,
+                    namespaces: ["tools.fs.read", "tools.fs.write"]
+                ),
+                .init(
+                    sourceID: "disabled-search",
+                    enabled: false,
+                    namespaces: ["tools.search"]
+                ),
+                .init(
+                    sourceID: "math",
+                    enabled: true,
+                    namespaces: ["tools.math"]
+                ),
+            ]
+        )
+
+        let shaped = shaper.shape(
+            makeNormalizedRequest(),
+            mcpToolCatalog: catalog
+        )
+
+        #expect(shaped.toolParser?.mode == .json)
+        #expect(shaped.toolParser?.source == "mcp")
+        #expect(shaped.toolParser?.namespaces == ["tools.fs.read", "tools.fs.write", "tools.math"])
+        #expect(shaped.toolParser?.mcpSourceIDs == ["filesystem", "math"])
+    }
+
+    @Test("mcp tool catalogs merge into model defaults without losing model parser mode")
+    func mcpToolCatalogsMergeIntoModelDefaultsWithoutLosingModelParserMode() throws {
+        var settings = Melix_Controlplane_V1_ModelSettings()
+        settings.ext["tool_parser_mode"] = "gemma"
+        settings.ext["tool_parser_namespaces"] = "tools.weather"
+        let modelSelection = try #require(ToolParserSelection(modelSettings: settings))
+        let shaper = TextRequestShaper()
+        let catalog = MCPToolCatalog(
+            configPath: "/tmp/mcp-tools.json",
+            defaultParserMode: .json,
+            sources: [
+                .init(
+                    sourceID: "filesystem",
+                    enabled: true,
+                    namespaces: ["tools.fs.read", "tools.weather"]
+                ),
+            ]
+        )
+
+        let shaped = shaper.shape(
+            makeNormalizedRequest(),
+            modelToolParser: modelSelection,
+            mcpToolCatalog: catalog
+        )
+
+        #expect(shaped.toolParser?.mode == .gemma)
+        #expect(shaped.toolParser?.source == "model")
+        #expect(shaped.toolParser?.namespaces == ["tools.weather", "tools.fs.read"])
+        #expect(shaped.toolParser?.mcpSourceIDs == ["filesystem"])
+    }
+
+    @Test("mcp tool catalogs preserve explicit text parser opt out")
+    func mcpToolCatalogsPreserveExplicitTextParserOptOut() {
+        let shaper = TextRequestShaper()
+        let catalog = MCPToolCatalog(
+            configPath: "/tmp/mcp-tools.json",
+            defaultParserMode: .json,
+            sources: [
+                .init(
+                    sourceID: "filesystem",
+                    enabled: true,
+                    namespaces: ["tools.fs.read"]
+                ),
+            ]
+        )
+        let requested = ToolParserSelection(
+            mode: .text,
+            namespaces: [],
+            source: "request"
+        )
+
+        let shaped = shaper.shape(
+            makeNormalizedRequest(toolParser: requested),
+            mcpToolCatalog: catalog
+        )
+
+        #expect(shaped.toolParser == requested)
+        #expect(shaped.toolParser?.mcpSourceIDs.isEmpty == true)
+    }
+
+    @Test("mcp tool catalogs do not create parser selection when no enabled namespaces remain")
+    func mcpToolCatalogsDoNotCreateParserSelectionWhenNoEnabledNamespacesRemain() {
+        let shaper = TextRequestShaper()
+        let catalog = MCPToolCatalog(
+            configPath: "/tmp/mcp-tools.json",
+            defaultParserMode: .json,
+            sources: [
+                .init(
+                    sourceID: "disabled-search",
+                    enabled: false,
+                    namespaces: ["tools.search"]
+                ),
+            ]
+        )
+
+        let shaped = shaper.shape(
+            makeNormalizedRequest(),
+            mcpToolCatalog: catalog
+        )
+
+        #expect(shaped.toolParser == nil)
+    }
+
     @Test("vlm family metadata supplies model-default tool parser selection")
     func vlmFamilyMetadataSuppliesModelDefaultToolParserSelection() throws {
         let modelSelection = try #require(ToolParserSelection(modelSettings: ModelCatalog.devVLMModel().settings))

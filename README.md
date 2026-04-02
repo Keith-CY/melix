@@ -108,6 +108,49 @@ The installer writes:
 The full operator flow, including bootstrap and uninstall commands, is documented in
 `docs/runbooks/phase-8-local-install.md`.
 
+## External Agent Integrations
+
+Melix can render reproducible setup fragments for external coding-agent clients from the
+currently selected desktop server session. The current target set includes:
+
+- `OpenAI-Compatible`
+- `OpenClaw`
+- `Hermes Agent`
+- `OpenCode`
+- `Codex`
+
+Run the deterministic smoke command for the export layer:
+
+```bash
+PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" \
+UV_CACHE_DIR="$(pwd)/.uv-cache" \
+uv run --project services/mlx-worker-python python scripts/m9_agent_export_smoke.py --json
+```
+
+Operator guidance for the desktop export picker, target-specific fragment formats, and
+placeholder auth behavior lives in `docs/runbooks/external-agent-integrations.md`.
+
+## Shared Access
+
+Melix can switch from implicit local trust to an explicit gateway keyring for shared local
+client access. Run the deterministic shared-access smoke with:
+
+```bash
+PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" \
+UV_CACHE_DIR="$(pwd)/.uv-cache" \
+uv run --project services/mlx-worker-python python scripts/m9_shared_access_smoke.py --json
+```
+
+This smoke verifies:
+
+- shared-enabled multi-key acceptance
+- missing and unknown key rejection
+- configured-but-disabled local-trust compatibility
+- shared-access gateway metrics export
+
+Environment examples, operator guidance, and desktop-state expectations live in
+`docs/runbooks/shared-access.md`.
+
 ## Release Gate
 
 Run the deterministic Phase 8 release gate before merge or release tagging:

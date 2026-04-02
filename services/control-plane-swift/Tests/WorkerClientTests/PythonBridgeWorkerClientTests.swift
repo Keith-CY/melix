@@ -456,6 +456,77 @@ struct PythonBridgeWorkerClientTests {
         #expect(benchEvents[1].completed.reportPath == "/tmp/model-ops/bench-report.md")
     }
 
+    @Test("model-ops bridge methods decode hub search and model card responses")
+    func modelOpsBridgeMethodsDecodeHubSearchAndModelCardResponses() async throws {
+        var searchRequest = Melix_Worker_V1_SearchHubModelsRequest()
+        searchRequest.query = "qwen"
+        searchRequest.pageSize = 5
+        searchRequest.cursor = "cursor:page-1"
+        searchRequest.mlxOnly = true
+
+        var searchResponse = Melix_Worker_V1_SearchHubModelsResponse()
+        searchResponse.ok = true
+        searchResponse.nextCursor = "cursor:page-2"
+        var searchModel = Melix_Worker_V1_HubModelSummary()
+        searchModel.repoID = "mlx-community/Qwen2.5-7B-Instruct-4bit"
+        searchModel.author = "mlx-community"
+        searchModel.modelName = "Qwen2.5-7B-Instruct-4bit"
+        searchModel.summary = "MLX text-generation build"
+        searchModel.pipelineTag = "text-generation"
+        searchModel.tags = ["mlx", "chat"]
+        searchModel.downloads = 321
+        searchModel.likes = 12
+        searchModel.mlxCompatible = true
+        searchModel.libraryName = "transformers"
+        searchModel.siblingFiles = ["README.md", "config.json"]
+        searchModel.lastModified = "2025-01-26T19:49:28Z"
+        searchResponse.models = [searchModel]
+
+        var cardRequest = Melix_Worker_V1_GetHubModelCardRequest()
+        cardRequest.repoID = "mlx-community/Qwen2.5-7B-Instruct-4bit"
+
+        var cardResponse = Melix_Worker_V1_GetHubModelCardResponse()
+        cardResponse.ok = true
+        cardResponse.card.repoID = "mlx-community/Qwen2.5-7B-Instruct-4bit"
+        cardResponse.card.author = "mlx-community"
+        cardResponse.card.modelName = "Qwen2.5-7B-Instruct-4bit"
+        cardResponse.card.summary = "MLX text-generation build"
+        cardResponse.card.license = "apache-2.0"
+        cardResponse.card.pipelineTag = "text-generation"
+        cardResponse.card.tags = ["mlx", "chat"]
+        cardResponse.card.downloads = 321
+        cardResponse.card.likes = 12
+        cardResponse.card.mlxCompatible = true
+        cardResponse.card.libraryName = "transformers"
+        cardResponse.card.siblingFiles = ["README.md", "config.json", "model.safetensors"]
+        cardResponse.card.baseModels = ["Qwen/Qwen2.5-7B-Instruct"]
+        cardResponse.card.lastModified = "2025-01-26T19:49:28Z"
+
+        let runner = ScriptedBridgeRunner()
+        await runner.setUnaryResponse(
+            .searchHubModels,
+            line: bridgeMessageLine(message: try searchResponse.serializedData())
+        )
+        await runner.setUnaryResponse(
+            .getHubModelCard,
+            line: bridgeMessageLine(message: try cardResponse.serializedData())
+        )
+
+        let client = PythonBridgeWorkerClient(socketPath: "/tmp/melix-test.sock", runner: runner)
+        let search = try await client.searchHubModels(request: searchRequest)
+        let card = try await client.getHubModelCard(request: cardRequest)
+
+        #expect(search.ok)
+        #expect(search.nextCursor == "cursor:page-2")
+        #expect(search.models.count == 1)
+        #expect(search.models[0].repoID == "mlx-community/Qwen2.5-7B-Instruct-4bit")
+        #expect(search.models[0].mlxCompatible)
+        #expect(card.ok)
+        #expect(card.card.repoID == "mlx-community/Qwen2.5-7B-Instruct-4bit")
+        #expect(card.card.license == "apache-2.0")
+        #expect(card.card.baseModels == ["Qwen/Qwen2.5-7B-Instruct"])
+    }
+
     @Test("phase-five preload writes embedding and rerank handles into the model catalog")
     func phaseFivePreloadWritesEmbeddingAndRerankHandlesIntoTheModelCatalog() async throws {
         let runner = ScriptedBridgeRunner()

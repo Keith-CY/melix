@@ -8,9 +8,12 @@ from typing import Any
 from packages.protocol.python.worker.v1 import maintenance_pb2
 
 from worker.engine.maintenance_core import MaintenanceCore
-from worker.model_registry.catalog import WorkerModelCatalog
-from worker.productization.release_gates import _evaluate_section_metrics, load_release_gate_policy
-from worker.registry import WorkerRegistry
+from worker.productization.release_gates import (
+    _build_maintenance_core as _build_release_gate_maintenance_core,
+    _ensure_training_dataset,
+    _evaluate_section_metrics,
+    load_release_gate_policy,
+)
 
 
 def collect_operator_action_evidence(jobs_root: str | Path) -> dict[str, Any]:
@@ -335,11 +338,11 @@ def _success_rate(successes: int, total: int) -> float:
 
 
 def _build_maintenance_core(jobs_root: Path) -> MaintenanceCore:
-    registry = WorkerRegistry(model_catalog=WorkerModelCatalog())
-    return MaintenanceCore(registry, jobs_root)
+    return _build_release_gate_maintenance_core(jobs_root)
 
 
 def _seed_registry_state(core: MaintenanceCore, root: Path) -> None:
+    dataset_root = _ensure_training_dataset(root)
     train_events = list(
         core.convert_model(
             maintenance_pb2.ConvertModelRequest(
@@ -349,7 +352,7 @@ def _seed_registry_state(core: MaintenanceCore, root: Path) -> None:
                 ext={
                     "operation": "train_lora",
                     "adapter_name": "melix-dev-adapter",
-                    "dataset_uri": "datasets/melix-dev",
+                    "dataset_uri": str(dataset_root),
                     "target_repo": "melix/adapters/melix-dev-adapter",
                 },
             )

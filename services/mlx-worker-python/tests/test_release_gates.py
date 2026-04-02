@@ -188,7 +188,7 @@ def test_collect_training_evidence_returns_required_metrics(tmp_path: Path) -> N
     evidence = collect_training_evidence(tmp_path / "jobs")
 
     assert evidence["adapter_name"] == "melix-dev-adapter"
-    assert evidence["dataset_uri"] == "datasets/melix-dev"
+    assert evidence["dataset_uri"] == str(tmp_path / "jobs" / "datasets" / "melix-dev")
     assert evidence["training_duration_ms"] == 1420.0
     assert evidence["adapter_publish_ms"] == 118.0
 

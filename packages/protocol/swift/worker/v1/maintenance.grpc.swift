@@ -111,6 +111,32 @@ public enum Melix_Worker_V1_MaintenanceService: Sendable {
                 type: .unary
             )
         }
+        /// Namespace for "SearchHubModels" metadata.
+        public enum SearchHubModels: Sendable {
+            /// Request type for "SearchHubModels".
+            public typealias Input = Melix_Worker_V1_SearchHubModelsRequest
+            /// Response type for "SearchHubModels".
+            public typealias Output = Melix_Worker_V1_SearchHubModelsResponse
+            /// Descriptor for "SearchHubModels".
+            public static let descriptor = GRPCCore.MethodDescriptor(
+                service: GRPCCore.ServiceDescriptor(fullyQualifiedService: "melix.worker.v1.MaintenanceService"),
+                method: "SearchHubModels",
+                type: .unary
+            )
+        }
+        /// Namespace for "GetHubModelCard" metadata.
+        public enum GetHubModelCard: Sendable {
+            /// Request type for "GetHubModelCard".
+            public typealias Input = Melix_Worker_V1_GetHubModelCardRequest
+            /// Response type for "GetHubModelCard".
+            public typealias Output = Melix_Worker_V1_GetHubModelCardResponse
+            /// Descriptor for "GetHubModelCard".
+            public static let descriptor = GRPCCore.MethodDescriptor(
+                service: GRPCCore.ServiceDescriptor(fullyQualifiedService: "melix.worker.v1.MaintenanceService"),
+                method: "GetHubModelCard",
+                type: .unary
+            )
+        }
         /// Descriptors for all methods in the "melix.worker.v1.MaintenanceService" service.
         public static let descriptors: [GRPCCore.MethodDescriptor] = [
             ConvertModel.descriptor,
@@ -119,7 +145,9 @@ public enum Melix_Worker_V1_MaintenanceService: Sendable {
             RunBench.descriptor,
             RunEvaluation.descriptor,
             ExportResults.descriptor,
-            SubmitResults.descriptor
+            SubmitResults.descriptor,
+            SearchHubModels.descriptor,
+            GetHubModelCard.descriptor
         ]
     }
 }
@@ -242,6 +270,34 @@ extension Melix_Worker_V1_MaintenanceService {
             request: GRPCCore.StreamingServerRequest<Melix_Worker_V1_SubmitResultsRequest>,
             context: GRPCCore.ServerContext
         ) async throws -> GRPCCore.StreamingServerResponse<Melix_Worker_V1_SubmitResultsResponse>
+
+        /// Handle the "SearchHubModels" method.
+        ///
+        /// - Parameters:
+        ///   - request: A streaming request of `Melix_Worker_V1_SearchHubModelsRequest` messages.
+        ///   - context: Context providing information about the RPC.
+        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
+        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
+        ///     to an internal error.
+        /// - Returns: A streaming response of `Melix_Worker_V1_SearchHubModelsResponse` messages.
+        func searchHubModels(
+            request: GRPCCore.StreamingServerRequest<Melix_Worker_V1_SearchHubModelsRequest>,
+            context: GRPCCore.ServerContext
+        ) async throws -> GRPCCore.StreamingServerResponse<Melix_Worker_V1_SearchHubModelsResponse>
+
+        /// Handle the "GetHubModelCard" method.
+        ///
+        /// - Parameters:
+        ///   - request: A streaming request of `Melix_Worker_V1_GetHubModelCardRequest` messages.
+        ///   - context: Context providing information about the RPC.
+        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
+        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
+        ///     to an internal error.
+        /// - Returns: A streaming response of `Melix_Worker_V1_GetHubModelCardResponse` messages.
+        func getHubModelCard(
+            request: GRPCCore.StreamingServerRequest<Melix_Worker_V1_GetHubModelCardRequest>,
+            context: GRPCCore.ServerContext
+        ) async throws -> GRPCCore.StreamingServerResponse<Melix_Worker_V1_GetHubModelCardResponse>
     }
 
     /// Service protocol for the "melix.worker.v1.MaintenanceService" service.
@@ -349,6 +405,34 @@ extension Melix_Worker_V1_MaintenanceService {
             request: GRPCCore.ServerRequest<Melix_Worker_V1_SubmitResultsRequest>,
             context: GRPCCore.ServerContext
         ) async throws -> GRPCCore.ServerResponse<Melix_Worker_V1_SubmitResultsResponse>
+
+        /// Handle the "SearchHubModels" method.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Melix_Worker_V1_SearchHubModelsRequest` message.
+        ///   - context: Context providing information about the RPC.
+        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
+        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
+        ///     to an internal error.
+        /// - Returns: A response containing a single `Melix_Worker_V1_SearchHubModelsResponse` message.
+        func searchHubModels(
+            request: GRPCCore.ServerRequest<Melix_Worker_V1_SearchHubModelsRequest>,
+            context: GRPCCore.ServerContext
+        ) async throws -> GRPCCore.ServerResponse<Melix_Worker_V1_SearchHubModelsResponse>
+
+        /// Handle the "GetHubModelCard" method.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Melix_Worker_V1_GetHubModelCardRequest` message.
+        ///   - context: Context providing information about the RPC.
+        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
+        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
+        ///     to an internal error.
+        /// - Returns: A response containing a single `Melix_Worker_V1_GetHubModelCardResponse` message.
+        func getHubModelCard(
+            request: GRPCCore.ServerRequest<Melix_Worker_V1_GetHubModelCardRequest>,
+            context: GRPCCore.ServerContext
+        ) async throws -> GRPCCore.ServerResponse<Melix_Worker_V1_GetHubModelCardResponse>
     }
 
     /// Simple service protocol for the "melix.worker.v1.MaintenanceService" service.
@@ -456,6 +540,34 @@ extension Melix_Worker_V1_MaintenanceService {
             request: Melix_Worker_V1_SubmitResultsRequest,
             context: GRPCCore.ServerContext
         ) async throws -> Melix_Worker_V1_SubmitResultsResponse
+
+        /// Handle the "SearchHubModels" method.
+        ///
+        /// - Parameters:
+        ///   - request: A `Melix_Worker_V1_SearchHubModelsRequest` message.
+        ///   - context: Context providing information about the RPC.
+        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
+        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
+        ///     to an internal error.
+        /// - Returns: A `Melix_Worker_V1_SearchHubModelsResponse` to respond with.
+        func searchHubModels(
+            request: Melix_Worker_V1_SearchHubModelsRequest,
+            context: GRPCCore.ServerContext
+        ) async throws -> Melix_Worker_V1_SearchHubModelsResponse
+
+        /// Handle the "GetHubModelCard" method.
+        ///
+        /// - Parameters:
+        ///   - request: A `Melix_Worker_V1_GetHubModelCardRequest` message.
+        ///   - context: Context providing information about the RPC.
+        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
+        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
+        ///     to an internal error.
+        /// - Returns: A `Melix_Worker_V1_GetHubModelCardResponse` to respond with.
+        func getHubModelCard(
+            request: Melix_Worker_V1_GetHubModelCardRequest,
+            context: GRPCCore.ServerContext
+        ) async throws -> Melix_Worker_V1_GetHubModelCardResponse
     }
 }
 
@@ -540,6 +652,28 @@ extension Melix_Worker_V1_MaintenanceService.StreamingServiceProtocol {
                 )
             }
         )
+        router.registerHandler(
+            forMethod: Melix_Worker_V1_MaintenanceService.Method.SearchHubModels.descriptor,
+            deserializer: GRPCProtobuf.ProtobufDeserializer<Melix_Worker_V1_SearchHubModelsRequest>(),
+            serializer: GRPCProtobuf.ProtobufSerializer<Melix_Worker_V1_SearchHubModelsResponse>(),
+            handler: { request, context in
+                try await self.searchHubModels(
+                    request: request,
+                    context: context
+                )
+            }
+        )
+        router.registerHandler(
+            forMethod: Melix_Worker_V1_MaintenanceService.Method.GetHubModelCard.descriptor,
+            deserializer: GRPCProtobuf.ProtobufDeserializer<Melix_Worker_V1_GetHubModelCardRequest>(),
+            serializer: GRPCProtobuf.ProtobufSerializer<Melix_Worker_V1_GetHubModelCardResponse>(),
+            handler: { request, context in
+                try await self.getHubModelCard(
+                    request: request,
+                    context: context
+                )
+            }
+        )
     }
 }
 
@@ -617,6 +751,28 @@ extension Melix_Worker_V1_MaintenanceService.ServiceProtocol {
         context: GRPCCore.ServerContext
     ) async throws -> GRPCCore.StreamingServerResponse<Melix_Worker_V1_SubmitResultsResponse> {
         let response = try await self.submitResults(
+            request: GRPCCore.ServerRequest(stream: request),
+            context: context
+        )
+        return GRPCCore.StreamingServerResponse(single: response)
+    }
+
+    public func searchHubModels(
+        request: GRPCCore.StreamingServerRequest<Melix_Worker_V1_SearchHubModelsRequest>,
+        context: GRPCCore.ServerContext
+    ) async throws -> GRPCCore.StreamingServerResponse<Melix_Worker_V1_SearchHubModelsResponse> {
+        let response = try await self.searchHubModels(
+            request: GRPCCore.ServerRequest(stream: request),
+            context: context
+        )
+        return GRPCCore.StreamingServerResponse(single: response)
+    }
+
+    public func getHubModelCard(
+        request: GRPCCore.StreamingServerRequest<Melix_Worker_V1_GetHubModelCardRequest>,
+        context: GRPCCore.ServerContext
+    ) async throws -> GRPCCore.StreamingServerResponse<Melix_Worker_V1_GetHubModelCardResponse> {
+        let response = try await self.getHubModelCard(
             request: GRPCCore.ServerRequest(stream: request),
             context: context
         )
@@ -719,6 +875,32 @@ extension Melix_Worker_V1_MaintenanceService.SimpleServiceProtocol {
     ) async throws -> GRPCCore.ServerResponse<Melix_Worker_V1_SubmitResultsResponse> {
         return GRPCCore.ServerResponse<Melix_Worker_V1_SubmitResultsResponse>(
             message: try await self.submitResults(
+                request: request.message,
+                context: context
+            ),
+            metadata: [:]
+        )
+    }
+
+    public func searchHubModels(
+        request: GRPCCore.ServerRequest<Melix_Worker_V1_SearchHubModelsRequest>,
+        context: GRPCCore.ServerContext
+    ) async throws -> GRPCCore.ServerResponse<Melix_Worker_V1_SearchHubModelsResponse> {
+        return GRPCCore.ServerResponse<Melix_Worker_V1_SearchHubModelsResponse>(
+            message: try await self.searchHubModels(
+                request: request.message,
+                context: context
+            ),
+            metadata: [:]
+        )
+    }
+
+    public func getHubModelCard(
+        request: GRPCCore.ServerRequest<Melix_Worker_V1_GetHubModelCardRequest>,
+        context: GRPCCore.ServerContext
+    ) async throws -> GRPCCore.ServerResponse<Melix_Worker_V1_GetHubModelCardResponse> {
+        return GRPCCore.ServerResponse<Melix_Worker_V1_GetHubModelCardResponse>(
+            message: try await self.getHubModelCard(
                 request: request.message,
                 context: context
             ),
@@ -867,6 +1049,44 @@ extension Melix_Worker_V1_MaintenanceService {
             deserializer: some GRPCCore.MessageDeserializer<Melix_Worker_V1_SubmitResultsResponse>,
             options: GRPCCore.CallOptions,
             onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Melix_Worker_V1_SubmitResultsResponse>) async throws -> Result
+        ) async throws -> Result where Result: Sendable
+
+        /// Call the "SearchHubModels" method.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Melix_Worker_V1_SearchHubModelsRequest` message.
+        ///   - serializer: A serializer for `Melix_Worker_V1_SearchHubModelsRequest` messages.
+        ///   - deserializer: A deserializer for `Melix_Worker_V1_SearchHubModelsResponse` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response, the result of which is
+        ///       returned to the caller. Returning from the closure will cancel the RPC if it
+        ///       hasn't already finished.
+        /// - Returns: The result of `handleResponse`.
+        func searchHubModels<Result>(
+            request: GRPCCore.ClientRequest<Melix_Worker_V1_SearchHubModelsRequest>,
+            serializer: some GRPCCore.MessageSerializer<Melix_Worker_V1_SearchHubModelsRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Melix_Worker_V1_SearchHubModelsResponse>,
+            options: GRPCCore.CallOptions,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Melix_Worker_V1_SearchHubModelsResponse>) async throws -> Result
+        ) async throws -> Result where Result: Sendable
+
+        /// Call the "GetHubModelCard" method.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Melix_Worker_V1_GetHubModelCardRequest` message.
+        ///   - serializer: A serializer for `Melix_Worker_V1_GetHubModelCardRequest` messages.
+        ///   - deserializer: A deserializer for `Melix_Worker_V1_GetHubModelCardResponse` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response, the result of which is
+        ///       returned to the caller. Returning from the closure will cancel the RPC if it
+        ///       hasn't already finished.
+        /// - Returns: The result of `handleResponse`.
+        func getHubModelCard<Result>(
+            request: GRPCCore.ClientRequest<Melix_Worker_V1_GetHubModelCardRequest>,
+            serializer: some GRPCCore.MessageSerializer<Melix_Worker_V1_GetHubModelCardRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Melix_Worker_V1_GetHubModelCardResponse>,
+            options: GRPCCore.CallOptions,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Melix_Worker_V1_GetHubModelCardResponse>) async throws -> Result
         ) async throws -> Result where Result: Sendable
     }
 
@@ -1091,6 +1311,66 @@ extension Melix_Worker_V1_MaintenanceService {
                 onResponse: handleResponse
             )
         }
+
+        /// Call the "SearchHubModels" method.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Melix_Worker_V1_SearchHubModelsRequest` message.
+        ///   - serializer: A serializer for `Melix_Worker_V1_SearchHubModelsRequest` messages.
+        ///   - deserializer: A deserializer for `Melix_Worker_V1_SearchHubModelsResponse` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response, the result of which is
+        ///       returned to the caller. Returning from the closure will cancel the RPC if it
+        ///       hasn't already finished.
+        /// - Returns: The result of `handleResponse`.
+        public func searchHubModels<Result>(
+            request: GRPCCore.ClientRequest<Melix_Worker_V1_SearchHubModelsRequest>,
+            serializer: some GRPCCore.MessageSerializer<Melix_Worker_V1_SearchHubModelsRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Melix_Worker_V1_SearchHubModelsResponse>,
+            options: GRPCCore.CallOptions = .defaults,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Melix_Worker_V1_SearchHubModelsResponse>) async throws -> Result = { response in
+                try response.message
+            }
+        ) async throws -> Result where Result: Sendable {
+            try await self.client.unary(
+                request: request,
+                descriptor: Melix_Worker_V1_MaintenanceService.Method.SearchHubModels.descriptor,
+                serializer: serializer,
+                deserializer: deserializer,
+                options: options,
+                onResponse: handleResponse
+            )
+        }
+
+        /// Call the "GetHubModelCard" method.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Melix_Worker_V1_GetHubModelCardRequest` message.
+        ///   - serializer: A serializer for `Melix_Worker_V1_GetHubModelCardRequest` messages.
+        ///   - deserializer: A deserializer for `Melix_Worker_V1_GetHubModelCardResponse` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response, the result of which is
+        ///       returned to the caller. Returning from the closure will cancel the RPC if it
+        ///       hasn't already finished.
+        /// - Returns: The result of `handleResponse`.
+        public func getHubModelCard<Result>(
+            request: GRPCCore.ClientRequest<Melix_Worker_V1_GetHubModelCardRequest>,
+            serializer: some GRPCCore.MessageSerializer<Melix_Worker_V1_GetHubModelCardRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Melix_Worker_V1_GetHubModelCardResponse>,
+            options: GRPCCore.CallOptions = .defaults,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Melix_Worker_V1_GetHubModelCardResponse>) async throws -> Result = { response in
+                try response.message
+            }
+        ) async throws -> Result where Result: Sendable {
+            try await self.client.unary(
+                request: request,
+                descriptor: Melix_Worker_V1_MaintenanceService.Method.GetHubModelCard.descriptor,
+                serializer: serializer,
+                deserializer: deserializer,
+                options: options,
+                onResponse: handleResponse
+            )
+        }
     }
 }
 
@@ -1263,6 +1543,56 @@ extension Melix_Worker_V1_MaintenanceService.ClientProtocol {
             request: request,
             serializer: GRPCProtobuf.ProtobufSerializer<Melix_Worker_V1_SubmitResultsRequest>(),
             deserializer: GRPCProtobuf.ProtobufDeserializer<Melix_Worker_V1_SubmitResultsResponse>(),
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
+    /// Call the "SearchHubModels" method.
+    ///
+    /// - Parameters:
+    ///   - request: A request containing a single `Melix_Worker_V1_SearchHubModelsRequest` message.
+    ///   - options: Options to apply to this RPC.
+    ///   - handleResponse: A closure which handles the response, the result of which is
+    ///       returned to the caller. Returning from the closure will cancel the RPC if it
+    ///       hasn't already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func searchHubModels<Result>(
+        request: GRPCCore.ClientRequest<Melix_Worker_V1_SearchHubModelsRequest>,
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Melix_Worker_V1_SearchHubModelsResponse>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        try await self.searchHubModels(
+            request: request,
+            serializer: GRPCProtobuf.ProtobufSerializer<Melix_Worker_V1_SearchHubModelsRequest>(),
+            deserializer: GRPCProtobuf.ProtobufDeserializer<Melix_Worker_V1_SearchHubModelsResponse>(),
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
+    /// Call the "GetHubModelCard" method.
+    ///
+    /// - Parameters:
+    ///   - request: A request containing a single `Melix_Worker_V1_GetHubModelCardRequest` message.
+    ///   - options: Options to apply to this RPC.
+    ///   - handleResponse: A closure which handles the response, the result of which is
+    ///       returned to the caller. Returning from the closure will cancel the RPC if it
+    ///       hasn't already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func getHubModelCard<Result>(
+        request: GRPCCore.ClientRequest<Melix_Worker_V1_GetHubModelCardRequest>,
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Melix_Worker_V1_GetHubModelCardResponse>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        try await self.getHubModelCard(
+            request: request,
+            serializer: GRPCProtobuf.ProtobufSerializer<Melix_Worker_V1_GetHubModelCardRequest>(),
+            deserializer: GRPCProtobuf.ProtobufDeserializer<Melix_Worker_V1_GetHubModelCardResponse>(),
             options: options,
             onResponse: handleResponse
         )
@@ -1465,6 +1795,64 @@ extension Melix_Worker_V1_MaintenanceService.ClientProtocol {
             metadata: metadata
         )
         return try await self.submitResults(
+            request: request,
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
+    /// Call the "SearchHubModels" method.
+    ///
+    /// - Parameters:
+    ///   - message: request message to send.
+    ///   - metadata: Additional metadata to send, defaults to empty.
+    ///   - options: Options to apply to this RPC, defaults to `.defaults`.
+    ///   - handleResponse: A closure which handles the response, the result of which is
+    ///       returned to the caller. Returning from the closure will cancel the RPC if it
+    ///       hasn't already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func searchHubModels<Result>(
+        _ message: Melix_Worker_V1_SearchHubModelsRequest,
+        metadata: GRPCCore.Metadata = [:],
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Melix_Worker_V1_SearchHubModelsResponse>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        let request = GRPCCore.ClientRequest<Melix_Worker_V1_SearchHubModelsRequest>(
+            message: message,
+            metadata: metadata
+        )
+        return try await self.searchHubModels(
+            request: request,
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
+    /// Call the "GetHubModelCard" method.
+    ///
+    /// - Parameters:
+    ///   - message: request message to send.
+    ///   - metadata: Additional metadata to send, defaults to empty.
+    ///   - options: Options to apply to this RPC, defaults to `.defaults`.
+    ///   - handleResponse: A closure which handles the response, the result of which is
+    ///       returned to the caller. Returning from the closure will cancel the RPC if it
+    ///       hasn't already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func getHubModelCard<Result>(
+        _ message: Melix_Worker_V1_GetHubModelCardRequest,
+        metadata: GRPCCore.Metadata = [:],
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Melix_Worker_V1_GetHubModelCardResponse>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        let request = GRPCCore.ClientRequest<Melix_Worker_V1_GetHubModelCardRequest>(
+            message: message,
+            metadata: metadata
+        )
+        return try await self.getHubModelCard(
             request: request,
             options: options,
             onResponse: handleResponse

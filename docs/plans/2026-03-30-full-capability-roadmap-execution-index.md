@@ -114,13 +114,21 @@ The roadmap extension in `M10-M17` includes milestone-level plans plus decompose
 ## M9: Ecosystem, Agent Integrations, Security, And Stability Completion
 
 - `M9.1` `docs/plans/2026-03-30-m9-1-mcp-tool-loading-and-auto-injection.md`
+  Status: completed in commit `597ba91`.
 - `M9.2` `docs/plans/2026-03-30-m9-2-agent-integration-exports.md`
+  Status: completed in commit `3fd8ddb`.
 - `M9.3` `docs/plans/2026-03-30-m9-3-additional-api-keys-and-shared-access.md`
+  Status: completed. Shared-access policy, multi-key gateway enforcement, menu bar operator projection, runbook guidance, smoke coverage, and changed-line coverage evidence are recorded in the repository.
 - `M9.4` `docs/plans/2026-03-30-m9-4-persistent-sessions-and-remember-me.md`
+  Status: pending. First executable slice is persistent auth-session storage, bootstrap restore, and restore or expiry tests.
 - `M9.5` `docs/plans/2026-03-30-m9-5-rich-output-sanitization.md`
+  Status: pending. First executable slice is shared sanitizer rules plus gateway-side enforcement tests.
 - `M9.6` `docs/plans/2026-03-30-m9-6-connection-lifecycle-hardening.md`
+  Status: pending. First executable slice is the lifecycle policy object plus keepalive and disconnect-path tests.
 - `M9.7` `docs/plans/2026-03-30-m9-7-security-and-stability-closure-audit.md`
+  Status: pending. First executable slice is the typed closure-audit schema and repository-owned JSON emitter.
 - `M9.8` `docs/plans/2026-03-30-m9-8-ecosystem-and-security-release-gates.md`
+  Status: pending. First executable slice is wiring M9 evidence collectors into the existing phase-8 gate and metrics pipeline after M9.4-M9.7 evidence exists.
 
 ## M10: Session Lifecycle And Power Management
 

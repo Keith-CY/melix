@@ -10,6 +10,12 @@ from packages.protocol.python.worker.v1 import maintenance_pb2
 from worker.grpc_server import WorkerMaintenanceService
 from worker.model_ops.adapter_activation_pipeline import AdapterActivationPipeline
 from worker.model_ops.job_registry import ModelOpsJob, ModelOpsJobRegistry
+from worker.model_ops.hub_catalog import (
+    HubCatalogError,
+    HubModelCardRecord,
+    HubModelSummaryRecord,
+    HubSearchPage,
+)
 from worker.model_ops.lora_training_pipeline import LoRATrainingPipeline
 from worker.model_ops.mlx_lm_runner import (
     ActivationMetrics,
@@ -80,6 +86,105 @@ class DeterministicLoRARunner(MLXLMRunner):
         )
 
 
+class FakeHubCatalog:
+    def __init__(self) -> None:
+        self.search_requests: list[dict[str, object]] = []
+        self.card_requests: list[str] = []
+
+    def search_models(
+        self,
+        *,
+        query: str,
+        page_size: int,
+        cursor: str,
+        mlx_only: bool,
+    ) -> HubSearchPage:
+        self.search_requests.append(
+            {
+                "query": query,
+                "page_size": page_size,
+                "cursor": cursor,
+                "mlx_only": mlx_only,
+            }
+        )
+        return HubSearchPage(
+            items=[
+                HubModelSummaryRecord(
+                    repo_id="mlx-community/Qwen2.5-7B-Instruct-4bit",
+                    author="mlx-community",
+                    model_name="Qwen2.5-7B-Instruct-4bit",
+                    summary="MLX text-generation build",
+                    pipeline_tag="text-generation",
+                    tags=["mlx", "chat"],
+                    downloads=321,
+                    likes=12,
+                    mlx_compatible=True,
+                    library_name="transformers",
+                    sibling_files=["README.md", "config.json"],
+                    last_modified="2025-01-26T19:49:28Z",
+                ),
+                HubModelSummaryRecord(
+                    repo_id="openai/example-non-mlx",
+                    author="openai",
+                    model_name="example-non-mlx",
+                    summary="Non-MLX text-generation build",
+                    pipeline_tag="text-generation",
+                    tags=["chat"],
+                    downloads=123,
+                    likes=4,
+                    mlx_compatible=False,
+                    library_name="transformers",
+                    sibling_files=["README.md"],
+                    last_modified="2025-01-25T08:00:00Z",
+                ),
+            ],
+            next_cursor="cursor:page-2",
+        )
+
+    def get_model_card(self, *, repo_id: str) -> HubModelCardRecord:
+        self.card_requests.append(repo_id)
+        return HubModelCardRecord(
+            repo_id=repo_id,
+            author="mlx-community",
+            model_name="Qwen2.5-7B-Instruct-4bit",
+            summary="MLX text-generation build",
+            license="apache-2.0",
+            pipeline_tag="text-generation",
+            tags=["mlx", "chat"],
+            downloads=321,
+            likes=12,
+            mlx_compatible=True,
+            library_name="transformers",
+            sibling_files=["README.md", "config.json", "model.safetensors"],
+            base_models=["Qwen/Qwen2.5-7B-Instruct"],
+            last_modified="2025-01-26T19:49:28Z",
+        )
+
+
+class FailingHubCatalog:
+    def __init__(
+        self,
+        *,
+        search_error: Exception | None = None,
+        card_error: Exception | None = None,
+    ) -> None:
+        self.search_error = search_error
+        self.card_error = card_error
+
+    def search_models(
+        self,
+        *,
+        query: str,
+        page_size: int,
+        cursor: str,
+        mlx_only: bool,
+    ) -> HubSearchPage:
+        raise self.search_error or AssertionError("search_error must be configured")
+
+    def get_model_card(self, *, repo_id: str) -> HubModelCardRecord:
+        raise self.card_error or AssertionError("card_error must be configured")
+
+
 def _write_training_dataset_package(tmp_path: Path, *, dataset_id: str = "melix-dev") -> Path:
     dataset_dir = tmp_path / "dataset"
     dataset_dir.mkdir(parents=True, exist_ok=True)
@@ -123,13 +228,53 @@ def _write_training_dataset_package(tmp_path: Path, *, dataset_id: str = "melix-
     return dataset_dir
 
 
-def build_service(tmp_path: Path, runner: MLXLMRunner | None = None) -> WorkerMaintenanceService:
+def _write_download_source_file(tmp_path: Path, *, size: int = 4096) -> tuple[Path, bytes]:
+    source_path = tmp_path / "download-source.bin"
+    payload = bytes(index % 251 for index in range(size))
+    source_path.write_bytes(payload)
+    return source_path, payload
+
+
+def _write_registry_manifest(
+    variant_dir: Path,
+    *,
+    model_id: str,
+    model_kind: str = "text",
+    quant_profile_id: str = "q4",
+    max_context: int = 8192,
+    ext: dict[str, str] | None = None,
+    manifest_fields: dict[str, object] | None = None,
+) -> None:
+    variant_dir.mkdir(parents=True, exist_ok=True)
+    payload: dict[str, object] = {
+        "schema_version": "melix.model_registry_manifest.v1",
+        "model_id": model_id,
+        "model_kind": model_kind,
+        "quant_profile_id": quant_profile_id,
+        "max_context": max_context,
+        "ext": ext or {},
+    }
+    if manifest_fields:
+        payload.update(manifest_fields)
+    (variant_dir / "manifest.json").write_text(json.dumps(payload) + "\n", encoding="utf-8")
+
+
+def build_service(
+    tmp_path: Path,
+    runner: MLXLMRunner | None = None,
+    hub_catalog: FakeHubCatalog | None = None,
+) -> WorkerMaintenanceService:
     registry = WorkerRegistry(model_catalog=WorkerModelCatalog())
-    service = WorkerMaintenanceService(registry, jobs_root=tmp_path / "model-ops")
+    service = WorkerMaintenanceService(
+        registry,
+        jobs_root=tmp_path / "model-ops",
+        hub_catalog=hub_catalog,
+    )
     if runner is not None:
         service._core = MaintenanceCore(
             registry,
             jobs_root=tmp_path / "model-ops",
+            hub_catalog=hub_catalog,
             lora_training_pipeline=LoRATrainingPipeline(runner=runner),
             adapter_activation_pipeline=AdapterActivationPipeline(runner=runner),
         )
@@ -203,6 +348,141 @@ def test_convert_model_supports_download_and_upload_jobs(tmp_path: Path) -> None
 
     assert download_events[-1].completed.output_path.endswith("download.artifact")
     assert upload_events[-1].completed.output_path.endswith("upload.receipt.json")
+
+
+def test_download_job_resumes_from_partial_state_and_records_resume_metadata(tmp_path: Path) -> None:
+    service = build_service(tmp_path)
+    source_path, source_bytes = _write_download_source_file(tmp_path, size=3072)
+    output_dir = tmp_path / "download-resume"
+
+    failed_events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="mlx-community/demo-repo",
+                output_dir=str(output_dir),
+                generate_manifest=True,
+                ext={
+                    "operation": "download",
+                    "source_path": str(source_path),
+                    "mirror_url": "https://mirror.example/hf",
+                    "max_retries": "0",
+                    "test_failures_before_success": "1",
+                    "test_fail_after_bytes": "1024",
+                },
+            ),
+            context=None,
+        )
+    )
+    failed_manifest = json.loads(
+        [event.manifest.manifest_json for event in failed_events if event.HasField("manifest")][-1]
+    )
+
+    assert failed_events[-1].HasField("failed")
+    assert failed_events[-1].failed.error.code == "download_retry_exhausted"
+    assert failed_manifest["status"] == "failed"
+    assert failed_manifest["downloaded_bytes"] == 1024
+    assert failed_manifest["output_path"].endswith("download.artifact")
+    assert failed_manifest["partial_path"].endswith("download.artifact.partial")
+    assert failed_manifest["state_path"].endswith("download.state.json")
+
+    resumed_events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="mlx-community/demo-repo",
+                output_dir=str(output_dir),
+                generate_manifest=True,
+                ext={
+                    "operation": "download",
+                    "source_path": str(source_path),
+                    "mirror_url": "https://mirror.example/hf",
+                },
+            ),
+            context=None,
+        )
+    )
+    resumed_manifest = json.loads(
+        [event.manifest.manifest_json for event in resumed_events if event.HasField("manifest")][-1]
+    )
+
+    assert resumed_events[-1].completed.output_path.endswith("download.artifact")
+    assert Path(resumed_events[-1].completed.output_path).read_bytes() == source_bytes
+    assert resumed_manifest["status"] == "completed"
+    assert resumed_manifest["resume_used"] is True
+    assert resumed_manifest["resume_from_bytes"] == 1024
+    assert resumed_manifest["downloaded_bytes"] == len(source_bytes)
+    assert resumed_manifest["total_bytes"] == len(source_bytes)
+    assert resumed_manifest["selected_mirror"] == "https://mirror.example/hf"
+    assert resumed_manifest["metrics"]["download.resume_success_rate"] == 1.0
+
+
+def test_download_job_retries_before_success_and_records_retry_metrics(tmp_path: Path) -> None:
+    service = build_service(tmp_path)
+    source_path, source_bytes = _write_download_source_file(tmp_path, size=2048)
+
+    events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="mlx-community/retry-demo",
+                output_dir=str(tmp_path / "download-retry"),
+                generate_manifest=True,
+                ext={
+                    "operation": "download",
+                    "source_path": str(source_path),
+                    "mirror_url": "https://mirror.example/retry",
+                    "max_retries": "2",
+                    "test_failures_before_success": "2",
+                    "test_fail_after_bytes": "512",
+                },
+            ),
+            context=None,
+        )
+    )
+    manifest_payload = json.loads(
+        [event.manifest.manifest_json for event in events if event.HasField("manifest")][-1]
+    )
+
+    assert events[-1].completed.output_path.endswith("download.artifact")
+    assert Path(events[-1].completed.output_path).read_bytes() == source_bytes
+    assert manifest_payload["status"] == "completed"
+    assert manifest_payload["retry_count"] == 2
+    assert manifest_payload["selected_mirror"] == "https://mirror.example/retry"
+    assert manifest_payload["metrics"]["download.retry_count"] == 2
+    assert manifest_payload["metrics"]["download.stall_detection_count"] == 0
+
+
+def test_download_job_classifies_stall_failures_in_manifest_and_error(tmp_path: Path) -> None:
+    service = build_service(tmp_path)
+    source_path, _ = _write_download_source_file(tmp_path, size=2048)
+
+    events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="mlx-community/stall-demo",
+                output_dir=str(tmp_path / "download-stall"),
+                generate_manifest=True,
+                ext={
+                    "operation": "download",
+                    "source_path": str(source_path),
+                    "stall_timeout_ms": "50",
+                    "max_retries": "0",
+                    "test_stall_after_bytes": "512",
+                    "test_stall_elapsed_ms": "250",
+                },
+            ),
+            context=None,
+        )
+    )
+    manifest_payload = json.loads(
+        [event.manifest.manifest_json for event in events if event.HasField("manifest")][-1]
+    )
+
+    assert events[-1].HasField("failed")
+    assert events[-1].failed.error.code == "download_stalled"
+    assert manifest_payload["status"] == "stalled"
+    assert manifest_payload["terminal_state"] == "stalled"
+    assert manifest_payload["stall_reason"] == "no_progress_timeout"
+    assert manifest_payload["stall_detection_count"] == 1
+    assert manifest_payload["metrics"]["download.stall_detection_count"] == 1
 
 
 def test_upload_job_links_quantized_artifact_metadata(tmp_path: Path) -> None:
@@ -554,6 +834,92 @@ def test_registry_snapshot_returns_training_history_and_adapter_registry(tmp_pat
     assert payload["adapters"][0]["status"] == "published"
 
 
+def test_registry_snapshot_includes_discovered_model_registry_payload(tmp_path: Path) -> None:
+    registry_root = tmp_path / "registry-root"
+    _write_registry_manifest(
+        registry_root / "mlx-community" / "Qwen2.5-7B-Instruct" / "4bit",
+        model_id="mlx-community/Qwen2.5-7B-Instruct/4bit",
+        max_context=16384,
+        ext={"source_root": "registry-root"},
+    )
+
+    registry = WorkerRegistry(
+        model_catalog=WorkerModelCatalog(
+            environment={
+                "MELIX_MODEL_ROOTS": str(registry_root),
+            }
+        )
+    )
+    service = WorkerMaintenanceService(registry, jobs_root=tmp_path / "model-ops")
+
+    snapshot_events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "snapshot"),
+                generate_manifest=True,
+                ext={"operation": "registry_snapshot"},
+            ),
+            context=None,
+        )
+    )
+    snapshot_manifest = next(
+        event.manifest for event in snapshot_events if event.HasField("manifest")
+    )
+    payload = json.loads(snapshot_manifest.manifest_json)
+
+    assert payload["operation"] == "registry_snapshot"
+    assert payload["model_registry"]["roots"][0]["root_id"] == "root-1"
+    assert payload["model_registry"]["roots"][0]["accessible"] is True
+    discovered_ids = [model["model_id"] for model in payload["model_registry"]["models"]]
+    assert discovered_ids == ["mlx-community/Qwen2.5-7B-Instruct/4bit"]
+    assert payload["model_registry"]["models"][0]["ext"]["melix.registry_root_id"] == "root-1"
+
+
+def test_registry_snapshot_includes_structured_identity_fields_for_discovered_models(tmp_path: Path) -> None:
+    registry_root = tmp_path / "registry-root"
+    _write_registry_manifest(
+        registry_root / "huggingface" / "mlx-community" / "Qwen2.5-7B-Instruct" / "4bit",
+        model_id="mlx-community/Qwen2.5-7B-Instruct/4bit",
+        manifest_fields={
+            "provider_id": "hf-mirror",
+            "variant_id": "q4f16",
+        },
+    )
+
+    registry = WorkerRegistry(
+        model_catalog=WorkerModelCatalog(
+            environment={
+                "MELIX_MODEL_ROOTS": str(registry_root),
+            }
+        )
+    )
+    service = WorkerMaintenanceService(registry, jobs_root=tmp_path / "model-ops")
+
+    snapshot_events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "snapshot"),
+                generate_manifest=True,
+                ext={"operation": "registry_snapshot"},
+            ),
+            context=None,
+        )
+    )
+    snapshot_manifest = next(
+        event.manifest for event in snapshot_events if event.HasField("manifest")
+    )
+    payload = json.loads(snapshot_manifest.manifest_json)
+    identity = payload["model_registry"]["models"][0]["ext"]
+
+    assert identity["melix.registry_provider_id"] == "hf-mirror"
+    assert identity["melix.registry_organization_id"] == "mlx-community"
+    assert identity["melix.registry_model_name"] == "Qwen2.5-7B-Instruct"
+    assert identity["melix.registry_variant_id"] == "q4f16"
+    assert identity["melix.registry_relative_path"] == "huggingface/mlx-community/Qwen2.5-7B-Instruct/4bit"
+
+
 def test_job_registry_snapshot_handles_invalid_manifests_and_non_numeric_ids() -> None:
     registry = ModelOpsJobRegistry()
 
@@ -590,6 +956,39 @@ def test_job_registry_snapshot_handles_invalid_manifests_and_non_numeric_ids() -
     assert custom_job["pct"] == 0.0
     assert custom_job["manifest"] == {}
     assert payload["adapters"][0]["status"] == "completed"
+
+
+def test_job_registry_snapshot_exposes_download_rows_with_machine_readable_status(tmp_path: Path) -> None:
+    service = build_service(tmp_path)
+    source_path, source_bytes = _write_download_source_file(tmp_path, size=1024)
+    output_dir = tmp_path / "download-snapshot"
+
+    list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="mlx-community/snapshot-demo",
+                output_dir=str(output_dir),
+                generate_manifest=True,
+                ext={
+                    "operation": "download",
+                    "source_path": str(source_path),
+                    "mirror_url": "https://mirror.example/snapshot",
+                },
+            ),
+            context=None,
+        )
+    )
+
+    snapshot = service._core._job_registry.snapshot()
+    download = snapshot["downloads"][0]
+
+    assert download["source_model"] == "mlx-community/snapshot-demo"
+    assert download["status"] == "completed"
+    assert download["selected_mirror"] == "https://mirror.example/snapshot"
+    assert download["downloaded_bytes"] == len(source_bytes)
+    assert download["total_bytes"] == len(source_bytes)
+    assert download["output_path"].endswith("download.artifact")
+    assert download["state_path"].endswith("download.state.json")
 
 
 def test_job_registry_snapshot_supports_name_only_publish_and_unpublished_adapters() -> None:
@@ -827,6 +1226,147 @@ def test_run_evaluation_returns_typed_job_and_result(tmp_path: Path) -> None:
     assert response.results[0].dataset_id == "qa_smoke.dev.v1"
     assert response.results[0].metrics[0].name == "eval.mmlu.accuracy"
     assert response.results[0].metrics[0].value == 1.0
+
+
+def test_search_hub_models_passes_cursor_and_filters_to_mlx_results(tmp_path: Path) -> None:
+    hub_catalog = FakeHubCatalog()
+    service = build_service(tmp_path, hub_catalog=hub_catalog)
+
+    response = service.SearchHubModels(
+        maintenance_pb2.SearchHubModelsRequest(
+            query="qwen",
+            page_size=5,
+            cursor="cursor:page-1",
+            mlx_only=True,
+        ),
+        context=None,
+    )
+
+    assert hub_catalog.search_requests == [
+        {
+            "query": "qwen",
+            "page_size": 5,
+            "cursor": "cursor:page-1",
+            "mlx_only": True,
+        }
+    ]
+    assert response.ok is True
+    assert response.next_cursor == "cursor:page-2"
+    assert [model.repo_id for model in response.models] == ["mlx-community/Qwen2.5-7B-Instruct-4bit"]
+    assert response.models[0].author == "mlx-community"
+    assert response.models[0].pipeline_tag == "text-generation"
+    assert response.models[0].tags == ["mlx", "chat"]
+    assert response.models[0].downloads == 321
+    assert response.models[0].likes == 12
+    assert response.models[0].mlx_compatible is True
+
+
+def test_get_hub_model_card_returns_normalized_payload(tmp_path: Path) -> None:
+    hub_catalog = FakeHubCatalog()
+    service = build_service(tmp_path, hub_catalog=hub_catalog)
+
+    response = service.GetHubModelCard(
+        maintenance_pb2.GetHubModelCardRequest(
+            repo_id="mlx-community/Qwen2.5-7B-Instruct-4bit",
+        ),
+        context=None,
+    )
+
+    assert hub_catalog.card_requests == ["mlx-community/Qwen2.5-7B-Instruct-4bit"]
+    assert response.ok is True
+    assert response.card.repo_id == "mlx-community/Qwen2.5-7B-Instruct-4bit"
+    assert response.card.author == "mlx-community"
+    assert response.card.model_name == "Qwen2.5-7B-Instruct-4bit"
+    assert response.card.summary == "MLX text-generation build"
+    assert response.card.license == "apache-2.0"
+    assert response.card.pipeline_tag == "text-generation"
+    assert response.card.tags == ["mlx", "chat"]
+    assert response.card.downloads == 321
+    assert response.card.likes == 12
+    assert response.card.mlx_compatible is True
+    assert response.card.library_name == "transformers"
+    assert response.card.sibling_files == ["README.md", "config.json", "model.safetensors"]
+    assert response.card.base_models == ["Qwen/Qwen2.5-7B-Instruct"]
+    assert response.card.last_modified == "2025-01-26T19:49:28Z"
+
+
+def test_search_hub_models_returns_hub_catalog_errors(tmp_path: Path) -> None:
+    service = build_service(
+        tmp_path,
+        hub_catalog=FailingHubCatalog(
+            search_error=HubCatalogError(
+                "hub_rate_limited",
+                "Hub request failed with HTTP 429.",
+                retriable=True,
+            )
+        ),
+    )
+
+    response = service.SearchHubModels(
+        maintenance_pb2.SearchHubModelsRequest(query="qwen"),
+        context=None,
+    )
+
+    assert response.ok is False
+    assert response.error.code == "hub_rate_limited"
+    assert response.error.message == "Hub request failed with HTTP 429."
+    assert response.error.retriable is True
+
+
+def test_search_hub_models_returns_generic_errors(tmp_path: Path) -> None:
+    service = build_service(
+        tmp_path,
+        hub_catalog=FailingHubCatalog(search_error=RuntimeError("boom")),
+    )
+
+    response = service.SearchHubModels(
+        maintenance_pb2.SearchHubModelsRequest(query="qwen"),
+        context=None,
+    )
+
+    assert response.ok is False
+    assert response.error.code == "hub_request_failed"
+    assert response.error.message == "boom"
+    assert response.error.retriable is False
+
+
+def test_get_hub_model_card_returns_hub_catalog_errors(tmp_path: Path) -> None:
+    service = build_service(
+        tmp_path,
+        hub_catalog=FailingHubCatalog(
+            card_error=HubCatalogError(
+                "not_found",
+                "Hub model not found for repo_id=missing/repo.",
+            )
+        ),
+    )
+
+    response = service.GetHubModelCard(
+        maintenance_pb2.GetHubModelCardRequest(repo_id="missing/repo"),
+        context=None,
+    )
+
+    assert response.ok is False
+    assert response.error.code == "not_found"
+    assert response.error.message == "Hub model not found for repo_id=missing/repo."
+    assert response.error.retriable is False
+
+
+def test_get_hub_model_card_returns_generic_errors(tmp_path: Path) -> None:
+    service = build_service(
+        tmp_path,
+        hub_catalog=FailingHubCatalog(card_error=RuntimeError("boom")),
+    )
+
+    response = service.GetHubModelCard(
+        maintenance_pb2.GetHubModelCardRequest(repo_id="mlx-community/example"),
+        context=None,
+    )
+
+    assert response.ok is False
+    assert response.error.code == "hub_request_failed"
+    assert response.error.message == "boom"
+    assert response.error.retriable is False
 
 
 def test_run_evaluation_uses_default_dataset_root_when_dataset_root_is_omitted(

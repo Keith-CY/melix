@@ -726,6 +726,170 @@ public struct Melix_Worker_V1_SubmitResultsResponse: Sendable {
   fileprivate var _error: Melix_Worker_V1_ErrorStatus? = nil
 }
 
+public struct Melix_Worker_V1_SearchHubModelsRequest: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var query: String = String()
+
+  public var pageSize: UInt32 = 0
+
+  public var cursor: String = String()
+
+  public var mlxOnly: Bool = false
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public struct Melix_Worker_V1_HubModelSummary: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var repoID: String = String()
+
+  public var author: String = String()
+
+  public var modelName: String = String()
+
+  public var summary: String = String()
+
+  public var pipelineTag: String = String()
+
+  public var tags: [String] = []
+
+  public var downloads: UInt64 = 0
+
+  public var likes: UInt64 = 0
+
+  public var mlxCompatible: Bool = false
+
+  public var libraryName: String = String()
+
+  public var siblingFiles: [String] = []
+
+  public var lastModified: String = String()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public struct Melix_Worker_V1_SearchHubModelsResponse: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var ok: Bool = false
+
+  public var error: Melix_Worker_V1_ErrorStatus {
+    get {_error ?? Melix_Worker_V1_ErrorStatus()}
+    set {_error = newValue}
+  }
+  /// Returns true if `error` has been explicitly set.
+  public var hasError: Bool {self._error != nil}
+  /// Clears the value of `error`. Subsequent reads from it will return its default value.
+  public mutating func clearError() {self._error = nil}
+
+  public var models: [Melix_Worker_V1_HubModelSummary] = []
+
+  public var nextCursor: String = String()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+
+  fileprivate var _error: Melix_Worker_V1_ErrorStatus? = nil
+}
+
+public struct Melix_Worker_V1_GetHubModelCardRequest: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var repoID: String = String()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public struct Melix_Worker_V1_HubModelCard: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var repoID: String = String()
+
+  public var author: String = String()
+
+  public var modelName: String = String()
+
+  public var summary: String = String()
+
+  public var license: String = String()
+
+  public var pipelineTag: String = String()
+
+  public var tags: [String] = []
+
+  public var downloads: UInt64 = 0
+
+  public var likes: UInt64 = 0
+
+  public var mlxCompatible: Bool = false
+
+  public var libraryName: String = String()
+
+  public var siblingFiles: [String] = []
+
+  public var baseModels: [String] = []
+
+  public var lastModified: String = String()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public struct Melix_Worker_V1_GetHubModelCardResponse: @unchecked Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var ok: Bool {
+    get {_storage._ok}
+    set {_uniqueStorage()._ok = newValue}
+  }
+
+  public var error: Melix_Worker_V1_ErrorStatus {
+    get {_storage._error ?? Melix_Worker_V1_ErrorStatus()}
+    set {_uniqueStorage()._error = newValue}
+  }
+  /// Returns true if `error` has been explicitly set.
+  public var hasError: Bool {_storage._error != nil}
+  /// Clears the value of `error`. Subsequent reads from it will return its default value.
+  public mutating func clearError() {_uniqueStorage()._error = nil}
+
+  public var card: Melix_Worker_V1_HubModelCard {
+    get {_storage._card ?? Melix_Worker_V1_HubModelCard()}
+    set {_uniqueStorage()._card = newValue}
+  }
+  /// Returns true if `card` has been explicitly set.
+  public var hasCard: Bool {_storage._card != nil}
+  /// Clears the value of `card`. Subsequent reads from it will return its default value.
+  public mutating func clearCard() {_uniqueStorage()._card = nil}
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+
+  fileprivate var _storage = _StorageClass.defaultInstance
+}
+
 // MARK: - Code below here is support for the SwiftProtobuf runtime.
 
 fileprivate let _protobuf_package = "melix.worker.v1"
@@ -2246,6 +2410,394 @@ extension Melix_Worker_V1_SubmitResultsResponse: SwiftProtobuf.Message, SwiftPro
     if lhs.ok != rhs.ok {return false}
     if lhs._error != rhs._error {return false}
     if lhs.submissionJson != rhs.submissionJson {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+extension Melix_Worker_V1_SearchHubModelsRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".SearchHubModelsRequest"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}query\0\u{3}page_size\0\u{1}cursor\0\u{3}mlx_only\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.query) }()
+      case 2: try { try decoder.decodeSingularUInt32Field(value: &self.pageSize) }()
+      case 3: try { try decoder.decodeSingularStringField(value: &self.cursor) }()
+      case 4: try { try decoder.decodeSingularBoolField(value: &self.mlxOnly) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.query.isEmpty {
+      try visitor.visitSingularStringField(value: self.query, fieldNumber: 1)
+    }
+    if self.pageSize != 0 {
+      try visitor.visitSingularUInt32Field(value: self.pageSize, fieldNumber: 2)
+    }
+    if !self.cursor.isEmpty {
+      try visitor.visitSingularStringField(value: self.cursor, fieldNumber: 3)
+    }
+    if self.mlxOnly != false {
+      try visitor.visitSingularBoolField(value: self.mlxOnly, fieldNumber: 4)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Melix_Worker_V1_SearchHubModelsRequest, rhs: Melix_Worker_V1_SearchHubModelsRequest) -> Bool {
+    if lhs.query != rhs.query {return false}
+    if lhs.pageSize != rhs.pageSize {return false}
+    if lhs.cursor != rhs.cursor {return false}
+    if lhs.mlxOnly != rhs.mlxOnly {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+extension Melix_Worker_V1_HubModelSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".HubModelSummary"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}repo_id\0\u{1}author\0\u{3}model_name\0\u{1}summary\0\u{3}pipeline_tag\0\u{1}tags\0\u{1}downloads\0\u{1}likes\0\u{3}mlx_compatible\0\u{3}library_name\0\u{3}sibling_files\0\u{3}last_modified\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.repoID) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.author) }()
+      case 3: try { try decoder.decodeSingularStringField(value: &self.modelName) }()
+      case 4: try { try decoder.decodeSingularStringField(value: &self.summary) }()
+      case 5: try { try decoder.decodeSingularStringField(value: &self.pipelineTag) }()
+      case 6: try { try decoder.decodeRepeatedStringField(value: &self.tags) }()
+      case 7: try { try decoder.decodeSingularUInt64Field(value: &self.downloads) }()
+      case 8: try { try decoder.decodeSingularUInt64Field(value: &self.likes) }()
+      case 9: try { try decoder.decodeSingularBoolField(value: &self.mlxCompatible) }()
+      case 10: try { try decoder.decodeSingularStringField(value: &self.libraryName) }()
+      case 11: try { try decoder.decodeRepeatedStringField(value: &self.siblingFiles) }()
+      case 12: try { try decoder.decodeSingularStringField(value: &self.lastModified) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.repoID.isEmpty {
+      try visitor.visitSingularStringField(value: self.repoID, fieldNumber: 1)
+    }
+    if !self.author.isEmpty {
+      try visitor.visitSingularStringField(value: self.author, fieldNumber: 2)
+    }
+    if !self.modelName.isEmpty {
+      try visitor.visitSingularStringField(value: self.modelName, fieldNumber: 3)
+    }
+    if !self.summary.isEmpty {
+      try visitor.visitSingularStringField(value: self.summary, fieldNumber: 4)
+    }
+    if !self.pipelineTag.isEmpty {
+      try visitor.visitSingularStringField(value: self.pipelineTag, fieldNumber: 5)
+    }
+    if !self.tags.isEmpty {
+      try visitor.visitRepeatedStringField(value: self.tags, fieldNumber: 6)
+    }
+    if self.downloads != 0 {
+      try visitor.visitSingularUInt64Field(value: self.downloads, fieldNumber: 7)
+    }
+    if self.likes != 0 {
+      try visitor.visitSingularUInt64Field(value: self.likes, fieldNumber: 8)
+    }
+    if self.mlxCompatible != false {
+      try visitor.visitSingularBoolField(value: self.mlxCompatible, fieldNumber: 9)
+    }
+    if !self.libraryName.isEmpty {
+      try visitor.visitSingularStringField(value: self.libraryName, fieldNumber: 10)
+    }
+    if !self.siblingFiles.isEmpty {
+      try visitor.visitRepeatedStringField(value: self.siblingFiles, fieldNumber: 11)
+    }
+    if !self.lastModified.isEmpty {
+      try visitor.visitSingularStringField(value: self.lastModified, fieldNumber: 12)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Melix_Worker_V1_HubModelSummary, rhs: Melix_Worker_V1_HubModelSummary) -> Bool {
+    if lhs.repoID != rhs.repoID {return false}
+    if lhs.author != rhs.author {return false}
+    if lhs.modelName != rhs.modelName {return false}
+    if lhs.summary != rhs.summary {return false}
+    if lhs.pipelineTag != rhs.pipelineTag {return false}
+    if lhs.tags != rhs.tags {return false}
+    if lhs.downloads != rhs.downloads {return false}
+    if lhs.likes != rhs.likes {return false}
+    if lhs.mlxCompatible != rhs.mlxCompatible {return false}
+    if lhs.libraryName != rhs.libraryName {return false}
+    if lhs.siblingFiles != rhs.siblingFiles {return false}
+    if lhs.lastModified != rhs.lastModified {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+extension Melix_Worker_V1_SearchHubModelsResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".SearchHubModelsResponse"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}ok\0\u{1}error\0\u{1}models\0\u{3}next_cursor\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularBoolField(value: &self.ok) }()
+      case 2: try { try decoder.decodeSingularMessageField(value: &self._error) }()
+      case 3: try { try decoder.decodeRepeatedMessageField(value: &self.models) }()
+      case 4: try { try decoder.decodeSingularStringField(value: &self.nextCursor) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    // The use of inline closures is to circumvent an issue where the compiler
+    // allocates stack space for every if/case branch local when no optimizations
+    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+    // https://github.com/apple/swift-protobuf/issues/1182
+    if self.ok != false {
+      try visitor.visitSingularBoolField(value: self.ok, fieldNumber: 1)
+    }
+    try { if let v = self._error {
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 2)
+    } }()
+    if !self.models.isEmpty {
+      try visitor.visitRepeatedMessageField(value: self.models, fieldNumber: 3)
+    }
+    if !self.nextCursor.isEmpty {
+      try visitor.visitSingularStringField(value: self.nextCursor, fieldNumber: 4)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Melix_Worker_V1_SearchHubModelsResponse, rhs: Melix_Worker_V1_SearchHubModelsResponse) -> Bool {
+    if lhs.ok != rhs.ok {return false}
+    if lhs._error != rhs._error {return false}
+    if lhs.models != rhs.models {return false}
+    if lhs.nextCursor != rhs.nextCursor {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+extension Melix_Worker_V1_GetHubModelCardRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".GetHubModelCardRequest"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}repo_id\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.repoID) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.repoID.isEmpty {
+      try visitor.visitSingularStringField(value: self.repoID, fieldNumber: 1)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Melix_Worker_V1_GetHubModelCardRequest, rhs: Melix_Worker_V1_GetHubModelCardRequest) -> Bool {
+    if lhs.repoID != rhs.repoID {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+extension Melix_Worker_V1_HubModelCard: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".HubModelCard"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}repo_id\0\u{1}author\0\u{3}model_name\0\u{1}summary\0\u{1}license\0\u{3}pipeline_tag\0\u{1}tags\0\u{1}downloads\0\u{1}likes\0\u{3}mlx_compatible\0\u{3}library_name\0\u{3}sibling_files\0\u{3}base_models\0\u{3}last_modified\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.repoID) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.author) }()
+      case 3: try { try decoder.decodeSingularStringField(value: &self.modelName) }()
+      case 4: try { try decoder.decodeSingularStringField(value: &self.summary) }()
+      case 5: try { try decoder.decodeSingularStringField(value: &self.license) }()
+      case 6: try { try decoder.decodeSingularStringField(value: &self.pipelineTag) }()
+      case 7: try { try decoder.decodeRepeatedStringField(value: &self.tags) }()
+      case 8: try { try decoder.decodeSingularUInt64Field(value: &self.downloads) }()
+      case 9: try { try decoder.decodeSingularUInt64Field(value: &self.likes) }()
+      case 10: try { try decoder.decodeSingularBoolField(value: &self.mlxCompatible) }()
+      case 11: try { try decoder.decodeSingularStringField(value: &self.libraryName) }()
+      case 12: try { try decoder.decodeRepeatedStringField(value: &self.siblingFiles) }()
+      case 13: try { try decoder.decodeRepeatedStringField(value: &self.baseModels) }()
+      case 14: try { try decoder.decodeSingularStringField(value: &self.lastModified) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.repoID.isEmpty {
+      try visitor.visitSingularStringField(value: self.repoID, fieldNumber: 1)
+    }
+    if !self.author.isEmpty {
+      try visitor.visitSingularStringField(value: self.author, fieldNumber: 2)
+    }
+    if !self.modelName.isEmpty {
+      try visitor.visitSingularStringField(value: self.modelName, fieldNumber: 3)
+    }
+    if !self.summary.isEmpty {
+      try visitor.visitSingularStringField(value: self.summary, fieldNumber: 4)
+    }
+    if !self.license.isEmpty {
+      try visitor.visitSingularStringField(value: self.license, fieldNumber: 5)
+    }
+    if !self.pipelineTag.isEmpty {
+      try visitor.visitSingularStringField(value: self.pipelineTag, fieldNumber: 6)
+    }
+    if !self.tags.isEmpty {
+      try visitor.visitRepeatedStringField(value: self.tags, fieldNumber: 7)
+    }
+    if self.downloads != 0 {
+      try visitor.visitSingularUInt64Field(value: self.downloads, fieldNumber: 8)
+    }
+    if self.likes != 0 {
+      try visitor.visitSingularUInt64Field(value: self.likes, fieldNumber: 9)
+    }
+    if self.mlxCompatible != false {
+      try visitor.visitSingularBoolField(value: self.mlxCompatible, fieldNumber: 10)
+    }
+    if !self.libraryName.isEmpty {
+      try visitor.visitSingularStringField(value: self.libraryName, fieldNumber: 11)
+    }
+    if !self.siblingFiles.isEmpty {
+      try visitor.visitRepeatedStringField(value: self.siblingFiles, fieldNumber: 12)
+    }
+    if !self.baseModels.isEmpty {
+      try visitor.visitRepeatedStringField(value: self.baseModels, fieldNumber: 13)
+    }
+    if !self.lastModified.isEmpty {
+      try visitor.visitSingularStringField(value: self.lastModified, fieldNumber: 14)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Melix_Worker_V1_HubModelCard, rhs: Melix_Worker_V1_HubModelCard) -> Bool {
+    if lhs.repoID != rhs.repoID {return false}
+    if lhs.author != rhs.author {return false}
+    if lhs.modelName != rhs.modelName {return false}
+    if lhs.summary != rhs.summary {return false}
+    if lhs.license != rhs.license {return false}
+    if lhs.pipelineTag != rhs.pipelineTag {return false}
+    if lhs.tags != rhs.tags {return false}
+    if lhs.downloads != rhs.downloads {return false}
+    if lhs.likes != rhs.likes {return false}
+    if lhs.mlxCompatible != rhs.mlxCompatible {return false}
+    if lhs.libraryName != rhs.libraryName {return false}
+    if lhs.siblingFiles != rhs.siblingFiles {return false}
+    if lhs.baseModels != rhs.baseModels {return false}
+    if lhs.lastModified != rhs.lastModified {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+extension Melix_Worker_V1_GetHubModelCardResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".GetHubModelCardResponse"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}ok\0\u{1}error\0\u{1}card\0")
+
+  fileprivate class _StorageClass {
+    var _ok: Bool = false
+    var _error: Melix_Worker_V1_ErrorStatus? = nil
+    var _card: Melix_Worker_V1_HubModelCard? = nil
+
+      // This property is used as the initial default value for new instances of the type.
+      // The type itself is protecting the reference to its storage via CoW semantics.
+      // This will force a copy to be made of this reference when the first mutation occurs;
+      // hence, it is safe to mark this as `nonisolated(unsafe)`.
+      static nonisolated(unsafe) let defaultInstance = _StorageClass()
+
+    private init() {}
+
+    init(copying source: _StorageClass) {
+      _ok = source._ok
+      _error = source._error
+      _card = source._card
+    }
+  }
+
+  fileprivate mutating func _uniqueStorage() -> _StorageClass {
+    if !isKnownUniquelyReferenced(&_storage) {
+      _storage = _StorageClass(copying: _storage)
+    }
+    return _storage
+  }
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    _ = _uniqueStorage()
+    try withExtendedLifetime(_storage) { (_storage: _StorageClass) in
+      while let fieldNumber = try decoder.nextFieldNumber() {
+        // The use of inline closures is to circumvent an issue where the compiler
+        // allocates stack space for every case branch when no optimizations are
+        // enabled. https://github.com/apple/swift-protobuf/issues/1034
+        switch fieldNumber {
+        case 1: try { try decoder.decodeSingularBoolField(value: &_storage._ok) }()
+        case 2: try { try decoder.decodeSingularMessageField(value: &_storage._error) }()
+        case 3: try { try decoder.decodeSingularMessageField(value: &_storage._card) }()
+        default: break
+        }
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    try withExtendedLifetime(_storage) { (_storage: _StorageClass) in
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every if/case branch local when no optimizations
+      // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+      // https://github.com/apple/swift-protobuf/issues/1182
+      if _storage._ok != false {
+        try visitor.visitSingularBoolField(value: _storage._ok, fieldNumber: 1)
+      }
+      try { if let v = _storage._error {
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 2)
+      } }()
+      try { if let v = _storage._card {
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 3)
+      } }()
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Melix_Worker_V1_GetHubModelCardResponse, rhs: Melix_Worker_V1_GetHubModelCardResponse) -> Bool {
+    if lhs._storage !== rhs._storage {
+      let storagesAreEqual: Bool = withExtendedLifetime((lhs._storage, rhs._storage)) { (_args: (_StorageClass, _StorageClass)) in
+        let _storage = _args.0
+        let rhs_storage = _args.1
+        if _storage._ok != rhs_storage._ok {return false}
+        if _storage._error != rhs_storage._error {return false}
+        if _storage._card != rhs_storage._card {return false}
+        return true
+      }
+      if !storagesAreEqual {return false}
+    }
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

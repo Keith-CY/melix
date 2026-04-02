@@ -1,0 +1,262 @@
+from __future__ import annotations
+
+import json
+import os
+from pathlib import Path
+
+from worker.model_registry.catalog import WorkerModelCatalog
+
+
+def _write_registry_manifest(
+    variant_dir: Path,
+    *,
+    model_id: str,
+    model_kind: str = "text",
+    quant_profile_id: str = "q4",
+    max_context: int = 8192,
+    ext: dict[str, str] | None = None,
+    manifest_fields: dict[str, object] | None = None,
+) -> None:
+    variant_dir.mkdir(parents=True, exist_ok=True)
+    payload: dict[str, object] = {
+        "schema_version": "melix.model_registry_manifest.v1",
+        "model_id": model_id,
+        "model_kind": model_kind,
+        "quant_profile_id": quant_profile_id,
+        "max_context": max_context,
+        "ext": ext or {},
+    }
+    if manifest_fields:
+        payload.update(manifest_fields)
+    (variant_dir / "manifest.json").write_text(json.dumps(payload) + "\n", encoding="utf-8")
+
+
+def test_registry_snapshot_collects_models_from_ordered_roots_and_keeps_first_duplicate(tmp_path: Path) -> None:
+    root_a = tmp_path / "root-a"
+    root_b = tmp_path / "root-b"
+    duplicate_id = "mlx-community/Qwen2.5-7B-Instruct/4bit"
+
+    _write_registry_manifest(
+        root_a / "mlx-community" / "Qwen2.5-7B-Instruct" / "4bit",
+        model_id=duplicate_id,
+        max_context=16384,
+        ext={"source_root": "a"},
+    )
+    _write_registry_manifest(
+        root_b / "mlx-community" / "Qwen2.5-7B-Instruct" / "4bit",
+        model_id=duplicate_id,
+        max_context=4096,
+        ext={"source_root": "b"},
+    )
+    _write_registry_manifest(
+        root_b / "mlx-community" / "Qwen2.5-14B-Instruct" / "8bit",
+        model_id="mlx-community/Qwen2.5-14B-Instruct/8bit",
+        quant_profile_id="q8",
+        max_context=32768,
+        ext={"source_root": "b"},
+    )
+
+    catalog = WorkerModelCatalog(
+        environment={
+            "MELIX_MODEL_ROOTS": f"{root_a}{os.pathsep}{root_b}",
+        }
+    )
+
+    snapshot = catalog.registry_snapshot()
+
+    assert [root.root_id for root in snapshot.roots] == ["root-1", "root-2"]
+    discovered = {model.model_id: model for model in snapshot.models}
+    assert duplicate_id in discovered
+    assert discovered[duplicate_id].max_context == 16384
+    assert discovered[duplicate_id].ext["source_root"] == "a"
+    assert discovered[duplicate_id].ext["melix.registry_root_id"] == "root-1"
+    assert discovered[duplicate_id].ext["melix.model_path"].endswith("root-a/mlx-community/Qwen2.5-7B-Instruct/4bit")
+    assert "mlx-community/Qwen2.5-14B-Instruct/8bit" in discovered
+    assert catalog.get(duplicate_id) == discovered[duplicate_id]
+
+
+def test_registry_snapshot_reports_invalid_roots_without_poisoning_valid_discovery(tmp_path: Path) -> None:
+    root_valid = tmp_path / "root-valid"
+    root_missing = tmp_path / "root-missing"
+
+    _write_registry_manifest(
+        root_valid / "mlx-community" / "Phi-4-mini" / "4bit",
+        model_id="mlx-community/Phi-4-mini/4bit",
+        ext={"source_root": "valid"},
+    )
+
+    catalog = WorkerModelCatalog(
+        environment={
+            "MELIX_MODEL_ROOTS": f"{root_missing}{os.pathsep}{root_valid}",
+        }
+    )
+
+    snapshot = catalog.registry_snapshot()
+
+    assert len(snapshot.roots) == 2
+    assert snapshot.roots[0].root_id == "root-1"
+    assert snapshot.roots[0].accessible is False
+    assert snapshot.roots[0].error_code == "not_found"
+    assert snapshot.roots[1].root_id == "root-2"
+    assert snapshot.roots[1].accessible is True
+    assert [model.model_id for model in snapshot.models] == ["mlx-community/Phi-4-mini/4bit"]
+
+
+def test_registry_snapshot_keeps_seed_models_alongside_discovered_entries(tmp_path: Path) -> None:
+    root_a = tmp_path / "root-a"
+    _write_registry_manifest(
+        root_a / "mlx-community" / "Llama-3.2-3B" / "q4",
+        model_id="mlx-community/Llama-3.2-3B/q4",
+    )
+
+    catalog = WorkerModelCatalog(
+        environment={
+            "MELIX_MODEL_ROOTS": str(root_a),
+        }
+    )
+
+    snapshot = catalog.registry_snapshot()
+    discovered_ids = {model.model_id for model in snapshot.models}
+
+    assert "mlx-community/Llama-3.2-3B/q4" in discovered_ids
+    assert "melix-dev-text" in {model.model_id for model in catalog.all_models()}
+
+
+def test_registry_snapshot_rescan_refreshes_discovery_and_deduplicates_empty_root_entries(tmp_path: Path) -> None:
+    root_a = tmp_path / "root-a"
+    root_b = tmp_path / "root-b"
+    root_b.mkdir(parents=True, exist_ok=True)
+
+    _write_registry_manifest(
+        root_a / "mlx-community" / "Qwen2.5-7B-Instruct" / "4bit",
+        model_id="mlx-community/Qwen2.5-7B-Instruct/4bit",
+    )
+
+    catalog = WorkerModelCatalog(
+        environment={
+            "MELIX_MODEL_ROOTS": f"{os.pathsep}{root_a}{os.pathsep}{root_a}{os.pathsep}{root_b}{os.pathsep}",
+        }
+    )
+
+    initial_snapshot = catalog.registry_snapshot()
+    _write_registry_manifest(
+        root_b / "mlx-community" / "Qwen2.5-14B-Instruct" / "8bit",
+        model_id="mlx-community/Qwen2.5-14B-Instruct/8bit",
+        quant_profile_id="q8",
+    )
+    refreshed_snapshot = catalog.registry_snapshot(rescan=True)
+
+    assert [root.root_path for root in initial_snapshot.roots] == [str(root_a), str(root_b)]
+    assert [root.root_path for root in refreshed_snapshot.roots] == [str(root_a), str(root_b)]
+    assert [model.model_id for model in initial_snapshot.models] == ["mlx-community/Qwen2.5-7B-Instruct/4bit"]
+    assert [model.model_id for model in refreshed_snapshot.models] == [
+        "mlx-community/Qwen2.5-14B-Instruct/8bit",
+        "mlx-community/Qwen2.5-7B-Instruct/4bit",
+    ]
+    assert catalog.get("mlx-community/Qwen2.5-14B-Instruct/8bit") is not None
+
+
+def test_registry_snapshot_derives_structured_identity_from_paths_and_sidecar_overrides(tmp_path: Path) -> None:
+    root = tmp_path / "root"
+
+    _write_registry_manifest(
+        root / "huggingface" / "mlx-community" / "Qwen2.5-7B-Instruct" / "4bit",
+        model_id="mlx-community/Qwen2.5-7B-Instruct/4bit",
+        manifest_fields={
+            "provider_id": "hf-mirror",
+            "variant_id": "q4f16",
+        },
+    )
+    _write_registry_manifest(
+        root / "mlx-community" / "Phi-4-mini" / "q8",
+        model_id="mlx-community/Phi-4-mini/q8",
+    )
+
+    catalog = WorkerModelCatalog(environment={"MELIX_MODEL_ROOTS": str(root)})
+
+    snapshot = catalog.registry_snapshot()
+    discovered = {model.model_id: model for model in snapshot.models}
+    qwen = discovered["mlx-community/Qwen2.5-7B-Instruct/4bit"]
+    phi = discovered["mlx-community/Phi-4-mini/q8"]
+
+    assert qwen.ext["melix.registry_provider_id"] == "hf-mirror"
+    assert qwen.ext["melix.registry_organization_id"] == "mlx-community"
+    assert qwen.ext["melix.registry_model_name"] == "Qwen2.5-7B-Instruct"
+    assert qwen.ext["melix.registry_variant_id"] == "q4f16"
+    assert qwen.ext["melix.registry_relative_path"] == "huggingface/mlx-community/Qwen2.5-7B-Instruct/4bit"
+    assert phi.ext["melix.registry_provider_id"] == ""
+    assert phi.ext["melix.registry_organization_id"] == "mlx-community"
+    assert phi.ext["melix.registry_model_name"] == "Phi-4-mini"
+    assert phi.ext["melix.registry_variant_id"] == "q8"
+    assert phi.ext["melix.registry_relative_path"] == "mlx-community/Phi-4-mini/q8"
+
+
+def test_registry_snapshot_skips_manifests_outside_supported_identity_depths(tmp_path: Path) -> None:
+    root = tmp_path / "root"
+
+    _write_registry_manifest(
+        root / "mlx-community" / "Qwen2.5-7B-Instruct" / "4bit",
+        model_id="mlx-community/Qwen2.5-7B-Instruct/4bit",
+    )
+    _write_registry_manifest(
+        root / "too-shallow" / "Qwen2.5-7B-Instruct",
+        model_id="too-shallow/Qwen2.5-7B-Instruct",
+    )
+    _write_registry_manifest(
+        root / "provider" / "mlx-community" / "Qwen2.5-7B-Instruct" / "4bit" / "extra",
+        model_id="provider/mlx-community/Qwen2.5-7B-Instruct/4bit/extra",
+    )
+
+    catalog = WorkerModelCatalog(environment={"MELIX_MODEL_ROOTS": str(root)})
+
+    snapshot = catalog.registry_snapshot()
+
+    assert [model.model_id for model in snapshot.models] == ["mlx-community/Qwen2.5-7B-Instruct/4bit"]
+
+
+def test_registry_snapshot_skips_invalid_manifests_and_normalizes_non_mapping_ext(tmp_path: Path) -> None:
+    root = tmp_path / "root"
+
+    broken_dir = root / "broken-json"
+    broken_dir.mkdir(parents=True, exist_ok=True)
+    (broken_dir / "manifest.json").write_text("{not-json\n", encoding="utf-8")
+
+    list_dir = root / "list-payload"
+    list_dir.mkdir(parents=True, exist_ok=True)
+    (list_dir / "manifest.json").write_text(json.dumps(["not", "a", "dict"]) + "\n", encoding="utf-8")
+
+    missing_id_dir = root / "missing-id"
+    missing_id_dir.mkdir(parents=True, exist_ok=True)
+    (missing_id_dir / "manifest.json").write_text(
+        json.dumps({"model_kind": "text", "ext": {"source_root": "missing-id"}}) + "\n",
+        encoding="utf-8",
+    )
+
+    ext_list_dir = root / "mlx-community" / "Valid-Model" / "4bit"
+    ext_list_dir.mkdir(parents=True, exist_ok=True)
+    (ext_list_dir / "manifest.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "melix.model_registry_manifest.v1",
+                "model_id": "mlx-community/Valid-Model/4bit",
+                "model_kind": "text",
+                "quant_profile_id": "q4",
+                "max_context": 8192,
+                "ext": ["not", "a", "mapping"],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    catalog = WorkerModelCatalog(
+        environment={
+            "MELIX_MODEL_ROOTS": str(root),
+        }
+    )
+
+    snapshot = catalog.registry_snapshot()
+
+    assert [model.model_id for model in snapshot.models] == ["mlx-community/Valid-Model/4bit"]
+    assert dict(snapshot.models[0].ext)["melix.registry_root_id"] == "root-1"
+    assert "source_root" not in snapshot.models[0].ext

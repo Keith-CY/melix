@@ -42,6 +42,8 @@ def main() -> None:
             "get-model-info",
             "convert-model",
             "run-doctor",
+            "search-hub-models",
+            "get-hub-model-card",
             "run-bench",
             "run-evaluation",
         ],
@@ -126,6 +128,14 @@ def main() -> None:
                 stub = maintenance_pb2_grpc.MaintenanceServiceStub(channel)
                 request = maintenance_pb2.RunDoctorRequest.FromString(request_bytes)
                 emit_message(stub.RunDoctor(request).SerializeToString())
+            elif args.command == "search-hub-models":
+                stub = maintenance_pb2_grpc.MaintenanceServiceStub(channel)
+                request = maintenance_pb2.SearchHubModelsRequest.FromString(request_bytes)
+                emit_message(stub.SearchHubModels(request).SerializeToString())
+            elif args.command == "get-hub-model-card":
+                stub = maintenance_pb2_grpc.MaintenanceServiceStub(channel)
+                request = maintenance_pb2.GetHubModelCardRequest.FromString(request_bytes)
+                emit_message(stub.GetHubModelCard(request).SerializeToString())
             elif args.command == "run-bench":
                 stub = maintenance_pb2_grpc.MaintenanceServiceStub(channel)
                 request = maintenance_pb2.RunBenchRequest.FromString(request_bytes)

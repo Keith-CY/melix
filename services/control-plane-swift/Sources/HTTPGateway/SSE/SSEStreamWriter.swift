@@ -618,6 +618,9 @@ public struct SSEStreamWriter: Sendable {
         if let fallbackMode = toolParser.fallbackMode {
             merged["parser_fallback_mode"] = fallbackMode.rawValue
         }
+        if !toolParser.mcpSourceIDs.isEmpty {
+            merged["mcp_source_ids"] = toolParser.mcpSourceIDs
+        }
         return merged
     }
 

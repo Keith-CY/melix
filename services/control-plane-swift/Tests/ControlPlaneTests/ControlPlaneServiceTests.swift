@@ -28,6 +28,113 @@ struct ControlPlaneServiceTests {
         #expect(response.features.contains("image-jobs"))
     }
 
+    @Test("handshake exposes MCP tool catalog state in features and snapshot")
+    func handshakeExposesMCPToolCatalogStateInFeaturesAndSnapshot() async throws {
+        let service = ControlPlaneService(
+            mcpToolCatalog: MCPToolCatalog(
+                configPath: "/tmp/mcp-tools.json",
+                defaultParserMode: .json,
+                sources: [
+                    .init(
+                        sourceID: "filesystem",
+                        enabled: true,
+                        namespaces: ["tools.fs.read", "tools.fs.write"]
+                    ),
+                    .init(
+                        sourceID: "disabled-search",
+                        enabled: false,
+                        namespaces: ["tools.search"]
+                    ),
+                ]
+            )
+        )
+
+        var request = Melix_Controlplane_V1_HandshakeRequest()
+        request.protocolVersion = "melix.controlplane.v1"
+        request.appVersion = "0.1.0"
+        request.bundleID = "com.melix.app"
+        request.clientInstanceID = "ui-mcp"
+
+        let response = try await service.handshake(request)
+
+        #expect(response.features.contains("mcp-tools"))
+        #expect(response.snapshot.mcpTools.configPath == "/tmp/mcp-tools.json")
+        #expect(response.snapshot.mcpTools.defaultParserMode == "json")
+        #expect(response.snapshot.mcpTools.enabledSourceCount == 1)
+        #expect(response.snapshot.mcpTools.resolvedToolCount == 2)
+        #expect(response.snapshot.mcpTools.sources.count == 2)
+        #expect(response.snapshot.mcpTools.sources[0].sourceID == "disabled-search")
+        #expect(response.snapshot.mcpTools.sources[1].sourceID == "filesystem")
+        #expect(response.snapshot.mcpTools.sources[1].namespaces == ["tools.fs.read", "tools.fs.write"])
+    }
+
+    @Test("gateway access policy normalizes shared-access configuration and rejects invalid keys")
+    func gatewayAccessPolicyNormalizesSharedAccessConfigurationAndRejectsInvalidKeys() {
+        let policy = GatewayAccessPolicy.load(
+            environment: [
+                "MELIX_GATEWAY_AUTH_MODE": "api_keys",
+                "MELIX_GATEWAY_SHARED_ACCESS_ENABLED": "true",
+                "MELIX_GATEWAY_API_KEYS_JSON": """
+                [
+                  {"id":"operator-a","label":"Operator A","token_hint":"operator-a","token":"sk-operator-a"},
+                  {"id":"operator-a","label":"Duplicate","token_hint":"duplicate","token":"sk-operator-a-2"},
+                  {"id":"empty-token","label":"Empty Token","token_hint":"empty-token","token":"   "},
+                  {"id":"operator-b","label":"Operator B","token_hint":"operator-b","token":"sk-operator-b"}
+                ]
+                """,
+            ]
+        )
+
+        #expect(policy.mode == .apiKeys)
+        #expect(policy.sharedAccessEnabled)
+        #expect(policy.sharedAccessReady)
+        #expect(policy.acceptedAPIKeyCount == 2)
+        #expect(policy.summary.acceptedApiKeyCount == 2)
+        #expect(policy.summary.keys.map(\.keyID) == ["operator-a", "operator-b"])
+    }
+
+    @Test("handshake projects gateway access summary without leaking raw secrets")
+    func handshakeProjectsGatewayAccessSummaryWithoutLeakingRawSecrets() async throws {
+        let service = ControlPlaneService(
+            gatewayAccessPolicy: GatewayAccessPolicy(
+                mode: .apiKeys,
+                sharedAccessEnabled: true,
+                keys: [
+                    .init(
+                        keyID: "desktop-agent",
+                        label: "Desktop Agent",
+                        tokenHint: "desktop-agent",
+                        token: "sk-desktop-agent"
+                    ),
+                    .init(
+                        keyID: "codex",
+                        label: "Codex",
+                        tokenHint: "codex",
+                        token: "sk-codex"
+                    ),
+                ]
+            )
+        )
+
+        var request = Melix_Controlplane_V1_HandshakeRequest()
+        request.protocolVersion = "melix.controlplane.v1"
+        request.appVersion = "0.1.0"
+        request.bundleID = "com.melix.app"
+        request.clientInstanceID = "ui-shared-access"
+
+        let response = try await service.handshake(request)
+
+        #expect(response.snapshot.hasGatewayAccess)
+        #expect(response.snapshot.gatewayAccess.mode == .apiKeys)
+        #expect(response.snapshot.gatewayAccess.sharedAccessEnabled)
+        #expect(response.snapshot.gatewayAccess.sharedAccessReady)
+        #expect(response.snapshot.gatewayAccess.requiredHeader == .xApiKey)
+        #expect(response.snapshot.gatewayAccess.acceptedApiKeyCount == 2)
+        #expect(response.snapshot.gatewayAccess.keys.map(\.tokenHint) == ["desktop-agent", "codex"])
+        #expect(response.snapshot.gatewayAccess.keys.contains(where: { $0.tokenHint == "sk-desktop-agent" }) == false)
+        #expect(response.snapshot.gatewayAccess.keys.contains(where: { $0.tokenHint == "sk-codex" }) == false)
+    }
+
     @Test("execute handles server.get_snapshot")
     func executeHandlesServerSnapshot() async throws {
         let service = ControlPlaneService()
@@ -52,6 +159,195 @@ struct ControlPlaneServiceTests {
         #expect(response.model.models.count == 1)
         #expect(response.model.models.first?.modelID == "melix-dev-text")
         #expect(response.model.models.first?.state == .modelDiscovered)
+    }
+
+    @Test("execute handles model.list by syncing registry snapshot models from the model-operations worker")
+    func executeHandlesModelListBySyncingRegistrySnapshotModelsFromTheModelOperationsWorker() async throws {
+        let modelOpsClient = ScriptedModelOperationsWorkerClient()
+        let manifestJSON = try makeRegistrySnapshotManifestJSON()
+        await modelOpsClient.setConvertEvents([
+            {
+                var event = Melix_Worker_V1_ConvertModelEvent()
+                event.started = Melix_Worker_V1_ConvertStarted()
+                event.started.jobID = "registry-snapshot-1"
+                return event
+            }(),
+            {
+                var event = Melix_Worker_V1_ConvertModelEvent()
+                event.manifest = Melix_Worker_V1_ConvertManifest()
+                event.manifest.manifestJson = manifestJSON
+                return event
+            }(),
+            {
+                var event = Melix_Worker_V1_ConvertModelEvent()
+                event.completed = Melix_Worker_V1_ConvertCompleted()
+                event.completed.outputPath = "/tmp/registry_snapshot.json"
+                return event
+            }(),
+        ])
+
+        let catalog = ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels())
+        let service = ControlPlaneService(
+            modelCatalog: catalog,
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                modelOperationsClient: modelOpsClient,
+                modelCatalog: catalog
+            )
+        )
+
+        let response = try await service.execute(makeListModelsRequest())
+        let lastRequest = try #require(await modelOpsClient.lastConvertRequest)
+        let discovered = try #require(
+            response.model.models.first(where: { $0.modelID == "mlx-community/Qwen2.5-7B-Instruct/4bit" })
+        )
+
+        #expect(response.ok)
+        #expect(lastRequest.ext["operation"] == "registry_snapshot")
+        #expect(lastRequest.generateManifest)
+        #expect(discovered.state == .modelDiscovered)
+        #expect(discovered.maxContext == 16384)
+        #expect(discovered.settings.ext["melix.registry_root_id"] == "root-1")
+        #expect(discovered.settings.ext["melix.registry_relative_path"] == "mlx-community/Qwen2.5-7B-Instruct/4bit")
+        #expect(discovered.settings.ext["melix.model_path"] == "/tmp/registry-root/mlx-community/Qwen2.5-7B-Instruct/4bit")
+    }
+
+    @Test("execute handles model.list by keeping the current catalog when registry sync throws")
+    func executeHandlesModelListByKeepingTheCurrentCatalogWhenRegistrySyncThrows() async throws {
+        let modelOpsClient = ScriptedModelOperationsWorkerClient()
+        await modelOpsClient.setConvertError(WorkerClientError.unavailable)
+
+        let service = ControlPlaneService(
+            modelCatalog: ModelCatalog(seedModels: [ModelCatalog.devTextModel()]),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                modelOperationsClient: modelOpsClient
+            )
+        )
+
+        let response = try await service.execute(makeListModelsRequest())
+        let lastRequest = try #require(await modelOpsClient.lastConvertRequest)
+
+        #expect(response.ok)
+        #expect(response.model.models.map(\.modelID) == ["melix-dev-text"])
+        #expect(lastRequest.sourceModel == "melix-dev-text")
+        #expect(lastRequest.ext["operation"] == "registry_snapshot")
+    }
+
+    @Test("execute handles model.list by ignoring failed and malformed registry snapshots")
+    func executeHandlesModelListByIgnoringFailedAndMalformedRegistrySnapshots() async throws {
+        let failedClient = ScriptedModelOperationsWorkerClient()
+        await failedClient.setConvertEvents([
+            {
+                var event = Melix_Worker_V1_ConvertModelEvent()
+                event.failed = Melix_Worker_V1_ConvertFailed()
+                return event
+            }(),
+        ])
+        let failedService = ControlPlaneService(
+            modelCatalog: ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels()),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                modelOperationsClient: failedClient
+            )
+        )
+
+        let failedResponse = try await failedService.execute(makeListModelsRequest())
+
+        #expect(failedResponse.ok)
+        #expect(failedResponse.model.models.contains(where: { $0.modelID == "melix-dev-text" }))
+        #expect(!failedResponse.model.models.contains(where: { $0.modelID == "mlx-community/Qwen2.5-7B-Instruct/4bit" }))
+
+        let malformedClient = ScriptedModelOperationsWorkerClient()
+        await malformedClient.setConvertEvents([
+            {
+                var event = Melix_Worker_V1_ConvertModelEvent()
+                event.manifest = Melix_Worker_V1_ConvertManifest()
+                event.manifest.manifestJson = "{not-json"
+                return event
+            }(),
+        ])
+        let malformedService = ControlPlaneService(
+            modelCatalog: ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels()),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                modelOperationsClient: malformedClient
+            )
+        )
+
+        let malformedResponse = try await malformedService.execute(makeListModelsRequest())
+
+        #expect(malformedResponse.ok)
+        #expect(malformedResponse.model.models.contains(where: { $0.modelID == "melix-dev-text" }))
+        #expect(!malformedResponse.model.models.contains(where: { $0.modelID == "mlx-community/Qwen2.5-7B-Instruct/4bit" }))
+    }
+
+    @Test("execute handles model.list by normalizing registry defaults and filtering invalid rows")
+    func executeHandlesModelListByNormalizingRegistryDefaultsAndFilteringInvalidRows() async throws {
+        let modelOpsClient = ScriptedModelOperationsWorkerClient()
+        let manifestJSON = try makeRegistrySnapshotManifestJSON(
+            models: [
+                [
+                    "model_kind": "text",
+                    "model_path": "/tmp/registry-root/ignored",
+                ],
+                [
+                    "model_id": "mlx-community/Mxbai-Embed/8bit",
+                    "model_path": "/tmp/registry-root/mlx-community/Mxbai-Embed/8bit",
+                    "model_kind": "embedding",
+                    "quant_profile_id": "q8",
+                    "max_context": "4096",
+                    "ext": [
+                        "": "ignored",
+                        "melix.capability.class": "embedding",
+                        "melix.capability.route_kind": "python_embedding",
+                        "melix.capability.supported_modalities": "text",
+                        "melix.capability.supported_tasks": "embed",
+                    ],
+                ],
+                [
+                    "model_id": "mlx-community/Speech/1",
+                    "model_path": "/tmp/registry-root/mlx-community/Speech/1",
+                    "model_kind": "speech",
+                ],
+            ]
+        )
+        await modelOpsClient.setConvertEvents([
+            {
+                var event = Melix_Worker_V1_ConvertModelEvent()
+                event.manifest = Melix_Worker_V1_ConvertManifest()
+                event.manifest.manifestJson = manifestJSON
+                return event
+            }(),
+        ])
+
+        let service = ControlPlaneService(
+            modelCatalog: ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels()),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                modelOperationsClient: modelOpsClient
+            )
+        )
+
+        let response = try await service.execute(makeListModelsRequest())
+        let embedding = try #require(response.model.models.first(where: { $0.modelID == "mlx-community/Mxbai-Embed/8bit" }))
+        let speech = try #require(response.model.models.first(where: { $0.modelID == "mlx-community/Speech/1" }))
+
+        #expect(response.ok)
+        #expect(!response.model.models.contains(where: { $0.settings.ext["melix.model_path"] == "/tmp/registry-root/ignored" && $0.modelID.isEmpty }))
+        #expect(embedding.maxContext == 4096)
+        #expect(embedding.capabilityClass == .modelCapabilityEmbedding)
+        #expect(embedding.routeClass == .workerRoutePythonEmbedding)
+        #expect(embedding.supportedModalities == ["text"])
+        #expect(embedding.supportedTasks == ["embed"])
+        #expect(embedding.settings.ext["melix.model_path"] == "/tmp/registry-root/mlx-community/Mxbai-Embed/8bit")
+        #expect(embedding.settings.ext[""] == nil)
+        #expect(speech.capabilityClass == .modelCapabilitySpeech)
+        #expect(speech.routeClass == .workerRoutePythonSpeech)
+        #expect(speech.supportedModalities == ["text", "audio"])
+        #expect(speech.supportedTasks == ["speak"])
+        #expect(speech.maxContext == 0)
+        #expect(speech.settings.ext["melix.model_path"] == "/tmp/registry-root/mlx-community/Speech/1")
     }
 
     @Test("execute handles model.load and emits a state change event")
@@ -873,6 +1169,67 @@ struct ControlPlaneServiceTests {
         #expect(derived.settings.ext["melix.derived_from_model_id"] == "melix-dev-text")
     }
 
+    @Test("execute preserves download operation state when the worker returns a terminal failure")
+    func executePreservesDownloadOperationStateWhenTheWorkerReturnsATerminalFailure() async throws {
+        let manifestJSON = """
+        {"schema_version":"melix.download_job.v1","status":"stalled","terminal_state":"stalled","selected_mirror":"https://mirror.example/hf","downloaded_bytes":512,"total_bytes":2048,"stall_reason":"no_progress_timeout","retry_count":1}
+        """
+
+        let modelOpsClient = ScriptedModelOperationsWorkerClient()
+        await modelOpsClient.setConvertEvents([
+            {
+                var event = Melix_Worker_V1_ConvertModelEvent()
+                event.started = Melix_Worker_V1_ConvertStarted()
+                event.started.jobID = "job-download-123"
+                return event
+            }(),
+            {
+                var event = Melix_Worker_V1_ConvertModelEvent()
+                event.progress = Melix_Worker_V1_ConvertProgress()
+                event.progress.stage = "download"
+                event.progress.pct = 0.25
+                return event
+            }(),
+            {
+                var event = Melix_Worker_V1_ConvertModelEvent()
+                event.manifest = Melix_Worker_V1_ConvertManifest()
+                event.manifest.manifestJson = manifestJSON
+                return event
+            }(),
+            {
+                var event = Melix_Worker_V1_ConvertModelEvent()
+                event.failed = Melix_Worker_V1_ConvertFailed()
+                event.failed.error.code = "download_stalled"
+                event.failed.error.message = "Download stalled without progress."
+                return event
+            }(),
+        ])
+        let service = ControlPlaneService(
+            modelCatalog: ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels()),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                modelOperationsClient: modelOpsClient
+            )
+        )
+
+        let response = try await service.execute(
+            makeRunModelOperationRequest(
+                modelID: "melix-dev-text",
+                operation: "download",
+                outputDir: "/tmp/melix-download"
+            )
+        )
+
+        #expect(response.ok == false)
+        #expect(response.error.code == "download_stalled")
+        #expect(response.error.message == "Download stalled without progress.")
+        #expect(response.model.operation.operation == "download")
+        #expect(response.model.operation.jobID == "job-download-123")
+        #expect(response.model.operation.stage == "download")
+        #expect(response.model.operation.pct == 0.25)
+        #expect(response.model.operation.manifestJson == manifestJSON)
+    }
+
     @Test("execute handles ops.run_doctor through the model-operations worker")
     func executeHandlesOpsRunDoctorThroughTheModelOperationsWorker() async throws {
         let modelOpsClient = ScriptedModelOperationsWorkerClient()
@@ -897,6 +1254,190 @@ struct ControlPlaneServiceTests {
         #expect(lastRequest.includeCacheDiagnostics)
         #expect(lastRequest.includeMemoryReport)
         #expect(response.ops.reportMarkdown.contains("Melix Doctor"))
+    }
+
+    @Test("execute handles ops.search_hub_models through the model-operations worker")
+    func executeHandlesOpsSearchHubModelsThroughTheModelOperationsWorker() async throws {
+        let modelOpsClient = ScriptedModelOperationsWorkerClient()
+        await modelOpsClient.setHubSearchResponse({
+            var response = Melix_Worker_V1_SearchHubModelsResponse()
+            response.ok = true
+            response.nextCursor = "cursor:page-2"
+            var model = Melix_Worker_V1_HubModelSummary()
+            model.repoID = "mlx-community/Qwen2.5-7B-Instruct-4bit"
+            model.author = "mlx-community"
+            model.modelName = "Qwen2.5-7B-Instruct-4bit"
+            model.summary = "MLX text-generation build"
+            model.pipelineTag = "text-generation"
+            model.tags = ["mlx", "chat"]
+            model.downloads = 321
+            model.likes = 12
+            model.mlxCompatible = true
+            model.libraryName = "transformers"
+            model.siblingFiles = ["README.md", "config.json"]
+            model.lastModified = "2025-01-26T19:49:28Z"
+            response.models = [model]
+            return response
+        }())
+        let service = ControlPlaneService(
+            modelCatalog: ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels()),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                modelOperationsClient: modelOpsClient
+            )
+        )
+
+        let response = try await service.execute(
+            makeSearchHubModelsRequest(
+                query: "qwen",
+                pageSize: 5,
+                cursor: "cursor:page-1",
+                mlxOnly: true
+            )
+        )
+        let lastRequest = try #require(await modelOpsClient.lastHubSearchRequest)
+
+        #expect(response.ok)
+        #expect(lastRequest.query == "qwen")
+        #expect(lastRequest.pageSize == 5)
+        #expect(lastRequest.cursor == "cursor:page-1")
+        #expect(lastRequest.mlxOnly)
+        #expect(response.ops.hubSearch.nextCursor == "cursor:page-2")
+        #expect(response.ops.hubSearch.models.count == 1)
+        #expect(response.ops.hubSearch.models[0].repoID == "mlx-community/Qwen2.5-7B-Instruct-4bit")
+        #expect(response.ops.hubSearch.models[0].author == "mlx-community")
+        #expect(response.ops.hubSearch.models[0].pipelineTag == "text-generation")
+        #expect(response.ops.hubSearch.models[0].mlxCompatible)
+        #expect(response.ops.hubSearch.models[0].siblingFiles == ["README.md", "config.json"])
+    }
+
+    @Test("execute handles ops.get_hub_model_card through the model-operations worker")
+    func executeHandlesOpsGetHubModelCardThroughTheModelOperationsWorker() async throws {
+        let modelOpsClient = ScriptedModelOperationsWorkerClient()
+        await modelOpsClient.setHubModelCardResponse({
+            var response = Melix_Worker_V1_GetHubModelCardResponse()
+            response.ok = true
+            response.card.repoID = "mlx-community/Qwen2.5-7B-Instruct-4bit"
+            response.card.author = "mlx-community"
+            response.card.modelName = "Qwen2.5-7B-Instruct-4bit"
+            response.card.summary = "MLX text-generation build"
+            response.card.license = "apache-2.0"
+            response.card.pipelineTag = "text-generation"
+            response.card.tags = ["mlx", "chat"]
+            response.card.downloads = 321
+            response.card.likes = 12
+            response.card.mlxCompatible = true
+            response.card.libraryName = "transformers"
+            response.card.siblingFiles = ["README.md", "config.json", "model.safetensors"]
+            response.card.baseModels = ["Qwen/Qwen2.5-7B-Instruct"]
+            response.card.lastModified = "2025-01-26T19:49:28Z"
+            return response
+        }())
+        let service = ControlPlaneService(
+            modelCatalog: ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels()),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                modelOperationsClient: modelOpsClient
+            )
+        )
+
+        let response = try await service.execute(
+            makeGetHubModelCardRequest(repoID: "mlx-community/Qwen2.5-7B-Instruct-4bit")
+        )
+        let lastRequest = try #require(await modelOpsClient.lastHubModelCardRequest)
+
+        #expect(response.ok)
+        #expect(lastRequest.repoID == "mlx-community/Qwen2.5-7B-Instruct-4bit")
+        #expect(response.ops.hubModelCard.repoID == "mlx-community/Qwen2.5-7B-Instruct-4bit")
+        #expect(response.ops.hubModelCard.author == "mlx-community")
+        #expect(response.ops.hubModelCard.license == "apache-2.0")
+        #expect(response.ops.hubModelCard.pipelineTag == "text-generation")
+        #expect(response.ops.hubModelCard.mlxCompatible)
+        #expect(response.ops.hubModelCard.baseModels == ["Qwen/Qwen2.5-7B-Instruct"])
+        #expect(response.ops.hubModelCard.siblingFiles == ["README.md", "config.json", "model.safetensors"])
+    }
+
+    @Test("execute returns unavailable for hub ops when the model-operations worker is missing")
+    func executeReturnsUnavailableForHubOpsWithoutModelOperationsWorker() async throws {
+        let service = ControlPlaneService()
+
+        let searchResponse = try await service.execute(
+            makeSearchHubModelsRequest(query: "qwen", pageSize: 5, cursor: "", mlxOnly: true)
+        )
+        let cardResponse = try await service.execute(
+            makeGetHubModelCardRequest(repoID: "mlx-community/Qwen2.5-7B-Instruct-4bit")
+        )
+
+        #expect(searchResponse.ok == false)
+        #expect(searchResponse.error.code == "unavailable")
+        #expect(searchResponse.error.message == "Model operations worker is unavailable.")
+        #expect(cardResponse.ok == false)
+        #expect(cardResponse.error.code == "unavailable")
+        #expect(cardResponse.error.message == "Model operations worker is unavailable.")
+    }
+
+    @Test("execute normalizes worker-declared hub op failures")
+    func executeNormalizesWorkerDeclaredHubOpFailures() async throws {
+        let modelOpsClient = ScriptedModelOperationsWorkerClient()
+        await modelOpsClient.setHubSearchResponse({
+            var response = Melix_Worker_V1_SearchHubModelsResponse()
+            response.ok = false
+            return response
+        }())
+        await modelOpsClient.setHubModelCardResponse({
+            var response = Melix_Worker_V1_GetHubModelCardResponse()
+            response.ok = false
+            return response
+        }())
+        let service = ControlPlaneService(
+            modelCatalog: ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels()),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                modelOperationsClient: modelOpsClient
+            )
+        )
+
+        let searchResponse = try await service.execute(
+            makeSearchHubModelsRequest(query: "qwen", pageSize: 5, cursor: "", mlxOnly: true)
+        )
+        let cardResponse = try await service.execute(
+            makeGetHubModelCardRequest(repoID: "mlx-community/Qwen2.5-7B-Instruct-4bit")
+        )
+
+        #expect(searchResponse.ok == false)
+        #expect(searchResponse.error.code == "unknown")
+        #expect(searchResponse.error.message == "Hub search failed.")
+        #expect(cardResponse.ok == false)
+        #expect(cardResponse.error.code == "unknown")
+        #expect(cardResponse.error.message == "Hub model card request failed.")
+    }
+
+    @Test("execute returns unavailable when hub worker requests throw")
+    func executeReturnsUnavailableWhenHubWorkerRequestsThrow() async throws {
+        let modelOpsClient = ScriptedModelOperationsWorkerClient()
+        await modelOpsClient.setHubSearchError(WorkerClientError.unavailable)
+        await modelOpsClient.setHubModelCardError(WorkerClientError.unavailable)
+        let service = ControlPlaneService(
+            modelCatalog: ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels()),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                modelOperationsClient: modelOpsClient
+            )
+        )
+
+        let searchResponse = try await service.execute(
+            makeSearchHubModelsRequest(query: "qwen", pageSize: 5, cursor: "", mlxOnly: true)
+        )
+        let cardResponse = try await service.execute(
+            makeGetHubModelCardRequest(repoID: "mlx-community/Qwen2.5-7B-Instruct-4bit")
+        )
+
+        #expect(searchResponse.ok == false)
+        #expect(searchResponse.error.code == "unavailable")
+        #expect(searchResponse.error.message.contains("Hub search worker request failed"))
+        #expect(cardResponse.ok == false)
+        #expect(cardResponse.error.code == "unavailable")
+        #expect(cardResponse.error.message.contains("Hub model card worker request failed"))
     }
 
     @Test("execute handles ops.run_bench through the model-operations worker")
@@ -2149,6 +2690,56 @@ struct ControlPlaneServiceTests {
         #expect(generated.execution.ext["melix.ocr.sampling_source"] == "model")
     }
 
+    @Test("startChat auto injects MCP tool metadata into worker requests")
+    func startChatAutoInjectsMCPToolMetadataIntoWorkerRequests() async throws {
+        let modelCatalog = ModelCatalog()
+        _ = await modelCatalog.loadModel(id: "melix-dev-text")
+        let textClient = ScriptedChatWorkerClient(events: [
+            makeQueuedExecuteEvent(requestID: "chat-mcp-service"),
+            makeCompletedExecuteEvent(
+                requestID: "chat-mcp-service",
+                finishReason: "stop",
+                assistant: "done",
+                reasoning: ""
+            ),
+        ])
+        let service = ControlPlaneService(
+            modelCatalog: modelCatalog,
+            workerRegistry: WorkerRegistry(defaultTextClient: textClient),
+            chatTranslator: ChatRequestTranslator(requestIDGenerator: { "chat-mcp-service" }),
+            mcpToolCatalog: MCPToolCatalog(
+                configPath: "/tmp/mcp-tools.json",
+                defaultParserMode: .json,
+                sources: [
+                    .init(
+                        sourceID: "filesystem",
+                        enabled: true,
+                        namespaces: ["tools.fs.read"]
+                    ),
+                    .init(
+                        sourceID: "math",
+                        enabled: true,
+                        namespaces: ["tools.math"]
+                    ),
+                ]
+            )
+        )
+
+        let execution = try await service.startChat(
+            ControlPlaneChatRequest(
+                modelID: "melix-dev-text",
+                messages: [.init(role: "user", content: "Call configured tools.")]
+            )
+        )
+        _ = try await Array(execution.stream)
+        let generated = try #require(await textClient.lastGenerateRequest)
+
+        #expect(generated.execution.ext["melix.tool_parser.mode"] == "json")
+        #expect(generated.execution.ext["melix.tool_parser.source"] == "mcp")
+        #expect(generated.execution.ext["melix.tool_parser.namespaces"] == "tools.fs.read,tools.math")
+        #expect(generated.execution.ext["melix.mcp.source_ids"] == "filesystem,math")
+    }
+
     @Test("startChat lazily loads a discovered text model before streaming")
     func startChatLazilyLoadsDiscoveredTextModel() async throws {
         let modelCatalog = ModelCatalog()
@@ -2768,6 +3359,36 @@ struct ControlPlaneServiceTests {
         return request
     }
 
+    private func makeSearchHubModelsRequest(
+        query: String,
+        pageSize: UInt32,
+        cursor: String,
+        mlxOnly: Bool
+    ) -> Melix_Controlplane_V1_ControlPlaneRequest {
+        var request = Melix_Controlplane_V1_ControlPlaneRequest()
+        request.requestID = "req-ops-search-hub-models"
+        request.commandType = "ops.search_hub_models"
+        request.ops = Melix_Controlplane_V1_OpsCommand()
+        request.ops.searchHubModels = Melix_Controlplane_V1_SearchHubModels()
+        request.ops.searchHubModels.query = query
+        request.ops.searchHubModels.pageSize = pageSize
+        request.ops.searchHubModels.cursor = cursor
+        request.ops.searchHubModels.mlxOnly = mlxOnly
+        return request
+    }
+
+    private func makeGetHubModelCardRequest(
+        repoID: String
+    ) -> Melix_Controlplane_V1_ControlPlaneRequest {
+        var request = Melix_Controlplane_V1_ControlPlaneRequest()
+        request.requestID = "req-ops-get-hub-model-card"
+        request.commandType = "ops.get_hub_model_card"
+        request.ops = Melix_Controlplane_V1_OpsCommand()
+        request.ops.getHubModelCard = Melix_Controlplane_V1_GetHubModelCard()
+        request.ops.getHubModelCard.repoID = repoID
+        return request
+    }
+
     private func makeRunBenchRequest() -> Melix_Controlplane_V1_ControlPlaneRequest {
         var request = Melix_Controlplane_V1_ControlPlaneRequest()
         request.requestID = "req-ops-bench"
@@ -3004,6 +3625,48 @@ struct ControlPlaneServiceTests {
             request.model.runOperation.quantProfile.kvQuant = kvQuant
         }
         return request
+    }
+
+    private func makeRegistrySnapshotManifestJSON(
+        models: [[String: Any]]? = nil
+    ) throws -> String {
+        let payload: [String: Any] = [
+            "operation": "registry_snapshot",
+            "model_registry": [
+                "scanned_at_unix_ms": 1_711_955_200_000,
+                "roots": [
+                    [
+                        "root_id": "root-1",
+                        "root_path": "/tmp/registry-root",
+                        "accessible": true,
+                        "error_code": "",
+                        "error_message": "",
+                        "discovered_model_ids": ["mlx-community/Qwen2.5-7B-Instruct/4bit"],
+                    ],
+                ],
+                "models": models ?? [
+                    [
+                        "model_id": "mlx-community/Qwen2.5-7B-Instruct/4bit",
+                        "model_path": "/tmp/registry-root/mlx-community/Qwen2.5-7B-Instruct/4bit",
+                        "model_kind": "text",
+                        "revision": "registry",
+                        "tokenizer_hash": "tok-registry",
+                        "quant_profile_id": "q4",
+                        "parser_mode": "text",
+                        "reasoning_mode": "off",
+                        "max_context": 16384,
+                        "ext": [
+                            "melix.registry_root_id": "root-1",
+                            "melix.registry_root_path": "/tmp/registry-root",
+                            "melix.registry_relative_path": "mlx-community/Qwen2.5-7B-Instruct/4bit",
+                            "melix.model_path": "/tmp/registry-root/mlx-community/Qwen2.5-7B-Instruct/4bit",
+                        ],
+                    ],
+                ],
+            ],
+        ]
+        let data = try JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])
+        return String(decoding: data, as: UTF8.self)
     }
 
     private func makeCacheSnapshot() -> Melix_Controlplane_V1_CacheSnapshot {
@@ -3660,6 +4323,8 @@ private actor ScriptedModelOperationsWorkerClient: WorkerRoutingClient, ModelOpe
     private(set) var lastInfoRequest: Melix_Worker_V1_GetModelInfoRequest?
     private(set) var lastConvertRequest: Melix_Worker_V1_ConvertModelRequest?
     private(set) var lastDoctorRequest: Melix_Worker_V1_RunDoctorRequest?
+    private(set) var lastHubSearchRequest: Melix_Worker_V1_SearchHubModelsRequest?
+    private(set) var lastHubModelCardRequest: Melix_Worker_V1_GetHubModelCardRequest?
     private(set) var lastBenchRequest: Melix_Worker_V1_RunBenchRequest?
     private(set) var lastEvaluationRequest: Melix_Worker_V1_RunEvaluationRequest?
     private(set) var lastExportRequest: Melix_Worker_V1_ExportResultsRequest?
@@ -3667,6 +4332,8 @@ private actor ScriptedModelOperationsWorkerClient: WorkerRoutingClient, ModelOpe
     private var infoResponse = Melix_Worker_V1_GetModelInfoResponse()
     private var convertEvents: [Melix_Worker_V1_ConvertModelEvent] = []
     private var doctorResponse = Melix_Worker_V1_RunDoctorResponse()
+    private var hubSearchResponse = Melix_Worker_V1_SearchHubModelsResponse()
+    private var hubModelCardResponse = Melix_Worker_V1_GetHubModelCardResponse()
     private var benchEvents: [Melix_Worker_V1_RunBenchEvent] = []
     private var evaluationResponse = Melix_Worker_V1_RunEvaluationResponse()
     private var exportResponse = Melix_Worker_V1_ExportResultsResponse()
@@ -3674,6 +4341,8 @@ private actor ScriptedModelOperationsWorkerClient: WorkerRoutingClient, ModelOpe
     private var infoError: Error?
     private var convertError: Error?
     private var doctorError: Error?
+    private var hubSearchError: Error?
+    private var hubModelCardError: Error?
     private var benchError: Error?
     private var evaluationError: Error?
 
@@ -3687,6 +4356,14 @@ private actor ScriptedModelOperationsWorkerClient: WorkerRoutingClient, ModelOpe
 
     func setDoctorResponse(_ response: Melix_Worker_V1_RunDoctorResponse) {
         doctorResponse = response
+    }
+
+    func setHubSearchResponse(_ response: Melix_Worker_V1_SearchHubModelsResponse) {
+        hubSearchResponse = response
+    }
+
+    func setHubModelCardResponse(_ response: Melix_Worker_V1_GetHubModelCardResponse) {
+        hubModelCardResponse = response
     }
 
     func setBenchEvents(_ events: [Melix_Worker_V1_RunBenchEvent]) {
@@ -3707,6 +4384,14 @@ private actor ScriptedModelOperationsWorkerClient: WorkerRoutingClient, ModelOpe
 
     func setDoctorError(_ error: Error?) {
         doctorError = error
+    }
+
+    func setHubSearchError(_ error: Error?) {
+        hubSearchError = error
+    }
+
+    func setHubModelCardError(_ error: Error?) {
+        hubModelCardError = error
     }
 
     func setBenchError(_ error: Error?) {
@@ -3782,6 +4467,26 @@ private actor ScriptedModelOperationsWorkerClient: WorkerRoutingClient, ModelOpe
             throw doctorError
         }
         return doctorResponse
+    }
+
+    func searchHubModels(
+        request: Melix_Worker_V1_SearchHubModelsRequest
+    ) async throws -> Melix_Worker_V1_SearchHubModelsResponse {
+        lastHubSearchRequest = request
+        if let hubSearchError {
+            throw hubSearchError
+        }
+        return hubSearchResponse
+    }
+
+    func getHubModelCard(
+        request: Melix_Worker_V1_GetHubModelCardRequest
+    ) async throws -> Melix_Worker_V1_GetHubModelCardResponse {
+        lastHubModelCardRequest = request
+        if let hubModelCardError {
+            throw hubModelCardError
+        }
+        return hubModelCardResponse
     }
 
     func runBench(

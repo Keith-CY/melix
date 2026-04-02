@@ -32,6 +32,7 @@ from worker.engine.maintenance_core import MaintenanceCore
 from worker.engine.rerank_core import RerankCore
 from worker.engine.speech_core import SpeechCore
 from worker.engine.transcription_core import TranscriptionCore
+from worker.model_ops.hub_catalog import HubCatalog
 from worker.registry import MemoryBudgetExceeded, WorkerRegistry
 from worker.runtime.deterministic_embedding_runtime import DeterministicEmbeddingRuntime
 from worker.runtime.deterministic_backend import DeterministicTextBackend
@@ -211,9 +212,10 @@ class WorkerMaintenanceService(maintenance_pb2_grpc.MaintenanceServiceServicer):
         jobs_root: Path | str | None = None,
         evaluation_jobs_root: Path | str | None = None,
         evaluation_core: EvaluationCore | None = None,
+        hub_catalog: HubCatalog | None = None,
     ) -> None:
         root = Path(jobs_root or ".runtime/model-ops")
-        self._core = MaintenanceCore(registry, jobs_root=root)
+        self._core = MaintenanceCore(registry, jobs_root=root, hub_catalog=hub_catalog)
         self._evaluation_jobs_root = Path(evaluation_jobs_root or root / "evaluation").resolve()
         # Stage the evaluation runner at service construction time so the later RPC path
         # can reuse the same file-backed jobs root without additional wiring changes.
@@ -227,6 +229,12 @@ class WorkerMaintenanceService(maintenance_pb2_grpc.MaintenanceServiceServicer):
 
     def RunDoctor(self, request, context):
         return self._core.doctor_response(request)
+
+    def SearchHubModels(self, request, context):
+        return self._core.search_hub_models(request)
+
+    def GetHubModelCard(self, request, context):
+        return self._core.get_hub_model_card(request)
 
     def RunBench(self, request, context):
         yield from self._core.bench_events(request)

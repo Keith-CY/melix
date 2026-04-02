@@ -9,7 +9,14 @@ from typing import Iterator
 from packages.protocol.python.worker.v1 import common_pb2, maintenance_pb2
 
 from worker.model_ops.adapter_activation_pipeline import AdapterActivationPipeline
+from worker.model_ops.download_pipeline import DownloadPipeline
 from worker.model_ops.errors import ModelOperationError
+from worker.model_ops.hub_catalog import (
+    HubCatalog,
+    HubCatalogError,
+    HubModelCardRecord,
+    HubModelSummaryRecord,
+)
 from worker.model_ops.job_registry import ModelOpsJobRegistry
 from worker.model_ops.lora_training_pipeline import LoRATrainingPipeline
 from worker.model_ops.operation_locks import ModelOpsConflictRegistry
@@ -59,13 +66,17 @@ class MaintenanceCore:
         registry: WorkerRegistry,
         jobs_root: Path,
         job_registry: ModelOpsJobRegistry | None = None,
+        hub_catalog: HubCatalog | None = None,
+        download_pipeline: DownloadPipeline | None = None,
         lora_training_pipeline: LoRATrainingPipeline | None = None,
         adapter_activation_pipeline: AdapterActivationPipeline | None = None,
     ) -> None:
         self._registry = registry
         self._jobs_root = Path(jobs_root)
         self._job_registry = job_registry or ModelOpsJobRegistry()
+        self._hub_catalog = hub_catalog or HubCatalog()
         self._quantization_pipeline = OQQuantizationPipeline(registry)
+        self._download_pipeline = download_pipeline or DownloadPipeline()
         self._lora_training_pipeline = lora_training_pipeline or LoRATrainingPipeline()
         self._adapter_activation_pipeline = adapter_activation_pipeline or AdapterActivationPipeline()
         self._operation_locks = ModelOpsConflictRegistry()
@@ -106,6 +117,42 @@ class MaintenanceCore:
             smoke_test_requested=smoke_test_requested,
             smoke_test_passed=smoke_test_passed,
             runtime="mlx_text",
+        )
+
+    @staticmethod
+    def _hub_summary_message(record: HubModelSummaryRecord) -> maintenance_pb2.HubModelSummary:
+        return maintenance_pb2.HubModelSummary(
+            repo_id=record.repo_id,
+            author=record.author,
+            model_name=record.model_name,
+            summary=record.summary,
+            pipeline_tag=record.pipeline_tag,
+            tags=record.tags,
+            downloads=record.downloads,
+            likes=record.likes,
+            mlx_compatible=record.mlx_compatible,
+            library_name=record.library_name,
+            sibling_files=record.sibling_files,
+            last_modified=record.last_modified,
+        )
+
+    @staticmethod
+    def _hub_model_card_message(record: HubModelCardRecord) -> maintenance_pb2.HubModelCard:
+        return maintenance_pb2.HubModelCard(
+            repo_id=record.repo_id,
+            author=record.author,
+            model_name=record.model_name,
+            summary=record.summary,
+            license=record.license,
+            pipeline_tag=record.pipeline_tag,
+            tags=record.tags,
+            downloads=record.downloads,
+            likes=record.likes,
+            mlx_compatible=record.mlx_compatible,
+            library_name=record.library_name,
+            sibling_files=record.sibling_files,
+            base_models=record.base_models,
+            last_modified=record.last_modified,
         )
 
     def convert_model(
@@ -217,6 +264,54 @@ class MaintenanceCore:
                 )
                 return
 
+            if operation == "download":
+                try:
+                    result = self._download_pipeline.run(
+                        request,
+                        job_id=job.job_id,
+                        output_dir=output_dir,
+                    )
+                except ModelOperationError as exc:
+                    state_json = exc.details.get("state_json", "")
+                    if state_json:
+                        self._job_registry.attach_manifest(job.job_id, state_json)
+                        if request.generate_manifest:
+                            yield maintenance_pb2.ConvertModelEvent(
+                                manifest=maintenance_pb2.ConvertManifest(manifest_json=state_json)
+                            )
+                    self._job_registry.fail(job.job_id, exc.code, exc.message)
+                    yield maintenance_pb2.ConvertModelEvent(
+                        failed=maintenance_pb2.ConvertFailed(
+                            error=common_pb2.ErrorStatus(
+                                code=exc.code,
+                                message=exc.message,
+                                retriable=exc.retriable,
+                                details=exc.details,
+                            )
+                        )
+                    )
+                    return
+
+                for snapshot in result.snapshots:
+                    self._job_registry.progress(job.job_id, snapshot.stage, snapshot.pct)
+                    self._job_registry.attach_manifest(job.job_id, snapshot.manifest_json)
+                    yield maintenance_pb2.ConvertModelEvent(
+                        progress=maintenance_pb2.ConvertProgress(
+                            stage=snapshot.stage,
+                            pct=snapshot.pct,
+                        )
+                    )
+                    if request.generate_manifest:
+                        yield maintenance_pb2.ConvertModelEvent(
+                            manifest=maintenance_pb2.ConvertManifest(manifest_json=snapshot.manifest_json)
+                        )
+
+                self._job_registry.complete(job.job_id, str(result.output_path))
+                yield maintenance_pb2.ConvertModelEvent(
+                    completed=maintenance_pb2.ConvertCompleted(output_path=str(result.output_path))
+                )
+                return
+
             if operation in {"train_lora", "activate_adapter"}:
                 try:
                     pipeline_result, progress_events = self._run_specialized_model_operation(
@@ -284,6 +379,7 @@ class MaintenanceCore:
                         "operation": operation,
                         "source_model": request.source_model,
                         "output_dir": str(output_dir),
+                        "model_registry": self._registry.model_catalog.registry_snapshot_payload(),
                     }
                 )
             else:
@@ -370,6 +466,76 @@ class MaintenanceCore:
             supported_parsers=supported_parsers,
             supported_modalities=supported_modalities,
             supported_tasks=supported_tasks,
+        )
+
+    def search_hub_models(
+        self,
+        request: maintenance_pb2.SearchHubModelsRequest,
+    ) -> maintenance_pb2.SearchHubModelsResponse:
+        try:
+            page = self._hub_catalog.search_models(
+                query=request.query,
+                page_size=request.page_size,
+                cursor=request.cursor,
+                mlx_only=request.mlx_only,
+            )
+        except HubCatalogError as exc:
+            return maintenance_pb2.SearchHubModelsResponse(
+                ok=False,
+                error=common_pb2.ErrorStatus(
+                    code=exc.code,
+                    message=exc.message,
+                    retriable=exc.retriable,
+                ),
+            )
+        except Exception as exc:
+            return maintenance_pb2.SearchHubModelsResponse(
+                ok=False,
+                error=common_pb2.ErrorStatus(
+                    code="hub_request_failed",
+                    message=str(exc),
+                ),
+            )
+
+        response = maintenance_pb2.SearchHubModelsResponse(
+            ok=True,
+            next_cursor=page.next_cursor,
+        )
+        items = [
+            item
+            for item in page.items
+            if not request.mlx_only or item.mlx_compatible
+        ]
+        response.models.extend(self._hub_summary_message(item) for item in items)
+        return response
+
+    def get_hub_model_card(
+        self,
+        request: maintenance_pb2.GetHubModelCardRequest,
+    ) -> maintenance_pb2.GetHubModelCardResponse:
+        try:
+            card = self._hub_catalog.get_model_card(repo_id=request.repo_id)
+        except HubCatalogError as exc:
+            return maintenance_pb2.GetHubModelCardResponse(
+                ok=False,
+                error=common_pb2.ErrorStatus(
+                    code=exc.code,
+                    message=exc.message,
+                    retriable=exc.retriable,
+                ),
+            )
+        except Exception as exc:
+            return maintenance_pb2.GetHubModelCardResponse(
+                ok=False,
+                error=common_pb2.ErrorStatus(
+                    code="hub_request_failed",
+                    message=str(exc),
+                ),
+            )
+
+        return maintenance_pb2.GetHubModelCardResponse(
+            ok=True,
+            card=self._hub_model_card_message(card),
         )
 
     def doctor_response(

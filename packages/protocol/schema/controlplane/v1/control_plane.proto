@@ -148,6 +148,8 @@ message OpsCommand {
     CancelRequest cancel_request = 7;
     ExportResults export_results = 8;
     SubmitResults submit_results = 9;
+    SearchHubModels search_hub_models = 10;
+    GetHubModelCard get_hub_model_card = 11;
   }
 }
 
@@ -197,6 +199,8 @@ message OpsReply {
   repeated EvaluationResultSummary evaluation_results = 7;
   string export_bundle_json = 8;
   string submission_json = 9;
+  HubSearchResult hub_search = 10;
+  HubModelCard hub_model_card = 11;
 }
 
 message PresetReply {
@@ -325,6 +329,15 @@ message RunEvaluation {
   uint32 sample_size = 3;
   map<string, string> parameters = 4;
 }
+message SearchHubModels {
+  string query = 1;
+  uint32 page_size = 2;
+  string cursor = 3;
+  bool mlx_only = 4;
+}
+message GetHubModelCard {
+  string repo_id = 1;
+}
 message ExportDiagnostics {}
 message ExportResults {
   string output_dir = 1;
@@ -385,6 +398,43 @@ message EvaluationResultSummary {
   uint32 sample_size = 5;
   repeated BenchmarkMetricValue metrics = 6;
   string report_path = 7;
+}
+
+message HubModelSummary {
+  string repo_id = 1;
+  string author = 2;
+  string model_name = 3;
+  string summary = 4;
+  string pipeline_tag = 5;
+  repeated string tags = 6;
+  uint64 downloads = 7;
+  uint64 likes = 8;
+  bool mlx_compatible = 9;
+  string library_name = 10;
+  repeated string sibling_files = 11;
+  string last_modified = 12;
+}
+
+message HubSearchResult {
+  repeated HubModelSummary models = 1;
+  string next_cursor = 2;
+}
+
+message HubModelCard {
+  string repo_id = 1;
+  string author = 2;
+  string model_name = 3;
+  string summary = 4;
+  string license = 5;
+  string pipeline_tag = 6;
+  repeated string tags = 7;
+  uint64 downloads = 8;
+  uint64 likes = 9;
+  bool mlx_compatible = 10;
+  string library_name = 11;
+  repeated string sibling_files = 12;
+  repeated string base_models = 13;
+  string last_modified = 14;
 }
 
 message ListPresets {}
@@ -611,6 +661,50 @@ message SubscribeRequest {
   repeated EventTopic topics = 4;
 }
 
+message MCPToolSourceSummary {
+  string source_id = 1;
+  bool enabled = 2;
+  repeated string namespaces = 3;
+  uint32 tool_count = 4;
+}
+
+message MCPToolCatalogSummary {
+  string config_path = 1;
+  string default_parser_mode = 2;
+  uint32 enabled_source_count = 3;
+  uint32 resolved_tool_count = 4;
+  repeated MCPToolSourceSummary sources = 5;
+}
+
+enum GatewayAccessMode {
+  GATEWAY_ACCESS_MODE_UNSPECIFIED = 0;
+  GATEWAY_ACCESS_MODE_NONE = 1;
+  GATEWAY_ACCESS_MODE_BEARER_TOKEN = 2;
+  GATEWAY_ACCESS_MODE_API_KEYS = 3;
+}
+
+enum GatewayAuthHeader {
+  GATEWAY_AUTH_HEADER_UNSPECIFIED = 0;
+  GATEWAY_AUTH_HEADER_NONE = 1;
+  GATEWAY_AUTH_HEADER_AUTHORIZATION_BEARER = 2;
+  GATEWAY_AUTH_HEADER_X_API_KEY = 3;
+}
+
+message GatewayAccessKeySummary {
+  string key_id = 1;
+  string label = 2;
+  string token_hint = 3;
+}
+
+message GatewayAccessSummary {
+  GatewayAccessMode mode = 1;
+  bool shared_access_enabled = 2;
+  bool shared_access_ready = 3;
+  GatewayAuthHeader required_header = 4;
+  uint32 accepted_api_key_count = 5;
+  repeated GatewayAccessKeySummary keys = 6;
+}
+
 message ServerSnapshot {
   ServerState server_state = 1;
   repeated WorkerSummary workers = 2;
@@ -622,6 +716,8 @@ message ServerSnapshot {
   repeated SessionSummary sessions = 8;
   repeated RecentError recent_errors = 9;
   repeated ImageJobSummary image_jobs = 10;
+  MCPToolCatalogSummary mcp_tools = 11;
+  GatewayAccessSummary gateway_access = 12;
 }
 
 message WorkerSummary {

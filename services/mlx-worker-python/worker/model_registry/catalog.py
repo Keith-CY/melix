@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+import json
 import os
+from pathlib import Path
+import time
 
 from packages.protocol.python.worker.v1 import common_pb2
 
@@ -10,10 +14,71 @@ _CAPABILITY_CLASS_KEY = "melix.capability.class"
 _CAPABILITY_SUPPORTED_MODALITIES_KEY = "melix.capability.supported_modalities"
 _CAPABILITY_SUPPORTED_TASKS_KEY = "melix.capability.supported_tasks"
 _CAPABILITY_SUPPORTED_PARSERS_KEY = "melix.capability.supported_parsers"
+_REGISTRY_ROOTS_ENV_KEY = "MELIX_MODEL_ROOTS"
+_REGISTRY_PROVIDER_ID_KEY = "melix.registry_provider_id"
+_REGISTRY_ORGANIZATION_ID_KEY = "melix.registry_organization_id"
+_REGISTRY_MODEL_NAME_KEY = "melix.registry_model_name"
+_REGISTRY_VARIANT_ID_KEY = "melix.registry_variant_id"
+
+
+@dataclass(frozen=True)
+class RegistryRootSnapshot:
+    root_id: str
+    root_path: str
+    accessible: bool
+    error_code: str = ""
+    error_message: str = ""
+    discovered_model_ids: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class RegistrySnapshot:
+    roots: tuple[RegistryRootSnapshot, ...]
+    models: tuple[common_pb2.ModelSpec, ...]
+    scanned_at_unix_ms: int
 
 
 def _normalized(value: str | None) -> str:
     return (value or "").strip()
+
+
+def _path_derived_registry_identity(relative_parts: tuple[str, ...]) -> tuple[str, str, str, str] | None:
+    if len(relative_parts) == 3:
+        organization_id, model_name, variant_id = relative_parts
+        return "", organization_id, model_name, variant_id
+    if len(relative_parts) == 4:
+        provider_id, organization_id, model_name, variant_id = relative_parts
+        return provider_id, organization_id, model_name, variant_id
+    return None
+
+
+def _apply_registry_identity_metadata(
+    model: common_pb2.ModelSpec,
+    *,
+    relative_parts: tuple[str, ...],
+) -> bool:
+    path_identity = _path_derived_registry_identity(relative_parts)
+    if path_identity is None:
+        return False
+
+    (
+        path_provider_id,
+        path_organization_id,
+        path_model_name,
+        path_variant_id,
+    ) = path_identity
+    provider_id = _normalized(model.ext.get(_REGISTRY_PROVIDER_ID_KEY)) or path_provider_id
+    organization_id = _normalized(model.ext.get(_REGISTRY_ORGANIZATION_ID_KEY)) or path_organization_id
+    model_name = _normalized(model.ext.get(_REGISTRY_MODEL_NAME_KEY)) or path_model_name
+    variant_id = _normalized(model.ext.get(_REGISTRY_VARIANT_ID_KEY)) or path_variant_id
+    if not organization_id or not model_name or not variant_id:
+        return False
+
+    model.ext[_REGISTRY_PROVIDER_ID_KEY] = provider_id
+    model.ext[_REGISTRY_ORGANIZATION_ID_KEY] = organization_id
+    model.ext[_REGISTRY_MODEL_NAME_KEY] = model_name
+    model.ext[_REGISTRY_VARIANT_ID_KEY] = variant_id
+    return True
 
 
 def _capability_metadata(
@@ -199,7 +264,7 @@ def _vision_capability_metadata(family_id: str) -> dict[str, str]:
 class WorkerModelCatalog:
     def __init__(self, environment: dict[str, str] | None = None) -> None:
         self._environment = dict(environment or os.environ)
-        self._models = {
+        self._seed_models = {
             "melix-dev-text": self.dev_text_model(environment=self._environment),
             "melix-dev-embed": self.dev_embedding_model(environment=self._environment),
             "melix-dev-rerank": self.dev_rerank_model(environment=self._environment),
@@ -209,9 +274,183 @@ class WorkerModelCatalog:
             "melix-dev-speech": self.dev_speech_model(environment=self._environment),
             "melix-dev-image": self.dev_image_model(environment=self._environment),
         }
+        self._models = dict(self._seed_models)
+        self._last_registry_snapshot = self._refresh_registry_snapshot()
 
     def get(self, model_id: str) -> common_pb2.ModelSpec | None:
         return self._models.get(model_id)
+
+    def all_models(self) -> list[common_pb2.ModelSpec]:
+        return [self._models[model_id] for model_id in sorted(self._models)]
+
+    def registry_snapshot(self, *, rescan: bool = False) -> RegistrySnapshot:
+        if rescan:
+            self._last_registry_snapshot = self._refresh_registry_snapshot()
+        return self._last_registry_snapshot
+
+    def registry_snapshot_payload(self, *, rescan: bool = False) -> dict[str, object]:
+        snapshot = self.registry_snapshot(rescan=rescan)
+        return {
+            "scanned_at_unix_ms": snapshot.scanned_at_unix_ms,
+            "roots": [
+                {
+                    "root_id": root.root_id,
+                    "root_path": root.root_path,
+                    "accessible": root.accessible,
+                    "error_code": root.error_code,
+                    "error_message": root.error_message,
+                    "discovered_model_ids": list(root.discovered_model_ids),
+                }
+                for root in snapshot.roots
+            ],
+            "models": [
+                {
+                    "model_id": model.model_id,
+                    "model_path": model.model_path,
+                    "model_kind": model.model_kind,
+                    "revision": model.revision,
+                    "tokenizer_hash": model.tokenizer_hash,
+                    "quant_profile_id": model.quant_profile_id,
+                    "parser_mode": model.parser_mode,
+                    "reasoning_mode": model.reasoning_mode,
+                    "max_context": model.max_context,
+                    "ext": dict(model.ext),
+                }
+                for model in snapshot.models
+            ],
+        }
+
+    def _refresh_registry_snapshot(self) -> RegistrySnapshot:
+        roots, discovered_models = self._scan_registry_roots()
+        self._models = dict(self._seed_models)
+        for model_id, model in discovered_models.items():
+            self._models.setdefault(model_id, model)
+        return RegistrySnapshot(
+            roots=tuple(roots),
+            models=tuple(discovered_models[model_id] for model_id in sorted(discovered_models)),
+            scanned_at_unix_ms=int(time.time() * 1000),
+        )
+
+    def _scan_registry_roots(self) -> tuple[list[RegistryRootSnapshot], dict[str, common_pb2.ModelSpec]]:
+        roots: list[RegistryRootSnapshot] = []
+        discovered_models: dict[str, common_pb2.ModelSpec] = {}
+
+        for index, root_path in enumerate(self._configured_registry_roots(), start=1):
+            root_id = f"root-{index}"
+            root = Path(root_path)
+            if not root.is_dir():
+                roots.append(
+                    RegistryRootSnapshot(
+                        root_id=root_id,
+                        root_path=str(root),
+                        accessible=False,
+                        error_code="not_found",
+                        error_message="Registry root does not exist.",
+                    )
+                )
+                continue
+
+            accepted_model_ids: list[str] = []
+            for manifest_path in sorted(root.rglob("manifest.json")):
+                parsed = self._parse_registry_manifest(manifest_path)
+                if parsed is None:
+                    continue
+                model_id, model = parsed
+                if model_id in discovered_models or model_id in self._seed_models:
+                    continue
+                relative_path = manifest_path.parent.relative_to(root)
+                if not _apply_registry_identity_metadata(
+                    model,
+                    relative_parts=relative_path.parts,
+                ):
+                    continue
+                model.ext["melix.registry_root_id"] = root_id
+                model.ext["melix.registry_root_path"] = str(root)
+                model.ext["melix.registry_relative_path"] = os.fspath(relative_path)
+                model.ext["melix.model_path"] = str(manifest_path.parent)
+                discovered_models[model_id] = model
+                accepted_model_ids.append(model_id)
+
+            roots.append(
+                RegistryRootSnapshot(
+                    root_id=root_id,
+                    root_path=str(root),
+                    accessible=True,
+                    discovered_model_ids=tuple(accepted_model_ids),
+                )
+            )
+
+        return roots, discovered_models
+
+    def _configured_registry_roots(self) -> list[str]:
+        raw = self._environment.get(_REGISTRY_ROOTS_ENV_KEY, "")
+        if not raw.strip():
+            return []
+
+        roots: list[str] = []
+        seen: set[str] = set()
+        for part in raw.split(os.pathsep):
+            normalized = part.strip()
+            if not normalized or normalized in seen:
+                continue
+            seen.add(normalized)
+            roots.append(normalized)
+        return roots
+
+    @staticmethod
+    def _parse_registry_manifest(
+        manifest_path: Path,
+    ) -> tuple[str, common_pb2.ModelSpec] | None:
+        try:
+            payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return None
+
+        if not isinstance(payload, dict):
+            return None
+
+        model_id = _normalized(str(payload.get("model_id", "")))
+        if not model_id:
+            return None
+
+        ext = payload.get("ext", {})
+        if not isinstance(ext, dict):
+            ext = {}
+        normalized_ext = {
+            str(key): str(value)
+            for key, value in ext.items()
+            if str(key).strip()
+        }
+        for payload_key, ext_key in (
+            ("provider_id", _REGISTRY_PROVIDER_ID_KEY),
+            ("organization_id", _REGISTRY_ORGANIZATION_ID_KEY),
+            ("model_name", _REGISTRY_MODEL_NAME_KEY),
+            ("variant_id", _REGISTRY_VARIANT_ID_KEY),
+        ):
+            override_value = _normalized(str(payload.get(payload_key, "")))
+            if override_value:
+                normalized_ext[ext_key] = override_value
+
+        model_kind = _normalized(str(payload.get("model_kind", "text"))) or "text"
+        quant_profile_id = _normalized(str(payload.get("quant_profile_id", "")))
+        revision = _normalized(str(payload.get("revision", "registry"))) or "registry"
+        tokenizer_hash = _normalized(str(payload.get("tokenizer_hash", "tok-registry"))) or "tok-registry"
+        parser_mode = _normalized(str(payload.get("parser_mode", "text"))) or "text"
+        reasoning_mode = _normalized(str(payload.get("reasoning_mode", "off"))) or "off"
+        max_context = int(payload.get("max_context", 8192) or 8192)
+
+        return model_id, common_pb2.ModelSpec(
+            model_id=model_id,
+            model_path=str(manifest_path.parent),
+            model_kind=model_kind,
+            revision=revision,
+            tokenizer_hash=tokenizer_hash,
+            quant_profile_id=quant_profile_id,
+            parser_mode=parser_mode,
+            reasoning_mode=reasoning_mode,
+            max_context=max_context,
+            ext=normalized_ext,
+        )
 
     @staticmethod
     def dev_text_model(environment: dict[str, str] | None = None) -> common_pb2.ModelSpec:

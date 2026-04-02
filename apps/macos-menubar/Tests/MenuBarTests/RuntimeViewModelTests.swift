@@ -132,6 +132,242 @@ struct RuntimeViewModelTests {
         #expect(stateChangeCount > 0)
     }
 
+    @Test("agent integration exports mirror the selected server session and record metrics")
+    @MainActor
+    func agentIntegrationExportsMirrorTheSelectedServerSessionAndRecordMetrics() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let metrics = MenuBarMetricsStore()
+        let viewModel = RuntimeViewModel(client: client, metrics: metrics)
+
+        await viewModel.start()
+        try await waitForRuntimeViewModelCondition("expected agent exports to be generated") {
+            viewModel.agentIntegrationExports.count == AgentIntegrationExportTarget.allCases.count
+        }
+
+        let selectedExport = try #require(viewModel.selectedAgentIntegrationExport)
+        let metricValues = await metrics.snapshot()
+
+        #expect(viewModel.agentIntegrationExports.map(\.target) == AgentIntegrationExportTarget.allCases)
+        #expect(selectedExport.target == .openAICompatible)
+        #expect(selectedExport.baseURL == "http://127.0.0.1:8080/v1")
+        #expect(selectedExport.modelID == "melix-dev-text")
+        #expect(selectedExport.shellSnippet.contains("curl http://127.0.0.1:8080/v1/responses"))
+        #expect(metricValues["integration.export_generation_ms"] != nil)
+        #expect(metricValues["integration.export_target_count"] == Double(AgentIntegrationExportTarget.allCases.count))
+    }
+
+    @Test("agent integration exports render auth placeholders and rebind when the selected server changes")
+    @MainActor
+    func agentIntegrationExportsRenderAuthPlaceholdersAndRebindWhenTheSelectedServerChanges() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+        viewModel.updateSelectedServerSessionAuthMode(.bearerToken)
+        viewModel.updateSelectedServerSessionAuthTokenHint("dev-token")
+        viewModel.selectAgentIntegrationTarget(.codex)
+
+        let codexExport = try #require(viewModel.selectedAgentIntegrationExport)
+        #expect(codexExport.configFragment.contains("<dev-token>"))
+        #expect(codexExport.shellSnippet.contains("OPENAI_API_KEY=<dev-token>"))
+
+        viewModel.createServerSession()
+        viewModel.updateSelectedServerSessionHost("0.0.0.0")
+        viewModel.updateSelectedServerSessionPort(9090)
+        viewModel.updateSelectedServerSessionAuthMode(.none)
+        viewModel.selectAgentIntegrationTarget(.openClaw)
+
+        let reboundServer = try #require(viewModel.selectedServerSession)
+        let reboundExport = try #require(viewModel.selectedAgentIntegrationExport)
+        #expect(reboundServer.port == 9090)
+        #expect(reboundExport.baseURL == "http://0.0.0.0:9090/v1")
+        #expect(reboundExport.configFragment.contains("http://0.0.0.0:9090/v1"))
+        #expect(reboundExport.configFragment.contains("not-required"))
+    }
+
+    @Test("shared-access snapshot hydrates server-session state and agent exports")
+    @MainActor
+    func sharedAccessSnapshotHydratesServerSessionStateAndAgentExports() async throws {
+        let snapshot = makeSnapshot(
+            serverState: .serverReady,
+            models: [makeModelSummary(state: .modelWarm)],
+            gatewayAccess: makeGatewayAccessSummary(
+                mode: .apiKeys,
+                sharedAccessEnabled: true,
+                acceptedApiKeyCount: 2,
+                keyHints: ["desktop-agent", "codex"]
+            )
+        )
+        let client = SnapshotControlPlaneXPCClient(snapshot: snapshot)
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+
+        let session = try #require(viewModel.selectedServerSession)
+        let export = try #require(viewModel.selectedAgentIntegrationExport)
+
+        #expect(session.authMode == .apiKeys)
+        #expect(session.sharedAccessState == .enabled)
+        #expect(session.accessKeyCount == 2)
+        #expect(session.accessKeyHints == ["desktop-agent", "codex"])
+        #expect(export.configFragment.contains("<desktop-agent>"))
+        #expect(export.shellSnippet.contains("x-api-key: <desktop-agent>"))
+    }
+
+    @Test("configured-but-disabled shared access stays local trust while surfacing key hints")
+    @MainActor
+    func configuredButDisabledSharedAccessStaysLocalTrustWhileSurfacingKeyHints() async throws {
+        let snapshot = makeSnapshot(
+            serverState: .serverReady,
+            models: [makeModelSummary(state: .modelWarm)],
+            gatewayAccess: makeGatewayAccessSummary(
+                mode: .apiKeys,
+                sharedAccessEnabled: false,
+                acceptedApiKeyCount: 2,
+                keyHints: ["desktop-agent", "codex"]
+            )
+        )
+        let client = SnapshotControlPlaneXPCClient(snapshot: snapshot)
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+
+        let session = try #require(viewModel.selectedServerSession)
+        let export = try #require(viewModel.selectedAgentIntegrationExport)
+        let authReference = desktopAPIAuthenticationReferenceText(
+            selectedSession: session,
+            selectedExport: export
+        )
+
+        #expect(session.authMode == .none)
+        #expect(session.sharedAccessState == .configuredDisabled)
+        #expect(session.accessKeyCount == 2)
+        #expect(session.accessKeyHints == ["desktop-agent", "codex"])
+        #expect(export.configFragment.contains("not-required"))
+        #expect(export.shellSnippet.contains("x-api-key") == false)
+        #expect(authReference.contains("configured but disabled"))
+        #expect(authReference.contains("desktop-agent, codex"))
+    }
+
+    @Test("switching auth mode away from shared access restores local-only trust state")
+    @MainActor
+    func switchingAuthModeAwayFromSharedAccessRestoresLocalOnlyTrustState() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+        viewModel.updateSelectedServerSessionAuthMode(.apiKeys)
+        #expect(viewModel.selectedServerSession?.sharedAccessState == .enabled)
+
+        viewModel.updateSelectedServerSessionAuthMode(.bearerToken)
+
+        let session = try #require(viewModel.selectedServerSession)
+        #expect(session.authMode == .bearerToken)
+        #expect(session.sharedAccessState == .localOnly)
+    }
+
+    @Test("gateway access projection covers none bearer and unknown modes")
+    @MainActor
+    func gatewayAccessProjectionCoversNoneBearerAndUnknownModes() async throws {
+        let noneSnapshot = makeSnapshot(
+            serverState: .serverReady,
+            models: [makeModelSummary(state: .modelWarm)],
+            gatewayAccess: makeGatewayAccessSummary(
+                mode: .none,
+                sharedAccessEnabled: false,
+                acceptedApiKeyCount: 0,
+                keyHints: []
+            )
+        )
+        let bearerSnapshot = makeSnapshot(
+            serverState: .serverReady,
+            models: [makeModelSummary(state: .modelWarm)],
+            gatewayAccess: makeGatewayAccessSummary(
+                mode: .bearerToken,
+                sharedAccessEnabled: false,
+                acceptedApiKeyCount: 0,
+                keyHints: ["desktop-agent"]
+            )
+        )
+        var unknownGatewayAccess = makeGatewayAccessSummary(
+            mode: .none,
+            sharedAccessEnabled: false,
+            acceptedApiKeyCount: 0,
+            keyHints: []
+        )
+        unknownGatewayAccess.mode = .UNRECOGNIZED(99)
+        let unknownSnapshot = makeSnapshot(
+            serverState: .serverReady,
+            models: [makeModelSummary(state: .modelWarm)],
+            gatewayAccess: unknownGatewayAccess
+        )
+
+        let noneViewModel = RuntimeViewModel(client: SnapshotControlPlaneXPCClient(snapshot: noneSnapshot))
+        await noneViewModel.start()
+        let noneSession = try #require(noneViewModel.selectedServerSession)
+        #expect(noneSession.authMode == .none)
+        #expect(noneSession.sharedAccessState == .localOnly)
+        #expect(noneSession.accessKeyCount == 0)
+
+        let bearerViewModel = RuntimeViewModel(client: SnapshotControlPlaneXPCClient(snapshot: bearerSnapshot))
+        await bearerViewModel.start()
+        let bearerSession = try #require(bearerViewModel.selectedServerSession)
+        #expect(bearerSession.authMode == .bearerToken)
+        #expect(bearerSession.authTokenHint == "desktop-agent")
+        #expect(bearerSession.sharedAccessState == .localOnly)
+        #expect(bearerSession.accessKeyCount == 1)
+        #expect(bearerSession.accessKeyHints == ["desktop-agent"])
+
+        let unknownViewModel = RuntimeViewModel(client: SnapshotControlPlaneXPCClient(snapshot: unknownSnapshot))
+        await unknownViewModel.start()
+        let unknownSession = try #require(unknownViewModel.selectedServerSession)
+        #expect(unknownSession.authMode == .none)
+        #expect(unknownSession.sharedAccessState == .localOnly)
+        #expect(unknownSession.accessKeyCount == 0)
+        #expect(unknownSession.authTokenHint.isEmpty)
+    }
+
+    @Test("server session shared-access summary text covers configured disabled and enabled states")
+    func serverSessionSharedAccessSummaryTextCoversConfiguredDisabledAndEnabledStates() {
+        let configuredDisabled = DesktopServerSessionState(
+            id: "configured-disabled",
+            title: "Configured Disabled",
+            modelID: "melix-dev-text",
+            sharedAccessState: .configuredDisabled
+        )
+        let enabledSingleKey = DesktopServerSessionState(
+            id: "enabled-single",
+            title: "Enabled Single",
+            modelID: "melix-dev-text",
+            sharedAccessState: .enabled,
+            accessKeyCount: 1
+        )
+        let enabledMultipleKeys = DesktopServerSessionState(
+            id: "enabled-multi",
+            title: "Enabled Multiple",
+            modelID: "melix-dev-text",
+            sharedAccessState: .enabled,
+            accessKeyCount: 2
+        )
+
+        #expect(configuredDisabled.sharedAccessSummaryText == "Shared access is configured but disabled.")
+        #expect(enabledSingleKey.sharedAccessSummaryText == "Shared access is enabled for 1 key.")
+        #expect(enabledMultipleKeys.sharedAccessSummaryText == "Shared access is enabled for 2 keys.")
+    }
+
+    @Test("agent integration exports stay empty when no server session is available")
+    @MainActor
+    func agentIntegrationExportsStayEmptyWhenNoServerSessionIsAvailable() async throws {
+        let client = EmptySnapshotControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+
+        #expect(viewModel.serverSessions.isEmpty)
+        #expect(viewModel.agentIntegrationExports.isEmpty)
+        #expect(viewModel.selectedAgentIntegrationExport == nil)
+    }
+
     @Test("empty workspace routes chat creation to server and server creation seeds the first chat session")
     @MainActor
     func emptyWorkspaceRoutesChatCreationToServerAndSeedsServerBoundChat() async throws {
@@ -566,15 +802,23 @@ struct RuntimeViewModelTests {
         await viewModel.start()
 
         let foundation = viewModel.desktopFoundationState
+        let hasReadyServerCard = foundation.dashboardCards.contains { $0.id == "server" && $0.value == "Ready" }
+        let hasConnectedCard = foundation.dashboardCards.contains { $0.id == "connection" && $0.value == "Connected" }
+        let hasDecodeLane = foundation.queueLanes.contains { $0.id == "text.decode.interactive" }
+        let hasPrimaryModel = foundation.models.contains { $0.modelID == "melix-dev-text" }
+        let hasProtocolSetting = foundation.settings.contains { $0.key == "Protocol" && $0.value == "melix.controlplane.v1" }
+        let hasConnectionSetting = foundation.settings.contains { $0.key == "Connection" && $0.value == "Connected" }
+        let hasTranslationMetric = foundation.benchMetrics.contains { $0.name == "http.translation_ms" }
+        let hasResponsesEndpoint = foundation.apiReference.contains { $0.path == "/v1/responses" }
         #expect(foundation.title == "Melix Ready")
-        #expect(foundation.dashboardCards.contains(where: { $0.id == "server" && $0.value == "Ready" }))
-        #expect(foundation.dashboardCards.contains(where: { $0.id == "connection" && $0.value == "Connected" }))
-        #expect(foundation.queueLanes.contains(where: { $0.id == "text.decode.interactive" }))
-        #expect(foundation.models.contains(where: { $0.modelID == "melix-dev-text" }))
-        #expect(foundation.settings.contains(where: { $0.key == "Protocol" && $0.value == "melix.controlplane.v1" }))
-        #expect(foundation.settings.contains(where: { $0.key == "Connection" && $0.value == "Connected" }))
-        #expect(foundation.benchMetrics.contains(where: { $0.name == "http.translation_ms" }))
-        #expect(foundation.apiReference.contains(where: { $0.path == "/v1/responses" }))
+        #expect(hasReadyServerCard)
+        #expect(hasConnectedCard)
+        #expect(hasDecodeLane)
+        #expect(hasPrimaryModel)
+        #expect(hasProtocolSetting)
+        #expect(hasConnectionSetting)
+        #expect(hasTranslationMetric)
+        #expect(hasResponsesEndpoint)
     }
 
     @Test("desktop foundation surfaces residency eviction and memory guard summaries")
@@ -696,13 +940,15 @@ struct RuntimeViewModelTests {
 
         let foundation = viewModel.desktopFoundationState
         let requests = await client.subscriptionRequests
+        let hasConnectedSetting = foundation.settings.contains { $0.key == "Connection" && $0.value == "Connected" }
+        let hasReconnectLog = foundation.logs.contains { $0.message.contains("Reconnected event stream") }
         #expect(requests.count == 2)
         if requests.count >= 2 {
             #expect(requests[0] == 0)
             #expect(requests[1] == 1)
         }
-        #expect(foundation.settings.contains(where: { $0.key == "Connection" && $0.value == "Connected" }))
-        #expect(foundation.logs.contains(where: { $0.message.contains("Reconnected event stream") }))
+        #expect(hasConnectedSetting)
+        #expect(hasReconnectLog)
         #expect(await metrics.snapshot()["desktop.reconnect_success_ms"] != nil)
     }
 
@@ -816,18 +1062,33 @@ struct RuntimeViewModelTests {
         let hasMemoryCard = foundation.dashboardCards.contains { card in
             card.id == "memory" && card.detail.contains("8")
         }
+        let hasSessionUpdateLog = foundation.logs.contains { $0.message == "Session session-42 updated" }
+        let hasCacheLog = foundation.logs.contains { $0.message == "Cache summary updated" }
+        let hasResourcePressureLog = foundation.logs.contains {
+            $0.message == "Resource pressure in metal" && $0.level == "warning"
+        }
+        let hasPrefillLog = foundation.logs.contains {
+            $0.message == "request-42 prefilling • 50% 12/24 • active 2 • waiting 1 • restore partial • pressure 0.25"
+        }
+        let hasHeartbeatLog = foundation.logs.contains { $0.message == "Heartbeat" }
+        let hasPrefillMetric = foundation.benchMetrics.contains {
+            $0.name == "scheduler.prefill_progress_pct" && $0.value == "50.00"
+        }
+        let hasCachePressureMetric = foundation.benchMetrics.contains {
+            $0.name == "scheduler.cache_pressure" && $0.value == "0.25"
+        }
         #expect(viewModel.statusTitle == "Melix Draining")
         #expect(viewModel.lastError == "thermal pressure")
         #expect(hasSessionsCard)
         #expect(hasCacheCard)
         #expect(hasMemoryCard)
-        #expect(foundation.logs.contains(where: { $0.message == "Session session-42 updated" }))
-        #expect(foundation.logs.contains(where: { $0.message == "Cache summary updated" }))
-        #expect(foundation.logs.contains(where: { $0.message == "Resource pressure in metal" && $0.level == "warning" }))
-        #expect(foundation.logs.contains(where: { $0.message == "request-42 prefilling • 50% 12/24 • active 2 • waiting 1 • restore partial • pressure 0.25" }))
-        #expect(foundation.logs.contains(where: { $0.message == "Heartbeat" }))
-        #expect(foundation.benchMetrics.contains(where: { $0.name == "scheduler.prefill_progress_pct" && $0.value == "50.00" }))
-        #expect(foundation.benchMetrics.contains(where: { $0.name == "scheduler.cache_pressure" && $0.value == "0.25" }))
+        #expect(hasSessionUpdateLog)
+        #expect(hasCacheLog)
+        #expect(hasResourcePressureLog)
+        #expect(hasPrefillLog)
+        #expect(hasHeartbeatLog)
+        #expect(hasPrefillMetric)
+        #expect(hasCachePressureMetric)
     }
 
     @Test("request progress events map all operator-facing phase labels")
@@ -885,7 +1146,10 @@ struct RuntimeViewModelTests {
         }
 
         let foundation = viewModel.desktopFoundationState
-        #expect(foundation.benchMetrics.contains(where: { $0.name == "scheduler.restore_stage_code" && $0.value == "0.00" }))
+        let hasRestoreStageMetric = foundation.benchMetrics.contains {
+            $0.name == "scheduler.restore_stage_code" && $0.value == "0.00"
+        }
+        #expect(hasRestoreStageMetric)
     }
 
     @Test("recent logs are trimmed to the last forty entries")
@@ -1436,11 +1700,16 @@ struct RuntimeViewModelTests {
 
         await viewModel.start()
 
-        #expect(viewModel.chatCapabilities.contains(where: { $0.id == "text" && $0.isReady }))
-        #expect(viewModel.chatCapabilities.contains(where: { $0.id == "ocr" && $0.isReady }))
-        #expect(viewModel.chatCapabilities.contains(where: { $0.id == "vlm" && $0.isReady == false }))
-        #expect(viewModel.chatCapabilities.contains(where: { $0.id == "transcription" && $0.isReady }))
-        #expect(viewModel.chatCapabilities.contains(where: { $0.id == "speech" && $0.isReady == false }))
+        let hasReadyTextCapability = viewModel.chatCapabilities.contains { $0.id == "text" && $0.isReady }
+        let hasReadyOCRCapability = viewModel.chatCapabilities.contains { $0.id == "ocr" && $0.isReady }
+        let hasPendingVLMBinding = viewModel.chatCapabilities.contains { $0.id == "vlm" && $0.isReady == false }
+        let hasReadyTranscriptionCapability = viewModel.chatCapabilities.contains { $0.id == "transcription" && $0.isReady }
+        let hasPendingSpeechCapability = viewModel.chatCapabilities.contains { $0.id == "speech" && $0.isReady == false }
+        #expect(hasReadyTextCapability)
+        #expect(hasReadyOCRCapability)
+        #expect(hasPendingVLMBinding)
+        #expect(hasReadyTranscriptionCapability)
+        #expect(hasPendingSpeechCapability)
     }
 
     @Test("image snapshot hydrates image panel state from control-plane truth")
@@ -2009,12 +2278,38 @@ private actor EventingSnapshotControlPlaneXPCClient: ControlPlaneXPCClient {
 
 private func makeSnapshot(
     serverState: Melix_Controlplane_V1_ServerState,
-    models: [Melix_Controlplane_V1_ModelSummary]
+    models: [Melix_Controlplane_V1_ModelSummary],
+    gatewayAccess: Melix_Controlplane_V1_GatewayAccessSummary? = nil
 ) -> Melix_Controlplane_V1_ServerSnapshot {
     var snapshot = Melix_Controlplane_V1_ServerSnapshot()
     snapshot.serverState = serverState
     snapshot.models = models
+    if let gatewayAccess {
+        snapshot.gatewayAccess = gatewayAccess
+    }
     return snapshot
+}
+
+private func makeGatewayAccessSummary(
+    mode: Melix_Controlplane_V1_GatewayAccessMode,
+    sharedAccessEnabled: Bool,
+    acceptedApiKeyCount: UInt32,
+    keyHints: [String]
+) -> Melix_Controlplane_V1_GatewayAccessSummary {
+    var summary = Melix_Controlplane_V1_GatewayAccessSummary()
+    summary.mode = mode
+    summary.sharedAccessEnabled = sharedAccessEnabled
+    summary.sharedAccessReady = keyHints.isEmpty == false
+    summary.requiredHeader = mode == .apiKeys ? .xApiKey : .none
+    summary.acceptedApiKeyCount = acceptedApiKeyCount
+    summary.keys = keyHints.enumerated().map { offset, hint in
+        var key = Melix_Controlplane_V1_GatewayAccessKeySummary()
+        key.keyID = "key-\(offset + 1)"
+        key.label = hint
+        key.tokenHint = hint
+        return key
+    }
+    return summary
 }
 
 private func makeModelSummary(
