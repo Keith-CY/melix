@@ -1316,10 +1316,10 @@ struct ControlPlaneServiceTests {
                 outputDir: "/tmp/melix-audio-runtime"
             )
         )
+        let lastRequest = try #require(await modelOpsClient.lastConvertRequest)
         let listResponse = try await service.execute(makeListModelsRequest())
         let runtimePackRecord = try #require(assetManager.runtimePackRecord(for: "audio-stt"))
         let model = try #require(listResponse.model.models.first(where: { $0.modelID == "melix-whisper-mlx" }))
-        let lastRequest = try #require(await modelOpsClient.lastConvertRequest)
 
         #expect(response.ok)
         #expect(lastRequest.ext["operation"] == "install_audio_runtime")
@@ -1368,10 +1368,10 @@ struct ControlPlaneServiceTests {
                 outputDir: "/tmp/melix-audio-models"
             )
         )
+        let lastRequest = try #require(await modelOpsClient.lastConvertRequest)
         let listResponse = try await service.execute(makeListModelsRequest())
         let managedRecord = try #require(assetManager.managedModelRecord(for: "melix-whisper-mlx"))
         let model = try #require(listResponse.model.models.first(where: { $0.modelID == "melix-whisper-mlx" }))
-        let lastRequest = try #require(await modelOpsClient.lastConvertRequest)
 
         #expect(response.ok)
         #expect(lastRequest.ext["operation"] == "download")
