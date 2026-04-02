@@ -369,6 +369,15 @@ public enum BootstrapWorkerPreparation {
         "rerank_scoring_mode",
         "rerank_yes_no_labels",
     ]
+    private static let audioExtKeys = [
+        "melix.audio.backend_id",
+        "melix.audio.family_id",
+        "melix.audio.install_profile",
+        "melix.audio.languages",
+        "melix.audio.voice_mode",
+        "melix.audio.output_formats",
+        "melix.audio.supports_instructions",
+    ]
     private static let capabilityExtKeys = [
         "melix.capability.route_kind",
         "melix.capability.class",
@@ -407,6 +416,10 @@ public enum BootstrapWorkerPreparation {
             return devTranscriptionModel()
         case "melix-dev-speech":
             return devSpeechModel()
+        case "melix-whisper-mlx":
+            return mlxWhisperModel()
+        case "melix-kokoro-mlx":
+            return mlxKokoroModel()
         case "melix-dev-image":
             return devImageModel()
         default:
@@ -439,11 +452,29 @@ public enum BootstrapWorkerPreparation {
         for key in rerankExtKeys {
             applyExtOverride(for: key, from: summary, to: &spec)
         }
+        for key in audioExtKeys {
+            applyExtOverride(for: key, from: summary, to: &spec)
+        }
         for key in capabilityExtKeys {
             applyExtOverride(for: key, from: summary, to: &spec)
         }
         for key in genericTextExtKeys {
             applyExtOverride(for: key, from: summary, to: &spec)
+        }
+        let overriddenModelPath = summary.settings.ext["melix.model_path"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !overriddenModelPath.isEmpty {
+            spec.modelPath = overriddenModelPath
+        }
+        let overriddenRevision = summary.settings.ext["melix.model_revision"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !overriddenRevision.isEmpty {
+            spec.revision = overriddenRevision
+        }
+        let overriddenTokenizerHash = summary.settings.ext["melix.tokenizer_hash"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !overriddenTokenizerHash.isEmpty {
+            spec.tokenizerHash = overriddenTokenizerHash
         }
         let adaptiveThinkingMode = summary.settings.adaptiveThinking.mode
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -758,6 +789,19 @@ public enum BootstrapWorkerPreparation {
         model.parserMode = "text"
         model.reasoningMode = "off"
         model.maxContext = 4096
+        model.ext["melix.audio.backend_id"] = "deterministic"
+        model.ext["melix.audio.family_id"] = "deterministic-transcription"
+        model.ext["melix.audio.install_profile"] = ""
+        model.ext["melix.audio.languages"] = "und"
+        model.ext["melix.audio.voice_mode"] = ""
+        model.ext["melix.audio.output_formats"] = ""
+        model.ext["melix.audio.supports_instructions"] = "false"
+        model.ext["melix.adapter_set_hash"] = "audio-family-deterministic-transcription"
+        model.ext["melix.capability.route_kind"] = "python_transcription"
+        model.ext["melix.capability.class"] = "transcription"
+        model.ext["melix.capability.supported_modalities"] = "audio,text"
+        model.ext["melix.capability.supported_tasks"] = "transcribe"
+        model.ext["melix.capability.supported_parsers"] = "text"
         return model
     }
 
@@ -772,6 +816,73 @@ public enum BootstrapWorkerPreparation {
         model.parserMode = "text"
         model.reasoningMode = "off"
         model.maxContext = 4096
+        model.ext["melix.audio.backend_id"] = "deterministic"
+        model.ext["melix.audio.family_id"] = "deterministic-speech"
+        model.ext["melix.audio.install_profile"] = ""
+        model.ext["melix.audio.languages"] = "und"
+        model.ext["melix.audio.voice_mode"] = "named"
+        model.ext["melix.audio.output_formats"] = "wav,mp3"
+        model.ext["melix.audio.supports_instructions"] = "false"
+        model.ext["melix.adapter_set_hash"] = "audio-family-deterministic-speech"
+        model.ext["melix.capability.route_kind"] = "python_speech"
+        model.ext["melix.capability.class"] = "speech"
+        model.ext["melix.capability.supported_modalities"] = "text,audio"
+        model.ext["melix.capability.supported_tasks"] = "speak"
+        model.ext["melix.capability.supported_parsers"] = "text"
+        return model
+    }
+
+    private static func mlxWhisperModel() -> Melix_Worker_V1_ModelSpec {
+        var model = Melix_Worker_V1_ModelSpec()
+        model.modelID = "melix-whisper-mlx"
+        model.modelPath = "mlx-community/whisper-large-v3-turbo-asr-fp16"
+        model.modelKind = "transcription"
+        model.revision = "mlx-audio"
+        model.tokenizerHash = "tok-whisper-mlx"
+        model.quantProfileID = "fp16"
+        model.parserMode = "text"
+        model.reasoningMode = "off"
+        model.maxContext = 4096
+        model.ext["melix.audio.backend_id"] = "mlx_audio.stt"
+        model.ext["melix.audio.family_id"] = "whisper"
+        model.ext["melix.audio.install_profile"] = "audio-stt"
+        model.ext["melix.audio.languages"] = "auto"
+        model.ext["melix.audio.voice_mode"] = ""
+        model.ext["melix.audio.output_formats"] = ""
+        model.ext["melix.audio.supports_instructions"] = "false"
+        model.ext["melix.adapter_set_hash"] = "audio-family-whisper"
+        model.ext["melix.capability.route_kind"] = "python_transcription"
+        model.ext["melix.capability.class"] = "transcription"
+        model.ext["melix.capability.supported_modalities"] = "audio,text"
+        model.ext["melix.capability.supported_tasks"] = "transcribe"
+        model.ext["melix.capability.supported_parsers"] = "text"
+        return model
+    }
+
+    private static func mlxKokoroModel() -> Melix_Worker_V1_ModelSpec {
+        var model = Melix_Worker_V1_ModelSpec()
+        model.modelID = "melix-kokoro-mlx"
+        model.modelPath = "mlx-community/Kokoro-82M-bf16"
+        model.modelKind = "speech"
+        model.revision = "mlx-audio"
+        model.tokenizerHash = "tok-kokoro-mlx"
+        model.quantProfileID = "bf16"
+        model.parserMode = "text"
+        model.reasoningMode = "off"
+        model.maxContext = 4096
+        model.ext["melix.audio.backend_id"] = "mlx_audio.tts"
+        model.ext["melix.audio.family_id"] = "kokoro"
+        model.ext["melix.audio.install_profile"] = "audio-tts"
+        model.ext["melix.audio.languages"] = "en"
+        model.ext["melix.audio.voice_mode"] = "named"
+        model.ext["melix.audio.output_formats"] = "wav"
+        model.ext["melix.audio.supports_instructions"] = "false"
+        model.ext["melix.adapter_set_hash"] = "audio-family-kokoro"
+        model.ext["melix.capability.route_kind"] = "python_speech"
+        model.ext["melix.capability.class"] = "speech"
+        model.ext["melix.capability.supported_modalities"] = "text,audio"
+        model.ext["melix.capability.supported_tasks"] = "speak"
+        model.ext["melix.capability.supported_parsers"] = "text"
         return model
     }
 

@@ -26,13 +26,14 @@ class TranscriptionCore:
 
         self._registry.start_request(request.id.request_id, runtime_kind="transcription")
         try:
-            transcript = self._registry.transcription_runtime.transcribe(
+            runtime = self._registry.runtime_for_loaded_model(loaded_model)
+            transcript = runtime.transcribe(
                 loaded_model.runtime_model,
                 request,
             )
-            if hasattr(self._registry.transcription_runtime, "last_probe_snapshot"):
+            if hasattr(runtime, "last_probe_snapshot"):
                 self._registry.record_transcription_probe(
-                    self._registry.transcription_runtime.last_probe_snapshot()
+                    runtime.last_probe_snapshot()
                 )
         except Exception as exc:  # pragma: no cover - defensive branch
             return inference_pb2.TranscribeResponse(

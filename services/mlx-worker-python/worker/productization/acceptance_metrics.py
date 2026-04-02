@@ -10,7 +10,7 @@ from packages.protocol.python.worker.v1 import maintenance_pb2
 from worker.engine.maintenance_core import MaintenanceCore
 from worker.productization.release_gates import (
     _build_maintenance_core as _build_release_gate_maintenance_core,
-    _ensure_training_dataset,
+    _ensure_dev_training_dataset,
     _evaluate_section_metrics,
     load_release_gate_policy,
 )
@@ -126,6 +126,8 @@ def build_phase8_metrics_report(
     cache_recovery_metrics = dict(
         release_gate_report.get("benchmarks", {}).get("recovery_metrics", {})
     )
+    audio = dict(release_gate_report.get("audio", {}))
+    audio_metrics = dict(audio.get("metrics", {}))
 
     metrics = {
         "desktop.cold_boot_to_ready_ms": round(
@@ -240,6 +242,46 @@ def build_phase8_metrics_report(
             compute_install_success_rate(release_gate_report["install"]),
             2,
         ),
+        "audio.slim_runtime_pack_install_ms": round(
+            float(audio_metrics.get("slim.audio_runtime_pack_install_ms", 0.0)),
+            2,
+        ),
+        "audio.slim_model_download_ms": round(
+            float(audio_metrics.get("slim.audio_model_download_ms", 0.0)),
+            2,
+        ),
+        "audio.slim_first_use_blocked_runtime_pack_count": round(
+            float(audio_metrics.get("slim.audio_first_use_blocked_runtime_pack_count", 0.0)),
+            2,
+        ),
+        "audio.slim_first_use_blocked_model_count": round(
+            float(audio_metrics.get("slim.audio_first_use_blocked_model_count", 0.0)),
+            2,
+        ),
+        "audio.slim_runtime_pack_recovery_success_rate": round(
+            float(audio_metrics.get("slim.audio_runtime_pack_recovery_success_rate", 0.0)),
+            2,
+        ),
+        "audio.full_runtime_pack_install_ms": round(
+            float(audio_metrics.get("full.audio_runtime_pack_install_ms", 0.0)),
+            2,
+        ),
+        "audio.full_model_download_ms": round(
+            float(audio_metrics.get("full.audio_model_download_ms", 0.0)),
+            2,
+        ),
+        "audio.full_first_use_blocked_runtime_pack_count": round(
+            float(audio_metrics.get("full.audio_first_use_blocked_runtime_pack_count", 0.0)),
+            2,
+        ),
+        "audio.full_first_use_blocked_model_count": round(
+            float(audio_metrics.get("full.audio_first_use_blocked_model_count", 0.0)),
+            2,
+        ),
+        "audio.full_runtime_pack_recovery_success_rate": round(
+            float(audio_metrics.get("full.audio_runtime_pack_recovery_success_rate", 0.0)),
+            2,
+        ),
         "training.job_duration_ms": round(
             float(release_gate_report["training"]["training_duration_ms"]),
             2,
@@ -273,6 +315,7 @@ def build_phase8_metrics_report(
             for key, value in cold_boot_evidence.items()
         },
         "runtime_core": runtime_core_evidence,
+        "audio": audio,
         "operator": operator,
         "release_gate": release_gate_report,
     }
@@ -312,10 +355,11 @@ def compute_release_smoke_pass_rate(report: dict[str, Any], policy: dict[str, An
         and compute_benchmark_regression_pct(report.get("benchmarks", {}), policy) == 0.0,
         _training_sane(report.get("training", {}), policy),
         _recovery_sane(report.get("recovery", {}), policy),
+        _audio_sane(report.get("audio", {}), policy),
         _runtime_core_sane(report.get("runtime_core", {}), policy),
     ]
     passed = sum(1 for section in sections if section)
-    return (passed / len(sections)) * 100.0
+    return round((passed / len(sections)) * 100.0, 2)
 
 
 def _metric_value(snapshot: dict[str, Any], key: str) -> float:
@@ -342,7 +386,7 @@ def _build_maintenance_core(jobs_root: Path) -> MaintenanceCore:
 
 
 def _seed_registry_state(core: MaintenanceCore, root: Path) -> None:
-    dataset_root = _ensure_training_dataset(root)
+    dataset_path = _ensure_dev_training_dataset(root)
     train_events = list(
         core.convert_model(
             maintenance_pb2.ConvertModelRequest(
@@ -352,7 +396,7 @@ def _seed_registry_state(core: MaintenanceCore, root: Path) -> None:
                 ext={
                     "operation": "train_lora",
                     "adapter_name": "melix-dev-adapter",
-                    "dataset_uri": str(dataset_root),
+                    "dataset_uri": str(dataset_path),
                     "target_repo": "melix/adapters/melix-dev-adapter",
                 },
             )
@@ -399,6 +443,25 @@ def _recovery_sane(recovery: dict[str, Any], policy: dict[str, Any]) -> bool:
         and float(duration) <= float(rules["restart_recovery_ms"]["max"])
         and float(success_rate) >= float(rules["restart_recovery_success_rate"]["min"])
     )
+
+
+def _audio_sane(audio: dict[str, Any], policy: dict[str, Any]) -> bool:
+    if not isinstance(audio, dict):
+        return False
+    checks = audio.get("checks", {})
+    required_checks = (
+        "slim_requires_runtime_pack_download",
+        "full_runtime_pack_preinstalled",
+        "slim_runtime_pack_metadata_exists",
+        "full_runtime_pack_metadata_exists",
+        "slim_managed_model_metadata_exists",
+        "full_managed_model_metadata_exists",
+    )
+    if not isinstance(checks, dict):
+        return False
+    if any(checks.get(name) is not True for name in required_checks):
+        return False
+    return not _evaluate_section_metrics(audio.get("metrics", {}), policy.get("audio", {}))
 
 
 def _runtime_core_sane(runtime_core: dict[str, Any], policy: dict[str, Any]) -> bool:

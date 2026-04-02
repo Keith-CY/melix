@@ -216,3 +216,47 @@ def test_deterministic_audio_runtimes_expose_probe_snapshots() -> None:
     assert speech.format == "wav"
     assert speech_probe.output_bytes == len(speech.audio_bytes)
     assert speech_probe.speech_latency_ms > 0.0
+
+
+def test_audio_catalog_models_expose_backend_metadata_and_real_backend_entries() -> None:
+    catalog = WorkerModelCatalog(
+        environment={
+            "MELIX_MLX_AUDIO_WHISPER_MODEL_PATH": "mlx-community/whisper-large-v3-turbo-asr-fp16",
+            "MELIX_MLX_AUDIO_KOKORO_MODEL_PATH": "mlx-community/Kokoro-82M-bf16",
+        }
+    )
+
+    deterministic_transcription = catalog.get("melix-dev-transcribe")
+    deterministic_speech = catalog.get("melix-dev-speech")
+    whisper = catalog.get("melix-whisper-mlx")
+    kokoro = catalog.get("melix-kokoro-mlx")
+
+    assert deterministic_transcription is not None
+    assert deterministic_transcription.ext["melix.audio.backend_id"] == "deterministic"
+    assert deterministic_transcription.ext["melix.audio.family_id"] == "deterministic-transcription"
+    assert deterministic_transcription.ext["melix.audio.install_profile"] == ""
+    assert deterministic_transcription.ext["melix.audio.languages"] == "und"
+    assert deterministic_transcription.ext["melix.capability.supported_modalities"] == "audio,text"
+    assert deterministic_transcription.ext["melix.capability.supported_tasks"] == "transcribe"
+
+    assert deterministic_speech is not None
+    assert deterministic_speech.ext["melix.audio.backend_id"] == "deterministic"
+    assert deterministic_speech.ext["melix.audio.family_id"] == "deterministic-speech"
+    assert deterministic_speech.ext["melix.audio.output_formats"] == "wav,mp3"
+    assert deterministic_speech.ext["melix.audio.voice_mode"] == "named"
+    assert deterministic_speech.ext["melix.audio.supports_instructions"] == "false"
+
+    assert whisper is not None
+    assert whisper.model_kind == "transcription"
+    assert whisper.model_path == "mlx-community/whisper-large-v3-turbo-asr-fp16"
+    assert whisper.ext["melix.audio.backend_id"] == "mlx_audio.stt"
+    assert whisper.ext["melix.audio.install_profile"] == "audio-stt"
+    assert whisper.ext["melix.audio.family_id"] == "whisper"
+
+    assert kokoro is not None
+    assert kokoro.model_kind == "speech"
+    assert kokoro.model_path == "mlx-community/Kokoro-82M-bf16"
+    assert kokoro.ext["melix.audio.backend_id"] == "mlx_audio.tts"
+    assert kokoro.ext["melix.audio.install_profile"] == "audio-tts"
+    assert kokoro.ext["melix.audio.family_id"] == "kokoro"
+    assert kokoro.ext["melix.audio.output_formats"] == "wav"

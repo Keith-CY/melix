@@ -524,6 +524,97 @@ struct RuntimeViewModelTests {
         #expect(banner.detail == viewModel.connectionDetailText)
     }
 
+    @Test("audio setup banner and download actions surface missing audio assets")
+    @MainActor
+    func audioSetupBannerAndDownloadActionsSurfaceMissingAudioAssets() async throws {
+        let client = FakeControlPlaneXPCClient()
+        var whisper = ModelCatalog.mlxWhisperModel()
+        whisper.settings.ext["melix.audio.runtime_pack_state"] = "missing"
+        whisper.settings.ext["melix.audio.runtime_pack_id"] = "melix-audio-runtime-pack"
+        whisper.settings.ext["melix.audio.model_state"] = "catalog_default"
+        let snapshot = makeSnapshot(
+            serverState: .serverReady,
+            models: [ModelCatalog.devTextModel(), whisper]
+        )
+        await client.configureSnapshot(snapshot)
+
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+
+        let banner = try #require(viewModel.desktopBannerState)
+        let action = try #require(viewModel.audioSetupActions.first)
+
+        #expect(banner.severity == .warning)
+        #expect(banner.title == "Audio Setup Required")
+        #expect(action.modelID == "melix-whisper-mlx")
+        #expect(action.actionTitle == "Install Audio Support")
+        #expect(action.detail.contains("melix-audio-runtime-pack"))
+    }
+
+    @Test("audio setup actions dispatch install and download operations then refresh snapshot")
+    @MainActor
+    func audioSetupActionsDispatchInstallAndDownloadOperationsThenRefreshSnapshot() async throws {
+        let client = FakeControlPlaneXPCClient()
+
+        var missingRuntime = ModelCatalog.mlxWhisperModel()
+        missingRuntime.settings.ext["melix.audio.runtime_pack_state"] = "missing"
+        missingRuntime.settings.ext["melix.audio.runtime_pack_id"] = "melix-audio-runtime-pack"
+        missingRuntime.settings.ext["melix.audio.model_state"] = "catalog_default"
+
+        var runtimeInstalled = missingRuntime
+        runtimeInstalled.settings.ext["melix.audio.runtime_pack_state"] = "installed"
+        runtimeInstalled.settings.ext["melix.audio.model_state"] = "catalog_default"
+
+        var managedLocal = runtimeInstalled
+        managedLocal.settings.ext["melix.audio.model_state"] = "managed_local"
+        managedLocal.settings.ext["melix.model_path"] = "/Users/test/Library/Application Support/Melix/models/default-managed/hf/mlx-community/whisper-large-v3-turbo-asr-fp16/mlx-audio"
+
+        await client.configureSnapshot(
+            makeSnapshot(serverState: .serverReady, models: [ModelCatalog.devTextModel(), missingRuntime])
+        )
+        await client.configureModelOperation(
+            makeNamedModelOperationResult(
+                operation: "install_audio_runtime",
+                outputPath: "/Users/test/Library/Application Support/Melix/runtime-packs/audio/melix-audio-runtime-pack/0.3.0",
+                manifestJSON: "{}"
+            ),
+            forNamedOperation: "install_audio_runtime"
+        )
+        await client.configureModelOperation(
+            makeNamedModelOperationResult(
+                operation: "download",
+                outputPath: managedLocal.settings.ext["melix.model_path"] ?? "",
+                manifestJSON: "{}"
+            ),
+            forNamedOperation: "download"
+        )
+
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+
+        await client.configureSnapshot(
+            makeSnapshot(serverState: .serverReady, models: [ModelCatalog.devTextModel(), runtimeInstalled])
+        )
+        await viewModel.installAudioRuntime(modelID: "melix-whisper-mlx")
+
+        let installRequest = try #require(await client.recordedModelOperationRequests.first)
+        #expect(installRequest.operation == "install_audio_runtime")
+        #expect(installRequest.modelID == "melix-whisper-mlx")
+        #expect(viewModel.audioSetupActions.first?.actionTitle == "Download Audio Model")
+
+        await client.configureSnapshot(
+            makeSnapshot(serverState: .serverReady, models: [ModelCatalog.devTextModel(), managedLocal])
+        )
+        await viewModel.downloadAudioModel(modelID: "melix-whisper-mlx")
+
+        let requests = await client.recordedModelOperationRequests
+        #expect(requests.count == 2)
+        #expect(requests[1].operation == "download")
+        #expect(requests[1].modelID == "melix-whisper-mlx")
+        #expect(viewModel.audioSetupActions.isEmpty)
+        #expect(viewModel.lastModelOperation?.operation == "download")
+    }
+
     @Test("load and unload actions dispatch through the client and refresh app state")
     @MainActor
     func loadAndUnloadDispatchThroughClient() async throws {

@@ -88,6 +88,8 @@ def render_portable_environment_script(app_support_name: str = "Melix") -> str:
             "",
             f'export MELIX_APP_SUPPORT_DIR="$HOME/Library/Application Support/{app_support_name}"',
             'export MELIX_RUNTIME_DIR="$MELIX_APP_SUPPORT_DIR/runtime"',
+            'export MELIX_MANAGED_MODEL_ROOT="$MELIX_APP_SUPPORT_DIR/models/default-managed"',
+            'export MELIX_AUDIO_RUNTIME_PACK_ROOT="$MELIX_APP_SUPPORT_DIR/runtime-packs/audio"',
             'export MELIX_LOGS_DIR="$HOME/Library/Logs/Melix"',
             "",
         ]
@@ -115,7 +117,7 @@ def render_launcher_script(
             'RESOURCES_DIR="$CONTENTS_DIR/Resources"',
             f'export MELIX_REPO_ROOT="$RESOURCES_DIR/{repo_root.as_posix()}"',
             'source "$RESOURCES_DIR/melix-product-env.sh"',
-            'mkdir -p "$MELIX_RUNTIME_DIR" "$MELIX_LOGS_DIR" "$MELIX_RUNTIME_DIR/swift-text-worker-cache"',
+            'mkdir -p "$MELIX_RUNTIME_DIR" "$MELIX_LOGS_DIR" "$MELIX_RUNTIME_DIR/swift-text-worker-cache" "$MELIX_MANAGED_MODEL_ROOT" "$MELIX_AUDIO_RUNTIME_PACK_ROOT"',
             'RUN_TOKEN="${MELIX_RUN_TOKEN:-$$}"',
             'export MELIX_WORKER_SOCKET_PATH="$MELIX_RUNTIME_DIR/python-worker-${RUN_TOKEN}.sock"',
             'export MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH="$MELIX_RUNTIME_DIR/swift-text-worker-${RUN_TOKEN}.sock"',

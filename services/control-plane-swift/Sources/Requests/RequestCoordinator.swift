@@ -1630,17 +1630,50 @@ public actor RequestCoordinator {
         case .pythonTranscription:
             await metricsStore.set(stats.lastPreprocessLatencyMs, forKey: "audio.preprocess_latency_ms")
             await metricsStore.set(
+                Double(stats.lastPreprocessInputBytes),
+                forKey: "audio.preprocess_input_bytes"
+            )
+            await metricsStore.set(
                 Double(stats.lastPreprocessPeakMemoryBytes),
                 forKey: "audio.preprocess_peak_memory_bytes"
             )
             await metricsStore.set(stats.lastTranscriptionLatencyMs, forKey: "audio.transcription_latency_ms")
+            await metricsStore.set(stats.lastAudioDurationSeconds, forKey: "audio.estimated_duration_seconds")
+            await metricsStore.set(stats.lastAudioDurationSeconds, forKey: "audio.audio_duration_seconds")
+            await metricsStore.set(Double(stats.lastAudioChunkCount), forKey: "audio.chunk_count")
+            await metricsStore.set(Double(stats.lastAudioChunkCount), forKey: "audio.audio_chunk_count")
+            await metricsStore.set(stats.lastAudioModelLoadLatencyMs, forKey: "audio.model_load_latency_ms")
+            await metricsStore.set(
+                Double(stats.lastAudioBackendUnavailableCount),
+                forKey: "audio.backend_unavailable_count"
+            )
+            await metricsStore.set(
+                Double(stats.lastLanguageFallbackCount),
+                forKey: "audio.language_fallback_count"
+            )
         case .pythonSpeech:
             await metricsStore.set(stats.lastPreprocessLatencyMs, forKey: "audio.preprocess_latency_ms")
+            await metricsStore.set(
+                Double(stats.lastPreprocessInputBytes),
+                forKey: "audio.preprocess_input_bytes"
+            )
             await metricsStore.set(
                 Double(stats.lastPreprocessPeakMemoryBytes),
                 forKey: "audio.preprocess_peak_memory_bytes"
             )
             await metricsStore.set(stats.lastSpeechLatencyMs, forKey: "audio.speech_latency_ms")
+            await metricsStore.set(stats.lastAudioModelLoadLatencyMs, forKey: "audio.model_load_latency_ms")
+            await metricsStore.set(
+                Double(stats.lastAudioBackendUnavailableCount),
+                forKey: "audio.backend_unavailable_count"
+            )
+            await metricsStore.set(
+                Double(stats.lastVoiceFallbackCount),
+                forKey: "audio.voice_fallback_count"
+            )
+            if stats.lastAudioOutputBytes > 0 {
+                await metricsStore.set(Double(stats.lastAudioOutputBytes), forKey: "audio.speech_output_bytes")
+            }
         default:
             break
         }

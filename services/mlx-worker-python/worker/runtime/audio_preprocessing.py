@@ -14,6 +14,7 @@ class AudioPreprocessError(ValueError):
 @dataclass(frozen=True)
 class PreparedAudioInput:
     bytes_data: bytes
+    local_path: str
     source_kind: str
     reference: str
     mime_type: str
@@ -38,11 +39,13 @@ def prepare_audio_input(request) -> PreparedAudioInput:
 
     if request.audio_bytes:
         bytes_data = bytes(request.audio_bytes)
+        local_path = ""
         source_kind = "inline"
         reference = "inline:audio"
     elif request.audio_uri:
         path = _path_from_uri(request.audio_uri)
         bytes_data = path.read_bytes()
+        local_path = str(path)
         source_kind = "uri"
         reference = request.audio_uri
         if not format_name:
@@ -58,6 +61,7 @@ def prepare_audio_input(request) -> PreparedAudioInput:
     latency_ms = max(0.0, (perf_counter() - started_at) * 1000.0)
     return PreparedAudioInput(
         bytes_data=bytes_data,
+        local_path=local_path,
         source_kind=source_kind,
         reference=reference,
         mime_type=mime_type,

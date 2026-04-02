@@ -122,6 +122,8 @@ Current phase-status and planning documents:
 - `plans/2026-03-31-m17-2-text-to-speech-backend-adapters-and-multilingual-voice-catalog.md`
 - `plans/2026-03-31-m17-3-speech-settings-locale-policy-and-optional-dependency-profiles.md`
 - `plans/2026-03-31-m17-4-speech-integration-benchmarks-runbooks-and-operator-evidence.md`
+- `plans/2026-04-02-m17-mlx-audio-library-integration.md`
+- `plans/2026-04-02-m17-audio-runtime-packs-and-managed-model-root.md`
 - `plans/2026-03-31-m10-m15-executable-goals.md`
 - `plans/2026-03-30-m3-12-protocol-compatibility-test-matrix.md`
 - `plans/2026-03-28-p1-m2-swift-text-worker-scaffold.md`

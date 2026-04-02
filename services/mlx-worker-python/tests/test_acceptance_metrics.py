@@ -237,6 +237,28 @@ def test_compute_release_smoke_pass_rate_uses_all_gate_sections() -> None:
             "restart_recovery_ms": 13550.49,
             "restart_recovery_success_rate": 100.0,
         },
+        "audio": {
+            "checks": {
+                "slim_requires_runtime_pack_download": True,
+                "full_runtime_pack_preinstalled": True,
+                "slim_runtime_pack_metadata_exists": True,
+                "full_runtime_pack_metadata_exists": True,
+                "slim_managed_model_metadata_exists": True,
+                "full_managed_model_metadata_exists": True,
+            },
+            "metrics": {
+                "slim.audio_runtime_pack_install_ms": 10.0,
+                "slim.audio_model_download_ms": 15.0,
+                "slim.audio_first_use_blocked_runtime_pack_count": 1.0,
+                "slim.audio_first_use_blocked_model_count": 1.0,
+                "slim.audio_runtime_pack_recovery_success_rate": 100.0,
+                "full.audio_runtime_pack_install_ms": 0.0,
+                "full.audio_model_download_ms": 15.0,
+                "full.audio_first_use_blocked_runtime_pack_count": 0.0,
+                "full.audio_first_use_blocked_model_count": 1.0,
+                "full.audio_runtime_pack_recovery_success_rate": 100.0,
+            },
+        },
         "runtime_core": {
             "multi_model_ready_count": 3.0,
             "multi_model_request_success_rate": 100.0,
@@ -248,7 +270,7 @@ def test_compute_release_smoke_pass_rate_uses_all_gate_sections() -> None:
     assert compute_release_smoke_pass_rate(report, policy) == 100.0
 
     report["recovery"]["restart_recovery_success_rate"] = 0.0
-    assert compute_release_smoke_pass_rate(report, policy) == 80.0
+    assert compute_release_smoke_pass_rate(report, policy) == 83.33
 
 
 def test_compute_release_smoke_pass_rate_fails_non_dict_runtime_core() -> None:
@@ -277,10 +299,32 @@ def test_compute_release_smoke_pass_rate_fails_non_dict_runtime_core() -> None:
             "restart_recovery_ms": 13550.49,
             "restart_recovery_success_rate": 100.0,
         },
+        "audio": {
+            "checks": {
+                "slim_requires_runtime_pack_download": True,
+                "full_runtime_pack_preinstalled": True,
+                "slim_runtime_pack_metadata_exists": True,
+                "full_runtime_pack_metadata_exists": True,
+                "slim_managed_model_metadata_exists": True,
+                "full_managed_model_metadata_exists": True,
+            },
+            "metrics": {
+                "slim.audio_runtime_pack_install_ms": 10.0,
+                "slim.audio_model_download_ms": 15.0,
+                "slim.audio_first_use_blocked_runtime_pack_count": 1.0,
+                "slim.audio_first_use_blocked_model_count": 1.0,
+                "slim.audio_runtime_pack_recovery_success_rate": 100.0,
+                "full.audio_runtime_pack_install_ms": 0.0,
+                "full.audio_model_download_ms": 15.0,
+                "full.audio_first_use_blocked_runtime_pack_count": 0.0,
+                "full.audio_first_use_blocked_model_count": 1.0,
+                "full.audio_runtime_pack_recovery_success_rate": 100.0,
+            },
+        },
         "runtime_core": "invalid",
     }
 
-    assert compute_release_smoke_pass_rate(report, policy) == 80.0
+    assert compute_release_smoke_pass_rate(report, policy) == 83.33
 
 
 def test_build_phase8_metrics_report_includes_required_probe_names() -> None:
@@ -343,6 +387,28 @@ def test_build_phase8_metrics_report_includes_required_probe_names() -> None:
                 "restart_recovery_ms": 13550.49,
                 "restart_recovery_success_rate": 100.0,
             },
+            "audio": {
+                "checks": {
+                    "slim_requires_runtime_pack_download": True,
+                    "full_runtime_pack_preinstalled": True,
+                    "slim_runtime_pack_metadata_exists": True,
+                    "full_runtime_pack_metadata_exists": True,
+                    "slim_managed_model_metadata_exists": True,
+                    "full_managed_model_metadata_exists": True,
+                },
+                "metrics": {
+                    "slim.audio_runtime_pack_install_ms": 12.3,
+                    "slim.audio_model_download_ms": 18.4,
+                    "slim.audio_first_use_blocked_runtime_pack_count": 1.0,
+                    "slim.audio_first_use_blocked_model_count": 1.0,
+                    "slim.audio_runtime_pack_recovery_success_rate": 100.0,
+                    "full.audio_runtime_pack_install_ms": 0.0,
+                    "full.audio_model_download_ms": 17.2,
+                    "full.audio_first_use_blocked_runtime_pack_count": 0.0,
+                    "full.audio_first_use_blocked_model_count": 1.0,
+                    "full.audio_runtime_pack_recovery_success_rate": 100.0,
+                },
+            },
             "runtime_core": {
                 "multi_model_ready_count": 3.0,
                 "multi_model_request_success_rate": 100.0,
@@ -397,6 +463,16 @@ def test_build_phase8_metrics_report_includes_required_probe_names() -> None:
     assert metrics["release.benchmark_regression_pct"] == 0.0
     assert metrics["release.smoke_pass_rate"] == 100.0
     assert metrics["install.success_rate"] == 100.0
+    assert metrics["audio.slim_runtime_pack_install_ms"] == 12.3
+    assert metrics["audio.slim_model_download_ms"] == 18.4
+    assert metrics["audio.slim_first_use_blocked_runtime_pack_count"] == 1.0
+    assert metrics["audio.slim_first_use_blocked_model_count"] == 1.0
+    assert metrics["audio.slim_runtime_pack_recovery_success_rate"] == 100.0
+    assert metrics["audio.full_runtime_pack_install_ms"] == 0.0
+    assert metrics["audio.full_model_download_ms"] == 17.2
+    assert metrics["audio.full_first_use_blocked_runtime_pack_count"] == 0.0
+    assert metrics["audio.full_first_use_blocked_model_count"] == 1.0
+    assert metrics["audio.full_runtime_pack_recovery_success_rate"] == 100.0
     assert metrics["training.job_duration_ms"] == 1420.0
     assert metrics["training.adapter_publish_ms"] == 118.0
 
@@ -440,6 +516,28 @@ def test_build_phase8_metrics_report_surfaces_cache_recovery_benchmark_metrics()
             "recovery": {
                 "restart_recovery_ms": 600.0,
                 "restart_recovery_success_rate": 100.0,
+            },
+            "audio": {
+                "checks": {
+                    "slim_requires_runtime_pack_download": True,
+                    "full_runtime_pack_preinstalled": True,
+                    "slim_runtime_pack_metadata_exists": True,
+                    "full_runtime_pack_metadata_exists": True,
+                    "slim_managed_model_metadata_exists": True,
+                    "full_managed_model_metadata_exists": True,
+                },
+                "metrics": {
+                    "slim.audio_runtime_pack_install_ms": 12.3,
+                    "slim.audio_model_download_ms": 18.4,
+                    "slim.audio_first_use_blocked_runtime_pack_count": 1.0,
+                    "slim.audio_first_use_blocked_model_count": 1.0,
+                    "slim.audio_runtime_pack_recovery_success_rate": 100.0,
+                    "full.audio_runtime_pack_install_ms": 0.0,
+                    "full.audio_model_download_ms": 17.2,
+                    "full.audio_first_use_blocked_runtime_pack_count": 0.0,
+                    "full.audio_first_use_blocked_model_count": 1.0,
+                    "full.audio_runtime_pack_recovery_success_rate": 100.0,
+                },
             },
             "runtime_core": {
                 "multi_model_ready_count": 3.0,
@@ -500,6 +598,28 @@ def test_build_phase8_metrics_report_accepts_cold_boot_metric_parameter() -> Non
             "recovery": {
                 "restart_recovery_ms": 600.0,
                 "restart_recovery_success_rate": 100.0,
+            },
+            "audio": {
+                "checks": {
+                    "slim_requires_runtime_pack_download": True,
+                    "full_runtime_pack_preinstalled": True,
+                    "slim_runtime_pack_metadata_exists": True,
+                    "full_runtime_pack_metadata_exists": True,
+                    "slim_managed_model_metadata_exists": True,
+                    "full_managed_model_metadata_exists": True,
+                },
+                "metrics": {
+                    "slim.audio_runtime_pack_install_ms": 12.3,
+                    "slim.audio_model_download_ms": 18.4,
+                    "slim.audio_first_use_blocked_runtime_pack_count": 1.0,
+                    "slim.audio_first_use_blocked_model_count": 1.0,
+                    "slim.audio_runtime_pack_recovery_success_rate": 100.0,
+                    "full.audio_runtime_pack_install_ms": 0.0,
+                    "full.audio_model_download_ms": 17.2,
+                    "full.audio_first_use_blocked_runtime_pack_count": 0.0,
+                    "full.audio_first_use_blocked_model_count": 1.0,
+                    "full.audio_runtime_pack_recovery_success_rate": 100.0,
+                },
             },
             "runtime_core": {
                 "multi_model_ready_count": 3.0,

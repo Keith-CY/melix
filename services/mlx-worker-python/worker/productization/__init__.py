@@ -1,96 +1,91 @@
-from worker.productization.install_assets import (
-    LaunchAgentSpec,
-    LocalProductLayout,
-    build_launch_agent_specs,
-    build_local_product_layout,
-    render_launch_agent_plist,
-    write_local_product_artifacts,
-)
-from worker.productization.acceptance_metrics import (
-    build_phase6_vision_metrics_report,
-    build_phase8_metrics_report,
-    collect_operator_action_evidence,
-    compute_benchmark_regression_pct,
-    compute_install_success_rate,
-    compute_release_smoke_pass_rate,
-)
-from worker.productization.release_gates import (
-    DEFAULT_RELEASE_GATE_POLICY,
-    build_release_gate_report,
-    collect_benchmark_evidence,
-    collect_evaluation_evidence,
-    collect_install_evidence,
-    collect_training_evidence,
-    evaluate_release_gate,
-    load_release_gate_policy,
-)
-from worker.productization.quantization_gates import (
-    DEFAULT_QUANTIZATION_GATE_POLICY,
-    collect_quantization_benchmark_evidence,
-    evaluate_quantization_gate,
-    load_quantization_gate_policy,
-)
-from worker.productization.macos_app_bundle import (
-    MacOSAppBundleLayout,
-    archive_macos_app_bundle,
-    build_macos_app_bundle_layout,
-    render_info_plist,
-    render_launcher_script,
-    render_portable_environment_script,
-    resolve_python_runtime_root,
-    resolve_site_packages_root,
-    write_unsigned_macos_app_bundle,
-)
-from worker.productization.build_metadata import (
-    BuildMetadata,
-    compute_build_metadata,
-    infer_git_ref_name,
-    infer_git_sha,
-    sanitize_ref_name,
-)
-from worker.productization.benchmark_schemas import (
-    BenchmarkMetricValue,
-    ServingBenchmarkJob,
-    ServingBenchmarkResult,
-    build_evaluation_job,
-    build_evaluation_result,
-    build_serving_benchmark_job,
-    build_serving_benchmark_results,
-)
-from worker.productization.evaluation_schemas import (
-    EvaluationDatasetPackageManifest,
-    EvaluationJob,
-    EvaluationResult,
-    build_dataset_package_manifest,
-    build_evaluation_job_record,
-    build_evaluation_result_record,
-)
-from worker.productization.benchmark_queue import (
-    BenchmarkQueueRecord,
-    BenchmarkQueueStore,
-)
-from worker.productization.benchmark_export import (
-    build_comparison_table,
-    build_export_bundle,
-    collect_benchmark_artifacts,
-    collect_evaluation_artifacts,
-    write_export_bundle,
-)
-from worker.productization.device_identity import (
-    DeviceIdentity,
-    collect_device_identity,
-    hash_hostname,
-)
-from worker.productization.submission_builder import (
-    SubmissionPayload,
-    build_submission_payload,
-)
+from __future__ import annotations
+
+from importlib import import_module
+
+_EXPORTS: dict[str, tuple[str, str]] = {
+    "DEFAULT_RELEASE_GATE_POLICY": ("worker.productization.release_gates", "DEFAULT_RELEASE_GATE_POLICY"),
+    "DEFAULT_QUANTIZATION_GATE_POLICY": ("worker.productization.quantization_gates", "DEFAULT_QUANTIZATION_GATE_POLICY"),
+    "LaunchAgentSpec": ("worker.productization.install_assets", "LaunchAgentSpec"),
+    "LocalProductLayout": ("worker.productization.install_assets", "LocalProductLayout"),
+    "MacOSAppBundleLayout": ("worker.productization.macos_app_bundle", "MacOSAppBundleLayout"),
+    "archive_macos_app_bundle": ("worker.productization.macos_app_bundle", "archive_macos_app_bundle"),
+    "build_phase6_vision_metrics_report": ("worker.productization.acceptance_metrics", "build_phase6_vision_metrics_report"),
+    "build_phase8_metrics_report": ("worker.productization.acceptance_metrics", "build_phase8_metrics_report"),
+    "build_release_gate_report": ("worker.productization.release_gates", "build_release_gate_report"),
+    "build_launch_agent_specs": ("worker.productization.install_assets", "build_launch_agent_specs"),
+    "build_local_product_layout": ("worker.productization.install_assets", "build_local_product_layout"),
+    "build_macos_app_bundle_layout": ("worker.productization.macos_app_bundle", "build_macos_app_bundle_layout"),
+    "BuildMetadata": ("worker.productization.build_metadata", "BuildMetadata"),
+    "BenchmarkMetricValue": ("worker.productization.benchmark_schemas", "BenchmarkMetricValue"),
+    "BenchmarkQueueRecord": ("worker.productization.benchmark_queue", "BenchmarkQueueRecord"),
+    "BenchmarkQueueStore": ("worker.productization.benchmark_queue", "BenchmarkQueueStore"),
+    "compute_build_metadata": ("worker.productization.build_metadata", "compute_build_metadata"),
+    "collect_benchmark_evidence": ("worker.productization.release_gates", "collect_benchmark_evidence"),
+    "collect_evaluation_evidence": ("worker.productization.release_gates", "collect_evaluation_evidence"),
+    "collect_install_evidence": ("worker.productization.release_gates", "collect_install_evidence"),
+    "collect_operator_action_evidence": ("worker.productization.acceptance_metrics", "collect_operator_action_evidence"),
+    "collect_quantization_benchmark_evidence": ("worker.productization.quantization_gates", "collect_quantization_benchmark_evidence"),
+    "collect_training_evidence": ("worker.productization.release_gates", "collect_training_evidence"),
+    "compute_benchmark_regression_pct": ("worker.productization.acceptance_metrics", "compute_benchmark_regression_pct"),
+    "compute_install_success_rate": ("worker.productization.acceptance_metrics", "compute_install_success_rate"),
+    "compute_release_smoke_pass_rate": ("worker.productization.acceptance_metrics", "compute_release_smoke_pass_rate"),
+    "EvaluationDatasetPackageManifest": ("worker.productization.evaluation_schemas", "EvaluationDatasetPackageManifest"),
+    "EvaluationJob": ("worker.productization.evaluation_schemas", "EvaluationJob"),
+    "EvaluationResult": ("worker.productization.evaluation_schemas", "EvaluationResult"),
+    "evaluate_release_gate": ("worker.productization.release_gates", "evaluate_release_gate"),
+    "evaluate_quantization_gate": ("worker.productization.quantization_gates", "evaluate_quantization_gate"),
+    "build_dataset_package_manifest": ("worker.productization.evaluation_schemas", "build_dataset_package_manifest"),
+    "build_evaluation_job": ("worker.productization.benchmark_schemas", "build_evaluation_job"),
+    "build_evaluation_result": ("worker.productization.benchmark_schemas", "build_evaluation_result"),
+    "build_evaluation_job_record": ("worker.productization.evaluation_schemas", "build_evaluation_job_record"),
+    "build_evaluation_result_record": ("worker.productization.evaluation_schemas", "build_evaluation_result_record"),
+    "build_serving_benchmark_job": ("worker.productization.benchmark_schemas", "build_serving_benchmark_job"),
+    "build_serving_benchmark_results": ("worker.productization.benchmark_schemas", "build_serving_benchmark_results"),
+    "load_release_gate_policy": ("worker.productization.release_gates", "load_release_gate_policy"),
+    "load_quantization_gate_policy": ("worker.productization.quantization_gates", "load_quantization_gate_policy"),
+    "infer_git_ref_name": ("worker.productization.build_metadata", "infer_git_ref_name"),
+    "infer_git_sha": ("worker.productization.build_metadata", "infer_git_sha"),
+    "render_info_plist": ("worker.productization.macos_app_bundle", "render_info_plist"),
+    "render_launcher_script": ("worker.productization.macos_app_bundle", "render_launcher_script"),
+    "render_portable_environment_script": ("worker.productization.macos_app_bundle", "render_portable_environment_script"),
+    "render_launch_agent_plist": ("worker.productization.install_assets", "render_launch_agent_plist"),
+    "resolve_python_runtime_root": ("worker.productization.macos_app_bundle", "resolve_python_runtime_root"),
+    "resolve_site_packages_root": ("worker.productization.macos_app_bundle", "resolve_site_packages_root"),
+    "sanitize_ref_name": ("worker.productization.build_metadata", "sanitize_ref_name"),
+    "ServingBenchmarkJob": ("worker.productization.benchmark_schemas", "ServingBenchmarkJob"),
+    "ServingBenchmarkResult": ("worker.productization.benchmark_schemas", "ServingBenchmarkResult"),
+    "write_unsigned_macos_app_bundle": ("worker.productization.macos_app_bundle", "write_unsigned_macos_app_bundle"),
+    "write_local_product_artifacts": ("worker.productization.install_assets", "write_local_product_artifacts"),
+    "build_comparison_table": ("worker.productization.benchmark_export", "build_comparison_table"),
+    "build_export_bundle": ("worker.productization.benchmark_export", "build_export_bundle"),
+    "collect_benchmark_artifacts": ("worker.productization.benchmark_export", "collect_benchmark_artifacts"),
+    "collect_evaluation_artifacts": ("worker.productization.benchmark_export", "collect_evaluation_artifacts"),
+    "write_export_bundle": ("worker.productization.benchmark_export", "write_export_bundle"),
+    "DeviceIdentity": ("worker.productization.device_identity", "DeviceIdentity"),
+    "collect_device_identity": ("worker.productization.device_identity", "collect_device_identity"),
+    "hash_hostname": ("worker.productization.device_identity", "hash_hostname"),
+    "SubmissionPayload": ("worker.productization.submission_builder", "SubmissionPayload"),
+    "build_submission_payload": ("worker.productization.submission_builder", "build_submission_payload"),
+}
 
 
-def build_family_support_matrix():
-    from worker.productization.family_support_matrix import build_family_support_matrix as _impl
+def __getattr__(name: str):
+    if name == "build_family_support_matrix":
+        from worker.productization.family_support_matrix import build_family_support_matrix as impl
 
-    return _impl()
+        globals()[name] = impl
+        return impl
+    if name not in _EXPORTS:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    module_name, attr_name = _EXPORTS[name]
+    value = getattr(import_module(module_name), attr_name)
+    globals()[name] = value
+    return value
+
+
+def __dir__() -> list[str]:
+    return sorted([*_EXPORTS, "build_family_support_matrix"])
+
 
 __all__ = [
     "DEFAULT_RELEASE_GATE_POLICY",

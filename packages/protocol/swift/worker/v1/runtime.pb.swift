@@ -361,6 +361,26 @@ public struct Melix_Worker_V1_RuntimeStats: @unchecked Sendable {
     set {_uniqueStorage()._memoryHeadroomBytes = newValue}
   }
 
+  public var lastAudioModelLoadLatencyMs: Double {
+    get {_storage._lastAudioModelLoadLatencyMs}
+    set {_uniqueStorage()._lastAudioModelLoadLatencyMs = newValue}
+  }
+
+  public var lastAudioBackendUnavailableCount: UInt64 {
+    get {_storage._lastAudioBackendUnavailableCount}
+    set {_uniqueStorage()._lastAudioBackendUnavailableCount = newValue}
+  }
+
+  public var lastVoiceFallbackCount: UInt64 {
+    get {_storage._lastVoiceFallbackCount}
+    set {_uniqueStorage()._lastVoiceFallbackCount = newValue}
+  }
+
+  public var lastLanguageFallbackCount: UInt64 {
+    get {_storage._lastLanguageFallbackCount}
+    set {_uniqueStorage()._lastLanguageFallbackCount = newValue}
+  }
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -857,7 +877,7 @@ extension Melix_Worker_V1_WarmupModelResponse: SwiftProtobuf.Message, SwiftProto
 
 extension Melix_Worker_V1_RuntimeStats: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".RuntimeStats"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}worker_state\0\u{3}resident_bytes\0\u{3}active_requests\0\u{3}active_prefills\0\u{3}active_decodes\0\u{3}l1_cache_bytes\0\u{3}l2_cache_bytes\0\u{3}l1_hit_rate\0\u{3}l2_hit_rate\0\u{3}active_multimodal_requests\0\u{3}last_probe_kind\0\u{3}last_preprocess_latency_ms\0\u{3}last_preprocess_input_bytes\0\u{3}last_preprocess_peak_memory_bytes\0\u{3}last_first_token_latency_ms\0\u{3}last_transcription_latency_ms\0\u{3}last_speech_latency_ms\0\u{3}last_audio_duration_seconds\0\u{3}last_audio_chunk_count\0\u{3}last_audio_output_bytes\0\u{3}last_image_job_latency_ms\0\u{3}last_image_artifact_publish_ms\0\u{3}last_image_output_bytes\0\u{3}last_image_peak_memory_bytes\0\u{3}model_resident_bytes\0\u{3}cache_resident_bytes\0\u{3}kv_cache_bytes\0\u{3}peak_allocation_bytes\0\u{3}memory_headroom_bytes\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}worker_state\0\u{3}resident_bytes\0\u{3}active_requests\0\u{3}active_prefills\0\u{3}active_decodes\0\u{3}l1_cache_bytes\0\u{3}l2_cache_bytes\0\u{3}l1_hit_rate\0\u{3}l2_hit_rate\0\u{3}active_multimodal_requests\0\u{3}last_probe_kind\0\u{3}last_preprocess_latency_ms\0\u{3}last_preprocess_input_bytes\0\u{3}last_preprocess_peak_memory_bytes\0\u{3}last_first_token_latency_ms\0\u{3}last_transcription_latency_ms\0\u{3}last_speech_latency_ms\0\u{3}last_audio_duration_seconds\0\u{3}last_audio_chunk_count\0\u{3}last_audio_output_bytes\0\u{3}last_image_job_latency_ms\0\u{3}last_image_artifact_publish_ms\0\u{3}last_image_output_bytes\0\u{3}last_image_peak_memory_bytes\0\u{3}model_resident_bytes\0\u{3}cache_resident_bytes\0\u{3}kv_cache_bytes\0\u{3}peak_allocation_bytes\0\u{3}memory_headroom_bytes\0\u{3}last_audio_model_load_latency_ms\0\u{3}last_audio_backend_unavailable_count\0\u{3}last_voice_fallback_count\0\u{3}last_language_fallback_count\0")
 
   fileprivate class _StorageClass {
     var _workerState: String = String()
@@ -889,6 +909,10 @@ extension Melix_Worker_V1_RuntimeStats: SwiftProtobuf.Message, SwiftProtobuf._Me
     var _kvCacheBytes: UInt64 = 0
     var _peakAllocationBytes: UInt64 = 0
     var _memoryHeadroomBytes: UInt64 = 0
+    var _lastAudioModelLoadLatencyMs: Double = 0
+    var _lastAudioBackendUnavailableCount: UInt64 = 0
+    var _lastVoiceFallbackCount: UInt64 = 0
+    var _lastLanguageFallbackCount: UInt64 = 0
 
       // This property is used as the initial default value for new instances of the type.
       // The type itself is protecting the reference to its storage via CoW semantics.
@@ -928,6 +952,10 @@ extension Melix_Worker_V1_RuntimeStats: SwiftProtobuf.Message, SwiftProtobuf._Me
       _kvCacheBytes = source._kvCacheBytes
       _peakAllocationBytes = source._peakAllocationBytes
       _memoryHeadroomBytes = source._memoryHeadroomBytes
+      _lastAudioModelLoadLatencyMs = source._lastAudioModelLoadLatencyMs
+      _lastAudioBackendUnavailableCount = source._lastAudioBackendUnavailableCount
+      _lastVoiceFallbackCount = source._lastVoiceFallbackCount
+      _lastLanguageFallbackCount = source._lastLanguageFallbackCount
     }
   }
 
@@ -975,6 +1003,10 @@ extension Melix_Worker_V1_RuntimeStats: SwiftProtobuf.Message, SwiftProtobuf._Me
         case 27: try { try decoder.decodeSingularUInt64Field(value: &_storage._kvCacheBytes) }()
         case 28: try { try decoder.decodeSingularUInt64Field(value: &_storage._peakAllocationBytes) }()
         case 29: try { try decoder.decodeSingularUInt64Field(value: &_storage._memoryHeadroomBytes) }()
+        case 30: try { try decoder.decodeSingularDoubleField(value: &_storage._lastAudioModelLoadLatencyMs) }()
+        case 31: try { try decoder.decodeSingularUInt64Field(value: &_storage._lastAudioBackendUnavailableCount) }()
+        case 32: try { try decoder.decodeSingularUInt64Field(value: &_storage._lastVoiceFallbackCount) }()
+        case 33: try { try decoder.decodeSingularUInt64Field(value: &_storage._lastLanguageFallbackCount) }()
         default: break
         }
       }
@@ -1070,6 +1102,18 @@ extension Melix_Worker_V1_RuntimeStats: SwiftProtobuf.Message, SwiftProtobuf._Me
       if _storage._memoryHeadroomBytes != 0 {
         try visitor.visitSingularUInt64Field(value: _storage._memoryHeadroomBytes, fieldNumber: 29)
       }
+      if _storage._lastAudioModelLoadLatencyMs.bitPattern != 0 {
+        try visitor.visitSingularDoubleField(value: _storage._lastAudioModelLoadLatencyMs, fieldNumber: 30)
+      }
+      if _storage._lastAudioBackendUnavailableCount != 0 {
+        try visitor.visitSingularUInt64Field(value: _storage._lastAudioBackendUnavailableCount, fieldNumber: 31)
+      }
+      if _storage._lastVoiceFallbackCount != 0 {
+        try visitor.visitSingularUInt64Field(value: _storage._lastVoiceFallbackCount, fieldNumber: 32)
+      }
+      if _storage._lastLanguageFallbackCount != 0 {
+        try visitor.visitSingularUInt64Field(value: _storage._lastLanguageFallbackCount, fieldNumber: 33)
+      }
     }
     try unknownFields.traverse(visitor: &visitor)
   }
@@ -1108,6 +1152,10 @@ extension Melix_Worker_V1_RuntimeStats: SwiftProtobuf.Message, SwiftProtobuf._Me
         if _storage._kvCacheBytes != rhs_storage._kvCacheBytes {return false}
         if _storage._peakAllocationBytes != rhs_storage._peakAllocationBytes {return false}
         if _storage._memoryHeadroomBytes != rhs_storage._memoryHeadroomBytes {return false}
+        if _storage._lastAudioModelLoadLatencyMs != rhs_storage._lastAudioModelLoadLatencyMs {return false}
+        if _storage._lastAudioBackendUnavailableCount != rhs_storage._lastAudioBackendUnavailableCount {return false}
+        if _storage._lastVoiceFallbackCount != rhs_storage._lastVoiceFallbackCount {return false}
+        if _storage._lastLanguageFallbackCount != rhs_storage._lastLanguageFallbackCount {return false}
         return true
       }
       if !storagesAreEqual {return false}

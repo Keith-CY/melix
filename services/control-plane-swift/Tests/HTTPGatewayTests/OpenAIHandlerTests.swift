@@ -2613,6 +2613,49 @@ struct OpenAIHandlerTests {
         #expect(unavailablePayload.contains("\"code\":\"worker_unavailable\""))
     }
 
+    @Test("POST /v1/audio/transcriptions preflights missing audio runtime packs for real audio models")
+    func postAudioTranscriptionsPreflightsMissingAudioRuntimePacksForRealAudioModels() async throws {
+        let textClient = ScriptedWorkerClient(events: [])
+        let audioClient = ScriptedPhaseFiveWorkerClient()
+        let assetManager = AudioAssetManager(
+            appSupportDirectory: FileManager.default.temporaryDirectory
+                .appendingPathComponent("melix-http-audio-preflight-\(UUID().uuidString)", isDirectory: true)
+        )
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.mlxWhisperModel()])
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: textClient),
+                abortRegistry: AbortRegistry()
+            ),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: textClient,
+                pythonCompatibilityClient: audioClient,
+                modelCatalog: catalog
+            ),
+            audioAssetManager: assetManager
+        )
+
+        let body = try #require(
+            """
+            {
+              "model": "melix-whisper-mlx",
+              "audio_url": "file:///tmp/audio.wav"
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(method: .post, path: "/v1/audio/transcriptions", headers: [:], body: body)
+        )
+        let payload = try await collectBody(response.body)
+
+        #expect(response.statusCode == 409)
+        #expect(payload.contains("\"code\":\"audio_runtime_pack_required\""))
+        #expect(payload.contains("\"runtime_pack_id\":\"melix-audio-runtime-pack\""))
+        #expect(await audioClient.lastTranscribeRequest == nil)
+    }
+
     @Test("POST /v1/audio/speech routes to the speech worker and returns audio bytes")
     func postAudioSpeechRoutesAndReturnsAudioBytes() async throws {
         let textClient = ScriptedWorkerClient(events: [])
@@ -2785,6 +2828,48 @@ struct OpenAIHandlerTests {
         #expect(payload == Data("mp3-bytes".utf8))
     }
 
+    @Test("POST /v1/audio/speech rejects formats unsupported by the selected model")
+    func postAudioSpeechRejectsFormatsUnsupportedByTheSelectedModel() async throws {
+        let textClient = ScriptedWorkerClient(events: [])
+        let audioClient = ScriptedPhaseFiveWorkerClient()
+        var kokoro = ModelCatalog.mlxKokoroModel()
+        kokoro.state = .modelDiscovered
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel(), kokoro])
+        _ = await catalog.loadModel(id: "melix-kokoro-mlx", dispatchHandle: "melix-kokoro-mlx::python")
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: textClient),
+                abortRegistry: AbortRegistry()
+            ),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: textClient,
+                pythonCompatibilityClient: audioClient,
+                modelCatalog: catalog
+            )
+        )
+
+        let body = try #require(
+            """
+            {
+              "model": "melix-kokoro-mlx",
+              "input": "hello speech",
+              "format": "mp3"
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(method: .post, path: "/v1/audio/speech", headers: [:], body: body)
+        )
+        let payload = try await collectBody(response.body)
+
+        #expect(response.statusCode == 400)
+        #expect(payload.contains("\"code\":\"invalid_argument\""))
+        #expect(payload.contains("does not support format"))
+        #expect(await audioClient.lastSpeakRequest == nil)
+    }
+
     @Test("POST /v1/audio/speech maps worker errors and thrown failures to HTTP responses")
     func postAudioSpeechMapsWorkerErrorsAndThrownFailuresToHTTPResponses() async throws {
         let textClient = ScriptedWorkerClient(events: [])
@@ -2889,6 +2974,55 @@ struct OpenAIHandlerTests {
 
         #expect(unavailableResponse.statusCode == 503)
         #expect(unavailablePayload.contains("\"code\":\"worker_unavailable\""))
+    }
+
+    @Test("POST /v1/audio/speech preflights missing managed audio models after runtime install")
+    func postAudioSpeechPreflightsMissingManagedAudioModelsAfterRuntimeInstall() async throws {
+        let textClient = ScriptedWorkerClient(events: [])
+        let audioClient = ScriptedPhaseFiveWorkerClient()
+        let appSupportDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-http-audio-model-\(UUID().uuidString)", isDirectory: true)
+        let assetManager = AudioAssetManager(appSupportDirectory: appSupportDirectory)
+        try assetManager.recordRuntimePackInstall(
+            packID: "melix-audio-runtime-pack",
+            version: "0.3.0",
+            profiles: ["audio-stt", "audio-tts"]
+        )
+
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.mlxKokoroModel()])
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: textClient),
+                abortRegistry: AbortRegistry()
+            ),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: textClient,
+                pythonCompatibilityClient: audioClient,
+                modelCatalog: catalog
+            ),
+            audioAssetManager: assetManager
+        )
+
+        let body = try #require(
+            """
+            {
+              "model": "melix-kokoro-mlx",
+              "input": "hello speech",
+              "format": "wav"
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(method: .post, path: "/v1/audio/speech", headers: [:], body: body)
+        )
+        let payload = try await collectBody(response.body)
+
+        #expect(response.statusCode == 409)
+        #expect(payload.contains("\"code\":\"audio_model_download_required\""))
+        #expect(payload.contains("\"model_id\":\"melix-kokoro-mlx\""))
+        #expect(await audioClient.lastSpeakRequest == nil)
     }
 
     @Test("POST /v1/images/generations routes to the image worker and returns JSON")

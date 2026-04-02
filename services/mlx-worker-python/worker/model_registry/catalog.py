@@ -19,6 +19,13 @@ _REGISTRY_PROVIDER_ID_KEY = "melix.registry_provider_id"
 _REGISTRY_ORGANIZATION_ID_KEY = "melix.registry_organization_id"
 _REGISTRY_MODEL_NAME_KEY = "melix.registry_model_name"
 _REGISTRY_VARIANT_ID_KEY = "melix.registry_variant_id"
+_AUDIO_BACKEND_ID_KEY = "melix.audio.backend_id"
+_AUDIO_FAMILY_ID_KEY = "melix.audio.family_id"
+_AUDIO_INSTALL_PROFILE_KEY = "melix.audio.install_profile"
+_AUDIO_LANGUAGES_KEY = "melix.audio.languages"
+_AUDIO_VOICE_MODE_KEY = "melix.audio.voice_mode"
+_AUDIO_OUTPUT_FORMATS_KEY = "melix.audio.output_formats"
+_AUDIO_SUPPORTS_INSTRUCTIONS_KEY = "melix.audio.supports_instructions"
 
 
 @dataclass(frozen=True)
@@ -261,6 +268,52 @@ def _vision_capability_metadata(family_id: str) -> dict[str, str]:
     )
 
 
+def _audio_capability_metadata(
+    *,
+    family_id: str,
+    model_kind: str,
+) -> dict[str, str]:
+    if model_kind == "transcription":
+        route_kind = "python_transcription"
+        capability_class = "transcription"
+        supported_modalities = ("audio", "text")
+        supported_tasks = ("transcribe",)
+    else:
+        route_kind = "python_speech"
+        capability_class = "speech"
+        supported_modalities = ("text", "audio")
+        supported_tasks = ("speak",)
+    return _capability_metadata(
+        adapter_set_hash=f"audio-family-{family_id}",
+        route_kind=route_kind,
+        capability_class=capability_class,
+        supported_modalities=supported_modalities,
+        supported_tasks=supported_tasks,
+        supported_parsers=("text",),
+    )
+
+
+def _audio_metadata(
+    *,
+    backend_id: str,
+    family_id: str,
+    install_profile: str,
+    languages: tuple[str, ...] = (),
+    voice_mode: str = "",
+    output_formats: tuple[str, ...] = (),
+    supports_instructions: bool = False,
+) -> dict[str, str]:
+    return {
+        _AUDIO_BACKEND_ID_KEY: backend_id,
+        _AUDIO_FAMILY_ID_KEY: family_id,
+        _AUDIO_INSTALL_PROFILE_KEY: install_profile,
+        _AUDIO_LANGUAGES_KEY: ",".join(languages),
+        _AUDIO_VOICE_MODE_KEY: voice_mode,
+        _AUDIO_OUTPUT_FORMATS_KEY: ",".join(output_formats),
+        _AUDIO_SUPPORTS_INSTRUCTIONS_KEY: "true" if supports_instructions else "false",
+    }
+
+
 class WorkerModelCatalog:
     def __init__(self, environment: dict[str, str] | None = None) -> None:
         self._environment = dict(environment or os.environ)
@@ -274,6 +327,15 @@ class WorkerModelCatalog:
             "melix-dev-speech": self.dev_speech_model(environment=self._environment),
             "melix-dev-image": self.dev_image_model(environment=self._environment),
         }
+        for helper in (
+            self.mlx_whisper_model,
+            self.mlx_parakeet_model,
+            self.mlx_kokoro_model,
+            self.mlx_qwen3_tts_model,
+        ):
+            model = helper(environment=self._environment)
+            if model is not None:
+                self._seed_models[model.model_id] = model
         self._models = dict(self._seed_models)
         self._last_registry_snapshot = self._refresh_registry_snapshot()
 
@@ -616,6 +678,7 @@ class WorkerModelCatalog:
     @staticmethod
     def dev_transcription_model(environment: dict[str, str] | None = None) -> common_pb2.ModelSpec:
         environment = dict(environment or os.environ)
+        family_id = "deterministic-transcription"
         return common_pb2.ModelSpec(
             model_id="melix-dev-transcribe",
             model_path=environment.get("MELIX_DEV_TRANSCRIBE_MODEL_PATH", "models/melix-dev-transcribe"),
@@ -626,11 +689,21 @@ class WorkerModelCatalog:
             parser_mode="text",
             reasoning_mode="off",
             max_context=4096,
+            ext={
+                **_audio_capability_metadata(family_id=family_id, model_kind="transcription"),
+                **_audio_metadata(
+                    backend_id="deterministic",
+                    family_id=family_id,
+                    install_profile="",
+                    languages=("und",),
+                ),
+            },
         )
 
     @staticmethod
     def dev_speech_model(environment: dict[str, str] | None = None) -> common_pb2.ModelSpec:
         environment = dict(environment or os.environ)
+        family_id = "deterministic-speech"
         return common_pb2.ModelSpec(
             model_id="melix-dev-speech",
             model_path=environment.get("MELIX_DEV_SPEECH_MODEL_PATH", "models/melix-dev-speech"),
@@ -641,6 +714,18 @@ class WorkerModelCatalog:
             parser_mode="text",
             reasoning_mode="off",
             max_context=4096,
+            ext={
+                **_audio_capability_metadata(family_id=family_id, model_kind="speech"),
+                **_audio_metadata(
+                    backend_id="deterministic",
+                    family_id=family_id,
+                    install_profile="",
+                    languages=("und",),
+                    voice_mode="named",
+                    output_formats=("wav", "mp3"),
+                    supports_instructions=False,
+                ),
+            },
         )
 
     @staticmethod
@@ -656,4 +741,126 @@ class WorkerModelCatalog:
             parser_mode="text",
             reasoning_mode="off",
             max_context=4096,
+        )
+
+    @staticmethod
+    def mlx_whisper_model(environment: dict[str, str] | None = None) -> common_pb2.ModelSpec | None:
+        environment = dict(environment or os.environ)
+        model_path = environment.get(
+            "MELIX_MLX_AUDIO_WHISPER_MODEL_PATH",
+            "mlx-community/whisper-large-v3-turbo-asr-fp16",
+        ).strip() or "mlx-community/whisper-large-v3-turbo-asr-fp16"
+        family_id = "whisper"
+        return common_pb2.ModelSpec(
+            model_id="melix-whisper-mlx",
+            model_path=model_path,
+            model_kind="transcription",
+            revision="mlx-audio",
+            tokenizer_hash="tok-whisper-mlx",
+            quant_profile_id="fp16",
+            parser_mode="text",
+            reasoning_mode="off",
+            max_context=4096,
+            ext={
+                **_audio_capability_metadata(family_id=family_id, model_kind="transcription"),
+                **_audio_metadata(
+                    backend_id="mlx_audio.stt",
+                    family_id=family_id,
+                    install_profile="audio-stt",
+                    languages=("auto",),
+                ),
+            },
+        )
+
+    @staticmethod
+    def mlx_parakeet_model(environment: dict[str, str] | None = None) -> common_pb2.ModelSpec | None:
+        environment = dict(environment or os.environ)
+        model_path = environment.get(
+            "MELIX_MLX_AUDIO_PARAKEET_MODEL_PATH",
+            "mlx-community/parakeet-tdt-0.6b-v2",
+        ).strip() or "mlx-community/parakeet-tdt-0.6b-v2"
+        family_id = "parakeet"
+        return common_pb2.ModelSpec(
+            model_id="melix-parakeet-mlx",
+            model_path=model_path,
+            model_kind="transcription",
+            revision="mlx-audio",
+            tokenizer_hash="tok-parakeet-mlx",
+            quant_profile_id="fp16",
+            parser_mode="text",
+            reasoning_mode="off",
+            max_context=4096,
+            ext={
+                **_audio_capability_metadata(family_id=family_id, model_kind="transcription"),
+                **_audio_metadata(
+                    backend_id="mlx_audio.stt",
+                    family_id=family_id,
+                    install_profile="audio-stt",
+                    languages=("auto",),
+                ),
+            },
+        )
+
+    @staticmethod
+    def mlx_kokoro_model(environment: dict[str, str] | None = None) -> common_pb2.ModelSpec | None:
+        environment = dict(environment or os.environ)
+        model_path = environment.get(
+            "MELIX_MLX_AUDIO_KOKORO_MODEL_PATH",
+            "mlx-community/Kokoro-82M-bf16",
+        ).strip() or "mlx-community/Kokoro-82M-bf16"
+        family_id = "kokoro"
+        return common_pb2.ModelSpec(
+            model_id="melix-kokoro-mlx",
+            model_path=model_path,
+            model_kind="speech",
+            revision="mlx-audio",
+            tokenizer_hash="tok-kokoro-mlx",
+            quant_profile_id="bf16",
+            parser_mode="text",
+            reasoning_mode="off",
+            max_context=4096,
+            ext={
+                **_audio_capability_metadata(family_id=family_id, model_kind="speech"),
+                **_audio_metadata(
+                    backend_id="mlx_audio.tts",
+                    family_id=family_id,
+                    install_profile="audio-tts",
+                    languages=("en",),
+                    voice_mode="named",
+                    output_formats=("wav",),
+                    supports_instructions=False,
+                ),
+            },
+        )
+
+    @staticmethod
+    def mlx_qwen3_tts_model(environment: dict[str, str] | None = None) -> common_pb2.ModelSpec:
+        environment = dict(environment or os.environ)
+        model_path = environment.get(
+            "MELIX_MLX_AUDIO_QWEN3_TTS_MODEL_PATH",
+            "mlx-community/Qwen3-TTS-4B-Instruct-2507-4bit",
+        ).strip() or "mlx-community/Qwen3-TTS-4B-Instruct-2507-4bit"
+        family_id = "qwen3-tts"
+        return common_pb2.ModelSpec(
+            model_id="melix-qwen3-tts-mlx",
+            model_path=model_path,
+            model_kind="speech",
+            revision="mlx-audio",
+            tokenizer_hash="tok-qwen3-tts-mlx",
+            quant_profile_id="4bit",
+            parser_mode="text",
+            reasoning_mode="off",
+            max_context=4096,
+            ext={
+                **_audio_capability_metadata(family_id=family_id, model_kind="speech"),
+                **_audio_metadata(
+                    backend_id="mlx_audio.tts",
+                    family_id=family_id,
+                    install_profile="audio-tts",
+                    languages=("zh", "en"),
+                    voice_mode="hybrid",
+                    output_formats=("wav",),
+                    supports_instructions=True,
+                ),
+            },
         )

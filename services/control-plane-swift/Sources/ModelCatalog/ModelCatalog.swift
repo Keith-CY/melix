@@ -466,6 +466,50 @@ public actor ModelCatalog {
         }
     }
 
+    private static func audioCapabilityAdapter(
+        familyID: String,
+        modelKind: String
+    ) -> CapabilityAdapterMetadata {
+        if modelKind == "transcription" {
+            return CapabilityAdapterMetadata(
+                adapterSetHash: "audio-family-\(familyID)",
+                routeKind: .pythonTranscription,
+                capabilityIdentifier: "transcription",
+                supportedModalities: ["audio", "text"],
+                supportedTasks: ["transcribe"],
+                supportedParsers: ["text"]
+            )
+        }
+        return CapabilityAdapterMetadata(
+            adapterSetHash: "audio-family-\(familyID)",
+            routeKind: .pythonSpeech,
+            capabilityIdentifier: "speech",
+            supportedModalities: ["text", "audio"],
+            supportedTasks: ["speak"],
+            supportedParsers: ["text"]
+        )
+    }
+
+    private static func audioMetadata(
+        backendID: String,
+        familyID: String,
+        installProfile: String,
+        languages: [String] = [],
+        voiceMode: String = "",
+        outputFormats: [String] = [],
+        supportsInstructions: Bool = false
+    ) -> [String: String] {
+        [
+            "melix.audio.backend_id": backendID,
+            "melix.audio.family_id": familyID,
+            "melix.audio.install_profile": installProfile,
+            "melix.audio.languages": languages.joined(separator: ","),
+            "melix.audio.voice_mode": voiceMode,
+            "melix.audio.output_formats": outputFormats.joined(separator: ","),
+            "melix.audio.supports_instructions": supportsInstructions ? "true" : "false",
+        ]
+    }
+
     private static func applyCapabilityAdapter(
         _ adapter: CapabilityAdapterMetadata,
         to model: inout Melix_Controlplane_V1_ModelSummary
@@ -744,6 +788,8 @@ public actor ModelCatalog {
     }
 
     public static func devTranscriptionModel() -> Melix_Controlplane_V1_ModelSummary {
+        let familyID = "deterministic-transcription"
+        let capabilityAdapter = audioCapabilityAdapter(familyID: familyID, modelKind: "transcription")
         var model = Melix_Controlplane_V1_ModelSummary()
         model.modelID = "melix-dev-transcribe"
         model.kind = "transcription"
@@ -755,10 +801,21 @@ public actor ModelCatalog {
         model.supportedTasks = ["transcribe"]
         model.settings.alias = "Melix Dev Transcription"
         model.settings.memoryPolicy = .memoryResidencyEvictable
+        model.settings.ext.merge(
+            audioMetadata(
+                backendID: "deterministic",
+                familyID: familyID,
+                installProfile: "",
+                languages: ["und"]
+            )
+        ) { _, new in new }
+        applyCapabilityAdapter(capabilityAdapter, to: &model)
         return withSynchronizedResidency(model)
     }
 
     public static func devSpeechModel() -> Melix_Controlplane_V1_ModelSummary {
+        let familyID = "deterministic-speech"
+        let capabilityAdapter = audioCapabilityAdapter(familyID: familyID, modelKind: "speech")
         var model = Melix_Controlplane_V1_ModelSummary()
         model.modelID = "melix-dev-speech"
         model.kind = "speech"
@@ -770,6 +827,73 @@ public actor ModelCatalog {
         model.supportedTasks = ["speak"]
         model.settings.alias = "Melix Dev Speech"
         model.settings.memoryPolicy = .memoryResidencyEvictable
+        model.settings.ext.merge(
+            audioMetadata(
+                backendID: "deterministic",
+                familyID: familyID,
+                installProfile: "",
+                languages: ["und"],
+                voiceMode: "named",
+                outputFormats: ["wav", "mp3"],
+                supportsInstructions: false
+            )
+        ) { _, new in new }
+        applyCapabilityAdapter(capabilityAdapter, to: &model)
+        return withSynchronizedResidency(model)
+    }
+
+    public static func mlxWhisperModel() -> Melix_Controlplane_V1_ModelSummary {
+        let familyID = "whisper"
+        let capabilityAdapter = audioCapabilityAdapter(familyID: familyID, modelKind: "transcription")
+        var model = Melix_Controlplane_V1_ModelSummary()
+        model.modelID = "melix-whisper-mlx"
+        model.kind = "transcription"
+        model.state = .modelDiscovered
+        model.capabilityClass = .modelCapabilityTranscription
+        model.routeClass = .workerRoutePythonTranscription
+        model.quantProfileID = "fp16"
+        model.maxContext = 4096
+        model.features = ["audio", "transcription"]
+        model.settings.alias = "Melix Whisper MLX"
+        model.settings.memoryPolicy = .memoryResidencyEvictable
+        model.settings.ext.merge(
+            audioMetadata(
+                backendID: "mlx_audio.stt",
+                familyID: familyID,
+                installProfile: "audio-stt",
+                languages: ["auto"]
+            )
+        ) { _, new in new }
+        applyCapabilityAdapter(capabilityAdapter, to: &model)
+        return withSynchronizedResidency(model)
+    }
+
+    public static func mlxKokoroModel() -> Melix_Controlplane_V1_ModelSummary {
+        let familyID = "kokoro"
+        let capabilityAdapter = audioCapabilityAdapter(familyID: familyID, modelKind: "speech")
+        var model = Melix_Controlplane_V1_ModelSummary()
+        model.modelID = "melix-kokoro-mlx"
+        model.kind = "speech"
+        model.state = .modelDiscovered
+        model.capabilityClass = .modelCapabilitySpeech
+        model.routeClass = .workerRoutePythonSpeech
+        model.quantProfileID = "bf16"
+        model.maxContext = 4096
+        model.features = ["audio", "speech"]
+        model.settings.alias = "Melix Kokoro MLX"
+        model.settings.memoryPolicy = .memoryResidencyEvictable
+        model.settings.ext.merge(
+            audioMetadata(
+                backendID: "mlx_audio.tts",
+                familyID: familyID,
+                installProfile: "audio-tts",
+                languages: ["en"],
+                voiceMode: "named",
+                outputFormats: ["wav"],
+                supportsInstructions: false
+            )
+        ) { _, new in new }
+        applyCapabilityAdapter(capabilityAdapter, to: &model)
         return withSynchronizedResidency(model)
     }
 

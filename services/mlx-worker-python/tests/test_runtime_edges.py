@@ -25,6 +25,7 @@ from worker.grpc_server import (
 )
 from worker.model_registry.catalog import WorkerModelCatalog
 from worker.registry import WorkerRegistry
+from worker.runtime.audio_runtime_protocols import AudioBackendUnavailableError
 from worker.runtime.deterministic_delay import configured_delay_ms
 from worker.runtime.mlx_text_runtime import AutoMLXBackend, MLXTextRuntime, RuntimeUnavailableError
 
@@ -50,6 +51,27 @@ class FakeBackend:
 class FailingBackend(FakeBackend):
     def load_model(self, model_spec):
         raise RuntimeError("cannot load model")
+
+
+class StubAudioRuntime:
+    def __init__(self, runtime_name: str):
+        self.runtime_name = runtime_name
+
+    def load_model(self, model_spec):
+        return {"runtime_name": self.runtime_name, "model_id": model_spec.model_id}
+
+    def estimate_resident_bytes(self, model_spec):
+        return 2048
+
+
+class UnavailableAudioRuntime(StubAudioRuntime):
+    def load_model(self, model_spec):
+        raise AudioBackendUnavailableError("mlx-audio speech backend is unavailable")
+
+
+class FailingAudioRuntime(StubAudioRuntime):
+    def load_model(self, model_spec):
+        raise RuntimeError("mlx-audio speech backend failed to load model")
 
 
 def build_registry(
@@ -257,6 +279,36 @@ def test_registry_capabilities_and_request_lifecycle() -> None:
     assert registry.runtime_stats().active_multimodal_requests == 0
 
 
+def test_audio_runtime_selection_uses_backend_metadata_and_rejects_missing_backend_configuration() -> None:
+    registry = WorkerRegistry(
+        runtime=MLXTextRuntime(backend=FakeBackend()),
+        transcription_runtime=StubAudioRuntime("deterministic-transcription"),
+        speech_runtime=StubAudioRuntime("deterministic-speech"),
+        mlx_audio_transcription_runtime=StubAudioRuntime("mlx-audio-stt"),
+        mlx_audio_speech_runtime=StubAudioRuntime("mlx-audio-tts"),
+        model_catalog=WorkerModelCatalog(),
+    )
+
+    _, deterministic_transcription = registry._runtime_for_model(WorkerModelCatalog.dev_transcription_model())
+    _, deterministic_speech = registry._runtime_for_model(WorkerModelCatalog.dev_speech_model())
+    _, whisper = registry._runtime_for_model(WorkerModelCatalog.mlx_whisper_model())
+    _, kokoro = registry._runtime_for_model(WorkerModelCatalog.mlx_kokoro_model())
+
+    missing_backend = common_pb2.ModelSpec(
+        model_id="missing-audio-backend",
+        model_path="models/missing-audio-backend",
+        model_kind="speech",
+    )
+
+    assert deterministic_transcription.runtime_name == "deterministic-transcription"
+    assert deterministic_speech.runtime_name == "deterministic-speech"
+    assert whisper.runtime_name == "mlx-audio-stt"
+    assert kokoro.runtime_name == "mlx-audio-tts"
+
+    with pytest.raises(RuntimeError, match="requires an explicit melix.audio.backend_id"):
+        registry._runtime_for_model(missing_backend)
+
+
 def test_registry_runtime_stats_include_vlm_cache_bytes_after_generation() -> None:
     registry, runtime_service, inference_service = build_services()
     load_response = runtime_service.LoadModel(
@@ -299,6 +351,80 @@ def test_registry_runtime_stats_include_vlm_cache_bytes_after_generation() -> No
     assert runtime_stats.l1_cache_bytes == cache_stats.stats.l1_bytes
     assert runtime_stats.cache_resident_bytes == cache_stats.stats.l1_bytes
     assert runtime_stats.l1_hit_rate == cache_stats.stats.l1_hit_rate
+
+
+def test_registry_runtime_stats_include_audio_load_and_fallback_probes() -> None:
+    registry = build_registry()
+
+    registry.record_audio_model_load_probe(12.5)
+    registry.increment_audio_backend_unavailable()
+    registry.record_transcription_probe(
+        SimpleNamespace(
+            preprocess_latency_ms=18.0,
+            preprocess_input_bytes=96,
+            preprocess_peak_memory_bytes=4096,
+            transcription_latency_ms=9.0,
+            estimated_duration_seconds=0.75,
+            chunk_count=4,
+            language_fallback_count=2,
+        )
+    )
+    registry.record_speech_probe(
+        SimpleNamespace(
+            speech_latency_ms=7.5,
+            output_bytes=128,
+            voice_fallback_count=1,
+        )
+    )
+
+    stats = registry.runtime_stats()
+
+    assert stats.last_audio_model_load_latency_ms == 12.5
+    assert stats.last_audio_backend_unavailable_count == 1
+    assert stats.last_voice_fallback_count == 1
+    assert stats.last_language_fallback_count == 2
+
+
+def test_runtime_service_maps_real_audio_load_failures_to_unavailable_and_runtime_error() -> None:
+    unavailable_registry = WorkerRegistry(
+        runtime=MLXTextRuntime(backend=FakeBackend()),
+        transcription_runtime=StubAudioRuntime("deterministic-transcription"),
+        speech_runtime=StubAudioRuntime("deterministic-speech"),
+        mlx_audio_transcription_runtime=StubAudioRuntime("mlx-audio-stt"),
+        mlx_audio_speech_runtime=UnavailableAudioRuntime("mlx-audio-tts"),
+        model_catalog=WorkerModelCatalog(),
+    )
+    unavailable_service = WorkerRuntimeService(unavailable_registry)
+    unavailable = unavailable_service.LoadModel(
+        runtime_pb2.LoadModelRequest(model=WorkerModelCatalog.mlx_kokoro_model()),
+        context=None,
+    )
+
+    assert unavailable.ok is False
+    assert unavailable.error.code == "unavailable"
+    assert "unavailable" in unavailable.error.message
+    assert unavailable_service.GetRuntimeStats(
+        runtime_pb2.GetRuntimeStatsRequest(),
+        context=None,
+    ).stats.last_audio_backend_unavailable_count == 1
+
+    failing_registry = WorkerRegistry(
+        runtime=MLXTextRuntime(backend=FakeBackend()),
+        transcription_runtime=StubAudioRuntime("deterministic-transcription"),
+        speech_runtime=StubAudioRuntime("deterministic-speech"),
+        mlx_audio_transcription_runtime=StubAudioRuntime("mlx-audio-stt"),
+        mlx_audio_speech_runtime=FailingAudioRuntime("mlx-audio-tts"),
+        model_catalog=WorkerModelCatalog(),
+    )
+    failing_service = WorkerRuntimeService(failing_registry)
+    failed = failing_service.LoadModel(
+        runtime_pb2.LoadModelRequest(model=WorkerModelCatalog.mlx_kokoro_model()),
+        context=None,
+    )
+
+    assert failed.ok is False
+    assert failed.error.code == "runtime_error"
+    assert "failed to load model" in failed.error.message
 
 
 def test_deterministic_multimodal_delay_prefers_specific_keys_and_shared_fallback() -> None:

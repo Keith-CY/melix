@@ -34,6 +34,7 @@ from worker.engine.speech_core import SpeechCore
 from worker.engine.transcription_core import TranscriptionCore
 from worker.model_ops.hub_catalog import HubCatalog
 from worker.registry import MemoryBudgetExceeded, WorkerRegistry
+from worker.runtime.audio_runtime_protocols import AudioBackendUnavailableError
 from worker.runtime.deterministic_embedding_runtime import DeterministicEmbeddingRuntime
 from worker.runtime.deterministic_backend import DeterministicTextBackend
 from worker.runtime.deterministic_rerank_runtime import DeterministicRerankRuntime
@@ -118,10 +119,23 @@ class WorkerRuntimeService(runtime_pb2_grpc.RuntimeServiceServicer):
                     details=exc.details,
                 ),
             )
-        except Exception as exc:
+        except AudioBackendUnavailableError as exc:
+            self._registry.increment_audio_backend_unavailable()
             return runtime_pb2.LoadModelResponse(
                 ok=False,
-                error=common_pb2.ErrorStatus(code="load_failed", message=str(exc)),
+                error=common_pb2.ErrorStatus(code="unavailable", message=str(exc)),
+            )
+        except Exception as exc:
+            is_real_audio_backend = (
+                request.model.model_kind in {"transcription", "speech"}
+                and request.model.ext.get("melix.audio.backend_id", "").startswith("mlx_audio.")
+            )
+            return runtime_pb2.LoadModelResponse(
+                ok=False,
+                error=common_pb2.ErrorStatus(
+                    code="runtime_error" if is_real_audio_backend else "load_failed",
+                    message=str(exc),
+                ),
             )
         response = runtime_pb2.LoadModelResponse(
             ok=True,

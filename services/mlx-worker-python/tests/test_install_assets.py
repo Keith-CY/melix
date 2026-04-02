@@ -22,6 +22,8 @@ def test_build_local_product_layout_uses_library_conventions(tmp_path: Path) -> 
 
     assert layout.app_support_dir == home_dir / "Library/Application Support/Melix"
     assert layout.runtime_dir == home_dir / "Library/Application Support/Melix/runtime"
+    assert layout.managed_models_dir == home_dir / "Library/Application Support/Melix/models/default-managed"
+    assert layout.audio_runtime_packs_dir == home_dir / "Library/Application Support/Melix/runtime-packs/audio"
     assert layout.logs_dir == home_dir / "Library/Logs/Melix"
     assert layout.launch_agents_dir == home_dir / "Library/LaunchAgents"
     assert layout.python_socket_path == layout.runtime_dir / "python-worker.sock"
@@ -54,10 +56,14 @@ def test_build_launch_agent_specs_capture_expected_commands_and_environment(tmp_
     assert "PYTHONPATH" in python_spec.environment
     assert python_spec.environment["UV_CACHE_DIR"] == str(repo_root / ".uv-cache")
     assert python_spec.environment["MELIX_PYTHON_WORKER_METRICS_PATH"] == str(layout.python_worker_metrics_path)
+    assert python_spec.environment["MELIX_MANAGED_MODEL_ROOT"] == str(layout.managed_models_dir)
+    assert python_spec.environment["MELIX_AUDIO_RUNTIME_PACK_ROOT"] == str(layout.audio_runtime_packs_dir)
 
     control_spec = specs["io.melix.control-plane"]
     assert control_spec.environment["MELIX_REPO_ROOT"] == str(repo_root)
     assert control_spec.environment["MELIX_HTTP_PORT"] == "11434"
+    assert control_spec.environment["MELIX_MANAGED_MODEL_ROOT"] == str(layout.managed_models_dir)
+    assert control_spec.environment["MELIX_AUDIO_RUNTIME_PACK_ROOT"] == str(layout.audio_runtime_packs_dir)
 
 
 def test_render_launch_agent_plist_round_trips_through_plistlib(tmp_path: Path) -> None:
@@ -106,8 +112,12 @@ def test_write_local_product_artifacts_writes_plists_manifest_and_env(tmp_path: 
     payload = json.loads(layout.install_manifest_path.read_text())
     assert payload["ready_probe_url"] == "http://127.0.0.1:19434/v1/models"
     assert len(payload["bootstrap_commands"]) == 3
+    assert payload["managed_models_dir"] == str(layout.managed_models_dir)
+    assert payload["audio_runtime_packs_dir"] == str(layout.audio_runtime_packs_dir)
     assert any("io.melix.control-plane.plist" in command for command in payload["bootstrap_commands"])
     assert (launch_agents_dir / "io.melix.swift-text-worker.plist").exists()
     assert (launch_agents_dir / "io.melix.python-worker.plist").exists()
     assert (launch_agents_dir / "io.melix.control-plane.plist").exists()
     assert f'MELIX_PYTHON_WORKER_METRICS_PATH="{layout.python_worker_metrics_path}"' in layout.environment_script_path.read_text()
+    assert f'MELIX_MANAGED_MODEL_ROOT="{layout.managed_models_dir}"' in layout.environment_script_path.read_text()
+    assert f'MELIX_AUDIO_RUNTIME_PACK_ROOT="{layout.audio_runtime_packs_dir}"' in layout.environment_script_path.read_text()

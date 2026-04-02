@@ -60,6 +60,7 @@ public struct OpenAIHandler: Sendable {
     private let sseWriter: SSEStreamWriter
     private let mcpToolCatalog: MCPToolCatalog
     private let gatewayAccessPolicy: GatewayAccessPolicy
+    private let audioAssetManager: AudioAssetManager
     private let decoder: JSONDecoder
     private let encoder: JSONEncoder
 
@@ -75,7 +76,8 @@ public struct OpenAIHandler: Sendable {
         translator: ChatRequestTranslator = ChatRequestTranslator(),
         sseWriter: SSEStreamWriter = SSEStreamWriter(),
         mcpToolCatalog: MCPToolCatalog = .empty,
-        gatewayAccessPolicy: GatewayAccessPolicy = .localTrust
+        gatewayAccessPolicy: GatewayAccessPolicy = .localTrust,
+        audioAssetManager: AudioAssetManager = AudioAssetManager()
     ) {
         self.modelCatalog = modelCatalog
         self.requestCoordinator = requestCoordinator
@@ -92,6 +94,7 @@ public struct OpenAIHandler: Sendable {
         self.sseWriter = sseWriter
         self.mcpToolCatalog = mcpToolCatalog
         self.gatewayAccessPolicy = gatewayAccessPolicy
+        self.audioAssetManager = audioAssetManager
         self.decoder = JSONDecoder()
         self.encoder = JSONEncoder()
         self.encoder.outputFormatting = [.sortedKeys]
@@ -474,6 +477,10 @@ public struct OpenAIHandler: Sendable {
         let transcriptionRequest = try decoder.decode(OpenAIAudioTranscriptionsRequest.self, from: request.body)
         let audioReference = transcriptionRequest.normalizedAudio
 
+        if let preflightFailure = await audioReadinessFailureResponse(for: transcriptionRequest.model) {
+            return preflightFailure
+        }
+
         guard let modelHandle = await modelCatalog.dispatchHandle(for: transcriptionRequest.model) else {
             return httpErrorResponse(for: .modelNotReady)
         }
@@ -565,6 +572,17 @@ public struct OpenAIHandler: Sendable {
 
     private func handleAudioSpeech(_ request: HTTPRequest) async throws -> HTTPResponse {
         let speechRequest = try decoder.decode(OpenAIAudioSpeechRequest.self, from: request.body)
+        let requestedFormat = (speechRequest.format ?? "wav").lowercased()
+        if let selectedModel = await modelCatalog.model(id: speechRequest.model),
+           !supportsSpeechFormat(requestedFormat, for: selectedModel) {
+            return invalidArgumentResponse(
+                message: "Model \(speechRequest.model) does not support format \(requestedFormat)."
+            )
+        }
+
+        if let preflightFailure = await audioReadinessFailureResponse(for: speechRequest.model) {
+            return preflightFailure
+        }
 
         guard let modelHandle = await modelCatalog.dispatchHandle(for: speechRequest.model) else {
             return httpErrorResponse(for: .modelNotReady)
@@ -587,7 +605,7 @@ public struct OpenAIHandler: Sendable {
         workerRequest.modelHandle = modelHandle
         workerRequest.input = speechRequest.input
         workerRequest.voice = speechRequest.voice ?? ""
-        workerRequest.format = speechRequest.format ?? "wav"
+        workerRequest.format = requestedFormat
         workerRequest.instructions = speechRequest.instructions ?? ""
 
         let startedAt = Date()
@@ -1114,6 +1132,58 @@ public struct OpenAIHandler: Sendable {
         )
     }
 
+    private func audioReadinessFailureResponse(for modelID: String) async -> HTTPResponse? {
+        guard let selectedModel = await modelCatalog.model(id: modelID) else {
+            return nil
+        }
+
+        let hydratedModel = audioAssetManager.hydrate(selectedModel)
+        let backendID = hydratedModel.settings.ext["melix.audio.backend_id"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard backendID.hasPrefix("mlx_audio.") else {
+            return nil
+        }
+
+        let runtimePackState = hydratedModel.settings.ext["melix.audio.runtime_pack_state"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if runtimePackState != "installed" {
+            await metricsStore.increment("audio_first_use_blocked_runtime_pack_count")
+            return jsonResponse(
+                statusCode: 409,
+                payload: [
+                    "error": [
+                        "code": "audio_runtime_pack_required",
+                        "message": "Audio runtime support must be installed before this model can serve requests.",
+                        "model_id": hydratedModel.modelID,
+                        "runtime_pack_id": hydratedModel.settings.ext["melix.audio.runtime_pack_id"] ?? "",
+                        "install_profile": hydratedModel.settings.ext["melix.audio.install_profile"] ?? "",
+                        "required_action": "install_audio_runtime",
+                    ],
+                ]
+            )
+        }
+
+        let modelState = hydratedModel.settings.ext["melix.audio.model_state"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if modelState != "managed_local" {
+            await metricsStore.increment("audio_first_use_blocked_model_count")
+            return jsonResponse(
+                statusCode: 409,
+                payload: [
+                    "error": [
+                        "code": "audio_model_download_required",
+                        "message": "The requested audio model must be downloaded into Melix managed storage before it can serve requests.",
+                        "model_id": hydratedModel.modelID,
+                        "managed_model_root": hydratedModel.settings.ext["melix.audio.managed_model_root"] ?? "",
+                        "required_action": "download",
+                    ],
+                ]
+            )
+        }
+
+        return nil
+    }
+
     private func hasNonEmptyHeader(
         named expectedName: String,
         in headers: [String: String]
@@ -1339,19 +1409,47 @@ public struct OpenAIHandler: Sendable {
         case .pythonTranscription:
             await metricsStore.set(stats.lastPreprocessLatencyMs, forKey: "audio.preprocess_latency_ms")
             await metricsStore.set(
+                Double(stats.lastPreprocessInputBytes),
+                forKey: "audio.preprocess_input_bytes"
+            )
+            await metricsStore.set(
                 Double(stats.lastPreprocessPeakMemoryBytes),
                 forKey: "audio.preprocess_peak_memory_bytes"
             )
             await metricsStore.set(stats.lastTranscriptionLatencyMs, forKey: "audio.transcription_latency_ms")
+            await metricsStore.set(stats.lastAudioDurationSeconds, forKey: "audio.estimated_duration_seconds")
             await metricsStore.set(stats.lastAudioDurationSeconds, forKey: "audio.audio_duration_seconds")
+            await metricsStore.set(Double(stats.lastAudioChunkCount), forKey: "audio.chunk_count")
             await metricsStore.set(Double(stats.lastAudioChunkCount), forKey: "audio.audio_chunk_count")
+            await metricsStore.set(stats.lastAudioModelLoadLatencyMs, forKey: "audio.model_load_latency_ms")
+            await metricsStore.set(
+                Double(stats.lastAudioBackendUnavailableCount),
+                forKey: "audio.backend_unavailable_count"
+            )
+            await metricsStore.set(
+                Double(stats.lastLanguageFallbackCount),
+                forKey: "audio.language_fallback_count"
+            )
         case .pythonSpeech:
             await metricsStore.set(stats.lastPreprocessLatencyMs, forKey: "audio.preprocess_latency_ms")
+            await metricsStore.set(
+                Double(stats.lastPreprocessInputBytes),
+                forKey: "audio.preprocess_input_bytes"
+            )
             await metricsStore.set(
                 Double(stats.lastPreprocessPeakMemoryBytes),
                 forKey: "audio.preprocess_peak_memory_bytes"
             )
             await metricsStore.set(stats.lastSpeechLatencyMs, forKey: "audio.speech_latency_ms")
+            await metricsStore.set(stats.lastAudioModelLoadLatencyMs, forKey: "audio.model_load_latency_ms")
+            await metricsStore.set(
+                Double(stats.lastAudioBackendUnavailableCount),
+                forKey: "audio.backend_unavailable_count"
+            )
+            await metricsStore.set(
+                Double(stats.lastVoiceFallbackCount),
+                forKey: "audio.voice_fallback_count"
+            )
             if stats.lastAudioOutputBytes > 0 {
                 await metricsStore.set(Double(stats.lastAudioOutputBytes), forKey: "audio.speech_output_bytes")
             }
@@ -1390,6 +1488,29 @@ public struct OpenAIHandler: Sendable {
         default:
             return "audio/\(format.lowercased())"
         }
+    }
+
+    private func supportsSpeechFormat(
+        _ format: String,
+        for model: Melix_Controlplane_V1_ModelSummary
+    ) -> Bool {
+        supportedSpeechFormats(for: model).contains(format.lowercased())
+    }
+
+    private func supportedSpeechFormats(
+        for model: Melix_Controlplane_V1_ModelSummary
+    ) -> Set<String> {
+        let rawValue = model.settings.ext["melix.audio.output_formats"]?
+            .split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+            .filter { !$0.isEmpty } ?? []
+        if !rawValue.isEmpty {
+            return Set(rawValue)
+        }
+        if model.kind == "speech" {
+            return ["wav", "mp3"]
+        }
+        return []
     }
 }
 

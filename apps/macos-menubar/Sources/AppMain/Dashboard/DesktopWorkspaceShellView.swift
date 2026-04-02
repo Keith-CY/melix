@@ -748,6 +748,37 @@ private struct DesktopDownloadsToolSectionView: View {
             Text("Model ingress and artifact publishing stay under Tools, not Server.")
                 .foregroundStyle(.secondary)
 
+            if viewModel.audioSetupActions.isEmpty == false {
+                GroupBox("Audio Setup") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        ForEach(viewModel.audioSetupActions) { action in
+                            HStack(alignment: .top) {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(action.alias)
+                                        .font(.headline)
+                                    Text(action.detail)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                Button(action.actionTitle) {
+                                    Task {
+                                        switch action.kind {
+                                        case .installRuntime:
+                                            await viewModel.installAudioRuntime(modelID: action.modelID)
+                                        case .downloadModel:
+                                            await viewModel.downloadAudioModel(modelID: action.modelID)
+                                        }
+                                    }
+                                }
+                                .buttonStyle(.borderedProminent)
+                            }
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+
             HStack {
                 Button("Download Model") {
                     Task { await viewModel.downloadPrimaryModel() }

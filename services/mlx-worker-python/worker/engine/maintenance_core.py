@@ -588,7 +588,8 @@ class MaintenanceCore:
     @staticmethod
     def _identity_diagnostic_lines(model: common_pb2.ModelSpec) -> list[str]:
         effective_family = (
-            model.ext.get("embedding_family_id")
+            model.ext.get("melix.audio.family_id")
+            or model.ext.get("embedding_family_id")
             or model.ext.get("rerank_family_id")
             or model.ext.get("vision_family_id")
         )

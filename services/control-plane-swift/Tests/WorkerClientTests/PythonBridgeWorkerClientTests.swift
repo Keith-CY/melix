@@ -859,6 +859,18 @@ struct PythonBridgeWorkerClientTests {
         #expect(spec.ext["ocr_sampling_profile_id"] == "ocr-deterministic")
     }
 
+    @Test("bootstrap worker preparation lets built-in audio models override model path from summary metadata")
+    func bootstrapWorkerPreparationLetsBuiltInAudioModelsOverrideModelPathFromSummaryMetadata() throws {
+        var summary = ModelCatalog.mlxWhisperModel()
+        summary.settings.ext["melix.model_path"] = "/tmp/melix-managed-audio/whisper"
+
+        let spec = try #require(BootstrapWorkerPreparation.modelSpec(for: summary))
+
+        #expect(spec.modelID == "melix-whisper-mlx")
+        #expect(spec.modelPath == "/tmp/melix-managed-audio/whisper")
+        #expect(spec.ext["melix.audio.backend_id"] == "mlx_audio.stt")
+    }
+
     @Test("bootstrap worker preparation carries VLM family metadata into worker model specs")
     func bootstrapWorkerPreparationCarriesVLMFamilyMetadataIntoWorkerModelSpecs() throws {
         var summary = ModelCatalog.devVLMModel()
@@ -941,6 +953,30 @@ struct PythonBridgeWorkerClientTests {
         #expect(spec.ext["melix.adapter_set_hash"] == "rerank-family-causal-lm")
         #expect(spec.ext["melix.capability.route_kind"] == "python_rerank")
         #expect(spec.ext["melix.capability.class"] == "rerank")
+    }
+
+    @Test("bootstrap worker preparation carries deterministic and mlx-audio metadata into worker model specs")
+    func bootstrapWorkerPreparationCarriesAudioMetadataIntoWorkerModelSpecs() throws {
+        let deterministicSpeech = try #require(BootstrapWorkerPreparation.modelSpec(for: ModelCatalog.devSpeechModel()))
+        let whisper = try #require(BootstrapWorkerPreparation.modelSpec(for: ModelCatalog.mlxWhisperModel()))
+        let kokoro = try #require(BootstrapWorkerPreparation.modelSpec(for: ModelCatalog.mlxKokoroModel()))
+
+        #expect(deterministicSpeech.modelID == "melix-dev-speech")
+        #expect(deterministicSpeech.ext["melix.audio.backend_id"] == "deterministic")
+        #expect(deterministicSpeech.ext["melix.audio.family_id"] == "deterministic-speech")
+        #expect(deterministicSpeech.ext["melix.audio.output_formats"] == "wav,mp3")
+
+        #expect(whisper.modelID == "melix-whisper-mlx")
+        #expect(whisper.modelKind == "transcription")
+        #expect(whisper.ext["melix.audio.backend_id"] == "mlx_audio.stt")
+        #expect(whisper.ext["melix.audio.family_id"] == "whisper")
+        #expect(whisper.ext["melix.audio.install_profile"] == "audio-stt")
+
+        #expect(kokoro.modelID == "melix-kokoro-mlx")
+        #expect(kokoro.modelKind == "speech")
+        #expect(kokoro.ext["melix.audio.backend_id"] == "mlx_audio.tts")
+        #expect(kokoro.ext["melix.audio.family_id"] == "kokoro")
+        #expect(kokoro.ext["melix.audio.output_formats"] == "wav")
     }
 
     @Test("bridge client treats helper errors as unavailable")

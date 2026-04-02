@@ -649,6 +649,36 @@ struct ModelCatalogTests {
         #expect(models.first(where: { $0.modelID == "melix-dev-speech" })?.supportedModalities == ["text", "audio"])
     }
 
+    @Test("audio seed models expose backend metadata for deterministic and mlx-audio paths")
+    func audioSeedModelsExposeBackendMetadata() async throws {
+        let deterministicTranscription = ModelCatalog.devTranscriptionModel()
+        let deterministicSpeech = ModelCatalog.devSpeechModel()
+        let whisper = ModelCatalog.mlxWhisperModel()
+        let kokoro = ModelCatalog.mlxKokoroModel()
+
+        #expect(deterministicTranscription.settings.ext["melix.audio.backend_id"] == "deterministic")
+        #expect(deterministicTranscription.settings.ext["melix.audio.family_id"] == "deterministic-transcription")
+        #expect(deterministicTranscription.settings.ext["melix.audio.install_profile"] == "")
+        #expect(deterministicTranscription.settings.ext["melix.audio.languages"] == "und")
+
+        #expect(deterministicSpeech.settings.ext["melix.audio.backend_id"] == "deterministic")
+        #expect(deterministicSpeech.settings.ext["melix.audio.family_id"] == "deterministic-speech")
+        #expect(deterministicSpeech.settings.ext["melix.audio.output_formats"] == "wav,mp3")
+        #expect(deterministicSpeech.settings.ext["melix.audio.voice_mode"] == "named")
+        #expect(deterministicSpeech.settings.ext["melix.audio.supports_instructions"] == "false")
+
+        #expect(whisper.kind == "transcription")
+        #expect(whisper.settings.ext["melix.audio.backend_id"] == "mlx_audio.stt")
+        #expect(whisper.settings.ext["melix.audio.family_id"] == "whisper")
+        #expect(whisper.settings.ext["melix.audio.install_profile"] == "audio-stt")
+
+        #expect(kokoro.kind == "speech")
+        #expect(kokoro.settings.ext["melix.audio.backend_id"] == "mlx_audio.tts")
+        #expect(kokoro.settings.ext["melix.audio.family_id"] == "kokoro")
+        #expect(kokoro.settings.ext["melix.audio.output_formats"] == "wav")
+        #expect(kokoro.settings.ext["melix.audio.supports_instructions"] == "false")
+    }
+
     @Test("phase seven contract seed models expose image routes and tasks")
     func phaseSevenContractSeedModelsExposeImageRoutesAndTasks() async throws {
         let catalog = ModelCatalog(seedModels: ModelCatalog.phaseSevenContractSeedModels())

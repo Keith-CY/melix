@@ -8,6 +8,7 @@ from packages.protocol.python.worker.v1 import maintenance_pb2
 from worker.productization.release_gates import (
     DEFAULT_RELEASE_GATE_POLICY,
     build_release_gate_report,
+    collect_audio_product_evidence,
     collect_benchmark_evidence,
     collect_evaluation_evidence,
     collect_install_evidence,
@@ -188,9 +189,35 @@ def test_collect_training_evidence_returns_required_metrics(tmp_path: Path) -> N
     evidence = collect_training_evidence(tmp_path / "jobs")
 
     assert evidence["adapter_name"] == "melix-dev-adapter"
-    assert evidence["dataset_uri"] == str(tmp_path / "jobs" / "datasets" / "melix-dev")
+    assert evidence["dataset_uri"] == "datasets/melix-dev"
     assert evidence["training_duration_ms"] == 1420.0
     assert evidence["adapter_publish_ms"] == 118.0
+
+
+def test_collect_audio_product_evidence_distinguishes_slim_and_full_builds(tmp_path: Path) -> None:
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+
+    evidence = collect_audio_product_evidence(repo_root)
+
+    checks = evidence["checks"]
+    metrics = evidence["metrics"]
+    variants = evidence["variants"]
+
+    assert checks["slim_requires_runtime_pack_download"] is True
+    assert checks["full_runtime_pack_preinstalled"] is True
+    assert checks["slim_runtime_pack_metadata_exists"] is True
+    assert checks["full_runtime_pack_metadata_exists"] is True
+    assert checks["slim_managed_model_metadata_exists"] is True
+    assert checks["full_managed_model_metadata_exists"] is True
+    assert metrics["slim.audio_first_use_blocked_runtime_pack_count"] == 1.0
+    assert metrics["slim.audio_first_use_blocked_model_count"] == 1.0
+    assert metrics["full.audio_first_use_blocked_runtime_pack_count"] == 0.0
+    assert metrics["full.audio_first_use_blocked_model_count"] == 1.0
+    assert metrics["slim.audio_runtime_pack_recovery_success_rate"] == 100.0
+    assert metrics["full.audio_runtime_pack_recovery_success_rate"] == 100.0
+    assert variants["slim"]["runtime_pack"]["pack_id"] == "melix-audio-runtime-pack"
+    assert variants["full"]["runtime_pack"]["version"] == "0.3.0"
 
 
 def test_evaluate_release_gate_fails_closed_for_missing_or_regressed_evidence() -> None:
@@ -222,6 +249,28 @@ def test_evaluate_release_gate_fails_closed_for_missing_or_regressed_evidence() 
             "prefill_memory_guard_rejection_count": 0.0,
             "prefill_memory_guard_success_rate": 0.0,
         },
+        "audio": {
+            "checks": {
+                "slim_requires_runtime_pack_download": False,
+                "full_runtime_pack_preinstalled": False,
+                "slim_runtime_pack_metadata_exists": False,
+                "full_runtime_pack_metadata_exists": False,
+                "slim_managed_model_metadata_exists": False,
+                "full_managed_model_metadata_exists": False,
+            },
+            "metrics": {
+                "slim.audio_runtime_pack_install_ms": 999.0,
+                "slim.audio_model_download_ms": 999.0,
+                "slim.audio_first_use_blocked_runtime_pack_count": 0.0,
+                "slim.audio_first_use_blocked_model_count": 0.0,
+                "slim.audio_runtime_pack_recovery_success_rate": 0.0,
+                "full.audio_runtime_pack_install_ms": 1.0,
+                "full.audio_model_download_ms": 999.0,
+                "full.audio_first_use_blocked_runtime_pack_count": 1.0,
+                "full.audio_first_use_blocked_model_count": 0.0,
+                "full.audio_runtime_pack_recovery_success_rate": 0.0,
+            },
+        },
     }
 
     failures = evaluate_release_gate(report, policy)
@@ -240,6 +289,10 @@ def test_evaluate_release_gate_fails_closed_for_missing_or_regressed_evidence() 
     assert "multi_model_request_success_rate=66.00 fell below minimum 100.00" in failures
     assert "prefill_memory_guard_rejection_count=0.00 fell below minimum 1.00" in failures
     assert "prefill_memory_guard_success_rate=0.00 fell below minimum 100.00" in failures
+    assert "checks.slim_requires_runtime_pack_download must be true" in failures
+    assert "checks.full_runtime_pack_preinstalled must be true" in failures
+    assert "slim.audio_first_use_blocked_runtime_pack_count=0.00 fell below minimum 1.00" in failures
+    assert "full.audio_runtime_pack_install_ms=1.00 exceeded maximum 0.00" in failures
     assert "quantization evidence is missing" in failures
 
 
@@ -295,6 +348,8 @@ def test_build_release_gate_report_passes_with_supplied_recovery_evidence(
 
     assert report["passed"] is True
     assert report["failures"] == []
+    assert report["audio"]["checks"]["slim_requires_runtime_pack_download"] is True
+    assert report["audio"]["checks"]["full_runtime_pack_preinstalled"] is True
 
 
 def test_load_release_gate_policy_reads_checked_in_json(tmp_path: Path) -> None:
@@ -398,6 +453,28 @@ def test_build_release_gate_report_uses_temp_jobs_root_and_reports_type_errors(
                 "prefill_memory_guard_rejection_count": 1.0,
                 "prefill_memory_guard_success_rate": 100.0,
             },
+            "audio": {
+                "checks": {
+                    "slim_requires_runtime_pack_download": True,
+                    "full_runtime_pack_preinstalled": True,
+                    "slim_runtime_pack_metadata_exists": True,
+                    "full_runtime_pack_metadata_exists": True,
+                    "slim_managed_model_metadata_exists": True,
+                    "full_managed_model_metadata_exists": True,
+                },
+                "metrics": {
+                    "slim.audio_runtime_pack_install_ms": "fast",
+                    "slim.audio_model_download_ms": 15.0,
+                    "slim.audio_first_use_blocked_runtime_pack_count": 1.0,
+                    "slim.audio_first_use_blocked_model_count": 1.0,
+                    "slim.audio_runtime_pack_recovery_success_rate": 100.0,
+                    "full.audio_runtime_pack_install_ms": 0.0,
+                    "full.audio_model_download_ms": 15.0,
+                    "full.audio_first_use_blocked_runtime_pack_count": 0.0,
+                    "full.audio_first_use_blocked_model_count": 1.0,
+                    "full.audio_runtime_pack_recovery_success_rate": 100.0,
+                },
+            },
             "quantization": {
                 "summary": {
                     "profile_count": 7,
@@ -420,6 +497,7 @@ def test_build_release_gate_report_uses_temp_jobs_root_and_reports_type_errors(
     assert "checks.environment_script_exists is missing" in failures
     assert "bench.smoke.ttft_ms must be numeric" in failures
     assert "multi_model_ready_count must be numeric" in failures
+    assert "slim.audio_runtime_pack_install_ms must be numeric" in failures
     assert "profiles.q2.job_ms is missing" in failures
 
 
@@ -451,6 +529,28 @@ def test_evaluate_release_gate_requires_runtime_core_evidence() -> None:
                 "restart_recovery_ms": 420.0,
                 "restart_recovery_success_rate": 100.0,
             },
+            "audio": {
+                "checks": {
+                    "slim_requires_runtime_pack_download": True,
+                    "full_runtime_pack_preinstalled": True,
+                    "slim_runtime_pack_metadata_exists": True,
+                    "full_runtime_pack_metadata_exists": True,
+                    "slim_managed_model_metadata_exists": True,
+                    "full_managed_model_metadata_exists": True,
+                },
+                "metrics": {
+                    "slim.audio_runtime_pack_install_ms": 10.0,
+                    "slim.audio_model_download_ms": 15.0,
+                    "slim.audio_first_use_blocked_runtime_pack_count": 1.0,
+                    "slim.audio_first_use_blocked_model_count": 1.0,
+                    "slim.audio_runtime_pack_recovery_success_rate": 100.0,
+                    "full.audio_runtime_pack_install_ms": 0.0,
+                    "full.audio_model_download_ms": 15.0,
+                    "full.audio_first_use_blocked_runtime_pack_count": 0.0,
+                    "full.audio_first_use_blocked_model_count": 1.0,
+                    "full.audio_runtime_pack_recovery_success_rate": 100.0,
+                },
+            },
             "quantization": {
                 "summary": {
                     "profile_count": 7,
@@ -474,6 +574,12 @@ def test_evaluate_release_gate_requires_runtime_core_evidence() -> None:
     assert "runtime_core evidence is missing" in failures
 
 
+def test_default_policy_includes_audio_section() -> None:
+    assert "audio" in DEFAULT_RELEASE_GATE_POLICY
+    assert "slim.audio_first_use_blocked_runtime_pack_count" in DEFAULT_RELEASE_GATE_POLICY["audio"]
+    assert DEFAULT_RELEASE_GATE_POLICY["audio"]["full.audio_runtime_pack_install_ms"]["max"] == 0.0
+
+
 def test_default_policy_includes_evaluation_section() -> None:
     assert "evaluation" in DEFAULT_RELEASE_GATE_POLICY
     assert "eval.mmlu.accuracy" in DEFAULT_RELEASE_GATE_POLICY["evaluation"]
@@ -485,6 +591,8 @@ def test_checked_in_release_gate_policy_includes_evaluation_thresholds() -> None
 
     policy = load_release_gate_policy(repo_root / "infra" / "release" / "phase8-release-gate-policy.json")
 
+    assert "audio" in policy
+    assert policy["audio"]["slim.audio_runtime_pack_recovery_success_rate"]["min"] == 100.0
     assert "evaluation" in policy
     assert policy["evaluation"]["eval.mmlu.accuracy"]["min"] == 0.5
 
@@ -525,6 +633,28 @@ def test_evaluate_release_gate_fails_on_low_eval_accuracy() -> None:
         "recovery": {
             "restart_recovery_ms": 420.0,
             "restart_recovery_success_rate": 100.0,
+        },
+        "audio": {
+            "checks": {
+                "slim_requires_runtime_pack_download": True,
+                "full_runtime_pack_preinstalled": True,
+                "slim_runtime_pack_metadata_exists": True,
+                "full_runtime_pack_metadata_exists": True,
+                "slim_managed_model_metadata_exists": True,
+                "full_managed_model_metadata_exists": True,
+            },
+            "metrics": {
+                "slim.audio_runtime_pack_install_ms": 10.0,
+                "slim.audio_model_download_ms": 15.0,
+                "slim.audio_first_use_blocked_runtime_pack_count": 1.0,
+                "slim.audio_first_use_blocked_model_count": 1.0,
+                "slim.audio_runtime_pack_recovery_success_rate": 100.0,
+                "full.audio_runtime_pack_install_ms": 0.0,
+                "full.audio_model_download_ms": 15.0,
+                "full.audio_first_use_blocked_runtime_pack_count": 0.0,
+                "full.audio_first_use_blocked_model_count": 1.0,
+                "full.audio_runtime_pack_recovery_success_rate": 100.0,
+            },
         },
         "runtime_core": {
             "multi_model_ready_count": 3.0,

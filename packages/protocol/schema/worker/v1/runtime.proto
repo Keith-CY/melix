@@ -94,6 +94,10 @@ message RuntimeStats {
   uint64 kv_cache_bytes = 27;
   uint64 peak_allocation_bytes = 28;
   uint64 memory_headroom_bytes = 29;
+  double last_audio_model_load_latency_ms = 30;
+  uint64 last_audio_backend_unavailable_count = 31;
+  uint64 last_voice_fallback_count = 32;
+  uint64 last_language_fallback_count = 33;
 }
 
 message GetRuntimeStatsRequest {}

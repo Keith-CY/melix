@@ -443,6 +443,72 @@ struct DesktopFoundationViewTests {
         #expect(view.subviews.isEmpty == false)
     }
 
+    @Test("downloads section renders audio setup actions and dispatches first-use remediation buttons")
+    @MainActor
+    func downloadsSectionRendersAudioSetupActionsAndDispatchesButtons() async throws {
+        let client = FakeControlPlaneXPCClient()
+
+        var missingRuntime = ModelCatalog.mlxWhisperModel()
+        missingRuntime.settings.ext["melix.audio.runtime_pack_state"] = "missing"
+        missingRuntime.settings.ext["melix.audio.runtime_pack_id"] = "melix-audio-runtime-pack"
+        missingRuntime.settings.ext["melix.audio.model_state"] = "catalog_default"
+
+        var runtimeInstalled = missingRuntime
+        runtimeInstalled.settings.ext["melix.audio.runtime_pack_state"] = "installed"
+
+        var managedLocal = runtimeInstalled
+        managedLocal.settings.ext["melix.audio.model_state"] = "managed_local"
+        managedLocal.settings.ext["melix.model_path"] = "/Users/test/Library/Application Support/Melix/models/default-managed/hf/mlx-community/whisper-large-v3-turbo-asr-fp16/mlx-audio"
+
+        await client.configureSnapshot(
+            makeAudioSetupSnapshot(models: [ModelCatalog.devTextModel(), missingRuntime])
+        )
+        await client.configureModelOperation(
+            makeNamedModelOperationResult(
+                operation: "install_audio_runtime",
+                outputPath: "/Users/test/Library/Application Support/Melix/runtime-packs/audio/melix-audio-runtime-pack/0.3.0",
+                manifestJSON: "{}"
+            ),
+            forNamedOperation: "install_audio_runtime"
+        )
+        await client.configureModelOperation(
+            makeNamedModelOperationResult(
+                operation: "download",
+                outputPath: managedLocal.settings.ext["melix.model_path"] ?? "",
+                manifestJSON: "{}"
+            ),
+            forNamedOperation: "download"
+        )
+
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        viewModel.selectSurface(.tools)
+        viewModel.selectToolSection(.downloads)
+
+        let initialView = hostView(DesktopWorkspaceShellView(viewModel: viewModel))
+        #expect(initialView.subviews.isEmpty == false)
+        #expect(viewModel.audioSetupActions.first?.actionTitle == "Install Audio Support")
+
+        await client.configureSnapshot(makeAudioSetupSnapshot(models: [ModelCatalog.devTextModel(), runtimeInstalled]))
+        await viewModel.installAudioRuntime(modelID: "melix-whisper-mlx")
+
+        let runtimeInstalledView = hostView(DesktopWorkspaceShellView(viewModel: viewModel))
+        #expect(runtimeInstalledView.subviews.isEmpty == false)
+        #expect(viewModel.audioSetupActions.first?.actionTitle == "Download Audio Model")
+
+        await client.configureSnapshot(makeAudioSetupSnapshot(models: [ModelCatalog.devTextModel(), managedLocal]))
+        await viewModel.downloadAudioModel(modelID: "melix-whisper-mlx")
+
+        let managedLocalView = hostView(DesktopWorkspaceShellView(viewModel: viewModel))
+        #expect(managedLocalView.subviews.isEmpty == false)
+        #expect(viewModel.audioSetupActions.isEmpty)
+
+        let requests = await client.recordedModelOperationRequests
+        #expect(requests.count == 2)
+        #expect(requests[0].operation == "install_audio_runtime")
+        #expect(requests[1].operation == "download")
+    }
+
     @Test("dashboard settings logs bench and api tabs render from foundation state")
     @MainActor
     func supportingTabsRenderFromFoundationState() async throws {
@@ -918,6 +984,15 @@ private func hostView<Content: View>(_ rootView: Content) -> NSView {
     view.frame = NSRect(x: 0, y: 0, width: 1200, height: 800)
     view.layoutSubtreeIfNeeded()
     return view
+}
+
+private func makeAudioSetupSnapshot(
+    models: [Melix_Controlplane_V1_ModelSummary]
+) -> Melix_Controlplane_V1_ServerSnapshot {
+    var snapshot = Melix_Controlplane_V1_ServerSnapshot()
+    snapshot.serverState = .serverReady
+    snapshot.models = models
+    return snapshot
 }
 
 private func makeNamedModelOperationResult(

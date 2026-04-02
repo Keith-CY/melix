@@ -14,6 +14,8 @@ class LocalProductLayout:
     home_dir: Path
     app_support_dir: Path
     runtime_dir: Path
+    managed_models_dir: Path
+    audio_runtime_packs_dir: Path
     logs_dir: Path
     launch_agents_dir: Path
     uv_cache_dir: Path
@@ -65,6 +67,8 @@ def build_local_product_layout(
 
     app_support_dir = resolved_home_dir / "Library/Application Support/Melix"
     runtime_dir = app_support_dir / "runtime"
+    managed_models_dir = app_support_dir / "models/default-managed"
+    audio_runtime_packs_dir = app_support_dir / "runtime-packs/audio"
     logs_dir = resolved_home_dir / "Library/Logs/Melix"
 
     return LocalProductLayout(
@@ -72,6 +76,8 @@ def build_local_product_layout(
         home_dir=resolved_home_dir,
         app_support_dir=app_support_dir,
         runtime_dir=runtime_dir,
+        managed_models_dir=managed_models_dir,
+        audio_runtime_packs_dir=audio_runtime_packs_dir,
         logs_dir=logs_dir,
         launch_agents_dir=resolved_launch_agents_dir,
         uv_cache_dir=resolved_repo_root / ".uv-cache",
@@ -120,6 +126,8 @@ def build_launch_agent_specs(
         "PYTHONPATH": f"{layout.repo_root}:{layout.repo_root / 'services/mlx-worker-python'}",
         "UV_CACHE_DIR": str(layout.uv_cache_dir),
         "MELIX_PYTHON_WORKER_METRICS_PATH": str(layout.python_worker_metrics_path),
+        "MELIX_MANAGED_MODEL_ROOT": str(layout.managed_models_dir),
+        "MELIX_AUDIO_RUNTIME_PACK_ROOT": str(layout.audio_runtime_packs_dir),
     }
 
     control_plane_environment = {
@@ -129,6 +137,8 @@ def build_launch_agent_specs(
         "MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH": str(layout.swift_text_worker_socket_path),
         "MELIX_REPO_ROOT": str(layout.repo_root),
         "MELIX_CONTROL_PLANE_METRICS_PATH": str(layout.control_plane_metrics_path),
+        "MELIX_MANAGED_MODEL_ROOT": str(layout.managed_models_dir),
+        "MELIX_AUDIO_RUNTIME_PACK_ROOT": str(layout.audio_runtime_packs_dir),
     }
 
     return [
@@ -222,6 +232,8 @@ def write_local_product_artifacts(
     directories = [
         layout.app_support_dir,
         layout.runtime_dir,
+        layout.managed_models_dir,
+        layout.audio_runtime_packs_dir,
         layout.logs_dir,
         layout.launch_agents_dir,
         layout.uv_cache_dir,
@@ -242,6 +254,8 @@ def write_local_product_artifacts(
         "repo_root": str(layout.repo_root),
         "app_support_dir": str(layout.app_support_dir),
         "runtime_dir": str(layout.runtime_dir),
+        "managed_models_dir": str(layout.managed_models_dir),
+        "audio_runtime_packs_dir": str(layout.audio_runtime_packs_dir),
         "logs_dir": str(layout.logs_dir),
         "launch_agents_dir": str(layout.launch_agents_dir),
         "environment_script_path": str(layout.environment_script_path),
@@ -266,6 +280,8 @@ def render_environment_script(layout: LocalProductLayout) -> str:
     exports = {
         "MELIX_APP_SUPPORT_DIR": str(layout.app_support_dir),
         "MELIX_RUNTIME_DIR": str(layout.runtime_dir),
+        "MELIX_MANAGED_MODEL_ROOT": str(layout.managed_models_dir),
+        "MELIX_AUDIO_RUNTIME_PACK_ROOT": str(layout.audio_runtime_packs_dir),
         "MELIX_WORKER_SOCKET_PATH": str(layout.python_socket_path),
         "MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH": str(layout.swift_text_worker_socket_path),
         "MELIX_HTTP_PORT": str(layout.http_port),

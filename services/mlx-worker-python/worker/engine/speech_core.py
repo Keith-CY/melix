@@ -26,13 +26,14 @@ class SpeechCore:
 
         self._registry.start_request(request.id.request_id, runtime_kind="speech")
         try:
-            result = self._registry.speech_runtime.speak(
+            runtime = self._registry.runtime_for_loaded_model(loaded_model)
+            result = runtime.speak(
                 loaded_model.runtime_model,
                 request,
             )
-            if hasattr(self._registry.speech_runtime, "last_probe_snapshot"):
+            if hasattr(runtime, "last_probe_snapshot"):
                 self._registry.record_speech_probe(
-                    self._registry.speech_runtime.last_probe_snapshot()
+                    runtime.last_probe_snapshot()
                 )
         except Exception as exc:  # pragma: no cover - defensive branch
             return inference_pb2.SpeakResponse(

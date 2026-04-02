@@ -483,6 +483,54 @@ struct ControlPlaneServiceTests {
         #expect(loadRequest.model.ext["melix.adapter_set_hash"] == "adapter-alpha")
     }
 
+    @Test("execute worker-backed audio model load prefers managed local model path")
+    func executeWorkerBackedAudioModelLoadPrefersManagedLocalModelPath() async throws {
+        let appSupportDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-audio-load-\(UUID().uuidString)", isDirectory: true)
+        let assetManager = AudioAssetManager(appSupportDirectory: appSupportDirectory)
+        let localModelDirectory = appSupportDirectory
+            .appendingPathComponent(
+                "models/default-managed/hf/mlx-community/whisper-large-v3-turbo-asr-fp16/main",
+                isDirectory: true
+            )
+        try FileManager.default.createDirectory(at: localModelDirectory, withIntermediateDirectories: true)
+        try assetManager.recordRuntimePackInstall(
+            packID: "melix-audio-runtime-pack",
+            version: "0.3.0",
+            profiles: ["audio-stt", "audio-tts"]
+        )
+        try assetManager.recordManagedModel(
+            modelID: "melix-whisper-mlx",
+            revision: "main",
+            sourceModelPath: "mlx-community/whisper-large-v3-turbo-asr-fp16",
+            localModelPath: localModelDirectory.path
+        )
+
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.mlxWhisperModel()])
+        let workerClient = ModelLifecycleWorkerClient()
+        var loadResponse = Melix_Worker_V1_LoadModelResponse()
+        loadResponse.ok = true
+        loadResponse.modelHandle = "melix-whisper-mlx::python"
+        await workerClient.setLoadResponse(loadResponse)
+
+        let registry = WorkerRegistry(
+            defaultTextClient: workerClient,
+            pythonCompatibilityClient: workerClient,
+            modelCatalog: catalog
+        )
+        let service = ControlPlaneService(
+            modelCatalog: catalog,
+            workerRegistry: registry,
+            audioAssetManager: assetManager
+        )
+
+        let response = try await service.execute(makeLoadModelRequest(modelID: "melix-whisper-mlx"))
+        let loadRequest = try #require(await workerClient.loadRequests.first)
+
+        #expect(response.ok)
+        #expect(loadRequest.model.modelPath == localModelDirectory.path)
+    }
+
     @Test("execute returns unavailable and records failed state when worker-backed model.load fails")
     func executeReturnsUnavailableAndRecordsFailedStateWhenWorkerBackedModelLoadFails() async throws {
         let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel()])
@@ -1228,6 +1276,109 @@ struct ControlPlaneServiceTests {
         #expect(response.model.operation.stage == "download")
         #expect(response.model.operation.pct == 0.25)
         #expect(response.model.operation.manifestJson == manifestJSON)
+    }
+
+    @Test("execute install_audio_runtime records shared audio runtime pack metadata")
+    func executeInstallAudioRuntimeRecordsSharedAudioRuntimePackMetadata() async throws {
+        let appSupportDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-audio-runtime-install-\(UUID().uuidString)", isDirectory: true)
+        let assetManager = AudioAssetManager(appSupportDirectory: appSupportDirectory)
+        let modelOpsClient = ScriptedModelOperationsWorkerClient()
+        await modelOpsClient.setConvertEvents([
+            {
+                var event = Melix_Worker_V1_ConvertModelEvent()
+                event.started = Melix_Worker_V1_ConvertStarted()
+                event.started.jobID = "job-install-audio"
+                return event
+            }(),
+            {
+                var event = Melix_Worker_V1_ConvertModelEvent()
+                event.completed = Melix_Worker_V1_ConvertCompleted()
+                event.completed.outputPath = "/tmp/melix-audio-runtime/install_audio_runtime.artifact.json"
+                return event
+            }(),
+        ])
+
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.mlxWhisperModel()])
+        let service = ControlPlaneService(
+            modelCatalog: catalog,
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                modelOperationsClient: modelOpsClient
+            ),
+            audioAssetManager: assetManager
+        )
+
+        let response = try await service.execute(
+            makeRunModelOperationRequest(
+                modelID: "melix-whisper-mlx",
+                operation: "install_audio_runtime",
+                outputDir: "/tmp/melix-audio-runtime"
+            )
+        )
+        let listResponse = try await service.execute(makeListModelsRequest())
+        let runtimePackRecord = try #require(assetManager.runtimePackRecord(for: "audio-stt"))
+        let model = try #require(listResponse.model.models.first(where: { $0.modelID == "melix-whisper-mlx" }))
+        let lastRequest = try #require(await modelOpsClient.lastConvertRequest)
+
+        #expect(response.ok)
+        #expect(lastRequest.ext["operation"] == "install_audio_runtime")
+        #expect(runtimePackRecord.packID == "melix-audio-runtime-pack")
+        #expect(runtimePackRecord.profiles == ["audio-stt", "audio-tts"])
+        #expect(response.model.operation.outputPath.contains("/runtime-packs/audio/melix-audio-runtime-pack/"))
+        #expect(model.settings.ext["melix.audio.runtime_pack_state"] == "installed")
+        #expect(model.settings.ext["melix.audio.runtime_pack_id"] == "melix-audio-runtime-pack")
+    }
+
+    @Test("execute download records managed local audio model metadata")
+    func executeDownloadRecordsManagedLocalAudioModelMetadata() async throws {
+        let appSupportDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-audio-model-download-\(UUID().uuidString)", isDirectory: true)
+        let assetManager = AudioAssetManager(appSupportDirectory: appSupportDirectory)
+        let modelOpsClient = ScriptedModelOperationsWorkerClient()
+        await modelOpsClient.setConvertEvents([
+            {
+                var event = Melix_Worker_V1_ConvertModelEvent()
+                event.started = Melix_Worker_V1_ConvertStarted()
+                event.started.jobID = "job-download-audio"
+                return event
+            }(),
+            {
+                var event = Melix_Worker_V1_ConvertModelEvent()
+                event.completed = Melix_Worker_V1_ConvertCompleted()
+                event.completed.outputPath = "/tmp/melix-audio-models/download.artifact.json"
+                return event
+            }(),
+        ])
+
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.mlxWhisperModel()])
+        let service = ControlPlaneService(
+            modelCatalog: catalog,
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                modelOperationsClient: modelOpsClient
+            ),
+            audioAssetManager: assetManager
+        )
+
+        let response = try await service.execute(
+            makeRunModelOperationRequest(
+                modelID: "melix-whisper-mlx",
+                operation: "download",
+                outputDir: "/tmp/melix-audio-models"
+            )
+        )
+        let listResponse = try await service.execute(makeListModelsRequest())
+        let managedRecord = try #require(assetManager.managedModelRecord(for: "melix-whisper-mlx"))
+        let model = try #require(listResponse.model.models.first(where: { $0.modelID == "melix-whisper-mlx" }))
+        let lastRequest = try #require(await modelOpsClient.lastConvertRequest)
+
+        #expect(response.ok)
+        #expect(lastRequest.ext["operation"] == "download")
+        #expect(managedRecord.localModelPath.contains("/models/default-managed/"))
+        #expect(response.model.operation.outputPath == managedRecord.localModelPath)
+        #expect(model.settings.ext["melix.audio.model_state"] == "managed_local")
+        #expect(model.settings.ext["melix.model_path"] == managedRecord.localModelPath)
     }
 
     @Test("execute handles ops.run_doctor through the model-operations worker")

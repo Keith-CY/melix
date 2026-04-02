@@ -25,6 +25,7 @@ public actor ControlPlaneService {
     private let chatTranslator: ChatRequestTranslator
     private let mcpToolCatalog: MCPToolCatalog
     private let gatewayAccessPolicy: GatewayAccessPolicy
+    private let audioAssetManager: AudioAssetManager
 
     public init(
         serverVersion: String = "0.1.0",
@@ -43,7 +44,8 @@ public actor ControlPlaneService {
         requestCoordinator: RequestCoordinator? = nil,
         chatTranslator: ChatRequestTranslator = ChatRequestTranslator(),
         mcpToolCatalog: MCPToolCatalog = .empty,
-        gatewayAccessPolicy: GatewayAccessPolicy = .localTrust
+        gatewayAccessPolicy: GatewayAccessPolicy = .localTrust,
+        audioAssetManager: AudioAssetManager = AudioAssetManager()
     ) {
         let resolvedSchedulerReadModel = schedulerReadModel ?? SchedulerReadModel(
             metricsStore: metricsStore,
@@ -87,6 +89,7 @@ public actor ControlPlaneService {
         self.chatTranslator = chatTranslator
         self.mcpToolCatalog = mcpToolCatalog
         self.gatewayAccessPolicy = gatewayAccessPolicy
+        self.audioAssetManager = audioAssetManager
     }
 
     public func handshake(
@@ -96,7 +99,15 @@ public actor ControlPlaneService {
         response.protocolVersion = request.protocolVersion
         response.serverVersion = serverVersion
         response.daemonInstanceID = daemonInstanceID
-        response.features = ["xpc", "models", "metrics", "cache-metadata", "session-graph", "image-jobs"]
+        response.features = [
+            "xpc",
+            "models",
+            "metrics",
+            "cache-metadata",
+            "session-graph",
+            "image-jobs",
+            "audio-assets",
+        ]
         if !mcpToolCatalog.sources.isEmpty || !mcpToolCatalog.configPath.isEmpty {
             response.features.append("mcp-tools")
         }
@@ -247,7 +258,7 @@ public actor ControlPlaneService {
         case .list:
             await syncRegistryModelsFromWorkerIfAvailable()
             var reply = Melix_Controlplane_V1_ModelReply()
-            reply.models = await modelCatalog.listModels()
+            reply.models = hydratedModels(await modelCatalog.listModels())
             return okResponse(for: request, model: reply)
         case .load(let load):
             guard await modelCatalog.model(id: load.modelID) != nil else {
@@ -274,8 +285,8 @@ public actor ControlPlaneService {
                 )
             }
             var reply = Melix_Controlplane_V1_ModelReply()
-            reply.model = model
-            reply.models = await modelCatalog.listModels()
+            reply.model = hydrate(model)
+            reply.models = hydratedModels(await modelCatalog.listModels())
             return okResponse(for: request, model: reply)
         case .unload(let unload):
             guard await modelCatalog.model(id: unload.modelID) != nil else {
@@ -297,8 +308,8 @@ public actor ControlPlaneService {
                 )
             }
             var reply = Melix_Controlplane_V1_ModelReply()
-            reply.model = model
-            reply.models = await modelCatalog.listModels()
+            reply.model = hydrate(model)
+            reply.models = hydratedModels(await modelCatalog.listModels())
             return okResponse(for: request, model: reply)
         case .setPolicy(let setPolicy):
             return await handleSetModelPolicy(request: request, command: setPolicy)
@@ -778,7 +789,7 @@ public actor ControlPlaneService {
     }
 
     private func buildSnapshot() async -> Melix_Controlplane_V1_ServerSnapshot {
-        let models = await modelCatalog.listModels()
+        let models = hydratedModels(await modelCatalog.listModels())
         let metrics = await metricsStore.snapshot()
         let queues = await schedulerReadModel.snapshot()
         let cache = await cacheMetadataStore.cacheSummary()
@@ -1252,6 +1263,15 @@ public actor ControlPlaneService {
             if command.operation == "activate_adapter" {
                 await registerActivatedDerivedModel(from: operation.manifestJson)
             }
+            do {
+                try await finalizeAudioModelOperation(command: command, operation: &operation)
+            } catch {
+                return errorResponse(
+                    for: request,
+                    code: "runtime_error",
+                    message: "Audio asset bookkeeping failed: \(error)"
+                )
+            }
 
             var reply = Melix_Controlplane_V1_ModelReply()
             reply.operation = operation
@@ -1267,6 +1287,84 @@ public actor ControlPlaneService {
             workerRegistry: workerRegistry,
             metricsStore: metricsStore
         )
+    }
+
+    private func finalizeAudioModelOperation(
+        command: Melix_Controlplane_V1_RunModelOperation,
+        operation: inout Melix_Controlplane_V1_ModelOperationResult
+    ) async throws {
+        let selectedModel = hydratedModel(await modelCatalog.model(id: command.modelID))
+        guard let selectedModel else {
+            return
+        }
+
+        let backendID = selectedModel.settings.ext["melix.audio.backend_id"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard backendID.hasPrefix("mlx_audio.") else {
+            return
+        }
+
+        if command.operation == "install_audio_runtime" {
+            let installProfile = selectedModel.settings.ext["melix.audio.install_profile"]?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            guard !installProfile.isEmpty else {
+                return
+            }
+            let packID = normalizedAudioMetadataValue(command.ext["melix.audio.runtime_pack_id"])
+                ?? normalizedAudioMetadataValue(selectedModel.settings.ext["melix.audio.runtime_pack_id"])
+                ?? audioAssetManager.runtimePackID(for: installProfile)
+            let version = normalizedAudioMetadataValue(command.ext["melix.audio.runtime_pack_version"]) ?? "0.3.0"
+            try audioAssetManager.recordRuntimePackInstall(
+                packID: packID,
+                version: version,
+                profiles: sharedAudioRuntimeProfiles(for: installProfile)
+            )
+            operation.outputPath = audioAssetManager.audioRuntimePackRootURL
+                .appendingPathComponent(packID, isDirectory: true)
+                .appendingPathComponent(version, isDirectory: true)
+                .path
+            return
+        }
+
+        guard command.operation == "download",
+              let modelSpec = BootstrapWorkerPreparation.modelSpec(for: selectedModel)
+        else {
+            return
+        }
+
+        let sourceModelPath = normalizedAudioMetadataValue(modelSpec.modelPath) ?? command.modelID
+        let revision = normalizedAudioMetadataValue(selectedModel.settings.ext["melix.model_revision"])
+            ?? normalizedAudioMetadataValue(modelSpec.revision)
+            ?? "managed"
+        let localModelDirectory = audioAssetManager.managedModelDirectoryURL(
+            sourceModelPath: sourceModelPath,
+            revision: revision
+        )
+        try audioAssetManager.recordManagedModel(
+            modelID: command.modelID,
+            revision: revision,
+            sourceModelPath: sourceModelPath,
+            localModelPath: localModelDirectory.path
+        )
+        operation.outputPath = localModelDirectory.path
+    }
+
+    private func normalizedAudioMetadataValue(_ rawValue: String?) -> String? {
+        guard let rawValue else {
+            return nil
+        }
+        let normalized = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        return normalized.isEmpty ? nil : normalized
+    }
+
+    private func sharedAudioRuntimeProfiles(for installProfile: String) -> [String] {
+        let normalizedInstallProfile = installProfile.trimmingCharacters(in: .whitespacesAndNewlines)
+        switch normalizedInstallProfile {
+        case "audio-stt", "audio-tts", "audio":
+            return ["audio-stt", "audio-tts"]
+        default:
+            return normalizedInstallProfile.isEmpty ? [] : [normalizedInstallProfile]
+        }
     }
 
     private func normalizedWorkerQuantProfile(
@@ -1849,15 +1947,17 @@ public actor ControlPlaneService {
         reason: String
     ) async -> ModelLoadOutcome {
         let preparedModelSpec = await modelCatalog.model(id: modelID).flatMap(BootstrapWorkerPreparation.modelSpec(for:))
+        let hydratedPreparedModelSpec = hydratedModel(await modelCatalog.model(id: modelID))
+            .flatMap(BootstrapWorkerPreparation.modelSpec(for:))
         guard let workerRegistry,
-              let modelSpec = preparedModelSpec,
+              let modelSpec = hydratedPreparedModelSpec ?? preparedModelSpec,
               let workerClient = await workerRegistry.client(forModelID: modelID) else {
             let model = await modelCatalog.recordLoadSucceeded(
                 id: modelID,
                 dispatchHandle: "\(modelID)::local",
                 reason: reason
             ) ?? Melix_Controlplane_V1_ModelSummary()
-            return ModelLoadOutcome(model: model, error: nil)
+            return ModelLoadOutcome(model: hydrate(model), error: nil)
         }
 
         var workerRequest = Melix_Worker_V1_LoadModelRequest()
@@ -1875,7 +1975,7 @@ public actor ControlPlaneService {
                     id: modelID,
                     reason: failureReason
                 ) ?? Melix_Controlplane_V1_ModelSummary()
-                return ModelLoadOutcome(model: model, error: explicitError)
+                return ModelLoadOutcome(model: hydrate(model), error: explicitError)
             }
             let model = await modelCatalog.recordLoadSucceeded(
                 id: modelID,
@@ -1884,13 +1984,13 @@ public actor ControlPlaneService {
                 workerResidency: response.hasResidency ? response.residency : nil,
                 reason: reason
             ) ?? Melix_Controlplane_V1_ModelSummary()
-            return ModelLoadOutcome(model: model, error: nil)
+            return ModelLoadOutcome(model: hydrate(model), error: nil)
         } catch {
             let model = await modelCatalog.recordLoadFailed(
                 id: modelID,
                 reason: "\(reason)_failed"
             ) ?? Melix_Controlplane_V1_ModelSummary()
-            return ModelLoadOutcome(model: model, error: nil)
+            return ModelLoadOutcome(model: hydrate(model), error: nil)
         }
     }
 
@@ -1913,10 +2013,11 @@ public actor ControlPlaneService {
         guard let workerRegistry,
               let handle = await modelCatalog.storedDispatchHandle(for: modelID),
               let workerClient = await workerRegistry.client(forModelID: modelID) else {
-            return await modelCatalog.recordUnloadSucceeded(
+            let unloaded = await modelCatalog.recordUnloadSucceeded(
                 id: modelID,
                 reason: reason
             ) ?? Melix_Controlplane_V1_ModelSummary()
+            return hydrate(unloaded)
         }
 
         var workerRequest = Melix_Worker_V1_UnloadModelRequest()
@@ -1925,21 +2026,40 @@ public actor ControlPlaneService {
         do {
             let response = try await workerClient.unloadModel(request: workerRequest)
             guard response.ok else {
-                return await modelCatalog.recordUnloadFailed(
+                let failed = await modelCatalog.recordUnloadFailed(
                     id: modelID,
                     reason: reason
                 ) ?? Melix_Controlplane_V1_ModelSummary()
+                return hydrate(failed)
             }
-            return await modelCatalog.recordUnloadSucceeded(
+            let unloaded = await modelCatalog.recordUnloadSucceeded(
                 id: modelID,
                 reason: reason
             ) ?? Melix_Controlplane_V1_ModelSummary()
+            return hydrate(unloaded)
         } catch {
-            return await modelCatalog.recordUnloadFailed(
+            let failed = await modelCatalog.recordUnloadFailed(
                 id: modelID,
                 reason: reason
             ) ?? Melix_Controlplane_V1_ModelSummary()
+            return hydrate(failed)
         }
+    }
+
+    private func hydrate(_ model: Melix_Controlplane_V1_ModelSummary) -> Melix_Controlplane_V1_ModelSummary {
+        audioAssetManager.hydrate(model)
+    }
+
+    private func hydratedModel(
+        _ model: Melix_Controlplane_V1_ModelSummary?
+    ) -> Melix_Controlplane_V1_ModelSummary? {
+        model.map(hydrate)
+    }
+
+    private func hydratedModels(
+        _ models: [Melix_Controlplane_V1_ModelSummary]
+    ) -> [Melix_Controlplane_V1_ModelSummary] {
+        models.map(hydrate)
     }
 
     private func performEvictionsForLoad(targetModelID: String) async {

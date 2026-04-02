@@ -74,6 +74,23 @@ public struct RuntimeModelOperationState: Equatable, Sendable {
     public let calibrationSampleCount: Int
 }
 
+public enum RuntimeAudioSetupActionKind: String, Equatable, Sendable {
+    case installRuntime = "install_runtime"
+    case downloadModel = "download_model"
+}
+
+public struct RuntimeAudioSetupActionState: Identifiable, Equatable, Sendable {
+    public let modelID: String
+    public let alias: String
+    public let detail: String
+    public let actionTitle: String
+    public let kind: RuntimeAudioSetupActionKind
+
+    public var id: String {
+        "\(modelID):\(kind.rawValue)"
+    }
+}
+
 public struct RuntimeDoctorReportState: Equatable, Sendable {
     public let markdown: String
 }
@@ -554,7 +571,52 @@ public final class RuntimeViewModel {
                 severity: .critical
             )
         }
+        if let audioSetupAction = audioSetupActions.first {
+            return DesktopBannerState(
+                title: "Audio Setup Required",
+                detail: audioSetupAction.detail,
+                severity: .warning
+            )
+        }
         return nil
+    }
+
+    public var audioSetupActions: [RuntimeAudioSetupActionState] {
+        latestSnapshot.models.compactMap { model in
+            let backendID = model.settings.ext["melix.audio.backend_id"]?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            guard backendID.hasPrefix("mlx_audio.") else {
+                return nil
+            }
+
+            let alias = model.settings.alias.isEmpty ? model.modelID : model.settings.alias
+            let runtimePackState = model.settings.ext["melix.audio.runtime_pack_state"]?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if runtimePackState != "installed" {
+                let runtimePackID = model.settings.ext["melix.audio.runtime_pack_id"]?
+                    .trimmingCharacters(in: .whitespacesAndNewlines) ?? "melix-audio-runtime-pack"
+                return RuntimeAudioSetupActionState(
+                    modelID: model.modelID,
+                    alias: alias,
+                    detail: "Install \(runtimePackID) to enable audio requests for \(alias).",
+                    actionTitle: "Install Audio Support",
+                    kind: .installRuntime
+                )
+            }
+
+            let modelState = model.settings.ext["melix.audio.model_state"]?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            guard modelState != "managed_local" else {
+                return nil
+            }
+            return RuntimeAudioSetupActionState(
+                modelID: model.modelID,
+                alias: alias,
+                detail: "Download \(alias) into Melix managed storage before serving audio requests.",
+                actionTitle: "Download Audio Model",
+                kind: .downloadModel
+            )
+        }
     }
 
     public var latestAdapterPackage: RuntimeAdapterPackageState? {
@@ -1116,6 +1178,30 @@ public final class RuntimeViewModel {
             operation: "download",
             outputDir: "/tmp/melix-download"
         )
+    }
+
+    public func installAudioRuntime(modelID: String) async {
+        guard !modelID.isEmpty else {
+            return
+        }
+        await runModelOperation(
+            modelID: modelID,
+            operation: "install_audio_runtime",
+            outputDir: "/tmp/melix-audio-runtime-pack"
+        )
+        await refreshDesktopFoundation()
+    }
+
+    public func downloadAudioModel(modelID: String) async {
+        guard !modelID.isEmpty else {
+            return
+        }
+        await runModelOperation(
+            modelID: modelID,
+            operation: "download",
+            outputDir: "/tmp/melix-audio-models"
+        )
+        await refreshDesktopFoundation()
     }
 
     public func uploadPrimaryModel() async {

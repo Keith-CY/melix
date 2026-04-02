@@ -13,6 +13,8 @@ from worker.runtime.deterministic_speech_runtime import DeterministicSpeechRunti
 from worker.runtime.deterministic_transcription_runtime import DeterministicTranscriptionRuntime
 from worker.runtime.deterministic_vlm_runtime import DeterministicVLMRuntime
 from worker.runtime.deterministic_image_generation_runtime import DeterministicImageGenerationRuntime
+from worker.runtime.audio_runtime_protocols import SpeechRuntimeProtocol, TranscriptionRuntimeProtocol
+from worker.runtime.mlx_audio_runtime import MLXAudioSpeechRuntime, MLXAudioTranscriptionRuntime
 from worker.runtime.mlx_text_runtime import MLXTextRuntime
 from worker.runtime.deterministic_embedding_runtime import DeterministicEmbeddingRuntime
 from worker.runtime.deterministic_rerank_runtime import DeterministicRerankRuntime
@@ -23,6 +25,7 @@ class LoadedModel:
     handle: str
     spec: common_pb2.ModelSpec
     runtime_model: object
+    runtime: object
     estimated_resident_bytes: int
     runtime_kind: str
     residency: common_pb2.ResidencyInfo
@@ -56,8 +59,10 @@ class WorkerRegistry:
         rerank_runtime: DeterministicRerankRuntime | None = None,
         ocr_runtime: DeterministicOCRRuntime | None = None,
         vlm_runtime: DeterministicVLMRuntime | None = None,
-        transcription_runtime: DeterministicTranscriptionRuntime | None = None,
-        speech_runtime: DeterministicSpeechRuntime | None = None,
+        transcription_runtime: TranscriptionRuntimeProtocol | None = None,
+        speech_runtime: SpeechRuntimeProtocol | None = None,
+        mlx_audio_transcription_runtime: TranscriptionRuntimeProtocol | None = None,
+        mlx_audio_speech_runtime: SpeechRuntimeProtocol | None = None,
         image_generation_runtime: DeterministicImageGenerationRuntime | None = None,
         model_catalog: WorkerModelCatalog | None = None,
         worker_id: str = "worker-text-001",
@@ -69,8 +74,15 @@ class WorkerRegistry:
         self.rerank_runtime = rerank_runtime or DeterministicRerankRuntime()
         self.ocr_runtime = ocr_runtime or DeterministicOCRRuntime()
         self.vlm_runtime = vlm_runtime or DeterministicVLMRuntime()
+        audio_execution_gate = Lock()
         self.transcription_runtime = transcription_runtime or DeterministicTranscriptionRuntime()
         self.speech_runtime = speech_runtime or DeterministicSpeechRuntime()
+        self.mlx_audio_transcription_runtime = (
+            mlx_audio_transcription_runtime or MLXAudioTranscriptionRuntime(execution_gate=audio_execution_gate)
+        )
+        self.mlx_audio_speech_runtime = (
+            mlx_audio_speech_runtime or MLXAudioSpeechRuntime(execution_gate=audio_execution_gate)
+        )
         self.image_generation_runtime = image_generation_runtime or DeterministicImageGenerationRuntime()
         self.model_catalog = model_catalog or WorkerModelCatalog()
         self.worker_id = worker_id
@@ -91,6 +103,10 @@ class WorkerRegistry:
         self._last_audio_duration_seconds = 0.0
         self._last_audio_chunk_count = 0
         self._last_audio_output_bytes = 0
+        self._last_audio_model_load_latency_ms = 0.0
+        self._last_audio_backend_unavailable_count = 0
+        self._last_voice_fallback_count = 0
+        self._last_language_fallback_count = 0
         self._last_image_job_latency_ms = 0.0
         self._last_image_artifact_publish_ms = 0.0
         self._last_image_output_bytes = 0
@@ -164,11 +180,14 @@ class WorkerRegistry:
                 handle=handle,
                 spec=resolved,
                 runtime_model=runtime_model,
+                runtime=runtime,
                 estimated_resident_bytes=estimated,
                 runtime_kind=runtime_kind,
                 residency=residency,
             )
             self._loaded_models[handle] = loaded
+            if runtime_kind in {"transcription", "speech"}:
+                self._last_audio_model_load_latency_ms = float(getattr(runtime_model, "load_latency_ms", 0.0))
             return loaded
 
     def unload_model(self, handle: str) -> bool:
@@ -241,6 +260,10 @@ class WorkerRegistry:
             last_audio_duration_seconds = self._last_audio_duration_seconds
             last_audio_chunk_count = self._last_audio_chunk_count
             last_audio_output_bytes = self._last_audio_output_bytes
+            last_audio_model_load_latency_ms = self._last_audio_model_load_latency_ms
+            last_audio_backend_unavailable_count = self._last_audio_backend_unavailable_count
+            last_voice_fallback_count = self._last_voice_fallback_count
+            last_language_fallback_count = self._last_language_fallback_count
             last_image_job_latency_ms = self._last_image_job_latency_ms
             last_image_artifact_publish_ms = self._last_image_artifact_publish_ms
             last_image_output_bytes = self._last_image_output_bytes
@@ -266,6 +289,10 @@ class WorkerRegistry:
             last_audio_duration_seconds=last_audio_duration_seconds,
             last_audio_chunk_count=last_audio_chunk_count,
             last_audio_output_bytes=last_audio_output_bytes,
+            last_audio_model_load_latency_ms=last_audio_model_load_latency_ms,
+            last_audio_backend_unavailable_count=last_audio_backend_unavailable_count,
+            last_voice_fallback_count=last_voice_fallback_count,
+            last_language_fallback_count=last_language_fallback_count,
             last_image_job_latency_ms=last_image_job_latency_ms,
             last_image_artifact_publish_ms=last_image_artifact_publish_ms,
             last_image_output_bytes=last_image_output_bytes,
@@ -292,8 +319,7 @@ class WorkerRegistry:
             self._draining = draining
 
     def runtime_for_loaded_model(self, loaded_model: LoadedModel) -> Any:
-        _, runtime = self._runtime_for_model(loaded_model.spec)
-        return runtime
+        return loaded_model.runtime
 
     def record_vision_probe(self, runtime_kind: str, probe: Any) -> None:
         with self._lock:
@@ -324,6 +350,7 @@ class WorkerRegistry:
             self._last_audio_duration_seconds = float(getattr(probe, "estimated_duration_seconds", 0.0))
             self._last_audio_chunk_count = int(getattr(probe, "chunk_count", 0))
             self._last_audio_output_bytes = 0
+            self._last_language_fallback_count = int(getattr(probe, "language_fallback_count", 0))
             self._last_image_job_latency_ms = 0.0
             self._last_image_artifact_publish_ms = 0.0
             self._last_image_output_bytes = 0
@@ -341,10 +368,19 @@ class WorkerRegistry:
             self._last_audio_duration_seconds = 0.0
             self._last_audio_chunk_count = 0
             self._last_audio_output_bytes = int(getattr(probe, "output_bytes", 0))
+            self._last_voice_fallback_count = int(getattr(probe, "voice_fallback_count", 0))
             self._last_image_job_latency_ms = 0.0
             self._last_image_artifact_publish_ms = 0.0
             self._last_image_output_bytes = 0
             self._last_image_peak_memory_bytes = 0
+
+    def record_audio_model_load_probe(self, load_latency_ms: float) -> None:
+        with self._lock:
+            self._last_audio_model_load_latency_ms = float(load_latency_ms)
+
+    def increment_audio_backend_unavailable(self) -> None:
+        with self._lock:
+            self._last_audio_backend_unavailable_count += 1
 
     def record_image_probe(self, probe: Any) -> None:
         with self._lock:
@@ -373,12 +409,37 @@ class WorkerRegistry:
         if model_spec.model_kind == "vlm":
             return "vlm", self.vlm_runtime
         if model_spec.model_kind == "transcription":
-            return "transcription", self.transcription_runtime
+            backend_id = self._audio_backend_id_for_model(model_spec)
+            if backend_id == "deterministic":
+                return "transcription", self.transcription_runtime
+            if backend_id == "mlx_audio.stt":
+                return "transcription", self.mlx_audio_transcription_runtime
+            raise RuntimeError(
+                f"Audio transcription model {model_spec.model_id} declares unsupported backend {backend_id!r}."
+            )
         if model_spec.model_kind == "speech":
-            return "speech", self.speech_runtime
+            backend_id = self._audio_backend_id_for_model(model_spec)
+            if backend_id == "deterministic":
+                return "speech", self.speech_runtime
+            if backend_id == "mlx_audio.tts":
+                return "speech", self.mlx_audio_speech_runtime
+            raise RuntimeError(
+                f"Audio speech model {model_spec.model_id} declares unsupported backend {backend_id!r}."
+            )
         if model_spec.model_kind == "image":
             return "image", self.image_generation_runtime
         return "text", self.runtime
+
+    @staticmethod
+    def _audio_backend_id_for_model(model_spec: common_pb2.ModelSpec) -> str:
+        backend_id = model_spec.ext.get("melix.audio.backend_id", "").strip()
+        if backend_id:
+            return backend_id
+        if model_spec.model_id in {"melix-dev-transcribe", "melix-dev-speech"}:
+            return "deterministic"
+        raise RuntimeError(
+            f"Audio model {model_spec.model_id} requires an explicit melix.audio.backend_id."
+        )
 
     def _loaded_model_summary(self, loaded: LoadedModel) -> runtime_pb2.LoadedModelSummary:
         summary = runtime_pb2.LoadedModelSummary()

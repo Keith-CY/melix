@@ -10,6 +10,7 @@ from worker.productization.macos_app_bundle import (
     render_launcher_script,
     render_portable_environment_script,
     resolve_python_runtime_root,
+    resolve_site_packages_root,
     write_unsigned_macos_app_bundle,
 )
 
@@ -43,6 +44,8 @@ def test_render_portable_environment_script_uses_home_relative_paths() -> None:
 
     assert 'export MELIX_APP_SUPPORT_DIR="$HOME/Library/Application Support/Melix"' in script
     assert 'export MELIX_RUNTIME_DIR="$MELIX_APP_SUPPORT_DIR/runtime"' in script
+    assert 'export MELIX_MANAGED_MODEL_ROOT="$MELIX_APP_SUPPORT_DIR/models/default-managed"' in script
+    assert 'export MELIX_AUDIO_RUNTIME_PACK_ROOT="$MELIX_APP_SUPPORT_DIR/runtime-packs/audio"' in script
 
 
 def test_render_launcher_script_starts_bundled_workers_and_app(tmp_path: Path) -> None:
@@ -71,6 +74,26 @@ def test_resolve_python_runtime_root_resolves_from_python_executable(tmp_path: P
     executable.write_text("", encoding="utf-8")
 
     assert resolve_python_runtime_root(executable) == runtime_root
+
+
+def test_resolve_site_packages_root_finds_virtualenv_site_packages(tmp_path: Path) -> None:
+    repo_root = tmp_path / "repo"
+    site_packages = repo_root / ".venv/lib/python3.13/site-packages"
+    site_packages.mkdir(parents=True)
+
+    assert resolve_site_packages_root(repo_root) == site_packages
+
+
+def test_resolve_site_packages_root_requires_virtualenv_site_packages(tmp_path: Path) -> None:
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+
+    try:
+        resolve_site_packages_root(repo_root)
+    except FileNotFoundError as error:
+        assert str(repo_root / ".venv/lib") in str(error)
+    else:
+        raise AssertionError("expected resolve_site_packages_root() to fail without site-packages")
 
 
 def test_write_unsigned_macos_app_bundle_writes_self_contained_layout(tmp_path: Path) -> None:

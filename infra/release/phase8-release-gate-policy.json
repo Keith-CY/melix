@@ -26,6 +26,38 @@
       "min": 100.0
     }
   },
+  "audio": {
+    "slim.audio_runtime_pack_install_ms": {
+      "max": 500.0
+    },
+    "slim.audio_model_download_ms": {
+      "max": 500.0
+    },
+    "slim.audio_first_use_blocked_runtime_pack_count": {
+      "min": 1.0
+    },
+    "slim.audio_first_use_blocked_model_count": {
+      "min": 1.0
+    },
+    "slim.audio_runtime_pack_recovery_success_rate": {
+      "min": 100.0
+    },
+    "full.audio_runtime_pack_install_ms": {
+      "max": 0.0
+    },
+    "full.audio_model_download_ms": {
+      "max": 500.0
+    },
+    "full.audio_first_use_blocked_runtime_pack_count": {
+      "max": 0.0
+    },
+    "full.audio_first_use_blocked_model_count": {
+      "min": 1.0
+    },
+    "full.audio_runtime_pack_recovery_success_rate": {
+      "min": 100.0
+    }
+  },
   "runtime_core": {
     "multi_model_ready_count": {
       "min": 3.0
