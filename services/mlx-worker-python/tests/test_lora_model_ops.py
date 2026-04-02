@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import pytest
+from urllib.error import HTTPError, URLError
 
 from packages.protocol.python.worker.v1 import maintenance_pb2
 
@@ -18,6 +20,12 @@ from worker.model_ops.mlx_lm_runner import (
     TrainingMetrics,
     TrainingRequest,
     TrainingResult,
+)
+from worker.model_ops import training_dataset as training_dataset_module
+from worker.model_ops.training_dataset import (
+    HFDatasetReference,
+    materialize_hf_training_dataset_package,
+    resolve_training_dataset_package,
 )
 from worker.model_registry.catalog import WorkerModelCatalog
 from worker.registry import WorkerRegistry
@@ -179,6 +187,32 @@ def _build_service(tmp_path: Path, runner: MLXLMRunner) -> WorkerMaintenanceServ
     return service
 
 
+class FakeHFDatasetFetcher:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, dict[str, str]]] = []
+
+    def __call__(self, endpoint: str, params: dict[str, str]) -> dict[str, object]:
+        self.calls.append((endpoint, dict(params)))
+        if endpoint == "splits":
+            return {
+                "splits": [
+                    {
+                        "dataset": "melix/demo-hf",
+                        "config": "default",
+                        "split": "train",
+                    }
+                ]
+            }
+        if endpoint == "rows":
+            return {
+                "rows": [
+                    {"row": {"text": "hello from hf"}},
+                    {"row": {"text": "goodbye from hf"}},
+                ]
+            }
+        raise AssertionError(f"Unexpected endpoint: {endpoint}")
+
+
 def test_train_lora_produces_adapter_package_and_expanded_modules(tmp_path: Path) -> None:
     dataset_dir = _write_dataset_package(
         tmp_path / "dataset",
@@ -260,6 +294,372 @@ def test_train_lora_produces_adapter_package_and_expanded_modules(tmp_path: Path
         "model.layers.0.mlp.gate_proj",
         "model.layers.1.mlp.gate_proj",
     ]
+
+
+def test_resolve_training_dataset_rejects_invalid_source_kind_and_missing_hf_path(tmp_path: Path) -> None:
+    with pytest.raises(Exception) as invalid_source:
+        resolve_training_dataset_package(
+            {"dataset_source_kind": "remote_zip"},
+            jobs_root=tmp_path / "jobs",
+        )
+    assert invalid_source.value.code == "invalid_dataset_source"
+
+    with pytest.raises(Exception) as missing_path:
+        resolve_training_dataset_package(
+            {"dataset_source_kind": "hf_dataset"},
+            jobs_root=tmp_path / "jobs",
+        )
+    assert missing_path.value.code == "invalid_dataset_source"
+
+
+def test_train_lora_materializes_hf_dataset_and_reuses_cached_package(tmp_path: Path) -> None:
+    fetcher = FakeHFDatasetFetcher()
+    registry = WorkerRegistry(model_catalog=WorkerModelCatalog())
+    service = WorkerMaintenanceService(registry, jobs_root=tmp_path / "model-ops")
+    service._core = MaintenanceCore(
+        registry,
+        jobs_root=tmp_path / "model-ops",
+        lora_training_pipeline=LoRATrainingPipeline(
+            runner=SuccessfulRunner(),
+            hf_dataset_fetcher=fetcher,
+        ),
+        adapter_activation_pipeline=AdapterActivationPipeline(runner=SuccessfulRunner()),
+    )
+
+    request = maintenance_pb2.ConvertModelRequest(
+        source_model="melix-dev-text",
+        output_dir=str(tmp_path / "ignored-train-output"),
+        generate_manifest=True,
+        ext={
+            "operation": "train_lora",
+            "adapter_name": "melix-hf-adapter",
+            "dataset_source_kind": "hf_dataset",
+            "hf_dataset_path": "melix/demo-hf",
+            "hf_train_split": "train",
+            "text_feature": "text",
+        },
+    )
+
+    first_events = list(service.ConvertModel(request, context=None))
+    second_events = list(service.ConvertModel(request, context=None))
+
+    first_payload = json.loads(
+        next(event.manifest for event in first_events if event.HasField("manifest")).manifest_json
+    )
+    second_payload = json.loads(
+        next(event.manifest for event in second_events if event.HasField("manifest")).manifest_json
+    )
+
+    assert first_payload["dataset_source_kind"] == "hf_dataset"
+    assert first_payload["hf_dataset_path"] == "melix/demo-hf"
+    assert first_payload["hf_dataset_name"] == "default"
+    assert first_payload["hf_train_split"] == "train"
+    assert first_payload["dataset_uri"] == "hf://melix/demo-hf?config=default&split=train&revision=main"
+    assert first_payload["dataset_cache_hit"] is False
+    assert first_payload["dataset_materialized_package_path"].startswith(str(tmp_path / "model-ops" / "datasets"))
+    assert Path(first_payload["dataset_materialized_package_path"]).is_dir()
+    assert second_payload["dataset_cache_hit"] is True
+    assert [endpoint for endpoint, _ in fetcher.calls] == ["splits", "rows"]
+
+
+def test_materialize_hf_training_dataset_rejects_empty_row_payload(tmp_path: Path) -> None:
+    reference = HFDatasetReference(
+        dataset_path="melix/demo-hf",
+        dataset_name="default",
+        dataset_revision="main",
+        train_split="train",
+        chat_feature="",
+        prompt_feature="",
+        completion_feature="",
+        text_feature="text",
+    )
+
+    def empty_fetcher(endpoint: str, params: dict[str, str]) -> dict[str, object]:
+        if endpoint == "rows":
+            return {"rows": []}
+        raise AssertionError(f"Unexpected endpoint: {endpoint}")
+
+    with pytest.raises(Exception) as exc:
+        materialize_hf_training_dataset_package(
+            reference,
+            cache_root=tmp_path / "datasets",
+            fetch_json=empty_fetcher,
+        )
+    assert exc.value.code == "hf_dataset_fetch_failed"
+
+
+def test_hf_dataset_fetcher_reports_http_url_json_and_shape_errors(monkeypatch) -> None:
+    class FakeResponse:
+        def __init__(self, payload: bytes) -> None:
+            self._payload = payload
+
+        def __enter__(self) -> "FakeResponse":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        def read(self) -> bytes:
+            return self._payload
+
+    def raise_http(request, timeout: int):
+        raise HTTPError(request.full_url, 429, "rate limited", hdrs=None, fp=None)
+
+    monkeypatch.setattr(training_dataset_module, "urlopen", raise_http)
+    with pytest.raises(Exception) as http_exc:
+        training_dataset_module._fetch_hf_dataset_server_json("rows", {"dataset": "melix/demo-hf"})
+    assert http_exc.value.code == "hf_dataset_fetch_failed"
+
+    def raise_url(request, timeout: int):
+        raise URLError("offline")
+
+    monkeypatch.setattr(training_dataset_module, "urlopen", raise_url)
+    with pytest.raises(Exception) as url_exc:
+        training_dataset_module._fetch_hf_dataset_server_json("rows", {"dataset": "melix/demo-hf"})
+    assert url_exc.value.code == "hf_dataset_fetch_failed"
+
+    monkeypatch.setattr(
+        training_dataset_module,
+        "urlopen",
+        lambda request, timeout: FakeResponse(b"{not-json"),
+    )
+    with pytest.raises(Exception) as json_exc:
+        training_dataset_module._fetch_hf_dataset_server_json("rows", {"dataset": "melix/demo-hf"})
+    assert json_exc.value.code == "hf_dataset_fetch_failed"
+
+    monkeypatch.setattr(
+        training_dataset_module,
+        "urlopen",
+        lambda request, timeout: FakeResponse(b"[]"),
+    )
+    with pytest.raises(Exception) as shape_exc:
+        training_dataset_module._fetch_hf_dataset_server_json("rows", {"dataset": "melix/demo-hf"})
+    assert shape_exc.value.code == "hf_dataset_fetch_failed"
+
+    captured_headers: dict[str, str] = {}
+
+    def success_urlopen(request, timeout: int):
+        for key, value in request.header_items():
+            captured_headers[key.lower()] = value
+        return FakeResponse(b"{}")
+
+    monkeypatch.setenv("HF_TOKEN", "secret-token")
+    monkeypatch.setattr(training_dataset_module, "urlopen", success_urlopen)
+    assert training_dataset_module._fetch_hf_dataset_server_json("rows", {"dataset": "melix/demo-hf"}) == {}
+    assert captured_headers["authorization"] == "Bearer secret-token"
+
+
+def test_reference_from_cached_manifest_handles_invalid_payloads(tmp_path: Path) -> None:
+    reference = HFDatasetReference(
+        dataset_path="melix/demo-hf",
+        dataset_name="default",
+        dataset_revision="main",
+        train_split="train",
+        chat_feature="",
+        prompt_feature="",
+        completion_feature="",
+        text_feature="text",
+    )
+    manifest_path = tmp_path / "manifest.json"
+
+    manifest_path.write_text("{not-json", encoding="utf-8")
+    assert training_dataset_module._reference_from_cached_manifest(reference, manifest_path) == reference
+
+    manifest_path.write_text("[]", encoding="utf-8")
+    assert training_dataset_module._reference_from_cached_manifest(reference, manifest_path) == reference
+
+
+def test_hf_dataset_helper_resolution_and_mapping_paths() -> None:
+    reference = HFDatasetReference(
+        dataset_path="melix/demo-hf",
+        dataset_name="",
+        dataset_revision="main",
+        train_split="train",
+        chat_feature="messages",
+        prompt_feature="",
+        completion_feature="",
+        text_feature="",
+    )
+
+    assert (
+        training_dataset_module._resolve_hf_dataset_name(
+            reference,
+            lambda endpoint, params: {"splits": [{"split": "validation", "config": "fallback"}]},
+        )
+        == "fallback"
+    )
+
+    with pytest.raises(Exception) as missing_splits:
+        training_dataset_module._resolve_hf_dataset_name(
+            reference,
+            lambda endpoint, params: {"splits": []},
+        )
+    assert missing_splits.value.code == "hf_dataset_fetch_failed"
+
+    with pytest.raises(Exception) as missing_config:
+        training_dataset_module._resolve_hf_dataset_name(
+            reference,
+            lambda endpoint, params: {"splits": [{"split": "train"}]},
+        )
+    assert missing_config.value.code == "hf_dataset_fetch_failed"
+
+    fetch_calls: list[tuple[str, dict[str, str]]] = []
+
+    def paged_fetcher(endpoint: str, params: dict[str, str]) -> dict[str, object]:
+        fetch_calls.append((endpoint, dict(params)))
+        return {
+            "rows": [
+                {"row": {"text": "alpha"}},
+                "skip-me",
+                {"row": {"text": "beta"}},
+            ]
+        }
+
+    rows = training_dataset_module._fetch_hf_dataset_rows(
+        HFDatasetReference(
+            dataset_path="melix/demo-hf",
+            dataset_name="default",
+            dataset_revision="main",
+            train_split="train",
+            chat_feature="",
+            prompt_feature="",
+            completion_feature="",
+            text_feature="text",
+        ),
+        paged_fetcher,
+    )
+    assert rows == [{"text": "alpha"}, {"text": "beta"}]
+    assert fetch_calls[0][0] == "rows"
+
+    with pytest.raises(Exception) as malformed_rows:
+        training_dataset_module._fetch_hf_dataset_rows(
+            HFDatasetReference(
+                dataset_path="melix/demo-hf",
+                dataset_name="default",
+                dataset_revision="main",
+                train_split="train",
+                chat_feature="",
+                prompt_feature="",
+                completion_feature="",
+                text_feature="text",
+            ),
+            lambda endpoint, params: {"rows": "bad"},
+        )
+    assert malformed_rows.value.code == "hf_dataset_fetch_failed"
+
+    assert training_dataset_module._infer_hf_dataset_format(
+        HFDatasetReference(
+            dataset_path="melix/demo-hf",
+            dataset_name="default",
+            dataset_revision="main",
+            train_split="train",
+            chat_feature="",
+            prompt_feature="prompt",
+            completion_feature="completion",
+            text_feature="",
+        ),
+        [{"prompt": "p", "completion": "c"}],
+    ) == "prompt_completion"
+    assert training_dataset_module._infer_hf_dataset_format(
+        HFDatasetReference(
+            dataset_path="melix/demo-hf",
+            dataset_name="default",
+            dataset_revision="main",
+            train_split="train",
+            chat_feature="",
+            prompt_feature="",
+            completion_feature="",
+            text_feature="text",
+        ),
+        [{"text": "hello"}],
+    ) == "text_completion"
+
+    with pytest.raises(Exception) as format_error:
+        training_dataset_module._infer_hf_dataset_format(
+            HFDatasetReference(
+                dataset_path="melix/demo-hf",
+                dataset_name="default",
+                dataset_revision="main",
+                train_split="train",
+                chat_feature="",
+                prompt_feature="",
+                completion_feature="",
+                text_feature="",
+            ),
+            [{"unknown": "field"}],
+        )
+    assert format_error.value.code == "hf_dataset_fetch_failed"
+
+    assert training_dataset_module._map_hf_row_to_training_sample(
+        {"prompt": "p", "completion": "c"},
+        "prompt_completion",
+        HFDatasetReference(
+            dataset_path="melix/demo-hf",
+            dataset_name="default",
+            dataset_revision="main",
+            train_split="train",
+            chat_feature="",
+            prompt_feature="prompt",
+            completion_feature="completion",
+            text_feature="",
+        ),
+    ) == {"prompt": "p", "completion": "c"}
+    assert training_dataset_module._map_hf_row_to_training_sample(
+        {"text": "hello"},
+        "text_completion",
+        HFDatasetReference(
+            dataset_path="melix/demo-hf",
+            dataset_name="default",
+            dataset_revision="main",
+            train_split="train",
+            chat_feature="",
+            prompt_feature="",
+            completion_feature="",
+            text_feature="text",
+        ),
+    ) == {"text": "hello"}
+
+    with pytest.raises(Exception) as chat_error:
+        training_dataset_module._map_hf_row_to_training_sample(
+            {"messages": "bad"},
+            "chat_messages",
+            reference,
+        )
+    assert chat_error.value.code == "hf_dataset_fetch_failed"
+
+    with pytest.raises(Exception) as prompt_error:
+        training_dataset_module._map_hf_row_to_training_sample(
+            {"prompt": "p"},
+            "prompt_completion",
+            HFDatasetReference(
+                dataset_path="melix/demo-hf",
+                dataset_name="default",
+                dataset_revision="main",
+                train_split="train",
+                chat_feature="",
+                prompt_feature="prompt",
+                completion_feature="completion",
+                text_feature="",
+            ),
+        )
+    assert prompt_error.value.code == "hf_dataset_fetch_failed"
+
+    with pytest.raises(Exception) as text_error:
+        training_dataset_module._map_hf_row_to_training_sample(
+            {"body": "p"},
+            "text_completion",
+            HFDatasetReference(
+                dataset_path="melix/demo-hf",
+                dataset_name="default",
+                dataset_revision="main",
+                train_split="train",
+                chat_feature="",
+                prompt_feature="",
+                completion_feature="",
+                text_feature="text",
+            ),
+        )
+    assert text_error.value.code == "hf_dataset_fetch_failed"
 
 
 def test_train_lora_invalid_dataset_package_fails_with_typed_error(tmp_path: Path) -> None:
@@ -397,6 +797,7 @@ def test_activate_adapter_produces_derived_model_and_registry_activation_state(t
                 ext={
                     "operation": "activate_adapter",
                     "artifact_path": adapter_manifest_path,
+                    "derived_model_alias": "Activated Alias",
                 },
             ),
             context=None,
@@ -425,8 +826,22 @@ def test_activate_adapter_produces_derived_model_and_registry_activation_state(t
     assert activation_payload["schema_version"] == "melix.derived_text_model.v1"
     assert activation_payload["activation_mode"] == "fused_derived_model"
     assert activation_payload["derived_model_id"].startswith("melix-dev-text-lora-")
+    assert activation_payload["derived_model_alias"] == "Activated Alias"
+    assert activation_payload["source_adapter_job_id"] == "model-ops-0001"
+    assert train_events[-1].completed.output_path == str(
+        tmp_path / "model-ops" / "train_lora" / "model-ops-0001" / "train_lora.adapter.json"
+    )
+    assert activate_events[-1].completed.output_path == str(
+        tmp_path
+        / "model-ops"
+        / "activate_adapter"
+        / "model-ops-0002"
+        / activation_payload["derived_model_id"]
+        / "manifest.json"
+    )
     assert activation_payload["adapter_set_hash"]
     assert Path(activation_payload["derived_model_path"]).is_dir()
     assert snapshot_payload["adapters"][0]["activation_status"] == "activated"
     assert snapshot_payload["adapters"][0]["derived_model_id"] == activation_payload["derived_model_id"]
     assert snapshot_payload["derived_models"][0]["model_id"] == activation_payload["derived_model_id"]
+    assert snapshot_payload["derived_models"][0]["adapter_manifest_path"] == train_events[-1].completed.output_path

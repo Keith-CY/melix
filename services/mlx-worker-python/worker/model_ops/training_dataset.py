@@ -1,14 +1,23 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from dataclasses import dataclass
+from dataclasses import replace
+import os
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
+from urllib.error import HTTPError, URLError
+from urllib.parse import urlencode
+from urllib.request import Request, urlopen
 
 from worker.model_ops.errors import ModelOperationError
 
 _SUPPORTED_FORMATS = {"chat_messages", "prompt_completion", "text_completion"}
 _SUPPORTED_ROLES = {"system", "user", "assistant", "tool"}
+_HF_DATASETS_SERVER_URL = "https://datasets-server.huggingface.co"
+
+HFDatasetFetcher = Callable[[str, dict[str, str]], dict[str, Any]]
 
 
 @dataclass(frozen=True)
@@ -33,6 +42,38 @@ class NormalizedDatasetSnapshot:
     train_path: Path
     sample_count: int
     format: str
+
+
+@dataclass(frozen=True)
+class HFDatasetReference:
+    dataset_path: str
+    dataset_name: str
+    dataset_revision: str
+    train_split: str
+    chat_feature: str
+    prompt_feature: str
+    completion_feature: str
+    text_feature: str
+
+
+@dataclass(frozen=True)
+class MaterializedTrainingDatasetPackage:
+    package_path: Path
+    cache_key: str
+    cache_hit: bool
+    dataset_uri: str
+    reference: HFDatasetReference
+
+
+@dataclass(frozen=True)
+class ResolvedTrainingDatasetPackage:
+    package: TrainingDatasetPackage
+    source_kind: str
+    dataset_uri: str
+    materialized_package_path: Path
+    cache_key: str
+    cache_hit: bool
+    hf_reference: HFDatasetReference | None
 
 
 def load_training_dataset_package(
@@ -144,6 +185,77 @@ def load_training_dataset_package(
     )
 
 
+def resolve_training_dataset_package(
+    request_ext: dict[str, str],
+    *,
+    jobs_root: Path,
+    hf_dataset_fetcher: HFDatasetFetcher | None = None,
+    sample_limit: int = 0,
+    max_characters_per_sample: int = 0,
+) -> ResolvedTrainingDatasetPackage:
+    source_kind = request_ext.get("dataset_source_kind", "").strip() or (
+        "hf_dataset" if request_ext.get("hf_dataset_path", "").strip() else "local_package"
+    )
+    if source_kind == "local_package":
+        dataset_uri = request_ext.get("dataset_uri", "").strip()
+        package = load_training_dataset_package(
+            dataset_uri,
+            sample_limit=sample_limit,
+            max_characters_per_sample=max_characters_per_sample,
+        )
+        return ResolvedTrainingDatasetPackage(
+            package=package,
+            source_kind="local_package",
+            dataset_uri=dataset_uri,
+            materialized_package_path=package.package_path,
+            cache_key="",
+            cache_hit=False,
+            hf_reference=None,
+        )
+
+    if source_kind != "hf_dataset":
+        raise ModelOperationError(
+            code="invalid_dataset_source",
+            message=f"Unsupported dataset_source_kind: {source_kind}",
+        )
+
+    reference = HFDatasetReference(
+        dataset_path=request_ext.get("hf_dataset_path", "").strip(),
+        dataset_name=request_ext.get("hf_dataset_name", "").strip(),
+        dataset_revision=request_ext.get("hf_dataset_revision", "").strip() or "main",
+        train_split=request_ext.get("hf_train_split", "").strip() or "train",
+        chat_feature=request_ext.get("chat_feature", "").strip(),
+        prompt_feature=request_ext.get("prompt_feature", "").strip(),
+        completion_feature=request_ext.get("completion_feature", "").strip(),
+        text_feature=request_ext.get("text_feature", "").strip(),
+    )
+    if not reference.dataset_path:
+        raise ModelOperationError(
+            code="invalid_dataset_source",
+            message="hf_dataset training requires hf_dataset_path.",
+        )
+
+    materialized = materialize_hf_training_dataset_package(
+        reference,
+        cache_root=jobs_root / "datasets",
+        fetch_json=hf_dataset_fetcher,
+    )
+    package = load_training_dataset_package(
+        str(materialized.package_path),
+        sample_limit=sample_limit,
+        max_characters_per_sample=max_characters_per_sample,
+    )
+    return ResolvedTrainingDatasetPackage(
+        package=package,
+        source_kind="hf_dataset",
+        dataset_uri=materialized.dataset_uri,
+        materialized_package_path=materialized.package_path,
+        cache_key=materialized.cache_key,
+        cache_hit=materialized.cache_hit,
+        hf_reference=materialized.reference,
+    )
+
+
 def write_normalized_dataset_snapshot(
     dataset: TrainingDatasetPackage,
     *,
@@ -179,6 +291,83 @@ def write_normalized_dataset_snapshot(
         train_path=train_path,
         sample_count=dataset.sample_count,
         format=dataset.format,
+    )
+
+
+def materialize_hf_training_dataset_package(
+    reference: HFDatasetReference,
+    *,
+    cache_root: Path,
+    fetch_json: HFDatasetFetcher | None = None,
+) -> MaterializedTrainingDatasetPackage:
+    fetcher = fetch_json or _fetch_hf_dataset_server_json
+    cache_root.mkdir(parents=True, exist_ok=True)
+    cache_key = _hf_materialization_cache_key(reference)
+    package_path = cache_root / cache_key
+    manifest_path = package_path / "manifest.json"
+    samples_path = package_path / "samples.jsonl"
+    if manifest_path.is_file() and samples_path.is_file():
+        cached_reference = _reference_from_cached_manifest(reference, manifest_path)
+        return MaterializedTrainingDatasetPackage(
+            package_path=package_path,
+            cache_key=cache_key,
+            cache_hit=True,
+            dataset_uri=_hf_dataset_uri(cached_reference),
+            reference=cached_reference,
+        )
+
+    resolved_reference = reference
+    if not resolved_reference.dataset_name:
+        resolved_reference = replace(
+            resolved_reference,
+            dataset_name=_resolve_hf_dataset_name(resolved_reference, fetcher),
+        )
+
+    rows = _fetch_hf_dataset_rows(resolved_reference, fetcher)
+    if not rows:
+        raise ModelOperationError(
+            code="hf_dataset_fetch_failed",
+            message="Hugging Face dataset did not return any training rows.",
+            details={"hf_dataset_path": resolved_reference.dataset_path},
+        )
+
+    format_name = _infer_hf_dataset_format(resolved_reference, rows)
+    serialized_samples = [_map_hf_row_to_training_sample(row, format_name, resolved_reference) for row in rows]
+    dataset_uri = _hf_dataset_uri(resolved_reference)
+    dataset_id = (
+        f"{resolved_reference.dataset_path}:{resolved_reference.dataset_name}:"
+        f"{resolved_reference.train_split}@{resolved_reference.dataset_revision}"
+    )
+
+    package_path.mkdir(parents=True, exist_ok=True)
+    manifest_payload = {
+        "schema_version": "melix.training_dataset_package.v1",
+        "dataset_id": dataset_id,
+        "format": format_name,
+        "sample_count": len(serialized_samples),
+        "version": resolved_reference.dataset_revision,
+        "dataset_uri": dataset_uri,
+        "source_kind": "hf_dataset",
+        "hf_dataset_path": resolved_reference.dataset_path,
+        "hf_dataset_name": resolved_reference.dataset_name,
+        "hf_dataset_revision": resolved_reference.dataset_revision,
+        "hf_train_split": resolved_reference.train_split,
+        "chat_feature": resolved_reference.chat_feature,
+        "prompt_feature": resolved_reference.prompt_feature,
+        "completion_feature": resolved_reference.completion_feature,
+        "text_feature": resolved_reference.text_feature,
+    }
+    manifest_path.write_text(json.dumps(manifest_payload, indent=2) + "\n", encoding="utf-8")
+    samples_path.write_text(
+        "\n".join(json.dumps(sample) for sample in serialized_samples) + "\n",
+        encoding="utf-8",
+    )
+    return MaterializedTrainingDatasetPackage(
+        package_path=package_path,
+        cache_key=cache_key,
+        cache_hit=False,
+        dataset_uri=dataset_uri,
+        reference=resolved_reference,
     )
 
 
@@ -261,6 +450,236 @@ def _normalize_sample(
             message="text_completion samples must include text.",
         )
     return {"text": _truncate_text(text, max_characters_per_sample)}
+
+
+def _fetch_hf_dataset_server_json(endpoint: str, params: dict[str, str]) -> dict[str, Any]:
+    query = urlencode({key: value for key, value in params.items() if value})
+    request = Request(f"{_HF_DATASETS_SERVER_URL}/{endpoint}?{query}")
+    token = os.environ.get("HF_TOKEN", "").strip() or os.environ.get("HUGGING_FACE_HUB_TOKEN", "").strip()
+    if token:
+        request.add_header("Authorization", f"Bearer {token}")
+    request.add_header("Accept", "application/json")
+    try:
+        with urlopen(request, timeout=30) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except HTTPError as exc:
+        raise ModelOperationError(
+            code="hf_dataset_fetch_failed",
+            message=f"Hugging Face dataset request failed with HTTP {exc.code}.",
+        ) from exc
+    except URLError as exc:
+        raise ModelOperationError(
+            code="hf_dataset_fetch_failed",
+            message=f"Hugging Face dataset request failed: {exc.reason}",
+        ) from exc
+    except json.JSONDecodeError as exc:
+        raise ModelOperationError(
+            code="hf_dataset_fetch_failed",
+            message="Hugging Face dataset response was not valid JSON.",
+        ) from exc
+
+    if not isinstance(payload, dict):
+        raise ModelOperationError(
+            code="hf_dataset_fetch_failed",
+            message="Hugging Face dataset response must be a JSON object.",
+        )
+    return payload
+
+
+def _reference_from_cached_manifest(
+    reference: HFDatasetReference,
+    manifest_path: Path,
+) -> HFDatasetReference:
+    try:
+        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return reference
+    if not isinstance(payload, dict):
+        return reference
+    return replace(
+        reference,
+        dataset_name=str(payload.get("hf_dataset_name", reference.dataset_name)),
+        dataset_revision=str(payload.get("hf_dataset_revision", reference.dataset_revision)),
+        train_split=str(payload.get("hf_train_split", reference.train_split)),
+        chat_feature=str(payload.get("chat_feature", reference.chat_feature)),
+        prompt_feature=str(payload.get("prompt_feature", reference.prompt_feature)),
+        completion_feature=str(payload.get("completion_feature", reference.completion_feature)),
+        text_feature=str(payload.get("text_feature", reference.text_feature)),
+    )
+
+
+def _resolve_hf_dataset_name(
+    reference: HFDatasetReference,
+    fetcher: HFDatasetFetcher,
+) -> str:
+    payload = fetcher(
+        "splits",
+        {
+            "dataset": reference.dataset_path,
+            "revision": reference.dataset_revision,
+        },
+    )
+    splits = payload.get("splits")
+    if not isinstance(splits, list) or not splits:
+        raise ModelOperationError(
+            code="hf_dataset_fetch_failed",
+            message="Hugging Face dataset splits metadata is unavailable.",
+            details={"hf_dataset_path": reference.dataset_path},
+        )
+
+    for item in splits:
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("split", "")) == reference.train_split:
+            config = str(item.get("config", "")).strip()
+            if config:
+                return config
+
+    first = splits[0]
+    if isinstance(first, dict):
+        config = str(first.get("config", "")).strip()
+        if config:
+            return config
+
+    raise ModelOperationError(
+        code="hf_dataset_fetch_failed",
+        message="Unable to resolve a Hugging Face dataset configuration for training.",
+        details={"hf_dataset_path": reference.dataset_path},
+    )
+
+
+def _fetch_hf_dataset_rows(
+    reference: HFDatasetReference,
+    fetcher: HFDatasetFetcher,
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    offset = 0
+    page_size = 100
+    while True:
+        payload = fetcher(
+            "rows",
+            {
+                "dataset": reference.dataset_path,
+                "config": reference.dataset_name,
+                "split": reference.train_split,
+                "offset": str(offset),
+                "length": str(page_size),
+                "revision": reference.dataset_revision,
+            },
+        )
+        raw_rows = payload.get("rows")
+        if not isinstance(raw_rows, list):
+            raise ModelOperationError(
+                code="hf_dataset_fetch_failed",
+                message="Hugging Face dataset rows payload is malformed.",
+                details={"hf_dataset_path": reference.dataset_path},
+            )
+        if not raw_rows:
+            break
+        for item in raw_rows:
+            if not isinstance(item, dict):
+                continue
+            row = item.get("row")
+            if isinstance(row, dict):
+                rows.append(row)
+        if len(raw_rows) < page_size:
+            break
+        offset += len(raw_rows)
+    return rows
+
+
+def _infer_hf_dataset_format(reference: HFDatasetReference, rows: list[dict[str, Any]]) -> str:
+    if reference.chat_feature:
+        return "chat_messages"
+    if reference.prompt_feature or reference.completion_feature:
+        return "prompt_completion"
+    if reference.text_feature:
+        return "text_completion"
+
+    sample = rows[0]
+    if isinstance(sample.get("messages"), list):
+        return "chat_messages"
+    if "prompt" in sample and "completion" in sample:
+        return "prompt_completion"
+    if "text" in sample:
+        return "text_completion"
+    raise ModelOperationError(
+        code="hf_dataset_fetch_failed",
+        message="Unable to infer a supported training format from the Hugging Face dataset row schema.",
+        details={"hf_dataset_path": reference.dataset_path},
+    )
+
+
+def _map_hf_row_to_training_sample(
+    row: dict[str, Any],
+    format_name: str,
+    reference: HFDatasetReference,
+) -> dict[str, Any]:
+    if format_name == "chat_messages":
+        field = reference.chat_feature or "messages"
+        messages = row.get(field)
+        if not isinstance(messages, list):
+            raise ModelOperationError(
+                code="hf_dataset_fetch_failed",
+                message="Hugging Face dataset chat rows must provide a messages list.",
+                details={"hf_dataset_path": reference.dataset_path, "chat_feature": field},
+            )
+        return {"messages": messages}
+
+    if format_name == "prompt_completion":
+        prompt_field = reference.prompt_feature or "prompt"
+        completion_field = reference.completion_feature or "completion"
+        if prompt_field not in row or completion_field not in row:
+            raise ModelOperationError(
+                code="hf_dataset_fetch_failed",
+                message="Hugging Face dataset prompt_completion rows are missing configured columns.",
+                details={
+                    "hf_dataset_path": reference.dataset_path,
+                    "prompt_feature": prompt_field,
+                    "completion_feature": completion_field,
+                },
+            )
+        return {
+            "prompt": row[prompt_field],
+            "completion": row[completion_field],
+        }
+
+    text_field = reference.text_feature or "text"
+    if text_field not in row:
+        raise ModelOperationError(
+            code="hf_dataset_fetch_failed",
+            message="Hugging Face dataset text rows are missing the configured text column.",
+            details={"hf_dataset_path": reference.dataset_path, "text_feature": text_field},
+        )
+    return {"text": row[text_field]}
+
+
+def _hf_dataset_uri(reference: HFDatasetReference) -> str:
+    return (
+        f"hf://{reference.dataset_path}"
+        f"?config={reference.dataset_name}&split={reference.train_split}"
+        f"&revision={reference.dataset_revision}"
+    )
+
+
+def _hf_materialization_cache_key(reference: HFDatasetReference) -> str:
+    digest = hashlib.sha256()
+    digest.update(
+        json.dumps(
+            {
+                "dataset_path": reference.dataset_path,
+                "dataset_name": reference.dataset_name,
+                "dataset_revision": reference.dataset_revision,
+                "train_split": reference.train_split,
+                "chat_feature": reference.chat_feature,
+                "prompt_feature": reference.prompt_feature,
+                "completion_feature": reference.completion_feature,
+                "text_feature": reference.text_feature,
+            },
+            sort_keys=True,
+        ).encode("utf-8")
+    )
+    return digest.hexdigest()[:16]
 
 
 def _truncate_text(value: str, max_characters_per_sample: int) -> str:

@@ -760,11 +760,14 @@ def test_convert_model_supports_train_lora_jobs(tmp_path: Path) -> None:
     payload = json.loads(manifest.manifest_json)
 
     assert events[0].started.job_id == "model-ops-0001"
-    assert events[-1].completed.output_path.endswith("train_lora.adapter.json")
+    assert events[-1].completed.output_path == str(
+        tmp_path / "model-ops" / "train_lora" / "model-ops-0001" / "train_lora.adapter.json"
+    )
     assert payload["schema_version"] == "melix.lora_adapter_package.v1"
     assert payload["operation"] == "train_lora"
     assert payload["adapter_name"] == "melix-dev-adapter"
     assert payload["dataset_uri"] == str(dataset_dir)
+    assert payload["dataset_source_kind"] == "local_package"
     assert payload["training_duration_ms"] == 1234.0
     assert payload["adapter_artifact_bytes"] > 0
 
@@ -832,6 +835,9 @@ def test_registry_snapshot_returns_training_history_and_adapter_registry(tmp_pat
     assert payload["adapters"][0]["adapter_name"] == "melix-dev-adapter"
     assert payload["adapters"][0]["published_repo"] == "melix/adapters/melix-dev-adapter"
     assert payload["adapters"][0]["status"] == "published"
+    assert payload["adapters"][0]["dataset_source_kind"] == "local_package"
+    assert payload["adapters"][0]["dataset_id"] == "melix-dev"
+    assert payload["adapters"][0]["normalized_dataset_manifest_path"].endswith("normalized_dataset/manifest.json")
 
 
 def test_registry_snapshot_includes_discovered_model_registry_payload(tmp_path: Path) -> None:
@@ -1057,6 +1063,70 @@ def test_job_registry_snapshot_supports_name_only_publish_and_unpublished_adapte
     assert adapters["adapter-b"]["published_repo"] == ""
     assert adapters["adapter-b"]["publish_job_id"] == ""
     assert adapters["adapter-b"]["status"] == "completed"
+
+
+def test_job_registry_snapshot_surfaces_dataset_provenance_and_derived_model_linkage() -> None:
+    registry = ModelOpsJobRegistry()
+
+    train_job = registry.start("train_lora", "melix-dev-text", "/runtime/train")
+    adapter_manifest_path = "/runtime/train/train_lora.adapter.json"
+    registry.attach_manifest(
+        train_job.job_id,
+        json.dumps(
+            {
+                "adapter_name": "adapter-hf",
+                "dataset_uri": "hf://melix/demo-hf?config=default&split=train",
+                "dataset_source_kind": "hf_dataset",
+                "dataset_id": "melix/demo-hf:default:train@main",
+                "dataset_format": "text_completion",
+                "dataset_materialized_package_path": "/runtime/datasets/cache-a",
+                "normalized_dataset_manifest_path": "/runtime/train/normalized_dataset/manifest.json",
+                "hf_dataset_path": "melix/demo-hf",
+                "hf_dataset_name": "default",
+                "hf_dataset_revision": "main",
+                "hf_train_split": "train",
+                "adapter_set_hash": "adapter-hash-a",
+                "training_duration_ms": 900.0,
+            }
+        ),
+    )
+    registry.complete(train_job.job_id, adapter_manifest_path)
+
+    activation_job = registry.start("activate_adapter", "melix-dev-text", "/runtime/activate")
+    registry.attach_manifest(
+        activation_job.job_id,
+        json.dumps(
+            {
+                "adapter_name": "adapter-hf",
+                "adapter_manifest_path": adapter_manifest_path,
+                "adapter_set_hash": "adapter-hash-a",
+                "derived_model_id": "melix-dev-text-lora-adapter",
+                "derived_model_path": "/runtime/activate/melix-dev-text-lora-adapter",
+                "activation_duration_ms": 321.0,
+                "source_adapter_job_id": train_job.job_id,
+            }
+        ),
+    )
+    registry.complete(activation_job.job_id, "/runtime/activate/melix-dev-text-lora-adapter/manifest.json")
+
+    snapshot = registry.snapshot()
+    adapter = snapshot["adapters"][0]
+    derived_model = snapshot["derived_models"][0]
+
+    assert adapter["dataset_source_kind"] == "hf_dataset"
+    assert adapter["dataset_id"] == "melix/demo-hf:default:train@main"
+    assert adapter["dataset_format"] == "text_completion"
+    assert adapter["dataset_materialized_package_path"] == "/runtime/datasets/cache-a"
+    assert adapter["normalized_dataset_manifest_path"] == "/runtime/train/normalized_dataset/manifest.json"
+    assert adapter["hf_dataset_path"] == "melix/demo-hf"
+    assert adapter["hf_dataset_name"] == "default"
+    assert adapter["hf_dataset_revision"] == "main"
+    assert adapter["hf_train_split"] == "train"
+    assert adapter["derived_model_id"] == "melix-dev-text-lora-adapter"
+    assert adapter["derived_model_path"] == "/runtime/activate/melix-dev-text-lora-adapter"
+    assert derived_model["model_id"] == "melix-dev-text-lora-adapter"
+    assert derived_model["adapter_manifest_path"] == adapter_manifest_path
+    assert derived_model["source_adapter_job_id"] == train_job.job_id
 
 
 def test_get_model_info_returns_known_dev_model_metadata(tmp_path: Path) -> None:

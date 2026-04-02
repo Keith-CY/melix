@@ -198,11 +198,11 @@ class MaintenanceCore:
             )
             return
 
-        output_dir = Path(request.output_dir or self._jobs_root / operation).resolve()
-        output_dir.mkdir(parents=True, exist_ok=True)
-
         try:
-            job = self._job_registry.start(operation, request.source_model, str(output_dir))
+            job = self._job_registry.start(operation, request.source_model, "")
+            output_dir = self._resolved_output_dir(operation, request, job.job_id)
+            output_dir.mkdir(parents=True, exist_ok=True)
+            self._job_registry.set_output_dir(job.job_id, str(output_dir))
             yield maintenance_pb2.ConvertModelEvent(
                 started=maintenance_pb2.ConvertStarted(job_id=job.job_id)
             )
@@ -739,6 +739,16 @@ class MaintenanceCore:
         }[operation]
         return output_dir / filename
 
+    def _resolved_output_dir(
+        self,
+        operation: str,
+        request: maintenance_pb2.ConvertModelRequest,
+        job_id: str,
+    ) -> Path:
+        if operation in {"train_lora", "activate_adapter"}:
+            return (self._jobs_root / operation / job_id).resolve()
+        return Path(request.output_dir or self._jobs_root / operation).resolve()
+
     def _lock_scope(self, operation: str, request: maintenance_pb2.ConvertModelRequest) -> str:
         if operation in {"quantize", "upload"}:
             linked_quantization = self._linked_quantization_metadata(request)
@@ -791,6 +801,7 @@ class MaintenanceCore:
                 request_ext=dict(request.ext),
                 source_model=source_model,
                 output_dir=output_dir,
+                jobs_root=self._jobs_root,
                 progress=record_progress,
             )
             return result, progress_events

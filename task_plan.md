@@ -19,7 +19,7 @@ Close the remaining M7 gaps on `main`, make LoRA product-ready across Window UI 
 2. Shared operator client and CLI foundation
    - status: completed
 3. LoRA backend and artifact productization
-   - status: pending
+   - status: completed
 4. LoRA Window UI and CLI exposure
    - status: pending
 5. Real benchmark runner and M7 closure
@@ -49,8 +49,8 @@ Close the remaining M7 gaps on `main`, make LoRA product-ready across Window UI 
 - Completed slices:
   - documentation reset and execution baseline
   - shared operator client and CLI foundation
-- Remaining slices:
   - LoRA backend and artifact productization
+- Remaining slices:
   - LoRA Window UI and CLI exposure
   - real benchmark runner and M7 closure
   - benchmark Window UI, CSV export, and CLI closure

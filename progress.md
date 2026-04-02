@@ -29,6 +29,19 @@
   - `services/control-plane-swift/Sources/XPCService/ControlPlaneService.swift`: changed-line coverage `100.00%` (`47/47`)
   - `services/control-plane-swift/Sources/XPCService/ControlPlaneXPCClient.swift`: changed-line coverage `100.00%` (`374/374`)
   - generated protobuf outputs, `Package.swift`, and `Package.resolved` are excluded from changed-line coverage because they are generated or manifest files rather than executable runtime sources
+- Landed the LoRA backend and artifact productization slice:
+  - added dataset-source resolution for `local_package` and `hf_dataset`, including Hugging Face materialization into `<jobs_root>/datasets/<cache-key>`
+  - moved `train_lora` and `activate_adapter` outputs to stable per-job paths under `<jobs_root>/<operation>/<job_id>/`
+  - persisted dataset provenance, cache metadata, adapter identity, and derived-model linkage into LoRA manifests and registry snapshots
+  - preserved source adapter job linkage and optional derived-model aliasing in activation manifests
+- Verification summary for the LoRA backend and artifact productization:
+  - `PYTHONPATH=/Users/ChenYu/Documents/Github/melix:/Users/ChenYu/Documents/Github/melix/services/mlx-worker-python uv run --project services/mlx-worker-python pytest services/mlx-worker-python/tests/test_lora_model_ops.py services/mlx-worker-python/tests/test_maintenance_service.py -q`: `51 passed`
+- Metrics report:
+  - `services/mlx-worker-python/worker/model_ops/training_dataset.py`: changed-line coverage `96.07%` (`171/178`)
+  - `services/mlx-worker-python/worker/model_ops/lora_training_pipeline.py`: changed-line coverage `100.00%` (`7/7`)
+  - `services/mlx-worker-python/worker/model_ops/adapter_activation_pipeline.py`: changed-line coverage `100.00%` (`3/3`)
+  - `services/mlx-worker-python/worker/model_ops/job_registry.py`: changed-line coverage `100.00%` (`3/3`)
+  - `services/mlx-worker-python/worker/engine/maintenance_core.py`: changed-line coverage `100.00%` (`8/8`)
 
 ## 2026-04-01
 

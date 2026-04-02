@@ -11,7 +11,8 @@ from packages.protocol.python.worker.v1 import common_pb2
 from worker.model_ops.mlx_lm_runner import MLXLMRunner, TrainingRequest
 from worker.model_ops.training_config import normalize_training_config
 from worker.model_ops.training_dataset import (
-    load_training_dataset_package,
+    HFDatasetFetcher,
+    resolve_training_dataset_package,
     write_normalized_dataset_snapshot,
 )
 
@@ -23,8 +24,13 @@ class LoRATrainingPipelineResult:
 
 
 class LoRATrainingPipeline:
-    def __init__(self, runner: MLXLMRunner | None = None) -> None:
+    def __init__(
+        self,
+        runner: MLXLMRunner | None = None,
+        hf_dataset_fetcher: HFDatasetFetcher | None = None,
+    ) -> None:
         self._runner = runner or MLXLMRunner()
+        self._hf_dataset_fetcher = hf_dataset_fetcher
 
     def run(
         self,
@@ -33,14 +39,17 @@ class LoRATrainingPipeline:
         request_ext: dict[str, str],
         source_model: common_pb2.ModelSpec,
         output_dir: Path,
+        jobs_root: Path,
         progress: Callable[[str, float], None] | None = None,
     ) -> LoRATrainingPipelineResult:
         emit = progress or (lambda stage, pct: None)
 
         emit("resolve_source", 0.1)
         emit("validate_dataset", 0.2)
-        dataset = load_training_dataset_package(
-            request_ext.get("dataset_uri", ""),
+        dataset = resolve_training_dataset_package(
+            request_ext,
+            jobs_root=jobs_root,
+            hf_dataset_fetcher=self._hf_dataset_fetcher,
             sample_limit=_int_ext(request_ext, "sample_limit"),
             max_characters_per_sample=_int_ext(request_ext, "max_characters_per_sample"),
         )
@@ -49,13 +58,13 @@ class LoRATrainingPipeline:
         config = normalize_training_config(
             source_model=source_model,
             ext=request_ext,
-            dataset_format=dataset.format,
-            response_only_supported=dataset.response_only_supported,
-            sample_count=dataset.sample_count,
+            dataset_format=dataset.package.format,
+            response_only_supported=dataset.package.response_only_supported,
+            sample_count=dataset.package.sample_count,
         )
 
         emit("prepare_training_data", 0.5)
-        normalized_snapshot = write_normalized_dataset_snapshot(dataset, output_dir=output_dir)
+        normalized_snapshot = write_normalized_dataset_snapshot(dataset.package, output_dir=output_dir)
 
         emit("apply_lora", 0.65)
         adapter_output_dir = output_dir / "adapter"
@@ -70,7 +79,7 @@ class LoRATrainingPipeline:
                 adapter_output_dir=adapter_output_dir,
                 normalized_dataset_dir=normalized_snapshot.dataset_dir,
                 config=config,
-                dataset_format=dataset.format,
+                dataset_format=dataset.package.format,
             )
         )
 
@@ -88,7 +97,16 @@ class LoRATrainingPipeline:
             "source_model": source_model.model_id,
             "source_model_revision": source_model.revision,
             "source_model_path": source_model.model_path,
-            "dataset_uri": request_ext.get("dataset_uri", ""),
+            "dataset_uri": dataset.dataset_uri,
+            "dataset_source_kind": dataset.source_kind,
+            "dataset_id": dataset.package.dataset_id,
+            "dataset_format": dataset.package.format,
+            "dataset_version": dataset.package.version,
+            "dataset_sample_count": dataset.package.sample_count,
+            "dataset_source_manifest_path": str(dataset.package.manifest_path),
+            "dataset_materialized_package_path": str(dataset.materialized_package_path),
+            "dataset_cache_key": dataset.cache_key,
+            "dataset_cache_hit": dataset.cache_hit,
             "training_mode": config.training_mode,
             "training_backend": training_result.execution_backend,
             "adapter_set_hash": adapter_set_hash,
@@ -120,7 +138,21 @@ class LoRATrainingPipeline:
             "adapter_artifact_bytes": adapter_artifact_bytes,
             "target_repo": config.target_repo,
         }
+        if dataset.hf_reference is not None:
+            manifest.update(
+                {
+                    "hf_dataset_path": dataset.hf_reference.dataset_path,
+                    "hf_dataset_name": dataset.hf_reference.dataset_name,
+                    "hf_dataset_revision": dataset.hf_reference.dataset_revision,
+                    "hf_train_split": dataset.hf_reference.train_split,
+                    "chat_feature": dataset.hf_reference.chat_feature,
+                    "prompt_feature": dataset.hf_reference.prompt_feature,
+                    "completion_feature": dataset.hf_reference.completion_feature,
+                    "text_feature": dataset.hf_reference.text_feature,
+                }
+            )
         manifest_path = output_dir / "train_lora.adapter.json"
+        manifest["artifact_path"] = str(manifest_path)
         manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
         return LoRATrainingPipelineResult(manifest=manifest, manifest_path=manifest_path)
 

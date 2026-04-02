@@ -101,6 +101,7 @@ class AdapterActivationPipeline:
             execution_backend = "internal"
 
         emit("write_manifest", 0.95)
+        derived_model_alias = request_ext.get("derived_model_alias", "").strip()
         manifest = {
             "schema_version": "melix.derived_text_model.v1",
             "job_id": job_id,
@@ -113,10 +114,13 @@ class AdapterActivationPipeline:
             "adapter_manifest_path": str(adapter_manifest_path),
             "adapter_name": adapter_manifest.get("adapter_name", ""),
             "adapter_set_hash": adapter_set_hash,
+            "source_adapter_job_id": str(adapter_manifest.get("job_id", "")),
             "derived_model_id": derived_model_id,
             "derived_model_path": str(derived_model_dir),
             "activation_duration_ms": activation_duration_ms,
             "melix.derived_from_adapter": True,
         }
+        if derived_model_alias:
+            manifest["derived_model_alias"] = derived_model_alias
         manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
         return AdapterActivationPipelineResult(manifest=manifest, manifest_path=manifest_path)

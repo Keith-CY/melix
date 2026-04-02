@@ -43,6 +43,10 @@ class ModelOpsJobRegistry:
         with self._lock:
             self._jobs[job_id].stage_history.append((stage, pct))
 
+    def set_output_dir(self, job_id: str, output_dir: str) -> None:
+        with self._lock:
+            self._jobs[job_id].output_dir = output_dir
+
     def attach_manifest(self, job_id: str, manifest_json: str) -> None:
         with self._lock:
             self._jobs[job_id].manifest_json = manifest_json
@@ -150,7 +154,10 @@ class ModelOpsJobRegistry:
                 "job_id": job["job_id"],
                 "derived_model_id": str(manifest.get("derived_model_id", "")),
                 "derived_model_path": str(manifest.get("derived_model_path", "")),
+                "derived_model_alias": str(manifest.get("derived_model_alias", "")),
                 "activation_duration_ms": float(manifest.get("activation_duration_ms", 0.0)),
+                "adapter_manifest_path": str(manifest.get("adapter_manifest_path", "")),
+                "source_adapter_job_id": str(manifest.get("source_adapter_job_id", "")),
                 "status": "activated",
             }
             adapter_set_hash = str(manifest.get("adapter_set_hash", ""))
@@ -186,6 +193,20 @@ class ModelOpsJobRegistry:
                     "adapter_name": adapter_name,
                     "source_model": job["source_model"],
                     "dataset_uri": str(manifest.get("dataset_uri", "")),
+                    "dataset_source_kind": str(manifest.get("dataset_source_kind", "")),
+                    "dataset_id": str(manifest.get("dataset_id", "")),
+                    "dataset_format": str(manifest.get("dataset_format", "")),
+                    "dataset_version": str(manifest.get("dataset_version", "")),
+                    "dataset_sample_count": int(manifest.get("dataset_sample_count", 0)),
+                    "dataset_source_manifest_path": str(manifest.get("dataset_source_manifest_path", "")),
+                    "dataset_materialized_package_path": str(manifest.get("dataset_materialized_package_path", "")),
+                    "dataset_cache_key": str(manifest.get("dataset_cache_key", "")),
+                    "dataset_cache_hit": bool(manifest.get("dataset_cache_hit", False)),
+                    "normalized_dataset_manifest_path": str(manifest.get("normalized_dataset_manifest_path", "")),
+                    "hf_dataset_path": str(manifest.get("hf_dataset_path", "")),
+                    "hf_dataset_name": str(manifest.get("hf_dataset_name", "")),
+                    "hf_dataset_revision": str(manifest.get("hf_dataset_revision", "")),
+                    "hf_train_split": str(manifest.get("hf_train_split", "")),
                     "output_path": output_path,
                     "adapter_set_hash": adapter_set_hash,
                     "target_repo": str(manifest.get("target_repo", "")),
@@ -195,7 +216,10 @@ class ModelOpsJobRegistry:
                     "activation_status": activation["status"] if activation else "pending_activation",
                     "derived_model_id": activation["derived_model_id"] if activation else "",
                     "derived_model_path": activation["derived_model_path"] if activation else "",
+                    "derived_model_alias": activation["derived_model_alias"] if activation else "",
                     "activation_job_id": activation["job_id"] if activation else "",
+                    "adapter_manifest_path": activation["adapter_manifest_path"] if activation else output_path,
+                    "source_adapter_job_id": activation["source_adapter_job_id"] if activation else job["job_id"],
                     "activation_duration_ms": activation["activation_duration_ms"] if activation else 0.0,
                     "exportable_state": "ready",
                     "published_state": "published" if publish else "not_published",
@@ -221,6 +245,10 @@ class ModelOpsJobRegistry:
                     "model_id": str(manifest.get("derived_model_id", "")),
                     "model_path": str(manifest.get("derived_model_path", "")),
                     "adapter_set_hash": str(manifest.get("adapter_set_hash", "")),
+                    "adapter_manifest_path": str(manifest.get("adapter_manifest_path", "")),
+                    "adapter_name": str(manifest.get("adapter_name", "")),
+                    "derived_model_alias": str(manifest.get("derived_model_alias", "")),
+                    "source_adapter_job_id": str(manifest.get("source_adapter_job_id", "")),
                     "source_model": str(manifest.get("source_model", "")),
                     "activation_mode": str(manifest.get("activation_mode", "")),
                     "status": "activated",
