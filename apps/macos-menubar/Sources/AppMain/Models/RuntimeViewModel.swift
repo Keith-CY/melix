@@ -268,6 +268,12 @@ public final class RuntimeViewModel {
         self.serverSessionAPIKeyStore = serverSessionAPIKeyStore
     }
 
+    deinit {
+        MainActor.assumeIsolated {
+            subscriptionTask?.cancel()
+        }
+    }
+
     public func selectSurface(_ surface: DesktopSurface) {
         selectedSurface = surface
         notifyStateChanged()
@@ -2264,15 +2270,14 @@ public final class RuntimeViewModel {
         )
 
         subscriptionTask = Task { [weak self] in
-            guard let self else {
-                return
-            }
             for await event in stream {
+                guard let self else { return }
                 await self.consume(event: event)
             }
             if Task.isCancelled {
                 return
             }
+            guard let self else { return }
             await self.handleUnexpectedSubscriptionTermination()
         }
     }

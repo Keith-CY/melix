@@ -778,6 +778,37 @@ def test_build_server_removes_existing_socket_file(monkeypatch, tmp_path: Path) 
     assert not socket_path.exists()
 
 
+def test_build_server_routes_tooling_roots_from_environment(monkeypatch, tmp_path: Path) -> None:
+    registry = build_registry()
+    seen: dict[str, object] = {}
+
+    class FakeBoundServer:
+        def add_generic_rpc_handlers(self, handlers) -> None:
+            return None
+
+        def add_registered_method_handlers(self, service_name, handlers) -> None:
+            return None
+
+        def add_insecure_port(self, address: str) -> int:
+            return 1
+
+    class FakeMaintenanceService:
+        def __init__(self, registry, jobs_root=None, evaluation_jobs_root=None, **kwargs) -> None:
+            seen["jobs_root"] = jobs_root
+            seen["evaluation_jobs_root"] = evaluation_jobs_root
+
+    monkeypatch.setenv("MELIX_MODEL_OPS_JOBS_ROOT", os.fspath(tmp_path / "ops"))
+    monkeypatch.setenv("MELIX_EVALUATION_JOBS_ROOT", os.fspath(tmp_path / "ops/evals"))
+    monkeypatch.setattr("worker.grpc_server.grpc.server", lambda executor: FakeBoundServer())
+    monkeypatch.setattr("worker.grpc_server.WorkerMaintenanceService", FakeMaintenanceService)
+    monkeypatch.setattr("worker.grpc_server.maintenance_pb2_grpc.add_MaintenanceServiceServicer_to_server", lambda servicer, server: None)
+
+    build_server(os.fspath(tmp_path / "worker.sock"), registry=registry)
+
+    assert seen["jobs_root"] == (tmp_path / "ops").resolve()
+    assert seen["evaluation_jobs_root"] == (tmp_path / "ops/evals").resolve()
+
+
 def test_elapsed_helpers_guard_invalid_origins() -> None:
     assert _elapsed_milliseconds_since(10, now_nanoseconds=5) == 0.0
     assert _elapsed_milliseconds_from_origin(None, now_nanoseconds=100) == 0.0

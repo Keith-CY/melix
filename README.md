@@ -108,6 +108,19 @@ The installer writes:
 The full operator flow, including bootstrap and uninstall commands, is documented in
 `docs/runbooks/phase-8-local-install.md`.
 
+For same-host service reuse, generate a named sidecar layout instead of reusing the default
+product instance:
+
+```bash
+python3 scripts/install_local_product.py \
+  --service-instance-name team-a \
+  --http-port 12434 \
+  --json
+```
+
+This creates isolated launch agents, runtime roots, managed model roots, and tooling jobs
+roots for that consumer.
+
 ## External Agent Integrations
 
 Melix can render reproducible setup fragments for external coding-agent clients from the
@@ -151,6 +164,35 @@ This smoke verifies:
 Environment examples, operator guidance, and desktop-state expectations live in
 `docs/runbooks/shared-access.md`.
 
+## Service-First Reuse
+
+Melix remains an `app + cli` product first. For team reuse, prefer calling Melix as a
+same-host sidecar service rather than extracting the inference core into a library.
+
+The stable v1 local reuse surface is:
+
+- `POST /v1/chat/completions`
+- `POST /v1/completions`
+- `POST /v1/responses`
+- `POST /v1/embeddings`
+- `POST /v1/rerank`
+- `GET /v1/models`
+- `GET /health`
+
+For repository-local development, a named sidecar instance uses an isolated runtime root:
+
+```bash
+MELIX_SERVICE_INSTANCE_NAME=team-a \
+MELIX_HTTP_PORT=12434 \
+bash scripts/dev_up.sh
+```
+
+This defaults the runtime directory to `.runtime/sidecars/team-a` and exports isolated
+paths for models, runtime packs, and tooling jobs.
+
+Operator guidance for service-first reuse and same-host sidecars lives in
+`docs/runbooks/service-first-reuse.md`.
+
 ## Release Gate
 
 Run the deterministic Phase 8 release gate before merge or release tagging:
@@ -193,6 +235,7 @@ The current phase-status and implementation guidance live under:
 - `docs/plans/2026-03-29-p8-m5-release-gate-automation.md`
 - `docs/plans/2026-03-29-p8-m6-release-runbooks-product-acceptance.md`
 - `docs/runbooks/phase-8-local-install.md`
+- `docs/runbooks/service-first-reuse.md`
 - `docs/runbooks/phase-8-release-gates.md`
 - `docs/runbooks/phase-8-product-acceptance.md`
 

@@ -4,7 +4,7 @@ import Testing
 
 @testable import AppMain
 
-@Suite("Menu Bar Bootstrap")
+@Suite("Menu Bar Bootstrap", .serialized)
 struct AppMainBootstrapTests {
     @Test("default bootstrap factory creates a live status menu")
     @MainActor

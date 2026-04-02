@@ -20,6 +20,7 @@ def main() -> int:
     parser.add_argument("--home-dir", default=str(Path.home()))
     parser.add_argument("--launch-agents-dir", default="")
     parser.add_argument("--http-port", type=int, default=11434)
+    parser.add_argument("--service-instance-name", default="")
     parser.add_argument("--swift-backend-mode", default="deterministic")
     parser.add_argument("--python-backend-mode", default="deterministic")
     parser.add_argument("--dev-text-model-path", default="")
@@ -31,6 +32,7 @@ def main() -> int:
         home_dir=args.home_dir,
         launch_agents_dir=args.launch_agents_dir or None,
         http_port=args.http_port,
+        service_instance_name=args.service_instance_name,
     )
     manifest = write_local_product_artifacts(
         layout,

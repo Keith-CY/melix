@@ -4,7 +4,7 @@ import Testing
 
 @testable import AppMain
 
-@Suite("Status Menu")
+@Suite("Status Menu", .serialized)
 struct StatusMenuTests {
     @Test("install renders server and model state through the renderer")
     @MainActor
@@ -57,11 +57,11 @@ struct StatusMenuTests {
 
         await viewModel.start()
         menu.perform(.loadPrimaryModel)
-        try await eventually("load action should reach the client") {
+        try await eventually("load action should reach the client", timeout: .seconds(2)) {
             viewModel.primaryModel?.stateText == "Warm"
         }
         menu.perform(.unloadPrimaryModel)
-        try await eventually("unload action should reach the client") {
+        try await eventually("unload action should reach the client", timeout: .seconds(2)) {
             viewModel.primaryModel?.stateText == "Unloaded"
         }
 
@@ -79,7 +79,7 @@ struct StatusMenuTests {
         let menuItem = NSMenuItem(title: "Load", action: nil, keyEquivalent: "")
         menuItem.representedObject = StatusMenuAction.loadPrimaryModel.rawValue
         menu.handleMenuAction(menuItem)
-        try await eventually("selector bridge should dispatch the load action") {
+        try await eventually("selector bridge should dispatch the load action", timeout: .seconds(2)) {
             viewModel.primaryModel?.stateText == "Warm"
         }
     }

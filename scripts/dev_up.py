@@ -26,9 +26,14 @@ class DevUpOptions:
 
 @dataclass(frozen=True)
 class RuntimeLayout:
+    service_instance_name: str
     runtime_dir: Path
     python_socket_path: Path
     swift_text_worker_socket_path: Path
+    managed_models_dir: Path
+    audio_runtime_packs_dir: Path
+    model_ops_jobs_root: Path
+    evaluation_jobs_root: Path
     control_plane_metrics_path: Path
     swift_text_worker_metrics_path: Path
     python_worker_metrics_path: Path
@@ -97,12 +102,30 @@ def build_swift_launch_command(
 
 
 def compute_runtime_layout(repo_root: Path) -> RuntimeLayout:
-    runtime_dir = resolve_path(os.environ.get("MELIX_RUNTIME_DIR", repo_root / ".runtime" / "phase1"))
+    service_instance_name = _normalize_service_instance_name(os.environ.get("MELIX_SERVICE_INSTANCE_NAME", ""))
+    default_runtime_dir = repo_root / ".runtime" / "phase1"
+    if service_instance_name:
+        default_runtime_dir = repo_root / ".runtime" / "sidecars" / service_instance_name
+    runtime_dir = resolve_path(os.environ.get("MELIX_RUNTIME_DIR", default_runtime_dir))
+    model_ops_jobs_root = Path(
+        os.environ.get("MELIX_MODEL_OPS_JOBS_ROOT", runtime_dir / "jobs" / "model-ops")
+    ).expanduser()
     return RuntimeLayout(
+        service_instance_name=service_instance_name,
         runtime_dir=runtime_dir,
         python_socket_path=Path(os.environ.get("MELIX_WORKER_SOCKET_PATH", runtime_dir / "python-worker.sock")).expanduser(),
         swift_text_worker_socket_path=Path(
             os.environ.get("MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH", runtime_dir / "swift-text-worker.sock")
+        ).expanduser(),
+        managed_models_dir=Path(
+            os.environ.get("MELIX_MANAGED_MODEL_ROOT", runtime_dir / "models" / "default-managed")
+        ).expanduser(),
+        audio_runtime_packs_dir=Path(
+            os.environ.get("MELIX_AUDIO_RUNTIME_PACK_ROOT", runtime_dir / "runtime-packs" / "audio")
+        ).expanduser(),
+        model_ops_jobs_root=model_ops_jobs_root,
+        evaluation_jobs_root=Path(
+            os.environ.get("MELIX_EVALUATION_JOBS_ROOT", model_ops_jobs_root / "evaluation")
         ).expanduser(),
         control_plane_metrics_path=Path(
             os.environ.get("MELIX_CONTROL_PLANE_METRICS_PATH", runtime_dir / "control-plane-metrics.json")
@@ -130,6 +153,11 @@ def ensure_runtime_directories(layout: RuntimeLayout) -> None:
         layout.uv_cache_dir,
         layout.swift_home,
         layout.clang_module_cache_path,
+        layout.managed_models_dir,
+        layout.audio_runtime_packs_dir,
+        layout.model_ops_jobs_root,
+        layout.evaluation_jobs_root,
+        layout.runtime_dir / "swift-text-worker-cache",
     ):
         directory.mkdir(parents=True, exist_ok=True)
 
@@ -232,8 +260,13 @@ def wait_for_http_ready(http_port: str, *, timeout_seconds: float = 120.0) -> No
 
 def write_runtime_environment(layout: RuntimeLayout) -> Path:
     env_path = layout.runtime_dir / "env.sh"
+    env_path.parent.mkdir(parents=True, exist_ok=True)
     exports = {
         "MELIX_RUNTIME_DIR": os.fspath(layout.runtime_dir),
+        "MELIX_MANAGED_MODEL_ROOT": os.fspath(layout.managed_models_dir),
+        "MELIX_AUDIO_RUNTIME_PACK_ROOT": os.fspath(layout.audio_runtime_packs_dir),
+        "MELIX_MODEL_OPS_JOBS_ROOT": os.fspath(layout.model_ops_jobs_root),
+        "MELIX_EVALUATION_JOBS_ROOT": os.fspath(layout.evaluation_jobs_root),
         "MELIX_WORKER_SOCKET_PATH": os.fspath(layout.python_socket_path),
         "MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH": os.fspath(layout.swift_text_worker_socket_path),
         "MELIX_HTTP_PORT": layout.http_port,
@@ -243,6 +276,8 @@ def write_runtime_environment(layout: RuntimeLayout) -> Path:
         "MELIX_SWIFT_TEXT_WORKER_METRICS_PATH": os.fspath(layout.swift_text_worker_metrics_path),
         "MELIX_PYTHON_WORKER_METRICS_PATH": os.fspath(layout.python_worker_metrics_path),
     }
+    if layout.service_instance_name:
+        exports["MELIX_SERVICE_INSTANCE_NAME"] = layout.service_instance_name
     lines = ["#!/usr/bin/env bash", "set -euo pipefail", ""]
     lines.extend(f'export {key}="{value}"' for key, value in exports.items())
     lines.append("")
@@ -293,6 +328,10 @@ def start_stack(options: DevUpOptions) -> None:
             "UV_CACHE_DIR": os.fspath(layout.uv_cache_dir),
             "MELIX_PYTHON_WORKER_METRICS_PATH": os.fspath(layout.python_worker_metrics_path),
             "MELIX_PYTHON_WORKER_STARTUP_T0_NS": str(time.perf_counter_ns()),
+            "MELIX_MANAGED_MODEL_ROOT": os.fspath(layout.managed_models_dir),
+            "MELIX_AUDIO_RUNTIME_PACK_ROOT": os.fspath(layout.audio_runtime_packs_dir),
+            "MELIX_MODEL_OPS_JOBS_ROOT": os.fspath(layout.model_ops_jobs_root),
+            "MELIX_EVALUATION_JOBS_ROOT": os.fspath(layout.evaluation_jobs_root),
         },
         command=[
             "uv",
@@ -331,6 +370,8 @@ def start_stack(options: DevUpOptions) -> None:
             "MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH": os.fspath(layout.swift_text_worker_socket_path),
             "MELIX_REPO_ROOT": os.fspath(repo_root),
             "MELIX_CONTROL_PLANE_METRICS_PATH": os.fspath(layout.control_plane_metrics_path),
+            "MELIX_MANAGED_MODEL_ROOT": os.fspath(layout.managed_models_dir),
+            "MELIX_AUDIO_RUNTIME_PACK_ROOT": os.fspath(layout.audio_runtime_packs_dir),
             "HOME": os.fspath(layout.swift_home),
             "CLANG_MODULE_CACHE_PATH": os.fspath(layout.clang_module_cache_path),
         },
@@ -355,8 +396,16 @@ def start_stack(options: DevUpOptions) -> None:
     print(f"Swift text worker metrics: {layout.swift_text_worker_metrics_path}")
     print(f"Python worker metrics: {layout.python_worker_metrics_path}")
     print(f"Runtime env file: {env_path}")
+    if layout.service_instance_name:
+        print(f"Service instance: {layout.service_instance_name}")
     if options.prefer_built:
         print("Swift launch mode: prefer-built")
+
+
+def _normalize_service_instance_name(value: str) -> str:
+    value = value.strip().lower()
+    normalized = "".join(character if character.isalnum() or character == "-" else "-" for character in value)
+    return normalized.strip("-")
 
 
 def main(argv: list[str] | None = None) -> int:

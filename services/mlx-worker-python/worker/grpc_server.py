@@ -436,7 +436,11 @@ def build_server(
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=4))
     runtime_service = WorkerRuntimeService(registry)
     inference_service = WorkerInferenceService(registry)
-    maintenance_service = WorkerMaintenanceService(registry)
+    maintenance_service = WorkerMaintenanceService(
+        registry,
+        jobs_root=_resolved_env_path("MELIX_MODEL_OPS_JOBS_ROOT"),
+        evaluation_jobs_root=_resolved_env_path("MELIX_EVALUATION_JOBS_ROOT"),
+    )
     cache_service = WorkerCacheService(registry)
     runtime_pb2_grpc.add_RuntimeServiceServicer_to_server(runtime_service, server)
     inference_pb2_grpc.add_InferenceServiceServicer_to_server(inference_service, server)
@@ -449,6 +453,13 @@ def build_server(
             _elapsed_milliseconds_since(server_build_started_at),
         )
     return server, runtime_service, inference_service
+
+
+def _resolved_env_path(key: str) -> Path | None:
+    raw_value = os.environ.get(key, "").strip()
+    if not raw_value:
+        return None
+    return Path(raw_value).expanduser().resolve()
 
 
 def main() -> None:

@@ -6,6 +6,7 @@ import stat
 import subprocess
 import sys
 import urllib.error
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -36,9 +37,14 @@ def make_executable(path: Path) -> None:
 
 def make_layout(dev_up, tmp_path: Path):
     return dev_up.RuntimeLayout(
+        service_instance_name="",
         runtime_dir=tmp_path / "runtime",
         python_socket_path=tmp_path / "runtime/python.sock",
         swift_text_worker_socket_path=tmp_path / "runtime/swift.sock",
+        managed_models_dir=tmp_path / "runtime/models/default-managed",
+        audio_runtime_packs_dir=tmp_path / "runtime/runtime-packs/audio",
+        model_ops_jobs_root=tmp_path / "runtime/jobs/model-ops",
+        evaluation_jobs_root=tmp_path / "runtime/jobs/model-ops/evaluation",
         control_plane_metrics_path=tmp_path / "runtime/control-plane.json",
         swift_text_worker_metrics_path=tmp_path / "runtime/swift-metrics.json",
         python_worker_metrics_path=tmp_path / "runtime/python-metrics.json",
@@ -164,6 +170,22 @@ def test_compute_runtime_layout_uses_environment_overrides(monkeypatch: pytest.M
     assert layout.python_socket_path == runtime_dir / "python-worker.sock"
 
 
+def test_compute_runtime_layout_uses_service_instance_name_for_sidecar_defaults(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    dev_up = load_dev_up_module()
+    monkeypatch.setenv("MELIX_SERVICE_INSTANCE_NAME", "team-a")
+
+    layout = dev_up.compute_runtime_layout(tmp_path)
+
+    assert layout.runtime_dir == (tmp_path / ".runtime" / "sidecars" / "team-a").resolve()
+    assert layout.managed_models_dir == layout.runtime_dir / "models/default-managed"
+    assert layout.audio_runtime_packs_dir == layout.runtime_dir / "runtime-packs/audio"
+    assert layout.model_ops_jobs_root == layout.runtime_dir / "jobs/model-ops"
+    assert layout.evaluation_jobs_root == layout.model_ops_jobs_root / "evaluation"
+
+
 def test_runtime_layout_helpers_manage_directories_and_artifacts(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -176,6 +198,10 @@ def test_runtime_layout_helpers_manage_directories_and_artifacts(
     assert layout.uv_cache_dir.is_dir()
     assert layout.swift_home.is_dir()
     assert layout.clang_module_cache_path.is_dir()
+    assert layout.managed_models_dir.is_dir()
+    assert layout.audio_runtime_packs_dir.is_dir()
+    assert layout.model_ops_jobs_root.is_dir()
+    assert layout.evaluation_jobs_root.is_dir()
 
     for artifact in (
         layout.python_socket_path,
@@ -202,6 +228,20 @@ def test_runtime_layout_helpers_manage_directories_and_artifacts(
 
     (layout.runtime_dir / "swift-text-worker.pid").unlink()
     dev_up.ensure_runtime_is_stopped(layout)
+
+
+def test_write_runtime_environment_exports_sidecar_roots(tmp_path: Path) -> None:
+    dev_up = load_dev_up_module()
+    layout = replace(make_layout(dev_up, tmp_path), service_instance_name="team-a")
+
+    env_path = dev_up.write_runtime_environment(layout)
+    payload = env_path.read_text(encoding="utf-8")
+
+    assert f'export MELIX_MANAGED_MODEL_ROOT="{layout.managed_models_dir}"' in payload
+    assert f'export MELIX_AUDIO_RUNTIME_PACK_ROOT="{layout.audio_runtime_packs_dir}"' in payload
+    assert f'export MELIX_MODEL_OPS_JOBS_ROOT="{layout.model_ops_jobs_root}"' in payload
+    assert f'export MELIX_EVALUATION_JOBS_ROOT="{layout.evaluation_jobs_root}"' in payload
+    assert 'export MELIX_SERVICE_INSTANCE_NAME="team-a"' in payload
 
 
 def test_spawn_background_process_and_write_pid_file(
@@ -361,7 +401,7 @@ def test_start_stack_orchestrates_processes_and_emits_runtime_env(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     dev_up = load_dev_up_module()
-    layout = make_layout(dev_up, tmp_path)
+    layout = replace(make_layout(dev_up, tmp_path), service_instance_name="team-a")
     calls: list[tuple[str, object]] = []
     pid_values = iter([101, 202, 303])
 
@@ -395,6 +435,7 @@ def test_start_stack_orchestrates_processes_and_emits_runtime_env(
     assert (layout.runtime_dir / "control-plane.pid").read_text(encoding="utf-8") == "303"
     output = capsys.readouterr().out
     assert "Melix local stack is ready." in output
+    assert "Service instance: team-a" in output
     assert "Swift launch mode: prefer-built" in output
     assert any(kind == "spawn" for kind, _ in calls)
     assert any(kind == "wait" for kind, _ in calls)

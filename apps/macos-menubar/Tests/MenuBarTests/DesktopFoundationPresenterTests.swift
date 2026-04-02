@@ -2,7 +2,7 @@ import Testing
 
 @testable import AppMain
 
-@Suite("Desktop Foundation Presenter")
+@Suite("Desktop Foundation Presenter", .serialized)
 struct DesktopFoundationPresenterTests {
     @Test("presenter reuses one window instance and records open metrics")
     @MainActor

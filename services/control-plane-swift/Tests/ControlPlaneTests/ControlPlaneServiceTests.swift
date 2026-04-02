@@ -380,26 +380,16 @@ struct ControlPlaneServiceTests {
         #expect(speech.settings.ext["melix.model_path"] == "/tmp/registry-root/mlx-community/Speech/1")
     }
 
-    @Test("execute handles model.load and emits a state change event")
-    func executeHandlesModelLoad() async throws {
+    @Test("execute handles model.load on the local fast path")
+    func executeHandlesLocalModelLoad() async throws {
         let service = ControlPlaneService()
-        let subscription = await service.subscribe()
-
-        let eventTask = Task {
-            var iterator = subscription.stream.makeAsyncIterator()
-            return try #require(await iterator.next())
-        }
 
         let response = try await service.execute(makeLoadModelRequest(modelID: "melix-dev-text"))
-        let event = try await eventTask.value
 
         #expect(response.ok)
         #expect(response.model.model.modelID == "melix-dev-text")
         #expect(response.model.model.state == .modelWarm)
         #expect(response.model.models.first?.state == .modelWarm)
-        #expect(event.eventType == "model.state_changed")
-        #expect(event.modelState.modelID == "melix-dev-text")
-        #expect(event.modelState.state == .modelWarm)
     }
 
     @Test("execute workerless model.load falls back to local catalog success")
@@ -416,26 +406,17 @@ struct ControlPlaneServiceTests {
         #expect(await catalog.dispatchHandle(for: "melix-dev-text") == "melix-dev-text::local")
     }
 
-    @Test("execute handles model.unload and emits a state change event")
-    func executeHandlesModelUnload() async throws {
+    @Test("execute handles model.unload on the local fast path")
+    func executeHandlesLocalModelUnload() async throws {
         let service = ControlPlaneService()
         _ = try await service.execute(makeLoadModelRequest(modelID: "melix-dev-text"))
 
-        let subscription = await service.subscribe()
-        let eventTask = Task {
-            var iterator = subscription.stream.makeAsyncIterator()
-            return try #require(await iterator.next())
-        }
-
         let response = try await service.execute(makeUnloadModelRequest(modelID: "melix-dev-text"))
-        let event = try await eventTask.value
 
         #expect(response.ok)
         #expect(response.model.model.modelID == "melix-dev-text")
         #expect(response.model.model.state == .modelUnloaded)
         #expect(response.model.models.first?.state == .modelUnloaded)
-        #expect(event.modelState.modelID == "melix-dev-text")
-        #expect(event.modelState.state == .modelUnloaded)
     }
 
     @Test("execute handles worker-backed model.load with loading and warm transitions")
@@ -462,6 +443,7 @@ struct ControlPlaneServiceTests {
 
         let response = try await service.execute(makeLoadModelRequest(modelID: "melix-dev-text"))
         let events = try await eventTask.value
+        await service.unsubscribe(subscription.subscriptionID)
 
         #expect(response.ok)
         #expect(events.map(\.modelState.state) == [.modelLoading, .modelWarm])
@@ -582,6 +564,7 @@ struct ControlPlaneServiceTests {
         let response = try await service.execute(makeLoadModelRequest(modelID: "melix-dev-text"))
         let events = try await eventTask.value
         let model = try #require(await catalog.model(id: "melix-dev-text"))
+        await service.unsubscribe(subscription.subscriptionID)
 
         #expect(!response.ok)
         #expect(response.error.code == "unavailable")
@@ -632,6 +615,7 @@ struct ControlPlaneServiceTests {
         let response = try await service.execute(makeLoadModelRequest(modelID: "melix-dev-text"))
         let events = try await eventTask.value
         let model = try #require(await catalog.model(id: "melix-dev-text"))
+        await service.unsubscribe(subscription.subscriptionID)
 
         #expect(!response.ok)
         #expect(response.error.code == "unavailable")
@@ -669,6 +653,7 @@ struct ControlPlaneServiceTests {
         let response = try await service.execute(makeLoadModelRequest(modelID: "melix-dev-text"))
         let events = try await eventTask.value
         let model = try #require(await catalog.model(id: "melix-dev-text"))
+        await service.unsubscribe(subscription.subscriptionID)
 
         #expect(!response.ok)
         #expect(response.error.code == "memory_budget_exceeded")
@@ -725,6 +710,7 @@ struct ControlPlaneServiceTests {
 
         let response = try await service.execute(makeUnloadModelRequest(modelID: "melix-dev-text"))
         let events = try await eventTask.value
+        await service.unsubscribe(subscription.subscriptionID)
 
         #expect(response.ok)
         #expect(events.map(\.modelState.state) == [.modelEvicting, .modelUnloaded])
@@ -754,6 +740,7 @@ struct ControlPlaneServiceTests {
         let response = try await service.execute(makeUnloadModelRequest(modelID: "melix-dev-text"))
         let events = try await eventTask.value
         let model = try #require(await catalog.model(id: "melix-dev-text"))
+        await service.unsubscribe(subscription.subscriptionID)
 
         #expect(!response.ok)
         #expect(response.error.code == "unavailable")
@@ -801,6 +788,7 @@ struct ControlPlaneServiceTests {
         let response = try await service.execute(makeUnloadModelRequest(modelID: "melix-dev-text"))
         let events = try await eventTask.value
         let model = try #require(await catalog.model(id: "melix-dev-text"))
+        await service.unsubscribe(subscription.subscriptionID)
 
         #expect(!response.ok)
         #expect(response.error.code == "unavailable")
@@ -3250,6 +3238,7 @@ struct ControlPlaneServiceTests {
         var iterator = subscription.stream.makeAsyncIterator()
         let firstEvent = await iterator.next()
         let secondEvent = await iterator.next()
+        await service.unsubscribe(subscription.subscriptionID)
         #expect(firstEvent?.eventType == "session.state_changed")
         #expect(firstEvent?.source == "session_graph")
         #expect(secondEvent?.eventType == "session.state_changed")

@@ -5,17 +5,21 @@ import os
 import plistlib
 from dataclasses import dataclass
 from pathlib import Path
+import re
 from typing import Any
 
 
 @dataclass(frozen=True)
 class LocalProductLayout:
+    service_instance_name: str
     repo_root: Path
     home_dir: Path
     app_support_dir: Path
     runtime_dir: Path
     managed_models_dir: Path
     audio_runtime_packs_dir: Path
+    model_ops_jobs_root: Path
+    evaluation_jobs_root: Path
     logs_dir: Path
     launch_agents_dir: Path
     uv_cache_dir: Path
@@ -56,6 +60,7 @@ def build_local_product_layout(
     *,
     launch_agents_dir: str | Path | None = None,
     http_port: int = 11434,
+    service_instance_name: str = "",
 ) -> LocalProductLayout:
     resolved_repo_root = Path(repo_root).expanduser().resolve()
     resolved_home_dir = Path(home_dir or Path.home()).expanduser().resolve()
@@ -65,19 +70,35 @@ def build_local_product_layout(
         else resolved_home_dir / "Library/LaunchAgents"
     )
 
-    app_support_dir = resolved_home_dir / "Library/Application Support/Melix"
+    normalized_instance_name = _normalize_service_instance_name(service_instance_name)
+    if normalized_instance_name:
+        app_support_dir = (
+            resolved_home_dir
+            / "Library/Application Support/Melix/sidecars"
+            / normalized_instance_name
+        )
+        logs_dir = resolved_home_dir / "Library/Logs/Melix/sidecars" / normalized_instance_name
+        environment_script_path = app_support_dir / f"melix-sidecar-{normalized_instance_name}-env.sh"
+    else:
+        app_support_dir = resolved_home_dir / "Library/Application Support/Melix"
+        logs_dir = resolved_home_dir / "Library/Logs/Melix"
+        environment_script_path = app_support_dir / "melix-product-env.sh"
     runtime_dir = app_support_dir / "runtime"
     managed_models_dir = app_support_dir / "models/default-managed"
     audio_runtime_packs_dir = app_support_dir / "runtime-packs/audio"
-    logs_dir = resolved_home_dir / "Library/Logs/Melix"
+    model_ops_jobs_root = app_support_dir / "jobs/model-ops"
+    evaluation_jobs_root = model_ops_jobs_root / "evaluation"
 
     return LocalProductLayout(
+        service_instance_name=normalized_instance_name,
         repo_root=resolved_repo_root,
         home_dir=resolved_home_dir,
         app_support_dir=app_support_dir,
         runtime_dir=runtime_dir,
         managed_models_dir=managed_models_dir,
         audio_runtime_packs_dir=audio_runtime_packs_dir,
+        model_ops_jobs_root=model_ops_jobs_root,
+        evaluation_jobs_root=evaluation_jobs_root,
         logs_dir=logs_dir,
         launch_agents_dir=resolved_launch_agents_dir,
         uv_cache_dir=resolved_repo_root / ".uv-cache",
@@ -94,7 +115,7 @@ def build_local_product_layout(
         swift_text_worker_stderr_path=logs_dir / "swift-text-worker.stderr.log",
         control_plane_stdout_path=logs_dir / "control-plane.stdout.log",
         control_plane_stderr_path=logs_dir / "control-plane.stderr.log",
-        environment_script_path=app_support_dir / "melix-product-env.sh",
+        environment_script_path=environment_script_path,
         install_manifest_path=app_support_dir / "install-manifest.json",
         http_port=http_port,
     )
@@ -128,7 +149,11 @@ def build_launch_agent_specs(
         "MELIX_PYTHON_WORKER_METRICS_PATH": str(layout.python_worker_metrics_path),
         "MELIX_MANAGED_MODEL_ROOT": str(layout.managed_models_dir),
         "MELIX_AUDIO_RUNTIME_PACK_ROOT": str(layout.audio_runtime_packs_dir),
+        "MELIX_MODEL_OPS_JOBS_ROOT": str(layout.model_ops_jobs_root),
+        "MELIX_EVALUATION_JOBS_ROOT": str(layout.evaluation_jobs_root),
     }
+    if layout.service_instance_name:
+        python_environment["MELIX_SERVICE_INSTANCE_NAME"] = layout.service_instance_name
 
     control_plane_environment = {
         **common_swift_environment,
@@ -140,11 +165,17 @@ def build_launch_agent_specs(
         "MELIX_MANAGED_MODEL_ROOT": str(layout.managed_models_dir),
         "MELIX_AUDIO_RUNTIME_PACK_ROOT": str(layout.audio_runtime_packs_dir),
     }
+    if layout.service_instance_name:
+        control_plane_environment["MELIX_SERVICE_INSTANCE_NAME"] = layout.service_instance_name
+
+    label_prefix = "io.melix"
+    if layout.service_instance_name:
+        label_prefix = f"{label_prefix}.{layout.service_instance_name}"
 
     return [
         LaunchAgentSpec(
-            label="io.melix.swift-text-worker",
-            plist_path=layout.launch_agents_dir / "io.melix.swift-text-worker.plist",
+            label=f"{label_prefix}.swift-text-worker",
+            plist_path=layout.launch_agents_dir / f"{label_prefix}.swift-text-worker.plist",
             program_arguments=[
                 "/usr/bin/env",
                 "swift",
@@ -159,8 +190,8 @@ def build_launch_agent_specs(
             stderr_path=layout.swift_text_worker_stderr_path,
         ),
         LaunchAgentSpec(
-            label="io.melix.python-worker",
-            plist_path=layout.launch_agents_dir / "io.melix.python-worker.plist",
+            label=f"{label_prefix}.python-worker",
+            plist_path=layout.launch_agents_dir / f"{label_prefix}.python-worker.plist",
             program_arguments=[
                 "/usr/bin/env",
                 "uv",
@@ -181,8 +212,8 @@ def build_launch_agent_specs(
             stderr_path=layout.python_worker_stderr_path,
         ),
         LaunchAgentSpec(
-            label="io.melix.control-plane",
-            plist_path=layout.launch_agents_dir / "io.melix.control-plane.plist",
+            label=f"{label_prefix}.control-plane",
+            plist_path=layout.launch_agents_dir / f"{label_prefix}.control-plane.plist",
             program_arguments=[
                 "/usr/bin/env",
                 "swift",
@@ -234,6 +265,8 @@ def write_local_product_artifacts(
         layout.runtime_dir,
         layout.managed_models_dir,
         layout.audio_runtime_packs_dir,
+        layout.model_ops_jobs_root,
+        layout.evaluation_jobs_root,
         layout.logs_dir,
         layout.launch_agents_dir,
         layout.uv_cache_dir,
@@ -251,11 +284,14 @@ def write_local_product_artifacts(
 
     layout.environment_script_path.write_text(render_environment_script(layout))
     manifest = {
+        "service_instance_name": layout.service_instance_name,
         "repo_root": str(layout.repo_root),
         "app_support_dir": str(layout.app_support_dir),
         "runtime_dir": str(layout.runtime_dir),
         "managed_models_dir": str(layout.managed_models_dir),
         "audio_runtime_packs_dir": str(layout.audio_runtime_packs_dir),
+        "model_ops_jobs_root": str(layout.model_ops_jobs_root),
+        "evaluation_jobs_root": str(layout.evaluation_jobs_root),
         "logs_dir": str(layout.logs_dir),
         "launch_agents_dir": str(layout.launch_agents_dir),
         "environment_script_path": str(layout.environment_script_path),
@@ -282,6 +318,8 @@ def render_environment_script(layout: LocalProductLayout) -> str:
         "MELIX_RUNTIME_DIR": str(layout.runtime_dir),
         "MELIX_MANAGED_MODEL_ROOT": str(layout.managed_models_dir),
         "MELIX_AUDIO_RUNTIME_PACK_ROOT": str(layout.audio_runtime_packs_dir),
+        "MELIX_MODEL_OPS_JOBS_ROOT": str(layout.model_ops_jobs_root),
+        "MELIX_EVALUATION_JOBS_ROOT": str(layout.evaluation_jobs_root),
         "MELIX_WORKER_SOCKET_PATH": str(layout.python_socket_path),
         "MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH": str(layout.swift_text_worker_socket_path),
         "MELIX_HTTP_PORT": str(layout.http_port),
@@ -289,7 +327,14 @@ def render_environment_script(layout: LocalProductLayout) -> str:
         "MELIX_SWIFT_TEXT_WORKER_METRICS_PATH": str(layout.swift_text_worker_metrics_path),
         "MELIX_PYTHON_WORKER_METRICS_PATH": str(layout.python_worker_metrics_path),
     }
+    if layout.service_instance_name:
+        exports["MELIX_SERVICE_INSTANCE_NAME"] = layout.service_instance_name
     lines = ["#!/usr/bin/env bash", "set -euo pipefail", ""]
     lines.extend(f'export {key}="{value}"' for key, value in exports.items())
     lines.append("")
     return "\n".join(lines)
+
+
+def _normalize_service_instance_name(value: str) -> str:
+    normalized = re.sub(r"[^a-z0-9-]+", "-", value.strip().lower()).strip("-")
+    return normalized

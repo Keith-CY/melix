@@ -3,7 +3,7 @@ import Testing
 
 @testable import AppMain
 
-@Suite("Agent Integration Export Smoke")
+@Suite("Agent Integration Export Smoke", .serialized)
 struct AgentIntegrationExportSmokeTests {
     @Test("agent integration export smoke fixture produces all targets")
     func agentIntegrationExportSmokeFixtureProducesAllTargets() throws {

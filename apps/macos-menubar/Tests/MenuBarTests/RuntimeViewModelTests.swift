@@ -5,7 +5,7 @@ import Testing
 import MelixControlPlaneCore
 import MelixControlPlaneProtocol
 
-@Suite("Runtime View Model")
+@Suite("Runtime View Model", .serialized)
 struct RuntimeViewModelTests {
     @Test("start hydrates the initial snapshot into app state")
     @MainActor

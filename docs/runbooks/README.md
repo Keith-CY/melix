@@ -17,6 +17,7 @@ Current runbooks:
 - `m7-benchmark-and-evaluation-foundation.md`
 - `m6-acceleration-benchmarks.md`
 - `model-family-support-matrix.md`
+- `service-first-reuse.md`
 - `phase-1-local-stack.md`
 - `phase-2-queue-pressure.md`
 - `phase-8-cache-recovery-benchmarks.md`

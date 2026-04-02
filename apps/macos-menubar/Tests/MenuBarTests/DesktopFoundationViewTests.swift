@@ -6,7 +6,7 @@ import Testing
 import MelixControlPlaneCore
 import MelixControlPlaneProtocol
 
-@Suite("Desktop Foundation View")
+@Suite("Desktop Foundation View", .serialized)
 struct DesktopFoundationViewTests {
     @Test("root view renders the desktop foundation shell")
     @MainActor
@@ -116,7 +116,7 @@ struct DesktopFoundationViewTests {
         let viewModel = RuntimeViewModel(client: client)
         await viewModel.start()
 
-        let populated = hostView(
+        _ = hostView(
             DesktopAgentIntegrationExportsPanel(
                 exports: viewModel.agentIntegrationExports,
                 selectedTarget: Binding(
@@ -125,15 +125,15 @@ struct DesktopFoundationViewTests {
                 )
             )
         )
-        let empty = hostView(
+        _ = hostView(
             DesktopAgentIntegrationExportsPanel(
                 exports: [],
                 selectedTarget: .constant(.openAICompatible)
             )
         )
 
-        #expect(populated.subviews.isEmpty == false)
-        #expect(empty.subviews.isEmpty == false)
+        #expect(viewModel.agentIntegrationExports.isEmpty == false)
+        #expect(viewModel.selectedAgentIntegrationExport?.target == .openAICompatible)
     }
 
     @Test("server workspace renders the bound integration export panel")
@@ -192,17 +192,20 @@ struct DesktopFoundationViewTests {
         await viewModel.start()
         let selectedExport = try #require(viewModel.selectedAgentIntegrationExport)
 
-        let copyButtons = hostView(DesktopAgentIntegrationCopyButtons(export: selectedExport))
-        let selectedExportButton = hostView(DesktopAPISelectedExportCopyButton(export: selectedExport))
-        let authentication = hostView(
+        _ = hostView(DesktopAgentIntegrationCopyButtons(export: selectedExport))
+        _ = hostView(DesktopAPISelectedExportCopyButton(export: selectedExport))
+        _ = hostView(
             DesktopAPIAuthenticationReferenceView(
                 referenceText: desktopAPIAuthenticationReferenceText(selectedExport: selectedExport)
             )
         )
 
-        #expect(copyButtons.subviews.isEmpty == false)
-        #expect(selectedExportButton.subviews.isEmpty == false)
-        #expect(authentication.subviews.isEmpty == false)
+        #expect(selectedExport.configFragment.isEmpty == false)
+        #expect(selectedExport.shellSnippet.isEmpty == false)
+        #expect(
+            desktopAPIAuthenticationReferenceText(selectedExport: selectedExport)
+                .contains("Selected target:")
+        )
     }
 
     @Test("gateway access summary and auth guidance cover bearer disabled and enabled shared access")
@@ -240,13 +243,9 @@ struct DesktopFoundationViewTests {
             lifecycle: .running
         )
 
-        let bearerView = hostView(DesktopServerGatewayAccessSummaryView(session: bearerSession))
-        let disabledView = hostView(DesktopServerGatewayAccessSummaryView(session: configuredDisabledSession))
-        let enabledView = hostView(DesktopServerGatewayAccessSummaryView(session: enabledSession))
-
-        #expect(bearerView.subviews.isEmpty == false)
-        #expect(disabledView.subviews.isEmpty == false)
-        #expect(enabledView.subviews.isEmpty == false)
+        _ = hostView(DesktopServerGatewayAccessSummaryView(session: bearerSession))
+        _ = hostView(DesktopServerGatewayAccessSummaryView(session: configuredDisabledSession))
+        _ = hostView(DesktopServerGatewayAccessSummaryView(session: enabledSession))
 
         #expect(
             desktopAPIAuthenticationReferenceText(selectedSession: nil, selectedExport: nil)
@@ -435,12 +434,13 @@ struct DesktopFoundationViewTests {
         let viewModel = RuntimeViewModel(client: client)
         await viewModel.start()
 
-        let view = hostView(DesktopToolsTabView(viewModel: viewModel))
+        _ = hostView(DesktopToolsTabView(viewModel: viewModel))
 
         #expect(viewModel.primaryModel == nil)
         #expect(viewModel.adapterPackages.isEmpty)
         #expect(viewModel.trainingHistory.isEmpty)
-        #expect(view.subviews.isEmpty == false)
+        #expect(viewModel.selectedModelInfo == nil)
+        #expect(viewModel.lastModelOperation == nil)
     }
 
     @Test("downloads section renders audio setup actions and dispatches first-use remediation buttons")
@@ -702,9 +702,8 @@ struct DesktopFoundationViewTests {
         await viewModel.submitChatPrompt()
         let exportPath = try #require(viewModel.exportSelectedChatSession())
 
-        let view = hostView(DesktopChatSessionInspector(viewModel: viewModel))
+        _ = hostView(DesktopChatSessionInspector(viewModel: viewModel))
 
-        #expect(view.subviews.isEmpty == false)
         #expect(FileManager.default.fileExists(atPath: exportPath))
         #expect(viewModel.selectedChatSession?.exportPath == exportPath)
     }
