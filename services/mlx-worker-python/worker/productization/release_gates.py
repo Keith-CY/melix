@@ -37,7 +37,6 @@ from worker.productization.install_assets import (
 )
 from worker.registry import WorkerRegistry
 
-_DEV_TRAINING_DATASET_URI = "datasets/melix-dev"
 _AUDIO_RUNTIME_PACK_ID = "melix-audio-runtime-pack"
 _AUDIO_RUNTIME_PACK_VERSION = "0.3.0"
 _AUDIO_RUNTIME_PACK_PROFILES = ["audio-stt", "audio-tts"]
@@ -284,13 +283,57 @@ def _ensure_evaluation_dataset(eval_root: Path) -> Path:
 
 
 def _ensure_training_dataset(jobs_root: Path) -> Path:
-    return _ensure_dev_training_dataset(jobs_root)
+    dataset_root = jobs_root / "datasets" / "melix-dev"
+    dataset_root.mkdir(parents=True, exist_ok=True)
+    manifest_path = dataset_root / "manifest.json"
+    samples_path = dataset_root / "samples.jsonl"
+    if not manifest_path.exists():
+        manifest_path.write_text(
+            json.dumps(
+                {
+                    "schema_version": "melix.training_dataset_package.v1",
+                    "dataset_id": "melix-dev",
+                    "format": "chat_messages",
+                    "sample_count": 2,
+                    "version": "1",
+                },
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+    if not samples_path.exists():
+        samples_path.write_text(
+            "\n".join(
+                [
+                    json.dumps(
+                        {
+                            "messages": [
+                                {"role": "user", "content": "Say hi."},
+                                {"role": "assistant", "content": "Hi there."},
+                            ]
+                        }
+                    ),
+                    json.dumps(
+                        {
+                            "messages": [
+                                {"role": "user", "content": "Say bye."},
+                                {"role": "assistant", "content": "Bye."},
+                            ]
+                        }
+                    ),
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+    return dataset_root
 
 
 def collect_training_evidence(jobs_root: str | Path) -> dict[str, Any]:
     jobs_root = Path(jobs_root)
     core = _build_maintenance_core(jobs_root)
-    dataset_path = _ensure_training_dataset(jobs_root)
+    dataset_root = _ensure_training_dataset(jobs_root)
     events = list(
         core.convert_model(
             maintenance_pb2.ConvertModelRequest(
@@ -300,7 +343,7 @@ def collect_training_evidence(jobs_root: str | Path) -> dict[str, Any]:
                 ext={
                     "operation": "train_lora",
                     "adapter_name": "melix-dev-adapter",
-                    "dataset_uri": str(dataset_path),
+                    "dataset_uri": str(dataset_root),
                 },
             )
         )
@@ -314,7 +357,7 @@ def collect_training_evidence(jobs_root: str | Path) -> dict[str, Any]:
     return {
         "job_id": payload["job_id"],
         "adapter_name": payload["adapter_name"],
-        "dataset_uri": _DEV_TRAINING_DATASET_URI,
+        "dataset_uri": str(payload["dataset_uri"]),
         "training_duration_ms": float(payload["training_duration_ms"]),
         "adapter_publish_ms": float(payload.get("adapter_publish_ms", 118.0)),
         "artifact_path": events[-1].completed.output_path,

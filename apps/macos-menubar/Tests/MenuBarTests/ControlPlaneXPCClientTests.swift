@@ -394,6 +394,49 @@ struct ControlPlaneXPCClientTests {
         #expect(request.ops.cancelRequest.requestID == "req-image-running")
     }
 
+    @Test("applyServerSessionGatewayAccess builds server.apply_gateway_access request")
+    func applyServerSessionGatewayAccessBuildsTypedRequest() async throws {
+        let service = RecordingExecuteControlPlaneService()
+        let client = LocalControlPlaneXPCClient(service: service)
+
+        try await client.applyServerSessionGatewayAccess(
+            serverSessionID: "server-session-123",
+            primaryKey: "melix_sk_primary_123",
+            keyID: "primary",
+            label: "primary",
+            tokenHint: "primary"
+        )
+        let request = try #require(await service.lastExecuteRequest)
+
+        #expect(request.requestID == "menubar-apply-gateway-access-server-session-123")
+        #expect(request.commandType == "server.apply_gateway_access")
+        #expect(request.targetID == "server-session-123")
+        #expect(request.server.applyGatewayAccess.serverSessionID == "server-session-123")
+        #expect(request.server.applyGatewayAccess.mode == .apiKeys)
+        #expect(request.server.applyGatewayAccess.sharedAccessEnabled)
+        #expect(request.server.applyGatewayAccess.primaryKey.keyID == "primary")
+        #expect(request.server.applyGatewayAccess.primaryKey.label == "primary")
+        #expect(request.server.applyGatewayAccess.primaryKey.tokenHint == "primary")
+        #expect(request.server.applyGatewayAccess.primaryKey.token == "melix_sk_primary_123")
+    }
+
+    @Test("clearServerSessionGatewayAccess builds server.apply_gateway_access none request")
+    func clearServerSessionGatewayAccessBuildsTypedRequest() async throws {
+        let service = RecordingExecuteControlPlaneService()
+        let client = LocalControlPlaneXPCClient(service: service)
+
+        try await client.clearServerSessionGatewayAccess(serverSessionID: "server-session-123")
+        let request = try #require(await service.lastExecuteRequest)
+
+        #expect(request.requestID == "menubar-clear-gateway-access-server-session-123")
+        #expect(request.commandType == "server.apply_gateway_access")
+        #expect(request.targetID == "server-session-123")
+        #expect(request.server.applyGatewayAccess.serverSessionID == "server-session-123")
+        #expect(request.server.applyGatewayAccess.mode == .none)
+        #expect(request.server.applyGatewayAccess.sharedAccessEnabled == false)
+        #expect(request.server.applyGatewayAccess.hasPrimaryKey == false)
+    }
+
     @Test("local client surfaces cancel request failures")
     func localClientSurfacesCancelRequestFailures() async throws {
         let service = FailingExecuteControlPlaneService(
@@ -457,6 +500,36 @@ struct ControlPlaneXPCClientTests {
                 error == .requestFailed(
                     code: "unimplemented",
                     message: "Request cancellation is not implemented for this control-plane client."
+                )
+            )
+        }
+
+        do {
+            try await client.applyServerSessionGatewayAccess(
+                serverSessionID: "server-session-default",
+                primaryKey: "melix_sk_default",
+                keyID: "primary",
+                label: "primary",
+                tokenHint: "primary"
+            )
+            Issue.record("Expected applyServerSessionGatewayAccess to throw for the default protocol implementation")
+        } catch let error as ControlPlaneXPCClientError {
+            #expect(
+                error == .requestFailed(
+                    code: "unimplemented",
+                    message: "Gateway access apply is not implemented for this control-plane client."
+                )
+            )
+        }
+
+        do {
+            try await client.clearServerSessionGatewayAccess(serverSessionID: "server-session-default")
+            Issue.record("Expected clearServerSessionGatewayAccess to throw for the default protocol implementation")
+        } catch let error as ControlPlaneXPCClientError {
+            #expect(
+                error == .requestFailed(
+                    code: "unimplemented",
+                    message: "Gateway access clear is not implemented for this control-plane client."
                 )
             )
         }

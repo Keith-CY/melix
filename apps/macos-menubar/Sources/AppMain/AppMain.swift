@@ -51,6 +51,9 @@ public final class MelixMenuBarBootstrap {
     public init(
         client: any ControlPlaneXPCClient,
         metrics: MenuBarMetricsStore = MenuBarMetricsStore(),
+        melixHome: MelixHome = MelixHome(),
+        operatorSessionStore: (any OperatorSessionStoring)? = nil,
+        serverSessionAPIKeyStore: (any ServerSessionAPIKeyStoring)? = nil,
         desktopFoundationPresenterFactory: @MainActor @escaping (
             RuntimeViewModel,
             MenuBarMetricsStore
@@ -70,7 +73,14 @@ public final class MelixMenuBarBootstrap {
             StatusMenu(viewModel: viewModel, openConsoleHandler: openConsole)
         }
     ) {
-        let viewModel = RuntimeViewModel(client: client, metrics: metrics)
+        let resolvedOperatorSessionStore = operatorSessionStore ?? OperatorSessionStore(melixHome: melixHome)
+        let resolvedServerSessionAPIKeyStore = serverSessionAPIKeyStore ?? ServerSessionAPIKeyStore(melixHome: melixHome)
+        let viewModel = RuntimeViewModel(
+            client: client,
+            metrics: metrics,
+            operatorSessionStore: resolvedOperatorSessionStore,
+            serverSessionAPIKeyStore: resolvedServerSessionAPIKeyStore
+        )
         let desktopFoundationPresenter = desktopFoundationPresenterFactory(viewModel, metrics)
         let commandCenterPresenter = commandCenterPresenterFactory(viewModel, metrics)
         viewModel.openCommandCenterAction = {
@@ -114,7 +124,13 @@ public final class MelixMenuBarBootstrap {
             modelCatalog: modelCatalog,
             workerRegistry: workerRegistry
         )
-        return MelixMenuBarBootstrap(client: LocalControlPlaneXPCClient(service: service))
+        let melixHome = MelixHome(environment: ProcessInfo.processInfo.environment)
+        return MelixMenuBarBootstrap(
+            client: LocalControlPlaneXPCClient(service: service),
+            melixHome: melixHome,
+            operatorSessionStore: OperatorSessionStore(melixHome: melixHome),
+            serverSessionAPIKeyStore: ServerSessionAPIKeyStore(melixHome: melixHome)
+        )
     }
 }
 

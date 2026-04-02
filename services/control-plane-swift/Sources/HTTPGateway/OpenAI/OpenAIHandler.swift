@@ -59,8 +59,8 @@ public struct OpenAIHandler: Sendable {
     private let translator: ChatRequestTranslator
     private let sseWriter: SSEStreamWriter
     private let mcpToolCatalog: MCPToolCatalog
-    private let gatewayAccessPolicy: GatewayAccessPolicy
     private let audioAssetManager: AudioAssetManager
+    private let gatewayAccessPolicyStore: GatewayAccessPolicyStore
     private let decoder: JSONDecoder
     private let encoder: JSONEncoder
 
@@ -77,7 +77,8 @@ public struct OpenAIHandler: Sendable {
         sseWriter: SSEStreamWriter = SSEStreamWriter(),
         mcpToolCatalog: MCPToolCatalog = .empty,
         gatewayAccessPolicy: GatewayAccessPolicy = .localTrust,
-        audioAssetManager: AudioAssetManager = AudioAssetManager()
+        audioAssetManager: AudioAssetManager = AudioAssetManager(),
+        gatewayAccessPolicyStore: GatewayAccessPolicyStore? = nil
     ) {
         self.modelCatalog = modelCatalog
         self.requestCoordinator = requestCoordinator
@@ -93,8 +94,8 @@ public struct OpenAIHandler: Sendable {
         self.translator = translator
         self.sseWriter = sseWriter
         self.mcpToolCatalog = mcpToolCatalog
-        self.gatewayAccessPolicy = gatewayAccessPolicy
         self.audioAssetManager = audioAssetManager
+        self.gatewayAccessPolicyStore = gatewayAccessPolicyStore ?? GatewayAccessPolicyStore(gatewayAccessPolicy)
         self.decoder = JSONDecoder()
         self.encoder = JSONEncoder()
         self.encoder.outputFormatting = [.sortedKeys]
@@ -145,6 +146,7 @@ public struct OpenAIHandler: Sendable {
             return nil
         }
 
+        let gatewayAccessPolicy = await gatewayAccessPolicyStore.currentPolicy()
         switch gatewayAccessPolicy.authorize(headers: request.headers) {
         case .success(let outcome):
             if case .authenticated = outcome, gatewayAccessPolicy.mode == .apiKeys, gatewayAccessPolicy.sharedAccessEnabled {

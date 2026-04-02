@@ -26,6 +26,7 @@ public struct ServerSnapshotBuilder {
             snapshot.mcpTools = mcpTools
         }
         if let gatewayAccess {
+            // Gateway access is projected from the runtime store, never from raw secret material.
             snapshot.gatewayAccess = gatewayAccess
         }
         return snapshot

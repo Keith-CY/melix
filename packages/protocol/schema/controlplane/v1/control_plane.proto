@@ -98,6 +98,7 @@ message ServerCommand {
     RestartServer restart = 3;
     GetServerSnapshot get_snapshot = 4;
     SetGlobalPolicy set_policy = 5;
+    ApplyGatewayAccess apply_gateway_access = 6;
   }
 }
 
@@ -217,6 +218,18 @@ message RestartServer {}
 message GetServerSnapshot {}
 message SetGlobalPolicy {
   map<string, string> values = 1;
+}
+message GatewayAccessKeyRecord {
+  string key_id = 1;
+  string label = 2;
+  string token_hint = 3;
+  string token = 4;
+}
+message ApplyGatewayAccess {
+  string server_session_id = 1;
+  GatewayAccessMode mode = 2;
+  bool shared_access_enabled = 3;
+  GatewayAccessKeyRecord primary_key = 4;
 }
 
 message ListModels {}

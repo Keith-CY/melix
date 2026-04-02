@@ -22,11 +22,21 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
         let ext: [String: String]
     }
 
+    struct RecordedGatewayAccessApplyRequest: Equatable, Sendable {
+        let serverSessionID: String
+        let primaryKey: String
+        let keyID: String
+        let label: String
+        let tokenHint: String
+    }
+
     private var streamContinuations: [AsyncStream<Melix_Controlplane_V1_ControlPlaneEvent>.Continuation] = []
     private var nextEventSequence: UInt64 = 1
 
     private(set) var recordedActions: [String] = []
     private(set) var recordedModelOperationRequests: [RecordedModelOperationRequest] = []
+    private(set) var recordedGatewayAccessApplyRequests: [RecordedGatewayAccessApplyRequest] = []
+    private(set) var recordedGatewayAccessClearRequests: [String] = []
     private(set) var handshakeCount = 0
     private(set) var subscriptionRequests: [UInt64] = []
     private var modelState: Melix_Controlplane_V1_ModelState = .modelDiscovered
@@ -43,6 +53,8 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
     private var imageGenerateError: Error?
     private var imageEditError: Error?
     private var cancelError: Error?
+    private var applyGatewayAccessError: Error?
+    private var clearGatewayAccessError: Error?
     private var snapshotOverride: Melix_Controlplane_V1_ServerSnapshot?
     private var responseFeatures: [String] = ["chat"]
     private var modelSettings = FakeControlPlaneXPCClient.defaultModelSettings()
@@ -84,7 +96,8 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
         chat: Error? = nil,
         imageGenerate: Error? = nil,
         imageEdit: Error? = nil,
-        cancel: Error? = nil
+        cancel: Error? = nil,
+        applyGatewayAccess: Error? = nil
     ) {
         handshakeError = handshake
         loadError = load
@@ -99,6 +112,7 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
         imageGenerateError = imageGenerate
         imageEditError = imageEdit
         cancelError = cancel
+        applyGatewayAccessError = applyGatewayAccess
     }
 
     func configureModelResponseFeatures(_ features: [String]) {
@@ -142,6 +156,10 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
         if let edit {
             imageEditResponse = edit
         }
+    }
+
+    func configureGatewayAccessClearError(_ error: Error?) {
+        clearGatewayAccessError = error
     }
 
     func handshake() async throws -> Melix_Controlplane_V1_HandshakeResponse {
@@ -342,6 +360,36 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
             throw cancelError
         }
         return true
+    }
+
+    func applyServerSessionGatewayAccess(
+        serverSessionID: String,
+        primaryKey: String,
+        keyID: String,
+        label: String,
+        tokenHint: String
+    ) async throws {
+        recordedActions.append("gateway.apply:\(serverSessionID)")
+        if let applyGatewayAccessError {
+            throw applyGatewayAccessError
+        }
+        recordedGatewayAccessApplyRequests.append(
+            RecordedGatewayAccessApplyRequest(
+                serverSessionID: serverSessionID,
+                primaryKey: primaryKey,
+                keyID: keyID,
+                label: label,
+                tokenHint: tokenHint
+            )
+        )
+    }
+
+    func clearServerSessionGatewayAccess(serverSessionID: String) async throws {
+        recordedActions.append("gateway.clear:\(serverSessionID)")
+        if let clearGatewayAccessError {
+            throw clearGatewayAccessError
+        }
+        recordedGatewayAccessClearRequests.append(serverSessionID)
     }
 
     func runDoctor() async throws -> String {

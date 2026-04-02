@@ -31,7 +31,12 @@ struct AppMainBootstrapTests {
         )
 
         bootstrap.start()
-        try await Task.sleep(for: .milliseconds(20))
+        try await waitForBootstrapCondition("expected bootstrap handshake to complete") {
+            await client.handshakeCount == 1
+        }
+        try await waitForBootstrapCondition("expected handshake metric to be recorded") {
+            await metrics.snapshot()["menu.handshake_ms"] != nil
+        }
 
         #expect(menu.installCount == 1)
         #expect(await client.handshakeCount == 1)
@@ -92,7 +97,9 @@ struct AppMainBootstrapTests {
             application: application,
             bootstrapFactory: { bootstrap }
         )
-        try await Task.sleep(for: .milliseconds(20))
+        try await waitForBootstrapCondition("expected launchLive handshake to complete") {
+            await client.handshakeCount == 1
+        }
 
         #expect(application.didSetAccessoryActivationPolicy)
         #expect(application.didRun)
@@ -181,6 +188,99 @@ struct AppMainBootstrapTests {
         #expect(environment.repoRoot.hasSuffix("/melix"))
         #expect(environment.pythonWorkerSocketPath == "/tmp/melix-worker.sock")
         #expect(environment.swiftTextWorkerSocketPath == "/var/run/melix/swift-text-worker.sock")
+    }
+
+    @Test("MelixHome defaults to HOME/.melix when MELIX_HOME is unset")
+    @MainActor
+    func melixHomeDefaultsToHomeDotMelix() async throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-menubar-tests-home-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        await withEnvironmentValue("MELIX_HOME", nil) {
+            await withEnvironmentValue("HOME", temporaryRoot.path) {
+                let melixHome = MelixHome(environment: ProcessInfo.processInfo.environment)
+                #expect(melixHome.rootURL.path == temporaryRoot.appendingPathComponent(".melix").path)
+            }
+        }
+    }
+
+    @Test("MelixHome honors MELIX_HOME override")
+    @MainActor
+    func melixHomeHonorsMelixHomeOverride() async throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-menubar-tests-override-\(UUID().uuidString)")
+        let overrideHome = temporaryRoot.appendingPathComponent("custom-home")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        await withEnvironmentValue("HOME", temporaryRoot.path) {
+            await withEnvironmentValue("MELIX_HOME", overrideHome.path) {
+                let melixHome = MelixHome(environment: ProcessInfo.processInfo.environment)
+                #expect(melixHome.rootURL.path == overrideHome.path)
+            }
+        }
+    }
+
+    @Test("MelixHome creates state and secrets artifacts with secure permissions")
+    @MainActor
+    func melixHomeCreatesStateAndSecretsArtifactsWithSecurePermissions() async throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-menubar-tests-permissions-\(UUID().uuidString)")
+        let melixHomePath = temporaryRoot.appendingPathComponent("melix-home")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        try await withEnvironmentValue("MELIX_HOME", melixHomePath.path) {
+            let melixHome = MelixHome(environment: ProcessInfo.processInfo.environment)
+            let operatorSessionStore = OperatorSessionStore(melixHome: melixHome)
+            let apiKeyStore = ServerSessionAPIKeyStore(melixHome: melixHome)
+            let serverSession = DesktopServerSessionState(
+                id: "server-session-1",
+                title: "Primary Server",
+                modelID: "melix-dev-text"
+            )
+
+            try operatorSessionStore.save(
+                OperatorSessionState(
+                    selectedSurface: .server,
+                    selectedServerSessionID: serverSession.id,
+                    serverSessions: [serverSession]
+                )
+            )
+            try apiKeyStore.savePrimaryKey(
+                serverSessionID: serverSession.id,
+                primaryKey: "melix_sk_test_primary"
+            )
+
+            #expect(try posixPermissions(at: melixHome.rootURL) == 0o700)
+            #expect(try posixPermissions(at: melixHome.stateDirectoryURL) == 0o700)
+            #expect(try posixPermissions(at: melixHome.secretsDirectoryURL) == 0o700)
+            #expect(try posixPermissions(at: melixHome.operatorSessionFileURL) == 0o600)
+            #expect(try posixPermissions(at: melixHome.serverSessionAPIKeysFileURL) == 0o600)
+        }
+    }
+
+    @Test("MelixHome bootstrap initializer resolves default persistence stores")
+    @MainActor
+    func melixHomeBootstrapInitializerResolvesDefaultPersistenceStores() {
+        let bootstrap = MelixMenuBarBootstrap(
+            client: FakeControlPlaneXPCClient(),
+            melixHome: MelixHome(environment: ProcessInfo.processInfo.environment),
+            operatorSessionStore: nil,
+            serverSessionAPIKeyStore: nil,
+            statusMenuFactory: { _, _ in RecordingInstallStatusMenu() }
+        )
+
+        #expect(type(of: bootstrap) == MelixMenuBarBootstrap.self)
+    }
+
+    @Test("MelixHome live bootstrap resolves MELIX_HOME-backed stores")
+    @MainActor
+    func melixHomeLiveBootstrapResolvesMelixHomeBackedStores() {
+        let bootstrap = MelixMenuBarBootstrap.live()
+        #expect(type(of: bootstrap) == MelixMenuBarBootstrap.self)
     }
 
     @Test("launchLive can use the default live bootstrap factory")
@@ -280,4 +380,27 @@ private func withEnvironmentValue(
         }
     }
     try await operation()
+}
+
+private func posixPermissions(at url: URL) throws -> Int {
+    let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
+    return (attributes[.posixPermissions] as? NSNumber)?.intValue ?? -1
+}
+
+@MainActor
+private func waitForBootstrapCondition(
+    _ description: String,
+    timeout: Duration = .seconds(2),
+    pollInterval: Duration = .milliseconds(10),
+    condition: @escaping @MainActor () async -> Bool
+) async throws {
+    let deadline = ContinuousClock.now + timeout
+    while ContinuousClock.now < deadline {
+        if await condition() {
+            return
+        }
+        try await Task.sleep(for: pollInterval)
+    }
+
+    throw MenuBarTestError(description: description)
 }

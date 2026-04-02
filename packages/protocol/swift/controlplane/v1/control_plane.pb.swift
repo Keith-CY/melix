@@ -1418,6 +1418,14 @@ public struct Melix_Controlplane_V1_ServerCommand: Sendable {
     set {kind = .setPolicy(newValue)}
   }
 
+  public var applyGatewayAccess: Melix_Controlplane_V1_ApplyGatewayAccess {
+    get {
+      if case .applyGatewayAccess(let v)? = kind {return v}
+      return Melix_Controlplane_V1_ApplyGatewayAccess()
+    }
+    set {kind = .applyGatewayAccess(newValue)}
+  }
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public enum OneOf_Kind: Equatable, Sendable {
@@ -1426,6 +1434,7 @@ public struct Melix_Controlplane_V1_ServerCommand: Sendable {
     case restart(Melix_Controlplane_V1_RestartServer)
     case getSnapshot(Melix_Controlplane_V1_GetServerSnapshot)
     case setPolicy(Melix_Controlplane_V1_SetGlobalPolicy)
+    case applyGatewayAccess(Melix_Controlplane_V1_ApplyGatewayAccess)
 
   }
 
@@ -2156,6 +2165,51 @@ public struct Melix_Controlplane_V1_SetGlobalPolicy: Sendable {
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
+}
+
+public struct Melix_Controlplane_V1_GatewayAccessKeyRecord: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var keyID: String = String()
+
+  public var label: String = String()
+
+  public var tokenHint: String = String()
+
+  public var token: String = String()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public struct Melix_Controlplane_V1_ApplyGatewayAccess: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var serverSessionID: String = String()
+
+  public var mode: Melix_Controlplane_V1_GatewayAccessMode = .unspecified
+
+  public var sharedAccessEnabled: Bool = false
+
+  public var primaryKey: Melix_Controlplane_V1_GatewayAccessKeyRecord {
+    get {_primaryKey ?? Melix_Controlplane_V1_GatewayAccessKeyRecord()}
+    set {_primaryKey = newValue}
+  }
+  /// Returns true if `primaryKey` has been explicitly set.
+  public var hasPrimaryKey: Bool {self._primaryKey != nil}
+  /// Clears the value of `primaryKey`. Subsequent reads from it will return its default value.
+  public mutating func clearPrimaryKey() {self._primaryKey = nil}
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+
+  fileprivate var _primaryKey: Melix_Controlplane_V1_GatewayAccessKeyRecord? = nil
 }
 
 public struct Melix_Controlplane_V1_ListModels: Sendable {
@@ -5504,7 +5558,7 @@ extension Melix_Controlplane_V1_ControlPlaneEvent: SwiftProtobuf.Message, SwiftP
 
 extension Melix_Controlplane_V1_ServerCommand: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ServerCommand"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}start\0\u{1}stop\0\u{1}restart\0\u{3}get_snapshot\0\u{3}set_policy\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}start\0\u{1}stop\0\u{1}restart\0\u{3}get_snapshot\0\u{3}set_policy\0\u{3}apply_gateway_access\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -5577,6 +5631,19 @@ extension Melix_Controlplane_V1_ServerCommand: SwiftProtobuf.Message, SwiftProto
           self.kind = .setPolicy(v)
         }
       }()
+      case 6: try {
+        var v: Melix_Controlplane_V1_ApplyGatewayAccess?
+        var hadOneofValue = false
+        if let current = self.kind {
+          hadOneofValue = true
+          if case .applyGatewayAccess(let m) = current {v = m}
+        }
+        try decoder.decodeSingularMessageField(value: &v)
+        if let v = v {
+          if hadOneofValue {try decoder.handleConflictingOneOf()}
+          self.kind = .applyGatewayAccess(v)
+        }
+      }()
       default: break
       }
     }
@@ -5607,6 +5674,10 @@ extension Melix_Controlplane_V1_ServerCommand: SwiftProtobuf.Message, SwiftProto
     case .setPolicy?: try {
       guard case .setPolicy(let v)? = self.kind else { preconditionFailure() }
       try visitor.visitSingularMessageField(value: v, fieldNumber: 5)
+    }()
+    case .applyGatewayAccess?: try {
+      guard case .applyGatewayAccess(let v)? = self.kind else { preconditionFailure() }
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 6)
     }()
     case nil: break
     }
@@ -6925,6 +6996,100 @@ extension Melix_Controlplane_V1_SetGlobalPolicy: SwiftProtobuf.Message, SwiftPro
 
   public static func ==(lhs: Melix_Controlplane_V1_SetGlobalPolicy, rhs: Melix_Controlplane_V1_SetGlobalPolicy) -> Bool {
     if lhs.values != rhs.values {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+extension Melix_Controlplane_V1_GatewayAccessKeyRecord: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".GatewayAccessKeyRecord"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}key_id\0\u{1}label\0\u{3}token_hint\0\u{1}token\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.keyID) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.label) }()
+      case 3: try { try decoder.decodeSingularStringField(value: &self.tokenHint) }()
+      case 4: try { try decoder.decodeSingularStringField(value: &self.token) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.keyID.isEmpty {
+      try visitor.visitSingularStringField(value: self.keyID, fieldNumber: 1)
+    }
+    if !self.label.isEmpty {
+      try visitor.visitSingularStringField(value: self.label, fieldNumber: 2)
+    }
+    if !self.tokenHint.isEmpty {
+      try visitor.visitSingularStringField(value: self.tokenHint, fieldNumber: 3)
+    }
+    if !self.token.isEmpty {
+      try visitor.visitSingularStringField(value: self.token, fieldNumber: 4)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Melix_Controlplane_V1_GatewayAccessKeyRecord, rhs: Melix_Controlplane_V1_GatewayAccessKeyRecord) -> Bool {
+    if lhs.keyID != rhs.keyID {return false}
+    if lhs.label != rhs.label {return false}
+    if lhs.tokenHint != rhs.tokenHint {return false}
+    if lhs.token != rhs.token {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+extension Melix_Controlplane_V1_ApplyGatewayAccess: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".ApplyGatewayAccess"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}server_session_id\0\u{1}mode\0\u{3}shared_access_enabled\0\u{3}primary_key\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.serverSessionID) }()
+      case 2: try { try decoder.decodeSingularEnumField(value: &self.mode) }()
+      case 3: try { try decoder.decodeSingularBoolField(value: &self.sharedAccessEnabled) }()
+      case 4: try { try decoder.decodeSingularMessageField(value: &self._primaryKey) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    // The use of inline closures is to circumvent an issue where the compiler
+    // allocates stack space for every if/case branch local when no optimizations
+    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+    // https://github.com/apple/swift-protobuf/issues/1182
+    if !self.serverSessionID.isEmpty {
+      try visitor.visitSingularStringField(value: self.serverSessionID, fieldNumber: 1)
+    }
+    if self.mode != .unspecified {
+      try visitor.visitSingularEnumField(value: self.mode, fieldNumber: 2)
+    }
+    if self.sharedAccessEnabled != false {
+      try visitor.visitSingularBoolField(value: self.sharedAccessEnabled, fieldNumber: 3)
+    }
+    try { if let v = self._primaryKey {
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 4)
+    } }()
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Melix_Controlplane_V1_ApplyGatewayAccess, rhs: Melix_Controlplane_V1_ApplyGatewayAccess) -> Bool {
+    if lhs.serverSessionID != rhs.serverSessionID {return false}
+    if lhs.mode != rhs.mode {return false}
+    if lhs.sharedAccessEnabled != rhs.sharedAccessEnabled {return false}
+    if lhs._primaryKey != rhs._primaryKey {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

@@ -24,8 +24,8 @@ public actor ControlPlaneService {
     private let requestCoordinator: RequestCoordinator?
     private let chatTranslator: ChatRequestTranslator
     private let mcpToolCatalog: MCPToolCatalog
-    private let gatewayAccessPolicy: GatewayAccessPolicy
     private let audioAssetManager: AudioAssetManager
+    private let gatewayAccessPolicyStore: GatewayAccessPolicyStore
 
     public init(
         serverVersion: String = "0.1.0",
@@ -45,7 +45,8 @@ public actor ControlPlaneService {
         chatTranslator: ChatRequestTranslator = ChatRequestTranslator(),
         mcpToolCatalog: MCPToolCatalog = .empty,
         gatewayAccessPolicy: GatewayAccessPolicy = .localTrust,
-        audioAssetManager: AudioAssetManager = AudioAssetManager()
+        audioAssetManager: AudioAssetManager = AudioAssetManager(),
+        gatewayAccessPolicyStore: GatewayAccessPolicyStore? = nil
     ) {
         let resolvedSchedulerReadModel = schedulerReadModel ?? SchedulerReadModel(
             metricsStore: metricsStore,
@@ -88,8 +89,8 @@ public actor ControlPlaneService {
         }
         self.chatTranslator = chatTranslator
         self.mcpToolCatalog = mcpToolCatalog
-        self.gatewayAccessPolicy = gatewayAccessPolicy
         self.audioAssetManager = audioAssetManager
+        self.gatewayAccessPolicyStore = gatewayAccessPolicyStore ?? GatewayAccessPolicyStore(gatewayAccessPolicy)
     }
 
     public func handshake(
@@ -241,6 +242,8 @@ public actor ControlPlaneService {
             var reply = Melix_Controlplane_V1_ServerReply()
             reply.snapshot = await buildSnapshot()
             return okResponse(for: request, server: reply)
+        case .applyGatewayAccess(let apply):
+            return await handleApplyGatewayAccess(request: request, command: apply)
         default:
             return errorResponse(
                 for: request,
@@ -795,6 +798,7 @@ public actor ControlPlaneService {
         let cache = await cacheMetadataStore.cacheSummary()
         let sessions = await sessionGraphStore.sessionSummaries()
         let imageJobs = await imageJobReadModel.snapshot()
+        let gatewayAccessSummary = await gatewayAccessPolicyStore.summary()
         return snapshotBuilder.build(
             models: models,
             metrics: metrics,
@@ -803,8 +807,53 @@ public actor ControlPlaneService {
             sessions: sessions,
             imageJobs: imageJobs,
             mcpTools: mcpToolCatalog.summary(),
-            gatewayAccess: gatewayAccessPolicy.summary
+            gatewayAccess: gatewayAccessSummary
         )
+    }
+
+    private func handleApplyGatewayAccess(
+        request: Melix_Controlplane_V1_ControlPlaneRequest,
+        command: Melix_Controlplane_V1_ApplyGatewayAccess
+    ) async -> Melix_Controlplane_V1_ControlPlaneResponse {
+        let startedAt = Date()
+        if request.targetID.isEmpty || request.targetID != command.serverSessionID {
+            return errorResponse(
+                for: request,
+                code: "invalid_argument",
+                message: "Target server session does not match gateway access payload."
+            )
+        }
+        guard let policy = GatewayAccessPolicy(apply: command) else {
+            return errorResponse(
+                for: request,
+                code: "invalid_argument",
+                message: "Gateway access payload is invalid."
+            )
+        }
+
+        let appliedPolicy = await gatewayAccessPolicyStore.replace(
+            with: policy,
+            serverSessionID: appliedPolicyServerSessionID(policy: policy, command: command)
+        )
+        await metricsStore.set(appliedPolicy.metricModeCode, forKey: "gateway.auth_mode_code")
+        await metricsStore.set(Double(appliedPolicy.acceptedAPIKeyCount), forKey: "gateway.accepted_api_key_count")
+        await metricsStore.set(appliedPolicy.sharedAccessEnabled ? 1 : 0, forKey: "shared_access.enabled")
+        await metricsStore.set(appliedPolicy.sharedAccessReady ? 1 : 0, forKey: "shared_access.ready")
+        await metricsStore.set(
+            Date().timeIntervalSince(startedAt) * 1000,
+            forKey: "gateway.api_key_apply_ms"
+        )
+
+        var reply = Melix_Controlplane_V1_ServerReply()
+        reply.snapshot = await buildSnapshot()
+        return okResponse(for: request, server: reply)
+    }
+
+    private func appliedPolicyServerSessionID(
+        policy: GatewayAccessPolicy,
+        command: Melix_Controlplane_V1_ApplyGatewayAccess
+    ) -> String? {
+        policy.mode == .none ? nil : command.serverSessionID
     }
 
     private func handleGenerateImage(

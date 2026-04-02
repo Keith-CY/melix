@@ -232,6 +232,71 @@ struct OpenAIHandlerTests {
         #expect(await metricsStore.value(forKey: "gateway.auth_validation_failures") == 2)
     }
 
+    @Test("GET /v1/models uses runtime gateway access policy store")
+    func getModelsUsesRuntimeGatewayAccessPolicyStore() async throws {
+        let metricsStore = MetricsStore()
+        let store = GatewayAccessPolicyStore(
+            GatewayAccessPolicy(
+                mode: .apiKeys,
+                sharedAccessEnabled: true,
+                keys: [
+                    .init(
+                        keyID: "primary",
+                        label: "Primary Key",
+                        tokenHint: "primary",
+                        token: "melix_sk_primary_secret"
+                    ),
+                ]
+            )
+        )
+        let handler = OpenAIHandler(
+            modelCatalog: ModelCatalog(seedModels: [warmModel()]),
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: ScriptedWorkerClient(events: [])),
+                abortRegistry: AbortRegistry()
+            ),
+            metricsStore: metricsStore,
+            gatewayAccessPolicyStore: store
+        )
+        let service = ControlPlaneService(
+            metricsStore: metricsStore,
+            gatewayAccessPolicyStore: store
+        )
+
+        let unauthorized = try await handler.handle(
+            HTTPRequest(
+                method: .get,
+                path: "/v1/models",
+                headers: [:],
+                body: Data()
+            )
+        )
+        let unauthorizedPayload = try await jsonObject(from: unauthorized.body)
+
+        let applyResponse = try await service.execute(
+            makeApplyGatewayAccessRequest(
+                serverSessionID: "server-session-1",
+                mode: .none,
+                sharedAccessEnabled: false,
+                primaryKey: nil
+            )
+        )
+
+        let authorized = try await handler.handle(
+            HTTPRequest(
+                method: .get,
+                path: "/v1/models",
+                headers: [:],
+                body: Data()
+            )
+        )
+
+        #expect(unauthorized.statusCode == 401)
+        #expect(unauthorizedPayload.errorCode == "missing_api_key")
+        #expect(applyResponse.ok)
+        #expect(authorized.statusCode == 200)
+    }
+
     @Test("POST /v1/chat/completions translates into a worker generate request")
     func postChatCompletionsTranslatesAndStreams() async throws {
         let catalog = ModelCatalog(seedModels: [warmModel()])

@@ -110,6 +110,14 @@ public protocol ControlPlaneXPCClient: Sendable {
     func runDoctor() async throws -> String
     func runBench() async throws -> ControlPlaneBenchResult
     func cancelRequest(requestID: String) async throws -> Bool
+    func applyServerSessionGatewayAccess(
+        serverSessionID: String,
+        primaryKey: String,
+        keyID: String,
+        label: String,
+        tokenHint: String
+    ) async throws
+    func clearServerSessionGatewayAccess(serverSessionID: String) async throws
 }
 
 public extension ControlPlaneXPCClient {
@@ -152,6 +160,32 @@ public extension ControlPlaneXPCClient {
         throw ControlPlaneXPCClientError.requestFailed(
             code: "unimplemented",
             message: "Request cancellation is not implemented for this control-plane client."
+        )
+    }
+
+    func applyServerSessionGatewayAccess(
+        serverSessionID: String,
+        primaryKey: String,
+        keyID: String,
+        label: String,
+        tokenHint: String
+    ) async throws {
+        _ = serverSessionID
+        _ = primaryKey
+        _ = keyID
+        _ = label
+        _ = tokenHint
+        throw ControlPlaneXPCClientError.requestFailed(
+            code: "unimplemented",
+            message: "Gateway access apply is not implemented for this control-plane client."
+        )
+    }
+
+    func clearServerSessionGatewayAccess(serverSessionID: String) async throws {
+        _ = serverSessionID
+        throw ControlPlaneXPCClientError.requestFailed(
+            code: "unimplemented",
+            message: "Gateway access clear is not implemented for this control-plane client."
         )
     }
 }
@@ -301,6 +335,30 @@ public actor LocalControlPlaneXPCClient: ControlPlaneXPCClient {
         try await execute(makeCancelRequest(requestID: requestID)) { _ in
             true
         }
+    }
+
+    public func applyServerSessionGatewayAccess(
+        serverSessionID: String,
+        primaryKey: String,
+        keyID: String = "primary",
+        label: String = "primary",
+        tokenHint: String = "primary"
+    ) async throws {
+        _ = try await execute(
+            makeApplyServerSessionGatewayAccessRequest(
+                serverSessionID: serverSessionID,
+                primaryKey: primaryKey,
+                keyID: keyID,
+                label: label,
+                tokenHint: tokenHint
+            )
+        ) { _ in true }
+    }
+
+    public func clearServerSessionGatewayAccess(serverSessionID: String) async throws {
+        _ = try await execute(
+            makeClearServerSessionGatewayAccessRequest(serverSessionID: serverSessionID)
+        ) { _ in true }
     }
 
     private func execute<T>(
@@ -469,6 +527,45 @@ public actor LocalControlPlaneXPCClient: ControlPlaneXPCClient {
         request.commandType = "ops.run_bench"
         request.ops = Melix_Controlplane_V1_OpsCommand()
         request.ops.runBench = Melix_Controlplane_V1_RunBench()
+        return request
+    }
+
+    private func makeApplyServerSessionGatewayAccessRequest(
+        serverSessionID: String,
+        primaryKey: String,
+        keyID: String,
+        label: String,
+        tokenHint: String
+    ) -> Melix_Controlplane_V1_ControlPlaneRequest {
+        var request = Melix_Controlplane_V1_ControlPlaneRequest()
+        request.requestID = "menubar-apply-gateway-access-\(serverSessionID)"
+        request.commandType = "server.apply_gateway_access"
+        request.targetID = serverSessionID
+        request.server = Melix_Controlplane_V1_ServerCommand()
+        request.server.applyGatewayAccess = Melix_Controlplane_V1_ApplyGatewayAccess()
+        request.server.applyGatewayAccess.serverSessionID = serverSessionID
+        request.server.applyGatewayAccess.mode = .apiKeys
+        request.server.applyGatewayAccess.sharedAccessEnabled = true
+        request.server.applyGatewayAccess.primaryKey = Melix_Controlplane_V1_GatewayAccessKeyRecord()
+        request.server.applyGatewayAccess.primaryKey.keyID = keyID
+        request.server.applyGatewayAccess.primaryKey.label = label
+        request.server.applyGatewayAccess.primaryKey.tokenHint = tokenHint
+        request.server.applyGatewayAccess.primaryKey.token = primaryKey
+        return request
+    }
+
+    private func makeClearServerSessionGatewayAccessRequest(
+        serverSessionID: String
+    ) -> Melix_Controlplane_V1_ControlPlaneRequest {
+        var request = Melix_Controlplane_V1_ControlPlaneRequest()
+        request.requestID = "menubar-clear-gateway-access-\(serverSessionID)"
+        request.commandType = "server.apply_gateway_access"
+        request.targetID = serverSessionID
+        request.server = Melix_Controlplane_V1_ServerCommand()
+        request.server.applyGatewayAccess = Melix_Controlplane_V1_ApplyGatewayAccess()
+        request.server.applyGatewayAccess.serverSessionID = serverSessionID
+        request.server.applyGatewayAccess.mode = .none
+        request.server.applyGatewayAccess.sharedAccessEnabled = false
         return request
     }
 }

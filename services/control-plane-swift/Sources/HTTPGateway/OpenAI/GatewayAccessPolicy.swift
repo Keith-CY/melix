@@ -6,6 +6,19 @@ public struct GatewayAccessPolicy: Equatable, Sendable {
         case none = "none"
         case bearerToken = "bearer_token"
         case apiKeys = "api_keys"
+
+        init?(protoValue: Melix_Controlplane_V1_GatewayAccessMode) {
+            switch protoValue {
+            case .none:
+                self = .none
+            case .bearerToken:
+                self = .bearerToken
+            case .apiKeys:
+                self = .apiKeys
+            case .unspecified, .UNRECOGNIZED(_):
+                return nil
+            }
+        }
     }
 
     public enum RequiredHeader: String, Equatable, Sendable {
@@ -146,6 +159,33 @@ public struct GatewayAccessPolicy: Equatable, Sendable {
     }
 
     public static let localTrust = GatewayAccessPolicy()
+
+    public init?(apply command: Melix_Controlplane_V1_ApplyGatewayAccess) {
+        guard Self.trimmed(command.serverSessionID).isEmpty == false else {
+            return nil
+        }
+        guard let mode = Mode(protoValue: command.mode) else {
+            return nil
+        }
+
+        switch mode {
+        case .none:
+            self = .localTrust
+        case .bearerToken, .apiKeys:
+            guard command.hasPrimaryKey else {
+                return nil
+            }
+            let key = Self.keyRecord(from: command.primaryKey)
+            guard let key else {
+                return nil
+            }
+            self = GatewayAccessPolicy(
+                mode: mode,
+                sharedAccessEnabled: mode == .apiKeys ? command.sharedAccessEnabled : false,
+                keys: [key]
+            )
+        }
+    }
 
     public var requiredHeader: RequiredHeader {
         switch mode {
@@ -293,29 +333,17 @@ public struct GatewayAccessPolicy: Equatable, Sendable {
         var sanitized: [KeyRecord] = []
 
         for key in keys {
-            let keyID = nonEmpty(key.keyID) ?? ""
-            let label = nonEmpty(key.label) ?? keyID
-            let tokenHint = nonEmpty(key.tokenHint) ?? keyID
-            let token = trimmed(key.token)
-
-            guard keyID.isEmpty == false, token.isEmpty == false else {
+            guard let normalized = normalizedKeyRecord(key) else {
                 continue
             }
-            guard seenIDs.insert(keyID).inserted else {
+            guard seenIDs.insert(normalized.keyID).inserted else {
                 continue
             }
-            guard seenTokens.insert(token).inserted else {
+            guard seenTokens.insert(normalized.token).inserted else {
                 continue
             }
 
-            sanitized.append(
-                KeyRecord(
-                    keyID: keyID,
-                    label: label,
-                    tokenHint: tokenHint,
-                    token: token
-                )
-            )
+            sanitized.append(normalized)
         }
 
         return sanitized
@@ -388,6 +416,48 @@ public struct GatewayAccessPolicy: Equatable, Sendable {
 
     private static func trimmed(_ value: String?) -> String {
         value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    }
+
+    private static func keyRecord(
+        from record: Melix_Controlplane_V1_GatewayAccessKeyRecord
+    ) -> KeyRecord? {
+        normalizedKeyRecord(
+            KeyRecord(
+                keyID: record.keyID,
+                label: record.label,
+                tokenHint: record.tokenHint,
+                token: record.token
+            )
+        )
+    }
+
+    private static func normalizedKeyRecord(_ key: KeyRecord) -> KeyRecord? {
+        let keyID = nonEmpty(key.keyID) ?? ""
+        let token = trimmed(key.token)
+        guard keyID.isEmpty == false, token.isEmpty == false else {
+            return nil
+        }
+        guard containsSecret(keyID, token: token) == false else {
+            return nil
+        }
+        return KeyRecord(
+            keyID: keyID,
+            label: secretSafeLabel(fallbackKeyID: keyID),
+            tokenHint: secretSafeTokenHint(fallbackKeyID: keyID),
+            token: token
+        )
+    }
+
+    private static func containsSecret(_ value: String, token: String) -> Bool {
+        trimmed(value).contains(token)
+    }
+
+    private static func secretSafeLabel(fallbackKeyID: String) -> String {
+        fallbackKeyID
+    }
+
+    private static func secretSafeTokenHint(fallbackKeyID: String) -> String {
+        fallbackKeyID
     }
 }
 

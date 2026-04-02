@@ -11,6 +11,7 @@ enum MelixControlPlaneBootstrap {
         let mcpLoadStartedAt = Date()
         let mcpToolCatalog = MCPToolCatalog.load(environment: ProcessInfo.processInfo.environment)
         let gatewayAccessPolicy = GatewayAccessPolicy.load(environment: ProcessInfo.processInfo.environment)
+        let gatewayAccessPolicyStore = GatewayAccessPolicyStore(gatewayAccessPolicy)
         let metricsStore = MetricsStore(exportPath: bootstrapEnvironment.controlPlaneMetricsPath)
         await metricsStore.set(
             Date().timeIntervalSince(mcpLoadStartedAt) * 1000,
@@ -24,6 +25,7 @@ enum MelixControlPlaneBootstrap {
         await metricsStore.set(Double(gatewayAccessPolicy.acceptedAPIKeyCount), forKey: "gateway.accepted_api_key_count")
         await metricsStore.set(gatewayAccessPolicy.sharedAccessEnabled ? 1 : 0, forKey: "shared_access.enabled")
         await metricsStore.set(gatewayAccessPolicy.sharedAccessReady ? 1 : 0, forKey: "shared_access.ready")
+        await metricsStore.set(0, forKey: "gateway.api_key_apply_ms")
         await metricsStore.set(0, forKey: "gateway.auth_validation_failures")
         await metricsStore.set(0, forKey: "shared_access.accepted_client_count")
         await metricsStore.set(0, forKey: "shared_access.rejected_request_count")
@@ -69,7 +71,7 @@ enum MelixControlPlaneBootstrap {
             imageJobReadModel: imageJobReadModel,
             imageJobAdmissionController: imageJobAdmissionController,
             mcpToolCatalog: mcpToolCatalog,
-            gatewayAccessPolicy: gatewayAccessPolicy
+            gatewayAccessPolicyStore: gatewayAccessPolicyStore
         )
 
         let handler = OpenAIHandler(
@@ -90,7 +92,7 @@ enum MelixControlPlaneBootstrap {
             imageJobAdmissionController: imageJobAdmissionController,
             cacheMetadataStore: cacheMetadataStore,
             mcpToolCatalog: mcpToolCatalog,
-            gatewayAccessPolicy: gatewayAccessPolicy
+            gatewayAccessPolicyStore: gatewayAccessPolicyStore
         )
 
         let server = try BootstrapHTTPServer(

@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 
+import MelixControlPlaneProtocol
 import MelixWorkerProtocol
 
 func collectChunks(
@@ -121,4 +122,26 @@ func makeErrorEvent(
     event.error.error.code = code
     event.error.error.message = message
     return event
+}
+
+func makeApplyGatewayAccessRequest(
+    requestID: String = "req-server-apply-gateway-access",
+    serverSessionID: String,
+    mode: Melix_Controlplane_V1_GatewayAccessMode,
+    sharedAccessEnabled: Bool,
+    primaryKey: Melix_Controlplane_V1_GatewayAccessKeyRecord?
+) -> Melix_Controlplane_V1_ControlPlaneRequest {
+    var request = Melix_Controlplane_V1_ControlPlaneRequest()
+    request.requestID = requestID
+    request.targetID = serverSessionID
+    request.commandType = "server.apply_gateway_access"
+    request.server = Melix_Controlplane_V1_ServerCommand()
+    request.server.applyGatewayAccess = Melix_Controlplane_V1_ApplyGatewayAccess()
+    request.server.applyGatewayAccess.serverSessionID = serverSessionID
+    request.server.applyGatewayAccess.mode = mode
+    request.server.applyGatewayAccess.sharedAccessEnabled = sharedAccessEnabled
+    if let primaryKey {
+        request.server.applyGatewayAccess.primaryKey = primaryKey
+    }
+    return request
 }

@@ -2,6 +2,7 @@ import Foundation
 import MelixControlPlaneCore
 import MelixControlPlaneProtocol
 import Observation
+import Security
 
 public actor MenuBarMetricsStore {
     private var values: [String: Double] = [:]
@@ -236,6 +237,8 @@ public final class RuntimeViewModel {
 
     private let client: any ControlPlaneXPCClient
     private let metrics: MenuBarMetricsStore
+    private let operatorSessionStore: any OperatorSessionStoring
+    private let serverSessionAPIKeyStore: any ServerSessionAPIKeyStoring
     private var subscriptionTask: Task<Void, Never>?
     private var lastSeenSeq: UInt64 = 0
     private var latestSnapshot = Melix_Controlplane_V1_ServerSnapshot()
@@ -245,13 +248,24 @@ public final class RuntimeViewModel {
     private var activeAssistantEntryID: String?
     private var activeReasoningEntryID: String?
     private var activeToolEntryIDs: [String: String] = [:]
+    private var persistedServerSessions: [DesktopServerSessionState] = []
+    private var operatorStateRestored = false
+    private var lastPersistedOperatorSessionState: OperatorSessionState?
+    private var gatewayAPIKeyPersistFailures = 0.0
+    private var lastAppliedGatewaySessionID = ""
+    private var lastAppliedGatewayPrimaryKey = ""
+    private var gatewayApplyTask: Task<Void, Never>?
 
     public init(
         client: any ControlPlaneXPCClient,
-        metrics: MenuBarMetricsStore = MenuBarMetricsStore()
+        metrics: MenuBarMetricsStore = MenuBarMetricsStore(),
+        operatorSessionStore: any OperatorSessionStoring = NullOperatorSessionStore(),
+        serverSessionAPIKeyStore: any ServerSessionAPIKeyStoring = NullServerSessionAPIKeyStore()
     ) {
         self.client = client
         self.metrics = metrics
+        self.operatorSessionStore = operatorSessionStore
+        self.serverSessionAPIKeyStore = serverSessionAPIKeyStore
     }
 
     public func selectSurface(_ surface: DesktopSurface) {
@@ -284,10 +298,9 @@ public final class RuntimeViewModel {
             port: 8080 + max(0, serverSessions.count),
             lifecycle: .draft
         )
-        var projectedSession = session
-        applyGatewayAccessProjection(to: &projectedSession)
-        serverSessions.append(projectedSession)
+        persistedServerSessions.append(session)
         selectedServerSessionID = session.id
+        syncServerSessionsWithModels()
         refreshAgentIntegrationExports()
         selectedSurface = .server
         if chatSessions.isEmpty {
@@ -303,6 +316,7 @@ public final class RuntimeViewModel {
         selectedServerSessionID = id
         selectedChatModelID = selectedServerSession?.modelID ?? selectedChatModelID
         refreshAgentIntegrationExports()
+        maybeApplyStoredGatewayAccessForSelectedRunningSession()
         notifyStateChanged()
     }
 
@@ -388,6 +402,47 @@ public final class RuntimeViewModel {
         updateSelectedServerSession { session in
             session.servingDefaults.maxConcurrentRequests = max(1, value)
             session.updatedAt = Date()
+        }
+    }
+
+    @discardableResult
+    public func generatePrimaryAPIKeyForSelectedServerSession() async -> String? {
+        guard let selectedServerSession else {
+            return nil
+        }
+
+        do {
+            let primaryKey = try Self.makePrimaryAPIKey()
+            let persistedRecord = try serverSessionAPIKeyStore.savePrimaryKey(
+                serverSessionID: selectedServerSession.id,
+                primaryKey: primaryKey,
+                keyID: "primary"
+            )
+
+            replaceServerSession(id: selectedServerSession.id) { session in
+                session.authMode = .apiKeys
+                session.sharedAccessState = .enabled
+                session.authTokenHint = persistedRecord.keyID
+                session.accessKeyCount = 1
+                session.accessKeyHints = [persistedRecord.keyID]
+                session.updatedAt = Date()
+            }
+            syncServerSessionsWithModels()
+            refreshAgentIntegrationExports()
+
+            notifyStateChanged()
+            return primaryKey
+        } catch {
+            gatewayAPIKeyPersistFailures += 1
+            Task {
+                await metrics.record(
+                    name: "gateway.api_key_persist_failures",
+                    valueMs: gatewayAPIKeyPersistFailures
+                )
+            }
+            recordLocalError("Primary API key persistence failed: \(error)")
+            notifyStateChanged()
+            return nil
         }
     }
 
@@ -654,6 +709,18 @@ public final class RuntimeViewModel {
     private var selectedChatSessionID = ""
 
     public func start() async {
+        let restoreStartedAt = Date()
+        restoreOperatorSessionState()
+        operatorStateRestored = true
+        await metrics.record(
+            name: "operator.session_restore_ms",
+            valueMs: Date().timeIntervalSince(restoreStartedAt) * 1_000
+        )
+        await metrics.record(
+            name: "gateway.api_key_persist_failures",
+            valueMs: gatewayAPIKeyPersistFailures
+        )
+
         await transitionConnectionState(to: "Connecting", detail: "Awaiting handshake")
         let handshakeStartedAt = Date()
 
@@ -1406,12 +1473,16 @@ public final class RuntimeViewModel {
         id: String,
         _ update: (inout DesktopServerSessionState) -> Void
     ) {
-        guard let index = serverSessions.firstIndex(where: { $0.id == id }) else {
-            return
+        if let index = persistedServerSessions.firstIndex(where: { $0.id == id }) {
+            var session = persistedServerSessions[index]
+            update(&session)
+            persistedServerSessions[index] = session
         }
-        var session = serverSessions[index]
-        update(&session)
-        serverSessions[index] = session
+        if let index = serverSessions.firstIndex(where: { $0.id == id }) {
+            var session = serverSessions[index]
+            update(&session)
+            serverSessions[index] = session
+        }
     }
 
     private func replaceChatSession(
@@ -1495,19 +1566,19 @@ public final class RuntimeViewModel {
             row.kind == "text" || latestSnapshot.models.first(where: { $0.modelID == row.modelID })?.features.contains("chat") == true
         }
 
-        if serverSessions.isEmpty, let firstTextModel = textModels.first {
+        if persistedServerSessions.isEmpty, let firstTextModel = textModels.first {
             let seeded = makeServerSession(for: firstTextModel, title: "Primary Server", port: 8080)
-            serverSessions = [seeded]
+            persistedServerSessions = [seeded]
             selectedServerSessionID = seeded.id
         }
 
-        guard serverSessions.isEmpty == false else {
+        guard persistedServerSessions.isEmpty == false else {
+            serverSessions = []
             return
         }
 
-        serverSessions = serverSessions.enumerated().map { offset, session in
+        serverSessions = persistedServerSessions.enumerated().map { offset, session in
             var updated = session
-            updated.updatedAt = Date()
             if let model = models.first(where: { $0.modelID == session.modelID }) {
                 updated.lastKnownModelStateText = model.stateText
                 switch session.lifecycle {
@@ -1536,6 +1607,8 @@ public final class RuntimeViewModel {
         if selectedServerSession == nil {
             selectedServerSessionID = serverSessions.first?.id ?? ""
         }
+
+        maybeApplyStoredGatewayAccessForSelectedRunningSession()
     }
 
     private func makeServerSession(
@@ -1569,6 +1642,144 @@ public final class RuntimeViewModel {
             updated.lastError = error
             updated.updatedAt = Date()
             return updated
+        }
+    }
+
+    private func restoreOperatorSessionState() {
+        do {
+            guard let restoredState = try operatorSessionStore.load() else {
+                return
+            }
+            selectedSurface = restoredState.selectedSurface
+            selectedServerSessionID = restoredState.selectedServerSessionID
+            if restoredState.serverSessions.isEmpty == false {
+                persistedServerSessions = restoredState.serverSessions
+                serverSessions = restoredState.serverSessions
+            }
+            lastPersistedOperatorSessionState = restoredState
+        } catch {
+            recordLocalError("Operator session restore failed: \(error)")
+        }
+    }
+
+    private func currentOperatorSessionState() -> OperatorSessionState {
+        OperatorSessionState(
+            selectedSurface: selectedSurface,
+            selectedServerSessionID: selectedServerSessionID,
+            serverSessions: persistedServerSessions
+        )
+    }
+
+    private func persistOperatorSessionState() {
+        guard operatorStateRestored else {
+            return
+        }
+
+        let state = currentOperatorSessionState()
+        guard state != lastPersistedOperatorSessionState else {
+            return
+        }
+
+        let startedAt = Date()
+        do {
+            try operatorSessionStore.save(state)
+            lastPersistedOperatorSessionState = state
+            let elapsedMs = Date().timeIntervalSince(startedAt) * 1_000
+            Task {
+                await metrics.record(name: "operator.session_persist_write_ms", valueMs: elapsedMs)
+            }
+        } catch {
+            recordLocalError("Operator session persistence failed: \(error)")
+        }
+    }
+
+    private func maybeApplyStoredGatewayAccessForSelectedRunningSession() {
+        guard let selectedServerSession else {
+            scheduleGatewayAccessClear(serverSessionID: lastAppliedGatewaySessionID)
+            return
+        }
+        guard selectedServerSession.isRunning else {
+            scheduleGatewayAccessClear(serverSessionID: selectedServerSession.id)
+            return
+        }
+
+        do {
+            guard
+                let persistedRecord = try serverSessionAPIKeyStore.loadPrimaryKey(
+                    serverSessionID: selectedServerSession.id
+                )
+            else {
+                scheduleGatewayAccessClear(serverSessionID: selectedServerSession.id)
+                return
+            }
+            guard persistedRecord.primaryKey.isEmpty == false else {
+                scheduleGatewayAccessClear(serverSessionID: selectedServerSession.id)
+                return
+            }
+
+            scheduleGatewayAccessApply(
+                serverSessionID: selectedServerSession.id,
+                primaryKey: persistedRecord.primaryKey,
+                keyID: persistedRecord.keyID,
+                label: persistedRecord.keyID,
+                tokenHint: persistedRecord.keyID
+            )
+        } catch {
+            recordLocalError("Gateway API key restore failed: \(error)")
+        }
+    }
+
+    private func scheduleGatewayAccessClear(serverSessionID: String) {
+        guard lastAppliedGatewaySessionID.isEmpty == false else {
+            return
+        }
+        let targetServerSessionID = serverSessionID.isEmpty ? lastAppliedGatewaySessionID : serverSessionID
+        gatewayApplyTask?.cancel()
+        gatewayApplyTask = Task { @MainActor in
+            do {
+                try await client.clearServerSessionGatewayAccess(serverSessionID: targetServerSessionID)
+                resetAppliedGatewayAccessState()
+            } catch {
+                recordLocalError("Gateway access clear failed: \(error)")
+                notifyStateChanged()
+            }
+        }
+    }
+
+    private func scheduleGatewayAccessApply(
+        serverSessionID: String,
+        primaryKey: String,
+        keyID: String,
+        label: String,
+        tokenHint: String,
+        force: Bool = false
+    ) {
+        guard !primaryKey.isEmpty else {
+            return
+        }
+        if force == false,
+           lastAppliedGatewaySessionID == serverSessionID,
+           lastAppliedGatewayPrimaryKey == primaryKey
+        {
+            return
+        }
+
+        gatewayApplyTask?.cancel()
+        gatewayApplyTask = Task { @MainActor in
+            do {
+                try await client.applyServerSessionGatewayAccess(
+                    serverSessionID: serverSessionID,
+                    primaryKey: primaryKey,
+                    keyID: keyID,
+                    label: label,
+                    tokenHint: tokenHint
+                )
+                lastAppliedGatewaySessionID = serverSessionID
+                lastAppliedGatewayPrimaryKey = primaryKey
+            } catch {
+                recordLocalError("Gateway access apply failed: \(error)")
+                notifyStateChanged()
+            }
         }
     }
 
@@ -2086,6 +2297,7 @@ public final class RuntimeViewModel {
         let startedAt = Date()
         do {
             let snapshot = try await client.serverSnapshot()
+            resetAppliedGatewayAccessState()
             apply(snapshot: snapshot)
             await metrics.record(
                 name: "desktop.reconnect_attempt_ms",
@@ -2114,8 +2326,14 @@ public final class RuntimeViewModel {
         notifyStateChanged()
     }
 
+    private func resetAppliedGatewayAccessState() {
+        lastAppliedGatewaySessionID = ""
+        lastAppliedGatewayPrimaryKey = ""
+    }
+
     private func notifyStateChanged() {
         persistSelectedChatSessionState()
+        persistOperatorSessionState()
         onStateChanged?()
     }
 
@@ -2273,6 +2491,25 @@ public final class RuntimeViewModel {
         default:
             return 0
         }
+    }
+
+    private enum APIKeyGenerationError: Error {
+        case randomGenerationFailed(Int32)
+    }
+
+    private static func makePrimaryAPIKey() throws -> String {
+        let byteCount = 32
+        var randomBytes = [UInt8](repeating: 0, count: byteCount)
+        let status = SecRandomCopyBytes(kSecRandomDefault, byteCount, &randomBytes)
+        guard status == errSecSuccess else {
+            throw APIKeyGenerationError.randomGenerationFailed(status)
+        }
+        let payload = Data(randomBytes)
+            .base64EncodedString()
+            .replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "=", with: "")
+        return "melix_sk_\(payload)"
     }
 
     private static func makeAdapterPackageState(from payload: [String: Any]) -> RuntimeAdapterPackageState {

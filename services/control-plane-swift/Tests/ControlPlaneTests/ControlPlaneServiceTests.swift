@@ -70,6 +70,8 @@ struct ControlPlaneServiceTests {
 
     @Test("gateway access policy normalizes shared-access configuration and rejects invalid keys")
     func gatewayAccessPolicyNormalizesSharedAccessConfigurationAndRejectsInvalidKeys() {
+        let leakedToken = "sk-operator-b"
+        let rejectedToken = "sk-rejected"
         let policy = GatewayAccessPolicy.load(
             environment: [
                 "MELIX_GATEWAY_AUTH_MODE": "api_keys",
@@ -79,7 +81,8 @@ struct ControlPlaneServiceTests {
                   {"id":"operator-a","label":"Operator A","token_hint":"operator-a","token":"sk-operator-a"},
                   {"id":"operator-a","label":"Duplicate","token_hint":"duplicate","token":"sk-operator-a-2"},
                   {"id":"empty-token","label":"Empty Token","token_hint":"empty-token","token":"   "},
-                  {"id":"operator-b","label":"Operator B","token_hint":"operator-b","token":"sk-operator-b"}
+                  {"id":"operator-b","label":"Operator B \(leakedToken)","token_hint":"operator-b \(leakedToken)","token":"\(leakedToken)"},
+                  {"id":"secret-\(rejectedToken)","label":"Rejected","token_hint":"Rejected","token":"\(rejectedToken)"}
                 ]
                 """,
             ]
@@ -91,6 +94,33 @@ struct ControlPlaneServiceTests {
         #expect(policy.acceptedAPIKeyCount == 2)
         #expect(policy.summary.acceptedApiKeyCount == 2)
         #expect(policy.summary.keys.map(\.keyID) == ["operator-a", "operator-b"])
+        #expect(policy.summary.keys.map(\.label) == ["operator-a", "operator-b"])
+        #expect(policy.summary.keys.map(\.tokenHint) == ["operator-a", "operator-b"])
+        #expect(policy.summary.keys.contains(where: { $0.keyID.contains(leakedToken) }) == false)
+        #expect(policy.summary.keys.contains(where: { $0.label.contains(leakedToken) }) == false)
+        #expect(policy.summary.keys.contains(where: { $0.tokenHint.contains(leakedToken) }) == false)
+    }
+
+    @Test("gateway access policy normalizes bearer-token environment metadata without leaking secrets")
+    func gatewayAccessPolicyNormalizesBearerTokenEnvironmentMetadataWithoutLeakingSecrets() {
+        let leakedToken = "sk-bearer-secret"
+        let policy = GatewayAccessPolicy.load(
+            environment: [
+                "MELIX_GATEWAY_AUTH_MODE": "bearer_token",
+                "MELIX_GATEWAY_BEARER_TOKEN": leakedToken,
+                "MELIX_GATEWAY_BEARER_TOKEN_ID": "primary",
+                "MELIX_GATEWAY_BEARER_TOKEN_LABEL": "Primary \(leakedToken)",
+                "MELIX_GATEWAY_BEARER_TOKEN_HINT": "Hint \(leakedToken)",
+            ]
+        )
+
+        #expect(policy.mode == .bearerToken)
+        #expect(policy.summary.keys.map(\.keyID) == ["primary"])
+        #expect(policy.summary.keys.map(\.label) == ["primary"])
+        #expect(policy.summary.keys.map(\.tokenHint) == ["primary"])
+        #expect(policy.summary.keys.contains(where: { $0.keyID.contains(leakedToken) }) == false)
+        #expect(policy.summary.keys.contains(where: { $0.label.contains(leakedToken) }) == false)
+        #expect(policy.summary.keys.contains(where: { $0.tokenHint.contains(leakedToken) }) == false)
     }
 
     @Test("handshake projects gateway access summary without leaking raw secrets")

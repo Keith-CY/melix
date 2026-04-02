@@ -1,6 +1,6 @@
 import Foundation
 
-public enum DesktopSurface: String, CaseIterable, Identifiable, Sendable {
+public enum DesktopSurface: String, CaseIterable, Identifiable, Codable, Sendable {
     case chat = "Chat"
     case image = "Image"
     case server = "Server"
@@ -27,7 +27,7 @@ public enum DesktopSurface: String, CaseIterable, Identifiable, Sendable {
     }
 }
 
-public enum DesktopToolSection: String, CaseIterable, Identifiable, Sendable {
+public enum DesktopToolSection: String, CaseIterable, Identifiable, Codable, Sendable {
     case modelsLibrary = "Models Library"
     case downloads = "Downloads"
     case training = "Training"
@@ -57,7 +57,7 @@ public enum DesktopToolSection: String, CaseIterable, Identifiable, Sendable {
     }
 }
 
-public enum DesktopServerAuthMode: String, CaseIterable, Identifiable, Sendable {
+public enum DesktopServerAuthMode: String, CaseIterable, Identifiable, Codable, Sendable {
     case none = "None"
     case bearerToken = "Bearer Token"
     case apiKeys = "API Keys"
@@ -67,13 +67,13 @@ public enum DesktopServerAuthMode: String, CaseIterable, Identifiable, Sendable 
     }
 }
 
-public enum DesktopSharedAccessState: String, Sendable {
+public enum DesktopSharedAccessState: String, Codable, Sendable {
     case localOnly = "Local Only"
     case configuredDisabled = "Configured, Disabled"
     case enabled = "Enabled"
 }
 
-public enum DesktopServerSessionLifecycle: String, Sendable {
+public enum DesktopServerSessionLifecycle: String, Codable, Sendable {
     case draft = "Draft"
     case starting = "Starting"
     case running = "Running"
@@ -83,7 +83,7 @@ public enum DesktopServerSessionLifecycle: String, Sendable {
     case unavailable = "Unavailable"
 }
 
-public struct DesktopServerServingDefaultsState: Equatable, Sendable {
+public struct DesktopServerServingDefaultsState: Codable, Equatable, Sendable {
     public var temperature: Double
     public var topP: Double
     public var maxTokens: Int
@@ -102,7 +102,7 @@ public struct DesktopServerServingDefaultsState: Equatable, Sendable {
     }
 }
 
-public struct DesktopServerSessionState: Identifiable, Equatable, Sendable {
+public struct DesktopServerSessionState: Codable, Identifiable, Equatable, Sendable {
     public let id: String
     public var title: String
     public var modelID: String

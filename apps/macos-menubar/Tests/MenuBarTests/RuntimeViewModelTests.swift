@@ -28,6 +28,407 @@ struct RuntimeViewModelTests {
         #expect(await metrics.snapshot()["menu.hydration_ms"] != nil)
     }
 
+    @Test("restoresSelectedSurfaceAndServerSession from operator-session state")
+    @MainActor
+    func restoresSelectedSurfaceAndServerSessionFromOperatorSessionState() async throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-menubar-restore-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let melixHome = MelixHome(environment: ["MELIX_HOME": temporaryRoot.path])
+        let operatorSessionStore = OperatorSessionStore(melixHome: melixHome)
+        let apiKeyStore = ServerSessionAPIKeyStore(melixHome: melixHome)
+        let restoredServerSession = DesktopServerSessionState(
+            id: "server-session-restored",
+            title: "Restored Server",
+            modelID: "melix-dev-text",
+            lifecycle: .running
+        )
+        try operatorSessionStore.save(
+            OperatorSessionState(
+                selectedSurface: .api,
+                selectedServerSessionID: restoredServerSession.id,
+                serverSessions: [restoredServerSession]
+            )
+        )
+
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(
+            client: client,
+            operatorSessionStore: operatorSessionStore,
+            serverSessionAPIKeyStore: apiKeyStore
+        )
+
+        await viewModel.start()
+
+        #expect(viewModel.selectedSurface == .api)
+        #expect(viewModel.selectedServerSession?.id == restoredServerSession.id)
+    }
+
+    @Test("generatesPrimaryAPIKeyForSelectedServerSession and forces api key auth mode")
+    @MainActor
+    func generatesPrimaryAPIKeyForSelectedServerSessionAndForcesAPIKeyAuthMode() async throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-menubar-generate-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let melixHome = MelixHome(environment: ["MELIX_HOME": temporaryRoot.path])
+        let operatorSessionStore = OperatorSessionStore(melixHome: melixHome)
+        let apiKeyStore = ServerSessionAPIKeyStore(melixHome: melixHome)
+        let client = FakeControlPlaneXPCClient()
+        let metrics = MenuBarMetricsStore()
+        let viewModel = RuntimeViewModel(
+            client: client,
+            metrics: metrics,
+            operatorSessionStore: operatorSessionStore,
+            serverSessionAPIKeyStore: apiKeyStore
+        )
+
+        await viewModel.start()
+        let selectedServerSessionID = try #require(viewModel.selectedServerSession?.id)
+        let generatedPrimaryKey = try #require(await viewModel.generatePrimaryAPIKeyForSelectedServerSession())
+        let persistedPrimaryKey = try #require(try apiKeyStore.loadPrimaryKey(serverSessionID: selectedServerSessionID))
+
+        #expect(generatedPrimaryKey.hasPrefix("melix_sk_"))
+        #expect(persistedPrimaryKey.primaryKey == generatedPrimaryKey)
+        #expect(viewModel.selectedServerSession?.authMode == .apiKeys)
+
+        var persistMetricFound = false
+        for _ in 0..<100 {
+            let metricValues = await metrics.snapshot()
+            if metricValues["operator.session_persist_write_ms"] != nil {
+                persistMetricFound = true
+                break
+            }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+
+        let metricValues = await metrics.snapshot()
+        #expect(metricValues["operator.session_restore_ms"] != nil)
+        #expect(persistMetricFound)
+        #expect(metricValues["gateway.api_key_persist_failures"] == 0)
+    }
+
+    @Test("defers gateway apply when selected server session is not running")
+    @MainActor
+    func defersGatewayApplyWhenSelectedServerSessionIsNotRunning() async throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-menubar-defer-apply-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let melixHome = MelixHome(environment: ["MELIX_HOME": temporaryRoot.path])
+        let operatorSessionStore = OperatorSessionStore(melixHome: melixHome)
+        let apiKeyStore = ServerSessionAPIKeyStore(melixHome: melixHome)
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(
+            client: client,
+            operatorSessionStore: operatorSessionStore,
+            serverSessionAPIKeyStore: apiKeyStore
+        )
+
+        await viewModel.start()
+        viewModel.createServerSession()
+        #expect(viewModel.selectedServerSession?.isRunning == false)
+
+        _ = await viewModel.generatePrimaryAPIKeyForSelectedServerSession()
+
+        #expect(await client.recordedGatewayAccessApplyRequests.isEmpty)
+    }
+
+    @Test("appliesStoredKeyWhenSelectedRunningServerSessionBecomesActive")
+    @MainActor
+    func appliesStoredKeyWhenSelectedRunningServerSessionBecomesActive() async throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-menubar-apply-stored-key-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let melixHome = MelixHome(environment: ["MELIX_HOME": temporaryRoot.path])
+        let operatorSessionStore = OperatorSessionStore(melixHome: melixHome)
+        let apiKeyStore = ServerSessionAPIKeyStore(melixHome: melixHome)
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(
+            client: client,
+            operatorSessionStore: operatorSessionStore,
+            serverSessionAPIKeyStore: apiKeyStore
+        )
+
+        await viewModel.start()
+        viewModel.createServerSession()
+        let selectedServerSessionID = try #require(viewModel.selectedServerSession?.id)
+        let primaryKey = try #require(await viewModel.generatePrimaryAPIKeyForSelectedServerSession())
+        #expect(await client.recordedGatewayAccessApplyRequests.isEmpty)
+
+        await viewModel.startSelectedServerSession()
+        var applyAttempts = 0
+        while await client.recordedGatewayAccessApplyRequests.isEmpty, applyAttempts < 200 {
+            applyAttempts += 1
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(await client.recordedGatewayAccessApplyRequests.isEmpty == false)
+
+        let appliedRequest = try #require(await client.recordedGatewayAccessApplyRequests.last)
+        #expect(appliedRequest.serverSessionID == selectedServerSessionID)
+        #expect(appliedRequest.primaryKey == primaryKey)
+    }
+
+    @Test("selecting a keyless server session clears previously applied gateway access")
+    @MainActor
+    func selectingAKeylessServerSessionClearsPreviouslyAppliedGatewayAccess() async throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-menubar-clear-keyless-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let melixHome = MelixHome(environment: ["MELIX_HOME": temporaryRoot.path])
+        let operatorSessionStore = OperatorSessionStore(melixHome: melixHome)
+        let apiKeyStore = ServerSessionAPIKeyStore(melixHome: melixHome)
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(
+            client: client,
+            operatorSessionStore: operatorSessionStore,
+            serverSessionAPIKeyStore: apiKeyStore
+        )
+
+        await viewModel.start()
+        _ = await viewModel.generatePrimaryAPIKeyForSelectedServerSession()
+        var applyAttempts = 0
+        while await client.recordedGatewayAccessApplyRequests.isEmpty, applyAttempts < 200 {
+            applyAttempts += 1
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(await client.recordedGatewayAccessApplyRequests.count == 1)
+
+        viewModel.createServerSession()
+
+        var clearAttempts = 0
+        while await client.recordedGatewayAccessClearRequests.isEmpty, clearAttempts < 200 {
+            clearAttempts += 1
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(await client.recordedGatewayAccessClearRequests == [try #require(viewModel.selectedServerSession?.id)])
+    }
+
+    @Test("stopping a keyed server session clears previously applied gateway access")
+    @MainActor
+    func stoppingAKeyedServerSessionClearsPreviouslyAppliedGatewayAccess() async throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-menubar-clear-stopped-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let melixHome = MelixHome(environment: ["MELIX_HOME": temporaryRoot.path])
+        let operatorSessionStore = OperatorSessionStore(melixHome: melixHome)
+        let apiKeyStore = ServerSessionAPIKeyStore(melixHome: melixHome)
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(
+            client: client,
+            operatorSessionStore: operatorSessionStore,
+            serverSessionAPIKeyStore: apiKeyStore
+        )
+
+        await viewModel.start()
+        let selectedServerSessionID = try #require(viewModel.selectedServerSession?.id)
+        _ = await viewModel.generatePrimaryAPIKeyForSelectedServerSession()
+        var applyAttempts = 0
+        while await client.recordedGatewayAccessApplyRequests.isEmpty, applyAttempts < 200 {
+            applyAttempts += 1
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(await client.recordedGatewayAccessApplyRequests.count == 1)
+
+        await viewModel.stopSelectedServerSession()
+
+        var clearAttempts = 0
+        while await client.recordedGatewayAccessClearRequests.isEmpty, clearAttempts < 200 {
+            clearAttempts += 1
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(await client.recordedGatewayAccessClearRequests == [selectedServerSessionID])
+    }
+
+    @Test("gateway access clear failures surface as recoverable local errors")
+    @MainActor
+    func gatewayAccessClearFailuresSurfaceAsRecoverableLocalErrors() async throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-menubar-clear-error-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let melixHome = MelixHome(environment: ["MELIX_HOME": temporaryRoot.path])
+        let operatorSessionStore = OperatorSessionStore(melixHome: melixHome)
+        let apiKeyStore = ServerSessionAPIKeyStore(melixHome: melixHome)
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(
+            client: client,
+            operatorSessionStore: operatorSessionStore,
+            serverSessionAPIKeyStore: apiKeyStore
+        )
+
+        await viewModel.start()
+        _ = await viewModel.generatePrimaryAPIKeyForSelectedServerSession()
+        var applyAttempts = 0
+        while await client.recordedGatewayAccessApplyRequests.count < 1, applyAttempts < 200 {
+            applyAttempts += 1
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(await client.recordedGatewayAccessApplyRequests.count == 1)
+
+        await client.configureGatewayAccessClearError(MenuBarTestError(description: "clear failed"))
+        viewModel.createServerSession()
+
+        try await waitForRuntimeViewModelCondition("expected gateway access clear failure to surface") {
+            viewModel.lastError?.contains("Gateway access clear failed") == true
+        }
+    }
+
+    @Test("generate primary key returns nil when no server session exists")
+    @MainActor
+    func generatePrimaryKeyReturnsNilWhenNoServerSessionExists() async throws {
+        let client = EmptySnapshotControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+        let generatedPrimaryKey = await viewModel.generatePrimaryAPIKeyForSelectedServerSession()
+
+        #expect(generatedPrimaryKey == nil)
+    }
+
+    @Test("generate primary key records persistence failures when the store write fails")
+    @MainActor
+    func generatePrimaryKeyRecordsPersistenceFailuresWhenStoreWriteFails() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let metrics = MenuBarMetricsStore()
+        let viewModel = RuntimeViewModel(
+            client: client,
+            metrics: metrics,
+            operatorSessionStore: NullOperatorSessionStore(),
+            serverSessionAPIKeyStore: ThrowingServerSessionAPIKeyStore(
+                throwOnLoad: false,
+                throwOnSave: true,
+                loadPrimaryKeyValue: nil
+            )
+        )
+
+        await viewModel.start()
+        let generatedPrimaryKey = await viewModel.generatePrimaryAPIKeyForSelectedServerSession()
+
+        #expect(generatedPrimaryKey == nil)
+        var metricValues = await metrics.snapshot()
+        if metricValues["gateway.api_key_persist_failures"] != 1 {
+            try await Task.sleep(for: .milliseconds(20))
+            metricValues = await metrics.snapshot()
+        }
+        #expect(metricValues["gateway.api_key_persist_failures"] == 1)
+    }
+
+    @Test("start captures operator-session restore failures as local errors")
+    @MainActor
+    func startCapturesOperatorSessionRestoreFailuresAsLocalErrors() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(
+            client: client,
+            operatorSessionStore: ThrowingOperatorSessionStore(throwOnLoad: true, throwOnSave: false),
+            serverSessionAPIKeyStore: NullServerSessionAPIKeyStore()
+        )
+
+        await viewModel.start()
+
+        #expect(viewModel.lastError?.contains("Operator session restore failed") == true)
+    }
+
+    @Test("persist operator-session failures are isolated to local error state")
+    @MainActor
+    func persistOperatorSessionFailuresAreIsolatedToLocalErrorState() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(
+            client: client,
+            operatorSessionStore: ThrowingOperatorSessionStore(throwOnLoad: false, throwOnSave: true),
+            serverSessionAPIKeyStore: NullServerSessionAPIKeyStore()
+        )
+
+        await viewModel.start()
+        viewModel.selectSurface(.server)
+
+        #expect(viewModel.lastError?.contains("Operator session persistence failed") == true)
+    }
+
+    @Test("stored gateway key load and apply failures surface as recoverable local errors")
+    @MainActor
+    func storedGatewayKeyLoadAndApplyFailuresSurfaceAsRecoverableLocalErrors() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureErrors(applyGatewayAccess: MenuBarTestError(description: "apply failed"))
+        let viewModel = RuntimeViewModel(
+            client: client,
+            operatorSessionStore: NullOperatorSessionStore(),
+            serverSessionAPIKeyStore: ThrowingServerSessionAPIKeyStore(
+                throwOnLoad: true,
+                throwOnSave: false,
+                loadPrimaryKeyValue: nil
+            )
+        )
+
+        await viewModel.start()
+        viewModel.selectServerSession(id: viewModel.selectedServerSession?.id ?? "")
+        #expect(viewModel.lastError?.contains("Gateway API key restore failed") == true)
+
+        let applyFailureViewModel = RuntimeViewModel(
+            client: client,
+            operatorSessionStore: NullOperatorSessionStore(),
+            serverSessionAPIKeyStore: ThrowingServerSessionAPIKeyStore(
+                throwOnLoad: false,
+                throwOnSave: false,
+                loadPrimaryKeyValue: "melix_sk_apply_failure"
+            )
+        )
+
+        await applyFailureViewModel.start()
+        applyFailureViewModel.selectServerSession(id: applyFailureViewModel.selectedServerSession?.id ?? "")
+        try await Task.sleep(for: .milliseconds(20))
+        #expect(applyFailureViewModel.lastError?.contains("Gateway access apply failed") == true)
+    }
+
+    @Test("stored gateway apply skips empty keys and dedupes already-applied keys")
+    @MainActor
+    func storedGatewayApplySkipsEmptyKeysAndDedupesAlreadyAppliedKeys() async throws {
+        let emptyKeyClient = FakeControlPlaneXPCClient()
+        let emptyKeyViewModel = RuntimeViewModel(
+            client: emptyKeyClient,
+            operatorSessionStore: NullOperatorSessionStore(),
+            serverSessionAPIKeyStore: ThrowingServerSessionAPIKeyStore(
+                throwOnLoad: false,
+                throwOnSave: false,
+                loadPrimaryKeyValue: ""
+            )
+        )
+
+        await emptyKeyViewModel.start()
+        emptyKeyViewModel.selectServerSession(id: emptyKeyViewModel.selectedServerSession?.id ?? "")
+        try await Task.sleep(for: .milliseconds(20))
+        #expect(await emptyKeyClient.recordedGatewayAccessApplyRequests.isEmpty)
+
+        let dedupeClient = FakeControlPlaneXPCClient()
+        let dedupeViewModel = RuntimeViewModel(
+            client: dedupeClient,
+            operatorSessionStore: NullOperatorSessionStore(),
+            serverSessionAPIKeyStore: ThrowingServerSessionAPIKeyStore(
+                throwOnLoad: false,
+                throwOnSave: false,
+                loadPrimaryKeyValue: "melix_sk_dedupe"
+            )
+        )
+
+        await dedupeViewModel.start()
+        dedupeViewModel.selectServerSession(id: dedupeViewModel.selectedServerSession?.id ?? "")
+        try await Task.sleep(for: .milliseconds(20))
+        dedupeViewModel.selectServerSession(id: dedupeViewModel.selectedServerSession?.id ?? "")
+        try await Task.sleep(for: .milliseconds(20))
+        #expect(await dedupeClient.recordedGatewayAccessApplyRequests.count == 1)
+    }
+
     @Test("chat requires a running server session before sending prompts")
     @MainActor
     func chatRequiresRunningServerSession() async throws {
@@ -1041,6 +1442,38 @@ struct RuntimeViewModelTests {
         #expect(hasConnectedSetting)
         #expect(hasReconnectLog)
         #expect(await metrics.snapshot()["desktop.reconnect_success_ms"] != nil)
+    }
+
+    @Test("subscription reconnect reapplies stored gateway access for the selected running server session")
+    @MainActor
+    func subscriptionReconnectReappliesStoredGatewayAccessForSelectedRunningServerSession() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(
+            client: client,
+            operatorSessionStore: NullOperatorSessionStore(),
+            serverSessionAPIKeyStore: ThrowingServerSessionAPIKeyStore(
+                throwOnLoad: false,
+                throwOnSave: false,
+                loadPrimaryKeyValue: "melix_sk_reconnect"
+            )
+        )
+
+        await viewModel.start()
+        var initialApplyAttempts = 0
+        while await client.recordedGatewayAccessApplyRequests.count < 1, initialApplyAttempts < 200 {
+            initialApplyAttempts += 1
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(await client.recordedGatewayAccessApplyRequests.count == 1)
+
+        await client.finishLatestSubscription()
+
+        var reconnectApplyAttempts = 0
+        while await client.recordedGatewayAccessApplyRequests.count < 2, reconnectApplyAttempts < 200 {
+            reconnectApplyAttempts += 1
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(await client.recordedGatewayAccessApplyRequests.count == 2)
     }
 
     @Test("desktop foundation refresh pulls a fresh server snapshot and records metrics")
@@ -2364,6 +2797,62 @@ private actor EventingSnapshotControlPlaneXPCClient: ControlPlaneXPCClient {
         event.modelState.modelID = modelID
         event.modelState.state = state
         continuation.yield(event)
+    }
+}
+
+private struct ThrowingOperatorSessionStore: OperatorSessionStoring {
+    let throwOnLoad: Bool
+    let throwOnSave: Bool
+
+    func load() throws -> OperatorSessionState? {
+        if throwOnLoad {
+            throw MenuBarTestError(description: "restore-failed")
+        }
+        return nil
+    }
+
+    func save(_ state: OperatorSessionState) throws {
+        _ = state
+        if throwOnSave {
+            throw MenuBarTestError(description: "persist-failed")
+        }
+    }
+}
+
+private struct ThrowingServerSessionAPIKeyStore: ServerSessionAPIKeyStoring {
+    let throwOnLoad: Bool
+    let throwOnSave: Bool
+    let loadPrimaryKeyValue: String?
+
+    func loadPrimaryKey(serverSessionID: String) throws -> ServerSessionPrimaryAPIKeyRecord? {
+        if throwOnLoad {
+            throw MenuBarTestError(description: "load-key-failed")
+        }
+        guard let loadPrimaryKeyValue else {
+            return nil
+        }
+        return ServerSessionPrimaryAPIKeyRecord(
+            serverSessionID: serverSessionID,
+            keyID: "primary",
+            primaryKey: loadPrimaryKeyValue,
+            updatedAt: Date()
+        )
+    }
+
+    func savePrimaryKey(
+        serverSessionID: String,
+        primaryKey: String,
+        keyID: String
+    ) throws -> ServerSessionPrimaryAPIKeyRecord {
+        if throwOnSave {
+            throw MenuBarTestError(description: "save-key-failed")
+        }
+        return ServerSessionPrimaryAPIKeyRecord(
+            serverSessionID: serverSessionID,
+            keyID: keyID,
+            primaryKey: primaryKey,
+            updatedAt: Date()
+        )
     }
 }
 
