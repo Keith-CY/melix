@@ -4,6 +4,7 @@ docs/product-brief.md
 .swift-home
 .uv-cache
 .runtime
+.claude
 .venv
 __pycache__/
 .pytest_cache/
