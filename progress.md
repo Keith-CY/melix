@@ -80,6 +80,20 @@
   - `services/mlx-worker-python/worker/productization/benchmark_schemas.py`: changed-line coverage `100.00%` (`6/6`)
   - `services/mlx-worker-python/worker/productization/release_gates.py`: changed-line coverage `100.00%` (`15/15`)
   - aggregate changed-line coverage for the executable Python scope in this slice: `95.16%` (`118/124`)
+- Landed the benchmark CLI and CSV export closure slice:
+  - added `ControlPlaneBenchmarkExportBundle` to `MelixControlPlaneCore` so benchmark history, suite metadata, and CSV rows decode from one shared persisted export format
+  - extended the shared local control-plane client with `ops.export_results`, returning typed export-bundle JSON for both native and CLI operator flows
+  - exposed `melix bench list` with human-readable and `--json` history output, and `melix bench export-csv` for filtered per-job CSV emission
+  - added targeted coverage for benchmark export decoding fallbacks, deterministic ordering, CSV quoting, and default control-plane export failures
+- Verification summary for the benchmark CLI and CSV export closure:
+  - `swift test --enable-code-coverage --filter MelixCLITests`: `24 tests passed`
+  - `swift test --package-path services/control-plane-swift --enable-code-coverage --filter BenchmarkExportBundleTests`: `3 tests passed`
+  - `swift test --package-path apps/macos-menubar --enable-code-coverage --filter ControlPlaneXPCClientTests`: `22 tests passed`
+- Metrics report:
+  - `Sources/MelixCLICore/MelixCLI.swift`: changed-line coverage `98.40%` (`123/125`)
+  - `services/control-plane-swift/Sources/XPCService/BenchmarkExportBundle.swift`: changed-line coverage `100.00%` (`163/163`)
+  - `services/control-plane-swift/Sources/XPCService/ControlPlaneXPCClient.swift`: changed-line coverage `96.30%` (`26/27`)
+  - aggregate changed-line coverage for the executable Swift scope in this slice: `99.05%` (`312/315`)
 
 ## 2026-04-01
 

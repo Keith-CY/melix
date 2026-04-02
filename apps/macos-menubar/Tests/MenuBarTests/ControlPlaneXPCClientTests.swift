@@ -497,6 +497,25 @@ struct ControlPlaneXPCClientTests {
         #expect(request.ops.runBench.parameters["batch_factor"] == "2")
     }
 
+    @Test("exportResults builds ops.export_results request and returns the export bundle json")
+    func exportResultsBuildsTypedRequest() async throws {
+        let service = RecordingExecuteControlPlaneService()
+        var response = Melix_Controlplane_V1_ControlPlaneResponse()
+        response.ok = true
+        response.ops = Melix_Controlplane_V1_OpsReply()
+        response.ops.exportBundleJson = #"{"export_schema_version":"melix.benchmark_export.v1","benchmark_jobs":[],"benchmark_results":[]}"#
+        await service.setExecuteResponse(response)
+        let client = LocalControlPlaneXPCClient(service: service)
+
+        let result = try await client.exportResults(outputDir: "/tmp/melix-export")
+        let request = try #require(await service.lastExecuteRequest)
+
+        #expect(request.requestID == "menubar-export-results")
+        #expect(request.commandType == "ops.export_results")
+        #expect(request.ops.exportResults.outputDir == "/tmp/melix-export")
+        #expect(result.exportBundleJSON.contains("\"export_schema_version\":\"melix.benchmark_export.v1\""))
+    }
+
     @Test("local client surfaces cancel request failures")
     func localClientSurfacesCancelRequestFailures() async throws {
         let service = FailingExecuteControlPlaneService(
@@ -518,8 +537,8 @@ struct ControlPlaneXPCClientTests {
         }
     }
 
-    @Test("default image ops doctor bench and cancel client methods throw unimplemented errors")
-    func defaultImageOpsDoctorBenchAndCancelClientMethodsThrowUnimplementedErrors() async throws {
+    @Test("default image ops doctor bench export and cancel client methods throw unimplemented errors")
+    func defaultImageOpsDoctorBenchExportAndCancelClientMethodsThrowUnimplementedErrors() async throws {
         let client = DefaultImagelessControlPlaneXPCClient()
 
         do {
@@ -614,6 +633,18 @@ struct ControlPlaneXPCClientTests {
                 error == .requestFailed(
                     code: "unimplemented",
                     message: "Bench is not implemented for this control-plane client."
+                )
+            )
+        }
+
+        do {
+            _ = try await client.exportResults()
+            Issue.record("Expected exportResults to throw for the default protocol implementation")
+        } catch let error as ControlPlaneXPCClientError {
+            #expect(
+                error == .requestFailed(
+                    code: "unimplemented",
+                    message: "Export results is not implemented for this control-plane client."
                 )
             )
         }
@@ -798,6 +829,11 @@ private actor FailingExecuteControlPlaneService: ControlPlaneExecuting {
 
 private actor RecordingExecuteControlPlaneService: ControlPlaneExecuting {
     private(set) var lastExecuteRequest: Melix_Controlplane_V1_ControlPlaneRequest?
+    private var executeResponse = Melix_Controlplane_V1_ControlPlaneResponse()
+
+    func setExecuteResponse(_ response: Melix_Controlplane_V1_ControlPlaneResponse) {
+        executeResponse = response
+    }
 
     func handshake(_ request: Melix_Controlplane_V1_HandshakeRequest) async throws -> Melix_Controlplane_V1_HandshakeResponse {
         _ = request
@@ -825,9 +861,10 @@ private actor RecordingExecuteControlPlaneService: ControlPlaneExecuting {
 
     func execute(_ request: Melix_Controlplane_V1_ControlPlaneRequest) async throws -> Melix_Controlplane_V1_ControlPlaneResponse {
         lastExecuteRequest = request
-        var response = Melix_Controlplane_V1_ControlPlaneResponse()
-        response.ok = true
-        return response
+        if executeResponse.ok == false && executeResponse.error.code.isEmpty && executeResponse.error.message.isEmpty {
+            executeResponse.ok = true
+        }
+        return executeResponse
     }
 }
 

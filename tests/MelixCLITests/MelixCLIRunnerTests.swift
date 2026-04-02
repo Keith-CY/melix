@@ -278,6 +278,62 @@ struct MelixCLIRunnerTests {
         #expect(path == "/tmp/melix/bench/job-5/report.md")
     }
 
+    @Test("bench list renders history rows and returns JSON when requested")
+    func benchListRendersHistoryRowsAndJSON() async throws {
+        let client = StubControlPlaneXPCClient()
+        await client.setExportResult(.init(exportBundleJSON: makeBenchmarkExportBundleJSON()))
+
+        let textOutput = try await MelixCLIRunner(client: client).run(.benchList(.init()))
+        let jsonOutput = try await MelixCLIRunner(client: client).run(.benchList(.init(json: true)))
+        let entries = try #require(parseJSONArray(jsonOutput))
+        let benchOneEntry = try #require(entries.first(where: {
+            ($0 as? [String: Any])?["job_id"] as? String == "bench-1"
+        }) as? [String: Any])
+
+        #expect(textOutput.contains("job_id\tmodel_id\tsuite\tdataset"))
+        #expect(textOutput.contains("bench-1\tmelix-dev-text\tsmoke\tHuggingFaceH4/ultrachat_200k/default:train_sft\t4\t2\tcompleted\t1712100000000"))
+        #expect(benchOneEntry["job_id"] as? String == "bench-1")
+        #expect(benchOneEntry["suite_id"] as? String == "smoke")
+        #expect(benchOneEntry["dataset_repo"] as? String == "HuggingFaceH4/ultrachat_200k")
+    }
+
+    @Test("bench export-csv writes filtered benchmark metric rows and returns JSON metadata")
+    func benchExportCSVWritesFilteredRows() async throws {
+        let client = StubControlPlaneXPCClient()
+        await client.setExportResult(.init(exportBundleJSON: makeBenchmarkExportBundleJSON()))
+        let outputURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathComponent("bench-1.csv")
+
+        let jsonOutput = try await MelixCLIRunner(client: client).run(
+            .benchExportCSV(.init(jobID: "bench-1", outputPath: outputURL.path, json: true))
+        )
+        let response = try #require(parseJSONObject(jsonOutput))
+        let csv = try String(contentsOf: outputURL, encoding: .utf8)
+
+        #expect(response["job_id"] as? String == "bench-1")
+        #expect(response["output_path"] as? String == outputURL.path)
+        #expect(response["row_count"] as? Int == 2)
+        #expect(csv.contains("job_id,model_id,suite_id,dataset_repo,dataset_config,dataset_split,sample_size,batch_factor,metric_name,metric_value,unit,created_at_unix_ms"))
+        #expect(csv.contains("bench-1,melix-dev-text,smoke,HuggingFaceH4/ultrachat_200k,default,train_sft,4,2,bench.smoke.tokens_per_second,47.08,tok/s,1712100000000"))
+        #expect(csv.contains("bench-1,melix-dev-text,smoke,HuggingFaceH4/ultrachat_200k,default,train_sft,4,2,bench.smoke.ttft_ms,24.45,ms,1712100000000"))
+    }
+
+    @Test("bench export-csv fails when the requested job is not present")
+    func benchExportCSVFailsForMissingJob() async throws {
+        let client = StubControlPlaneXPCClient()
+        await client.setExportResult(.init(exportBundleJSON: makeBenchmarkExportBundleJSON()))
+
+        do {
+            _ = try await MelixCLIRunner(client: client).run(
+                .benchExportCSV(.init(jobID: "bench-missing", outputPath: "/tmp/missing.csv"))
+            )
+            Issue.record("Expected bench export-csv to fail when the job is missing.")
+        } catch let error as MelixCLIError {
+            #expect(error == .runtime("No benchmark metrics were found for job bench-missing."))
+        }
+    }
+
     @Test("lora list fails when the server snapshot has no models")
     func loraListFailsWhenServerSnapshotIsEmpty() async throws {
         let client = StubControlPlaneXPCClient()
@@ -355,6 +411,7 @@ private actor StubControlPlaneXPCClient: ControlPlaneXPCClient {
     private var snapshot = makeServerSnapshot(models: [makeModelSummary(id: "melix-dev-text", kind: "text")])
     private var modelOperationResult = makeModelOperationResult()
     private var benchResult = ControlPlaneBenchResult(reportPath: "", reportMarkdown: "", metrics: [:])
+    private var exportResult = ControlPlaneExportResult(exportBundleJSON: #"{"export_schema_version":"melix.benchmark_export.v1","benchmark_jobs":[],"benchmark_results":[]}"#)
 
     func setServerSnapshot(_ snapshot: Melix_Controlplane_V1_ServerSnapshot) {
         self.snapshot = snapshot
@@ -366,6 +423,10 @@ private actor StubControlPlaneXPCClient: ControlPlaneXPCClient {
 
     func setBenchResult(_ result: ControlPlaneBenchResult) {
         self.benchResult = result
+    }
+
+    func setExportResult(_ result: ControlPlaneExportResult) {
+        self.exportResult = result
     }
 
     func handshake() async throws -> Melix_Controlplane_V1_HandshakeResponse {
@@ -456,6 +517,11 @@ private actor StubControlPlaneXPCClient: ControlPlaneXPCClient {
         return benchResult
     }
 
+    func exportResults(outputDir: String) async throws -> ControlPlaneExportResult {
+        _ = outputDir
+        return exportResult
+    }
+
     func cancelRequest(requestID: String) async throws -> Bool {
         _ = requestID
         return false
@@ -513,4 +579,59 @@ private func parseJSONObject(_ text: String) -> [String: Any]? {
         return nil
     }
     return (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+}
+
+private func parseJSONArray(_ text: String) -> [Any]? {
+    guard let data = text.data(using: .utf8) else {
+        return nil
+    }
+    return (try? JSONSerialization.jsonObject(with: data)) as? [Any]
+}
+
+private func makeBenchmarkExportBundleJSON() -> String {
+    """
+    {
+      "export_schema_version": "melix.benchmark_export.v1",
+      "exported_at_unix_ms": 1712101234567,
+      "benchmark_jobs": [
+        {
+          "schema_version": "melix.serving_benchmark_job.v1",
+          "job_id": "bench-1",
+          "model_id": "melix-dev-text",
+          "suites": ["smoke"],
+          "parameters": {
+            "sample_size": "4",
+            "batch_factor": "2"
+          },
+          "status": "completed",
+          "output_dir": "/tmp/melix/bench/runs/bench-1",
+          "created_at_unix_ms": 1712100000000,
+          "updated_at_unix_ms": 1712100005000,
+          "suite_metadata": {
+            "smoke": {
+              "title": "UltraChat Smoke",
+              "dataset_path": "HuggingFaceH4/ultrachat_200k",
+              "dataset_name": "default",
+              "dataset_split": "train_sft",
+              "sample_size": 4,
+              "batch_factor": 2
+            }
+          }
+        }
+      ],
+      "benchmark_results": [
+        {
+          "schema_version": "melix.serving_benchmark_result.v1",
+          "job_id": "bench-1",
+          "suite": "smoke",
+          "metrics": [
+            {"name": "bench.smoke.ttft_ms", "value": 24.45, "unit": "ms"},
+            {"name": "bench.smoke.tokens_per_second", "value": 47.08, "unit": "tok/s"}
+          ],
+          "report_path": "/tmp/melix/bench/runs/bench-1/bench-report.md",
+          "report_markdown": "# Melix Bench\\n"
+        }
+      ]
+    }
+    """
 }

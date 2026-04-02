@@ -56,13 +56,18 @@ Close the remaining M7 benchmark-platform gaps, make LoRA production-ready acros
 - add controlled Hugging Face benchmark suites with explicit dataset provenance and queue metadata
 - update the roadmap execution index and progress log to mark M7 completed once the real runner and evidence land
 
-### 6. Benchmark Window UI, CSV Export, And CLI Closure
+### 6. Benchmark CLI And CSV Export Closure
 
-- add Window UI controls for model selection, suite multi-select, sample-size, batch-factor, history inspection, and result visualization
-- add CSV export built from persisted run history
+- add a shared benchmark export bundle decoder in `MelixControlPlaneCore` so Window UI and `melix` CLI render the same persisted benchmark history
+- extend the shared control-plane client with `ops.export_results`
 - expose `melix bench run`, `melix bench list`, and `melix bench export-csv`
 
-### 7. Verification, Metrics, And Runbook Closure
+### 7. Benchmark Window UI Visualization Closure
+
+- add Window UI controls for model selection, suite multi-select, sample-size, batch-factor, history inspection, and result visualization
+- wire Window UI history rendering and CSV export through the shared benchmark export bundle parser instead of bespoke decoding
+
+### 8. Verification, Metrics, And Runbook Closure
 
 - update runbooks, README CLI guidance, and productization verification steps
 - record touched-scope Swift and Python changed-line coverage for each executable slice
@@ -91,7 +96,7 @@ Close the remaining M7 benchmark-platform gaps, make LoRA production-ready acros
 - `melix` CLI exposes LoRA training, LoRA activation, benchmark execution, benchmark listing, and benchmark CSV export
 - Window UI and CLI both use shared control-plane truth
 - LoRA can train from either a local package or a Hugging Face dataset configuration and can activate the resulting adapter into a derived model
-- benchmark results come from real execution, persist per run, can be visualized, and can be exported as CSV
+- benchmark results come from real execution, persist per run, can be exported as CSV, and still need Window UI visualization closure in the final slice
 - M7 is only marked completed after the real benchmark runner and benchmark evidence are committed
 
 ## Assumptions And Constraints

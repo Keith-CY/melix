@@ -135,6 +135,36 @@ struct MelixCLIParserTests {
         #expect(options.json)
     }
 
+    @Test("parses bench list and export-csv commands")
+    func parsesBenchListAndExportCSVCommands() throws {
+        let listCommand = try MelixCLIParser.parse([
+            "bench",
+            "list",
+            "--json",
+        ])
+        let exportCommand = try MelixCLIParser.parse([
+            "bench",
+            "export-csv",
+            "--job-id", "bench-1",
+            "--output", "/tmp/melix/bench-1.csv",
+            "--json",
+        ])
+
+        guard case .benchList(let listOptions) = listCommand else {
+            Issue.record("Expected benchList command")
+            return
+        }
+        guard case .benchExportCSV(let exportOptions) = exportCommand else {
+            Issue.record("Expected benchExportCSV command")
+            return
+        }
+
+        #expect(listOptions.json)
+        #expect(exportOptions.jobID == "bench-1")
+        #expect(exportOptions.outputPath == "/tmp/melix/bench-1.csv")
+        #expect(exportOptions.json)
+    }
+
     @Test("parses lora activate with explicit alias and adapter path")
     func parsesLoraActivateCommand() throws {
         let command = try MelixCLIParser.parse([
@@ -181,6 +211,14 @@ struct MelixCLIParserTests {
             for: ["bench", "run"],
             equals: .missingRequired("--model-id is required for melix bench run.")
         )
+        try assertError(
+            for: ["bench", "export-csv", "--output", "/tmp/out.csv"],
+            equals: .missingRequired("--job-id is required for melix bench export-csv.")
+        )
+        try assertError(
+            for: ["bench", "export-csv", "--job-id", "bench-1"],
+            equals: .missingRequired("--output is required for melix bench export-csv.")
+        )
         try assertError(for: ["bench", "oops"], equals: .usage(MelixCLIParser.usageText))
     }
 
@@ -193,6 +231,7 @@ struct MelixCLIParserTests {
         #expect(MelixCLIError.usage("usage").errorDescription == "usage")
         #expect(MelixCLIError.missingValue("--alpha").errorDescription == "Missing value for --alpha.")
         #expect(MelixCLIError.missingRequired("required").errorDescription == "required")
+        #expect(MelixCLIError.runtime("runtime").errorDescription == "runtime")
     }
 }
 

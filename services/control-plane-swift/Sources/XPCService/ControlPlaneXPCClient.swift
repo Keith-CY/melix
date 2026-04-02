@@ -95,6 +95,14 @@ public struct ControlPlaneBenchRequest: Equatable, Sendable {
     }
 }
 
+public struct ControlPlaneExportResult: Equatable, Sendable {
+    public let exportBundleJSON: String
+
+    public init(exportBundleJSON: String) {
+        self.exportBundleJSON = exportBundleJSON
+    }
+}
+
 public protocol ControlPlaneXPCClient: Sendable {
     func handshake() async throws -> Melix_Controlplane_V1_HandshakeResponse
     func subscribe(lastSeenSeq: UInt64) async -> AsyncStream<Melix_Controlplane_V1_ControlPlaneEvent>
@@ -124,6 +132,7 @@ public protocol ControlPlaneXPCClient: Sendable {
     ) async throws -> Melix_Controlplane_V1_ImageJobSummary
     func runDoctor() async throws -> String
     func runBench(_ request: ControlPlaneBenchRequest) async throws -> ControlPlaneBenchResult
+    func exportResults(outputDir: String) async throws -> ControlPlaneExportResult
     func cancelRequest(requestID: String) async throws -> Bool
     func applyServerSessionGatewayAccess(
         serverSessionID: String,
@@ -172,6 +181,18 @@ public extension ControlPlaneXPCClient {
         throw ControlPlaneXPCClientError.requestFailed(
             code: "unimplemented",
             message: "Bench is not implemented for this control-plane client."
+        )
+    }
+
+    func exportResults() async throws -> ControlPlaneExportResult {
+        try await exportResults(outputDir: "")
+    }
+
+    func exportResults(outputDir: String) async throws -> ControlPlaneExportResult {
+        _ = outputDir
+        throw ControlPlaneXPCClientError.requestFailed(
+            code: "unimplemented",
+            message: "Export results is not implemented for this control-plane client."
         )
     }
 
@@ -348,6 +369,12 @@ public actor LocalControlPlaneXPCClient: ControlPlaneXPCClient {
                 reportMarkdown: response.ops.reportMarkdown,
                 metrics: response.ops.metrics.values
             )
+        }
+    }
+
+    public func exportResults(outputDir: String = "") async throws -> ControlPlaneExportResult {
+        try await execute(makeExportResultsRequest(outputDir: outputDir)) { response in
+            ControlPlaneExportResult(exportBundleJSON: response.ops.exportBundleJson)
         }
     }
 
@@ -552,6 +579,16 @@ public actor LocalControlPlaneXPCClient: ControlPlaneXPCClient {
         request.ops.runBench.modelID = bench.modelID
         request.ops.runBench.suites = bench.suites
         request.ops.runBench.parameters = bench.parameters
+        return request
+    }
+
+    private func makeExportResultsRequest(outputDir: String) -> Melix_Controlplane_V1_ControlPlaneRequest {
+        var request = Melix_Controlplane_V1_ControlPlaneRequest()
+        request.requestID = "menubar-export-results"
+        request.commandType = "ops.export_results"
+        request.ops = Melix_Controlplane_V1_OpsCommand()
+        request.ops.exportResults = Melix_Controlplane_V1_ExportResults()
+        request.ops.exportResults.outputDir = outputDir
         return request
     }
 

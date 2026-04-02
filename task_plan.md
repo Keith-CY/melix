@@ -24,9 +24,11 @@ Close the remaining M7 gaps on `main`, make LoRA product-ready across Window UI 
    - status: completed
 5. Real benchmark runner and M7 closure
    - status: completed
-6. Benchmark Window UI, CSV export, and CLI closure
+6. Benchmark CLI and CSV export closure
+   - status: completed
+7. Benchmark Window UI visualization closure
    - status: pending
-7. Final verification, metrics, and progress closure
+8. Final verification, metrics, and progress closure
    - status: pending
 
 ## Acceptance
@@ -53,6 +55,7 @@ Close the remaining M7 gaps on `main`, make LoRA product-ready across Window UI 
   - LoRA Window UI and CLI exposure
   - benchmark core runner, per-run persistence, and export compatibility
   - controlled Hugging Face benchmark suites and M7 closure
+  - benchmark CLI listing and CSV export closure
 - Remaining slices:
-  - benchmark Window UI, CSV export, and CLI closure
+  - benchmark Window UI visualization closure
   - final verification, metrics, and progress closure
