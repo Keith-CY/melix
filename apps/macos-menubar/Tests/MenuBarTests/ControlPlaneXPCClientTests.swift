@@ -51,6 +51,22 @@ struct ControlPlaneXPCClientTests {
         #expect(snapshot.queues.lanes.contains(where: { $0.laneID == "text.decode.interactive" }))
     }
 
+    @Test("local client bridges subscription streams and unsubscribes on termination")
+    func localClientBridgesSubscriptionStreams() async {
+        let service = StreamingExecuteControlPlaneService()
+        let client = LocalControlPlaneXPCClient(service: service)
+        let stream = await client.subscribe(lastSeenSeq: 12)
+        var iterator = stream.makeAsyncIterator()
+
+        let firstEvent = await iterator.next()
+        _ = iterator
+
+        #expect(await service.lastSubscriptionRequest == 12)
+        #expect(firstEvent?.eventType == "bench.progress")
+        try? await Task.sleep(nanoseconds: 10_000_000)
+        #expect(await service.unsubscribedIDs == ["streaming"])
+    }
+
     @Test("load and unload surface request failures for unknown models")
     func loadAndUnloadSurfaceRequestFailures() async throws {
         let service = ControlPlaneService()
@@ -231,6 +247,31 @@ struct ControlPlaneXPCClientTests {
         #expect(result.artifact.manifestBytes == 32)
     }
 
+    @Test("local client builds quantize requests with a typed quant profile")
+    func localClientBuildsQuantizeRequestsWithTypedQuantProfile() async throws {
+        let service = RecordingExecuteControlPlaneService()
+        let client = LocalControlPlaneXPCClient(service: service)
+
+        _ = try await client.runModelOperation(
+            modelID: "melix-dev-text",
+            operation: "quantize",
+            outputDir: "/tmp/melix-quantize",
+            quantProfileID: "q6",
+            weightQuant: "q6",
+            kvQuant: "q4",
+            ext: ["target_repo": "melix/demo-quantized"]
+        )
+        let request = try #require(await service.lastExecuteRequest)
+
+        #expect(request.model.runOperation.generateManifest)
+        #expect(request.model.runOperation.runSmokeTest)
+        #expect(request.model.runOperation.quantProfile.algorithm == "oq")
+        #expect(request.model.runOperation.quantProfile.schemaVersion == "melix.quant_profile.v1")
+        #expect(request.model.runOperation.quantProfile.quantProfileID == "q6")
+        #expect(request.model.runOperation.quantProfile.weightQuant == "q6")
+        #expect(request.model.runOperation.quantProfile.kvQuant == "q4")
+    }
+
     @Test("local client runs doctor and bench through control-plane execute")
     func localClientRunsDoctorAndBench() async throws {
         let reportPath = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("melix-xpc-bench.md").path
@@ -265,10 +306,11 @@ struct ControlPlaneXPCClientTests {
                 return event
             }(),
         ])
+        let textClient = XPCScriptedChatWorkerClient(events: [])
         let service = ControlPlaneService(
             modelCatalog: ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels()),
             workerRegistry: WorkerRegistry(
-                defaultTextClient: NullWorkerClient(),
+                defaultTextClient: textClient,
                 modelOperationsClient: modelOpsClient
             )
         )
@@ -430,6 +472,31 @@ struct ControlPlaneXPCClientTests {
         #expect(request.server.applyGatewayAccess.hasPrimaryKey == false)
     }
 
+    @Test("runBench builds ops.run_bench request with explicit model suites and parameters")
+    func runBenchBuildsTypedRequestWithExplicitModelSuitesAndParameters() async throws {
+        let service = RecordingExecuteControlPlaneService()
+        let client = LocalControlPlaneXPCClient(service: service)
+
+        _ = try await client.runBench(
+            ControlPlaneBenchRequest(
+                modelID: "melix-dev-text",
+                suites: ["smoke", "latency"],
+                parameters: [
+                    "sample_size": "8",
+                    "batch_factor": "2",
+                ]
+            )
+        )
+        let request = try #require(await service.lastExecuteRequest)
+
+        #expect(request.requestID == "menubar-run-bench")
+        #expect(request.commandType == "ops.run_bench")
+        #expect(request.ops.runBench.modelID == "melix-dev-text")
+        #expect(request.ops.runBench.suites == ["smoke", "latency"])
+        #expect(request.ops.runBench.parameters["sample_size"] == "8")
+        #expect(request.ops.runBench.parameters["batch_factor"] == "2")
+    }
+
     @Test("local client surfaces cancel request failures")
     func localClientSurfacesCancelRequestFailures() async throws {
         let service = FailingExecuteControlPlaneService(
@@ -550,6 +617,21 @@ struct ControlPlaneXPCClientTests {
                 )
             )
         }
+    }
+
+    @Test("fake control-plane client records bench actions")
+    func fakeControlPlaneClientRecordsBenchActions() async throws {
+        let client = FakeControlPlaneXPCClient()
+
+        _ = try await client.runBench(
+            ControlPlaneBenchRequest(
+                modelID: "melix-dev-text",
+                suites: ["smoke"],
+                parameters: ["sample_size": "8"]
+            )
+        )
+
+        #expect(await client.recordedActions.contains("bench"))
     }
 
     @Test("local client starts chat through the control plane and streams typed chat events")
@@ -749,6 +831,43 @@ private actor RecordingExecuteControlPlaneService: ControlPlaneExecuting {
     }
 }
 
+private actor StreamingExecuteControlPlaneService: ControlPlaneExecuting {
+    private(set) var lastSubscriptionRequest: UInt64?
+    private(set) var unsubscribedIDs: [String] = []
+
+    func handshake(_ request: Melix_Controlplane_V1_HandshakeRequest) async throws -> Melix_Controlplane_V1_HandshakeResponse {
+        _ = request
+        return Melix_Controlplane_V1_HandshakeResponse()
+    }
+
+    func subscribe(_ request: Melix_Controlplane_V1_SubscribeRequest) async -> ControlPlaneSubscription {
+        lastSubscriptionRequest = request.lastSeenSeq
+        return ControlPlaneSubscription(
+            subscriptionID: "streaming",
+            stream: AsyncStream { continuation in
+                var event = Melix_Controlplane_V1_ControlPlaneEvent()
+                event.eventType = "bench.progress"
+                continuation.yield(event)
+                continuation.finish()
+            }
+        )
+    }
+
+    func unsubscribe(_ subscriptionID: String) async {
+        unsubscribedIDs.append(subscriptionID)
+    }
+
+    func startChat(_ request: ControlPlaneChatRequest) async throws -> ControlPlaneChatExecution {
+        _ = request
+        throw ControlPlaneChatExecutionError.unavailable
+    }
+
+    func execute(_ request: Melix_Controlplane_V1_ControlPlaneRequest) async throws -> Melix_Controlplane_V1_ControlPlaneResponse {
+        _ = request
+        return Melix_Controlplane_V1_ControlPlaneResponse()
+    }
+}
+
 private actor XPCScriptedChatWorkerClient: WorkerRoutingClient {
     private let events: [Melix_Worker_V1_ExecuteEvent]
 
@@ -782,6 +901,7 @@ private actor XPCScriptedChatWorkerClient: WorkerRoutingClient {
         request: Melix_Worker_V1_LoadModelRequest
     ) async throws -> Melix_Worker_V1_LoadModelResponse {
         var response = Melix_Worker_V1_LoadModelResponse()
+        response.ok = true
         response.modelHandle = request.model.modelID
         return response
     }

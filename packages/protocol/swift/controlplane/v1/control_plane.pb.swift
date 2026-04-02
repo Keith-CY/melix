@@ -2580,6 +2580,8 @@ public struct Melix_Controlplane_V1_RunBench: Sendable {
 
   public var parameters: Dictionary<String,String> = [:]
 
+  public var modelID: String = String()
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -7946,7 +7948,7 @@ extension Melix_Controlplane_V1_RunDoctor: SwiftProtobuf.Message, SwiftProtobuf.
 
 extension Melix_Controlplane_V1_RunBench: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".RunBench"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}suites\0\u{1}parameters\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}suites\0\u{1}parameters\0\u{3}model_id\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -7956,6 +7958,7 @@ extension Melix_Controlplane_V1_RunBench: SwiftProtobuf.Message, SwiftProtobuf._
       switch fieldNumber {
       case 1: try { try decoder.decodeRepeatedStringField(value: &self.suites) }()
       case 2: try { try decoder.decodeMapField(fieldType: SwiftProtobuf._ProtobufMap<SwiftProtobuf.ProtobufString,SwiftProtobuf.ProtobufString>.self, value: &self.parameters) }()
+      case 3: try { try decoder.decodeSingularStringField(value: &self.modelID) }()
       default: break
       }
     }
@@ -7968,12 +7971,16 @@ extension Melix_Controlplane_V1_RunBench: SwiftProtobuf.Message, SwiftProtobuf._
     if !self.parameters.isEmpty {
       try visitor.visitMapField(fieldType: SwiftProtobuf._ProtobufMap<SwiftProtobuf.ProtobufString,SwiftProtobuf.ProtobufString>.self, value: self.parameters, fieldNumber: 2)
     }
+    if !self.modelID.isEmpty {
+      try visitor.visitSingularStringField(value: self.modelID, fieldNumber: 3)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: Melix_Controlplane_V1_RunBench, rhs: Melix_Controlplane_V1_RunBench) -> Bool {
     if lhs.suites != rhs.suites {return false}
     if lhs.parameters != rhs.parameters {return false}
+    if lhs.modelID != rhs.modelID {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

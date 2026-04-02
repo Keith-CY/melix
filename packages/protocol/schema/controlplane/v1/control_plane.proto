@@ -335,6 +335,7 @@ message RunDoctor {}
 message RunBench {
   repeated string suites = 1;
   map<string, string> parameters = 2;
+  string model_id = 3;
 }
 message RunEvaluation {
   string suite_id = 1;

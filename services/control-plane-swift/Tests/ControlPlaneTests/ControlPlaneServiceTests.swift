@@ -351,10 +351,11 @@ struct ControlPlaneServiceTests {
             }(),
         ])
 
+        let textClient = ScriptedChatWorkerClient(events: [])
         let service = ControlPlaneService(
             modelCatalog: ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels()),
             workerRegistry: WorkerRegistry(
-                defaultTextClient: NullWorkerClient(),
+                defaultTextClient: textClient,
                 modelOperationsClient: modelOpsClient
             )
         )
@@ -1001,10 +1002,11 @@ struct ControlPlaneServiceTests {
             response.supportedModalities = ["text"]
             return response
         }())
+        let textClient = ScriptedChatWorkerClient(events: [])
         let service = ControlPlaneService(
             modelCatalog: ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels()),
             workerRegistry: WorkerRegistry(
-                defaultTextClient: NullWorkerClient(),
+                defaultTextClient: textClient,
                 modelOperationsClient: modelOpsClient
             )
         )
@@ -1084,10 +1086,11 @@ struct ControlPlaneServiceTests {
                 return event
             }(),
         ])
+        let textClient = ScriptedChatWorkerClient(events: [])
         let service = ControlPlaneService(
             modelCatalog: ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels()),
             workerRegistry: WorkerRegistry(
-                defaultTextClient: NullWorkerClient(),
+                defaultTextClient: textClient,
                 modelOperationsClient: modelOpsClient
             )
         )
@@ -1150,10 +1153,11 @@ struct ControlPlaneServiceTests {
                 return event
             }(),
         ])
+        let textClient = ScriptedChatWorkerClient(events: [])
         let service = ControlPlaneService(
             modelCatalog: ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels()),
             workerRegistry: WorkerRegistry(
-                defaultTextClient: NullWorkerClient(),
+                defaultTextClient: textClient,
                 modelOperationsClient: modelOpsClient
             )
         )
@@ -1644,10 +1648,11 @@ struct ControlPlaneServiceTests {
                 return event
             }(),
         ])
+        let textClient = ScriptedChatWorkerClient(events: [])
         let service = ControlPlaneService(
             modelCatalog: ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels()),
             workerRegistry: WorkerRegistry(
-                defaultTextClient: NullWorkerClient(),
+                defaultTextClient: textClient,
                 modelOperationsClient: modelOpsClient
             )
         )
@@ -1675,6 +1680,120 @@ struct ControlPlaneServiceTests {
         #expect(response.ops.benchmarkResults[0].metrics[0].unit == "ms")
         #expect(response.ops.benchmarkResults[0].metrics[0].value == 24.45)
         #expect(snapshot.ops.metrics.values["bench.smoke.ttft_ms"] == 24.45)
+    }
+
+    @Test("execute routes ops.run_bench to the explicit requested model when model_id is provided")
+    func executeRoutesOpsRunBenchToExplicitRequestedModel() async throws {
+        let reportPath = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("melix-bench-explicit-report.md").path
+        try "# Melix Bench\n".write(toFile: reportPath, atomically: true, encoding: .utf8)
+
+        let modelOpsClient = ScriptedModelOperationsWorkerClient()
+        await modelOpsClient.setBenchEvents([
+            {
+                var event = Melix_Worker_V1_RunBenchEvent()
+                event.started = Melix_Worker_V1_BenchStarted()
+                event.started.jobID = "bench-explicit"
+                return event
+            }(),
+            {
+                var event = Melix_Worker_V1_RunBenchEvent()
+                event.completed = Melix_Worker_V1_BenchCompleted()
+                event.completed.reportPath = reportPath
+                return event
+            }(),
+        ])
+        let catalog = ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels())
+        _ = await catalog.loadModel(id: "melix-dev-text", dispatchHandle: "melix-dev-text::explicit")
+        let service = ControlPlaneService(
+            modelCatalog: catalog,
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                modelOperationsClient: modelOpsClient
+            )
+        )
+
+        let response = try await service.execute(makeRunBenchRequest(modelID: "melix-dev-text"))
+        let lastRequest = try #require(await modelOpsClient.lastBenchRequest)
+
+        #expect(response.ok)
+        #expect(lastRequest.modelHandle == "melix-dev-text::explicit")
+        #expect(response.ops.benchmarkJob.jobID == "bench-explicit")
+        #expect(response.ops.benchmarkJob.modelID == "melix-dev-text")
+    }
+
+    @Test("execute rejects ops.run_bench when the requested model is not loaded")
+    func executeRejectsOpsRunBenchWhenRequestedModelIsNotLoaded() async throws {
+        let modelOpsClient = ScriptedModelOperationsWorkerClient()
+        let service = ControlPlaneService(
+            modelCatalog: ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels()),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                modelOperationsClient: modelOpsClient
+            )
+        )
+
+        let response = try await service.execute(makeRunBenchRequest(modelID: "missing-model"))
+
+        #expect(!response.ok)
+        #expect(response.error.code == "not_found")
+        #expect(response.error.message.contains("missing-model"))
+        #expect(await modelOpsClient.lastBenchRequest == nil)
+    }
+
+    @Test("execute rejects ops.run_bench when no preferred benchmark target exists")
+    func executeRejectsOpsRunBenchWhenNoPreferredTargetExists() async throws {
+        let modelOpsClient = ScriptedModelOperationsWorkerClient()
+        let service = ControlPlaneService(
+            modelCatalog: ModelCatalog(seedModels: []),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                modelOperationsClient: modelOpsClient
+            )
+        )
+
+        let response = try await service.execute(makeRunBenchRequest())
+
+        #expect(!response.ok)
+        #expect(response.error.code == "not_found")
+        #expect(response.error.message.contains("preferred benchmark model"))
+        #expect(await modelOpsClient.lastBenchRequest == nil)
+    }
+
+    @Test("execute surfaces failed benchmark jobs with the explicit benchmark model id")
+    func executeSurfacesFailedBenchmarkJobs() async throws {
+        let modelOpsClient = ScriptedModelOperationsWorkerClient()
+        await modelOpsClient.setBenchEvents([
+            {
+                var event = Melix_Worker_V1_RunBenchEvent()
+                event.started = Melix_Worker_V1_BenchStarted()
+                event.started.jobID = "bench-failed"
+                return event
+            }(),
+            {
+                var event = Melix_Worker_V1_RunBenchEvent()
+                event.failed = Melix_Worker_V1_BenchFailed()
+                event.failed.error.code = "runtime_error"
+                event.failed.error.message = "benchmark failed"
+                return event
+            }(),
+        ])
+        let catalog = ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels())
+        _ = await catalog.loadModel(id: "melix-dev-text", dispatchHandle: "melix-dev-text::explicit")
+        let service = ControlPlaneService(
+            modelCatalog: catalog,
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                modelOperationsClient: modelOpsClient
+            )
+        )
+
+        let response = try await service.execute(makeRunBenchRequest(modelID: "melix-dev-text"))
+
+        #expect(!response.ok)
+        #expect(response.error.code == "runtime_error")
+        #expect(response.ops.benchmarkJob.jobID == "bench-failed")
+        #expect(response.ops.benchmarkJob.modelID == "melix-dev-text")
+        #expect(response.ops.benchmarkJob.status == "failed")
     }
 
     @Test("execute handles ops.run_evaluation through the model-operations worker")
@@ -3559,12 +3678,13 @@ struct ControlPlaneServiceTests {
         return request
     }
 
-    private func makeRunBenchRequest() -> Melix_Controlplane_V1_ControlPlaneRequest {
+    private func makeRunBenchRequest(modelID: String = "") -> Melix_Controlplane_V1_ControlPlaneRequest {
         var request = Melix_Controlplane_V1_ControlPlaneRequest()
         request.requestID = "req-ops-bench"
         request.commandType = "ops.run_bench"
         request.ops = Melix_Controlplane_V1_OpsCommand()
         request.ops.runBench = Melix_Controlplane_V1_RunBench()
+        request.ops.runBench.modelID = modelID
         request.ops.runBench.suites = ["smoke", "latency"]
         return request
     }

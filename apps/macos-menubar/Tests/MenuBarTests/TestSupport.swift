@@ -400,7 +400,8 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
         return doctorResponse
     }
 
-    func runBench() async throws -> ControlPlaneBenchResult {
+    func runBench(_ request: ControlPlaneBenchRequest) async throws -> ControlPlaneBenchResult {
+        _ = request
         recordedActions.append("bench")
         if let benchError {
             throw benchError

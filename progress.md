@@ -14,6 +14,21 @@
 - Metrics report:
   - changed-line coverage for the touched executable scope: `N/A`
   - reason: this commit records documentation and execution-tracking updates only and does not change executable source files
+- Landed the shared operator client and CLI foundation slice:
+  - extended `RunBench` with explicit `model_id` selection and regenerated Swift/Python/descriptors
+  - moved `ControlPlaneXPCClient` into `services/control-plane-swift` so Window UI and CLI can share one local operator client
+  - taught `ControlPlaneService` benchmark execution to resolve explicit model IDs, lazy-load a text benchmark target, and preserve failed benchmark job summaries in error responses
+  - added the root `melix` Swift package products and the first public commands for `lora list`, `lora train`, `lora activate`, and `bench run`
+- Verification summary for the shared operator client and CLI foundation:
+  - `make proto`: pass
+  - `swift test --enable-code-coverage --filter MelixCLITests`: `18 tests passed`
+  - `swift test --package-path services/control-plane-swift --enable-code-coverage --filter ControlPlaneServiceTests`: `103 tests passed`
+  - `swift test --package-path apps/macos-menubar --enable-code-coverage --filter ControlPlaneXPCClientTests`: `21 tests passed`
+- Metrics report:
+  - `Sources/MelixCLICore/MelixCLI.swift`: changed-line coverage `99.63%` (`270/271`)
+  - `services/control-plane-swift/Sources/XPCService/ControlPlaneService.swift`: changed-line coverage `100.00%` (`47/47`)
+  - `services/control-plane-swift/Sources/XPCService/ControlPlaneXPCClient.swift`: changed-line coverage `100.00%` (`374/374`)
+  - generated protobuf outputs, `Package.swift`, and `Package.resolved` are excluded from changed-line coverage because they are generated or manifest files rather than executable runtime sources
 
 ## 2026-04-01
 

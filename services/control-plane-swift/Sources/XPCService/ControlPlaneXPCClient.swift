@@ -1,5 +1,4 @@
 import Foundation
-import MelixControlPlaneCore
 import MelixControlPlaneProtocol
 
 public enum ControlPlaneXPCClientError: Error, Equatable {
@@ -80,6 +79,22 @@ public struct ControlPlaneBenchResult: Equatable, Sendable {
     }
 }
 
+public struct ControlPlaneBenchRequest: Equatable, Sendable {
+    public let modelID: String
+    public let suites: [String]
+    public let parameters: [String: String]
+
+    public init(
+        modelID: String = "",
+        suites: [String] = [],
+        parameters: [String: String] = [:]
+    ) {
+        self.modelID = modelID
+        self.suites = suites
+        self.parameters = parameters
+    }
+}
+
 public protocol ControlPlaneXPCClient: Sendable {
     func handshake() async throws -> Melix_Controlplane_V1_HandshakeResponse
     func subscribe(lastSeenSeq: UInt64) async -> AsyncStream<Melix_Controlplane_V1_ControlPlaneEvent>
@@ -108,7 +123,7 @@ public protocol ControlPlaneXPCClient: Sendable {
         _ request: ControlPlaneImageEditRequest
     ) async throws -> Melix_Controlplane_V1_ImageJobSummary
     func runDoctor() async throws -> String
-    func runBench() async throws -> ControlPlaneBenchResult
+    func runBench(_ request: ControlPlaneBenchRequest) async throws -> ControlPlaneBenchResult
     func cancelRequest(requestID: String) async throws -> Bool
     func applyServerSessionGatewayAccess(
         serverSessionID: String,
@@ -149,6 +164,11 @@ public extension ControlPlaneXPCClient {
     }
 
     func runBench() async throws -> ControlPlaneBenchResult {
+        try await runBench(ControlPlaneBenchRequest())
+    }
+
+    func runBench(_ request: ControlPlaneBenchRequest) async throws -> ControlPlaneBenchResult {
+        _ = request
         throw ControlPlaneXPCClientError.requestFailed(
             code: "unimplemented",
             message: "Bench is not implemented for this control-plane client."
@@ -321,8 +341,8 @@ public actor LocalControlPlaneXPCClient: ControlPlaneXPCClient {
         }
     }
 
-    public func runBench() async throws -> ControlPlaneBenchResult {
-        try await execute(makeRunBenchRequest()) { response in
+    public func runBench(_ request: ControlPlaneBenchRequest) async throws -> ControlPlaneBenchResult {
+        try await execute(makeRunBenchRequest(request)) { response in
             ControlPlaneBenchResult(
                 reportPath: response.ops.reportPath,
                 reportMarkdown: response.ops.reportMarkdown,
@@ -521,12 +541,17 @@ public actor LocalControlPlaneXPCClient: ControlPlaneXPCClient {
         return request
     }
 
-    private func makeRunBenchRequest() -> Melix_Controlplane_V1_ControlPlaneRequest {
+    private func makeRunBenchRequest(
+        _ bench: ControlPlaneBenchRequest
+    ) -> Melix_Controlplane_V1_ControlPlaneRequest {
         var request = Melix_Controlplane_V1_ControlPlaneRequest()
         request.requestID = "menubar-run-bench"
         request.commandType = "ops.run_bench"
         request.ops = Melix_Controlplane_V1_OpsCommand()
         request.ops.runBench = Melix_Controlplane_V1_RunBench()
+        request.ops.runBench.modelID = bench.modelID
+        request.ops.runBench.suites = bench.suites
+        request.ops.runBench.parameters = bench.parameters
         return request
     }
 

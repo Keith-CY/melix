@@ -583,8 +583,28 @@ public actor ControlPlaneService {
             return errorResponse(for: request, code: "unavailable", message: "Model operations worker is unavailable.")
         }
 
+        let requestedModelID = command.modelID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let benchmarkModelID = await resolvedBenchmarkModelID(preferred: requestedModelID)
+        guard !benchmarkModelID.isEmpty else {
+            let modelLabel = requestedModelID.isEmpty ? "preferred benchmark model" : requestedModelID
+            return errorResponse(
+                for: request,
+                code: "not_found",
+                message: "No loaded benchmark target is available for \(modelLabel)."
+            )
+        }
+        let modelHandle: String
+        do {
+            modelHandle = try await benchmarkModelHandle(for: benchmarkModelID)
+        } catch {
+            return errorResponse(
+                for: request,
+                code: "not_found",
+                message: "No loaded benchmark target is available for \(benchmarkModelID)."
+            )
+        }
+
         var workerRequest = Melix_Worker_V1_RunBenchRequest()
-        let modelHandle = await preferredModelOperationsHandle()
         let requestedSuites = command.suites.isEmpty ? ["smoke", "latency"] : Array(command.suites)
         workerRequest.modelHandle = modelHandle
         workerRequest.suites = requestedSuites
@@ -603,7 +623,7 @@ public actor ControlPlaneService {
                     benchJobID = started.jobID
                     reply.benchmarkJob = makeBenchmarkJobSummary(
                         jobID: started.jobID,
-                        modelHandle: modelHandle,
+                        modelID: benchmarkModelID,
                         suites: requestedSuites,
                         parameters: command.parameters,
                         status: "running",
@@ -623,7 +643,7 @@ public actor ControlPlaneService {
                     let resolvedJobID = benchJobID.isEmpty ? "bench-unknown" : benchJobID
                     reply.benchmarkJob = makeBenchmarkJobSummary(
                         jobID: resolvedJobID,
-                        modelHandle: modelHandle,
+                        modelID: benchmarkModelID,
                         suites: requestedSuites,
                         parameters: command.parameters,
                         status: "completed",
@@ -641,7 +661,7 @@ public actor ControlPlaneService {
                     let resolvedJobID = benchJobID.isEmpty ? "bench-unknown" : benchJobID
                     reply.benchmarkJob = makeBenchmarkJobSummary(
                         jobID: resolvedJobID,
-                        modelHandle: modelHandle,
+                        modelID: benchmarkModelID,
                         suites: requestedSuites,
                         parameters: command.parameters,
                         status: "failed",
@@ -661,7 +681,8 @@ public actor ControlPlaneService {
                 return errorResponse(
                     for: request,
                     code: failedError.code.isEmpty ? "unknown" : failedError.code,
-                    message: failedError.message.isEmpty ? "Bench request failed." : failedError.message
+                    message: failedError.message.isEmpty ? "Bench request failed." : failedError.message,
+                    ops: reply
                 )
             }
 
@@ -1533,6 +1554,27 @@ public actor ControlPlaneService {
         return ""
     }
 
+    private func resolvedBenchmarkModelID(preferred modelID: String) async -> String {
+        if !modelID.isEmpty {
+            return modelID
+        }
+        let models = await modelCatalog.listModels()
+
+        for model in models where model.kind == "text" || model.capabilityClass == .modelCapabilityText {
+            return model.modelID
+        }
+        return models.first?.modelID ?? ""
+    }
+
+    private func benchmarkModelHandle(for modelID: String) async throws -> String {
+        try await OnDemandModelLoader.ensureTextModelReady(
+            modelID: modelID,
+            modelCatalog: modelCatalog,
+            workerRegistry: workerRegistry,
+            metricsStore: metricsStore
+        )
+    }
+
     private func publishBenchProgress(jobID: String, suite: String, pct: Float) async {
         var event = Melix_Controlplane_V1_ControlPlaneEvent()
         event.eventType = "bench.progress"
@@ -1547,7 +1589,7 @@ public actor ControlPlaneService {
 
     private func makeBenchmarkJobSummary(
         jobID: String,
-        modelHandle: String,
+        modelID: String,
         suites: [String],
         parameters: [String: String],
         status: String,
@@ -1556,8 +1598,7 @@ public actor ControlPlaneService {
         var summary = Melix_Controlplane_V1_BenchmarkJobSummary()
         summary.schemaVersion = "melix.serving_benchmark_job.v1"
         summary.jobID = jobID
-        let derivedModelID = modelHandle.components(separatedBy: "::").first(where: { !$0.isEmpty }) ?? ""
-        summary.modelID = derivedModelID.isEmpty ? "melix-dev-text" : derivedModelID
+        summary.modelID = modelID.isEmpty ? "melix-dev-text" : modelID
         summary.suites = suites
         summary.parameters = parameters
         summary.status = status
@@ -1950,13 +1991,17 @@ public actor ControlPlaneService {
     private func errorResponse(
         for request: Melix_Controlplane_V1_ControlPlaneRequest,
         code: String,
-        message: String
+        message: String,
+        ops: Melix_Controlplane_V1_OpsReply? = nil
     ) -> Melix_Controlplane_V1_ControlPlaneResponse {
         var response = baseResponse(for: request)
         response.ok = false
         response.error = Melix_Controlplane_V1_ErrorStatus()
         response.error.code = code
         response.error.message = message
+        if let ops {
+            response.ops = ops
+        }
         return response
     }
 
