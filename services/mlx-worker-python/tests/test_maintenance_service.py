@@ -31,6 +31,7 @@ from worker.productization.benchmark_schemas import (
     build_serving_benchmark_job,
     build_serving_benchmark_results,
 )
+from worker.productization.benchmark_suites import BenchmarkSuiteCatalog
 from worker.model_registry.catalog import WorkerModelCatalog
 from worker.registry import WorkerRegistry
 from worker.engine.maintenance_core import MaintenanceCore
@@ -126,6 +127,54 @@ class EmptyThenTokenBenchmarkBackend:
             return
         yield RuntimeTokenEvent(text="")
         yield RuntimeTokenEvent(text="token", completion_tokens=1)
+
+
+class FakeBenchmarkHFDatasetFetcher:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, dict[str, str]]] = []
+
+    def __call__(self, endpoint: str, params: dict[str, str]) -> dict[str, object]:
+        self.calls.append((endpoint, dict(params)))
+        dataset = params.get("dataset", "")
+        offset = params.get("offset", "0")
+        if endpoint == "rows" and offset != "0":
+            return {"rows": []}
+
+        if dataset == "HuggingFaceH4/ultrachat_200k":
+            if endpoint == "rows":
+                return {
+                    "rows": [
+                        {
+                            "row": {
+                                "messages": [
+                                    {"role": "user", "content": "Say hi."},
+                                    {"role": "assistant", "content": "Hi."},
+                                ]
+                            }
+                        },
+                        {
+                            "row": {
+                                "messages": [
+                                    {"role": "user", "content": "Say bye."},
+                                    {"role": "assistant", "content": "Bye."},
+                                ]
+                            }
+                        },
+                    ]
+                }
+            return {"splits": [{"dataset": dataset, "config": "default", "split": "train_sft"}]}
+
+        if dataset == "databricks/databricks-dolly-15k":
+            if endpoint == "rows":
+                return {
+                    "rows": [
+                        {"row": {"instruction": "List two colors.", "response": "Red and blue."}},
+                        {"row": {"instruction": "List two animals.", "response": "Cat and dog."}},
+                    ]
+                }
+            return {"splits": [{"dataset": dataset, "config": "default", "split": "train"}]}
+
+        raise AssertionError(f"Unexpected benchmark fetch: endpoint={endpoint} dataset={dataset}")
 
 
 class FakeHubCatalog:
@@ -306,6 +355,7 @@ def build_service(
     runner: MLXLMRunner | None = None,
     hub_catalog: FakeHubCatalog | None = None,
     registry: WorkerRegistry | None = None,
+    benchmark_fetcher: FakeBenchmarkHFDatasetFetcher | None = None,
 ) -> WorkerMaintenanceService:
     registry = registry or WorkerRegistry(
         runtime=MLXTextRuntime(backend=DeterministicTextBackend()),
@@ -316,14 +366,16 @@ def build_service(
         jobs_root=tmp_path / "model-ops",
         hub_catalog=hub_catalog,
     )
-    if runner is not None:
-        service._core = MaintenanceCore(
-            registry,
-            jobs_root=tmp_path / "model-ops",
-            hub_catalog=hub_catalog,
-            lora_training_pipeline=LoRATrainingPipeline(runner=runner),
-            adapter_activation_pipeline=AdapterActivationPipeline(runner=runner),
-        )
+    service._core = MaintenanceCore(
+        registry,
+        jobs_root=tmp_path / "model-ops",
+        hub_catalog=hub_catalog,
+        lora_training_pipeline=LoRATrainingPipeline(runner=runner or DeterministicLoRARunner()),
+        adapter_activation_pipeline=AdapterActivationPipeline(runner=runner or DeterministicLoRARunner()),
+        benchmark_suite_catalog=BenchmarkSuiteCatalog(
+            hf_dataset_fetcher=benchmark_fetcher or FakeBenchmarkHFDatasetFetcher()
+        ),
+    )
     return service
 
 
@@ -1355,19 +1407,29 @@ def test_benchmark_helper_defaults_cover_invalid_parameters_and_sparse_samples(t
         runtime=MLXTextRuntime(backend=EmptyThenTokenBenchmarkBackend()),
         model_catalog=WorkerModelCatalog(),
     )
-    core = MaintenanceCore(registry, jobs_root=tmp_path / "model-ops")
+    catalog = BenchmarkSuiteCatalog(hf_dataset_fetcher=FakeBenchmarkHFDatasetFetcher())
+    core = MaintenanceCore(
+        registry,
+        jobs_root=tmp_path / "model-ops",
+        benchmark_suite_catalog=catalog,
+    )
     loaded = registry.load_model(WorkerModelCatalog.dev_text_model())
+    resolved_suite = catalog.resolve_suite(
+        "smoke",
+        jobs_root=tmp_path / "model-ops",
+        parameters={"sample_size": "oops", "batch_factor": "oops"},
+    )
 
     sample = core._measure_text_bench_sample(
         loaded_model=loaded,
-        suite="smoke",
-        sample_index=0,
+        suite=resolved_suite,
+        prompt=resolved_suite.prompt_batches[0],
         parameters={"max_output_tokens": "not-a-number"},
     )
 
     assert sample.completion_tokens == 1
-    assert MaintenanceCore._benchmark_sample_count("smoke", {"sample_size": "oops"}) == 1
-    assert MaintenanceCore._benchmark_sample_count("latency", {"sample_size": "oops"}) == 5
+    assert resolved_suite.sample_size == 1
+    assert resolved_suite.batch_factor == 1
     assert MaintenanceCore._benchmark_max_output_tokens({"max_output_tokens": "oops"}) == 8
     assert MaintenanceCore._percentile([], 95.0) == 0.0
     assert MaintenanceCore._percentile([1.234], 95.0) == 1.23
@@ -1712,6 +1774,7 @@ def test_run_bench_persists_job_manifest_and_per_suite_results(tmp_path: Path) -
         output_dir=str(run_dir),
         created_at_unix_ms=job_payload["created_at_unix_ms"],
         updated_at_unix_ms=job_payload["updated_at_unix_ms"],
+        suite_metadata=job_payload["suite_metadata"],
     )
     expected_results = {
         result.suite: result.to_dict()
@@ -1727,8 +1790,48 @@ def test_run_bench_persists_job_manifest_and_per_suite_results(tmp_path: Path) -
     assert job_payload == expected_job.to_dict()
     assert job_payload["created_at_unix_ms"] > 0
     assert job_payload["updated_at_unix_ms"] >= job_payload["created_at_unix_ms"]
+    assert job_payload["suite_metadata"]["smoke"]["dataset_path"] == "HuggingFaceH4/ultrachat_200k"
+    assert job_payload["suite_metadata"]["latency"]["dataset_path"] == "databricks/databricks-dolly-15k"
     assert smoke_payload == expected_results["smoke"]
     assert latency_payload == expected_results["latency"]
+
+
+def test_run_bench_records_curated_hf_suite_cache_hits_across_runs(tmp_path: Path) -> None:
+    fetcher = FakeBenchmarkHFDatasetFetcher()
+    service = build_service(tmp_path, benchmark_fetcher=fetcher)
+
+    first_events = list(
+        service.RunBench(
+            maintenance_pb2.RunBenchRequest(
+                model_handle="melix-dev-text::1",
+                suites=["smoke"],
+            ),
+            context=None,
+        )
+    )
+    second_events = list(
+        service.RunBench(
+            maintenance_pb2.RunBenchRequest(
+                model_handle="melix-dev-text::1",
+                suites=["smoke"],
+            ),
+            context=None,
+        )
+    )
+
+    first_job = json.loads(
+        (tmp_path / "model-ops" / "bench" / "runs" / first_events[0].started.job_id / "bench-job.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    second_job = json.loads(
+        (tmp_path / "model-ops" / "bench" / "runs" / second_events[0].started.job_id / "bench-job.json").read_text(
+            encoding="utf-8"
+        )
+    )
+
+    assert first_job["suite_metadata"]["smoke"]["cache_hit"] is False
+    assert second_job["suite_metadata"]["smoke"]["cache_hit"] is True
 
 
 def test_run_bench_persists_completed_queue_state(tmp_path: Path) -> None:
@@ -1789,7 +1892,13 @@ def test_bench_events_forwards_parameters_to_queue_record(tmp_path: Path) -> Non
         runtime=MLXTextRuntime(backend=DeterministicTextBackend()),
         model_catalog=WorkerModelCatalog(),
     )
-    core = MaintenanceCore(registry, jobs_root=tmp_path / "model-ops")
+    core = MaintenanceCore(
+        registry,
+        jobs_root=tmp_path / "model-ops",
+        benchmark_suite_catalog=BenchmarkSuiteCatalog(
+            hf_dataset_fetcher=FakeBenchmarkHFDatasetFetcher()
+        ),
+    )
 
     events = list(
         core.bench_events(

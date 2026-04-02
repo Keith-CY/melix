@@ -67,6 +67,19 @@
   - `services/mlx-worker-python/worker/productization/benchmark_export.py`: changed-line coverage `100.00%` (`18/18`)
   - `services/mlx-worker-python/worker/productization/release_gates.py`: changed-line coverage `100.00%` (`3/3`)
   - aggregate changed-line coverage for the executable Python scope in this slice: `100.00%` (`144/144`)
+- Closed M7 with curated Hugging Face benchmark suites:
+  - added a repository-owned benchmark suite catalog that maps `smoke` and `latency` to explicit Hugging Face datasets, splits, and feature mappings
+  - materialized benchmark suites on demand under the shared runtime dataset cache and persisted dataset provenance, cache keys, and cache-hit state into benchmark job manifests
+  - switched runtime benchmark prompts from synthetic hard-coded strings to prompt batches derived from curated HF-backed dataset rows while preserving queue state and export compatibility
+  - updated the roadmap execution index to mark M7 completed; benchmark Window UI, CSV, and CLI productization remain active post-M7 work in the same transaction
+- Verification summary for the M7 suite-catalog closure:
+  - `PYTHONPATH=/Users/ChenYu/Documents/Github/melix:/Users/ChenYu/Documents/Github/melix/services/mlx-worker-python uv run --project services/mlx-worker-python pytest services/mlx-worker-python/tests/test_benchmark_suites.py services/mlx-worker-python/tests/test_maintenance_service.py services/mlx-worker-python/tests/test_benchmark_export.py services/mlx-worker-python/tests/test_benchmark_store.py services/mlx-worker-python/tests/test_benchmark_schemas.py services/mlx-worker-python/tests/test_release_gates.py -q`: `80 passed`
+- Metrics report:
+  - `services/mlx-worker-python/worker/productization/benchmark_suites.py`: changed-line coverage `93.55%` (`87/93`)
+  - `services/mlx-worker-python/worker/engine/maintenance_core.py`: changed-line coverage `100.00%` (`10/10`)
+  - `services/mlx-worker-python/worker/productization/benchmark_schemas.py`: changed-line coverage `100.00%` (`6/6`)
+  - `services/mlx-worker-python/worker/productization/release_gates.py`: changed-line coverage `100.00%` (`15/15`)
+  - aggregate changed-line coverage for the executable Python scope in this slice: `95.16%` (`118/124`)
 
 ## 2026-04-01
 

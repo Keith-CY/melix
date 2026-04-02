@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from worker.productization.evaluation_schemas import (
     EvaluationJob,
@@ -40,9 +40,10 @@ class ServingBenchmarkJob:
     output_dir: str
     created_at_unix_ms: int
     updated_at_unix_ms: int
+    suite_metadata: dict[str, dict[str, object]] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, object]:
-        return {
+        payload: dict[str, object] = {
             "schema_version": self.schema_version,
             "job_id": self.job_id,
             "model_id": self.model_id,
@@ -53,6 +54,12 @@ class ServingBenchmarkJob:
             "created_at_unix_ms": self.created_at_unix_ms,
             "updated_at_unix_ms": self.updated_at_unix_ms,
         }
+        if self.suite_metadata:
+            payload["suite_metadata"] = {
+                suite_id: dict(metadata)
+                for suite_id, metadata in self.suite_metadata.items()
+            }
+        return payload
 
 
 @dataclass(frozen=True)
@@ -85,6 +92,7 @@ def build_serving_benchmark_job(
     output_dir: str,
     created_at_unix_ms: int = 0,
     updated_at_unix_ms: int = 0,
+    suite_metadata: dict[str, dict[str, object]] | None = None,
 ) -> ServingBenchmarkJob:
     return ServingBenchmarkJob(
         schema_version=_SERVING_BENCHMARK_JOB_SCHEMA_VERSION,
@@ -96,6 +104,7 @@ def build_serving_benchmark_job(
         output_dir=output_dir,
         created_at_unix_ms=created_at_unix_ms,
         updated_at_unix_ms=updated_at_unix_ms,
+        suite_metadata=dict(suite_metadata or {}),
     )
 
 

@@ -4,6 +4,8 @@ import json
 import sys
 from pathlib import Path
 
+import pytest
+
 from packages.protocol.python.worker.v1 import maintenance_pb2
 from worker.productization.release_gates import (
     DEFAULT_RELEASE_GATE_POLICY,
@@ -185,6 +187,33 @@ def test_collect_cache_recovery_benchmark_evidence_delegates_to_runtime_probes(
     evidence = release_gates_module.collect_cache_recovery_benchmark_evidence(tmp_path / "repo")
 
     assert evidence["metrics"]["bench.recovery.hot_followup_ttft_delta_ms"] == 9.5
+
+
+def test_release_gate_benchmark_fetcher_covers_curated_splits_pagination_and_errors() -> None:
+    smoke_splits = release_gates_module._release_gate_benchmark_fetcher(
+        "splits",
+        {"dataset": "HuggingFaceH4/ultrachat_200k"},
+    )
+    latency_splits = release_gates_module._release_gate_benchmark_fetcher(
+        "splits",
+        {"dataset": "databricks/databricks-dolly-15k"},
+    )
+    paged_rows = release_gates_module._release_gate_benchmark_fetcher(
+        "rows",
+        {"dataset": "HuggingFaceH4/ultrachat_200k", "offset": "100"},
+    )
+
+    assert smoke_splits["splits"][0]["split"] == "train_sft"
+    assert latency_splits["splits"][0]["split"] == "train"
+    assert paged_rows == {"rows": []}
+
+    with pytest.raises(RuntimeError) as error:
+        release_gates_module._release_gate_benchmark_fetcher(
+            "splits",
+            {"dataset": "missing/dataset"},
+        )
+
+    assert "Unsupported release-gate benchmark dataset" in str(error.value)
 
 
 def test_collect_training_evidence_returns_required_metrics(tmp_path: Path) -> None:

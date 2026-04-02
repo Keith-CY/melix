@@ -24,6 +24,7 @@ from worker.model_ops.operation_locks import ModelOpsConflictRegistry
 from worker.model_ops.quantization_pipeline import OQQuantizationPipeline
 from worker.model_ops.quantization_profiles import protected_scope_for_request
 from worker.productization.benchmark_queue import BenchmarkQueueRecord, BenchmarkQueueStore
+from worker.productization.benchmark_suites import BenchmarkSuiteCatalog, ResolvedBenchmarkSuite
 from worker.registry import WorkerRegistry
 
 _CAPABILITY_SUPPORTED_MODALITIES_KEY = "melix.capability.supported_modalities"
@@ -78,6 +79,7 @@ class MaintenanceCore:
         download_pipeline: DownloadPipeline | None = None,
         lora_training_pipeline: LoRATrainingPipeline | None = None,
         adapter_activation_pipeline: AdapterActivationPipeline | None = None,
+        benchmark_suite_catalog: BenchmarkSuiteCatalog | None = None,
     ) -> None:
         self._registry = registry
         self._jobs_root = Path(jobs_root)
@@ -90,6 +92,7 @@ class MaintenanceCore:
         self._operation_locks = ModelOpsConflictRegistry()
         self._benchmark_store = None
         self._benchmark_queue_store = BenchmarkQueueStore()
+        self._benchmark_suite_catalog = benchmark_suite_catalog or BenchmarkSuiteCatalog()
 
     @staticmethod
     def _worker_quant_profile(profile) -> maintenance_pb2.QuantizationProfile:
@@ -681,6 +684,7 @@ class MaintenanceCore:
 
         benchmark_mode = parameters.get("benchmark_mode", "text")
         metrics: list[BenchMetricSpec] = []
+        suite_metadata: dict[str, dict[str, object]] = {}
         lazy_model_handle = ""
         loaded_model = None
         try:
@@ -692,15 +696,20 @@ class MaintenanceCore:
                 yield maintenance_pb2.RunBenchEvent(
                     progress=maintenance_pb2.BenchProgress(suite=suite, pct=pct)
                 )
-                suite_metrics = (
-                    self._bench_metrics_for_vlm_suite(suite)
-                    if benchmark_mode == "vlm"
-                    else self._measure_text_bench_metrics(
-                        loaded_model=loaded_model,
-                        suite=suite,
+                if benchmark_mode == "vlm":
+                    suite_metrics = self._bench_metrics_for_vlm_suite(suite)
+                else:
+                    resolved_suite = self._benchmark_suite_catalog.resolve_suite(
+                        suite,
+                        jobs_root=self._jobs_root,
                         parameters=parameters,
                     )
-                )
+                    suite_metadata[resolved_suite.suite_id] = resolved_suite.metadata()
+                    suite_metrics = self._measure_text_bench_metrics(
+                        loaded_model=loaded_model,
+                        suite=resolved_suite,
+                        parameters=parameters,
+                    )
                 for metric in suite_metrics:
                     metrics.append(metric)
                     yield maintenance_pb2.RunBenchEvent(
@@ -723,6 +732,7 @@ class MaintenanceCore:
                 output_dir=str(output_dir),
                 created_at_unix_ms=queued_at,
                 updated_at_unix_ms=completed_at,
+                suite_metadata=suite_metadata,
             )
             result_records = build_serving_benchmark_results(
                 job_id=job.job_id,
@@ -914,30 +924,29 @@ class MaintenanceCore:
         self,
         *,
         loaded_model,
-        suite: str,
+        suite: ResolvedBenchmarkSuite,
         parameters: dict[str, str],
     ) -> list[BenchMetricSpec]:
-        sample_count = self._benchmark_sample_count(suite, parameters)
         samples = [
             self._measure_text_bench_sample(
                 loaded_model=loaded_model,
                 suite=suite,
-                sample_index=index,
+                prompt=prompt,
                 parameters=parameters,
             )
-            for index in range(sample_count)
+            for prompt in suite.prompt_batches
         ]
-        if suite == "latency":
+        if suite.suite_id == "latency":
             total_latencies = [sample.total_latency_ms for sample in samples]
             return [
                 BenchMetricSpec(
-                    suite=suite,
+                    suite=suite.suite_id,
                     name="bench.latency.p50_ms",
                     value=self._percentile(total_latencies, 50.0),
                     unit="ms",
                 ),
                 BenchMetricSpec(
-                    suite=suite,
+                    suite=suite.suite_id,
                     name="bench.latency.p95_ms",
                     value=self._percentile(total_latencies, 95.0),
                     unit="ms",
@@ -957,14 +966,14 @@ class MaintenanceCore:
         )
         return [
             BenchMetricSpec(
-                suite=suite,
-                name=f"bench.{suite}.ttft_ms",
+                suite=suite.suite_id,
+                name=f"bench.{suite.suite_id}.ttft_ms",
                 value=ttft_avg,
                 unit="ms",
             ),
             BenchMetricSpec(
-                suite=suite,
-                name=f"bench.{suite}.tokens_per_second",
+                suite=suite.suite_id,
+                name=f"bench.{suite.suite_id}.tokens_per_second",
                 value=tokens_per_second,
                 unit="tok/s",
             ),
@@ -974,12 +983,11 @@ class MaintenanceCore:
         self,
         *,
         loaded_model,
-        suite: str,
-        sample_index: int,
+        suite: ResolvedBenchmarkSuite,
+        prompt: str,
         parameters: dict[str, str],
     ) -> BenchSample:
         runtime = self._registry.runtime_for_loaded_model(loaded_model)
-        prompt = self._bench_prompt_for_suite(suite=suite, sample_index=sample_index)
         messages = [common_pb2.ChatMessage(role="user", parts=[common_pb2.MessagePart(text=prompt)])]
         rendered_prompt = runtime.render_prompt(
             messages,
@@ -987,7 +995,7 @@ class MaintenanceCore:
             execution_ext={},
         )
         cancel_event = self._registry.start_request(
-            request_id=f"bench-{loaded_model.handle}-{suite}-{sample_index}",
+            request_id=f"bench-{loaded_model.handle}-{suite.suite_id}-{abs(hash(prompt))}",
             runtime_kind=loaded_model.runtime_kind,
         ).cancel_event
         try:
@@ -1018,7 +1026,7 @@ class MaintenanceCore:
                 completion_tokens = int(getattr(runtime_event, "completion_tokens", 0) or (completion_tokens + 1))
             finished_at = time.perf_counter()
         finally:
-            self._registry.finish_request(f"bench-{loaded_model.handle}-{suite}-{sample_index}")
+            self._registry.finish_request(f"bench-{loaded_model.handle}-{suite.suite_id}-{abs(hash(prompt))}")
 
         first_token_time = first_token_at or finished_at
         completed_at = last_token_at or finished_at
@@ -1027,22 +1035,6 @@ class MaintenanceCore:
             total_latency_ms=round((completed_at - started_at) * 1_000.0, 2),
             completion_tokens=completion_tokens,
         )
-
-    @staticmethod
-    def _bench_prompt_for_suite(*, suite: str, sample_index: int) -> str:
-        if suite == "latency":
-            return f"latency-{sample_index}"
-        return f"smoke-{sample_index}"
-
-    @staticmethod
-    def _benchmark_sample_count(suite: str, parameters: dict[str, str]) -> int:
-        raw_value = parameters.get("sample_size", "").strip()
-        if raw_value:
-            try:
-                return max(1, int(raw_value))
-            except ValueError:
-                return 1 if suite == "smoke" else 5
-        return 1 if suite == "smoke" else 5
 
     @staticmethod
     def _benchmark_max_output_tokens(parameters: dict[str, str]) -> int:

@@ -25,6 +25,7 @@ from worker.productization.benchmark_schemas import (
     build_serving_benchmark_job,
     build_serving_benchmark_results,
 )
+from worker.productization.benchmark_suites import BenchmarkSuiteCatalog
 from worker.productization.quantization_gates import (
     DEFAULT_QUANTIZATION_GATE_POLICY,
     collect_quantization_benchmark_evidence,
@@ -505,7 +506,42 @@ def _build_maintenance_core(jobs_root: str | Path) -> MaintenanceCore:
         Path(jobs_root),
         lora_training_pipeline=LoRATrainingPipeline(runner=runner),
         adapter_activation_pipeline=AdapterActivationPipeline(runner=runner),
+        benchmark_suite_catalog=BenchmarkSuiteCatalog(
+            hf_dataset_fetcher=_release_gate_benchmark_fetcher
+        ),
     )
+
+
+def _release_gate_benchmark_fetcher(endpoint: str, params: dict[str, str]) -> dict[str, object]:
+    dataset = params.get("dataset", "")
+    offset = params.get("offset", "0")
+    if endpoint == "rows" and offset != "0":
+        return {"rows": []}
+    if dataset == "HuggingFaceH4/ultrachat_200k":
+        if endpoint == "rows":
+            return {
+                "rows": [
+                    {
+                        "row": {
+                            "messages": [
+                                {"role": "user", "content": "Say hi."},
+                                {"role": "assistant", "content": "Hi."},
+                            ]
+                        }
+                    }
+                ]
+            }
+        return {"splits": [{"dataset": dataset, "config": "default", "split": "train_sft"}]}
+    if dataset == "databricks/databricks-dolly-15k":
+        if endpoint == "rows":
+            return {
+                "rows": [
+                    {"row": {"instruction": "Colors?", "response": "Red."}},
+                    {"row": {"instruction": "Animals?", "response": "Cat."}},
+                ]
+            }
+        return {"splits": [{"dataset": dataset, "config": "default", "split": "train"}]}
+    raise RuntimeError(f"Unsupported release-gate benchmark dataset: {dataset}")
 
 
 def _collect_audio_variant_evidence(
