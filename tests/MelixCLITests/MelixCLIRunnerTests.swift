@@ -72,6 +72,7 @@ struct MelixCLIRunnerTests {
             .loraTrain(
                 .init(
                     modelID: "melix-dev-text",
+                    datasetSourceKind: "local_package",
                     datasetURI: "/tmp/datasets/alpaca.jsonl",
                     adapterName: "demo-adapter",
                     targetRepo: "melix/demo-adapter",
@@ -87,11 +88,56 @@ struct MelixCLIRunnerTests {
         #expect(output == "/tmp/melix/train_lora/job-1")
         #expect(call.modelID == "melix-dev-text")
         #expect(call.operation == "train_lora")
+        #expect(call.ext["dataset_source_kind"] == "local_package")
         #expect(call.ext["dataset_uri"] == "/tmp/datasets/alpaca.jsonl")
         #expect(call.ext["adapter_name"] == "demo-adapter")
         #expect(call.ext["target_repo"] == "melix/demo-adapter")
         #expect(call.ext["rank"] == "8")
         #expect(call.ext["epochs"] == "3")
+    }
+
+    @Test("lora train forwards Hugging Face dataset metadata and boolean flags")
+    func loraTrainForwardsHFDatasetPayload() async throws {
+        let client = StubControlPlaneXPCClient()
+        await client.setModelOperationResult(makeModelOperationResult(outputPath: "/tmp/melix/train_lora/job-hf"))
+
+        let output = try await MelixCLIRunner(client: client).run(
+            .loraTrain(
+                .init(
+                    modelID: "melix-dev-text",
+                    datasetSourceKind: "hf_dataset",
+                    datasetURI: "",
+                    adapterName: "hf-demo-adapter",
+                    parameters: [
+                        "hf_dataset_path": "HuggingFaceH4/ultrachat_200k",
+                        "hf_dataset_name": "default",
+                        "hf_dataset_revision": "main",
+                        "hf_train_split": "train_sft",
+                        "hf_valid_split": "test_sft",
+                        "text_feature": "messages",
+                        "response_only": "true",
+                        "mask_prompt": "true",
+                        "gradient_checkpointing": "true",
+                        "derived_model_alias": "melix-dev-text-ultrachat",
+                    ]
+                )
+            )
+        )
+        let call = try #require(await client.lastModelOperationCall)
+
+        #expect(output == "/tmp/melix/train_lora/job-hf")
+        #expect(call.ext["dataset_source_kind"] == "hf_dataset")
+        #expect(call.ext["dataset_uri"] == nil)
+        #expect(call.ext["hf_dataset_path"] == "HuggingFaceH4/ultrachat_200k")
+        #expect(call.ext["hf_dataset_name"] == "default")
+        #expect(call.ext["hf_dataset_revision"] == "main")
+        #expect(call.ext["hf_train_split"] == "train_sft")
+        #expect(call.ext["hf_valid_split"] == "test_sft")
+        #expect(call.ext["text_feature"] == "messages")
+        #expect(call.ext["response_only"] == "true")
+        #expect(call.ext["mask_prompt"] == "true")
+        #expect(call.ext["gradient_checkpointing"] == "true")
+        #expect(call.ext["derived_model_alias"] == "melix-dev-text-ultrachat")
     }
 
     @Test("lora train returns manifest json when requested")
@@ -106,6 +152,7 @@ struct MelixCLIRunnerTests {
             .loraTrain(
                 .init(
                     modelID: "melix-dev-text",
+                    datasetSourceKind: "local_package",
                     datasetURI: "/tmp/datasets/alpaca.jsonl",
                     adapterName: "demo-adapter",
                     json: true

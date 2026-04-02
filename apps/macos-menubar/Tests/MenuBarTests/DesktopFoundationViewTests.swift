@@ -152,6 +152,61 @@ struct DesktopFoundationViewTests {
         #expect(selectedExport.target == .openAICompatible)
     }
 
+    @Test("tools workspace renders lora training controls for local and Hugging Face datasets")
+    @MainActor
+    func toolsWorkspaceRendersLoRATrainingControls() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+
+        viewModel.selectSurface(.tools)
+        viewModel.selectToolSection(.training)
+        viewModel.loraDatasetSourceKind = .localPackage
+        _ = hostView(DesktopWorkspaceShellView(viewModel: viewModel))
+
+        viewModel.loraDatasetSourceKind = .huggingFaceDataset
+        let hfView = hostView(DesktopWorkspaceShellView(viewModel: viewModel))
+
+        #expect(hfView.subviews.isEmpty == false)
+        #expect(viewModel.selectedToolSection == .training)
+    }
+
+    @Test("training tool section renders populated adapter activation state and dispatches actions")
+    @MainActor
+    func trainingToolSectionRendersPopulatedActivationState() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureModelOperation(
+            makeNamedModelOperationResult(
+                operation: "registry_snapshot",
+                outputPath: "/tmp/melix-model-ops-registry/registry_snapshot.json",
+                manifestJSON: makeRegistrySnapshotManifest(
+                    publishedRepo: "",
+                    targetRepo: "melix/adapters/melix-dev-adapter",
+                    activationStatus: "activated",
+                    derivedModelID: "melix-dev-text-lora-adapter",
+                    derivedModelPath: "/tmp/melix-derived/model"
+                )
+            ),
+            forNamedOperation: "registry_snapshot"
+        )
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        await viewModel.refreshModelOpsProductState()
+
+        let section = DesktopTrainingToolSectionView(viewModel: viewModel)
+        let hosted = hostView(section)
+
+        await section.trainLoRA()
+        await section.activateAdapter()
+        await section.publishAdapter()
+
+        #expect(hosted.subviews.isEmpty == false)
+        #expect(viewModel.selectedAdapterPackage?.derivedModelID == "melix-dev-text-lora-adapter")
+        #expect(await client.recordedActions.contains("operation:train_lora:melix-dev-text"))
+        #expect(await client.recordedActions.contains("operation:activate_adapter:melix-dev-text"))
+        #expect(await client.recordedActions.contains("operation:upload:melix-dev-text"))
+    }
+
     @Test("api workspace renders authentication and quick-start integration references")
     @MainActor
     func apiWorkspaceRendersAuthenticationAndQuickStartIntegrationReferences() async throws {

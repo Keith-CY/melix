@@ -34,10 +34,14 @@ struct MelixCLIParserTests {
             "--rank", "8",
             "--alpha", "16",
             "--dropout", "0.05",
+            "--target-modules", "q_proj,k_proj,v_proj",
+            "--num-layers", "12",
             "--batch-size", "2",
             "--epochs", "3",
             "--learning-rate", "0.0001",
             "--max-seq-length", "4096",
+            "--response-only",
+            "--gradient-checkpointing",
             "--json",
         ])
 
@@ -47,17 +51,63 @@ struct MelixCLIParserTests {
         }
 
         #expect(options.modelID == "melix-dev-text")
+        #expect(options.datasetSourceKind == "local_package")
         #expect(options.datasetURI == "/tmp/data/alpaca.jsonl")
         #expect(options.adapterName == "demo-adapter")
         #expect(options.targetRepo == "melix/demo-adapter")
         #expect(options.parameters["rank"] == "8")
         #expect(options.parameters["alpha"] == "16")
         #expect(options.parameters["dropout"] == "0.05")
+        #expect(options.parameters["target_modules"] == "q_proj,k_proj,v_proj")
+        #expect(options.parameters["num_layers"] == "12")
         #expect(options.parameters["batch_size"] == "2")
         #expect(options.parameters["epochs"] == "3")
         #expect(options.parameters["learning_rate"] == "0.0001")
         #expect(options.parameters["max_seq_length"] == "4096")
+        #expect(options.parameters["response_only"] == "true")
+        #expect(options.parameters["gradient_checkpointing"] == "true")
         #expect(options.json)
+    }
+
+    @Test("parses lora train with a Hugging Face dataset source and feature mapping")
+    func parsesLoraTrainCommandForHFDataset() throws {
+        let command = try MelixCLIParser.parse([
+            "lora",
+            "train",
+            "--model-id", "melix-dev-text",
+            "--hf-dataset-path", "HuggingFaceH4/ultrachat_200k",
+            "--hf-dataset-name", "default",
+            "--hf-dataset-revision", "main",
+            "--hf-train-split", "train_sft",
+            "--hf-valid-split", "test_sft",
+            "--text-feature", "messages",
+            "--prompt-feature", "prompt",
+            "--completion-feature", "completion",
+            "--chat-feature", "messages",
+            "--adapter-name", "hf-demo-adapter",
+            "--mask-prompt",
+            "--derived-model-alias", "melix-dev-text-ultrachat",
+        ])
+
+        guard case .loraTrain(let options) = command else {
+            Issue.record("Expected loraTrain command")
+            return
+        }
+
+        #expect(options.datasetSourceKind == "hf_dataset")
+        #expect(options.datasetURI.isEmpty)
+        #expect(options.adapterName == "hf-demo-adapter")
+        #expect(options.parameters["hf_dataset_path"] == "HuggingFaceH4/ultrachat_200k")
+        #expect(options.parameters["hf_dataset_name"] == "default")
+        #expect(options.parameters["hf_dataset_revision"] == "main")
+        #expect(options.parameters["hf_train_split"] == "train_sft")
+        #expect(options.parameters["hf_valid_split"] == "test_sft")
+        #expect(options.parameters["text_feature"] == "messages")
+        #expect(options.parameters["prompt_feature"] == "prompt")
+        #expect(options.parameters["completion_feature"] == "completion")
+        #expect(options.parameters["chat_feature"] == "messages")
+        #expect(options.parameters["mask_prompt"] == "true")
+        #expect(options.parameters["derived_model_alias"] == "melix-dev-text-ultrachat")
     }
 
     @Test("parses bench run with explicit model suites and tuning parameters")
@@ -117,7 +167,7 @@ struct MelixCLIParserTests {
         )
         try assertError(
             for: ["lora", "train", "--model-id", "melix-dev-text", "--adapter-name", "demo"],
-            equals: .missingRequired("--dataset-uri is required for melix lora train.")
+            equals: .missingRequired("Either --dataset-uri or --hf-dataset-path is required for melix lora train.")
         )
         try assertError(
             for: ["lora", "train", "--model-id", "melix-dev-text", "--dataset-uri", "/tmp/data.jsonl"],

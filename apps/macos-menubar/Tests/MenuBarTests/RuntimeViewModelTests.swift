@@ -28,6 +28,31 @@ struct RuntimeViewModelTests {
         #expect(await metrics.snapshot()["menu.hydration_ms"] != nil)
     }
 
+    @Test("lora model selection falls back to the first text model and stays empty without text models")
+    @MainActor
+    func loraModelSelectionFallsBackToFirstTextModel() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+        viewModel.selectedLoraModelID = "missing-model"
+
+        #expect(viewModel.selectedLoraModel?.modelID == "melix-dev-text")
+        #expect(viewModel.selectedLoraModelID == "melix-dev-text")
+
+        var imageOnlySnapshot = Melix_Controlplane_V1_ServerSnapshot()
+        imageOnlySnapshot.serverState = .serverReady
+        imageOnlySnapshot.models = [makeMenuBarImageModelSummary()]
+        await client.configureSnapshot(imageOnlySnapshot)
+
+        let imageOnlyViewModel = RuntimeViewModel(client: client)
+        await imageOnlyViewModel.start()
+        imageOnlyViewModel.selectedLoraModelID = "missing-model"
+
+        #expect(imageOnlyViewModel.loraCapableModels.isEmpty)
+        #expect(imageOnlyViewModel.selectedLoraModel == nil)
+    }
+
     @Test("restoresSelectedSurfaceAndServerSession from operator-session state")
     @MainActor
     func restoresSelectedSurfaceAndServerSessionFromOperatorSessionState() async throws {
@@ -1810,6 +1835,87 @@ struct RuntimeViewModelTests {
         #expect(await metrics.snapshot()["menu.ops_bench_ms"] != nil)
         #expect(await metrics.snapshot()["menu.model_operation_ms"] != nil)
         #expect(await metrics.snapshot()["menu.model_ops_refresh_ms"] != nil)
+    }
+
+    @Test("lora training and activation dispatch the configured dataset source hyperparameters and derived alias")
+    @MainActor
+    func loraTrainingAndActivationDispatchConfiguredPayloads() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(client: client)
+        await client.configureModelOperation(
+            makeNamedModelOperationResult(
+                operation: "registry_snapshot",
+                outputPath: "/tmp/melix-model-ops-registry/registry_snapshot.json",
+                manifestJSON: makeRegistrySnapshotManifest(
+                    publishedRepo: "",
+                    targetRepo: "melix/adapters/hf-demo-adapter"
+                )
+            ),
+            forNamedOperation: "registry_snapshot"
+        )
+
+        await viewModel.start()
+        viewModel.selectedLoraModelID = "melix-dev-text"
+        viewModel.loraDatasetSourceKind = .huggingFaceDataset
+        viewModel.loraHFDatasetPath = "HuggingFaceH4/ultrachat_200k"
+        viewModel.loraHFDatasetName = "default"
+        viewModel.loraHFDatasetRevision = "main"
+        viewModel.loraHFTrainSplit = "train_sft"
+        viewModel.loraHFValidSplit = "test_sft"
+        viewModel.loraTextFeature = "messages"
+        viewModel.loraPromptFeature = "prompt"
+        viewModel.loraCompletionFeature = "completion"
+        viewModel.loraChatFeature = "messages"
+        viewModel.loraAdapterName = "hf-demo-adapter"
+        viewModel.loraTargetRepo = "melix/adapters/hf-demo-adapter"
+        viewModel.loraRank = "32"
+        viewModel.loraAlpha = "64"
+        viewModel.loraDropout = "0.1"
+        viewModel.loraTargetModules = "q_proj,k_proj,v_proj"
+        viewModel.loraNumLayers = "24"
+        viewModel.loraBatchSize = "4"
+        viewModel.loraEpochs = "2"
+        viewModel.loraLearningRate = "0.0002"
+        viewModel.loraMaxSeqLength = "8192"
+        viewModel.loraResponseOnly = true
+        viewModel.loraMaskPrompt = true
+        viewModel.loraGradientCheckpointing = true
+        viewModel.loraDerivedModelAlias = "melix-dev-text-ultrachat"
+
+        await viewModel.trainPrimaryModel()
+        let trainRequest = try #require(await client.recordedModelOperationRequests.first(where: { $0.operation == "train_lora" }))
+        #expect(trainRequest.modelID == "melix-dev-text")
+        #expect(trainRequest.ext["dataset_source_kind"] == "hf_dataset")
+        #expect(trainRequest.ext["hf_dataset_path"] == "HuggingFaceH4/ultrachat_200k")
+        #expect(trainRequest.ext["hf_dataset_name"] == "default")
+        #expect(trainRequest.ext["hf_dataset_revision"] == "main")
+        #expect(trainRequest.ext["hf_train_split"] == "train_sft")
+        #expect(trainRequest.ext["hf_valid_split"] == "test_sft")
+        #expect(trainRequest.ext["text_feature"] == "messages")
+        #expect(trainRequest.ext["prompt_feature"] == "prompt")
+        #expect(trainRequest.ext["completion_feature"] == "completion")
+        #expect(trainRequest.ext["chat_feature"] == "messages")
+        #expect(trainRequest.ext["adapter_name"] == "hf-demo-adapter")
+        #expect(trainRequest.ext["target_repo"] == "melix/adapters/hf-demo-adapter")
+        #expect(trainRequest.ext["rank"] == "32")
+        #expect(trainRequest.ext["alpha"] == "64")
+        #expect(trainRequest.ext["dropout"] == "0.1")
+        #expect(trainRequest.ext["target_modules"] == "q_proj,k_proj,v_proj")
+        #expect(trainRequest.ext["num_layers"] == "24")
+        #expect(trainRequest.ext["batch_size"] == "4")
+        #expect(trainRequest.ext["epochs"] == "2")
+        #expect(trainRequest.ext["learning_rate"] == "0.0002")
+        #expect(trainRequest.ext["max_seq_length"] == "8192")
+        #expect(trainRequest.ext["response_only"] == "true")
+        #expect(trainRequest.ext["mask_prompt"] == "true")
+        #expect(trainRequest.ext["gradient_checkpointing"] == "true")
+        #expect(trainRequest.ext["derived_model_alias"] == "melix-dev-text-ultrachat")
+
+        await viewModel.activateLatestAdapter()
+        let activateRequest = try #require(await client.recordedModelOperationRequests.first(where: { $0.operation == "activate_adapter" }))
+        #expect(activateRequest.modelID == "melix-dev-text")
+        #expect(activateRequest.ext["artifact_path"] == "/tmp/melix-train-lora/train_lora.adapter.json")
+        #expect(activateRequest.ext["derived_model_alias"] == "melix-dev-text-ultrachat")
     }
 
     @Test("fetch model info surfaces OCR profile defaults from the active snapshot")

@@ -42,6 +42,19 @@
   - `services/mlx-worker-python/worker/model_ops/adapter_activation_pipeline.py`: changed-line coverage `100.00%` (`3/3`)
   - `services/mlx-worker-python/worker/model_ops/job_registry.py`: changed-line coverage `100.00%` (`3/3`)
   - `services/mlx-worker-python/worker/engine/maintenance_core.py`: changed-line coverage `100.00%` (`8/8`)
+- Landed the LoRA Window UI and CLI exposure slice:
+  - extended `melix lora train` so it accepts either `--dataset-uri` or `--hf-dataset-path`, forwards feature mappings and LoRA hyperparameters, and exposes `derived-model-alias`, `response-only`, `mask-prompt`, and `gradient-checkpointing`
+  - added Window UI training controls for base-model selection, dataset-source switching, Hugging Face dataset metadata, LoRA hyperparameters, adapter naming, and derived-model aliasing
+  - added Window UI adapter selection plus activation and publish actions backed by shared control-plane requests instead of hard-coded demo payloads
+  - refreshed the native operator state so activated derived models re-enter the runtime shell and bench metrics survive the post-activation snapshot refresh
+- Verification summary for the LoRA Window UI and CLI exposure slice:
+  - `swift test --enable-code-coverage --filter MelixCLITests`: `20 tests passed`
+  - `swift test --package-path apps/macos-menubar --enable-code-coverage --filter 'RuntimeViewModelTests|DesktopFoundationViewTests'`: `116 tests passed`
+- Metrics report:
+  - `Sources/MelixCLICore/MelixCLI.swift`: changed-line coverage `100.00%` (`37/37`)
+  - `apps/macos-menubar/Sources/AppMain/Models/RuntimeViewModel.swift`: changed-line coverage `100.00%` (`148/148`)
+  - `apps/macos-menubar/Sources/AppMain/Dashboard/DesktopWorkspaceShellView.swift`: changed-line coverage `95.03%` (`172/181`)
+  - aggregate changed-line coverage for the executable Swift scope in this slice: `97.54%` (`357/366`)
 
 ## 2026-04-01
 

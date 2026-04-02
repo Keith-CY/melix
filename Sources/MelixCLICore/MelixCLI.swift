@@ -14,6 +14,7 @@ public struct LoraListOptions: Equatable, Sendable {
 
 public struct LoraTrainOptions: Equatable, Sendable {
     public let modelID: String
+    public let datasetSourceKind: String
     public let datasetURI: String
     public let adapterName: String
     public let targetRepo: String
@@ -22,6 +23,7 @@ public struct LoraTrainOptions: Equatable, Sendable {
 
     public init(
         modelID: String,
+        datasetSourceKind: String = "local_package",
         datasetURI: String,
         adapterName: String,
         targetRepo: String = "",
@@ -29,6 +31,7 @@ public struct LoraTrainOptions: Equatable, Sendable {
         json: Bool = false
     ) {
         self.modelID = modelID
+        self.datasetSourceKind = datasetSourceKind
         self.datasetURI = datasetURI
         self.adapterName = adapterName
         self.targetRepo = targetRepo
@@ -118,7 +121,7 @@ public enum MelixCLIParser {
     public static let usageText = """
     Usage:
       melix lora list [--model-id MODEL_ID] [--json]
-      melix lora train --model-id MODEL_ID --dataset-uri PATH --adapter-name NAME [--target-repo REPO] [--rank N] [--alpha N] [--dropout N] [--batch-size N] [--epochs N] [--learning-rate N] [--max-seq-length N] [--json]
+      melix lora train --model-id MODEL_ID (--dataset-uri PATH | --hf-dataset-path REPO) --adapter-name NAME [--target-repo REPO] [--rank N] [--alpha N] [--dropout N] [--target-modules CSV] [--num-layers N] [--batch-size N] [--epochs N] [--learning-rate N] [--max-seq-length N] [--hf-dataset-name NAME] [--hf-dataset-revision REV] [--hf-train-split SPLIT] [--hf-valid-split SPLIT] [--text-feature NAME] [--prompt-feature NAME] [--completion-feature NAME] [--chat-feature NAME] [--derived-model-alias NAME] [--response-only] [--mask-prompt] [--gradient-checkpointing] [--json]
       melix lora activate --model-id MODEL_ID --adapter-path PATH [--alias NAME] [--json]
       melix bench run --model-id MODEL_ID [--suite SUITE ...] [--sample-size N] [--batch-factor N] [--json]
     """
@@ -142,21 +145,48 @@ public enum MelixCLIParser {
             guard let modelID = values.single["--model-id"], !modelID.isEmpty else {
                 throw MelixCLIError.missingRequired("--model-id is required for melix lora train.")
             }
-            guard let datasetURI = values.single["--dataset-uri"], !datasetURI.isEmpty else {
-                throw MelixCLIError.missingRequired("--dataset-uri is required for melix lora train.")
+            let datasetURI = values.single["--dataset-uri"] ?? ""
+            let hfDatasetPath = values.single["--hf-dataset-path"] ?? ""
+            guard !datasetURI.isEmpty || !hfDatasetPath.isEmpty else {
+                throw MelixCLIError.missingRequired("Either --dataset-uri or --hf-dataset-path is required for melix lora train.")
             }
             guard let adapterName = values.single["--adapter-name"], !adapterName.isEmpty else {
                 throw MelixCLIError.missingRequired("--adapter-name is required for melix lora train.")
             }
+            let datasetSourceKind = datasetURI.isEmpty ? "hf_dataset" : "local_package"
             var parameters: [String: String] = [:]
-            for option in ["--rank", "--alpha", "--dropout", "--batch-size", "--epochs", "--learning-rate", "--max-seq-length"] {
+            for option in [
+                "--rank",
+                "--alpha",
+                "--dropout",
+                "--target-modules",
+                "--num-layers",
+                "--batch-size",
+                "--epochs",
+                "--learning-rate",
+                "--max-seq-length",
+                "--hf-dataset-path",
+                "--hf-dataset-name",
+                "--hf-dataset-revision",
+                "--hf-train-split",
+                "--hf-valid-split",
+                "--chat-feature",
+                "--prompt-feature",
+                "--completion-feature",
+                "--text-feature",
+                "--derived-model-alias",
+            ] {
                 if let value = values.single[option] {
                     parameters[normalizedParameterKey(option)] = value
                 }
             }
+            for flag in ["--response-only", "--mask-prompt", "--gradient-checkpointing"] where values.flags.contains(flag) {
+                parameters[normalizedParameterKey(flag)] = "true"
+            }
             return .loraTrain(
                 LoraTrainOptions(
                     modelID: modelID,
+                    datasetSourceKind: datasetSourceKind,
                     datasetURI: datasetURI,
                     adapterName: adapterName,
                     targetRepo: values.single["--target-repo"] ?? "",
@@ -229,9 +259,10 @@ private struct ArgumentCursor {
     func parse() throws -> ParsedArguments {
         var result = ParsedArguments()
         var index = 0
+        let valueLessFlags: Set<String> = ["--json", "--response-only", "--mask-prompt", "--gradient-checkpointing"]
         while index < arguments.count {
             let token = arguments[index]
-            if token == "--json" {
+            if valueLessFlags.contains(token) {
                 result.flags.insert(token)
                 index += 1
                 continue
@@ -279,7 +310,10 @@ public actor MelixCLIRunner {
         case .loraTrain(let options):
             var ext = options.parameters
             ext["adapter_name"] = options.adapterName
-            ext["dataset_uri"] = options.datasetURI
+            ext["dataset_source_kind"] = options.datasetSourceKind
+            if !options.datasetURI.isEmpty {
+                ext["dataset_uri"] = options.datasetURI
+            }
             if !options.targetRepo.isEmpty {
                 ext["target_repo"] = options.targetRepo
             }

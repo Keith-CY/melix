@@ -807,22 +807,159 @@ private struct DesktopDownloadsToolSectionView: View {
     }
 }
 
-private struct DesktopTrainingToolSectionView: View {
+struct DesktopTrainingToolSectionView: View {
     let viewModel: RuntimeViewModel
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            HStack {
-                Button("Train LoRA") {
-                    Task { await viewModel.trainPrimaryModel() }
-                }
-                .buttonStyle(.borderedProminent)
+            Text("Train adapters from a local package or a controlled Hugging Face dataset, then activate the saved adapter into a derived text model.")
+                .foregroundStyle(.secondary)
 
-                Button("Publish Adapter") {
-                    Task { await viewModel.publishLatestAdapter() }
+            GroupBox("Training Configuration") {
+                VStack(alignment: .leading, spacing: 12) {
+                    Picker("Base Model", selection: stringBinding(\.selectedLoraModelID)) {
+                        ForEach(viewModel.loraCapableModels, id: \.modelID) { model in
+                            Text(model.modelID).tag(model.modelID)
+                        }
+                    }
+                    .pickerStyle(.menu)
+
+                    Picker("Dataset Source", selection: datasetSourceBinding()) {
+                        ForEach(RuntimeLoraDatasetSourceKind.allCases) { source in
+                            Text(source.title).tag(source)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+
+                    if viewModel.loraDatasetSourceKind == .localPackage {
+                        TextField("Dataset URI", text: stringBinding(\.loraDatasetURI))
+                            .textFieldStyle(.roundedBorder)
+                    } else {
+                        VStack(alignment: .leading, spacing: 10) {
+                            TextField("HF Dataset Path", text: stringBinding(\.loraHFDatasetPath))
+                                .textFieldStyle(.roundedBorder)
+
+                            HStack {
+                                TextField("Config / Name", text: stringBinding(\.loraHFDatasetName))
+                                    .textFieldStyle(.roundedBorder)
+                                TextField("Revision", text: stringBinding(\.loraHFDatasetRevision))
+                                    .textFieldStyle(.roundedBorder)
+                            }
+
+                            HStack {
+                                TextField("Train Split", text: stringBinding(\.loraHFTrainSplit))
+                                    .textFieldStyle(.roundedBorder)
+                                TextField("Valid Split", text: stringBinding(\.loraHFValidSplit))
+                                    .textFieldStyle(.roundedBorder)
+                            }
+
+                            HStack {
+                                TextField("Text Feature", text: stringBinding(\.loraTextFeature))
+                                    .textFieldStyle(.roundedBorder)
+                                TextField("Prompt Feature", text: stringBinding(\.loraPromptFeature))
+                                    .textFieldStyle(.roundedBorder)
+                            }
+
+                            HStack {
+                                TextField("Completion Feature", text: stringBinding(\.loraCompletionFeature))
+                                    .textFieldStyle(.roundedBorder)
+                                TextField("Chat Feature", text: stringBinding(\.loraChatFeature))
+                                    .textFieldStyle(.roundedBorder)
+                            }
+                        }
+                    }
+
+                    HStack {
+                        TextField("Adapter Name", text: stringBinding(\.loraAdapterName))
+                            .textFieldStyle(.roundedBorder)
+                        TextField("Target Repo", text: stringBinding(\.loraTargetRepo))
+                            .textFieldStyle(.roundedBorder)
+                    }
+
+                    HStack {
+                        TextField("Rank", text: stringBinding(\.loraRank))
+                            .textFieldStyle(.roundedBorder)
+                        TextField("Alpha", text: stringBinding(\.loraAlpha))
+                            .textFieldStyle(.roundedBorder)
+                        TextField("Dropout", text: stringBinding(\.loraDropout))
+                            .textFieldStyle(.roundedBorder)
+                    }
+
+                    HStack {
+                        TextField("Batch Size", text: stringBinding(\.loraBatchSize))
+                            .textFieldStyle(.roundedBorder)
+                        TextField("Epochs", text: stringBinding(\.loraEpochs))
+                            .textFieldStyle(.roundedBorder)
+                        TextField("Learning Rate", text: stringBinding(\.loraLearningRate))
+                            .textFieldStyle(.roundedBorder)
+                        TextField("Max Seq Length", text: stringBinding(\.loraMaxSeqLength))
+                            .textFieldStyle(.roundedBorder)
+                    }
+
+                    HStack {
+                        TextField("Target Modules", text: stringBinding(\.loraTargetModules))
+                            .textFieldStyle(.roundedBorder)
+                        TextField("Num Layers", text: stringBinding(\.loraNumLayers))
+                            .textFieldStyle(.roundedBorder)
+                    }
+
+                    TextField("Derived Model Alias", text: stringBinding(\.loraDerivedModelAlias))
+                        .textFieldStyle(.roundedBorder)
+
+                    HStack {
+                        Toggle("Response Only", isOn: boolBinding(\.loraResponseOnly))
+                        Toggle("Mask Prompt", isOn: boolBinding(\.loraMaskPrompt))
+                        Toggle("Gradient Checkpointing", isOn: boolBinding(\.loraGradientCheckpointing))
+                    }
+
+                    HStack {
+                        Button("Train LoRA", action: startTrainLoRATask)
+                        .buttonStyle(.borderedProminent)
+
+                        Button("Activate Adapter", action: startActivateAdapterTask)
+                        .buttonStyle(.bordered)
+                        .disabled(viewModel.selectedAdapterPackage == nil)
+
+                        Button("Publish Adapter", action: startPublishAdapterTask)
+                        .buttonStyle(.bordered)
+                        .disabled(viewModel.selectedAdapterPackage == nil)
+                    }
                 }
-                .buttonStyle(.bordered)
-                .disabled(viewModel.latestAdapterPackage == nil)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            GroupBox("Adapter Activation") {
+                VStack(alignment: .leading, spacing: 8) {
+                    if viewModel.adapterPackages.isEmpty {
+                        Text("No adapter packages yet.")
+                            .foregroundStyle(.secondary)
+                    } else {
+                        Picker("Selected Adapter", selection: stringBinding(\.selectedAdapterPackageID)) {
+                            ForEach(viewModel.adapterPackages) { adapter in
+                                Text("\(adapter.adapterName) • \(adapter.statusText)").tag(adapter.id)
+                            }
+                        }
+                        .pickerStyle(.menu)
+
+                        if let adapter = viewModel.selectedAdapterPackage {
+                            Text("Saved artifact: \(adapter.outputPath)")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            if !adapter.derivedModelID.isEmpty {
+                                Text("Derived model: \(adapter.derivedModelID)")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            HStack {
+                Text("Saved adapters and historical jobs come from the shared registry snapshot.")
+                    .foregroundStyle(.secondary)
+                Spacer()
             }
 
             GroupBox("Adapters") {
@@ -865,6 +1002,51 @@ private struct DesktopTrainingToolSectionView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
+    }
+
+    private func stringBinding(_ keyPath: ReferenceWritableKeyPath<RuntimeViewModel, String>) -> Binding<String> {
+        Binding(
+            get: { viewModel[keyPath: keyPath] },
+            set: { viewModel[keyPath: keyPath] = $0 }
+        )
+    }
+
+    private func boolBinding(_ keyPath: ReferenceWritableKeyPath<RuntimeViewModel, Bool>) -> Binding<Bool> {
+        Binding(
+            get: { viewModel[keyPath: keyPath] },
+            set: { viewModel[keyPath: keyPath] = $0 }
+        )
+    }
+
+    private func datasetSourceBinding() -> Binding<RuntimeLoraDatasetSourceKind> {
+        Binding(
+            get: { viewModel.loraDatasetSourceKind },
+            set: { viewModel.loraDatasetSourceKind = $0 }
+        )
+    }
+
+    func trainLoRA() async {
+        await viewModel.trainPrimaryModel()
+    }
+
+    func activateAdapter() async {
+        await viewModel.activateLatestAdapter()
+    }
+
+    func publishAdapter() async {
+        await viewModel.publishLatestAdapter()
+    }
+
+    private func startTrainLoRATask() {
+        Task { await trainLoRA() }
+    }
+
+    private func startActivateAdapterTask() {
+        Task { await activateAdapter() }
+    }
+
+    private func startPublishAdapterTask() {
+        Task { await publishAdapter() }
     }
 }
 

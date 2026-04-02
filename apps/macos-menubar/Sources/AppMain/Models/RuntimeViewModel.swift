@@ -96,6 +96,24 @@ public struct RuntimeDoctorReportState: Equatable, Sendable {
     public let markdown: String
 }
 
+public enum RuntimeLoraDatasetSourceKind: String, CaseIterable, Identifiable, Sendable {
+    case localPackage = "local_package"
+    case huggingFaceDataset = "hf_dataset"
+
+    public var id: String {
+        rawValue
+    }
+
+    public var title: String {
+        switch self {
+        case .localPackage:
+            return "Local Package"
+        case .huggingFaceDataset:
+            return "Hugging Face"
+        }
+    }
+}
+
 public struct RuntimeAdapterPackageState: Identifiable, Equatable, Sendable {
     public let id: String
     public let adapterName: String
@@ -223,6 +241,34 @@ public final class RuntimeViewModel {
     public private(set) var selectedAgentIntegrationTarget: AgentIntegrationExportTarget = .openAICompatible
     public var chatComposerText = ""
     public var selectedChatModelID = "melix-dev-text"
+    public var selectedLoraModelID = "melix-dev-text"
+    public var loraDatasetSourceKind: RuntimeLoraDatasetSourceKind = .localPackage
+    public var loraDatasetURI = "datasets/melix-dev"
+    public var loraHFDatasetPath = ""
+    public var loraHFDatasetName = ""
+    public var loraHFDatasetRevision = ""
+    public var loraHFTrainSplit = "train"
+    public var loraHFValidSplit = ""
+    public var loraChatFeature = ""
+    public var loraPromptFeature = ""
+    public var loraCompletionFeature = ""
+    public var loraTextFeature = "text"
+    public var loraAdapterName = "melix-dev-adapter"
+    public var loraTargetRepo = "melix/adapters/melix-dev-adapter"
+    public var loraRank = "8"
+    public var loraAlpha = "16"
+    public var loraDropout = "0.0"
+    public var loraTargetModules = ""
+    public var loraNumLayers = ""
+    public var loraBatchSize = "1"
+    public var loraEpochs = "1"
+    public var loraLearningRate = "0.0001"
+    public var loraMaxSeqLength = "2048"
+    public var loraResponseOnly = true
+    public var loraMaskPrompt = false
+    public var loraGradientCheckpointing = false
+    public var loraDerivedModelAlias = ""
+    public var selectedAdapterPackageID = ""
     public var imagePromptText = ""
     public var imageEditSourceURL = ""
     public var imageEditMaskURL = ""
@@ -682,6 +728,22 @@ public final class RuntimeViewModel {
 
     public var latestAdapterPackage: RuntimeAdapterPackageState? {
         adapterPackages.first
+    }
+
+    public var loraCapableModels: [RuntimeModelRow] {
+        models.filter { $0.kind == "text" }
+    }
+
+    public var selectedLoraModel: RuntimeModelRow? {
+        let modelID = resolvedLoraModelID()
+        return loraCapableModels.first(where: { $0.modelID == modelID }) ?? loraCapableModels.first
+    }
+
+    public var selectedAdapterPackage: RuntimeAdapterPackageState? {
+        guard !selectedAdapterPackageID.isEmpty else {
+            return adapterPackages.first
+        }
+        return adapterPackages.first(where: { $0.id == selectedAdapterPackageID }) ?? adapterPackages.first
     }
 
     public var imageModels: [RuntimeModelRow] {
@@ -1291,47 +1353,52 @@ public final class RuntimeViewModel {
     }
 
     public func trainPrimaryModel() async {
-        guard let modelID = primaryModel?.modelID else {
+        let modelID = resolvedLoraModelID()
+        guard !modelID.isEmpty else {
             return
         }
         await runModelOperation(
             modelID: modelID,
             operation: "train_lora",
-            outputDir: "/tmp/melix-train-lora",
-            ext: [
-                "adapter_name": "melix-dev-adapter",
-                "dataset_uri": "datasets/melix-dev",
-                "target_repo": "melix/adapters/melix-dev-adapter",
-            ],
+            outputDir: "",
+            ext: loraTrainingExt(),
             refreshProductToolingState: true
         )
     }
 
     public func activateLatestAdapter() async {
-        guard let modelID = primaryModel?.modelID, let adapter = latestAdapterPackage, !adapter.outputPath.isEmpty else {
+        let modelID = resolvedLoraModelID()
+        guard !modelID.isEmpty, let adapter = selectedAdapterPackage, !adapter.outputPath.isEmpty else {
             return
         }
 
+        var ext: [String: String] = [
+            "artifact_path": adapter.outputPath,
+        ]
+        if let alias = Self.normalizedOptionalString(loraDerivedModelAlias) {
+            ext["derived_model_alias"] = alias
+        }
         await runModelOperation(
             modelID: modelID,
             operation: "activate_adapter",
-            outputDir: "/tmp/melix-activate-adapter",
-            ext: [
-                "artifact_path": adapter.outputPath,
-            ],
+            outputDir: "",
+            ext: ext,
             refreshProductToolingState: true
         )
+        await refreshDesktopFoundation()
     }
 
     public func refreshModelOpsProductState() async {
-        guard let modelID = primaryModel?.modelID else {
+        let modelID = resolvedLoraModelID()
+        guard !modelID.isEmpty else {
             return
         }
         await refreshModelOpsProductState(modelID: modelID, notify: true)
     }
 
     public func publishLatestAdapter() async {
-        guard let modelID = primaryModel?.modelID, let adapter = latestAdapterPackage else {
+        let modelID = resolvedLoraModelID()
+        guard !modelID.isEmpty, let adapter = selectedAdapterPackage else {
             return
         }
 
@@ -1431,7 +1498,7 @@ public final class RuntimeViewModel {
             let result = try await client.runModelOperation(
                 modelID: modelID,
                 operation: "registry_snapshot",
-                outputDir: "/tmp/melix-model-ops-registry",
+                outputDir: "",
                 quantProfileID: "",
                 weightQuant: "",
                 kvQuant: "",
@@ -1465,6 +1532,7 @@ public final class RuntimeViewModel {
         trainingHistory = jobs
             .filter { Self.stringValue("operation", from: $0) == "train_lora" }
             .map(Self.makeTrainingHistoryEntryState)
+        refreshLoraSelectionState()
     }
 
     private func updateSelectedServerSession(
@@ -1855,6 +1923,13 @@ public final class RuntimeViewModel {
 
     private func apply(snapshot: Melix_Controlplane_V1_ServerSnapshot) {
         latestSnapshot = snapshot
+        if let lastBenchReport {
+            for metric in lastBenchReport.metrics {
+                if let value = Double(metric.value) {
+                    latestSnapshot.metrics.values[metric.name] = value
+                }
+            }
+        }
         serverStateText = Self.serverStateText(snapshot.serverState)
         statusTitle = "Melix \(serverStateText)"
         models = snapshot.models
@@ -1864,6 +1939,7 @@ public final class RuntimeViewModel {
         ensureChatSessionsBoundToServerSessions()
         refreshImageState()
         refreshChatCapabilities()
+        refreshLoraSelectionState()
         refreshAgentIntegrationExports()
         notifyStateChanged()
     }
@@ -1890,6 +1966,7 @@ public final class RuntimeViewModel {
         ensureChatSessionsBoundToServerSessions()
         refreshImageState()
         refreshChatCapabilities()
+        refreshLoraSelectionState()
         refreshAgentIntegrationExports()
     }
 
@@ -2054,6 +2131,17 @@ public final class RuntimeViewModel {
         return selectedChatModelID
     }
 
+    private func resolvedLoraModelID() -> String {
+        if loraCapableModels.contains(where: { $0.modelID == selectedLoraModelID }) {
+            return selectedLoraModelID
+        }
+        if let textModel = loraCapableModels.first {
+            selectedLoraModelID = textModel.modelID
+            return textModel.modelID
+        }
+        return ""
+    }
+
     private func resolvedImageModelID() -> String {
         if models.contains(where: { $0.modelID == selectedImageModelID && Self.isImageModelKind($0.kind) }) {
             return selectedImageModelID
@@ -2120,6 +2208,66 @@ public final class RuntimeViewModel {
                 isReady: model.state == .modelWarm || model.state == .modelPinned
             )
         }
+    }
+
+    private func refreshLoraSelectionState() {
+        if loraCapableModels.contains(where: { $0.modelID == selectedLoraModelID }) == false,
+           let textModel = loraCapableModels.first {
+            selectedLoraModelID = textModel.modelID
+        }
+
+        if adapterPackages.contains(where: { $0.id == selectedAdapterPackageID }) == false {
+            selectedAdapterPackageID = adapterPackages.first?.id ?? ""
+        }
+    }
+
+    private func loraTrainingExt() -> [String: String] {
+        var ext: [String: String] = [
+            "adapter_name": Self.normalizedOptionalString(loraAdapterName) ?? "melix-dev-adapter",
+            "dataset_source_kind": loraDatasetSourceKind.rawValue,
+        ]
+
+        if loraDatasetSourceKind == .localPackage {
+            ext["dataset_uri"] = Self.normalizedOptionalString(loraDatasetURI) ?? "datasets/melix-dev"
+        } else {
+            Self.assignOptional(loraHFDatasetPath, for: "hf_dataset_path", into: &ext)
+            Self.assignOptional(loraHFDatasetName, for: "hf_dataset_name", into: &ext)
+            Self.assignOptional(loraHFDatasetRevision, for: "hf_dataset_revision", into: &ext)
+            Self.assignOptional(loraHFTrainSplit, for: "hf_train_split", into: &ext)
+            Self.assignOptional(loraHFValidSplit, for: "hf_valid_split", into: &ext)
+            Self.assignOptional(loraChatFeature, for: "chat_feature", into: &ext)
+            Self.assignOptional(loraPromptFeature, for: "prompt_feature", into: &ext)
+            Self.assignOptional(loraCompletionFeature, for: "completion_feature", into: &ext)
+            Self.assignOptional(loraTextFeature, for: "text_feature", into: &ext)
+        }
+
+        Self.assignOptional(loraTargetRepo, for: "target_repo", into: &ext)
+        Self.assignOptional(loraRank, for: "rank", into: &ext)
+        Self.assignOptional(loraAlpha, for: "alpha", into: &ext)
+        Self.assignOptional(loraDropout, for: "dropout", into: &ext)
+        Self.assignOptional(loraTargetModules, for: "target_modules", into: &ext)
+        Self.assignOptional(loraNumLayers, for: "num_layers", into: &ext)
+        Self.assignOptional(loraBatchSize, for: "batch_size", into: &ext)
+        Self.assignOptional(loraEpochs, for: "epochs", into: &ext)
+        Self.assignOptional(loraLearningRate, for: "learning_rate", into: &ext)
+        Self.assignOptional(loraMaxSeqLength, for: "max_seq_length", into: &ext)
+        Self.assignOptional(loraDerivedModelAlias, for: "derived_model_alias", into: &ext)
+        ext["response_only"] = loraResponseOnly ? "true" : "false"
+        ext["mask_prompt"] = loraMaskPrompt ? "true" : "false"
+        ext["gradient_checkpointing"] = loraGradientCheckpointing ? "true" : "false"
+        return ext
+    }
+
+    private static func normalizedOptionalString(_ value: String) -> String? {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    private static func assignOptional(_ value: String, for key: String, into ext: inout [String: String]) {
+        guard let normalized = normalizedOptionalString(value) else {
+            return
+        }
+        ext[key] = normalized
     }
 
     private func appendAssistantDelta(_ text: String, requestID: String) {
