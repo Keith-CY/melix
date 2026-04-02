@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+import math
 from pathlib import Path
 import time
 from typing import Iterator
@@ -36,6 +37,13 @@ class BenchMetricSpec:
     name: str
     value: float
     unit: str
+
+
+@dataclass(frozen=True)
+class BenchSample:
+    ttft_ms: float
+    total_latency_ms: float
+    completion_tokens: int
 
 
 def _split_capability_values(raw_value: str) -> list[str]:
@@ -642,13 +650,16 @@ class MaintenanceCore:
         suites = list(request.suites) or ["smoke"]
         raw_parameters = getattr(request, "parameters", None)
         parameters = dict(raw_parameters) if raw_parameters else {}
-        output_dir = (self._jobs_root / "bench").resolve()
-        output_dir.mkdir(parents=True, exist_ok=True)
+        bench_root = (self._jobs_root / "bench").resolve()
+        bench_root.mkdir(parents=True, exist_ok=True)
 
-        job = self._job_registry.start("bench", request.model_handle or "runtime", str(output_dir))
+        job = self._job_registry.start("bench", request.model_handle or "runtime", "")
+        output_dir = (bench_root / "runs" / job.job_id).resolve()
+        output_dir.mkdir(parents=True, exist_ok=True)
+        self._job_registry.set_output_dir(job.job_id, str(output_dir))
         queued_at = int(time.time() * 1000)
         self._benchmark_queue_store.enqueue(
-            queue_root=output_dir / "queue",
+            queue_root=bench_root / "queue",
             record=BenchmarkQueueRecord(
                 queue_item_id=job.job_id,
                 job_kind="benchmark",
@@ -662,7 +673,7 @@ class MaintenanceCore:
         )
         yield maintenance_pb2.RunBenchEvent(started=maintenance_pb2.BenchStarted(job_id=job.job_id))
         self._benchmark_queue_store.transition(
-            queue_root=output_dir / "queue",
+            queue_root=bench_root / "queue",
             queue_item_id=job.job_id,
             status="running",
             updated_at_unix_ms=queued_at + 1,
@@ -670,61 +681,76 @@ class MaintenanceCore:
 
         benchmark_mode = parameters.get("benchmark_mode", "text")
         metrics: list[BenchMetricSpec] = []
-        for index, suite in enumerate(suites, start=1):
-            pct = index / max(len(suites), 1)
-            self._job_registry.progress(job.job_id, suite, pct)
-            yield maintenance_pb2.RunBenchEvent(
-                progress=maintenance_pb2.BenchProgress(suite=suite, pct=pct)
-            )
-            suite_metrics = (
-                self._bench_metrics_for_vlm_suite(suite)
-                if benchmark_mode == "vlm"
-                else self._bench_metrics_for_suite(suite)
-            )
-            for metric in suite_metrics:
-                metrics.append(metric)
+        lazy_model_handle = ""
+        loaded_model = None
+        try:
+            if benchmark_mode != "vlm":
+                lazy_model_handle, loaded_model = self._resolve_benchmark_loaded_model(request.model_handle)
+            for index, suite in enumerate(suites, start=1):
+                pct = index / max(len(suites), 1)
+                self._job_registry.progress(job.job_id, suite, pct)
                 yield maintenance_pb2.RunBenchEvent(
-                    metric=maintenance_pb2.BenchMetric(
-                        name=metric.name,
-                        value=metric.value,
-                        unit=metric.unit,
+                    progress=maintenance_pb2.BenchProgress(suite=suite, pct=pct)
+                )
+                suite_metrics = (
+                    self._bench_metrics_for_vlm_suite(suite)
+                    if benchmark_mode == "vlm"
+                    else self._measure_text_bench_metrics(
+                        loaded_model=loaded_model,
+                        suite=suite,
+                        parameters=parameters,
                     )
                 )
+                for metric in suite_metrics:
+                    metrics.append(metric)
+                    yield maintenance_pb2.RunBenchEvent(
+                        metric=maintenance_pb2.BenchMetric(
+                            name=metric.name,
+                            value=metric.value,
+                            unit=metric.unit,
+                        )
+                    )
 
-        report_path = output_dir / "bench-report.md"
-        report_path.write_text(self._render_bench_report(request, metrics), encoding="utf-8")
-        job_record = build_serving_benchmark_job(
-            job_id=job.job_id,
-            model_id=(request.model_handle or "runtime").split("::", 1)[0],
-            suites=tuple(suites),
-            parameters=parameters,
-            status="completed",
-            output_dir=str(output_dir),
-        )
-        result_records = build_serving_benchmark_results(
-            job_id=job.job_id,
-            metrics={metric.name: metric.value for metric in metrics},
-            units={metric.name: metric.unit for metric in metrics},
-            report_path=str(report_path),
-            report_markdown=report_path.read_text(encoding="utf-8"),
-        )
-        if self._benchmark_store is None:
-            self._benchmark_store = BenchmarkStore()
-        self._benchmark_store.persist_serving_benchmark(
-            jobs_root=output_dir,
-            job=job_record,
-            results=result_records,
-        )
-        self._job_registry.complete(job.job_id, str(report_path))
-        self._benchmark_queue_store.transition(
-            queue_root=output_dir / "queue",
-            queue_item_id=job.job_id,
-            status="completed",
-            updated_at_unix_ms=int(time.time() * 1000),
-        )
-        yield maintenance_pb2.RunBenchEvent(
-            completed=maintenance_pb2.BenchCompleted(report_path=str(report_path))
-        )
+            report_path = output_dir / "bench-report.md"
+            report_path.write_text(self._render_bench_report(request, metrics), encoding="utf-8")
+            completed_at = int(time.time() * 1000)
+            job_record = build_serving_benchmark_job(
+                job_id=job.job_id,
+                model_id=(request.model_handle or lazy_model_handle or "runtime").split("::", 1)[0],
+                suites=tuple(suites),
+                parameters=parameters,
+                status="completed",
+                output_dir=str(output_dir),
+                created_at_unix_ms=queued_at,
+                updated_at_unix_ms=completed_at,
+            )
+            result_records = build_serving_benchmark_results(
+                job_id=job.job_id,
+                metrics={metric.name: metric.value for metric in metrics},
+                units={metric.name: metric.unit for metric in metrics},
+                report_path=str(report_path),
+                report_markdown=report_path.read_text(encoding="utf-8"),
+            )
+            if self._benchmark_store is None:
+                self._benchmark_store = BenchmarkStore()
+            self._benchmark_store.persist_serving_benchmark(
+                jobs_root=output_dir,
+                job=job_record,
+                results=result_records,
+            )
+            self._job_registry.complete(job.job_id, str(report_path))
+            self._benchmark_queue_store.transition(
+                queue_root=bench_root / "queue",
+                queue_item_id=job.job_id,
+                status="completed",
+                updated_at_unix_ms=completed_at,
+            )
+            yield maintenance_pb2.RunBenchEvent(
+                completed=maintenance_pb2.BenchCompleted(report_path=str(report_path))
+            )
+        finally:
+            if lazy_model_handle and loaded_model is not None and lazy_model_handle == loaded_model.handle:
+                self._registry.unload_model(lazy_model_handle)
 
     @staticmethod
     def _artifact_path(operation: str, output_dir: Path) -> Path:
@@ -866,6 +892,184 @@ class MaintenanceCore:
                 unit="tok/s",
             ),
         ]
+
+    def _resolve_benchmark_loaded_model(self, model_handle: str):
+        if model_handle:
+            loaded_model = self._registry.get_loaded_model(model_handle)
+            if loaded_model is not None:
+                return "", loaded_model
+
+        model_id = model_handle.split("::", 1)[0] if model_handle else "melix-dev-text"
+        model_spec = self._registry.model_catalog.get(model_id)
+        if model_spec is None:
+            raise ModelOperationError(
+                code="not_found",
+                message="Unknown benchmark model.",
+                details={"model_id": model_id},
+            )
+        loaded_model = self._registry.load_model(model_spec)
+        return loaded_model.handle, loaded_model
+
+    def _measure_text_bench_metrics(
+        self,
+        *,
+        loaded_model,
+        suite: str,
+        parameters: dict[str, str],
+    ) -> list[BenchMetricSpec]:
+        sample_count = self._benchmark_sample_count(suite, parameters)
+        samples = [
+            self._measure_text_bench_sample(
+                loaded_model=loaded_model,
+                suite=suite,
+                sample_index=index,
+                parameters=parameters,
+            )
+            for index in range(sample_count)
+        ]
+        if suite == "latency":
+            total_latencies = [sample.total_latency_ms for sample in samples]
+            return [
+                BenchMetricSpec(
+                    suite=suite,
+                    name="bench.latency.p50_ms",
+                    value=self._percentile(total_latencies, 50.0),
+                    unit="ms",
+                ),
+                BenchMetricSpec(
+                    suite=suite,
+                    name="bench.latency.p95_ms",
+                    value=self._percentile(total_latencies, 95.0),
+                    unit="ms",
+                ),
+            ]
+
+        ttft_avg = sum(sample.ttft_ms for sample in samples) / max(len(samples), 1)
+        throughput_values = [
+            (sample.completion_tokens / max((sample.total_latency_ms - sample.ttft_ms) / 1_000.0, 0.001))
+            for sample in samples
+            if sample.completion_tokens > 0
+        ]
+        tokens_per_second = (
+            sum(throughput_values) / len(throughput_values)
+            if throughput_values
+            else 0.0
+        )
+        return [
+            BenchMetricSpec(
+                suite=suite,
+                name=f"bench.{suite}.ttft_ms",
+                value=ttft_avg,
+                unit="ms",
+            ),
+            BenchMetricSpec(
+                suite=suite,
+                name=f"bench.{suite}.tokens_per_second",
+                value=tokens_per_second,
+                unit="tok/s",
+            ),
+        ]
+
+    def _measure_text_bench_sample(
+        self,
+        *,
+        loaded_model,
+        suite: str,
+        sample_index: int,
+        parameters: dict[str, str],
+    ) -> BenchSample:
+        runtime = self._registry.runtime_for_loaded_model(loaded_model)
+        prompt = self._bench_prompt_for_suite(suite=suite, sample_index=sample_index)
+        messages = [common_pb2.ChatMessage(role="user", parts=[common_pb2.MessagePart(text=prompt)])]
+        rendered_prompt = runtime.render_prompt(
+            messages,
+            loaded_model=loaded_model.runtime_model,
+            execution_ext={},
+        )
+        cancel_event = self._registry.start_request(
+            request_id=f"bench-{loaded_model.handle}-{suite}-{sample_index}",
+            runtime_kind=loaded_model.runtime_kind,
+        ).cancel_event
+        try:
+            started_at = time.perf_counter()
+            first_token_at: float | None = None
+            last_token_at: float | None = None
+            completion_tokens = 0
+            sampling = common_pb2.SamplingConfig(
+                temperature=0.0,
+                top_p=1.0,
+                top_k=1,
+                max_output_tokens=self._benchmark_max_output_tokens(parameters),
+            )
+            for runtime_event in runtime.generate_tokens(
+                loaded_model.runtime_model,
+                rendered_prompt,
+                sampling,
+                cancel_event,
+                execution_ext={},
+            ):
+                text = getattr(runtime_event, "text", "")
+                if not text:
+                    continue
+                now = time.perf_counter()
+                if first_token_at is None:
+                    first_token_at = now
+                last_token_at = now
+                completion_tokens = int(getattr(runtime_event, "completion_tokens", 0) or (completion_tokens + 1))
+            finished_at = time.perf_counter()
+        finally:
+            self._registry.finish_request(f"bench-{loaded_model.handle}-{suite}-{sample_index}")
+
+        first_token_time = first_token_at or finished_at
+        completed_at = last_token_at or finished_at
+        return BenchSample(
+            ttft_ms=round((first_token_time - started_at) * 1_000.0, 2),
+            total_latency_ms=round((completed_at - started_at) * 1_000.0, 2),
+            completion_tokens=completion_tokens,
+        )
+
+    @staticmethod
+    def _bench_prompt_for_suite(*, suite: str, sample_index: int) -> str:
+        if suite == "latency":
+            return f"latency-{sample_index}"
+        return f"smoke-{sample_index}"
+
+    @staticmethod
+    def _benchmark_sample_count(suite: str, parameters: dict[str, str]) -> int:
+        raw_value = parameters.get("sample_size", "").strip()
+        if raw_value:
+            try:
+                return max(1, int(raw_value))
+            except ValueError:
+                return 1 if suite == "smoke" else 5
+        return 1 if suite == "smoke" else 5
+
+    @staticmethod
+    def _benchmark_max_output_tokens(parameters: dict[str, str]) -> int:
+        raw_value = parameters.get("max_output_tokens", "").strip()
+        if raw_value:
+            try:
+                return max(4, int(raw_value))
+            except ValueError:
+                return 8
+        return 8
+
+    @staticmethod
+    def _percentile(values: list[float], percentile: float) -> float:
+        if not values:
+            return 0.0
+        ordered = sorted(values)
+        if len(ordered) == 1:
+            return round(ordered[0], 2)
+        rank = (len(ordered) - 1) * max(0.0, min(percentile, 100.0)) / 100.0
+        lower_index = math.floor(rank)
+        upper_index = math.ceil(rank)
+        lower_value = ordered[lower_index]
+        upper_value = ordered[upper_index]
+        if lower_index == upper_index:
+            return round(lower_value, 2)
+        weight = rank - lower_index
+        return round(lower_value + (upper_value - lower_value) * weight, 2)
 
     @staticmethod
     def _bench_metrics_for_vlm_suite(suite: str) -> list[BenchMetricSpec]:

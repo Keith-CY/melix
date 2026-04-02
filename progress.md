@@ -55,6 +55,18 @@
   - `apps/macos-menubar/Sources/AppMain/Models/RuntimeViewModel.swift`: changed-line coverage `100.00%` (`148/148`)
   - `apps/macos-menubar/Sources/AppMain/Dashboard/DesktopWorkspaceShellView.swift`: changed-line coverage `95.03%` (`172/181`)
   - aggregate changed-line coverage for the executable Swift scope in this slice: `97.54%` (`357/366`)
+- Landed the benchmark core runner slice for M7:
+  - replaced deterministic text benchmark placeholder metrics with runtime-backed measurements against the selected model runtime
+  - added lazy benchmark model loading for worker-side runs and persisted benchmark runs under `<jobs_root>/bench/runs/<job_id>/`
+  - kept queue state under `<jobs_root>/bench/queue` while making export and submission flows recurse across run history for backward compatibility
+  - updated release-gate benchmark evidence to use the runtime-backed benchmark core under deterministic test runtime wiring
+- Verification summary for the benchmark core runner slice:
+  - `PYTHONPATH=/Users/ChenYu/Documents/Github/melix:/Users/ChenYu/Documents/Github/melix/services/mlx-worker-python uv run --project services/mlx-worker-python pytest services/mlx-worker-python/tests/test_maintenance_service.py services/mlx-worker-python/tests/test_benchmark_export.py services/mlx-worker-python/tests/test_benchmark_store.py services/mlx-worker-python/tests/test_benchmark_schemas.py services/mlx-worker-python/tests/test_release_gates.py -q`: `76 passed`
+- Metrics report:
+  - `services/mlx-worker-python/worker/engine/maintenance_core.py`: changed-line coverage `100.00%` (`123/123`)
+  - `services/mlx-worker-python/worker/productization/benchmark_export.py`: changed-line coverage `100.00%` (`18/18`)
+  - `services/mlx-worker-python/worker/productization/release_gates.py`: changed-line coverage `100.00%` (`3/3`)
+  - aggregate changed-line coverage for the executable Python scope in this slice: `100.00%` (`144/144`)
 
 ## 2026-04-01
 

@@ -41,12 +41,14 @@ def test_collect_benchmark_evidence_returns_required_metrics(tmp_path: Path) -> 
     evidence = collect_benchmark_evidence(tmp_path / "jobs")
 
     assert evidence["report_exists"] is True
-    assert evidence["metrics"]["bench.smoke.ttft_ms"] == 24.45
-    assert evidence["metrics"]["bench.smoke.tokens_per_second"] == 47.08
-    assert evidence["metrics"]["bench.latency.p95_ms"] == 44.72
+    assert evidence["metrics"]["bench.smoke.ttft_ms"] >= 0.0
+    assert evidence["metrics"]["bench.smoke.tokens_per_second"] >= 45.0
+    assert evidence["metrics"]["bench.latency.p95_ms"] <= 50.0
+    assert evidence["metrics"]["bench.latency.p95_ms"] >= evidence["metrics"]["bench.latency.p50_ms"]
     assert evidence["job"]["schema_version"] == "melix.serving_benchmark_job.v1"
     assert evidence["job"]["job_id"] == "model-ops-0001"
     assert evidence["job"]["suites"] == ["smoke", "latency"]
+    assert evidence["job"]["output_dir"].endswith("/bench/runs/model-ops-0001")
     assert [row["suite"] for row in evidence["results"]] == ["latency", "smoke"]
 
 

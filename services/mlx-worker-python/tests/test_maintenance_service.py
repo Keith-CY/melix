@@ -16,6 +16,7 @@ from worker.model_ops.hub_catalog import (
     HubModelSummaryRecord,
     HubSearchPage,
 )
+from worker.model_ops.errors import ModelOperationError
 from worker.model_ops.lora_training_pipeline import LoRATrainingPipeline
 from worker.model_ops.mlx_lm_runner import (
     ActivationMetrics,
@@ -33,6 +34,8 @@ from worker.productization.benchmark_schemas import (
 from worker.model_registry.catalog import WorkerModelCatalog
 from worker.registry import WorkerRegistry
 from worker.engine.maintenance_core import MaintenanceCore
+from worker.runtime.deterministic_backend import DeterministicTextBackend
+from worker.runtime.mlx_text_runtime import MLXTextRuntime, RuntimeTokenEvent
 
 
 class DeterministicLoRARunner(MLXLMRunner):
@@ -84,6 +87,45 @@ class DeterministicLoRARunner(MLXLMRunner):
             metrics=ActivationMetrics(job_duration_ms=321.0),
             execution_backend="native",
         )
+
+
+class FastBenchmarkBackend:
+    runtime_name = "fast-benchmark"
+
+    def load_model(self, model_spec):
+        return {"model_id": model_spec.model_id, "model_path": model_spec.model_path}
+
+    def estimate_resident_bytes(self, model_spec) -> int:
+        return 1_024
+
+    def generate_tokens(self, loaded_model, prompt: str, sampling, cancel_event):
+        _ = loaded_model
+        _ = sampling
+        _ = prompt
+        for chunk in ("fast ", "runtime ", "probe"):
+            if cancel_event.is_set():
+                return
+            time.sleep(0.005)
+            yield chunk
+
+
+class EmptyThenTokenBenchmarkBackend:
+    runtime_name = "empty-then-token"
+
+    def load_model(self, model_spec):
+        return {"model_id": model_spec.model_id, "model_path": model_spec.model_path}
+
+    def estimate_resident_bytes(self, model_spec) -> int:
+        return 1_024
+
+    def generate_tokens(self, loaded_model, prompt: str, sampling, cancel_event):
+        _ = loaded_model
+        _ = prompt
+        _ = sampling
+        if cancel_event.is_set():
+            return
+        yield RuntimeTokenEvent(text="")
+        yield RuntimeTokenEvent(text="token", completion_tokens=1)
 
 
 class FakeHubCatalog:
@@ -263,8 +305,12 @@ def build_service(
     tmp_path: Path,
     runner: MLXLMRunner | None = None,
     hub_catalog: FakeHubCatalog | None = None,
+    registry: WorkerRegistry | None = None,
 ) -> WorkerMaintenanceService:
-    registry = WorkerRegistry(model_catalog=WorkerModelCatalog())
+    registry = registry or WorkerRegistry(
+        runtime=MLXTextRuntime(backend=DeterministicTextBackend()),
+        model_catalog=WorkerModelCatalog(),
+    )
     service = WorkerMaintenanceService(
         registry,
         jobs_root=tmp_path / "model-ops",
@@ -1245,6 +1291,88 @@ def test_doctor_and_bench_return_deterministic_reports(tmp_path: Path) -> None:
     assert "bench.smoke.ttft_ms" in report
 
 
+def test_run_bench_measures_runtime_behavior_from_loaded_backend(tmp_path: Path) -> None:
+    registry = WorkerRegistry(
+        runtime=MLXTextRuntime(backend=FastBenchmarkBackend()),
+        model_catalog=WorkerModelCatalog(),
+    )
+    service = build_service(tmp_path, registry=registry)
+
+    events = list(
+        service.RunBench(
+            maintenance_pb2.RunBenchRequest(
+                model_handle="melix-dev-text::1",
+                suites=["smoke", "latency"],
+                parameters={"sample_size": "4"},
+            ),
+            context=None,
+        )
+    )
+
+    metrics = {
+        event.metric.name: event.metric.value
+        for event in events
+        if event.HasField("metric")
+    }
+
+    assert metrics["bench.smoke.tokens_per_second"] > 100.0
+    assert 0.0 < metrics["bench.smoke.ttft_ms"] < 20.0
+    assert metrics["bench.latency.p95_ms"] >= metrics["bench.latency.p50_ms"] > 0.0
+
+
+def test_resolve_benchmark_loaded_model_reuses_existing_handle(tmp_path: Path) -> None:
+    registry = WorkerRegistry(
+        runtime=MLXTextRuntime(backend=DeterministicTextBackend()),
+        model_catalog=WorkerModelCatalog(),
+    )
+    loaded = registry.load_model(WorkerModelCatalog.dev_text_model())
+    core = MaintenanceCore(registry, jobs_root=tmp_path / "model-ops")
+
+    lazy_handle, resolved = core._resolve_benchmark_loaded_model(loaded.handle)
+
+    assert lazy_handle == ""
+    assert resolved.handle == loaded.handle
+
+
+def test_resolve_benchmark_loaded_model_raises_typed_error_for_unknown_model(tmp_path: Path) -> None:
+    registry = WorkerRegistry(
+        runtime=MLXTextRuntime(backend=DeterministicTextBackend()),
+        model_catalog=WorkerModelCatalog(),
+    )
+    core = MaintenanceCore(registry, jobs_root=tmp_path / "model-ops")
+
+    try:
+        core._resolve_benchmark_loaded_model("missing-model::1")
+    except ModelOperationError as error:
+        assert error.code == "not_found"
+        assert error.details == {"model_id": "missing-model"}
+    else:  # pragma: no cover - defensive assertion
+        raise AssertionError("expected missing benchmark model to raise ModelOperationError")
+
+
+def test_benchmark_helper_defaults_cover_invalid_parameters_and_sparse_samples(tmp_path: Path) -> None:
+    registry = WorkerRegistry(
+        runtime=MLXTextRuntime(backend=EmptyThenTokenBenchmarkBackend()),
+        model_catalog=WorkerModelCatalog(),
+    )
+    core = MaintenanceCore(registry, jobs_root=tmp_path / "model-ops")
+    loaded = registry.load_model(WorkerModelCatalog.dev_text_model())
+
+    sample = core._measure_text_bench_sample(
+        loaded_model=loaded,
+        suite="smoke",
+        sample_index=0,
+        parameters={"max_output_tokens": "not-a-number"},
+    )
+
+    assert sample.completion_tokens == 1
+    assert MaintenanceCore._benchmark_sample_count("smoke", {"sample_size": "oops"}) == 1
+    assert MaintenanceCore._benchmark_sample_count("latency", {"sample_size": "oops"}) == 5
+    assert MaintenanceCore._benchmark_max_output_tokens({"max_output_tokens": "oops"}) == 8
+    assert MaintenanceCore._percentile([], 95.0) == 0.0
+    assert MaintenanceCore._percentile([1.234], 95.0) == 1.23
+
+
 def test_run_evaluation_returns_typed_job_and_result(tmp_path: Path) -> None:
     service = build_service(tmp_path)
     dataset_root = tmp_path / "datasets" / "qa_smoke.dev.v1"
@@ -1550,13 +1678,15 @@ def test_run_bench_persists_job_manifest_and_per_suite_results(tmp_path: Path) -
     )
 
     report_path = Path(events[-1].completed.report_path)
-    job_manifest = report_path.with_name("bench-job.json")
-    smoke_result = report_path.with_name("bench-result-smoke.json")
-    latency_result = report_path.with_name("bench-result-latency.json")
+    run_dir = tmp_path / "model-ops" / "bench" / "runs" / events[0].started.job_id
+    job_manifest = run_dir / "bench-job.json"
+    smoke_result = run_dir / "bench-result-smoke.json"
+    latency_result = run_dir / "bench-result-latency.json"
 
     assert job_manifest.exists() is True
     assert smoke_result.exists() is True
     assert latency_result.exists() is True
+    assert report_path.parent == run_dir
 
     job_payload = json.loads(job_manifest.read_text(encoding="utf-8"))
     smoke_payload = json.loads(smoke_result.read_text(encoding="utf-8"))
@@ -1579,7 +1709,9 @@ def test_run_bench_persists_job_manifest_and_per_suite_results(tmp_path: Path) -
         suites=("smoke", "latency"),
         parameters={},
         status="completed",
-        output_dir=str(report_path.parent),
+        output_dir=str(run_dir),
+        created_at_unix_ms=job_payload["created_at_unix_ms"],
+        updated_at_unix_ms=job_payload["updated_at_unix_ms"],
     )
     expected_results = {
         result.suite: result.to_dict()
@@ -1593,6 +1725,8 @@ def test_run_bench_persists_job_manifest_and_per_suite_results(tmp_path: Path) -
     }
 
     assert job_payload == expected_job.to_dict()
+    assert job_payload["created_at_unix_ms"] > 0
+    assert job_payload["updated_at_unix_ms"] >= job_payload["created_at_unix_ms"]
     assert smoke_payload == expected_results["smoke"]
     assert latency_payload == expected_results["latency"]
 
@@ -1651,7 +1785,10 @@ def test_bench_events_vlm_mode_produces_vlm_metrics(tmp_path: Path) -> None:
 
 
 def test_bench_events_forwards_parameters_to_queue_record(tmp_path: Path) -> None:
-    registry = WorkerRegistry(model_catalog=WorkerModelCatalog())
+    registry = WorkerRegistry(
+        runtime=MLXTextRuntime(backend=DeterministicTextBackend()),
+        model_catalog=WorkerModelCatalog(),
+    )
     core = MaintenanceCore(registry, jobs_root=tmp_path / "model-ops")
 
     events = list(

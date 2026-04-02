@@ -12,13 +12,11 @@ def collect_benchmark_artifacts(jobs_root: Path) -> dict[str, object]:
     jobs: list[dict[str, object]] = []
     results: list[dict[str, object]] = []
 
-    job_path = jobs_root / "bench-job.json"
-    if job_path.is_file():
-        jobs.append(json.loads(job_path.read_text(encoding="utf-8")))
-
-    for result_path in sorted(jobs_root.glob("bench-result-*.json")):
-        if result_path.is_file():
-            results.append(json.loads(result_path.read_text(encoding="utf-8")))
+    _collect_benchmark_run(jobs_root, jobs=jobs, results=results)
+    runs_root = jobs_root / "runs"
+    if runs_root.is_dir():
+        for run_root in sorted(path for path in runs_root.iterdir() if path.is_dir()):
+            _collect_benchmark_run(run_root, jobs=jobs, results=results)
 
     return {"benchmark_jobs": jobs, "benchmark_results": results}
 
@@ -133,8 +131,27 @@ def _find_metric_value(
 
 def _resolve_artifact_root(jobs_root: Path, *, fallback_dir: str, job_filename: str) -> Path:
     direct_job = jobs_root / job_filename
+    direct_runs = jobs_root / "runs"
     fallback_root = jobs_root / fallback_dir
     fallback_job = fallback_root / job_filename
-    if direct_job.is_file() or not fallback_job.is_file():
+    fallback_runs = fallback_root / "runs"
+    if direct_job.is_file() or direct_runs.is_dir():
         return jobs_root
-    return fallback_root
+    if fallback_job.is_file() or fallback_runs.is_dir():
+        return fallback_root
+    return jobs_root
+
+
+def _collect_benchmark_run(
+    run_root: Path,
+    *,
+    jobs: list[dict[str, object]],
+    results: list[dict[str, object]],
+) -> None:
+    job_path = run_root / "bench-job.json"
+    if job_path.is_file():
+        jobs.append(json.loads(job_path.read_text(encoding="utf-8")))
+
+    for result_path in sorted(run_root.glob("bench-result-*.json")):
+        if result_path.is_file():
+            results.append(json.loads(result_path.read_text(encoding="utf-8")))

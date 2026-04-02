@@ -37,6 +37,36 @@ def _write_bench_fixtures(root: Path) -> None:
     )
 
 
+def _write_bench_run_fixture(root: Path, *, job_id: str, model_id: str, ttft_ms: float) -> None:
+    run_root = root / "runs" / job_id
+    run_root.mkdir(parents=True, exist_ok=True)
+    (run_root / "bench-job.json").write_text(
+        json.dumps({
+            "schema_version": "melix.serving_benchmark_job.v1",
+            "job_id": job_id,
+            "model_id": model_id,
+            "suites": ["smoke"],
+            "parameters": {"sample_size": "4"},
+            "status": "completed",
+            "output_dir": str(run_root),
+            "created_at_unix_ms": 101,
+            "updated_at_unix_ms": 202,
+        }) + "\n"
+    )
+    (run_root / "bench-result-smoke.json").write_text(
+        json.dumps({
+            "schema_version": "melix.serving_benchmark_result.v1",
+            "job_id": job_id,
+            "suite": "smoke",
+            "metrics": [
+                {"name": "bench.smoke.ttft_ms", "value": ttft_ms, "unit": "ms"},
+            ],
+            "report_path": str(run_root / "bench-report.md"),
+            "report_markdown": "# Melix Bench\n",
+        }) + "\n"
+    )
+
+
 def _write_eval_fixtures(root: Path) -> None:
     root.mkdir(parents=True, exist_ok=True)
     (root / "evaluation-job.json").write_text(
@@ -70,6 +100,19 @@ def test_collect_benchmark_artifacts_finds_persisted_bench_files(tmp_path: Path)
     assert result["benchmark_jobs"][0]["job_id"] == "bench-1"
     assert len(result["benchmark_results"]) == 1
     assert result["benchmark_results"][0]["suite"] == "smoke"
+
+
+def test_collect_benchmark_artifacts_reads_per_run_history_from_runs_directory(
+    tmp_path: Path,
+) -> None:
+    bench_root = tmp_path / "bench"
+    _write_bench_run_fixture(bench_root, job_id="bench-1", model_id="model-a", ttft_ms=11.0)
+    _write_bench_run_fixture(bench_root, job_id="bench-2", model_id="model-b", ttft_ms=13.5)
+
+    result = collect_benchmark_artifacts(tmp_path)
+
+    assert [job["job_id"] for job in result["benchmark_jobs"]] == ["bench-1", "bench-2"]
+    assert [row["job_id"] for row in result["benchmark_results"]] == ["bench-1", "bench-2"]
 
 
 def test_collect_evaluation_artifacts_finds_persisted_eval_files(tmp_path: Path) -> None:

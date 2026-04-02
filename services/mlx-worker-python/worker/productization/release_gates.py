@@ -36,6 +36,8 @@ from worker.productization.install_assets import (
     write_local_product_artifacts,
 )
 from worker.registry import WorkerRegistry
+from worker.runtime.deterministic_backend import DeterministicTextBackend
+from worker.runtime.mlx_text_runtime import MLXTextRuntime
 
 _AUDIO_RUNTIME_PACK_ID = "melix-audio-runtime-pack"
 _AUDIO_RUNTIME_PACK_VERSION = "0.3.0"
@@ -493,7 +495,10 @@ def evaluate_release_gate(report: dict[str, Any], policy: dict[str, Any]) -> lis
 
 
 def _build_maintenance_core(jobs_root: str | Path) -> MaintenanceCore:
-    registry = WorkerRegistry(model_catalog=WorkerModelCatalog())
+    registry = WorkerRegistry(
+        runtime=MLXTextRuntime(backend=DeterministicTextBackend()),
+        model_catalog=WorkerModelCatalog(),
+    )
     runner = _SyntheticProductizationRunner()
     return MaintenanceCore(
         registry,
