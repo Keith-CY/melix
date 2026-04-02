@@ -1,5 +1,20 @@
 # Progress Log
 
+## 2026-04-03
+
+- Reset the active repository task plan from the closed M6 transaction to the M7, LoRA, Benchmark, and CLI productization transaction.
+- Added `docs/plans/2026-04-03-m7-lora-benchmark-cli-productization.md` as the umbrella execution plan for:
+  - shared operator client and `melix` CLI exposure
+  - LoRA productization across Window UI and CLI
+  - real M7 benchmark runner closure
+  - benchmark UI, visualization, and CSV export
+- Updated the execution index so M7 now points at the active umbrella plan and is explicitly tracked as in progress rather than implied complete.
+- Verification summary for the documentation reset:
+  - `python3 scripts/python_changed_line_coverage.py`: `N/A`
+- Metrics report:
+  - changed-line coverage for the touched executable scope: `N/A`
+  - reason: this commit records documentation and execution-tracking updates only and does not change executable source files
+
 ## 2026-04-01
 
 - Reviewed `docs/superpowers/plans/2026-03-31-m7-3-m7-5-benchmark-eval-foundation.md` and corrected the plan steps for:

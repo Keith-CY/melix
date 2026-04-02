@@ -2,39 +2,48 @@
 
 ## Goal
 
-Close the remaining M6 gaps on `main` so Quantization And Inference Acceleration is implementation-complete against the repository plans and backed by executable verification.
+Close the remaining M7 gaps on `main`, make LoRA product-ready across Window UI and CLI, and then finish Benchmark productization with real execution, controlled Hugging Face suites, visualization, and CSV export.
 
 ## Scope
 
-- add missing executable benchmark evidence for `M6.7`
-- add missing sparse-prefill benchmark and runbook coverage for `M6.8`
-- tighten `M6.9` conflict locking semantics toward family or protected-scope behavior and cover it with tests
-- refresh the M6 closing verification commands and metrics evidence
+- refresh progress and execution documents so M7, LoRA, Benchmark, and CLI work are tracked from the current repository state
+- expose a shared local control-plane client surface so Window UI and `melix` CLI can reuse the same operator commands
+- productize LoRA training and activation with local-package and Hugging Face dataset inputs, stable artifact storage, Window UI forms, and CLI commands
+- complete M7 with real benchmark execution, per-run persistence, controlled Hugging Face benchmark suites, and executable evidence
+- productize Benchmark with Window UI model and suite selection, history views, visualization, and CSV export
 
 ## Phases
 
-1. Planning and baseline evidence
-   - status: completed
-2. M6.9 locking semantics via TDD
-   - status: completed
-3. M6.7 and M6.8 benchmark or runbook closure
-   - status: completed
-4. Verification and metrics report
-   - status: completed
+1. Documentation reset and execution baseline
+   - status: in_progress
+2. Shared operator client and CLI foundation
+   - status: pending
+3. LoRA backend and artifact productization
+   - status: pending
+4. LoRA Window UI and CLI exposure
+   - status: pending
+5. Real benchmark runner and M7 closure
+   - status: pending
+6. Benchmark Window UI, CSV export, and CLI closure
+   - status: pending
+7. Final verification, metrics, and progress closure
+   - status: pending
 
 ## Acceptance
 
-- M6 child-plan acceptance criteria are satisfied or updated with explicit executable evidence.
-- Remaining benchmark and runbook gaps for `M6.7` and `M6.8` are closed in-repo.
-- Locking behavior for quantization conflicts is protected-scope aware and test-covered.
-- Relevant Python verification commands pass.
+- Progress and roadmap documents describe the true M7 and productization state and point at the active execution plan.
+- LoRA training accepts either a local dataset package or a Hugging Face dataset configuration, persists reproducible artifacts under the runtime jobs root, and exposes training plus activation through Window UI and `melix` CLI.
+- Activated adapters register derived text models that can be selected for inference through the existing product shell.
+- Benchmark executes real measurements against an explicitly selected model, persists per-run results, supports controlled Hugging Face suites with on-demand caching, and can export CSV.
+- Window UI and CLI both operate through the control-plane truth rather than bypassing it.
+- Touched Python and Swift scope maintain measured changed-line coverage of at least `95%` where executable lines exist.
 
 ## Risks
 
-- Swift package verification may be blocked by local toolchain or `.build` cache drift.
-- Existing Phase 2 metrics code may need careful extension to avoid regressing current probes.
+- Swift package verification may remain slower than the Python worker path because of large workspace recompilation.
+- Real benchmark execution depends on loaded text-model availability and runtime characteristics that differ between deterministic and MLX-backed environments.
+- Hugging Face dataset materialization must remain testable without network access, so loader seams need explicit fixture-driven coverage.
 
 ## Outcome
 
-- M6 closing gaps were addressed with code, tests, plan updates, and a new acceleration benchmark runbook.
-- Live benchmark evidence was captured successfully by booting a fresh runtime with `scripts/dev_up.sh --prefer-built`.
+- Pending. This plan will be updated after each executable slice lands and is committed.

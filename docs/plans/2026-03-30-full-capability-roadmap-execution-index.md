@@ -86,6 +86,8 @@ The roadmap extension in `M10-M17` includes milestone-level plans plus decompose
 
 ## M7: Benchmark And Evaluation Platform
 
+- Status: in progress. Active umbrella execution plan: `docs/plans/2026-04-03-m7-lora-benchmark-cli-productization.md`.
+
 - `M7.1` `docs/plans/2026-03-30-m7-1-serving-benchmark-job-schema.md`
 - `M7.2` `docs/plans/2026-03-30-m7-2-evaluation-suite-job-schema.md`
 - `M7.3` `docs/plans/2026-03-30-m7-3-serving-benchmark-runners.md`
