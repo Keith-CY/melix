@@ -16,6 +16,7 @@ Use documents in this order when resolving ambiguity:
 The current top-level specifications remain canonical and should not be moved without an explicit migration task:
 
 - `architecture-spec.md`
+- `benchmark-evaluation-contract.md`
 - `control-plane-protocol.md`
 - `worker-rpc-schema.md`
 - `repo-skeleton.md`

@@ -2,6 +2,21 @@
 
 ## 2026-04-03
 
+- Captured the next-step benchmark and evaluation I/O contract as a canonical repository specification.
+- Added `docs/benchmark-evaluation-contract.md` to define:
+  - the explicit split between `bench` and `eval`
+  - required target selectors, task kinds, normalized inputs, and exportable outputs
+  - performance summary metrics, context-sweep rows, and batch-sweep rows
+  - evaluation suite summaries, category breakdowns, and sample-level CSV and JSONL fields
+  - Window UI and CLI parity requirements
+- Updated `docs/README.md` so the benchmark and evaluation contract is listed with the canonical top-level specifications.
+- Reset `task_plan.md` for this docs-only transaction so the repository reflects that the next follow-up after implementation is contract capture rather than another code slice.
+- Verification summary for the benchmark and evaluation contract capture:
+  - `git diff --check`: pass
+- Metrics report:
+  - changed-line coverage for the touched executable scope: `N/A`
+  - reason: this transaction changes repository documentation only and does not modify executable source files
+
 - Started the benchmark and evaluation redesign follow-up as a new transaction on top of the completed M7 / LoRA / benchmark productization baseline.
 - Added `docs/plans/2026-04-03-benchmark-evaluation-redesign.md` to define the split between:
   - `bench` for performance benchmarking
