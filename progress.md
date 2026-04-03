@@ -106,6 +106,20 @@
   - `apps/macos-menubar/Sources/AppMain/Models/RuntimeViewModel.swift`: changed-line coverage `98.91%` (`272/275`)
   - `apps/macos-menubar/Sources/AppMain/Dashboard/DesktopWorkspaceShellView.swift`: changed-line coverage `92.06%` (`232/252`)
   - aggregate changed-line coverage for the executable Swift scope in this slice: `95.64%` (`504/527`)
+- Closed the M7, LoRA, Benchmark, and CLI productization transaction:
+  - stabilized the final Python verification path by replacing the live Hugging Face benchmark-suite fetch in `test_runtime_edges.py` with a deterministic local fake
+  - documented the public `melix` CLI LoRA and benchmark flows in `README.md`
+  - updated the LoRA, benchmark, and product-acceptance runbooks so Window UI and CLI workflows now share one repository-owned operator guide
+- Verification summary for the final close-out slice:
+  - `make proto`: pass
+  - `make py-test`: `358 passed in 8.63s`
+  - `make swift-test`: `175 tests passed`
+  - `make integration-test`: `54 passed in 621.74s (0:10:21)`
+  - `PYTHONPATH=/Users/ChenYu/Documents/Github/melix:/Users/ChenYu/Documents/Github/melix/services/mlx-worker-python uv run --project services/mlx-worker-python pytest services/mlx-worker-python/tests/test_runtime_edges.py -q`: `22 passed`
+- Metrics report:
+  - `services/mlx-worker-python/tests/test_runtime_edges.py`: changed-line coverage `100.00%` (`24/24`)
+  - `README.md`, `docs/runbooks/m7-benchmark-and-evaluation-foundation.md`, `docs/runbooks/phase-8-lora-adapter-workflow.md`, `docs/runbooks/phase-8-product-acceptance.md`, `docs/plans/2026-04-03-m7-lora-benchmark-cli-productization.md`, and `task_plan.md` are documentation-only and excluded from executable changed-line coverage
+  - aggregate changed-line coverage for the executable touched scope in this slice: `100.00%` (`24/24`)
 
 ## 2026-04-01
 

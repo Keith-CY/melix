@@ -4,6 +4,20 @@
 
 Run the end-of-phase product acceptance flow for Melix and capture the final metrics report.
 
+## Repository Verification
+
+Before claiming productization completion, run the repository-owned verification commands:
+
+```bash
+make proto
+make py-test
+make swift-test
+make integration-test
+```
+
+Use these as the final repository verification gate for LoRA, benchmark, and CLI productization
+in addition to the release-gate and metrics commands below.
+
 ## Install Or Upgrade
 
 Generate or refresh the local product assets:

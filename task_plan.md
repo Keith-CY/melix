@@ -29,7 +29,7 @@ Close the remaining M7 gaps on `main`, make LoRA product-ready across Window UI 
 7. Benchmark Window UI visualization closure
    - status: completed
 8. Final verification, metrics, and progress closure
-   - status: pending
+   - status: completed
 
 ## Acceptance
 

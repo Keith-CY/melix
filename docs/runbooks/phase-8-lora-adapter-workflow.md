@@ -8,8 +8,38 @@ Prepare a local dataset package, train a Melix LoRA adapter, activate it into a 
 
 - the local Melix stack is available
 - the source model is a text-capable Melix model summary
-- the dataset exists as a local `melix.training_dataset_package.v1`
+- the dataset exists either as a local `melix.training_dataset_package.v1` or as a supported Hugging Face dataset configuration
 - the target model family is supported by the current LoRA config mapper
+
+## Window UI And CLI Entry Points
+
+The native operator window now exposes the full LoRA workflow from the diagnostics and tooling
+surfaces:
+
+- choose a base text model
+- choose a local dataset package or a Hugging Face dataset source
+- set LoRA hyperparameters, adapter name, target repo, and optional derived-model alias
+- start training, inspect persisted adapter history, and activate an adapter into a derived model
+
+The same workflow is available through the public `melix` CLI:
+
+```bash
+swift run melix lora list
+
+swift run melix lora train \
+  --model-id melix-dev-text::1 \
+  --dataset-uri /absolute/path/to/dataset-package \
+  --adapter-name melix-dev-adapter \
+  --target-repo melix/adapters/melix-dev-adapter
+
+swift run melix lora train \
+  --model-id melix-dev-text::1 \
+  --hf-dataset-path HuggingFaceH4/ultrachat_200k \
+  --hf-train-split train_sft \
+  --chat-feature messages \
+  --adapter-name melix-ultrachat \
+  --target-repo melix/adapters/melix-ultrachat
+```
 
 ## Dataset Package Layout
 
@@ -53,7 +83,8 @@ Example `samples.jsonl` for `chat_messages`:
 
 ## Train Adapter
 
-Trigger a `RunModelOperation(train_lora)` request from the native desktop tools surface or an existing control-plane client.
+Trigger a `RunModelOperation(train_lora)` request from the native desktop tools surface, the
+public `melix` CLI, or an existing control-plane client.
 
 Use the following `ext` keys as the stable operator-facing inputs:
 
@@ -78,11 +109,40 @@ Use the following `ext` keys as the stable operator-facing inputs:
 }
 ```
 
+Equivalent CLI examples:
+
+```bash
+swift run melix lora train \
+  --model-id melix-dev-text::1 \
+  --dataset-uri /absolute/path/to/dataset-package \
+  --adapter-name melix-dev-adapter \
+  --target-repo melix/adapters/melix-dev-adapter \
+  --rank 16 \
+  --alpha 32 \
+  --dropout 0.1 \
+  --batch-size 4 \
+  --epochs 1 \
+  --learning-rate 1e-5 \
+  --max-seq-length 2048 \
+  --response-only \
+  --mask-prompt
+
+swift run melix lora train \
+  --model-id melix-dev-text::1 \
+  --hf-dataset-path databricks/databricks-dolly-15k \
+  --hf-train-split train \
+  --prompt-feature instruction \
+  --completion-feature response \
+  --adapter-name melix-dolly \
+  --target-repo melix/adapters/melix-dolly
+```
+
 Expected training behavior:
 
 - dataset validation runs before backend execution
+- Hugging Face dataset materialization is cached under `<jobs_root>/datasets/<cache-key>`
 - Melix expands compact target modules into family-specific module paths
-- Melix writes a normalized dataset snapshot under the job output directory
+- Melix writes a normalized dataset snapshot under `<jobs_root>/train_lora/<job_id>/`
 - Melix emits the stages `resolve_source`, `validate_dataset`, `normalize_config`, `prepare_training_data`, `apply_lora`, `train`, `write_adapter`, and `write_manifest`
 - the completed artifact is `train_lora.adapter.json` with schema `melix.lora_adapter_package.v1`
 
@@ -97,11 +157,20 @@ Trigger `RunModelOperation(activate_adapter)` with the adapter manifest path ret
 }
 ```
 
+Equivalent CLI example:
+
+```bash
+swift run melix lora activate \
+  --model-id melix-dev-text::1 \
+  --adapter-path /absolute/path/to/train_lora.adapter.json \
+  --alias melix-dev-text-lora
+```
+
 Expected activation behavior:
 
 - Melix validates adapter compatibility against the base model
 - v1 activation defaults to `fused_derived_model`
-- the completed artifact is `activate_adapter.derived_model.json` with schema `melix.derived_text_model.v1`
+- the completed artifact is `activate_adapter.derived_model.json` with schema `melix.derived_text_model.v1` under `<jobs_root>/activate_adapter/<job_id>/`
 - the result includes `derived_model_id`, `derived_model_path`, `activation_duration_ms`, and `adapter_set_hash`
 - the activated model is registered into the control-plane catalog as a text model
 
@@ -183,6 +252,7 @@ v1 note:
 
 ```bash
 make py-test
+swift test --enable-code-coverage --filter MelixCLITests
 swift test --package-path services/control-plane-swift --filter executeRegistersActivatedDerivedModelsIntoTheCatalog
 swift test --package-path apps/macos-menubar --filter RuntimeViewModelTests
 swift test --package-path apps/macos-menubar --filter DesktopFoundationViewTests

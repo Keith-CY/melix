@@ -8,12 +8,46 @@ Run the repository-owned verification flow for the first executable M7 benchmark
 - offline packaged evaluation execution
 - control-plane evaluation command wiring
 - export and submission payload shaping over persisted artifacts
+- operator-visible benchmark history, visualization, and CSV export through the Window UI and `melix` CLI
 
 ## Preconditions
 
 - `make proto` has completed successfully
 - Python dependencies are bootstrapped with `make bootstrap`
 - Swift toolchain is available for focused control-plane verification
+
+## Operator Window And CLI
+
+The benchmark workflow is now available from both the native operator window and the public
+`melix` CLI.
+
+Use the native operator window when you need:
+
+- explicit benchmark target model selection
+- curated suite multi-select
+- sample-size and batch-factor controls
+- persisted history review, metric cards, chart visualization, and CSV export
+
+Use the CLI for deterministic shell-driven execution:
+
+```bash
+swift run melix bench run \
+  --model-id melix-dev-text::1 \
+  --suite smoke \
+  --suite latency \
+  --sample-size 2 \
+  --batch-factor 1
+
+swift run melix bench list --json
+
+swift run melix bench export-csv \
+  --job-id <benchmark-job-id> \
+  --output /tmp/melix-benchmark.csv
+```
+
+Each benchmark run is persisted under `<jobs_root>/bench/runs/<job_id>/`. The shared export
+bundle used by both the native operator window and CLI also records dataset provenance, suite
+metadata, and cache-hit state for the curated Hugging Face suite inputs.
 
 ## Python Verification
 
@@ -82,8 +116,8 @@ Expected outcomes:
   reported `export_path`.
 - `SubmitResults` uses the same persisted artifact roots and returns a typed
   `melix.submission.v1` payload with stable device identity fields under `device`.
-- For this M7 closure, operator visibility is via machine-readable control-plane/XPC payloads and
-  this runbook rather than a dedicated desktop comparison or submission workflow.
+- For this M7 closure, operator visibility includes the dedicated benchmark controls in the native
+  operator window together with `melix bench list` and `melix bench export-csv`.
 
 ## Coverage
 

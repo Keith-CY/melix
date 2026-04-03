@@ -24,8 +24,9 @@ Close the remaining M7 benchmark-platform gaps, make LoRA production-ready acros
 
 ## Status
 
-- Slices 1 through 7 are complete in the current transaction.
-- Slice 8 remains open for full-repository verification, final metrics capture, and close-out documentation.
+- All eight slices are complete in the current transaction.
+- Final repository verification completed with `make proto`, `make py-test`, `make swift-test`, and `make integration-test`.
+- The public `melix` CLI, LoRA Window UI workflows, benchmark Window UI workflows, and benchmark CSV export guidance are now documented in the repository README and runbooks.
 
 ## Execution Slices
 

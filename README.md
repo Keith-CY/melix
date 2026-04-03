@@ -121,6 +121,60 @@ python3 scripts/install_local_product.py \
 This creates isolated launch agents, runtime roots, managed model roots, and tooling jobs
 roots for that consumer.
 
+## LoRA And Benchmark Operator Flows
+
+The same local control-plane truth now powers both the native operator window and the public
+`melix` CLI.
+
+Use the native operator window when you need:
+
+- guided model, dataset, and parameter selection for LoRA training
+- adapter activation into a derived text model for local inference
+- benchmark suite multi-select, history inspection, charting, and CSV export
+
+Use the CLI when you need reproducible automation or shell integration:
+
+```bash
+swift run melix lora list
+
+swift run melix lora train \
+  --model-id melix-dev-text::1 \
+  --dataset-uri /absolute/path/to/dataset-package \
+  --adapter-name melix-dev-adapter \
+  --target-repo melix/adapters/melix-dev-adapter
+
+swift run melix lora train \
+  --model-id melix-dev-text::1 \
+  --hf-dataset-path HuggingFaceH4/ultrachat_200k \
+  --hf-train-split train_sft \
+  --chat-feature messages \
+  --adapter-name melix-ultrachat \
+  --target-repo melix/adapters/melix-ultrachat
+
+swift run melix lora activate \
+  --model-id melix-dev-text::1 \
+  --adapter-path /absolute/path/to/train_lora.adapter.json \
+  --alias melix-dev-text-lora
+
+swift run melix bench run \
+  --model-id melix-dev-text::1 \
+  --suite smoke \
+  --suite latency \
+  --sample-size 2 \
+  --batch-factor 1
+
+swift run melix bench list --json
+
+swift run melix bench export-csv \
+  --job-id <benchmark-job-id> \
+  --output /tmp/melix-benchmark.csv
+```
+
+Detailed operator guidance lives in:
+
+- `docs/runbooks/phase-8-lora-adapter-workflow.md`
+- `docs/runbooks/m7-benchmark-and-evaluation-foundation.md`
+
 ## External Agent Integrations
 
 Melix can render reproducible setup fragments for external coding-agent clients from the

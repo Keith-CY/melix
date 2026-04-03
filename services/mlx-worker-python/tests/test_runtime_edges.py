@@ -24,6 +24,7 @@ from worker.grpc_server import (
     main,
 )
 from worker.model_registry.catalog import WorkerModelCatalog
+from worker.productization.benchmark_suites import BenchmarkSuiteCatalog
 from worker.registry import WorkerRegistry
 from worker.runtime.audio_runtime_protocols import AudioBackendUnavailableError
 from worker.runtime.deterministic_delay import configured_delay_ms
@@ -72,6 +73,77 @@ class UnavailableAudioRuntime(StubAudioRuntime):
 class FailingAudioRuntime(StubAudioRuntime):
     def load_model(self, model_spec):
         raise RuntimeError("mlx-audio speech backend failed to load model")
+
+
+class FakeBenchmarkHFDatasetFetcher:
+    def __call__(self, endpoint: str, params: dict[str, str]) -> dict[str, object]:
+        dataset = params.get("dataset", "")
+        offset = params.get("offset", "0")
+        if endpoint == "rows" and offset != "0":
+            return {"rows": []}
+
+        if dataset == "HuggingFaceH4/ultrachat_200k":
+            if endpoint == "rows":
+                return {
+                    "rows": [
+                        {
+                            "row": {
+                                "messages": [
+                                    {"role": "user", "content": "Say hi."},
+                                    {"role": "assistant", "content": "Hi."},
+                                ]
+                            }
+                        },
+                        {
+                            "row": {
+                                "messages": [
+                                    {"role": "user", "content": "Say bye."},
+                                    {"role": "assistant", "content": "Bye."},
+                                ]
+                            }
+                        },
+                    ]
+                }
+            return {"splits": [{"dataset": dataset, "config": "default", "split": "train_sft"}]}
+
+        if dataset == "databricks/databricks-dolly-15k":
+            if endpoint == "rows":
+                return {
+                    "rows": [
+                        {"row": {"instruction": "List two colors.", "response": "Red and blue."}},
+                        {"row": {"instruction": "List two animals.", "response": "Cat and dog."}},
+                    ]
+                }
+            return {"splits": [{"dataset": dataset, "config": "default", "split": "train"}]}
+
+        raise AssertionError(f"Unexpected benchmark fetch: endpoint={endpoint} dataset={dataset}")
+
+
+def test_fake_benchmark_hf_dataset_fetcher_covers_supported_and_error_paths() -> None:
+    fetcher = FakeBenchmarkHFDatasetFetcher()
+
+    assert fetcher("rows", {"dataset": "HuggingFaceH4/ultrachat_200k", "offset": "1"}) == {"rows": []}
+    assert fetcher("splits", {"dataset": "HuggingFaceH4/ultrachat_200k"}) == {
+        "splits": [
+            {
+                "dataset": "HuggingFaceH4/ultrachat_200k",
+                "config": "default",
+                "split": "train_sft",
+            }
+        ]
+    }
+    assert fetcher("splits", {"dataset": "databricks/databricks-dolly-15k"}) == {
+        "splits": [
+            {
+                "dataset": "databricks/databricks-dolly-15k",
+                "config": "default",
+                "split": "train",
+            }
+        ]
+    }
+
+    with pytest.raises(AssertionError, match="Unexpected benchmark fetch"):
+        fetcher("splits", {"dataset": "unknown/dataset"})
 
 
 def build_registry(
@@ -818,6 +890,9 @@ def test_elapsed_helpers_guard_invalid_origins() -> None:
 
 def test_maintenance_service_keeps_doctor_and_bench_structured(tmp_path: Path) -> None:
     service = WorkerMaintenanceService(build_registry(), jobs_root=tmp_path / "ops")
+    service._core._benchmark_suite_catalog = BenchmarkSuiteCatalog(
+        hf_dataset_fetcher=FakeBenchmarkHFDatasetFetcher()
+    )
 
     doctor = service.RunDoctor(
         maintenance_pb2.RunDoctorRequest(
