@@ -29,6 +29,17 @@
 - Metrics report for Task 2:
   - `Sources/MelixCLICore/MelixCLI.swift`, `tests/MelixCLITests/MelixCLIParserTests.swift`, and `tests/MelixCLITests/MelixCLIRunnerTests.swift`: aggregate changed-line coverage `100.00%` (`66/66`)
   - `services/control-plane-swift/Sources/XPCService/ControlPlaneXPCClient.swift`, `services/control-plane-swift/Sources/XPCService/ControlPlaneService.swift`, and `services/control-plane-swift/Tests/ControlPlaneTests/ControlPlaneServiceTests.swift`: aggregate changed-line coverage `100.00%` (`14/14`)
+- Closed the Task 2 follow-up test gap after the main normalization commit:
+  - added parser coverage for default canonical bench fields and invalid `cache_profile` rejection
+  - added CLI runner coverage for normalized bench request forwarding
+  - updated the control-plane canonical bench forwarding test to prove unsorted context and batch inputs are normalized before worker dispatch
+- Verification summary for the Task 2 follow-up:
+  - `swift test --enable-code-coverage --filter MelixCLITests`: `41 tests passed`
+  - `swift test --package-path services/control-plane-swift --enable-code-coverage --filter ControlPlaneServiceTests`: `115 tests passed`
+  - both Swift test bundles emitted the existing linker warning `warning: input verification failed` while processing `SwiftTextWorkerClient.swift.o`; the tests still passed and this warning is outside the touched follow-up scope
+- Metrics report for the Task 2 follow-up:
+  - `tests/MelixCLITests/MelixCLIParserTests.swift` and `tests/MelixCLITests/MelixCLIRunnerTests.swift`: aggregate changed-line coverage `100.00%` (`66/66`)
+  - `services/control-plane-swift/Tests/ControlPlaneTests/ControlPlaneServiceTests.swift`: changed-line coverage `100.00%` (`14/14`)
 
 - Converted the canonical benchmark and evaluation contract into an executable implementation plan.
 - Added `docs/plans/2026-04-03-bench-eval-contract-expansion-implementation.md` with staged tasks for:

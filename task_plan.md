@@ -20,7 +20,7 @@ Execute `docs/plans/2026-04-03-bench-eval-contract-expansion-implementation.md` 
    - evidence: `ed65fe6`
 2. Task 2: implement canonical bench request normalization in CLI and control plane
    - status: completed
-   - evidence: `d70d4a2` plus the follow-up Task 2 test and metrics close-out in the current working tree
+   - evidence: `d70d4a2` and `769f65b`
 3. Task 3: implement canonical bench metrics, sweeps, and exports in the Python worker
    - status: pending
 4. Task 4: implement canonical evaluation controls, persistence, and exports
