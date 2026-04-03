@@ -165,6 +165,66 @@ public struct RuntimeBenchReportState: Equatable, Sendable {
     public let metrics: [RuntimeBenchMetricState]
 }
 
+public struct RuntimeBenchmarkSuiteOptionState: Identifiable, Equatable, Sendable {
+    public let id: String
+    public let title: String
+    public let datasetPath: String
+    public let datasetName: String
+    public let datasetSplit: String
+    public let defaultSampleSize: Int
+    public let defaultBatchFactor: Int
+
+    public var datasetLabel: String {
+        "\(datasetPath) • \(datasetSplit)"
+    }
+
+    public var defaultsText: String {
+        "default \(defaultSampleSize)x sample • \(defaultBatchFactor)x batch"
+    }
+}
+
+public struct RuntimeBenchmarkHistoryEntryState: Identifiable, Equatable, Sendable {
+    public let id: String
+    public let jobID: String
+    public let modelID: String
+    public let suiteID: String
+    public let suiteTitle: String
+    public let datasetLabel: String
+    public let sampleSizeText: String
+    public let batchFactorText: String
+    public let statusText: String
+    public let metricCountText: String
+    public let createdAtText: String
+    public let createdAtUnixMS: Int64
+    public let reportPath: String
+}
+
+public struct RuntimeBenchmarkMetricCardState: Identifiable, Equatable, Sendable {
+    public let id: String
+    public let suiteTitle: String
+    public let metricName: String
+    public let metricLabel: String
+    public let value: Double
+    public let valueText: String
+    public let unit: String
+}
+
+public struct RuntimeBenchmarkChartPointState: Identifiable, Equatable, Sendable {
+    public let id: String
+    public let jobID: String
+    public let suiteTitle: String
+    public let metricName: String
+    public let value: Double
+    public let unit: String
+    public let createdAtLabel: String
+    public let createdAtUnixMS: Int64
+}
+
+public struct RuntimeBenchmarkCSVExportState: Equatable, Sendable {
+    public let outputPath: String
+    public let rowCount: Int
+}
+
 public struct DesktopChatTranscriptEntry: Identifiable, Equatable, Sendable {
     public enum Kind: String, Sendable {
         case user
@@ -226,6 +286,11 @@ public final class RuntimeViewModel {
     public private(set) var lastModelOperation: RuntimeModelOperationState?
     public private(set) var lastDoctorReport: RuntimeDoctorReportState?
     public private(set) var lastBenchReport: RuntimeBenchReportState?
+    public private(set) var benchmarkHistory: [RuntimeBenchmarkHistoryEntryState] = []
+    public private(set) var benchmarkMetricCards: [RuntimeBenchmarkMetricCardState] = []
+    public private(set) var benchmarkChartPoints: [RuntimeBenchmarkChartPointState] = []
+    public private(set) var benchmarkMetricOptions: [String] = []
+    public private(set) var lastBenchmarkCSVExport: RuntimeBenchmarkCSVExportState?
     public private(set) var adapterPackages: [RuntimeAdapterPackageState] = []
     public private(set) var trainingHistory: [RuntimeTrainingHistoryEntryState] = []
     public private(set) var chatTranscript: [DesktopChatTranscriptEntry] = []
@@ -242,6 +307,12 @@ public final class RuntimeViewModel {
     public var chatComposerText = ""
     public var selectedChatModelID = "melix-dev-text"
     public var selectedLoraModelID = "melix-dev-text"
+    public var selectedBenchmarkModelID = "melix-dev-text"
+    public var selectedBenchmarkSuiteIDs: Set<String> = ["smoke"]
+    public var benchmarkSampleSize = ""
+    public var benchmarkBatchFactor = ""
+    public var selectedBenchmarkHistoryJobID = ""
+    public var selectedBenchmarkMetricName = ""
     public var loraDatasetSourceKind: RuntimeLoraDatasetSourceKind = .localPackage
     public var loraDatasetURI = "datasets/melix-dev"
     public var loraHFDatasetPath = ""
@@ -301,6 +372,28 @@ public final class RuntimeViewModel {
     private var lastAppliedGatewaySessionID = ""
     private var lastAppliedGatewayPrimaryKey = ""
     private var gatewayApplyTask: Task<Void, Never>?
+    private var benchmarkExportBundle: ControlPlaneBenchmarkExportBundle?
+
+    private static let benchmarkSuiteOptions = [
+        RuntimeBenchmarkSuiteOptionState(
+            id: "smoke",
+            title: "UltraChat Smoke",
+            datasetPath: "HuggingFaceH4/ultrachat_200k",
+            datasetName: "default",
+            datasetSplit: "train_sft",
+            defaultSampleSize: 1,
+            defaultBatchFactor: 1
+        ),
+        RuntimeBenchmarkSuiteOptionState(
+            id: "latency",
+            title: "Dolly Latency",
+            datasetPath: "databricks/databricks-dolly-15k",
+            datasetName: "default",
+            datasetSplit: "train",
+            defaultSampleSize: 5,
+            defaultBatchFactor: 1
+        ),
+    ]
 
     public init(
         client: any ControlPlaneXPCClient,
@@ -328,6 +421,28 @@ public final class RuntimeViewModel {
     public func selectToolSection(_ section: DesktopToolSection) {
         selectedSurface = .tools
         selectedToolSection = section
+        notifyStateChanged()
+    }
+
+    public func toggleBenchmarkSuite(_ suiteID: String) {
+        if selectedBenchmarkSuiteIDs.contains(suiteID) {
+            selectedBenchmarkSuiteIDs.remove(suiteID)
+        } else {
+            selectedBenchmarkSuiteIDs.insert(suiteID)
+        }
+        rebuildBenchmarkDerivedState()
+        notifyStateChanged()
+    }
+
+    public func selectBenchmarkHistory(jobID: String) {
+        selectedBenchmarkHistoryJobID = jobID
+        rebuildBenchmarkDerivedState()
+        notifyStateChanged()
+    }
+
+    public func selectBenchmarkMetric(_ metricName: String) {
+        selectedBenchmarkMetricName = metricName
+        rebuildBenchmarkDerivedState()
         notifyStateChanged()
     }
 
@@ -771,6 +886,19 @@ public final class RuntimeViewModel {
             lastError: lastError,
             recentEvents: recentEvents
         )
+    }
+
+    public var benchmarkModels: [RuntimeModelRow] {
+        models.filter(Self.isBenchmarkEligibleModel)
+    }
+
+    public var benchmarkSuites: [RuntimeBenchmarkSuiteOptionState] {
+        Self.benchmarkSuiteOptions
+    }
+
+    public var selectedBenchmarkHistoryEntry: RuntimeBenchmarkHistoryEntryState? {
+        benchmarkHistory.first(where: { $0.jobID == selectedBenchmarkHistoryJobID })
+            ?? benchmarkHistory.first
     }
 
     private var selectedServerSessionID = ""
@@ -1469,9 +1597,27 @@ public final class RuntimeViewModel {
     }
 
     public func runBench() async {
+        let modelID = resolvedBenchmarkModelID()
+        guard !modelID.isEmpty else {
+            recordLocalError("Select a text model before running Benchmark.")
+            notifyStateChanged()
+            return
+        }
+        let suites = selectedBenchmarkSuiteIDs.sorted()
+        guard suites.isEmpty == false else {
+            recordLocalError("Select at least one benchmark dataset before running Benchmark.")
+            notifyStateChanged()
+            return
+        }
         let startedAt = Date()
         do {
-            let result = try await client.runBench()
+            let result = try await client.runBench(
+                ControlPlaneBenchRequest(
+                    modelID: modelID,
+                    suites: suites,
+                    parameters: benchmarkParameters()
+                )
+            )
             await metrics.record(
                 name: "menu.ops_bench_ms",
                 valueMs: Date().timeIntervalSince(startedAt) * 1_000
@@ -1485,6 +1631,44 @@ public final class RuntimeViewModel {
                 metrics: result.metrics.keys.sorted().map { key in
                     RuntimeBenchMetricState(name: key, value: String(format: "%.2f", result.metrics[key] ?? 0))
                 }
+            )
+            await refreshBenchmarkHistory(notify: false)
+        } catch {
+            recordLocalError(String(describing: error))
+        }
+        notifyStateChanged()
+    }
+
+    public func refreshBenchmarkHistory() async {
+        await refreshBenchmarkHistory(notify: true)
+    }
+
+    public func exportSelectedBenchmarkCSV() async {
+        let startedAt = Date()
+        do {
+            let exportDirectory = try Self.ensureBenchmarkExportDirectory()
+            let export = try await client.exportResults(outputDir: exportDirectory.path)
+            let bundle = try ControlPlaneBenchmarkExportBundle.decode(json: export.exportBundleJSON)
+            applyBenchmarkExportBundle(bundle)
+            let selectedJobID = selectedBenchmarkHistoryJobID.isEmpty ? nil : selectedBenchmarkHistoryJobID
+            let rows = bundle.benchmarkCSVRows(jobID: selectedJobID)
+            guard rows.isEmpty == false else {
+                recordLocalError("No benchmark rows are available for CSV export.")
+                notifyStateChanged()
+                return
+            }
+            let csv = bundle.benchmarkCSV(jobID: selectedJobID)
+            let outputURL = exportDirectory.appendingPathComponent(
+                Self.benchmarkCSVFileName(jobID: selectedJobID)
+            )
+            try csv.write(to: outputURL, atomically: true, encoding: .utf8)
+            lastBenchmarkCSVExport = RuntimeBenchmarkCSVExportState(
+                outputPath: outputURL.path,
+                rowCount: rows.count
+            )
+            await metrics.record(
+                name: "menu.bench_export_csv_ms",
+                valueMs: Date().timeIntervalSince(startedAt) * 1_000
             )
         } catch {
             recordLocalError(String(describing: error))
@@ -1940,8 +2124,114 @@ public final class RuntimeViewModel {
         refreshImageState()
         refreshChatCapabilities()
         refreshLoraSelectionState()
+        refreshBenchmarkSelectionState()
         refreshAgentIntegrationExports()
         notifyStateChanged()
+    }
+
+    private func refreshBenchmarkSelectionState() {
+        let availableModelIDs = benchmarkModels.map(\.modelID)
+        if availableModelIDs.contains(selectedBenchmarkModelID) == false {
+            selectedBenchmarkModelID = availableModelIDs.first ?? ""
+        }
+
+        let validSuiteIDs = Set(Self.benchmarkSuiteOptions.map(\.id))
+        selectedBenchmarkSuiteIDs = selectedBenchmarkSuiteIDs.intersection(validSuiteIDs)
+        if selectedBenchmarkSuiteIDs.isEmpty {
+            selectedBenchmarkSuiteIDs = ["smoke"]
+        }
+        rebuildBenchmarkDerivedState()
+    }
+
+    private func refreshBenchmarkHistory(notify: Bool) async {
+        let startedAt = Date()
+        do {
+            let exportDirectory = try Self.ensureBenchmarkExportDirectory()
+            let export = try await client.exportResults(outputDir: exportDirectory.path)
+            let bundle = try ControlPlaneBenchmarkExportBundle.decode(json: export.exportBundleJSON)
+            applyBenchmarkExportBundle(bundle)
+            await metrics.record(
+                name: "menu.bench_history_refresh_ms",
+                valueMs: Date().timeIntervalSince(startedAt) * 1_000
+            )
+        } catch {
+            recordLocalError(String(describing: error))
+        }
+        if notify {
+            notifyStateChanged()
+        }
+    }
+
+    private func applyBenchmarkExportBundle(_ bundle: ControlPlaneBenchmarkExportBundle) {
+        benchmarkExportBundle = bundle
+        benchmarkHistory = bundle.benchmarkHistoryEntries().map(Self.makeBenchmarkHistoryEntryState)
+        if benchmarkHistory.contains(where: { $0.jobID == selectedBenchmarkHistoryJobID }) == false {
+            selectedBenchmarkHistoryJobID = benchmarkHistory.first?.jobID ?? ""
+        }
+        rebuildBenchmarkDerivedState()
+    }
+
+    private func rebuildBenchmarkDerivedState() {
+        guard let benchmarkExportBundle else {
+            benchmarkMetricCards = []
+            benchmarkChartPoints = []
+            benchmarkMetricOptions = []
+            if selectedBenchmarkHistoryJobID.isEmpty == false {
+                selectedBenchmarkHistoryJobID = ""
+            }
+            if selectedBenchmarkMetricName.isEmpty == false {
+                selectedBenchmarkMetricName = ""
+            }
+            return
+        }
+
+        let allRows = benchmarkExportBundle.benchmarkCSVRows()
+        benchmarkMetricOptions = Array(Set(allRows.map(\.metricName))).sorted()
+        let selectedHistoryJobID = selectedBenchmarkHistoryJobID.isEmpty ? (benchmarkHistory.first?.jobID ?? "") : selectedBenchmarkHistoryJobID
+        if selectedBenchmarkHistoryJobID != selectedHistoryJobID {
+            selectedBenchmarkHistoryJobID = selectedHistoryJobID
+        }
+
+        let selectedRows = benchmarkExportBundle.benchmarkCSVRows(jobID: selectedHistoryJobID.isEmpty ? nil : selectedHistoryJobID)
+        benchmarkMetricCards = selectedRows.map(Self.makeBenchmarkMetricCardState)
+
+        let preferredMetricName = selectedRows.first?.metricName ?? benchmarkMetricOptions.first ?? ""
+        if benchmarkMetricOptions.contains(selectedBenchmarkMetricName) == false {
+            selectedBenchmarkMetricName = preferredMetricName
+        }
+
+        let suiteFilter = selectedBenchmarkSuiteIDs.isEmpty ? Set(Self.benchmarkSuiteOptions.map(\.id)) : selectedBenchmarkSuiteIDs
+        benchmarkChartPoints = allRows
+            .filter { row in
+                row.metricName == selectedBenchmarkMetricName && suiteFilter.contains(row.suiteID)
+            }
+            .sorted { lhs, rhs in
+                if lhs.createdAtUnixMS == rhs.createdAtUnixMS {
+                    return lhs.jobID < rhs.jobID
+                }
+                return lhs.createdAtUnixMS < rhs.createdAtUnixMS
+            }
+            .map(Self.makeBenchmarkChartPointState)
+    }
+
+    private func resolvedBenchmarkModelID() -> String {
+        if !selectedBenchmarkModelID.isEmpty {
+            return selectedBenchmarkModelID
+        }
+        return benchmarkModels.first?.modelID ?? ""
+    }
+
+    private func benchmarkParameters() -> [String: String] {
+        var parameters: [String: String] = [:]
+        let sampleSize = benchmarkSampleSize.trimmingCharacters(in: .whitespacesAndNewlines)
+        if sampleSize.isEmpty == false {
+            parameters["sample_size"] = sampleSize
+        }
+        let batchFactor = benchmarkBatchFactor.trimmingCharacters(in: .whitespacesAndNewlines)
+        if batchFactor.isEmpty == false {
+            parameters["batch_factor"] = batchFactor
+        }
+        return parameters
     }
 
     private func upsert(model: Melix_Controlplane_V1_ModelSummary) {
@@ -2716,6 +3006,59 @@ public final class RuntimeViewModel {
         )
     }
 
+    private static func makeBenchmarkHistoryEntryState(
+        from entry: ControlPlaneBenchmarkHistoryEntry
+    ) -> RuntimeBenchmarkHistoryEntryState {
+        let datasetParts = [entry.datasetRepo, entry.datasetConfig]
+            .filter { $0.isEmpty == false }
+            .joined(separator: " • ")
+        let splitSuffix = entry.datasetSplit.isEmpty ? "" : " • \(entry.datasetSplit)"
+        return RuntimeBenchmarkHistoryEntryState(
+            id: "\(entry.jobID):\(entry.suiteID)",
+            jobID: entry.jobID,
+            modelID: entry.modelID,
+            suiteID: entry.suiteID,
+            suiteTitle: entry.suiteTitle,
+            datasetLabel: datasetParts + splitSuffix,
+            sampleSizeText: entry.sampleSize.map(String.init) ?? "default",
+            batchFactorText: entry.batchFactor.map(String.init) ?? "default",
+            statusText: humanizeStatus(entry.status),
+            metricCountText: "\(entry.metricCount) metrics",
+            createdAtText: benchmarkTimestampLabel(entry.createdAtUnixMS),
+            createdAtUnixMS: entry.createdAtUnixMS,
+            reportPath: entry.reportPath
+        )
+    }
+
+    private static func makeBenchmarkMetricCardState(
+        from row: ControlPlaneBenchmarkCSVRow
+    ) -> RuntimeBenchmarkMetricCardState {
+        RuntimeBenchmarkMetricCardState(
+            id: "\(row.jobID):\(row.suiteID):\(row.metricName)",
+            suiteTitle: benchmarkSuiteTitle(for: row.suiteID),
+            metricName: row.metricName,
+            metricLabel: benchmarkMetricLabel(row.metricName),
+            value: row.metricValue,
+            valueText: String(format: "%.2f %@", row.metricValue, row.unit),
+            unit: row.unit
+        )
+    }
+
+    private static func makeBenchmarkChartPointState(
+        from row: ControlPlaneBenchmarkCSVRow
+    ) -> RuntimeBenchmarkChartPointState {
+        RuntimeBenchmarkChartPointState(
+            id: "\(row.jobID):\(row.suiteID):\(row.metricName)",
+            jobID: row.jobID,
+            suiteTitle: benchmarkSuiteTitle(for: row.suiteID),
+            metricName: row.metricName,
+            value: row.metricValue,
+            unit: row.unit,
+            createdAtLabel: benchmarkTimestampLabel(row.createdAtUnixMS),
+            createdAtUnixMS: row.createdAtUnixMS
+        )
+    }
+
     private static func stringValue(_ key: String, from payload: [String: Any]) -> String {
         payload[key] as? String ?? ""
     }
@@ -2762,6 +3105,43 @@ public final class RuntimeViewModel {
             return String(format: "%.2fs", milliseconds / 1_000)
         }
         return String(format: "%.0fms", milliseconds)
+    }
+
+    private static func benchmarkMetricLabel(_ metricName: String) -> String {
+        let normalized = metricName.split(separator: ".").last.map(String.init) ?? metricName
+        return normalized.replacingOccurrences(of: "_", with: " ")
+    }
+
+    private static func benchmarkSuiteTitle(for suiteID: String) -> String {
+        benchmarkSuiteOptions.first(where: { $0.id == suiteID })?.title ?? suiteID
+    }
+
+    private static func benchmarkTimestampLabel(_ unixMS: Int64) -> String {
+        let date = Date(timeIntervalSince1970: Double(unixMS) / 1_000)
+        return date.formatted(date: .abbreviated, time: .shortened)
+    }
+
+    private static func isBenchmarkEligibleModel(_ model: RuntimeModelRow) -> Bool {
+        model.kind == "text"
+    }
+
+    private static func ensureBenchmarkExportDirectory() throws -> URL {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "melix-benchmark-exports",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: directory,
+            withIntermediateDirectories: true,
+            attributes: nil
+        )
+        return directory
+    }
+
+    private static func benchmarkCSVFileName(jobID: String?) -> String {
+        let sanitizedJobID = (jobID?.isEmpty == false ? jobID! : "all-runs")
+            .replacingOccurrences(of: "/", with: "-")
+        return "melix-benchmark-\(sanitizedJobID).csv"
     }
 
     private static func isImageModelKind(_ kind: String) -> Bool {

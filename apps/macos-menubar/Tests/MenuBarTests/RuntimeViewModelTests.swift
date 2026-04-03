@@ -1837,6 +1837,142 @@ struct RuntimeViewModelTests {
         #expect(await metrics.snapshot()["menu.model_ops_refresh_ms"] != nil)
     }
 
+    @Test("benchmark configuration dispatches explicit model suites history refresh and csv export")
+    @MainActor
+    func benchmarkConfigurationDispatchesExplicitModelSuitesHistoryRefreshAndCSVExport() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let metrics = MenuBarMetricsStore()
+        let viewModel = RuntimeViewModel(client: client, metrics: metrics)
+        await client.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [
+                    makeModelSummary(modelID: "melix-dev-text", state: .modelWarm),
+                    makeModelSummary(modelID: "melix-dev-text-lora", state: .modelWarm),
+                ]
+            )
+        )
+        await client.configureBenchResponse(
+            ControlPlaneBenchResult(
+                reportPath: "/tmp/melix/bench/runs/bench-newer/bench-report.md",
+                reportMarkdown: "# Melix Bench\n\n- bench.smoke.tokens_per_second: 61.20 tok/s\n",
+                metrics: [
+                    "bench.smoke.ttft_ms": 21.10,
+                    "bench.smoke.tokens_per_second": 61.20,
+                    "bench.latency.p95_ms": 39.70,
+                ]
+            )
+        )
+        await client.configureExportResult(
+            ControlPlaneExportResult(exportBundleJSON: makeBenchmarkExportBundleJSON())
+        )
+
+        await viewModel.start()
+        viewModel.selectedBenchmarkModelID = "melix-dev-text-lora"
+        viewModel.selectedBenchmarkSuiteIDs = ["smoke", "latency"]
+        viewModel.benchmarkSampleSize = "6"
+        viewModel.benchmarkBatchFactor = "2"
+
+        await viewModel.runBench()
+        viewModel.selectBenchmarkMetric("bench.smoke.tokens_per_second")
+
+        let benchRequest = try #require(await client.recordedBenchRequests.last)
+        #expect(benchRequest.modelID == "melix-dev-text-lora")
+        #expect(Set(benchRequest.suites) == Set(["smoke", "latency"]))
+        #expect(benchRequest.parameters["sample_size"] == "6")
+        #expect(benchRequest.parameters["batch_factor"] == "2")
+        #expect(viewModel.benchmarkHistory.count == 3)
+        #expect(viewModel.selectedBenchmarkHistoryEntry?.jobID == "bench-newer")
+        #expect(viewModel.benchmarkMetricCards.count == 3)
+        #expect(viewModel.benchmarkMetricOptions.contains("bench.smoke.tokens_per_second"))
+        #expect(viewModel.benchmarkChartPoints.count == 2)
+
+        await viewModel.exportSelectedBenchmarkCSV()
+
+        let exportState = try #require(viewModel.lastBenchmarkCSVExport)
+        #expect(exportState.rowCount == 3)
+        #expect(FileManager.default.fileExists(atPath: exportState.outputPath))
+        let csv = try String(contentsOfFile: exportState.outputPath, encoding: .utf8)
+        #expect(csv.contains("bench-newer"))
+        #expect(await client.recordedActions.contains("bench.export"))
+        #expect(await client.recordedExportOutputDirs.isEmpty == false)
+        #expect(await metrics.snapshot()["menu.bench_history_refresh_ms"] != nil)
+        #expect(await metrics.snapshot()["menu.bench_export_csv_ms"] != nil)
+    }
+
+    @Test("benchmark selection state falls back and benchmark guard rails surface local errors")
+    @MainActor
+    func benchmarkSelectionStateFallsBackAndGuardRailsSurfaceLocalErrors() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(client: client)
+        viewModel.selectedBenchmarkModelID = "missing-model"
+        viewModel.selectedBenchmarkSuiteIDs = ["unknown-suite"]
+        viewModel.selectedBenchmarkHistoryJobID = "stale-job"
+        viewModel.selectedBenchmarkMetricName = "stale-metric"
+
+        await viewModel.start()
+
+        #expect(viewModel.selectedBenchmarkModelID == "melix-dev-text")
+        #expect(viewModel.selectedBenchmarkSuiteIDs == ["smoke"])
+        #expect(viewModel.selectedBenchmarkHistoryJobID.isEmpty)
+        #expect(viewModel.selectedBenchmarkMetricName.isEmpty)
+
+        viewModel.toggleBenchmarkSuite("latency")
+        #expect(viewModel.selectedBenchmarkSuiteIDs.contains("latency"))
+        viewModel.toggleBenchmarkSuite("latency")
+        #expect(viewModel.selectedBenchmarkSuiteIDs.contains("latency") == false)
+
+        viewModel.selectBenchmarkHistory(jobID: "bench-older")
+        viewModel.selectBenchmarkMetric("bench.smoke.tokens_per_second")
+        #expect(viewModel.selectedBenchmarkHistoryJobID.isEmpty)
+        #expect(viewModel.selectedBenchmarkMetricName.isEmpty)
+
+        viewModel.selectedBenchmarkSuiteIDs = []
+        await viewModel.runBench()
+        #expect(viewModel.lastError == "Select at least one benchmark dataset before running Benchmark.")
+
+        let imageOnlyClient = FakeControlPlaneXPCClient()
+        await imageOnlyClient.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [makeMenuBarImageModelSummary()]
+            )
+        )
+        let imageOnlyViewModel = RuntimeViewModel(client: imageOnlyClient)
+        await imageOnlyViewModel.start()
+        imageOnlyViewModel.selectedBenchmarkSuiteIDs = ["smoke"]
+
+        await imageOnlyViewModel.runBench()
+
+        #expect(imageOnlyViewModel.lastError == "Select a text model before running Benchmark.")
+    }
+
+    @Test("benchmark history refresh and csv export surface export failures and empty rows")
+    @MainActor
+    func benchmarkHistoryRefreshAndCSVExportSurfaceFailuresAndEmptyRows() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(client: client)
+        await client.configureExportResult(
+            ControlPlaneExportResult(exportBundleJSON: makeBenchmarkExportBundleJSONWithoutResults())
+        )
+
+        await viewModel.start()
+        await viewModel.refreshBenchmarkHistory()
+
+        #expect(viewModel.benchmarkHistory.count == 1)
+        #expect(viewModel.selectedBenchmarkHistoryEntry?.jobID == "bench-empty")
+        #expect(viewModel.benchmarkMetricCards.isEmpty)
+        #expect(viewModel.benchmarkChartPoints.isEmpty)
+
+        await viewModel.exportSelectedBenchmarkCSV()
+        #expect(viewModel.lastError == "No benchmark rows are available for CSV export.")
+
+        await client.configureErrors(exportResults: MenuBarTestError(description: "export failed"))
+        await viewModel.refreshBenchmarkHistory()
+
+        #expect(viewModel.lastError == "export failed")
+    }
+
     @Test("lora training and activation dispatch the configured dataset source hyperparameters and derived alias")
     @MainActor
     func loraTrainingAndActivationDispatchConfiguredPayloads() async throws {

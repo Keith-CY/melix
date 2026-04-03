@@ -94,6 +94,18 @@
   - `services/control-plane-swift/Sources/XPCService/BenchmarkExportBundle.swift`: changed-line coverage `100.00%` (`163/163`)
   - `services/control-plane-swift/Sources/XPCService/ControlPlaneXPCClient.swift`: changed-line coverage `96.30%` (`26/27`)
   - aggregate changed-line coverage for the executable Swift scope in this slice: `99.05%` (`312/315`)
+- Landed the benchmark Window UI visualization closure slice:
+  - expanded the diagnostics workspace into a benchmark operator surface with explicit model selection, curated suite multi-select, sample-size and batch-factor controls, history refresh, and CSV export
+  - taught `RuntimeViewModel` to derive benchmark history cards, metric pickers, chart points, CSV export state, and history selection from the shared benchmark export bundle
+  - added Window UI rendering for benchmark empty states, persisted history, metric cards, and chart visualization while keeping benchmark actions on shared control-plane truth
+  - added targeted tests for benchmark guard rails, empty export handling, diagnostics action helpers, and Window UI empty-state plus exported-state rendering
+- Verification summary for the benchmark Window UI visualization closure:
+  - `swift test --package-path apps/macos-menubar --filter 'RuntimeViewModelTests|DesktopFoundationViewTests'`: `122 tests passed`
+  - `swift test --package-path apps/macos-menubar --enable-code-coverage --filter 'RuntimeViewModelTests|DesktopFoundationViewTests'`: `122 tests passed`
+- Metrics report:
+  - `apps/macos-menubar/Sources/AppMain/Models/RuntimeViewModel.swift`: changed-line coverage `98.91%` (`272/275`)
+  - `apps/macos-menubar/Sources/AppMain/Dashboard/DesktopWorkspaceShellView.swift`: changed-line coverage `92.06%` (`232/252`)
+  - aggregate changed-line coverage for the executable Swift scope in this slice: `95.64%` (`504/527`)
 
 ## 2026-04-01
 

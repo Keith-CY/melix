@@ -35,6 +35,8 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
 
     private(set) var recordedActions: [String] = []
     private(set) var recordedModelOperationRequests: [RecordedModelOperationRequest] = []
+    private(set) var recordedBenchRequests: [ControlPlaneBenchRequest] = []
+    private(set) var recordedExportOutputDirs: [String] = []
     private(set) var recordedGatewayAccessApplyRequests: [RecordedGatewayAccessApplyRequest] = []
     private(set) var recordedGatewayAccessClearRequests: [String] = []
     private(set) var handshakeCount = 0
@@ -49,6 +51,7 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
     private var modelOperationError: Error?
     private var doctorError: Error?
     private var benchError: Error?
+    private var exportError: Error?
     private var chatError: Error?
     private var imageGenerateError: Error?
     private var imageEditError: Error?
@@ -66,6 +69,9 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
         reportPath: "/tmp/melix-fake/bench-report.md",
         reportMarkdown: "# Melix Bench\n\n- bench.smoke.ttft_ms: 24.45 ms\n",
         metrics: ["bench.smoke.ttft_ms": 24.45]
+    )
+    private var exportResult = ControlPlaneExportResult(
+        exportBundleJSON: #"{"export_schema_version":"melix.benchmark_export.v1","benchmark_jobs":[],"benchmark_results":[]}"#
     )
     private var chatEvents = FakeControlPlaneXPCClient.defaultChatEvents()
     private var imageGenerateResponse = makeMenuBarImageJobSummary(
@@ -93,6 +99,7 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
         modelOperation: Error? = nil,
         doctor: Error? = nil,
         bench: Error? = nil,
+        exportResults: Error? = nil,
         chat: Error? = nil,
         imageGenerate: Error? = nil,
         imageEdit: Error? = nil,
@@ -108,6 +115,7 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
         modelOperationError = modelOperation
         doctorError = doctor
         benchError = bench
+        exportError = exportResults
         chatError = chat
         imageGenerateError = imageGenerate
         imageEditError = imageEdit
@@ -140,6 +148,10 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
 
     func configureBenchResponse(_ result: ControlPlaneBenchResult) {
         benchResponse = result
+    }
+
+    func configureExportResult(_ result: ControlPlaneExportResult) {
+        exportResult = result
     }
 
     func configureChatEvents(_ events: [ControlPlaneChatStreamEvent]) {
@@ -401,12 +413,21 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
     }
 
     func runBench(_ request: ControlPlaneBenchRequest) async throws -> ControlPlaneBenchResult {
-        _ = request
+        recordedBenchRequests.append(request)
         recordedActions.append("bench")
         if let benchError {
             throw benchError
         }
         return benchResponse
+    }
+
+    func exportResults(outputDir: String) async throws -> ControlPlaneExportResult {
+        recordedExportOutputDirs.append(outputDir)
+        recordedActions.append("bench.export")
+        if let exportError {
+            throw exportError
+        }
+        return exportResult
     }
 
     func sendModelStateChanged(state: Melix_Controlplane_V1_ModelState) {
@@ -714,4 +735,141 @@ func makeMenuBarImageJobSummary(
     job.createdAtUnixMs = 1_710_000_000_000
     job.updatedAtUnixMs = 1_710_000_000_500
     return job
+}
+
+func makeBenchmarkExportBundleJSON() -> String {
+    """
+    {
+      "export_schema_version": "melix.benchmark_export.v1",
+      "exported_at_unix_ms": 1712201234567,
+      "benchmark_jobs": [
+        {
+          "schema_version": "melix.serving_benchmark_job.v1",
+          "job_id": "bench-older",
+          "model_id": "melix-dev-text",
+          "suites": ["smoke"],
+          "parameters": {
+            "sample_size": "2",
+            "batch_factor": "1"
+          },
+          "status": "completed",
+          "output_dir": "/tmp/melix/bench/runs/bench-older",
+          "created_at_unix_ms": 1712100000000,
+          "updated_at_unix_ms": 1712100004000,
+          "suite_metadata": {
+            "smoke": {
+              "title": "UltraChat Smoke",
+              "dataset_path": "HuggingFaceH4/ultrachat_200k",
+              "dataset_name": "default",
+              "dataset_split": "train_sft",
+              "sample_size": 2,
+              "batch_factor": 1
+            }
+          }
+        },
+        {
+          "schema_version": "melix.serving_benchmark_job.v1",
+          "job_id": "bench-newer",
+          "model_id": "melix-dev-text-lora",
+          "suites": ["smoke", "latency"],
+          "parameters": {
+            "sample_size": "6",
+            "batch_factor": "2"
+          },
+          "status": "completed",
+          "output_dir": "/tmp/melix/bench/runs/bench-newer",
+          "created_at_unix_ms": 1712200000000,
+          "updated_at_unix_ms": 1712200005000,
+          "suite_metadata": {
+            "smoke": {
+              "title": "UltraChat Smoke",
+              "dataset_path": "HuggingFaceH4/ultrachat_200k",
+              "dataset_name": "default",
+              "dataset_split": "train_sft",
+              "sample_size": 6,
+              "batch_factor": 2
+            },
+            "latency": {
+              "title": "Dolly Latency",
+              "dataset_path": "databricks/databricks-dolly-15k",
+              "dataset_name": "default",
+              "dataset_split": "train",
+              "sample_size": 6,
+              "batch_factor": 2
+            }
+          }
+        }
+      ],
+      "benchmark_results": [
+        {
+          "schema_version": "melix.serving_benchmark_result.v1",
+          "job_id": "bench-older",
+          "suite": "smoke",
+          "metrics": [
+            {"name": "bench.smoke.ttft_ms", "value": 24.45, "unit": "ms"},
+            {"name": "bench.smoke.tokens_per_second", "value": 47.08, "unit": "tok/s"}
+          ],
+          "report_path": "/tmp/melix/bench/runs/bench-older/bench-report.md",
+          "report_markdown": "# Bench Older\\n"
+        },
+        {
+          "schema_version": "melix.serving_benchmark_result.v1",
+          "job_id": "bench-newer",
+          "suite": "smoke",
+          "metrics": [
+            {"name": "bench.smoke.ttft_ms", "value": 21.10, "unit": "ms"},
+            {"name": "bench.smoke.tokens_per_second", "value": 61.20, "unit": "tok/s"}
+          ],
+          "report_path": "/tmp/melix/bench/runs/bench-newer/bench-report.md",
+          "report_markdown": "# Bench Newer\\n"
+        },
+        {
+          "schema_version": "melix.serving_benchmark_result.v1",
+          "job_id": "bench-newer",
+          "suite": "latency",
+          "metrics": [
+            {"name": "bench.latency.p95_ms", "value": 39.70, "unit": "ms"}
+          ],
+          "report_path": "/tmp/melix/bench/runs/bench-newer/bench-report.md",
+          "report_markdown": "# Bench Newer\\n"
+        }
+      ]
+    }
+    """
+}
+
+func makeBenchmarkExportBundleJSONWithoutResults() -> String {
+    """
+    {
+      "export_schema_version": "melix.benchmark_export.v1",
+      "exported_at_unix_ms": 1712201234567,
+      "benchmark_jobs": [
+        {
+          "schema_version": "melix.serving_benchmark_job.v1",
+          "job_id": "bench-empty",
+          "model_id": "melix-dev-text",
+          "suites": ["smoke"],
+          "parameters": {
+            "sample_size": "1",
+            "batch_factor": "1"
+          },
+          "status": "completed",
+          "output_dir": "/tmp/melix/bench/runs/bench-empty",
+          "created_at_unix_ms": 1712200000000,
+          "updated_at_unix_ms": 1712200005000,
+          "suite_metadata": {
+            "smoke": {
+              "title": "UltraChat Smoke",
+              "dataset_path": "HuggingFaceH4/ultrachat_200k",
+              "dataset_name": "default",
+              "dataset_split": "train_sft",
+              "sample_size": 1,
+              "batch_factor": 1
+            }
+          }
+        }
+      ],
+      "benchmark_results": []
+    }
+    """
 }

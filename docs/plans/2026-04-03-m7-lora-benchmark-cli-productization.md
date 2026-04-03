@@ -22,6 +22,11 @@ Close the remaining M7 benchmark-platform gaps, make LoRA production-ready acros
 - create a second operator surface that bypasses control-plane state
 - add automatic control-plane service bootstrapping to the CLI in v1
 
+## Status
+
+- Slices 1 through 7 are complete in the current transaction.
+- Slice 8 remains open for full-repository verification, final metrics capture, and close-out documentation.
+
 ## Execution Slices
 
 ### 1. Documentation Reset And Transaction Baseline
@@ -96,7 +101,7 @@ Close the remaining M7 benchmark-platform gaps, make LoRA production-ready acros
 - `melix` CLI exposes LoRA training, LoRA activation, benchmark execution, benchmark listing, and benchmark CSV export
 - Window UI and CLI both use shared control-plane truth
 - LoRA can train from either a local package or a Hugging Face dataset configuration and can activate the resulting adapter into a derived model
-- benchmark results come from real execution, persist per run, can be exported as CSV, and still need Window UI visualization closure in the final slice
+- benchmark results come from real execution, persist per run, can be exported as CSV, and render in the Window UI with model and suite selection, history inspection, visualization, and CSV export
 - M7 is only marked completed after the real benchmark runner and benchmark evidence are committed
 
 ## Assumptions And Constraints

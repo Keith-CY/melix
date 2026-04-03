@@ -1,4 +1,5 @@
 import AppKit
+import Charts
 import SwiftUI
 
 @MainActor
@@ -1050,25 +1051,86 @@ struct DesktopTrainingToolSectionView: View {
     }
 }
 
-private struct DesktopDiagnosticsToolSectionView: View {
+struct DesktopDiagnosticsToolSectionView: View {
     let viewModel: RuntimeViewModel
     let foundation: DesktopFoundationState
 
+    func inspectPrimaryModel() async {
+        await viewModel.inspectPrimaryModel()
+    }
+
+    func runDoctor() async {
+        await viewModel.runDoctor()
+    }
+
+    func runBenchmark() async {
+        await viewModel.runBench()
+    }
+
+    func refreshBenchmarkResults() async {
+        await viewModel.refreshBenchmarkHistory()
+    }
+
+    func exportBenchmarkCSV() async {
+        await viewModel.exportSelectedBenchmarkCSV()
+    }
+
+    func refreshTooling() async {
+        await viewModel.refreshModelOpsProductState()
+    }
+
+    func toggleBenchmarkSuiteSelection(_ suiteID: String) {
+        viewModel.toggleBenchmarkSuite(suiteID)
+    }
+
+    func selectBenchmarkHistory(jobID: String) {
+        viewModel.selectBenchmarkHistory(jobID: jobID)
+    }
+
+    func refreshBenchmarkHistoryIfNeeded() async {
+        if viewModel.benchmarkHistory.isEmpty {
+            await viewModel.refreshBenchmarkHistory()
+        }
+    }
+
+    private func startInspectTask() {
+        Task { await inspectPrimaryModel() }
+    }
+
+    private func startDoctorTask() {
+        Task { await runDoctor() }
+    }
+
+    private func startBenchmarkTask() {
+        Task { await runBenchmark() }
+    }
+
+    private func startRefreshBenchmarkResultsTask() {
+        Task { await refreshBenchmarkResults() }
+    }
+
+    private func startExportBenchmarkCSVTask() {
+        Task { await exportBenchmarkCSV() }
+    }
+
+    private func startRefreshToolingTask() {
+        Task { await refreshTooling() }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            HStack {
-                Button("Inspect") {
-                    Task { await viewModel.inspectPrimaryModel() }
+            GroupBox("Diagnostics Actions") {
+                HStack {
+                    Button("Inspect", action: startInspectTask)
+                    Button("Doctor", action: startDoctorTask)
+                    Button("Run Benchmark", action: startBenchmarkTask)
+                    .disabled(viewModel.benchmarkModels.isEmpty || viewModel.selectedBenchmarkSuiteIDs.isEmpty)
+                    Button("Refresh Results", action: startRefreshBenchmarkResultsTask)
+                    Button("Export CSV", action: startExportBenchmarkCSVTask)
+                    .disabled(viewModel.benchmarkHistory.isEmpty)
+                    Button("Refresh Tooling", action: startRefreshToolingTask)
                 }
-                Button("Doctor") {
-                    Task { await viewModel.runDoctor() }
-                }
-                Button("Bench") {
-                    Task { await viewModel.runBench() }
-                }
-                Button("Refresh Tooling") {
-                    Task { await viewModel.refreshModelOpsProductState() }
-                }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
 
             if let info = viewModel.selectedModelInfo {
@@ -1084,16 +1146,207 @@ private struct DesktopDiagnosticsToolSectionView: View {
                 }
             }
 
+            GroupBox("Benchmark Configuration") {
+                VStack(alignment: .leading, spacing: 12) {
+                    if viewModel.benchmarkModels.isEmpty {
+                        Text("No text models are available for benchmark execution.")
+                            .foregroundStyle(.secondary)
+                    } else {
+                        Picker(
+                            "Benchmark Model",
+                            selection: Binding(
+                                get: { viewModel.selectedBenchmarkModelID },
+                                set: { viewModel.selectedBenchmarkModelID = $0 }
+                            )
+                        ) {
+                            ForEach(viewModel.benchmarkModels) { model in
+                                Text(model.alias.isEmpty ? model.modelID : "\(model.alias) • \(model.modelID)")
+                                    .tag(model.modelID)
+                            }
+                        }
+                        .pickerStyle(.menu)
+                    }
+
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 220), spacing: 12)], spacing: 12) {
+                        ForEach(viewModel.benchmarkSuites) { suite in
+                            Button {
+                                toggleBenchmarkSuiteSelection(suite.id)
+                            } label: {
+                                VStack(alignment: .leading, spacing: 8) {
+                                    HStack {
+                                        Text(suite.title)
+                                            .font(.headline)
+                                        Spacer()
+                                        Image(systemName: viewModel.selectedBenchmarkSuiteIDs.contains(suite.id) ? "checkmark.circle.fill" : "circle")
+                                            .foregroundStyle(viewModel.selectedBenchmarkSuiteIDs.contains(suite.id) ? Color.accentColor : .secondary)
+                                    }
+                                    Text(suite.datasetLabel)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                    Text("config \(suite.datasetName) • \(suite.defaultsText)")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(12)
+                                .background(
+                                    viewModel.selectedBenchmarkSuiteIDs.contains(suite.id)
+                                    ? Color.accentColor.opacity(0.12)
+                                    : Color.secondary.opacity(0.06),
+                                    in: RoundedRectangle(cornerRadius: 12)
+                                )
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+
+                    HStack(spacing: 16) {
+                        TextField(
+                            "Sample Size",
+                            text: Binding(
+                                get: { viewModel.benchmarkSampleSize },
+                                set: { viewModel.benchmarkSampleSize = $0 }
+                            )
+                        )
+                        .textFieldStyle(.roundedBorder)
+                        TextField(
+                            "Batch Factor",
+                            text: Binding(
+                                get: { viewModel.benchmarkBatchFactor },
+                                set: { viewModel.benchmarkBatchFactor = $0 }
+                            )
+                        )
+                        .textFieldStyle(.roundedBorder)
+                    }
+
+                    if let export = viewModel.lastBenchmarkCSVExport {
+                        Text("CSV exported: \(export.rowCount) rows • \(export.outputPath)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
             if let report = viewModel.lastDoctorReport {
                 GroupBox("Doctor Report") {
                     Text(report.markdown)
                         .font(.caption.monospaced())
                         .textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
 
-            GroupBox("Bench Metrics") {
+            GroupBox("Benchmark Results") {
+                VStack(alignment: .leading, spacing: 8) {
+                    if let selectedEntry = viewModel.selectedBenchmarkHistoryEntry {
+                        Text("Selected run \(selectedEntry.jobID) • \(selectedEntry.suiteTitle) • \(selectedEntry.createdAtText)")
+                            .font(.headline)
+                        Text("\(selectedEntry.modelID) • \(selectedEntry.datasetLabel)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    if viewModel.benchmarkMetricOptions.isEmpty {
+                        Text("Run a benchmark or refresh persisted results to visualize history.")
+                            .foregroundStyle(.secondary)
+                    } else {
+                        Picker(
+                            "Metric",
+                            selection: Binding(
+                                get: { viewModel.selectedBenchmarkMetricName },
+                                set: { viewModel.selectBenchmarkMetric($0) }
+                            )
+                        ) {
+                            ForEach(viewModel.benchmarkMetricOptions, id: \.self) { metricName in
+                                Text(metricName).tag(metricName)
+                            }
+                        }
+                        .pickerStyle(.menu)
+
+                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 180), spacing: 12)], spacing: 12) {
+                            ForEach(viewModel.benchmarkMetricCards.prefix(6)) { metric in
+                                VStack(alignment: .leading, spacing: 6) {
+                                    Text(metric.metricLabel)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                    Text(metric.valueText)
+                                        .font(.headline)
+                                        .monospacedDigit()
+                                    Text(metric.suiteTitle)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(12)
+                                .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 12))
+                            }
+                        }
+
+                        if viewModel.benchmarkChartPoints.isEmpty == false {
+                            Chart(viewModel.benchmarkChartPoints) { point in
+                                BarMark(
+                                    x: .value("Run", point.createdAtLabel),
+                                    y: .value("Value", point.value)
+                                )
+                                .foregroundStyle(by: .value("Suite", point.suiteTitle))
+                            }
+                            .frame(height: 240)
+                            .chartLegend(position: .bottom)
+                        }
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            GroupBox("Benchmark History") {
+                VStack(alignment: .leading, spacing: 10) {
+                    ForEach(viewModel.benchmarkHistory.prefix(12)) { entry in
+                        Button {
+                            selectBenchmarkHistory(jobID: entry.jobID)
+                        } label: {
+                            VStack(alignment: .leading, spacing: 6) {
+                                HStack {
+                                    Text("\(entry.suiteTitle) • \(entry.jobID)")
+                                        .font(.headline)
+                                    Spacer()
+                                    Text(entry.statusText)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                                Text("\(entry.modelID) • \(entry.datasetLabel)")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                Text("sample \(entry.sampleSizeText) • batch \(entry.batchFactorText) • \(entry.metricCountText) • \(entry.createdAtText)")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                if entry.reportPath.isEmpty == false {
+                                    Text(entry.reportPath)
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(12)
+                            .background(
+                                viewModel.selectedBenchmarkHistoryJobID == entry.jobID
+                                ? Color.accentColor.opacity(0.12)
+                                : Color.secondary.opacity(0.06),
+                                in: RoundedRectangle(cornerRadius: 12)
+                            )
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    if viewModel.benchmarkHistory.isEmpty {
+                        Text("No persisted benchmark history yet.")
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            GroupBox("Runtime Metrics Snapshot") {
                 VStack(alignment: .leading, spacing: 8) {
                     ForEach(foundation.benchMetrics.prefix(10)) { metric in
                         HStack {
@@ -1112,6 +1365,7 @@ private struct DesktopDiagnosticsToolSectionView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
+        .task(refreshBenchmarkHistoryIfNeeded)
     }
 }
 

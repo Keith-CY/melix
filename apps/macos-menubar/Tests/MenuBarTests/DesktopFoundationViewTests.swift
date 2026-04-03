@@ -452,6 +452,114 @@ struct DesktopFoundationViewTests {
         #expect(viewModel.trainingHistory.first?.jobID == "model-ops-0001")
     }
 
+    @Test("workspace diagnostics renders benchmark configuration history and charts")
+    @MainActor
+    func workspaceDiagnosticsRendersBenchmarkConfigurationHistoryAndCharts() async throws {
+        let client = FakeControlPlaneXPCClient()
+        var derivedModel = ModelCatalog.devTextModel()
+        derivedModel.modelID = "melix-dev-text-lora"
+        await client.configureSnapshot(
+            makeAudioSetupSnapshot(
+                models: [
+                    ModelCatalog.devTextModel(),
+                    derivedModel,
+                ]
+            )
+        )
+        await client.configureExportResult(
+            ControlPlaneExportResult(exportBundleJSON: makeBenchmarkExportBundleJSON())
+        )
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        viewModel.selectSurface(.tools)
+        viewModel.selectToolSection(.diagnostics)
+        viewModel.selectedBenchmarkSuiteIDs = ["smoke", "latency"]
+        await viewModel.refreshBenchmarkHistory()
+        viewModel.selectBenchmarkMetric("bench.smoke.tokens_per_second")
+
+        let view = hostView(DesktopWorkspaceShellView(viewModel: viewModel))
+
+        #expect(view.subviews.isEmpty == false)
+        #expect(viewModel.benchmarkHistory.count == 3)
+        #expect(viewModel.benchmarkMetricCards.isEmpty == false)
+        #expect(viewModel.benchmarkChartPoints.count == 2)
+    }
+
+    @Test("diagnostics tool section action helpers dispatch benchmark operations and render exported state")
+    @MainActor
+    func diagnosticsToolSectionActionHelpersDispatchBenchmarkOperations() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureModelOperation(
+            makeNamedModelOperationResult(
+                operation: "registry_snapshot",
+                outputPath: "/tmp/melix-model-ops-registry/registry_snapshot.json",
+                manifestJSON: makeRegistrySnapshotManifest(
+                    publishedRepo: "",
+                    targetRepo: "melix/adapters/melix-dev-adapter"
+                )
+            ),
+            forNamedOperation: "registry_snapshot"
+        )
+        await client.configureExportResult(
+            ControlPlaneExportResult(exportBundleJSON: makeBenchmarkExportBundleJSON())
+        )
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        viewModel.selectSurface(.tools)
+        viewModel.selectToolSection(.diagnostics)
+
+        let section = DesktopDiagnosticsToolSectionView(
+            viewModel: viewModel,
+            foundation: viewModel.desktopFoundationState
+        )
+        await section.inspectPrimaryModel()
+        await section.runDoctor()
+        await section.runBenchmark()
+        await section.refreshBenchmarkResults()
+        section.toggleBenchmarkSuiteSelection("latency")
+        await section.exportBenchmarkCSV()
+        await section.refreshTooling()
+        section.selectBenchmarkHistory(jobID: "bench-older")
+
+        let view = hostView(section)
+        let actions = await client.recordedActions
+
+        #expect(view.subviews.isEmpty == false)
+        #expect(actions.contains("info:melix-dev-text"))
+        #expect(actions.contains("doctor"))
+        #expect(actions.contains("bench"))
+        #expect(actions.contains("bench.export"))
+        #expect(actions.contains("operation:registry_snapshot:melix-dev-text"))
+        #expect(viewModel.lastBenchmarkCSVExport?.rowCount == 3)
+        #expect(viewModel.selectedBenchmarkHistoryJobID == "bench-older")
+        #expect(viewModel.selectedBenchmarkSuiteIDs.contains("latency"))
+    }
+
+    @Test("diagnostics tool section renders empty benchmark states and refreshes persisted history when needed")
+    @MainActor
+    func diagnosticsToolSectionRendersEmptyBenchmarkStates() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureSnapshot(
+            makeAudioSetupSnapshot(models: [makeMenuBarImageModelSummary()])
+        )
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        viewModel.selectSurface(.tools)
+        viewModel.selectToolSection(.diagnostics)
+
+        let section = DesktopDiagnosticsToolSectionView(
+            viewModel: viewModel,
+            foundation: viewModel.desktopFoundationState
+        )
+        await section.refreshBenchmarkHistoryIfNeeded()
+        let view = hostView(section)
+
+        #expect(view.subviews.isEmpty == false)
+        #expect(viewModel.benchmarkModels.isEmpty)
+        #expect(viewModel.benchmarkHistory.isEmpty)
+        #expect(await client.recordedActions.contains("bench.export"))
+    }
+
     @Test("tools tab renders pending adapter registry and history rows")
     @MainActor
     func toolsTabRendersPendingAdapterRegistryRows() async throws {
