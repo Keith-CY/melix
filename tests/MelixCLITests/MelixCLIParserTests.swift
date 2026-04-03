@@ -187,6 +187,81 @@ struct MelixCLIParserTests {
         #expect(exportOptions.json)
     }
 
+    @Test("parses eval run with direct repo target and sampling controls")
+    func parsesEvalRunCommand() throws {
+        let command = try MelixCLIParser.parse([
+            "eval",
+            "run",
+            "--repo-id", "unsloth/gemma-4-E4B-it-MLX-8bit",
+            "--suite", "mmlu",
+            "--suite", "gsm8k",
+            "--dataset-id", "mmlu.dev.v1",
+            "--sample-size", "8",
+            "--batch-factor", "2",
+            "--seed", "7",
+            "--few-shot", "4",
+            "--json",
+        ])
+
+        guard case .evalRun(let options) = command else {
+            Issue.record("Expected evalRun command")
+            return
+        }
+
+        #expect(options.modelID.isEmpty)
+        #expect(options.hfRepoID == "unsloth/gemma-4-E4B-it-MLX-8bit")
+        #expect(options.suites == ["mmlu", "gsm8k"])
+        #expect(options.datasetID == "mmlu.dev.v1")
+        #expect(options.sampleSize == 8)
+        #expect(options.parameters["batch_factor"] == "2")
+        #expect(options.parameters["seed"] == "7")
+        #expect(options.parameters["few_shot"] == "4")
+        #expect(options.json)
+    }
+
+    @Test("parses eval list and export commands")
+    func parsesEvalListAndExportCommands() throws {
+        let listCommand = try MelixCLIParser.parse([
+            "eval",
+            "list",
+            "--json",
+        ])
+        let summaryCommand = try MelixCLIParser.parse([
+            "eval",
+            "export-summary-csv",
+            "--job-id", "eval-1",
+            "--output", "/tmp/melix/eval-1-summary.csv",
+            "--json",
+        ])
+        let samplesCommand = try MelixCLIParser.parse([
+            "eval",
+            "export-samples-jsonl",
+            "--job-id", "eval-1",
+            "--output", "/tmp/melix/eval-1-samples.jsonl",
+        ])
+
+        guard case .evalList(let listOptions) = listCommand else {
+            Issue.record("Expected evalList command")
+            return
+        }
+        guard case .evalExportSummaryCSV(let summaryOptions) = summaryCommand else {
+            Issue.record("Expected evalExportSummaryCSV command")
+            return
+        }
+        guard case .evalExportSamplesJSONL(let samplesOptions) = samplesCommand else {
+            Issue.record("Expected evalExportSamplesJSONL command")
+            return
+        }
+
+        #expect(listOptions.json)
+        #expect(summaryOptions.jobID == "eval-1")
+        #expect(summaryOptions.outputPath == "/tmp/melix/eval-1-summary.csv")
+        #expect(summaryOptions.json)
+        #expect(samplesOptions.jobID == "eval-1")
+        #expect(samplesOptions.outputPath == "/tmp/melix/eval-1-samples.jsonl")
+        #expect(samplesOptions.json == false)
+    }
+
     @Test("parses lora activate with explicit alias and adapter path")
     func parsesLoraActivateCommand() throws {
         let command = try MelixCLIParser.parse([
@@ -246,12 +321,31 @@ struct MelixCLIParserTests {
             equals: .missingRequired("--output is required for melix bench export-csv.")
         )
         try assertError(for: ["bench", "oops"], equals: .usage(MelixCLIParser.usageText))
+        try assertError(
+            for: ["eval", "run"],
+            equals: .missingRequired("Exactly one of --model-id or --repo-id is required for melix eval run.")
+        )
+        try assertError(
+            for: ["eval", "run", "--model-id", "melix-dev-text", "--repo-id", "repo"],
+            equals: .missingRequired("Exactly one of --model-id or --repo-id is required for melix eval run.")
+        )
+        try assertError(for: ["eval"], equals: .usage(MelixCLIParser.usageText))
+        try assertError(for: ["eval", "oops"], equals: .usage(MelixCLIParser.usageText))
+        try assertError(
+            for: ["eval", "export-summary-csv", "--output", "/tmp/out.csv"],
+            equals: .missingRequired("--job-id is required for melix eval export-summary-csv.")
+        )
+        try assertError(
+            for: ["eval", "export-samples-csv", "--job-id", "eval-1"],
+            equals: .missingRequired("--output is required for melix eval export-samples-csv.")
+        )
     }
 
     @Test("surfaces malformed option errors")
     func surfacesMalformedOptionErrors() throws {
         try assertError(for: ["bench", "run", "oops"], equals: .usage(MelixCLIParser.usageText))
         try assertError(for: ["bench", "run", "--model-id"], equals: .missingValue("--model-id"))
+        try assertError(for: ["eval", "run", "--repo-id"], equals: .missingValue("--repo-id"))
         try assertError(for: ["lora", "list", "--model-id"], equals: .missingValue("--model-id"))
         try assertError(for: ["lora", "activate", "--model-id", "melix-dev-text", "oops"], equals: .usage(MelixCLIParser.usageText))
         #expect(MelixCLIError.usage("usage").errorDescription == "usage")

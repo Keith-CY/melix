@@ -2,6 +2,44 @@
 
 ## 2026-04-03
 
+- Started the benchmark and evaluation redesign follow-up as a new transaction on top of the completed M7 / LoRA / benchmark productization baseline.
+- Added `docs/plans/2026-04-03-benchmark-evaluation-redesign.md` to define the split between:
+  - `bench` for performance benchmarking
+  - `eval` for intelligence evaluation
+- Regenerated the control-plane and worker protocol surfaces so evaluation requests and export bundles now carry typed task and source metadata.
+- Landed the Python worker evaluation productization slice:
+  - added typed evaluation schemas and per-run persistence helpers
+  - persisted evaluation jobs, summary results, and sample rows
+  - extended benchmark export collection so benchmark and evaluation history can be exported from one bundle
+  - wired evaluation execution and export data into the worker gRPC surface
+- Landed the shared Swift export and control-plane slice:
+  - added evaluation job, result, sample, and export-bundle decoding to `BenchmarkExportBundle`
+  - added typed shared-client request and result models for evaluation runs
+  - extended `ControlPlaneService` so `ops.run_evaluation` resolves model or direct Hugging Face repo targets and returns typed job summaries
+- Landed the `melix eval` CLI slice:
+  - added parser and runner support for `eval run`, `eval list`, `eval export-summary-csv`, `eval export-samples-csv`, and `eval export-samples-jsonl`
+  - kept `--model-id` and `--repo-id` as mutually exclusive evaluation targets
+  - reused the shared local control-plane client instead of creating a second evaluation-only path
+- Landed the Window UI evaluation slice:
+  - added evaluation target selection, suite selection, sample-size, batch-factor, few-shot, and seed controls
+  - added evaluation history, summary metric cards, and sample previews
+  - added evaluation export actions for summary CSV, samples CSV, and samples JSONL
+- Verification summary for the benchmark and evaluation redesign:
+  - `PYTHONPATH="/Users/ChenYu/Documents/Github/melix:/Users/ChenYu/Documents/Github/melix/services/mlx-worker-python" uv run --project services/mlx-worker-python pytest services/mlx-worker-python/tests/test_evaluation_schemas.py services/mlx-worker-python/tests/test_evaluation_store.py services/mlx-worker-python/tests/test_evaluation_core.py services/mlx-worker-python/tests/test_benchmark_export.py services/mlx-worker-python/tests/test_submission_builder.py services/mlx-worker-python/tests/test_benchmark_schemas.py -q`: `26 passed in 0.15s`
+  - `swift test --enable-code-coverage --filter MelixCLITests`: `37 tests passed`
+  - `swift test --package-path services/control-plane-swift --enable-code-coverage --filter 'BenchmarkExportBundleTests|ControlPlaneServiceTests'`: `117 tests passed`
+  - `swift test --package-path apps/macos-menubar --enable-code-coverage --filter 'ControlPlaneXPCClientTests|DesktopFoundationViewTests|RuntimeViewModelTests'`: `157 tests passed`
+  - `make proto`: pass
+  - `make py-test`: `383 passed in 7.95s`
+  - `make swift-test`: failed outside the touched scope because `services/mlx-text-worker-swift` exited with unexpected signal `11`; the evaluation transaction does not touch that workspace
+- Metrics report:
+  - `services/mlx-worker-python/worker/engine/evaluation_core.py`, `services/mlx-worker-python/worker/grpc_server.py`, `services/mlx-worker-python/worker/productization/benchmark_export.py`, `services/mlx-worker-python/worker/productization/benchmark_schemas.py`, `services/mlx-worker-python/worker/productization/evaluation_schemas.py`, `services/mlx-worker-python/worker/productization/evaluation_store.py`, `services/mlx-worker-python/worker/productization/submission_builder.py`, and `services/mlx-worker-python/worker/productization/__init__.py`: aggregate changed-line coverage `100.00%` (`123/123`)
+  - `Sources/MelixCLICore/MelixCLI.swift`: changed-line coverage `99.56%` (`226/227`)
+  - `services/control-plane-swift/Sources/XPCService/BenchmarkExportBundle.swift` and `services/control-plane-swift/Sources/XPCService/ControlPlaneService.swift`: aggregate changed-line coverage `99.14%` (`231/233`)
+  - `services/control-plane-swift/Sources/XPCService/ControlPlaneXPCClient.swift`: changed-line coverage `100.00%` (`41/41`)
+  - `apps/macos-menubar/Sources/AppMain/Models/RuntimeViewModel.swift` and `apps/macos-menubar/Sources/AppMain/Dashboard/DesktopWorkspaceShellView.swift`: aggregate changed-line coverage `95.76%` (`655/684`)
+  - aggregate changed-line coverage for the touched executable Python and Swift scope in this transaction: `97.39%` (`1276/1308`)
+
 - Reset the active repository task plan from the closed M6 transaction to the M7, LoRA, Benchmark, and CLI productization transaction.
 - Added `docs/plans/2026-04-03-m7-lora-benchmark-cli-productization.md` as the umbrella execution plan for:
   - shared operator client and `melix` CLI exposure

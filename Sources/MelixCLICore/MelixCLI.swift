@@ -101,6 +101,54 @@ public struct BenchExportCSVOptions: Equatable, Sendable {
     }
 }
 
+public struct EvalRunOptions: Equatable, Sendable {
+    public let modelID: String
+    public let hfRepoID: String
+    public let suites: [String]
+    public let datasetID: String
+    public let sampleSize: UInt32
+    public let parameters: [String: String]
+    public let json: Bool
+
+    public init(
+        modelID: String = "",
+        hfRepoID: String = "",
+        suites: [String] = [],
+        datasetID: String = "",
+        sampleSize: UInt32 = 0,
+        parameters: [String: String] = [:],
+        json: Bool = false
+    ) {
+        self.modelID = modelID
+        self.hfRepoID = hfRepoID
+        self.suites = suites
+        self.datasetID = datasetID
+        self.sampleSize = sampleSize
+        self.parameters = parameters
+        self.json = json
+    }
+}
+
+public struct EvalListOptions: Equatable, Sendable {
+    public let json: Bool
+
+    public init(json: Bool = false) {
+        self.json = json
+    }
+}
+
+public struct EvalExportOptions: Equatable, Sendable {
+    public let jobID: String
+    public let outputPath: String
+    public let json: Bool
+
+    public init(jobID: String, outputPath: String, json: Bool = false) {
+        self.jobID = jobID
+        self.outputPath = outputPath
+        self.json = json
+    }
+}
+
 public enum MelixCLICommand: Equatable, Sendable {
     case loraList(LoraListOptions)
     case loraTrain(LoraTrainOptions)
@@ -108,6 +156,11 @@ public enum MelixCLICommand: Equatable, Sendable {
     case benchRun(BenchRunOptions)
     case benchList(BenchListOptions)
     case benchExportCSV(BenchExportCSVOptions)
+    case evalRun(EvalRunOptions)
+    case evalList(EvalListOptions)
+    case evalExportSummaryCSV(EvalExportOptions)
+    case evalExportSamplesCSV(EvalExportOptions)
+    case evalExportSamplesJSONL(EvalExportOptions)
 }
 
 public enum MelixCLIError: Error, LocalizedError, Equatable, Sendable {
@@ -141,6 +194,8 @@ public enum MelixCLIParser {
             return try parseLora(tail)
         case "bench":
             return try parseBench(tail)
+        case "eval":
+            return try parseEval(tail)
         default:
             throw MelixCLIError.usage(Self.usageText)
         }
@@ -154,6 +209,11 @@ public enum MelixCLIParser {
       melix bench run (--model-id MODEL_ID | --repo-id HF_REPO) [--suite SUITE ...] [--sample-size N] [--batch-factor N] [--json]
       melix bench list [--json]
       melix bench export-csv --job-id JOB_ID --output PATH [--json]
+      melix eval run (--model-id MODEL_ID | --repo-id HF_REPO) [--suite SUITE ...] [--dataset-id DATASET_ID] [--sample-size N] [--batch-factor N] [--seed N] [--few-shot N] [--json]
+      melix eval list [--json]
+      melix eval export-summary-csv --job-id JOB_ID --output PATH [--json]
+      melix eval export-samples-csv --job-id JOB_ID --output PATH [--json]
+      melix eval export-samples-jsonl --job-id JOB_ID --output PATH [--json]
     """
 
     private static func parseLora(_ arguments: [String]) throws -> MelixCLICommand {
@@ -293,6 +353,67 @@ public enum MelixCLIParser {
         default:
             throw MelixCLIError.usage(usageText)
         }
+    }
+
+    private static func parseEval(_ arguments: [String]) throws -> MelixCLICommand {
+        guard let action = arguments.first else {
+            throw MelixCLIError.usage(usageText)
+        }
+        let values = try ArgumentCursor(arguments: Array(arguments.dropFirst())).parse()
+        switch action {
+        case "run":
+            let modelID = values.single["--model-id"] ?? ""
+            let hfRepoID = values.single["--repo-id"] ?? ""
+            let explicitTargetCount = [modelID, hfRepoID].filter { !$0.isEmpty }.count
+            guard explicitTargetCount == 1 else {
+                throw MelixCLIError.missingRequired("Exactly one of --model-id or --repo-id is required for melix eval run.")
+            }
+            var parameters: [String: String] = [:]
+            if let batchFactor = values.single["--batch-factor"] {
+                parameters["batch_factor"] = batchFactor
+            }
+            if let seed = values.single["--seed"] {
+                parameters["seed"] = seed
+            }
+            if let fewShot = values.single["--few-shot"] {
+                parameters["few_shot"] = fewShot
+            }
+            let sampleSize = UInt32(values.single["--sample-size"] ?? "") ?? 0
+            return .evalRun(
+                EvalRunOptions(
+                    modelID: modelID,
+                    hfRepoID: hfRepoID,
+                    suites: values.multi["--suite"] ?? [],
+                    datasetID: values.single["--dataset-id"] ?? "",
+                    sampleSize: sampleSize,
+                    parameters: parameters,
+                    json: values.flags.contains("--json")
+                )
+            )
+        case "list":
+            return .evalList(EvalListOptions(json: values.flags.contains("--json")))
+        case "export-summary-csv":
+            return .evalExportSummaryCSV(try parseEvalExportOptions(values, command: "melix eval export-summary-csv"))
+        case "export-samples-csv":
+            return .evalExportSamplesCSV(try parseEvalExportOptions(values, command: "melix eval export-samples-csv"))
+        case "export-samples-jsonl":
+            return .evalExportSamplesJSONL(try parseEvalExportOptions(values, command: "melix eval export-samples-jsonl"))
+        default:
+            throw MelixCLIError.usage(usageText)
+        }
+    }
+
+    private static func parseEvalExportOptions(
+        _ values: ParsedArguments,
+        command: String
+    ) throws -> EvalExportOptions {
+        guard let jobID = values.single["--job-id"], !jobID.isEmpty else {
+            throw MelixCLIError.missingRequired("--job-id is required for \(command).")
+        }
+        guard let outputPath = values.single["--output"], !outputPath.isEmpty else {
+            throw MelixCLIError.missingRequired("--output is required for \(command).")
+        }
+        return EvalExportOptions(jobID: jobID, outputPath: outputPath, json: values.flags.contains("--json"))
     }
 
     private static func normalizedParameterKey(_ option: String) -> String {
@@ -459,6 +580,38 @@ public actor MelixCLIRunner {
                 )
             }
             return outputURL.path + "\n"
+        case .evalRun(let options):
+            let suites = options.suites.isEmpty ? ["mmlu"] : options.suites
+            let results = try await runEvaluationSuites(options: options, suites: suites)
+            if options.json {
+                return try prettyJSON(results.map(makeEvaluationPayload))
+            }
+            return renderEvaluationRuns(results)
+        case .evalList(let options):
+            let bundle = try await benchmarkExportBundle()
+            let entries = bundle.evaluationHistoryEntries()
+            if options.json {
+                return try prettyJSON(entries)
+            }
+            return renderEvaluationHistory(entries)
+        case .evalExportSummaryCSV(let options):
+            return try await exportEvaluationArtifact(
+                options: options,
+                rowCount: { bundle in bundle.evaluationSummaryCSVRows(jobID: options.jobID).count },
+                contents: { bundle in bundle.evaluationSummaryCSV(jobID: options.jobID) }
+            )
+        case .evalExportSamplesCSV(let options):
+            return try await exportEvaluationArtifact(
+                options: options,
+                rowCount: { bundle in bundle.evaluationSampleRows(jobID: options.jobID).count },
+                contents: { bundle in bundle.evaluationSamplesCSV(jobID: options.jobID) }
+            )
+        case .evalExportSamplesJSONL(let options):
+            return try await exportEvaluationArtifact(
+                options: options,
+                rowCount: { bundle in bundle.evaluationSampleRows(jobID: options.jobID).count },
+                contents: { bundle in try bundle.evaluationSamplesJSONL(jobID: options.jobID) }
+            )
         }
     }
 
@@ -498,6 +651,54 @@ public actor MelixCLIRunner {
         return try ControlPlaneBenchmarkExportBundle.decode(json: export.exportBundleJSON)
     }
 
+    private func runEvaluationSuites(
+        options: EvalRunOptions,
+        suites: [String]
+    ) async throws -> [ControlPlaneEvaluationResult] {
+        var collected: [ControlPlaneEvaluationResult] = []
+        for suiteID in suites {
+            let request = ControlPlaneEvaluationRequest(
+                modelID: options.modelID,
+                hfRepoID: options.hfRepoID,
+                suiteID: suiteID,
+                datasetID: options.datasetID.isEmpty ? Self.defaultEvaluationDatasetID(for: suiteID) : options.datasetID,
+                sampleSize: options.sampleSize,
+                parameters: options.parameters
+            )
+            collected.append(try await client.runEvaluation(request))
+        }
+        return collected
+    }
+
+    private func exportEvaluationArtifact(
+        options: EvalExportOptions,
+        rowCount: (ControlPlaneBenchmarkExportBundle) throws -> Int,
+        contents: (ControlPlaneBenchmarkExportBundle) throws -> String
+    ) async throws -> String {
+        let bundle = try await benchmarkExportBundle()
+        let rows = try rowCount(bundle)
+        guard rows > 0 else {
+            throw MelixCLIError.runtime("No evaluation rows were found for job \(options.jobID).")
+        }
+        let outputURL = URL(fileURLWithPath: options.outputPath)
+        try FileManager.default.createDirectory(
+            at: outputURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true,
+            attributes: nil
+        )
+        try contents(bundle).write(to: outputURL, atomically: true, encoding: .utf8)
+        if options.json {
+            return try prettyJSON(
+                EvalExportResponse(
+                    jobID: options.jobID,
+                    outputPath: outputURL.path,
+                    rowCount: rows
+                )
+            )
+        }
+        return outputURL.path + "\n"
+    }
+
     private func renderBenchmarkHistory(_ entries: [ControlPlaneBenchmarkHistoryEntry]) -> String {
         guard entries.isEmpty == false else {
             return "No benchmark runs found.\n"
@@ -521,6 +722,45 @@ public actor MelixCLIRunner {
         ] + lines).joined(separator: "\n") + "\n"
     }
 
+    private func renderEvaluationHistory(_ entries: [ControlPlaneEvaluationHistoryEntry]) -> String {
+        guard entries.isEmpty == false else {
+            return "No evaluation runs found.\n"
+        }
+        let lines = entries.map { entry in
+            [
+                entry.jobID,
+                entry.modelID,
+                entry.taskKind.isEmpty ? "-" : entry.taskKind,
+                entry.sourceRepo.isEmpty ? "-" : entry.sourceRepo,
+                entry.suiteID,
+                entry.datasetID,
+                String(entry.sampleSize),
+                entry.scoringMode,
+                entry.status,
+                String(entry.createdAtUnixMS),
+            ].joined(separator: "\t")
+        }
+        return ([
+            "job_id\tmodel_id\ttask_kind\tsource_repo\tsuite\tdataset\tsample_size\tscoring_mode\tstatus\tcreated_at_unix_ms",
+        ] + lines).joined(separator: "\n") + "\n"
+    }
+
+    private func renderEvaluationRuns(_ runs: [ControlPlaneEvaluationResult]) -> String {
+        guard runs.isEmpty == false else {
+            return "No evaluation runs completed.\n"
+        }
+        let lines = runs.map { run in
+            let metrics = run.results
+                .flatMap(\.metrics)
+                .map { metric in
+                    metric.unit.isEmpty ? "\(metric.name)=\(metric.value)" : "\(metric.name)=\(metric.value)\(metric.unit)"
+                }
+                .joined(separator: ", ")
+            return [run.job.jobID, run.job.suiteID, run.job.datasetID, run.job.status, metrics].joined(separator: "\t")
+        }
+        return (["job_id\tsuite\tdataset\tstatus\tmetrics"] + lines).joined(separator: "\n") + "\n"
+    }
+
     private func benchmarkDatasetLabel(_ entry: ControlPlaneBenchmarkHistoryEntry) -> String {
         var pieces: [String] = []
         if !entry.datasetRepo.isEmpty {
@@ -536,7 +776,50 @@ public actor MelixCLIRunner {
         return label.isEmpty ? "-" : label
     }
 
+    private func makeEvaluationPayload(_ result: ControlPlaneEvaluationResult) -> [String: Any] {
+        [
+            "job": [
+                "schema_version": result.job.schemaVersion,
+                "job_id": result.job.jobID,
+                "model_id": result.job.modelID,
+                "task_kind": result.job.taskKind,
+                "source_repo": result.job.sourceRepo,
+                "suite_id": result.job.suiteID,
+                "dataset_id": result.job.datasetID,
+                "sample_size": Int(result.job.sampleSize),
+                "scoring_mode": result.job.scoringMode,
+                "parameters": result.job.parameters,
+                "status": result.job.status,
+                "output_dir": result.job.outputDir,
+                "created_at_unix_ms": result.job.createdAtUnixMs,
+                "updated_at_unix_ms": result.job.updatedAtUnixMs,
+            ],
+            "results": result.results.map { record in
+                [
+                    "schema_version": record.schemaVersion,
+                    "job_id": record.jobID,
+                    "suite_id": record.suiteID,
+                    "dataset_id": record.datasetID,
+                    "sample_size": Int(record.sampleSize),
+                    "report_path": record.reportPath,
+                    "metrics": record.metrics.map { metric in
+                        [
+                            "name": metric.name,
+                            "value": metric.value,
+                            "unit": metric.unit,
+                        ]
+                    },
+                ]
+            },
+        ]
+    }
+
     private func prettyJSON(_ payload: [String: Any]) throws -> String {
+        let data = try JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys])
+        return String(decoding: data, as: UTF8.self) + "\n"
+    }
+
+    private func prettyJSON(_ payload: [[String: Any]]) throws -> String {
         let data = try JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys])
         return String(decoding: data, as: UTF8.self) + "\n"
     }
@@ -548,9 +831,19 @@ public actor MelixCLIRunner {
         let data = try encoder.encode(payload)
         return String(decoding: data, as: UTF8.self) + "\n"
     }
+
+    private static func defaultEvaluationDatasetID(for suiteID: String) -> String {
+        "\(suiteID).dev.v1"
+    }
 }
 
 private struct BenchExportCSVResponse: Encodable {
+    let jobID: String
+    let outputPath: String
+    let rowCount: Int
+}
+
+private struct EvalExportResponse: Encodable {
     let jobID: String
     let outputPath: String
     let rowCount: Int

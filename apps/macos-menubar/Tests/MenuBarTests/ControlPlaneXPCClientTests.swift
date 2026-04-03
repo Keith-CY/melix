@@ -247,6 +247,29 @@ struct ControlPlaneXPCClientTests {
         #expect(result.artifact.manifestBytes == 32)
     }
 
+    @Test("protocol default evaluation helper reports an unimplemented error")
+    func protocolDefaultEvaluationHelperReportsUnimplemented() async throws {
+        let client = DefaultingControlPlaneXPCClient()
+
+        do {
+            _ = try await client.runEvaluation(
+                ControlPlaneEvaluationRequest(
+                    suiteID: "mmlu",
+                    datasetID: "mmlu.dev.v1",
+                    sampleSize: 1
+                )
+            )
+            Issue.record("Expected the protocol default runEvaluation implementation to throw.")
+        } catch let error as ControlPlaneXPCClientError {
+            #expect(
+                error == .requestFailed(
+                    code: "unimplemented",
+                    message: "Evaluation is not implemented for this control-plane client."
+                )
+            )
+        }
+    }
+
     @Test("local client builds quantize requests with a typed quant profile")
     func localClientBuildsQuantizeRequestsWithTypedQuantProfile() async throws {
         let service = RecordingExecuteControlPlaneService()
@@ -519,6 +542,44 @@ struct ControlPlaneXPCClientTests {
         #expect(request.ops.runBench.parameters["sample_size"] == "1")
     }
 
+    @Test("runEvaluation builds ops.run_evaluation request with direct repo targeting")
+    func runEvaluationBuildsTypedRequest() async throws {
+        let service = RecordingExecuteControlPlaneService()
+        var response = Melix_Controlplane_V1_ControlPlaneResponse()
+        response.ok = true
+        response.ops = Melix_Controlplane_V1_OpsReply()
+        response.ops.evaluationJob = Melix_Controlplane_V1_EvaluationJobSummary()
+        response.ops.evaluationJob.jobID = "eval-1"
+        response.ops.evaluationJob.suiteID = "mmlu"
+        await service.setExecuteResponse(response)
+        let client = LocalControlPlaneXPCClient(service: service)
+
+        let result = try await client.runEvaluation(
+            ControlPlaneEvaluationRequest(
+                hfRepoID: "unsloth/gemma-4-E4B-it-MLX-8bit",
+                suiteID: "mmlu",
+                datasetID: "mmlu.dev.v1",
+                sampleSize: 8,
+                parameters: [
+                    "batch_factor": "2",
+                    "few_shot": "4",
+                ]
+            )
+        )
+        let request = try #require(await service.lastExecuteRequest)
+
+        #expect(request.requestID == "menubar-run-eval-mmlu")
+        #expect(request.commandType == "ops.run_evaluation")
+        #expect(request.ops.runEvaluation.modelID.isEmpty)
+        #expect(request.ops.runEvaluation.hfRepoID == "unsloth/gemma-4-E4B-it-MLX-8bit")
+        #expect(request.ops.runEvaluation.suiteID == "mmlu")
+        #expect(request.ops.runEvaluation.datasetID == "mmlu.dev.v1")
+        #expect(request.ops.runEvaluation.sampleSize == 8)
+        #expect(request.ops.runEvaluation.parameters["batch_factor"] == "2")
+        #expect(result.job.jobID == "eval-1")
+        #expect(result.job.suiteID == "mmlu")
+    }
+
     @Test("exportResults builds ops.export_results request and returns the export bundle json")
     func exportResultsBuildsTypedRequest() async throws {
         let service = RecordingExecuteControlPlaneService()
@@ -732,6 +793,100 @@ struct ControlPlaneXPCClientTests {
             if case .tokenDelta("assistant") = $0 { return true }
             return false
         }))
+    }
+}
+
+private actor DefaultingControlPlaneXPCClient: ControlPlaneXPCClient {
+    func handshake() async throws -> Melix_Controlplane_V1_HandshakeResponse {
+        Melix_Controlplane_V1_HandshakeResponse()
+    }
+
+    func subscribe(lastSeenSeq: UInt64) async -> AsyncStream<Melix_Controlplane_V1_ControlPlaneEvent> {
+        _ = lastSeenSeq
+        return AsyncStream { continuation in
+            continuation.finish()
+        }
+    }
+
+    func startChat(_ request: ControlPlaneChatRequest) async throws -> ControlPlaneChatExecution {
+        _ = request
+        return ControlPlaneChatExecution(
+            requestID: "noop",
+            modelID: "",
+            stream: AsyncThrowingStream { continuation in
+                continuation.finish()
+            }
+        )
+    }
+
+    func serverSnapshot() async throws -> Melix_Controlplane_V1_ServerSnapshot {
+        Melix_Controlplane_V1_ServerSnapshot()
+    }
+
+    func loadModel(modelID: String) async throws -> Melix_Controlplane_V1_ModelSummary {
+        _ = modelID
+        return Melix_Controlplane_V1_ModelSummary()
+    }
+
+    func unloadModel(modelID: String) async throws -> Melix_Controlplane_V1_ModelSummary {
+        _ = modelID
+        return Melix_Controlplane_V1_ModelSummary()
+    }
+
+    func updateModelSettings(
+        modelID: String,
+        values: [String: String]
+    ) async throws -> Melix_Controlplane_V1_ModelSummary {
+        _ = modelID
+        _ = values
+        return Melix_Controlplane_V1_ModelSummary()
+    }
+
+    func modelInfo(modelID: String) async throws -> Melix_Controlplane_V1_ModelInfo {
+        _ = modelID
+        return Melix_Controlplane_V1_ModelInfo()
+    }
+
+    func runModelOperation(
+        modelID: String,
+        operation: String,
+        outputDir: String,
+        quantProfileID: String,
+        weightQuant: String,
+        kvQuant: String,
+        ext: [String: String]
+    ) async throws -> Melix_Controlplane_V1_ModelOperationResult {
+        _ = modelID
+        _ = operation
+        _ = outputDir
+        _ = quantProfileID
+        _ = weightQuant
+        _ = kvQuant
+        _ = ext
+        return Melix_Controlplane_V1_ModelOperationResult()
+    }
+
+    func cancelRequest(requestID: String) async throws -> Bool {
+        _ = requestID
+        return false
+    }
+
+    func applyServerSessionGatewayAccess(
+        serverSessionID: String,
+        primaryKey: String,
+        keyID: String,
+        label: String,
+        tokenHint: String
+    ) async throws {
+        _ = serverSessionID
+        _ = primaryKey
+        _ = keyID
+        _ = label
+        _ = tokenHint
+    }
+
+    func clearServerSessionGatewayAccess(serverSessionID: String) async throws {
+        _ = serverSessionID
     }
 }
 

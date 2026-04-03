@@ -516,10 +516,16 @@ struct DesktopFoundationViewTests {
         await section.runDoctor()
         await section.runBenchmark()
         await section.refreshBenchmarkResults()
+        await section.runEvaluation()
+        await section.refreshEvaluationResults()
         section.toggleBenchmarkSuiteSelection("latency")
         await section.exportBenchmarkCSV()
+        await section.exportEvaluationSummaryCSV()
+        await section.exportEvaluationSamplesCSV()
+        await section.exportEvaluationSamplesJSONL()
         await section.refreshTooling()
         section.selectBenchmarkHistory(jobID: "bench-older")
+        section.selectEvaluationHistory(jobID: "eval-newer")
 
         let view = hostView(section)
         let actions = await client.recordedActions
@@ -528,10 +534,13 @@ struct DesktopFoundationViewTests {
         #expect(actions.contains("info:melix-dev-text"))
         #expect(actions.contains("doctor"))
         #expect(actions.contains("bench"))
+        #expect(actions.contains("eval"))
         #expect(actions.contains("bench.export"))
         #expect(actions.contains("operation:registry_snapshot:melix-dev-text"))
         #expect(viewModel.lastBenchmarkCSVExport?.rowCount == 3)
+        #expect(viewModel.lastEvaluationExport?.rowCount == 2)
         #expect(viewModel.selectedBenchmarkHistoryJobID == "bench-older")
+        #expect(viewModel.selectedEvaluationHistoryJobID == "eval-newer")
         #expect(viewModel.selectedBenchmarkSuiteIDs.contains("latency"))
     }
 
@@ -551,7 +560,7 @@ struct DesktopFoundationViewTests {
             viewModel: viewModel,
             foundation: viewModel.desktopFoundationState
         )
-        await section.refreshBenchmarkHistoryIfNeeded()
+        await section.refreshDiagnosticsHistoryIfNeeded()
         let view = hostView(section)
 
         #expect(view.subviews.isEmpty == false)
@@ -605,6 +614,61 @@ struct DesktopFoundationViewTests {
 
         #expect(view.subviews.isEmpty == false)
         #expect(viewModel.benchmarkTargetSummaryText.contains("unsloth/gemma-4-E4B-it-MLX-8bit"))
+    }
+
+    @Test("workspace diagnostics renders evaluation configuration history and sample previews")
+    @MainActor
+    func workspaceDiagnosticsRendersEvaluationConfigurationHistoryAndSamples() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureExportResult(
+            ControlPlaneExportResult(exportBundleJSON: makeBenchmarkExportBundleJSON())
+        )
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        viewModel.selectSurface(.tools)
+        viewModel.selectToolSection(.diagnostics)
+        viewModel.selectedEvaluationSuiteIDs = ["mmlu"]
+        await viewModel.refreshEvaluationHistory()
+
+        let view = hostView(DesktopWorkspaceShellView(viewModel: viewModel))
+
+        #expect(view.subviews.isEmpty == false)
+        #expect(viewModel.evaluationHistory.count == 1)
+        #expect(viewModel.evaluationMetricCards.count == 2)
+        #expect(viewModel.evaluationSamplePreview.count == 2)
+    }
+
+    @Test("workspace diagnostics covers evaluation helper actions and direct repo configuration")
+    @MainActor
+    func workspaceDiagnosticsCoversEvaluationHelperActionsAndDirectRepoConfiguration() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureExportResult(
+            ControlPlaneExportResult(exportBundleJSON: makeBenchmarkExportBundleJSON())
+        )
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        viewModel.selectSurface(.tools)
+        viewModel.selectToolSection(.diagnostics)
+        let section = DesktopDiagnosticsToolSectionView(
+            viewModel: viewModel,
+            foundation: viewModel.desktopFoundationState
+        )
+
+        section.toggleEvaluationSuiteSelection("gsm8k")
+        #expect(viewModel.selectedEvaluationSuiteIDs.contains("gsm8k"))
+
+        await section.refreshDiagnosticsHistoryIfNeeded()
+        #expect(viewModel.evaluationHistory.isEmpty == false)
+
+        section.selectEvaluationHistory(jobID: "eval-newer")
+        #expect(viewModel.selectedEvaluationHistoryEntry?.jobID == "eval-newer")
+
+        viewModel.selectedEvaluationTargetMode = .huggingFaceRepo
+        viewModel.evaluationHFRepoID = "unsloth/gemma-4-E4B-it-MLX-8bit"
+        let hosted = hostView(DesktopWorkspaceShellView(viewModel: viewModel))
+
+        #expect(hosted.subviews.isEmpty == false)
+        #expect(viewModel.evaluationTargetSummaryText.contains("unsloth/gemma-4-E4B-it-MLX-8bit"))
     }
 
     @Test("tools tab renders pending adapter registry and history rows")

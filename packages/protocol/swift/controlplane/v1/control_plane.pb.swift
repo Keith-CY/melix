@@ -2602,6 +2602,10 @@ public struct Melix_Controlplane_V1_RunEvaluation: Sendable {
 
   public var parameters: Dictionary<String,String> = [:]
 
+  public var modelID: String = String()
+
+  public var hfRepoID: String = String()
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -2787,6 +2791,16 @@ public struct Melix_Controlplane_V1_EvaluationJobSummary: Sendable {
   public var parameters: Dictionary<String,String> = [:]
 
   public var status: String = String()
+
+  public var taskKind: String = String()
+
+  public var sourceRepo: String = String()
+
+  public var outputDir: String = String()
+
+  public var createdAtUnixMs: Int64 = 0
+
+  public var updatedAtUnixMs: Int64 = 0
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -7999,7 +8013,7 @@ extension Melix_Controlplane_V1_RunBench: SwiftProtobuf.Message, SwiftProtobuf._
 
 extension Melix_Controlplane_V1_RunEvaluation: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".RunEvaluation"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}suite_id\0\u{3}dataset_id\0\u{3}sample_size\0\u{1}parameters\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}suite_id\0\u{3}dataset_id\0\u{3}sample_size\0\u{1}parameters\0\u{3}model_id\0\u{3}hf_repo_id\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -8011,6 +8025,8 @@ extension Melix_Controlplane_V1_RunEvaluation: SwiftProtobuf.Message, SwiftProto
       case 2: try { try decoder.decodeSingularStringField(value: &self.datasetID) }()
       case 3: try { try decoder.decodeSingularUInt32Field(value: &self.sampleSize) }()
       case 4: try { try decoder.decodeMapField(fieldType: SwiftProtobuf._ProtobufMap<SwiftProtobuf.ProtobufString,SwiftProtobuf.ProtobufString>.self, value: &self.parameters) }()
+      case 5: try { try decoder.decodeSingularStringField(value: &self.modelID) }()
+      case 6: try { try decoder.decodeSingularStringField(value: &self.hfRepoID) }()
       default: break
       }
     }
@@ -8029,6 +8045,12 @@ extension Melix_Controlplane_V1_RunEvaluation: SwiftProtobuf.Message, SwiftProto
     if !self.parameters.isEmpty {
       try visitor.visitMapField(fieldType: SwiftProtobuf._ProtobufMap<SwiftProtobuf.ProtobufString,SwiftProtobuf.ProtobufString>.self, value: self.parameters, fieldNumber: 4)
     }
+    if !self.modelID.isEmpty {
+      try visitor.visitSingularStringField(value: self.modelID, fieldNumber: 5)
+    }
+    if !self.hfRepoID.isEmpty {
+      try visitor.visitSingularStringField(value: self.hfRepoID, fieldNumber: 6)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -8037,6 +8059,8 @@ extension Melix_Controlplane_V1_RunEvaluation: SwiftProtobuf.Message, SwiftProto
     if lhs.datasetID != rhs.datasetID {return false}
     if lhs.sampleSize != rhs.sampleSize {return false}
     if lhs.parameters != rhs.parameters {return false}
+    if lhs.modelID != rhs.modelID {return false}
+    if lhs.hfRepoID != rhs.hfRepoID {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -8427,7 +8451,7 @@ extension Melix_Controlplane_V1_BenchmarkResultSummary: SwiftProtobuf.Message, S
 
 extension Melix_Controlplane_V1_EvaluationJobSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".EvaluationJobSummary"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}schema_version\0\u{3}job_id\0\u{3}model_id\0\u{3}suite_id\0\u{3}dataset_id\0\u{3}sample_size\0\u{3}scoring_mode\0\u{1}parameters\0\u{1}status\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}schema_version\0\u{3}job_id\0\u{3}model_id\0\u{3}suite_id\0\u{3}dataset_id\0\u{3}sample_size\0\u{3}scoring_mode\0\u{1}parameters\0\u{1}status\0\u{3}task_kind\0\u{3}source_repo\0\u{3}output_dir\0\u{3}created_at_unix_ms\0\u{3}updated_at_unix_ms\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -8444,6 +8468,11 @@ extension Melix_Controlplane_V1_EvaluationJobSummary: SwiftProtobuf.Message, Swi
       case 7: try { try decoder.decodeSingularStringField(value: &self.scoringMode) }()
       case 8: try { try decoder.decodeMapField(fieldType: SwiftProtobuf._ProtobufMap<SwiftProtobuf.ProtobufString,SwiftProtobuf.ProtobufString>.self, value: &self.parameters) }()
       case 9: try { try decoder.decodeSingularStringField(value: &self.status) }()
+      case 10: try { try decoder.decodeSingularStringField(value: &self.taskKind) }()
+      case 11: try { try decoder.decodeSingularStringField(value: &self.sourceRepo) }()
+      case 12: try { try decoder.decodeSingularStringField(value: &self.outputDir) }()
+      case 13: try { try decoder.decodeSingularInt64Field(value: &self.createdAtUnixMs) }()
+      case 14: try { try decoder.decodeSingularInt64Field(value: &self.updatedAtUnixMs) }()
       default: break
       }
     }
@@ -8477,6 +8506,21 @@ extension Melix_Controlplane_V1_EvaluationJobSummary: SwiftProtobuf.Message, Swi
     if !self.status.isEmpty {
       try visitor.visitSingularStringField(value: self.status, fieldNumber: 9)
     }
+    if !self.taskKind.isEmpty {
+      try visitor.visitSingularStringField(value: self.taskKind, fieldNumber: 10)
+    }
+    if !self.sourceRepo.isEmpty {
+      try visitor.visitSingularStringField(value: self.sourceRepo, fieldNumber: 11)
+    }
+    if !self.outputDir.isEmpty {
+      try visitor.visitSingularStringField(value: self.outputDir, fieldNumber: 12)
+    }
+    if self.createdAtUnixMs != 0 {
+      try visitor.visitSingularInt64Field(value: self.createdAtUnixMs, fieldNumber: 13)
+    }
+    if self.updatedAtUnixMs != 0 {
+      try visitor.visitSingularInt64Field(value: self.updatedAtUnixMs, fieldNumber: 14)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -8490,6 +8534,11 @@ extension Melix_Controlplane_V1_EvaluationJobSummary: SwiftProtobuf.Message, Swi
     if lhs.scoringMode != rhs.scoringMode {return false}
     if lhs.parameters != rhs.parameters {return false}
     if lhs.status != rhs.status {return false}
+    if lhs.taskKind != rhs.taskKind {return false}
+    if lhs.sourceRepo != rhs.sourceRepo {return false}
+    if lhs.outputDir != rhs.outputDir {return false}
+    if lhs.createdAtUnixMs != rhs.createdAtUnixMs {return false}
+    if lhs.updatedAtUnixMs != rhs.updatedAtUnixMs {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

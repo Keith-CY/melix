@@ -366,6 +366,157 @@ struct MelixCLIRunnerTests {
         }
     }
 
+    @Test("eval run forwards sequential suite requests and returns JSON output")
+    func evalRunForwardsSuiteRequestsAndReturnsJSON() async throws {
+        let client = StubControlPlaneXPCClient()
+        await client.setEvaluationResults([
+            makeEvaluationRunResult(
+                jobID: "eval-1",
+                suiteID: "mmlu",
+                datasetID: "mmlu.dev.v1",
+                metricName: "eval.mmlu.accuracy",
+                metricValue: 0.75
+            ),
+            makeEvaluationRunResult(
+                jobID: "eval-2",
+                suiteID: "gsm8k",
+                datasetID: "gsm8k.dev.v1",
+                metricName: "eval.gsm8k.exact_match",
+                metricValue: 0.5
+            ),
+        ])
+
+        let output = try await MelixCLIRunner(client: client).run(
+            .evalRun(
+                .init(
+                    modelID: "melix-dev-text",
+                    suites: ["mmlu", "gsm8k"],
+                    sampleSize: 8,
+                    parameters: ["batch_factor": "2", "few_shot": "4"],
+                    json: true
+                )
+            )
+        )
+        let payload = try #require(parseJSONArray(output))
+        let requests = await client.evaluationRequests
+
+        #expect(requests.count == 2)
+        #expect(requests[0].suiteID == "mmlu")
+        #expect(requests[0].datasetID == "mmlu.dev.v1")
+        #expect(requests[0].sampleSize == 8)
+        #expect(requests[0].parameters["batch_factor"] == "2")
+        #expect(requests[1].suiteID == "gsm8k")
+        #expect(requests[1].datasetID == "gsm8k.dev.v1")
+        let firstRun = try #require(payload.first as? [String: Any])
+        let firstJob = try #require(firstRun["job"] as? [String: Any])
+        #expect(firstJob["job_id"] as? String == "eval-1")
+        #expect(firstJob["suite_id"] as? String == "mmlu")
+    }
+
+    @Test("eval run renders tabular text output for completed suites")
+    func evalRunRendersTextOutput() async throws {
+        let client = StubControlPlaneXPCClient()
+        await client.setEvaluationResults([
+            makeEvaluationRunResult(
+                jobID: "eval-1",
+                suiteID: "mmlu",
+                datasetID: "mmlu.dev.v1",
+                metricName: "eval.mmlu.accuracy",
+                metricValue: 0.75
+            ),
+        ])
+
+        let output = try await MelixCLIRunner(client: client).run(
+            .evalRun(
+                .init(
+                    modelID: "melix-dev-text",
+                    sampleSize: 8
+                )
+            )
+        )
+        let request = try #require((await client.evaluationRequests).first)
+
+        #expect(request.suiteID == "mmlu")
+        #expect(request.datasetID == "mmlu.dev.v1")
+        #expect(output.contains("job_id\tsuite\tdataset\tstatus\tmetrics"))
+        #expect(output.contains("eval-1\tmmlu\tmmlu.dev.v1\tcompleted\teval.mmlu.accuracy=0.75ratio"))
+    }
+
+    @Test("eval list renders history rows and returns JSON when requested")
+    func evalListRendersHistoryRowsAndJSON() async throws {
+        let client = StubControlPlaneXPCClient()
+        await client.setExportResult(.init(exportBundleJSON: makeBenchmarkExportBundleJSON()))
+
+        let textOutput = try await MelixCLIRunner(client: client).run(.evalList(.init()))
+        let jsonOutput = try await MelixCLIRunner(client: client).run(.evalList(.init(json: true)))
+        let entries = try #require(parseJSONArray(jsonOutput))
+        let evalEntry = try #require(entries.first as? [String: Any])
+
+        #expect(textOutput.contains("job_id\tmodel_id\ttask_kind\tsource_repo\tsuite\tdataset\tsample_size\tscoring_mode\tstatus\tcreated_at_unix_ms"))
+        #expect(textOutput.contains("eval-1\tmelix-dev-text\ttext-generation\tHuggingFaceH4/ultrachat_200k\tmmlu\tmmlu.dev.v1\t8\tmultiple_choice_accuracy\tcompleted\t1712400000000"))
+        #expect(evalEntry["job_id"] as? String == "eval-1")
+        #expect(evalEntry["suite_id"] as? String == "mmlu")
+        #expect(evalEntry["task_kind"] as? String == "text-generation")
+    }
+
+    @Test("eval list renders the empty history state when no evaluation jobs are present")
+    func evalListRendersEmptyState() async throws {
+        let client = StubControlPlaneXPCClient()
+        await client.setExportResult(.init(exportBundleJSON: makeEmptyBenchmarkExportBundleJSON()))
+
+        let output = try await MelixCLIRunner(client: client).run(.evalList(.init()))
+
+        #expect(output == "No evaluation runs found.\n")
+    }
+
+    @Test("eval export commands write summary csv and sample artifacts")
+    func evalExportCommandsWriteArtifacts() async throws {
+        let client = StubControlPlaneXPCClient()
+        await client.setExportResult(.init(exportBundleJSON: makeBenchmarkExportBundleJSON()))
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let summaryURL = root.appendingPathComponent("eval-1-summary.csv")
+        let samplesURL = root.appendingPathComponent("eval-1-samples.csv")
+        let jsonlURL = root.appendingPathComponent("eval-1-samples.jsonl")
+
+        let summaryOutput = try await MelixCLIRunner(client: client).run(
+            .evalExportSummaryCSV(.init(jobID: "eval-1", outputPath: summaryURL.path, json: true))
+        )
+        _ = try await MelixCLIRunner(client: client).run(
+            .evalExportSamplesCSV(.init(jobID: "eval-1", outputPath: samplesURL.path))
+        )
+        _ = try await MelixCLIRunner(client: client).run(
+            .evalExportSamplesJSONL(.init(jobID: "eval-1", outputPath: jsonlURL.path))
+        )
+
+        let response = try #require(parseJSONObject(summaryOutput))
+        let summaryCSV = try String(contentsOf: summaryURL, encoding: .utf8)
+        let samplesCSV = try String(contentsOf: samplesURL, encoding: .utf8)
+        let samplesJSONL = try String(contentsOf: jsonlURL, encoding: .utf8)
+
+        #expect(response["job_id"] as? String == "eval-1")
+        #expect(response["row_count"] as? Int == 1)
+        #expect(summaryCSV.contains("job_id,model_id,task_kind,source_repo,suite_id,dataset_id,sample_size,scoring_mode,metric_name,metric_value,unit,created_at_unix_ms"))
+        #expect(summaryCSV.contains("eval-1,melix-dev-text,text-generation,HuggingFaceH4/ultrachat_200k,mmlu,mmlu.dev.v1,8,multiple_choice_accuracy,eval.mmlu.accuracy,0.75,ratio,1712400000000"))
+        #expect(samplesCSV.contains("id,correct,expected,predicted,question,raw_response,time_s,parse_status"))
+        #expect(samplesCSV.contains("sample-1,true,4,4,2+2?,4,0.01,parsed"))
+        #expect(samplesJSONL.contains("\"sample_id\":\"sample-1\""))
+    }
+
+    @Test("eval export commands fail when the requested job has no rows")
+    func evalExportCommandsFailForMissingJob() async throws {
+        let client = StubControlPlaneXPCClient()
+        await client.setExportResult(.init(exportBundleJSON: makeBenchmarkExportBundleJSON()))
+
+        do {
+            _ = try await MelixCLIRunner(client: client).run(
+                .evalExportSummaryCSV(.init(jobID: "eval-missing", outputPath: "/tmp/eval-missing.csv"))
+            )
+            Issue.record("Expected eval export-summary-csv to fail when the job is missing.")
+        } catch let error as MelixCLIError {
+            #expect(error == .runtime("No evaluation rows were found for job eval-missing."))
+        }
+    }
+
     @Test("runner default live client path uses the supplied environment-backed service builder")
     func runnerDefaultLiveClientPathUsesServiceBuilder() async throws {
         let recorder = EnvironmentRecorder()
@@ -563,11 +714,13 @@ private actor StubControlPlaneXPCClient: ControlPlaneXPCClient {
 
     private(set) var lastModelOperationCall: ModelOperationCall?
     private(set) var lastBenchRequest: ControlPlaneBenchRequest?
+    private(set) var evaluationRequests: [ControlPlaneEvaluationRequest] = []
     private(set) var loadedModelIDs: [String] = []
 
     private var snapshot = makeServerSnapshot(models: [makeModelSummary(id: "melix-dev-text", kind: "text")])
     private var modelOperationResult = makeModelOperationResult()
     private var benchResult = ControlPlaneBenchResult(reportPath: "", reportMarkdown: "", metrics: [:])
+    private var evaluationResultsQueue: [ControlPlaneEvaluationResult] = []
     private var exportResult = ControlPlaneExportResult(exportBundleJSON: #"{"export_schema_version":"melix.benchmark_export.v1","benchmark_jobs":[],"benchmark_results":[]}"#)
 
     func setServerSnapshot(_ snapshot: Melix_Controlplane_V1_ServerSnapshot) {
@@ -580,6 +733,10 @@ private actor StubControlPlaneXPCClient: ControlPlaneXPCClient {
 
     func setBenchResult(_ result: ControlPlaneBenchResult) {
         self.benchResult = result
+    }
+
+    func setEvaluationResults(_ results: [ControlPlaneEvaluationResult]) {
+        self.evaluationResultsQueue = results
     }
 
     func setExportResult(_ result: ControlPlaneExportResult) {
@@ -672,6 +829,14 @@ private actor StubControlPlaneXPCClient: ControlPlaneXPCClient {
     func runBench(_ request: ControlPlaneBenchRequest) async throws -> ControlPlaneBenchResult {
         lastBenchRequest = request
         return benchResult
+    }
+
+    func runEvaluation(_ request: ControlPlaneEvaluationRequest) async throws -> ControlPlaneEvaluationResult {
+        evaluationRequests.append(request)
+        guard evaluationResultsQueue.isEmpty == false else {
+            throw MelixCLIError.runtime("No stub evaluation result is configured.")
+        }
+        return evaluationResultsQueue.removeFirst()
     }
 
     func exportResults(outputDir: String) async throws -> ControlPlaneExportResult {
@@ -791,6 +956,107 @@ private func makeBenchmarkExportBundleJSON() -> String {
           "report_markdown": "# Melix Bench\\n"
         }
       ]
+      ,
+      "evaluation_jobs": [
+        {
+          "schema_version": "melix.evaluation_job.v1",
+          "job_id": "eval-1",
+          "model_id": "melix-dev-text",
+          "task_kind": "text-generation",
+          "source_repo": "HuggingFaceH4/ultrachat_200k",
+          "suite_id": "mmlu",
+          "dataset_id": "mmlu.dev.v1",
+          "sample_size": 8,
+          "scoring_mode": "multiple_choice_accuracy",
+          "parameters": {
+            "few_shot": "4"
+          },
+          "status": "completed",
+          "output_dir": "/tmp/melix/evaluation/runs/eval-1",
+          "created_at_unix_ms": 1712400000000,
+          "updated_at_unix_ms": 1712400005000
+        }
+      ],
+      "evaluation_results": [
+        {
+          "schema_version": "melix.evaluation_result.v1",
+          "job_id": "eval-1",
+          "suite_id": "mmlu",
+          "dataset_id": "mmlu.dev.v1",
+          "sample_size": 8,
+          "metrics": [
+            {"name": "eval.mmlu.accuracy", "value": 0.75, "unit": "ratio"}
+          ],
+          "report_path": "/tmp/melix/evaluation/runs/eval-1/evaluation-result.json"
+        }
+      ],
+      "evaluation_samples": [
+        {
+          "schema_version": "melix.evaluation_sample.v1",
+          "job_id": "eval-1",
+          "suite_id": "mmlu",
+          "dataset_id": "mmlu.dev.v1",
+          "sample_id": "sample-1",
+          "question": "2+2?",
+          "expected": "4",
+          "predicted": "4",
+          "raw_response": "4",
+          "correct": true,
+          "time_s": 0.01,
+          "parse_status": "parsed"
+        }
+      ]
     }
     """
+}
+
+private func makeEmptyBenchmarkExportBundleJSON() -> String {
+    """
+    {
+      "export_schema_version": "melix.benchmark_export.v1",
+      "benchmark_jobs": [],
+      "benchmark_results": [],
+      "evaluation_jobs": [],
+      "evaluation_results": [],
+      "evaluation_samples": []
+    }
+    """
+}
+
+private func makeEvaluationRunResult(
+    jobID: String,
+    suiteID: String,
+    datasetID: String,
+    metricName: String,
+    metricValue: Double
+) -> ControlPlaneEvaluationResult {
+    var job = Melix_Controlplane_V1_EvaluationJobSummary()
+    job.schemaVersion = "melix.evaluation_job.v1"
+    job.jobID = jobID
+    job.modelID = "melix-dev-text"
+    job.taskKind = "text-generation"
+    job.sourceRepo = "HuggingFaceH4/ultrachat_200k"
+    job.suiteID = suiteID
+    job.datasetID = datasetID
+    job.sampleSize = 8
+    job.scoringMode = "multiple_choice_accuracy"
+    job.status = "completed"
+    job.outputDir = "/tmp/melix/evaluation/runs/\(jobID)"
+    job.createdAtUnixMs = 1712400000000
+    job.updatedAtUnixMs = 1712400005000
+
+    var metric = Melix_Controlplane_V1_BenchmarkMetricValue()
+    metric.name = metricName
+    metric.value = metricValue
+    metric.unit = "ratio"
+
+    var result = Melix_Controlplane_V1_EvaluationResultSummary()
+    result.schemaVersion = "melix.evaluation_result.v1"
+    result.jobID = jobID
+    result.suiteID = suiteID
+    result.datasetID = datasetID
+    result.sampleSize = 8
+    result.metrics = [metric]
+    result.reportPath = "/tmp/melix/evaluation/runs/\(jobID)/evaluation-result.json"
+    return ControlPlaneEvaluationResult(job: job, results: [result])
 }

@@ -2,62 +2,62 @@
 
 ## Goal
 
-Close the remaining M7 gaps on `main`, make LoRA product-ready across Window UI and CLI, and then finish Benchmark productization with real execution, controlled Hugging Face suites, visualization, and CSV export.
+Split Melix operator benchmarking into two explicit product lines on `main`:
+
+- `bench` for performance benchmarking
+- `eval` for intelligence evaluation
+
+The transaction must expose the new evaluation workflow through protocol contracts, the shared control-plane client, the Python worker, the Window UI, and the public `melix` CLI.
 
 ## Scope
 
-- refresh progress and execution documents so M7, LoRA, Benchmark, and CLI work are tracked from the current repository state
-- expose a shared local control-plane client surface so Window UI and `melix` CLI can reuse the same operator commands
-- productize LoRA training and activation with local-package and Hugging Face dataset inputs, stable artifact storage, Window UI forms, and CLI commands
-- complete M7 with real benchmark execution, per-run persistence, controlled Hugging Face benchmark suites, and executable evidence
-- productize Benchmark with Window UI model and suite selection, history views, visualization, and CSV export
+- add typed evaluation request and export schema fields to the control-plane and worker protocols
+- add shared Swift export decoding and control-plane execution support for evaluation jobs, results, and samples
+- expose `melix eval run`, `melix eval list`, `melix eval export-summary-csv`, `melix eval export-samples-csv`, and `melix eval export-samples-jsonl`
+- persist evaluation jobs, summary results, and per-sample rows in the Python worker productization layer
+- expose evaluation configuration, history, summary cards, and sample previews in the Window UI
+- update execution planning and progress documents so the repository reflects the benchmark and evaluation split
 
 ## Phases
 
-1. Documentation reset and execution baseline
+1. Plan and status reset for the benchmark and evaluation redesign
    - status: completed
-2. Shared operator client and CLI foundation
+2. Protocol and generated artifact updates
    - status: completed
-3. LoRA backend and artifact productization
+3. Python worker evaluation persistence and export support
    - status: completed
-4. LoRA Window UI and CLI exposure
+4. Shared Swift export decoding and control-plane evaluation plumbing
    - status: completed
-5. Real benchmark runner and M7 closure
+5. `melix eval` CLI parser and runner implementation
    - status: completed
-6. Benchmark CLI and CSV export closure
+6. Window UI evaluation workspace and history views
    - status: completed
-7. Benchmark Window UI visualization closure
-   - status: completed
-8. Final verification, metrics, and progress closure
+7. Verification, coverage, metrics, and commit closure
    - status: completed
 
 ## Acceptance
 
-- Progress and roadmap documents describe the true M7 and productization state and point at the active execution plan.
-- LoRA training accepts either a local dataset package or a Hugging Face dataset configuration, persists reproducible artifacts under the runtime jobs root, and exposes training plus activation through Window UI and `melix` CLI.
-- Activated adapters register derived text models that can be selected for inference through the existing product shell.
-- Benchmark executes real measurements against an explicitly selected model, persists per-run results, supports controlled Hugging Face suites with on-demand caching, and can export CSV.
-- Window UI and CLI both operate through the control-plane truth rather than bypassing it.
-- Touched Python and Swift scope maintain measured changed-line coverage of at least `95%` where executable lines exist.
+- `melix eval ...` is a first-class CLI product that supports direct model IDs and direct Hugging Face repo targets.
+- Evaluation runs persist typed jobs, results, and sample-level evidence under the productization layer and can be exported as CSV and JSONL.
+- Window UI exposes evaluation target selection, suite selection, run controls, history, summary cards, and sample previews without overloading the performance benchmark cards.
+- Control-plane export decoding understands both benchmark and evaluation history from one shared export bundle.
+- The touched executable Python and Swift scope maintains changed-line coverage of at least `95%`.
 
 ## Risks
 
-- Swift package verification may remain slower than the Python worker path because of large workspace recompilation.
-- Real benchmark execution depends on loaded text-model availability and runtime characteristics that differ between deterministic and MLX-backed environments.
-- Hugging Face dataset materialization must remain testable without network access, so loader seams need explicit fixture-driven coverage.
+- SwiftUI host-view tests can validate stateful rendering, but direct button-click automation remains brittle in the current AppKit test harness.
+- Evaluation export compatibility depends on keeping the benchmark export bundle backward-compatible for older persisted benchmark-only runs.
+- Generated protobuf artifacts widen the change set, so schema and generated outputs must stay in sync in the same commit.
 
 ## Outcome
 
 - Completed slices:
-  - documentation reset and execution baseline
-  - shared operator client and CLI foundation
-  - LoRA backend and artifact productization
-  - LoRA Window UI and CLI exposure
-  - benchmark core runner, per-run persistence, and export compatibility
-  - controlled Hugging Face benchmark suites and M7 closure
-  - benchmark CLI listing and CSV export closure
-  - benchmark Window UI visualization closure
-  - post-close VLM benchmark compatibility for direct Hugging Face repos, including Gemma 4 text-backed fallback and direct proof coverage for `unsloth/gemma-4-E4B-it-MLX-8bit`
-- Remaining slices:
-  - commit the verified post-close direct-HF and VLM benchmark compatibility slice
-  - start the benchmark and evaluation redesign follow-up in a new transaction after this working tree is clean
+  - plan and progress reset for the benchmark and evaluation redesign
+  - protocol updates for evaluation request shapes and export metadata
+  - Python worker evaluation schemas, persistence, export collection, and gRPC wiring
+  - shared Swift export decoding and control-plane evaluation execution plumbing
+  - `melix eval` CLI parser and runner implementation
+  - Window UI evaluation configuration, history, summary cards, and sample previews
+  - targeted verification, changed-line coverage, and metrics evidence for the touched executable scope
+- Follow-up slices:
+  - review `omlx` benchmark and intelligence design and decide the next-generation Melix benchmark and evaluation input/output contract

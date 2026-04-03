@@ -74,9 +74,14 @@ def _write_eval_fixtures(root: Path) -> None:
             "schema_version": "melix.evaluation_job.v1",
             "job_id": "eval-1",
             "model_id": "melix-dev-text",
+            "task_kind": "text-generation",
+            "source_repo": "HuggingFaceH4/ultrachat_200k",
             "suite_id": "mmlu",
             "dataset_id": "mmlu.dev.v1",
             "sample_size": 8,
+            "output_dir": str(root),
+            "created_at_unix_ms": 101,
+            "updated_at_unix_ms": 202,
         }) + "\n"
     )
     (root / "evaluation-result.json").write_text(
@@ -88,6 +93,24 @@ def _write_eval_fixtures(root: Path) -> None:
                 {"name": "eval.mmlu.accuracy", "value": 0.75, "unit": "ratio"},
             ],
         }) + "\n"
+    )
+    (root / "evaluation-samples.jsonl").write_text(
+        "\n".join([
+            json.dumps({
+                "schema_version": "melix.evaluation_sample.v1",
+                "job_id": "eval-1",
+                "suite_id": "mmlu",
+                "dataset_id": "mmlu.dev.v1",
+                "sample_id": "1",
+                "question": "2+2?",
+                "expected": "4",
+                "predicted": "4",
+                "raw_response": "4",
+                "correct": True,
+                "time_s": 0.01,
+                "parse_status": "parsed",
+            }),
+        ]) + "\n"
     )
 
 
@@ -124,6 +147,22 @@ def test_collect_evaluation_artifacts_finds_persisted_eval_files(tmp_path: Path)
     assert result["evaluation_jobs"][0]["job_id"] == "eval-1"
     assert len(result["evaluation_results"]) == 1
     assert result["evaluation_results"][0]["suite_id"] == "mmlu"
+    assert len(result["evaluation_samples"]) == 1
+    assert result["evaluation_samples"][0]["sample_id"] == "1"
+
+
+def test_collect_evaluation_artifacts_reads_per_run_history_from_runs_directory(
+    tmp_path: Path,
+) -> None:
+    evaluation_root = tmp_path / "evaluation"
+    _write_eval_fixtures(evaluation_root / "runs" / "eval-1")
+    _write_eval_fixtures(evaluation_root / "runs" / "eval-2")
+
+    result = collect_evaluation_artifacts(tmp_path)
+
+    assert [job["job_id"] for job in result["evaluation_jobs"]] == ["eval-1", "eval-1"]
+    assert [row["job_id"] for row in result["evaluation_results"]] == ["eval-1", "eval-1"]
+    assert [sample["job_id"] for sample in result["evaluation_samples"]] == ["eval-1", "eval-1"]
 
 
 def test_build_export_bundle_combines_benchmark_and_evaluation_artifacts(tmp_path: Path) -> None:
@@ -136,6 +175,7 @@ def test_build_export_bundle_combines_benchmark_and_evaluation_artifacts(tmp_pat
     assert isinstance(bundle["exported_at_unix_ms"], int)
     assert len(bundle["benchmark_jobs"]) == 1
     assert len(bundle["evaluation_jobs"]) == 1
+    assert len(bundle["evaluation_samples"]) == 1
 
 
 def test_build_export_bundle_collects_benchmark_and_evaluation_from_model_ops_root(
@@ -151,6 +191,7 @@ def test_build_export_bundle_collects_benchmark_and_evaluation_from_model_ops_ro
     assert len(bundle["benchmark_results"]) == 1
     assert len(bundle["evaluation_jobs"]) == 1
     assert len(bundle["evaluation_results"]) == 1
+    assert len(bundle["evaluation_samples"]) == 1
 
 
 def test_write_export_bundle_persists_structured_json(tmp_path: Path) -> None:
@@ -210,7 +251,7 @@ def test_build_comparison_table_handles_single_run() -> None:
     assert "| bench.smoke.ttft_ms | 24.45 |" in table
 
 
-def test_build_comparison_table_includes_evaluation_metrics() -> None:
+def test_build_comparison_table_ignores_evaluation_metrics() -> None:
     run = {
         "benchmark_jobs": [{"job_id": "run-1", "model_id": "melix-dev"}],
         "benchmark_results": [],
@@ -222,4 +263,4 @@ def test_build_comparison_table_includes_evaluation_metrics() -> None:
 
     table = build_comparison_table([run])
 
-    assert "| eval.mmlu.accuracy | 0.75 |" in table
+    assert table == ""

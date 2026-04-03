@@ -7,15 +7,25 @@ import re
 import time
 
 from worker.productization.benchmark_queue import BenchmarkQueueRecord, BenchmarkQueueStore
-from worker.productization.evaluation_schemas import EvaluationJob, EvaluationResult
+from worker.productization.evaluation_schemas import EvaluationJob, EvaluationResult, EvaluationSample
 from worker.productization.evaluation_store import EvaluationStore
 from worker.productization.benchmark_schemas import (
     build_evaluation_job,
     build_evaluation_result,
+    build_evaluation_sample,
 )
 
 
-_SUPPORTED_SUITE_IDS = {"mmlu"}
+_SUITE_SCORE_MODES = {
+    "mmlu": ("accuracy", "multiple_choice_accuracy"),
+    "arc_challenge": ("accuracy", "multiple_choice_accuracy"),
+    "hellaswag": ("accuracy", "multiple_choice_accuracy"),
+    "winogrande": ("accuracy", "multiple_choice_accuracy"),
+    "truthfulqa_mc": ("accuracy", "multiple_choice_accuracy"),
+    "gsm8k": ("exact_match", "exact_match"),
+    "humaneval": ("pass_at_1", "pass_at_1"),
+    "mbpp": ("pass_at_1", "pass_at_1"),
+}
 _ARITHMETIC_PROMPT_PATTERN = re.compile(r"\s*(\d+)\s*([+-])\s*(\d+)\s*\?\s*")
 
 
@@ -23,6 +33,7 @@ _ARITHMETIC_PROMPT_PATTERN = re.compile(r"\s*(\d+)\s*([+-])\s*(\d+)\s*\?\s*")
 class EvaluationRun:
     job: EvaluationJob
     result: EvaluationResult
+    samples: tuple[EvaluationSample, ...]
     persisted_paths: dict[str, Path]
 
 
@@ -48,7 +59,7 @@ class EvaluationCore:
         parameters: dict[str, str] | None = None,
     ) -> EvaluationRun:
         dataset_root = Path(dataset_root).resolve()
-        if suite_id not in _SUPPORTED_SUITE_IDS:
+        if suite_id not in _SUITE_SCORE_MODES:
             raise ValueError(f"Unsupported evaluation suite: {suite_id}")
 
         manifest = json.loads((dataset_root / "manifest.json").read_text(encoding="utf-8"))
@@ -63,36 +74,63 @@ class EvaluationCore:
             if line.strip()
         ]
         selected = samples[: max(sample_size, 0)]
-        correct = sum(1 for sample in selected if self._sample_is_correct(sample))
-        accuracy = round(correct / max(len(selected), 1), 2)
+        score_name, scoring_mode = _SUITE_SCORE_MODES[suite_id]
+        created_at_unix_ms = int(time.time() * 1000)
+        job_id = self._next_job_id()
+        run_root = self._run_root(job_id)
+        sample_records = tuple(
+            self._build_sample_record(
+                job_id=job_id,
+                suite_id=suite_id,
+                dataset_id=manifest["dataset_id"],
+                index=index,
+                sample=sample,
+            )
+            for index, sample in enumerate(selected, start=1)
+        )
+        correct = sum(1 for sample in sample_records if sample.correct)
+        accuracy = round(correct / max(len(sample_records), 1), 4)
         job_parameters = {"dataset_root": str(dataset_root)}
         if parameters:
             job_parameters.update(parameters)
-        job_parameters.setdefault("sample_size", str(len(selected)))
+        job_parameters.setdefault("sample_size", str(len(sample_records)))
 
-        report_path = self._result_path(dataset_root)
+        report_path = self._result_path(run_root if self._jobs_root is not None else dataset_root)
+        output_dir = str(run_root) if self._jobs_root is not None else str(dataset_root)
         job = build_evaluation_job(
-            job_id="eval-local",
+            job_id=job_id,
             model_id=model_id,
+            task_kind=job_parameters.get("task_kind", "text-generation"),
+            source_repo=job_parameters.get("source_repo", ""),
             suite_id=suite_id,
             dataset_id=manifest["dataset_id"],
-            sample_size=len(selected),
-            scoring_mode="deterministic_accuracy",
+            sample_size=len(sample_records),
+            scoring_mode=scoring_mode,
             parameters=job_parameters,
             status="completed",
+            output_dir=output_dir,
+            created_at_unix_ms=created_at_unix_ms,
+            updated_at_unix_ms=created_at_unix_ms,
         )
         result = build_evaluation_result(
             job_id=job.job_id,
             suite_id=suite_id,
             dataset_id=manifest["dataset_id"],
-            sample_size=len(selected),
-            metrics={f"eval.{suite_id}.accuracy": accuracy},
+            sample_size=len(sample_records),
+            metrics={
+                f"eval.{suite_id}.{score_name}": accuracy,
+                f"eval.{suite_id}.correct_count": float(correct),
+            },
             report_path=str(report_path),
+            units={
+                f"eval.{suite_id}.{score_name}": "ratio",
+                f"eval.{suite_id}.correct_count": "count",
+            },
         )
         persisted_paths: dict[str, Path] = {}
         if self._jobs_root is not None:
             queue_root = self._jobs_root / "queue"
-            queued_at = int(time.time() * 1000)
+            queued_at = created_at_unix_ms
             self._queue_store.enqueue(
                 queue_root=queue_root,
                 record=BenchmarkQueueRecord(
@@ -116,6 +154,7 @@ class EvaluationCore:
                 jobs_root=self._jobs_root,
                 job=job,
                 result=result,
+                samples=sample_records,
             )
             self._queue_store.transition(
                 queue_root=queue_root,
@@ -123,18 +162,59 @@ class EvaluationCore:
                 status="completed",
                 updated_at_unix_ms=int(time.time() * 1000),
             )
-        return EvaluationRun(job=job, result=result, persisted_paths=persisted_paths)
+        return EvaluationRun(job=job, result=result, samples=sample_records, persisted_paths=persisted_paths)
 
-    def _result_path(self, dataset_root: Path) -> Path:
+    def _result_path(self, run_root: Path) -> Path:
         if self._jobs_root is not None:
-            return self._jobs_root / "evaluation-result.json"
-        return dataset_root / "evaluation-result.json"
+            return run_root / "evaluation-result.json"
+        return run_root / "evaluation-result.json"
+
+    def _next_job_id(self) -> str:
+        if self._jobs_root is None:
+            return "eval-local"
+        runs_root = self._jobs_root / "runs"
+        runs_root.mkdir(parents=True, exist_ok=True)
+        existing = sorted(
+            int(path.name.removeprefix("eval-"))
+            for path in runs_root.iterdir()
+            if path.is_dir() and path.name.startswith("eval-") and path.name.removeprefix("eval-").isdigit()
+        )
+        next_index = (existing[-1] + 1) if existing else 1
+        return f"eval-{next_index:04d}"
+
+    def _run_root(self, job_id: str) -> Path:
+        if self._jobs_root is None:
+            return Path.cwd()
+        return self._jobs_root / "runs" / job_id
 
     @staticmethod
-    def _sample_is_correct(sample: dict[str, object]) -> bool:
-        expected = str(sample.get("expected", "")).strip()
-        predicted = EvaluationCore._deterministic_answer(str(sample.get("prompt", "")))
-        return predicted == expected
+    def _build_sample_record(
+        *,
+        job_id: str,
+        suite_id: str,
+        dataset_id: str,
+        index: int,
+        sample: dict[str, object],
+    ) -> EvaluationSample:
+        prompt = str(sample.get("prompt", sample.get("question", "")))
+        expected = str(sample.get("expected", sample.get("answer", ""))).strip()
+        started_at = time.perf_counter()
+        predicted = EvaluationCore._deterministic_answer(prompt)
+        duration_s = round(time.perf_counter() - started_at, 6)
+        parse_status = "parsed" if predicted else "empty_prediction"
+        return build_evaluation_sample(
+            job_id=job_id,
+            suite_id=suite_id,
+            dataset_id=dataset_id,
+            sample_id=str(sample.get("id", index)),
+            question=prompt,
+            expected=expected,
+            predicted=predicted,
+            raw_response=predicted,
+            correct=predicted == expected,
+            time_s=duration_s,
+            parse_status=parse_status,
+        )
 
     @staticmethod
     def _deterministic_answer(prompt: str) -> str:

@@ -2100,6 +2100,133 @@ struct RuntimeViewModelTests {
         #expect(viewModel.lastError == "export failed")
     }
 
+    @Test("evaluation configuration dispatches explicit suites history refresh and exports")
+    @MainActor
+    func evaluationConfigurationDispatchesExplicitSuitesHistoryRefreshAndExports() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let metrics = MenuBarMetricsStore()
+        let viewModel = RuntimeViewModel(client: client, metrics: metrics)
+        await client.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [
+                    makeModelSummary(modelID: "melix-dev-text", state: .modelWarm),
+                    makeModelSummary(modelID: "melix-dev-text-lora", state: .modelWarm),
+                ]
+            )
+        )
+        await client.configureExportResult(
+            ControlPlaneExportResult(exportBundleJSON: makeBenchmarkExportBundleJSON())
+        )
+
+        await viewModel.start()
+        viewModel.selectedEvaluationModelID = "melix-dev-text-lora"
+        viewModel.selectedEvaluationSuiteIDs = ["mmlu", "gsm8k"]
+        viewModel.evaluationSampleSize = "12"
+        viewModel.evaluationBatchFactor = "2"
+        viewModel.evaluationFewShot = "3"
+        viewModel.evaluationSeed = "7"
+
+        await viewModel.runEvaluation()
+
+        let evaluationRequests = await client.recordedEvaluationRequests
+        #expect(evaluationRequests.count == 2)
+        #expect(Set(evaluationRequests.map(\.suiteID)) == Set(["mmlu", "gsm8k"]))
+        #expect(evaluationRequests.allSatisfy { $0.modelID == "melix-dev-text-lora" })
+        #expect(evaluationRequests.allSatisfy { $0.sampleSize == 12 })
+        #expect(evaluationRequests.allSatisfy { $0.parameters["batch_factor"] == "2" })
+        #expect(evaluationRequests.allSatisfy { $0.parameters["few_shot"] == "3" })
+        #expect(evaluationRequests.allSatisfy { $0.parameters["seed"] == "7" })
+        #expect(viewModel.evaluationHistory.count == 1)
+        #expect(viewModel.selectedEvaluationHistoryEntry?.jobID == "eval-newer")
+        #expect(viewModel.evaluationMetricCards.count == 2)
+        #expect(viewModel.evaluationSamplePreview.count == 2)
+
+        await viewModel.exportSelectedEvaluationSummaryCSV()
+        let summaryExport = try #require(viewModel.lastEvaluationExport)
+        #expect(summaryExport.formatTitle == "summary.csv")
+        #expect(summaryExport.rowCount == 2)
+        #expect(FileManager.default.fileExists(atPath: summaryExport.outputPath))
+
+        await viewModel.exportSelectedEvaluationSamplesCSV()
+        let samplesCSVExport = try #require(viewModel.lastEvaluationExport)
+        #expect(samplesCSVExport.formatTitle == "samples.csv")
+        let samplesCSV = try String(contentsOfFile: samplesCSVExport.outputPath, encoding: .utf8)
+        #expect(samplesCSV.contains("mmlu-0001"))
+
+        await viewModel.exportSelectedEvaluationSamplesJSONL()
+        let samplesJSONLExport = try #require(viewModel.lastEvaluationExport)
+        #expect(samplesJSONLExport.formatTitle == "samples.jsonl")
+        let samplesJSONL = try String(contentsOfFile: samplesJSONLExport.outputPath, encoding: .utf8)
+        #expect(samplesJSONL.contains("\"sample_id\":\"mmlu-0001\""))
+        #expect(await client.recordedActions.contains("eval"))
+        #expect(await client.recordedActions.contains("bench.export"))
+        #expect(await metrics.snapshot()["menu.ops_eval_ms"] != nil)
+        #expect(await metrics.snapshot()["menu.eval_history_refresh_ms"] != nil)
+        #expect(await metrics.snapshot()["menu.eval_export_csv_ms"] != nil)
+        #expect(await metrics.snapshot()["menu.eval_export_jsonl_ms"] != nil)
+    }
+
+    @Test("evaluation selection state and guard rails cover catalog and direct repo flows")
+    @MainActor
+    func evaluationSelectionStateAndGuardRailsCoverCatalogAndDirectRepoFlows() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(client: client)
+        viewModel.selectedEvaluationModelID = "missing-model"
+        viewModel.selectedEvaluationSuiteIDs = ["unknown-suite"]
+        viewModel.selectedEvaluationHistoryJobID = "stale-job"
+
+        await viewModel.start()
+
+        #expect(viewModel.selectedEvaluationModelID == "melix-dev-text")
+        #expect(viewModel.selectedEvaluationSuiteIDs == ["mmlu"])
+        #expect(viewModel.selectedEvaluationHistoryJobID.isEmpty)
+
+        viewModel.toggleEvaluationSuite("gsm8k")
+        #expect(viewModel.selectedEvaluationSuiteIDs.contains("gsm8k"))
+        viewModel.toggleEvaluationSuite("gsm8k")
+        #expect(viewModel.selectedEvaluationSuiteIDs.contains("gsm8k") == false)
+
+        viewModel.selectedEvaluationSuiteIDs = []
+        await viewModel.runEvaluation()
+        #expect(viewModel.lastError == "Select at least one evaluation suite before running Evaluation.")
+
+        viewModel.selectedEvaluationTargetMode = .huggingFaceRepo
+        viewModel.evaluationHFRepoID = ""
+        viewModel.selectedEvaluationSuiteIDs = ["mmlu"]
+        await viewModel.runEvaluation()
+        #expect(viewModel.lastError == "Enter a Hugging Face repo before running Evaluation.")
+
+        viewModel.evaluationHFRepoID = "meta-llama/Llama-3.2-1B-Instruct"
+        await viewModel.runEvaluation()
+
+        let request = try #require(await client.recordedEvaluationRequests.last)
+        #expect(request.modelID.isEmpty)
+        #expect(request.hfRepoID == "meta-llama/Llama-3.2-1B-Instruct")
+        #expect(viewModel.evaluationTargetSummaryText.contains("meta-llama/Llama-3.2-1B-Instruct"))
+
+        let audioOnlyClient = FakeControlPlaneXPCClient()
+        let audioOnlyModel = makeCapabilityModelSummary(
+            modelID: "melix-dev-audio",
+            kind: "audio",
+            state: .modelWarm,
+            features: ["transcribe"]
+        )
+        await audioOnlyClient.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [audioOnlyModel]
+            )
+        )
+        let audioOnlyViewModel = RuntimeViewModel(client: audioOnlyClient)
+        await audioOnlyViewModel.start()
+        audioOnlyViewModel.selectedEvaluationSuiteIDs = ["mmlu"]
+
+        await audioOnlyViewModel.runEvaluation()
+
+        #expect(audioOnlyViewModel.lastError == "Select a text-generation model before running Evaluation.")
+    }
+
     @Test("lora training and activation dispatch the configured dataset source hyperparameters and derived alias")
     @MainActor
     func loraTrainingAndActivationDispatchConfiguredPayloads() async throws {

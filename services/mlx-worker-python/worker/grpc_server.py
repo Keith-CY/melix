@@ -255,12 +255,17 @@ class WorkerMaintenanceService(maintenance_pb2_grpc.MaintenanceServiceServicer):
 
     def RunEvaluation(self, request, context):
         try:
+            parameters = dict(request.parameters)
+            if request.task_kind:
+                parameters.setdefault("task_kind", request.task_kind)
+            if request.source_repo:
+                parameters.setdefault("source_repo", request.source_repo)
             run = self._evaluation_core.run_local_suite(
                 model_id=request.model_handle.split("::", 1)[0] if request.model_handle else "melix-dev-text",
                 suite_id=request.suite_id,
                 dataset_root=Path(request.dataset_root) if request.dataset_root else self._default_dataset_root(request.dataset_id),
                 sample_size=request.sample_size,
-                parameters=dict(request.parameters),
+                parameters=parameters,
             )
         except Exception as exc:
             return maintenance_pb2.RunEvaluationResponse(
@@ -272,12 +277,17 @@ class WorkerMaintenanceService(maintenance_pb2_grpc.MaintenanceServiceServicer):
         response.job.schema_version = run.job.schema_version
         response.job.job_id = run.job.job_id
         response.job.model_id = run.job.model_id
+        response.job.task_kind = run.job.task_kind
+        response.job.source_repo = run.job.source_repo
         response.job.suite_id = run.job.suite_id
         response.job.dataset_id = run.job.dataset_id
         response.job.sample_size = run.job.sample_size
         response.job.scoring_mode = run.job.scoring_mode
         response.job.parameters.update(run.job.parameters)
         response.job.status = run.job.status
+        response.job.output_dir = run.job.output_dir
+        response.job.created_at_unix_ms = run.job.created_at_unix_ms
+        response.job.updated_at_unix_ms = run.job.updated_at_unix_ms
 
         result = response.results.add()
         result.schema_version = run.result.schema_version

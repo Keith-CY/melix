@@ -98,6 +98,44 @@ public struct ControlPlaneBenchRequest: Equatable, Sendable {
     }
 }
 
+public struct ControlPlaneEvaluationRequest: Equatable, Sendable {
+    public let modelID: String
+    public let hfRepoID: String
+    public let suiteID: String
+    public let datasetID: String
+    public let sampleSize: UInt32
+    public let parameters: [String: String]
+
+    public init(
+        modelID: String = "",
+        hfRepoID: String = "",
+        suiteID: String,
+        datasetID: String = "",
+        sampleSize: UInt32 = 0,
+        parameters: [String: String] = [:]
+    ) {
+        self.modelID = modelID
+        self.hfRepoID = hfRepoID
+        self.suiteID = suiteID
+        self.datasetID = datasetID
+        self.sampleSize = sampleSize
+        self.parameters = parameters
+    }
+}
+
+public struct ControlPlaneEvaluationResult: Equatable, Sendable {
+    public let job: Melix_Controlplane_V1_EvaluationJobSummary
+    public let results: [Melix_Controlplane_V1_EvaluationResultSummary]
+
+    public init(
+        job: Melix_Controlplane_V1_EvaluationJobSummary,
+        results: [Melix_Controlplane_V1_EvaluationResultSummary]
+    ) {
+        self.job = job
+        self.results = results
+    }
+}
+
 public struct ControlPlaneExportResult: Equatable, Sendable {
     public let exportBundleJSON: String
 
@@ -135,6 +173,7 @@ public protocol ControlPlaneXPCClient: Sendable {
     ) async throws -> Melix_Controlplane_V1_ImageJobSummary
     func runDoctor() async throws -> String
     func runBench(_ request: ControlPlaneBenchRequest) async throws -> ControlPlaneBenchResult
+    func runEvaluation(_ request: ControlPlaneEvaluationRequest) async throws -> ControlPlaneEvaluationResult
     func exportResults(outputDir: String) async throws -> ControlPlaneExportResult
     func cancelRequest(requestID: String) async throws -> Bool
     func applyServerSessionGatewayAccess(
@@ -184,6 +223,14 @@ public extension ControlPlaneXPCClient {
         throw ControlPlaneXPCClientError.requestFailed(
             code: "unimplemented",
             message: "Bench is not implemented for this control-plane client."
+        )
+    }
+
+    func runEvaluation(_ request: ControlPlaneEvaluationRequest) async throws -> ControlPlaneEvaluationResult {
+        _ = request
+        throw ControlPlaneXPCClientError.requestFailed(
+            code: "unimplemented",
+            message: "Evaluation is not implemented for this control-plane client."
         )
     }
 
@@ -371,6 +418,15 @@ public actor LocalControlPlaneXPCClient: ControlPlaneXPCClient {
                 reportPath: response.ops.reportPath,
                 reportMarkdown: response.ops.reportMarkdown,
                 metrics: response.ops.metrics.values
+            )
+        }
+    }
+
+    public func runEvaluation(_ request: ControlPlaneEvaluationRequest) async throws -> ControlPlaneEvaluationResult {
+        try await execute(makeRunEvaluationRequest(request)) { response in
+            ControlPlaneEvaluationResult(
+                job: response.ops.evaluationJob,
+                results: Array(response.ops.evaluationResults)
             )
         }
     }
@@ -583,6 +639,23 @@ public actor LocalControlPlaneXPCClient: ControlPlaneXPCClient {
         request.ops.runBench.hfRepoID = bench.hfRepoID
         request.ops.runBench.suites = bench.suites
         request.ops.runBench.parameters = bench.parameters
+        return request
+    }
+
+    private func makeRunEvaluationRequest(
+        _ evaluation: ControlPlaneEvaluationRequest
+    ) -> Melix_Controlplane_V1_ControlPlaneRequest {
+        var request = Melix_Controlplane_V1_ControlPlaneRequest()
+        request.requestID = "menubar-run-eval-\(evaluation.suiteID)"
+        request.commandType = "ops.run_evaluation"
+        request.ops = Melix_Controlplane_V1_OpsCommand()
+        request.ops.runEvaluation = Melix_Controlplane_V1_RunEvaluation()
+        request.ops.runEvaluation.modelID = evaluation.modelID
+        request.ops.runEvaluation.hfRepoID = evaluation.hfRepoID
+        request.ops.runEvaluation.suiteID = evaluation.suiteID
+        request.ops.runEvaluation.datasetID = evaluation.datasetID
+        request.ops.runEvaluation.sampleSize = evaluation.sampleSize
+        request.ops.runEvaluation.parameters = evaluation.parameters
         return request
     }
 

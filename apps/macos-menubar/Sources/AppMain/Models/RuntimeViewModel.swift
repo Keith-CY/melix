@@ -249,6 +249,66 @@ public struct RuntimeBenchmarkCSVExportState: Equatable, Sendable {
     public let rowCount: Int
 }
 
+public struct RuntimeEvaluationSuiteOptionState: Identifiable, Equatable, Sendable {
+    public let id: String
+    public let title: String
+    public let datasetID: String
+    public let scoreLabel: String
+    public let defaultSampleSize: Int
+    public let defaultBatchFactor: Int
+
+    public var defaultsText: String {
+        "default \(defaultSampleSize)x sample • \(defaultBatchFactor)x batch"
+    }
+}
+
+public struct RuntimeEvaluationHistoryEntryState: Identifiable, Equatable, Sendable {
+    public let id: String
+    public let jobID: String
+    public let modelID: String
+    public let taskKind: String
+    public let taskTitle: String
+    public let sourceRepo: String
+    public let suiteID: String
+    public let suiteTitle: String
+    public let datasetID: String
+    public let sampleSizeText: String
+    public let scoringModeText: String
+    public let statusText: String
+    public let metricCountText: String
+    public let createdAtText: String
+    public let createdAtUnixMS: Int64
+    public let reportPath: String
+}
+
+public struct RuntimeEvaluationMetricCardState: Identifiable, Equatable, Sendable {
+    public let id: String
+    public let suiteTitle: String
+    public let metricName: String
+    public let metricLabel: String
+    public let value: Double
+    public let valueText: String
+    public let unit: String
+}
+
+public struct RuntimeEvaluationSamplePreviewState: Identifiable, Equatable, Sendable {
+    public let id: String
+    public let sampleID: String
+    public let question: String
+    public let expected: String
+    public let predicted: String
+    public let rawResponse: String
+    public let correctText: String
+    public let parseStatus: String
+    public let timeText: String
+}
+
+public struct RuntimeEvaluationExportState: Equatable, Sendable {
+    public let outputPath: String
+    public let rowCount: Int
+    public let formatTitle: String
+}
+
 public struct DesktopChatTranscriptEntry: Identifiable, Equatable, Sendable {
     public enum Kind: String, Sendable {
         case user
@@ -315,6 +375,10 @@ public final class RuntimeViewModel {
     public private(set) var benchmarkChartPoints: [RuntimeBenchmarkChartPointState] = []
     public private(set) var benchmarkMetricOptions: [String] = []
     public private(set) var lastBenchmarkCSVExport: RuntimeBenchmarkCSVExportState?
+    public private(set) var evaluationHistory: [RuntimeEvaluationHistoryEntryState] = []
+    public private(set) var evaluationMetricCards: [RuntimeEvaluationMetricCardState] = []
+    public private(set) var evaluationSamplePreview: [RuntimeEvaluationSamplePreviewState] = []
+    public private(set) var lastEvaluationExport: RuntimeEvaluationExportState?
     public private(set) var adapterPackages: [RuntimeAdapterPackageState] = []
     public private(set) var trainingHistory: [RuntimeTrainingHistoryEntryState] = []
     public private(set) var chatTranscript: [DesktopChatTranscriptEntry] = []
@@ -339,6 +403,15 @@ public final class RuntimeViewModel {
     public var benchmarkHFRepoID = ""
     public var selectedBenchmarkHistoryJobID = ""
     public var selectedBenchmarkMetricName = ""
+    public var selectedEvaluationTargetMode: RuntimeBenchmarkTargetMode = .catalogModel
+    public var selectedEvaluationModelID = "melix-dev-text"
+    public var selectedEvaluationSuiteIDs: Set<String> = ["mmlu"]
+    public var evaluationSampleSize = ""
+    public var evaluationBatchFactor = ""
+    public var evaluationSeed = ""
+    public var evaluationFewShot = ""
+    public var evaluationHFRepoID = ""
+    public var selectedEvaluationHistoryJobID = ""
     public var loraDatasetSourceKind: RuntimeLoraDatasetSourceKind = .localPackage
     public var loraDatasetURI = "datasets/melix-dev"
     public var loraHFDatasetPath = ""
@@ -503,6 +576,73 @@ public final class RuntimeViewModel {
         ),
     ]
 
+    private static let evaluationSuiteOptions = [
+        RuntimeEvaluationSuiteOptionState(
+            id: "mmlu",
+            title: "MMLU",
+            datasetID: "mmlu.dev.v1",
+            scoreLabel: "Multiple-choice accuracy",
+            defaultSampleSize: 8,
+            defaultBatchFactor: 1
+        ),
+        RuntimeEvaluationSuiteOptionState(
+            id: "arc_challenge",
+            title: "ARC Challenge",
+            datasetID: "arc_challenge.dev.v1",
+            scoreLabel: "Multiple-choice accuracy",
+            defaultSampleSize: 8,
+            defaultBatchFactor: 1
+        ),
+        RuntimeEvaluationSuiteOptionState(
+            id: "hellaswag",
+            title: "HellaSwag",
+            datasetID: "hellaswag.dev.v1",
+            scoreLabel: "Multiple-choice accuracy",
+            defaultSampleSize: 8,
+            defaultBatchFactor: 1
+        ),
+        RuntimeEvaluationSuiteOptionState(
+            id: "winogrande",
+            title: "Winogrande",
+            datasetID: "winogrande.dev.v1",
+            scoreLabel: "Multiple-choice accuracy",
+            defaultSampleSize: 8,
+            defaultBatchFactor: 1
+        ),
+        RuntimeEvaluationSuiteOptionState(
+            id: "truthfulqa_mc",
+            title: "TruthfulQA MC",
+            datasetID: "truthfulqa_mc.dev.v1",
+            scoreLabel: "Multiple-choice accuracy",
+            defaultSampleSize: 8,
+            defaultBatchFactor: 1
+        ),
+        RuntimeEvaluationSuiteOptionState(
+            id: "gsm8k",
+            title: "GSM8K",
+            datasetID: "gsm8k.dev.v1",
+            scoreLabel: "Exact match",
+            defaultSampleSize: 8,
+            defaultBatchFactor: 1
+        ),
+        RuntimeEvaluationSuiteOptionState(
+            id: "humaneval",
+            title: "HumanEval",
+            datasetID: "humaneval.dev.v1",
+            scoreLabel: "Pass@1",
+            defaultSampleSize: 4,
+            defaultBatchFactor: 1
+        ),
+        RuntimeEvaluationSuiteOptionState(
+            id: "mbpp",
+            title: "MBPP",
+            datasetID: "mbpp.dev.v1",
+            scoreLabel: "Pass@1",
+            defaultSampleSize: 4,
+            defaultBatchFactor: 1
+        ),
+    ]
+
     public init(
         client: any ControlPlaneXPCClient,
         metrics: MenuBarMetricsStore = MenuBarMetricsStore(),
@@ -551,6 +691,22 @@ public final class RuntimeViewModel {
     public func selectBenchmarkMetric(_ metricName: String) {
         selectedBenchmarkMetricName = metricName
         rebuildBenchmarkDerivedState()
+        notifyStateChanged()
+    }
+
+    public func toggleEvaluationSuite(_ suiteID: String) {
+        if selectedEvaluationSuiteIDs.contains(suiteID) {
+            selectedEvaluationSuiteIDs.remove(suiteID)
+        } else {
+            selectedEvaluationSuiteIDs.insert(suiteID)
+        }
+        rebuildEvaluationDerivedState()
+        notifyStateChanged()
+    }
+
+    public func selectEvaluationHistory(jobID: String) {
+        selectedEvaluationHistoryJobID = jobID
+        rebuildEvaluationDerivedState()
         notifyStateChanged()
     }
 
@@ -1004,6 +1160,14 @@ public final class RuntimeViewModel {
         Self.benchmarkSuiteOptions.filter { $0.taskKind == resolvedBenchmarkTaskKind() }
     }
 
+    public var evaluationModels: [RuntimeModelRow] {
+        models.filter { $0.kind == "text" }
+    }
+
+    public var evaluationSuites: [RuntimeEvaluationSuiteOptionState] {
+        Self.evaluationSuiteOptions
+    }
+
     public var benchmarkTargetTaskKind: String {
         resolvedBenchmarkTaskKind()
     }
@@ -1030,9 +1194,40 @@ public final class RuntimeViewModel {
         }
     }
 
+    public var evaluationTargetTaskKind: String {
+        "text-generation"
+    }
+
+    public var evaluationTargetTaskTitle: String {
+        Self.benchmarkTaskTitle(for: evaluationTargetTaskKind)
+    }
+
+    public var evaluationTargetSummaryText: String {
+        switch selectedEvaluationTargetMode {
+        case .catalogModel:
+            guard let model = latestSnapshot.models.first(where: { $0.modelID == resolvedEvaluationModelID() }) else {
+                return "Select a text-generation model for Evaluation."
+            }
+            let alias = model.settings.alias.trimmingCharacters(in: .whitespacesAndNewlines)
+            let label = alias.isEmpty ? model.modelID : "\(alias) • \(model.modelID)"
+            return "\(evaluationTargetTaskTitle) • \(label)"
+        case .huggingFaceRepo:
+            let repoID = evaluationHFRepoID.trimmingCharacters(in: .whitespacesAndNewlines)
+            if repoID.isEmpty {
+                return "Enter a Hugging Face text-generation repo for Evaluation."
+            }
+            return "\(evaluationTargetTaskTitle) • \(repoID)"
+        }
+    }
+
     public var selectedBenchmarkHistoryEntry: RuntimeBenchmarkHistoryEntryState? {
         benchmarkHistory.first(where: { $0.jobID == selectedBenchmarkHistoryJobID })
             ?? benchmarkHistory.first
+    }
+
+    public var selectedEvaluationHistoryEntry: RuntimeEvaluationHistoryEntryState? {
+        evaluationHistory.first(where: { $0.jobID == selectedEvaluationHistoryJobID })
+            ?? evaluationHistory.first
     }
 
     private var selectedServerSessionID = ""
@@ -1821,6 +2016,119 @@ public final class RuntimeViewModel {
         notifyStateChanged()
     }
 
+    public func runEvaluation() async {
+        let modelID = resolvedEvaluationModelID()
+        let repoID = evaluationHFRepoID.trimmingCharacters(in: .whitespacesAndNewlines)
+        switch selectedEvaluationTargetMode {
+        case .catalogModel:
+            guard !modelID.isEmpty else {
+                recordLocalError("Select a text-generation model before running Evaluation.")
+                notifyStateChanged()
+                return
+            }
+        case .huggingFaceRepo:
+            guard !repoID.isEmpty else {
+                recordLocalError("Enter a Hugging Face repo before running Evaluation.")
+                notifyStateChanged()
+                return
+            }
+        }
+
+        let suites = selectedEvaluationSuiteIDs.sorted()
+        guard suites.isEmpty == false else {
+            recordLocalError("Select at least one evaluation suite before running Evaluation.")
+            notifyStateChanged()
+            return
+        }
+
+        let startedAt = Date()
+        do {
+            for suiteID in suites {
+                let datasetID = Self.evaluationSuiteOptions.first(where: { $0.id == suiteID })?.datasetID ?? "\(suiteID).dev.v1"
+                _ = try await client.runEvaluation(
+                    ControlPlaneEvaluationRequest(
+                        modelID: selectedEvaluationTargetMode == .catalogModel ? modelID : "",
+                        hfRepoID: selectedEvaluationTargetMode == .huggingFaceRepo ? repoID : "",
+                        suiteID: suiteID,
+                        datasetID: datasetID,
+                        sampleSize: evaluationSampleSize(for: suiteID),
+                        parameters: evaluationParameters()
+                    )
+                )
+            }
+            await metrics.record(
+                name: "menu.ops_eval_ms",
+                valueMs: Date().timeIntervalSince(startedAt) * 1_000
+            )
+            await refreshEvaluationHistory(notify: false)
+        } catch {
+            recordLocalError(String(describing: error))
+        }
+        notifyStateChanged()
+    }
+
+    public func refreshEvaluationHistory() async {
+        await refreshEvaluationHistory(notify: true)
+    }
+
+    public func exportSelectedEvaluationSummaryCSV() async {
+        await exportEvaluationArtifact(
+            formatTitle: "summary.csv",
+            fileName: Self.evaluationSummaryCSVFileName(jobID: selectedEvaluationHistoryJobID),
+            builder: { bundle, jobID in
+                let rows = bundle.evaluationSummaryCSVRows(jobID: jobID)
+                return (rows.count, bundle.evaluationSummaryCSV(jobID: jobID))
+            },
+            missingRowsMessage: "No evaluation summary rows are available for CSV export."
+        )
+    }
+
+    public func exportSelectedEvaluationSamplesCSV() async {
+        await exportEvaluationArtifact(
+            formatTitle: "samples.csv",
+            fileName: Self.evaluationSamplesCSVFileName(jobID: selectedEvaluationHistoryJobID),
+            builder: { bundle, jobID in
+                let rows = bundle.evaluationSampleRows(jobID: jobID)
+                return (rows.count, bundle.evaluationSamplesCSV(jobID: jobID))
+            },
+            missingRowsMessage: "No evaluation sample rows are available for CSV export."
+        )
+    }
+
+    public func exportSelectedEvaluationSamplesJSONL() async {
+        let startedAt = Date()
+        do {
+            let exportDirectory = try Self.ensureEvaluationExportDirectory()
+            let export = try await client.exportResults(outputDir: exportDirectory.path)
+            let bundle = try ControlPlaneBenchmarkExportBundle.decode(json: export.exportBundleJSON)
+            applyBenchmarkExportBundle(bundle)
+            let selectedJobID = selectedEvaluationHistoryJobID.isEmpty ? nil : selectedEvaluationHistoryJobID
+            let rows = bundle.evaluationSampleRows(jobID: selectedJobID)
+            guard rows.isEmpty == false else {
+                recordLocalError("No evaluation sample rows are available for JSONL export.")
+                notifyStateChanged()
+                return
+            }
+            let jsonl = try bundle.evaluationSamplesJSONL(jobID: selectedJobID)
+            let outputURL = exportDirectory.appendingPathComponent(
+                Self.evaluationSamplesJSONLFileName(jobID: selectedJobID)
+            )
+            try jsonl.write(to: outputURL, atomically: true, encoding: .utf8)
+            lastEvaluationExport = RuntimeEvaluationExportState(
+                outputPath: outputURL.path,
+                rowCount: rows.count,
+                formatTitle: "samples.jsonl"
+            )
+            await metrics.record(
+                name: "menu.eval_export_jsonl_ms",
+                valueMs: Date().timeIntervalSince(startedAt) * 1_000
+            )
+        } catch {
+            recordLocalError(String(describing: error))
+        }
+        notifyStateChanged()
+    }
+
     private func refreshModelOpsProductState(modelID: String, notify: Bool) async {
         let startedAt = Date()
         do {
@@ -2270,6 +2578,7 @@ public final class RuntimeViewModel {
         refreshChatCapabilities()
         refreshLoraSelectionState()
         refreshBenchmarkSelectionState()
+        refreshEvaluationSelectionState()
         refreshAgentIntegrationExports()
         notifyStateChanged()
     }
@@ -2286,6 +2595,20 @@ public final class RuntimeViewModel {
             selectedBenchmarkSuiteIDs = ["smoke"]
         }
         rebuildBenchmarkDerivedState()
+    }
+
+    private func refreshEvaluationSelectionState() {
+        let availableModelIDs = evaluationModels.map(\.modelID)
+        if availableModelIDs.contains(selectedEvaluationModelID) == false {
+            selectedEvaluationModelID = availableModelIDs.first ?? ""
+        }
+
+        let validSuiteIDs = Set(Self.evaluationSuiteOptions.map(\.id))
+        selectedEvaluationSuiteIDs = selectedEvaluationSuiteIDs.intersection(validSuiteIDs)
+        if selectedEvaluationSuiteIDs.isEmpty {
+            selectedEvaluationSuiteIDs = ["mmlu"]
+        }
+        rebuildEvaluationDerivedState()
     }
 
     private func refreshBenchmarkHistory(notify: Bool) async {
@@ -2307,6 +2630,25 @@ public final class RuntimeViewModel {
         }
     }
 
+    private func refreshEvaluationHistory(notify: Bool) async {
+        let startedAt = Date()
+        do {
+            let exportDirectory = try Self.ensureEvaluationExportDirectory()
+            let export = try await client.exportResults(outputDir: exportDirectory.path)
+            let bundle = try ControlPlaneBenchmarkExportBundle.decode(json: export.exportBundleJSON)
+            applyBenchmarkExportBundle(bundle)
+            await metrics.record(
+                name: "menu.eval_history_refresh_ms",
+                valueMs: Date().timeIntervalSince(startedAt) * 1_000
+            )
+        } catch {
+            recordLocalError(String(describing: error))
+        }
+        if notify {
+            notifyStateChanged()
+        }
+    }
+
     private func applyBenchmarkExportBundle(_ bundle: ControlPlaneBenchmarkExportBundle) {
         benchmarkExportBundle = bundle
         benchmarkHistory = bundle.benchmarkHistoryEntries().map(Self.makeBenchmarkHistoryEntryState)
@@ -2314,6 +2656,7 @@ public final class RuntimeViewModel {
             selectedBenchmarkHistoryJobID = benchmarkHistory.first?.jobID ?? ""
         }
         rebuildBenchmarkDerivedState()
+        rebuildEvaluationDerivedState()
     }
 
     private func rebuildBenchmarkDerivedState() {
@@ -2359,11 +2702,42 @@ public final class RuntimeViewModel {
             .map(Self.makeBenchmarkChartPointState)
     }
 
+    private func rebuildEvaluationDerivedState() {
+        guard let benchmarkExportBundle else {
+            evaluationHistory = []
+            evaluationMetricCards = []
+            evaluationSamplePreview = []
+            if selectedEvaluationHistoryJobID.isEmpty == false {
+                selectedEvaluationHistoryJobID = ""
+            }
+            return
+        }
+
+        evaluationHistory = benchmarkExportBundle.evaluationHistoryEntries().map(Self.makeEvaluationHistoryEntryState)
+        let selectedHistoryJobID = selectedEvaluationHistoryJobID.isEmpty ? (evaluationHistory.first?.jobID ?? "") : selectedEvaluationHistoryJobID
+        if selectedEvaluationHistoryJobID != selectedHistoryJobID {
+            selectedEvaluationHistoryJobID = selectedHistoryJobID
+        }
+
+        let selectedRows = benchmarkExportBundle.evaluationSummaryCSVRows(jobID: selectedHistoryJobID.isEmpty ? nil : selectedHistoryJobID)
+        evaluationMetricCards = selectedRows.map(Self.makeEvaluationMetricCardState)
+        evaluationSamplePreview = benchmarkExportBundle.evaluationSampleRows(jobID: selectedHistoryJobID.isEmpty ? nil : selectedHistoryJobID)
+            .prefix(6)
+            .map(Self.makeEvaluationSamplePreviewState)
+    }
+
     private func resolvedBenchmarkModelID() -> String {
         if !selectedBenchmarkModelID.isEmpty {
             return selectedBenchmarkModelID
         }
         return benchmarkModels.first?.modelID ?? ""
+    }
+
+    private func resolvedEvaluationModelID() -> String {
+        if !selectedEvaluationModelID.isEmpty {
+            return selectedEvaluationModelID
+        }
+        return evaluationModels.first?.modelID ?? ""
     }
 
     private func resolvedBenchmarkTaskKind() -> String {
@@ -2392,6 +2766,68 @@ public final class RuntimeViewModel {
         return parameters
     }
 
+    private func evaluationParameters() -> [String: String] {
+        var parameters: [String: String] = [:]
+        let batchFactor = evaluationBatchFactor.trimmingCharacters(in: .whitespacesAndNewlines)
+        if batchFactor.isEmpty == false {
+            parameters["batch_factor"] = batchFactor
+        }
+        let seed = evaluationSeed.trimmingCharacters(in: .whitespacesAndNewlines)
+        if seed.isEmpty == false {
+            parameters["seed"] = seed
+        }
+        let fewShot = evaluationFewShot.trimmingCharacters(in: .whitespacesAndNewlines)
+        if fewShot.isEmpty == false {
+            parameters["few_shot"] = fewShot
+        }
+        return parameters
+    }
+
+    private func evaluationSampleSize(for suiteID: String) -> UInt32 {
+        let rawSampleSize = evaluationSampleSize.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let sampleSize = UInt32(rawSampleSize), sampleSize > 0 {
+            return sampleSize
+        }
+        let fallback = Self.evaluationSuiteOptions.first(where: { $0.id == suiteID })?.defaultSampleSize ?? 8
+        return UInt32(fallback)
+    }
+
+    private func exportEvaluationArtifact(
+        formatTitle: String,
+        fileName: String,
+        builder: (ControlPlaneBenchmarkExportBundle, String?) -> (Int, String),
+        missingRowsMessage: String
+    ) async {
+        let startedAt = Date()
+        do {
+            let exportDirectory = try Self.ensureEvaluationExportDirectory()
+            let export = try await client.exportResults(outputDir: exportDirectory.path)
+            let bundle = try ControlPlaneBenchmarkExportBundle.decode(json: export.exportBundleJSON)
+            applyBenchmarkExportBundle(bundle)
+            let selectedJobID = selectedEvaluationHistoryJobID.isEmpty ? nil : selectedEvaluationHistoryJobID
+            let (rowCount, payload) = builder(bundle, selectedJobID)
+            guard rowCount > 0 else {
+                recordLocalError(missingRowsMessage)
+                notifyStateChanged()
+                return
+            }
+            let outputURL = exportDirectory.appendingPathComponent(fileName)
+            try payload.write(to: outputURL, atomically: true, encoding: .utf8)
+            lastEvaluationExport = RuntimeEvaluationExportState(
+                outputPath: outputURL.path,
+                rowCount: rowCount,
+                formatTitle: formatTitle
+            )
+            await metrics.record(
+                name: "menu.eval_export_csv_ms",
+                valueMs: Date().timeIntervalSince(startedAt) * 1_000
+            )
+        } catch {
+            recordLocalError(String(describing: error))
+        }
+        notifyStateChanged()
+    }
+
     private func upsert(model: Melix_Controlplane_V1_ModelSummary) {
         let row = makeRuntimeModelRow(model)
         var modelSummary = model
@@ -2415,6 +2851,7 @@ public final class RuntimeViewModel {
         refreshImageState()
         refreshChatCapabilities()
         refreshLoraSelectionState()
+        refreshEvaluationSelectionState()
         refreshAgentIntegrationExports()
     }
 
@@ -3222,6 +3659,59 @@ public final class RuntimeViewModel {
         )
     }
 
+    private static func makeEvaluationHistoryEntryState(
+        from entry: ControlPlaneEvaluationHistoryEntry
+    ) -> RuntimeEvaluationHistoryEntryState {
+        RuntimeEvaluationHistoryEntryState(
+            id: "\(entry.jobID):\(entry.suiteID)",
+            jobID: entry.jobID,
+            modelID: entry.modelID,
+            taskKind: entry.taskKind,
+            taskTitle: benchmarkTaskTitle(for: entry.taskKind),
+            sourceRepo: entry.sourceRepo,
+            suiteID: entry.suiteID,
+            suiteTitle: evaluationSuiteTitle(for: entry.suiteID),
+            datasetID: entry.datasetID,
+            sampleSizeText: String(entry.sampleSize),
+            scoringModeText: evaluationScoringModeLabel(entry.scoringMode),
+            statusText: humanizeStatus(entry.status),
+            metricCountText: "\(entry.metricCount) metrics",
+            createdAtText: benchmarkTimestampLabel(entry.createdAtUnixMS),
+            createdAtUnixMS: entry.createdAtUnixMS,
+            reportPath: entry.reportPath
+        )
+    }
+
+    private static func makeEvaluationMetricCardState(
+        from row: ControlPlaneEvaluationSummaryCSVRow
+    ) -> RuntimeEvaluationMetricCardState {
+        RuntimeEvaluationMetricCardState(
+            id: "\(row.jobID):\(row.suiteID):\(row.metricName)",
+            suiteTitle: evaluationSuiteTitle(for: row.suiteID),
+            metricName: row.metricName,
+            metricLabel: benchmarkMetricLabel(row.metricName),
+            value: row.metricValue,
+            valueText: String(format: "%.2f %@", row.metricValue, row.unit),
+            unit: row.unit
+        )
+    }
+
+    private static func makeEvaluationSamplePreviewState(
+        from row: ControlPlaneEvaluationSampleRecord
+    ) -> RuntimeEvaluationSamplePreviewState {
+        RuntimeEvaluationSamplePreviewState(
+            id: "\(row.jobID):\(row.sampleID)",
+            sampleID: row.sampleID,
+            question: row.question,
+            expected: row.expected,
+            predicted: row.predicted,
+            rawResponse: row.rawResponse,
+            correctText: row.correct ? "Correct" : "Incorrect",
+            parseStatus: row.parseStatus,
+            timeText: String(format: "%.2fs", row.timeS)
+        )
+    }
+
     private static func stringValue(_ key: String, from payload: [String: Any]) -> String {
         payload[key] as? String ?? ""
     }
@@ -3273,6 +3763,18 @@ public final class RuntimeViewModel {
     private static func benchmarkMetricLabel(_ metricName: String) -> String {
         let normalized = metricName.split(separator: ".").last.map(String.init) ?? metricName
         return normalized.replacingOccurrences(of: "_", with: " ")
+    }
+
+    private static func evaluationSuiteTitle(for suiteID: String) -> String {
+        evaluationSuiteOptions.first(where: { $0.id == suiteID })?.title ?? suiteID
+    }
+
+    private static func evaluationScoringModeLabel(_ scoringMode: String) -> String {
+        let normalized = scoringMode.replacingOccurrences(of: "_", with: " ")
+        guard let first = normalized.first else {
+            return "Unknown"
+        }
+        return String(first).uppercased() + normalized.dropFirst()
     }
 
     private static func benchmarkSuiteTitle(for suiteID: String, taskKind: String) -> String {
@@ -3368,10 +3870,41 @@ public final class RuntimeViewModel {
         return directory
     }
 
+    private static func ensureEvaluationExportDirectory() throws -> URL {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "melix-evaluation-exports",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: directory,
+            withIntermediateDirectories: true,
+            attributes: nil
+        )
+        return directory
+    }
+
     private static func benchmarkCSVFileName(jobID: String?) -> String {
         let sanitizedJobID = (jobID?.isEmpty == false ? jobID! : "all-runs")
             .replacingOccurrences(of: "/", with: "-")
         return "melix-benchmark-\(sanitizedJobID).csv"
+    }
+
+    private static func evaluationSummaryCSVFileName(jobID: String?) -> String {
+        let sanitizedJobID = (jobID?.isEmpty == false ? jobID! : "all-runs")
+            .replacingOccurrences(of: "/", with: "-")
+        return "melix-evaluation-summary-\(sanitizedJobID).csv"
+    }
+
+    private static func evaluationSamplesCSVFileName(jobID: String?) -> String {
+        let sanitizedJobID = (jobID?.isEmpty == false ? jobID! : "all-runs")
+            .replacingOccurrences(of: "/", with: "-")
+        return "melix-evaluation-samples-\(sanitizedJobID).csv"
+    }
+
+    private static func evaluationSamplesJSONLFileName(jobID: String?) -> String {
+        let sanitizedJobID = (jobID?.isEmpty == false ? jobID! : "all-runs")
+            .replacingOccurrences(of: "/", with: "-")
+        return "melix-evaluation-samples-\(sanitizedJobID).jsonl"
     }
 
     private static func isImageModelKind(_ kind: String) -> Bool {

@@ -544,6 +544,10 @@ public struct Melix_Worker_V1_RunEvaluationRequest: Sendable {
 
   public var parameters: Dictionary<String,String> = [:]
 
+  public var taskKind: String = String()
+
+  public var sourceRepo: String = String()
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -588,6 +592,16 @@ public struct Melix_Worker_V1_WorkerEvaluationJob: Sendable {
 
   public var status: String = String()
 
+  public var taskKind: String = String()
+
+  public var sourceRepo: String = String()
+
+  public var outputDir: String = String()
+
+  public var createdAtUnixMs: Int64 = 0
+
+  public var updatedAtUnixMs: Int64 = 0
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -617,39 +631,44 @@ public struct Melix_Worker_V1_WorkerEvaluationResult: Sendable {
   public init() {}
 }
 
-public struct Melix_Worker_V1_RunEvaluationResponse: Sendable {
+public struct Melix_Worker_V1_RunEvaluationResponse: @unchecked Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
-  public var ok: Bool = false
+  public var ok: Bool {
+    get {_storage._ok}
+    set {_uniqueStorage()._ok = newValue}
+  }
 
   public var error: Melix_Worker_V1_ErrorStatus {
-    get {_error ?? Melix_Worker_V1_ErrorStatus()}
-    set {_error = newValue}
+    get {_storage._error ?? Melix_Worker_V1_ErrorStatus()}
+    set {_uniqueStorage()._error = newValue}
   }
   /// Returns true if `error` has been explicitly set.
-  public var hasError: Bool {self._error != nil}
+  public var hasError: Bool {_storage._error != nil}
   /// Clears the value of `error`. Subsequent reads from it will return its default value.
-  public mutating func clearError() {self._error = nil}
+  public mutating func clearError() {_uniqueStorage()._error = nil}
 
   public var job: Melix_Worker_V1_WorkerEvaluationJob {
-    get {_job ?? Melix_Worker_V1_WorkerEvaluationJob()}
-    set {_job = newValue}
+    get {_storage._job ?? Melix_Worker_V1_WorkerEvaluationJob()}
+    set {_uniqueStorage()._job = newValue}
   }
   /// Returns true if `job` has been explicitly set.
-  public var hasJob: Bool {self._job != nil}
+  public var hasJob: Bool {_storage._job != nil}
   /// Clears the value of `job`. Subsequent reads from it will return its default value.
-  public mutating func clearJob() {self._job = nil}
+  public mutating func clearJob() {_uniqueStorage()._job = nil}
 
-  public var results: [Melix_Worker_V1_WorkerEvaluationResult] = []
+  public var results: [Melix_Worker_V1_WorkerEvaluationResult] {
+    get {_storage._results}
+    set {_uniqueStorage()._results = newValue}
+  }
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
 
-  fileprivate var _error: Melix_Worker_V1_ErrorStatus? = nil
-  fileprivate var _job: Melix_Worker_V1_WorkerEvaluationJob? = nil
+  fileprivate var _storage = _StorageClass.defaultInstance
 }
 
 public struct Melix_Worker_V1_ExportResultsRequest: Sendable {
@@ -1999,7 +2018,7 @@ extension Melix_Worker_V1_BenchFailed: SwiftProtobuf.Message, SwiftProtobuf._Mes
 
 extension Melix_Worker_V1_RunEvaluationRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".RunEvaluationRequest"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}model_handle\0\u{3}suite_id\0\u{3}dataset_id\0\u{3}dataset_root\0\u{3}sample_size\0\u{1}parameters\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}model_handle\0\u{3}suite_id\0\u{3}dataset_id\0\u{3}dataset_root\0\u{3}sample_size\0\u{1}parameters\0\u{3}task_kind\0\u{3}source_repo\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -2013,6 +2032,8 @@ extension Melix_Worker_V1_RunEvaluationRequest: SwiftProtobuf.Message, SwiftProt
       case 4: try { try decoder.decodeSingularStringField(value: &self.datasetRoot) }()
       case 5: try { try decoder.decodeSingularUInt32Field(value: &self.sampleSize) }()
       case 6: try { try decoder.decodeMapField(fieldType: SwiftProtobuf._ProtobufMap<SwiftProtobuf.ProtobufString,SwiftProtobuf.ProtobufString>.self, value: &self.parameters) }()
+      case 7: try { try decoder.decodeSingularStringField(value: &self.taskKind) }()
+      case 8: try { try decoder.decodeSingularStringField(value: &self.sourceRepo) }()
       default: break
       }
     }
@@ -2037,6 +2058,12 @@ extension Melix_Worker_V1_RunEvaluationRequest: SwiftProtobuf.Message, SwiftProt
     if !self.parameters.isEmpty {
       try visitor.visitMapField(fieldType: SwiftProtobuf._ProtobufMap<SwiftProtobuf.ProtobufString,SwiftProtobuf.ProtobufString>.self, value: self.parameters, fieldNumber: 6)
     }
+    if !self.taskKind.isEmpty {
+      try visitor.visitSingularStringField(value: self.taskKind, fieldNumber: 7)
+    }
+    if !self.sourceRepo.isEmpty {
+      try visitor.visitSingularStringField(value: self.sourceRepo, fieldNumber: 8)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -2047,6 +2074,8 @@ extension Melix_Worker_V1_RunEvaluationRequest: SwiftProtobuf.Message, SwiftProt
     if lhs.datasetRoot != rhs.datasetRoot {return false}
     if lhs.sampleSize != rhs.sampleSize {return false}
     if lhs.parameters != rhs.parameters {return false}
+    if lhs.taskKind != rhs.taskKind {return false}
+    if lhs.sourceRepo != rhs.sourceRepo {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -2094,7 +2123,7 @@ extension Melix_Worker_V1_EvaluationMetricValue: SwiftProtobuf.Message, SwiftPro
 
 extension Melix_Worker_V1_WorkerEvaluationJob: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".WorkerEvaluationJob"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}schema_version\0\u{3}job_id\0\u{3}model_id\0\u{3}suite_id\0\u{3}dataset_id\0\u{3}sample_size\0\u{3}scoring_mode\0\u{1}parameters\0\u{1}status\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}schema_version\0\u{3}job_id\0\u{3}model_id\0\u{3}suite_id\0\u{3}dataset_id\0\u{3}sample_size\0\u{3}scoring_mode\0\u{1}parameters\0\u{1}status\0\u{3}task_kind\0\u{3}source_repo\0\u{3}output_dir\0\u{3}created_at_unix_ms\0\u{3}updated_at_unix_ms\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -2111,6 +2140,11 @@ extension Melix_Worker_V1_WorkerEvaluationJob: SwiftProtobuf.Message, SwiftProto
       case 7: try { try decoder.decodeSingularStringField(value: &self.scoringMode) }()
       case 8: try { try decoder.decodeMapField(fieldType: SwiftProtobuf._ProtobufMap<SwiftProtobuf.ProtobufString,SwiftProtobuf.ProtobufString>.self, value: &self.parameters) }()
       case 9: try { try decoder.decodeSingularStringField(value: &self.status) }()
+      case 10: try { try decoder.decodeSingularStringField(value: &self.taskKind) }()
+      case 11: try { try decoder.decodeSingularStringField(value: &self.sourceRepo) }()
+      case 12: try { try decoder.decodeSingularStringField(value: &self.outputDir) }()
+      case 13: try { try decoder.decodeSingularInt64Field(value: &self.createdAtUnixMs) }()
+      case 14: try { try decoder.decodeSingularInt64Field(value: &self.updatedAtUnixMs) }()
       default: break
       }
     }
@@ -2144,6 +2178,21 @@ extension Melix_Worker_V1_WorkerEvaluationJob: SwiftProtobuf.Message, SwiftProto
     if !self.status.isEmpty {
       try visitor.visitSingularStringField(value: self.status, fieldNumber: 9)
     }
+    if !self.taskKind.isEmpty {
+      try visitor.visitSingularStringField(value: self.taskKind, fieldNumber: 10)
+    }
+    if !self.sourceRepo.isEmpty {
+      try visitor.visitSingularStringField(value: self.sourceRepo, fieldNumber: 11)
+    }
+    if !self.outputDir.isEmpty {
+      try visitor.visitSingularStringField(value: self.outputDir, fieldNumber: 12)
+    }
+    if self.createdAtUnixMs != 0 {
+      try visitor.visitSingularInt64Field(value: self.createdAtUnixMs, fieldNumber: 13)
+    }
+    if self.updatedAtUnixMs != 0 {
+      try visitor.visitSingularInt64Field(value: self.updatedAtUnixMs, fieldNumber: 14)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -2157,6 +2206,11 @@ extension Melix_Worker_V1_WorkerEvaluationJob: SwiftProtobuf.Message, SwiftProto
     if lhs.scoringMode != rhs.scoringMode {return false}
     if lhs.parameters != rhs.parameters {return false}
     if lhs.status != rhs.status {return false}
+    if lhs.taskKind != rhs.taskKind {return false}
+    if lhs.sourceRepo != rhs.sourceRepo {return false}
+    if lhs.outputDir != rhs.outputDir {return false}
+    if lhs.createdAtUnixMs != rhs.createdAtUnixMs {return false}
+    if lhs.updatedAtUnixMs != rhs.updatedAtUnixMs {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -2226,46 +2280,88 @@ extension Melix_Worker_V1_RunEvaluationResponse: SwiftProtobuf.Message, SwiftPro
   public static let protoMessageName: String = _protobuf_package + ".RunEvaluationResponse"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}ok\0\u{1}error\0\u{1}job\0\u{1}results\0")
 
+  fileprivate class _StorageClass {
+    var _ok: Bool = false
+    var _error: Melix_Worker_V1_ErrorStatus? = nil
+    var _job: Melix_Worker_V1_WorkerEvaluationJob? = nil
+    var _results: [Melix_Worker_V1_WorkerEvaluationResult] = []
+
+      // This property is used as the initial default value for new instances of the type.
+      // The type itself is protecting the reference to its storage via CoW semantics.
+      // This will force a copy to be made of this reference when the first mutation occurs;
+      // hence, it is safe to mark this as `nonisolated(unsafe)`.
+      static nonisolated(unsafe) let defaultInstance = _StorageClass()
+
+    private init() {}
+
+    init(copying source: _StorageClass) {
+      _ok = source._ok
+      _error = source._error
+      _job = source._job
+      _results = source._results
+    }
+  }
+
+  fileprivate mutating func _uniqueStorage() -> _StorageClass {
+    if !isKnownUniquelyReferenced(&_storage) {
+      _storage = _StorageClass(copying: _storage)
+    }
+    return _storage
+  }
+
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
-    while let fieldNumber = try decoder.nextFieldNumber() {
-      // The use of inline closures is to circumvent an issue where the compiler
-      // allocates stack space for every case branch when no optimizations are
-      // enabled. https://github.com/apple/swift-protobuf/issues/1034
-      switch fieldNumber {
-      case 1: try { try decoder.decodeSingularBoolField(value: &self.ok) }()
-      case 2: try { try decoder.decodeSingularMessageField(value: &self._error) }()
-      case 3: try { try decoder.decodeSingularMessageField(value: &self._job) }()
-      case 4: try { try decoder.decodeRepeatedMessageField(value: &self.results) }()
-      default: break
+    _ = _uniqueStorage()
+    try withExtendedLifetime(_storage) { (_storage: _StorageClass) in
+      while let fieldNumber = try decoder.nextFieldNumber() {
+        // The use of inline closures is to circumvent an issue where the compiler
+        // allocates stack space for every case branch when no optimizations are
+        // enabled. https://github.com/apple/swift-protobuf/issues/1034
+        switch fieldNumber {
+        case 1: try { try decoder.decodeSingularBoolField(value: &_storage._ok) }()
+        case 2: try { try decoder.decodeSingularMessageField(value: &_storage._error) }()
+        case 3: try { try decoder.decodeSingularMessageField(value: &_storage._job) }()
+        case 4: try { try decoder.decodeRepeatedMessageField(value: &_storage._results) }()
+        default: break
+        }
       }
     }
   }
 
   public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
-    // The use of inline closures is to circumvent an issue where the compiler
-    // allocates stack space for every if/case branch local when no optimizations
-    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
-    // https://github.com/apple/swift-protobuf/issues/1182
-    if self.ok != false {
-      try visitor.visitSingularBoolField(value: self.ok, fieldNumber: 1)
-    }
-    try { if let v = self._error {
-      try visitor.visitSingularMessageField(value: v, fieldNumber: 2)
-    } }()
-    try { if let v = self._job {
-      try visitor.visitSingularMessageField(value: v, fieldNumber: 3)
-    } }()
-    if !self.results.isEmpty {
-      try visitor.visitRepeatedMessageField(value: self.results, fieldNumber: 4)
+    try withExtendedLifetime(_storage) { (_storage: _StorageClass) in
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every if/case branch local when no optimizations
+      // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+      // https://github.com/apple/swift-protobuf/issues/1182
+      if _storage._ok != false {
+        try visitor.visitSingularBoolField(value: _storage._ok, fieldNumber: 1)
+      }
+      try { if let v = _storage._error {
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 2)
+      } }()
+      try { if let v = _storage._job {
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 3)
+      } }()
+      if !_storage._results.isEmpty {
+        try visitor.visitRepeatedMessageField(value: _storage._results, fieldNumber: 4)
+      }
     }
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: Melix_Worker_V1_RunEvaluationResponse, rhs: Melix_Worker_V1_RunEvaluationResponse) -> Bool {
-    if lhs.ok != rhs.ok {return false}
-    if lhs._error != rhs._error {return false}
-    if lhs._job != rhs._job {return false}
-    if lhs.results != rhs.results {return false}
+    if lhs._storage !== rhs._storage {
+      let storagesAreEqual: Bool = withExtendedLifetime((lhs._storage, rhs._storage)) { (_args: (_StorageClass, _StorageClass)) in
+        let _storage = _args.0
+        let rhs_storage = _args.1
+        if _storage._ok != rhs_storage._ok {return false}
+        if _storage._error != rhs_storage._error {return false}
+        if _storage._job != rhs_storage._job {return false}
+        if _storage._results != rhs_storage._results {return false}
+        return true
+      }
+      if !storagesAreEqual {return false}
+    }
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

@@ -343,6 +343,8 @@ message RunEvaluation {
   string dataset_id = 2;
   uint32 sample_size = 3;
   map<string, string> parameters = 4;
+  string model_id = 5;
+  string hf_repo_id = 6;
 }
 message SearchHubModels {
   string query = 1;
@@ -405,6 +407,11 @@ message EvaluationJobSummary {
   string scoring_mode = 7;
   map<string, string> parameters = 8;
   string status = 9;
+  string task_kind = 10;
+  string source_repo = 11;
+  string output_dir = 12;
+  int64 created_at_unix_ms = 13;
+  int64 updated_at_unix_ms = 14;
 }
 
 message EvaluationResultSummary {

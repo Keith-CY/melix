@@ -6,6 +6,7 @@ from dataclasses import dataclass
 _EVALUATION_DATASET_PACKAGE_SCHEMA_VERSION = "melix.evaluation_dataset_package.v1"
 _EVALUATION_JOB_SCHEMA_VERSION = "melix.evaluation_job.v1"
 _EVALUATION_RESULT_SCHEMA_VERSION = "melix.evaluation_result.v1"
+_EVALUATION_SAMPLE_SCHEMA_VERSION = "melix.evaluation_sample.v1"
 
 
 @dataclass(frozen=True)
@@ -47,24 +48,34 @@ class EvaluationJob:
     schema_version: str
     job_id: str
     model_id: str
+    task_kind: str
+    source_repo: str
     suite_id: str
     dataset_id: str
     sample_size: int
     scoring_mode: str
     parameters: dict[str, str]
     status: str
+    output_dir: str
+    created_at_unix_ms: int
+    updated_at_unix_ms: int
 
     def to_dict(self) -> dict[str, object]:
         return {
             "schema_version": self.schema_version,
             "job_id": self.job_id,
             "model_id": self.model_id,
+            "task_kind": self.task_kind,
+            "source_repo": self.source_repo,
             "suite_id": self.suite_id,
             "dataset_id": self.dataset_id,
             "sample_size": self.sample_size,
             "scoring_mode": self.scoring_mode,
             "parameters": dict(self.parameters),
             "status": self.status,
+            "output_dir": self.output_dir,
+            "created_at_unix_ms": self.created_at_unix_ms,
+            "updated_at_unix_ms": self.updated_at_unix_ms,
         }
 
 
@@ -90,6 +101,38 @@ class EvaluationResult:
         }
 
 
+@dataclass(frozen=True)
+class EvaluationSample:
+    schema_version: str
+    job_id: str
+    suite_id: str
+    dataset_id: str
+    sample_id: str
+    question: str
+    expected: str
+    predicted: str
+    raw_response: str
+    correct: bool
+    time_s: float
+    parse_status: str
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "schema_version": self.schema_version,
+            "job_id": self.job_id,
+            "suite_id": self.suite_id,
+            "dataset_id": self.dataset_id,
+            "sample_id": self.sample_id,
+            "question": self.question,
+            "expected": self.expected,
+            "predicted": self.predicted,
+            "raw_response": self.raw_response,
+            "correct": self.correct,
+            "time_s": self.time_s,
+            "parse_status": self.parse_status,
+        }
+
+
 def build_dataset_package_manifest(
     *, dataset_id: str, suite_id: str, version: str, sample_count: int, split: str
 ) -> EvaluationDatasetPackageManifest:
@@ -107,23 +150,33 @@ def build_evaluation_job_record(
     *,
     job_id: str,
     model_id: str,
+    task_kind: str,
+    source_repo: str,
     suite_id: str,
     dataset_id: str,
     sample_size: int,
     scoring_mode: str,
     parameters: dict[str, str],
     status: str,
+    output_dir: str = "",
+    created_at_unix_ms: int = 0,
+    updated_at_unix_ms: int = 0,
 ) -> EvaluationJob:
     return EvaluationJob(
         schema_version=_EVALUATION_JOB_SCHEMA_VERSION,
         job_id=job_id,
         model_id=model_id,
+        task_kind=task_kind,
+        source_repo=source_repo,
         suite_id=suite_id,
         dataset_id=dataset_id,
         sample_size=sample_size,
         scoring_mode=scoring_mode,
         parameters=dict(parameters),
         status=status,
+        output_dir=output_dir,
+        created_at_unix_ms=created_at_unix_ms,
+        updated_at_unix_ms=updated_at_unix_ms,
     )
 
 
@@ -135,9 +188,11 @@ def build_evaluation_result_record(
     sample_size: int,
     metrics: dict[str, float],
     report_path: str,
+    units: dict[str, str] | None = None,
 ) -> EvaluationResult:
+    metric_units = units or {}
     ordered_metrics = tuple(
-        EvaluationMetricValue(name=name, value=float(value))
+        EvaluationMetricValue(name=name, value=float(value), unit=metric_units.get(name, ""))
         for name, value in sorted(metrics.items())
     )
     return EvaluationResult(
@@ -148,4 +203,34 @@ def build_evaluation_result_record(
         sample_size=sample_size,
         metrics=ordered_metrics,
         report_path=report_path,
+    )
+
+
+def build_evaluation_sample_record(
+    *,
+    job_id: str,
+    suite_id: str,
+    dataset_id: str,
+    sample_id: str,
+    question: str,
+    expected: str,
+    predicted: str,
+    raw_response: str,
+    correct: bool,
+    time_s: float,
+    parse_status: str,
+) -> EvaluationSample:
+    return EvaluationSample(
+        schema_version=_EVALUATION_SAMPLE_SCHEMA_VERSION,
+        job_id=job_id,
+        suite_id=suite_id,
+        dataset_id=dataset_id,
+        sample_id=sample_id,
+        question=question,
+        expected=expected,
+        predicted=predicted,
+        raw_response=raw_response,
+        correct=correct,
+        time_s=float(time_s),
+        parse_status=parse_status,
     )

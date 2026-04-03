@@ -157,17 +157,183 @@ public struct ControlPlaneBenchmarkCSVRow: Codable, Equatable, Sendable {
     public let createdAtUnixMS: Int64
 }
 
+public struct ControlPlaneEvaluationJobRecord: Codable, Equatable, Sendable {
+    public let schemaVersion: String
+    public let jobID: String
+    public let modelID: String
+    public let taskKind: String
+    public let sourceRepo: String
+    public let suiteID: String
+    public let datasetID: String
+    public let sampleSize: Int
+    public let scoringMode: String
+    public let parameters: [String: String]
+    public let status: String
+    public let outputDir: String
+    public let createdAtUnixMS: Int64
+    public let updatedAtUnixMS: Int64
+
+    enum CodingKeys: String, CodingKey {
+        case schemaVersion = "schema_version"
+        case jobID = "job_id"
+        case modelID = "model_id"
+        case taskKind = "task_kind"
+        case sourceRepo = "source_repo"
+        case suiteID = "suite_id"
+        case datasetID = "dataset_id"
+        case sampleSize = "sample_size"
+        case scoringMode = "scoring_mode"
+        case parameters
+        case status
+        case outputDir = "output_dir"
+        case createdAtUnixMS = "created_at_unix_ms"
+        case updatedAtUnixMS = "updated_at_unix_ms"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        schemaVersion = try container.decodeIfPresent(String.self, forKey: .schemaVersion) ?? ""
+        jobID = try container.decodeIfPresent(String.self, forKey: .jobID) ?? ""
+        modelID = try container.decodeIfPresent(String.self, forKey: .modelID) ?? ""
+        taskKind = try container.decodeIfPresent(String.self, forKey: .taskKind) ?? ""
+        sourceRepo = try container.decodeIfPresent(String.self, forKey: .sourceRepo) ?? ""
+        suiteID = try container.decodeIfPresent(String.self, forKey: .suiteID) ?? ""
+        datasetID = try container.decodeIfPresent(String.self, forKey: .datasetID) ?? ""
+        sampleSize = try container.decodeIfPresent(Int.self, forKey: .sampleSize) ?? 0
+        scoringMode = try container.decodeIfPresent(String.self, forKey: .scoringMode) ?? ""
+        parameters = try container.decodeIfPresent([String: String].self, forKey: .parameters) ?? [:]
+        status = try container.decodeIfPresent(String.self, forKey: .status) ?? ""
+        outputDir = try container.decodeIfPresent(String.self, forKey: .outputDir) ?? ""
+        createdAtUnixMS = try container.decodeIfPresent(Int64.self, forKey: .createdAtUnixMS) ?? 0
+        updatedAtUnixMS = try container.decodeIfPresent(Int64.self, forKey: .updatedAtUnixMS) ?? 0
+    }
+}
+
+public struct ControlPlaneEvaluationResultRecord: Codable, Equatable, Sendable {
+    public let schemaVersion: String
+    public let jobID: String
+    public let suiteID: String
+    public let datasetID: String
+    public let sampleSize: Int
+    public let metrics: [ControlPlaneBenchmarkMetricRecord]
+    public let reportPath: String
+
+    enum CodingKeys: String, CodingKey {
+        case schemaVersion = "schema_version"
+        case jobID = "job_id"
+        case suiteID = "suite_id"
+        case datasetID = "dataset_id"
+        case sampleSize = "sample_size"
+        case metrics
+        case reportPath = "report_path"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        schemaVersion = try container.decodeIfPresent(String.self, forKey: .schemaVersion) ?? ""
+        jobID = try container.decodeIfPresent(String.self, forKey: .jobID) ?? ""
+        suiteID = try container.decodeIfPresent(String.self, forKey: .suiteID) ?? ""
+        datasetID = try container.decodeIfPresent(String.self, forKey: .datasetID) ?? ""
+        sampleSize = try container.decodeIfPresent(Int.self, forKey: .sampleSize) ?? 0
+        metrics = try container.decodeIfPresent([ControlPlaneBenchmarkMetricRecord].self, forKey: .metrics) ?? []
+        reportPath = try container.decodeIfPresent(String.self, forKey: .reportPath) ?? ""
+    }
+}
+
+public struct ControlPlaneEvaluationSampleRecord: Codable, Equatable, Sendable {
+    public let schemaVersion: String
+    public let jobID: String
+    public let suiteID: String
+    public let datasetID: String
+    public let sampleID: String
+    public let question: String
+    public let expected: String
+    public let predicted: String
+    public let rawResponse: String
+    public let correct: Bool
+    public let timeS: Double
+    public let parseStatus: String
+
+    enum CodingKeys: String, CodingKey {
+        case schemaVersion = "schema_version"
+        case jobID = "job_id"
+        case suiteID = "suite_id"
+        case datasetID = "dataset_id"
+        case sampleID = "sample_id"
+        case question
+        case expected
+        case predicted
+        case rawResponse = "raw_response"
+        case correct
+        case timeS = "time_s"
+        case parseStatus = "parse_status"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        schemaVersion = try container.decodeIfPresent(String.self, forKey: .schemaVersion) ?? ""
+        jobID = try container.decodeIfPresent(String.self, forKey: .jobID) ?? ""
+        suiteID = try container.decodeIfPresent(String.self, forKey: .suiteID) ?? ""
+        datasetID = try container.decodeIfPresent(String.self, forKey: .datasetID) ?? ""
+        sampleID = try container.decodeIfPresent(String.self, forKey: .sampleID) ?? ""
+        question = try container.decodeIfPresent(String.self, forKey: .question) ?? ""
+        expected = try container.decodeIfPresent(String.self, forKey: .expected) ?? ""
+        predicted = try container.decodeIfPresent(String.self, forKey: .predicted) ?? ""
+        rawResponse = try container.decodeIfPresent(String.self, forKey: .rawResponse) ?? ""
+        correct = try container.decodeIfPresent(Bool.self, forKey: .correct) ?? false
+        timeS = try container.decodeIfPresent(Double.self, forKey: .timeS) ?? 0
+        parseStatus = try container.decodeIfPresent(String.self, forKey: .parseStatus) ?? ""
+    }
+}
+
+public struct ControlPlaneEvaluationHistoryEntry: Codable, Equatable, Sendable {
+    public let jobID: String
+    public let modelID: String
+    public let taskKind: String
+    public let sourceRepo: String
+    public let suiteID: String
+    public let datasetID: String
+    public let sampleSize: Int
+    public let scoringMode: String
+    public let status: String
+    public let metricCount: Int
+    public let createdAtUnixMS: Int64
+    public let updatedAtUnixMS: Int64
+    public let reportPath: String
+}
+
+public struct ControlPlaneEvaluationSummaryCSVRow: Codable, Equatable, Sendable {
+    public let jobID: String
+    public let modelID: String
+    public let taskKind: String
+    public let sourceRepo: String
+    public let suiteID: String
+    public let datasetID: String
+    public let sampleSize: Int
+    public let scoringMode: String
+    public let metricName: String
+    public let metricValue: Double
+    public let unit: String
+    public let createdAtUnixMS: Int64
+}
+
 public struct ControlPlaneBenchmarkExportBundle: Codable, Equatable, Sendable {
     public let exportSchemaVersion: String
     public let exportedAtUnixMS: Int64
     public let benchmarkJobs: [ControlPlaneBenchmarkJobRecord]
     public let benchmarkResults: [ControlPlaneBenchmarkResultRecord]
+    public let evaluationJobs: [ControlPlaneEvaluationJobRecord]
+    public let evaluationResults: [ControlPlaneEvaluationResultRecord]
+    public let evaluationSamples: [ControlPlaneEvaluationSampleRecord]
 
     enum CodingKeys: String, CodingKey {
         case exportSchemaVersion = "export_schema_version"
         case exportedAtUnixMS = "exported_at_unix_ms"
         case benchmarkJobs = "benchmark_jobs"
         case benchmarkResults = "benchmark_results"
+        case evaluationJobs = "evaluation_jobs"
+        case evaluationResults = "evaluation_results"
+        case evaluationSamples = "evaluation_samples"
     }
 
     public init(from decoder: Decoder) throws {
@@ -176,6 +342,9 @@ public struct ControlPlaneBenchmarkExportBundle: Codable, Equatable, Sendable {
         exportedAtUnixMS = try container.decodeIfPresent(Int64.self, forKey: .exportedAtUnixMS) ?? 0
         benchmarkJobs = try container.decodeIfPresent([ControlPlaneBenchmarkJobRecord].self, forKey: .benchmarkJobs) ?? []
         benchmarkResults = try container.decodeIfPresent([ControlPlaneBenchmarkResultRecord].self, forKey: .benchmarkResults) ?? []
+        evaluationJobs = try container.decodeIfPresent([ControlPlaneEvaluationJobRecord].self, forKey: .evaluationJobs) ?? []
+        evaluationResults = try container.decodeIfPresent([ControlPlaneEvaluationResultRecord].self, forKey: .evaluationResults) ?? []
+        evaluationSamples = try container.decodeIfPresent([ControlPlaneEvaluationSampleRecord].self, forKey: .evaluationSamples) ?? []
     }
 
     public static func decode(json: String) throws -> ControlPlaneBenchmarkExportBundle {
@@ -287,11 +456,157 @@ public struct ControlPlaneBenchmarkExportBundle: Codable, Equatable, Sendable {
         return ([header] + body).joined(separator: "\n") + "\n"
     }
 
+    public func evaluationHistoryEntries() -> [ControlPlaneEvaluationHistoryEntry] {
+        let resultsByJob = Dictionary(grouping: evaluationResults, by: \.jobID)
+        return evaluationJobs
+            .sorted(by: Self.sortEvaluationJobsNewestFirst)
+            .map { job in
+                let result = resultsByJob[job.jobID]?.first
+                return ControlPlaneEvaluationHistoryEntry(
+                    jobID: job.jobID,
+                    modelID: job.modelID,
+                    taskKind: normalizedEvaluationTaskKind(for: job),
+                    sourceRepo: normalizedEvaluationSourceRepo(for: job),
+                    suiteID: job.suiteID,
+                    datasetID: job.datasetID,
+                    sampleSize: job.sampleSize,
+                    scoringMode: job.scoringMode,
+                    status: job.status,
+                    metricCount: result?.metrics.count ?? 0,
+                    createdAtUnixMS: job.createdAtUnixMS,
+                    updatedAtUnixMS: job.updatedAtUnixMS,
+                    reportPath: result?.reportPath ?? ""
+                )
+            }
+    }
+
+    public func evaluationSummaryCSVRows(jobID: String? = nil) -> [ControlPlaneEvaluationSummaryCSVRow] {
+        let resultsByJob = Dictionary(grouping: evaluationResults, by: \.jobID)
+        return evaluationJobs
+            .filter { jobID == nil || $0.jobID == jobID }
+            .sorted {
+                if $0.createdAtUnixMS == $1.createdAtUnixMS {
+                    return $0.jobID < $1.jobID
+                }
+                return $0.createdAtUnixMS < $1.createdAtUnixMS
+            }
+            .flatMap { job in
+                let result = resultsByJob[job.jobID]?.first
+                return (result?.metrics ?? []).sorted { $0.name < $1.name }.map { metric in
+                    ControlPlaneEvaluationSummaryCSVRow(
+                        jobID: job.jobID,
+                        modelID: job.modelID,
+                        taskKind: normalizedEvaluationTaskKind(for: job),
+                        sourceRepo: normalizedEvaluationSourceRepo(for: job),
+                        suiteID: job.suiteID,
+                        datasetID: job.datasetID,
+                        sampleSize: job.sampleSize,
+                        scoringMode: job.scoringMode,
+                        metricName: metric.name,
+                        metricValue: metric.value,
+                        unit: metric.unit,
+                        createdAtUnixMS: job.createdAtUnixMS
+                    )
+                }
+            }
+    }
+
+    public func evaluationSummaryCSV(jobID: String? = nil) -> String {
+        let rows = evaluationSummaryCSVRows(jobID: jobID)
+        let header = "job_id,model_id,task_kind,source_repo,suite_id,dataset_id,sample_size,scoring_mode,metric_name,metric_value,unit,created_at_unix_ms"
+        guard rows.isEmpty == false else {
+            return header + "\n"
+        }
+        let body = rows.map { row in
+            [
+                row.jobID,
+                row.modelID,
+                row.taskKind,
+                row.sourceRepo,
+                row.suiteID,
+                row.datasetID,
+                String(row.sampleSize),
+                row.scoringMode,
+                row.metricName,
+                String(row.metricValue),
+                row.unit,
+                String(row.createdAtUnixMS),
+            ]
+            .map(Self.csvField)
+            .joined(separator: ",")
+        }
+        return ([header] + body).joined(separator: "\n") + "\n"
+    }
+
+    public func evaluationSampleRows(jobID: String? = nil) -> [ControlPlaneEvaluationSampleRecord] {
+        evaluationSamples
+            .filter { jobID == nil || $0.jobID == jobID }
+            .sorted {
+                if $0.jobID == $1.jobID {
+                    return $0.sampleID < $1.sampleID
+                }
+                return $0.jobID < $1.jobID
+            }
+    }
+
+    public func evaluationSamplesCSV(jobID: String? = nil) -> String {
+        let rows = evaluationSampleRows(jobID: jobID)
+        let header = "id,correct,expected,predicted,question,raw_response,time_s,parse_status"
+        guard rows.isEmpty == false else {
+            return header + "\n"
+        }
+        let body = rows.map { row in
+            [
+                row.sampleID,
+                row.correct ? "true" : "false",
+                row.expected,
+                row.predicted,
+                row.question,
+                row.rawResponse,
+                String(row.timeS),
+                row.parseStatus,
+            ]
+            .map(Self.csvField)
+            .joined(separator: ",")
+        }
+        return ([header] + body).joined(separator: "\n") + "\n"
+    }
+
+    public func evaluationSamplesJSONL(jobID: String? = nil) throws -> String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let rows = evaluationSampleRows(jobID: jobID)
+        return try rows
+            .map { sample in
+                let data = try encoder.encode(sample)
+                return String(decoding: data, as: UTF8.self)
+            }
+            .joined(separator: "\n")
+            + (rows.isEmpty ? "" : "\n")
+    }
+
     private static func parameterInt(_ rawValue: String?) -> Int? {
         guard let rawValue else {
             return nil
         }
         return Int(rawValue)
+    }
+
+    private func normalizedEvaluationTaskKind(for job: ControlPlaneEvaluationJobRecord) -> String {
+        if !job.taskKind.isEmpty {
+            return job.taskKind
+        }
+        if let parameterTaskKind = job.parameters["task_kind"], !parameterTaskKind.isEmpty {
+            return parameterTaskKind
+        }
+        return "text-generation"
+    }
+
+    private func normalizedEvaluationSourceRepo(for job: ControlPlaneEvaluationJobRecord) -> String {
+        if !job.sourceRepo.isEmpty {
+            return job.sourceRepo
+        }
+        return job.parameters["source_repo"] ?? ""
     }
 
     private func normalizedTaskKind(for job: ControlPlaneBenchmarkJobRecord) -> String {
@@ -317,6 +632,16 @@ public struct ControlPlaneBenchmarkExportBundle: Codable, Equatable, Sendable {
     private static func sortJobsNewestFirst(
         lhs: ControlPlaneBenchmarkJobRecord,
         rhs: ControlPlaneBenchmarkJobRecord
+    ) -> Bool {
+        if lhs.createdAtUnixMS == rhs.createdAtUnixMS {
+            return lhs.jobID > rhs.jobID
+        }
+        return lhs.createdAtUnixMS > rhs.createdAtUnixMS
+    }
+
+    private static func sortEvaluationJobsNewestFirst(
+        lhs: ControlPlaneEvaluationJobRecord,
+        rhs: ControlPlaneEvaluationJobRecord
     ) -> Bool {
         if lhs.createdAtUnixMS == rhs.createdAtUnixMS {
             return lhs.jobID > rhs.jobID

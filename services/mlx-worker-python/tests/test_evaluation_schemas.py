@@ -4,6 +4,7 @@ from worker.productization.evaluation_schemas import (
     build_dataset_package_manifest,
     build_evaluation_job_record,
     build_evaluation_result_record,
+    build_evaluation_sample_record,
 )
 
 
@@ -29,24 +30,34 @@ def test_build_evaluation_job_record_preserves_core_fields() -> None:
     job = build_evaluation_job_record(
         job_id="eval-1",
         model_id="melix-dev-text",
+        task_kind="text-generation",
+        source_repo="HuggingFaceH4/ultrachat_200k",
         suite_id="mmlu",
         dataset_id="mmlu-dev",
         sample_size=8,
         scoring_mode="exact-match",
         parameters={"split": "validation"},
         status="completed",
+        output_dir="/tmp/melix/evaluation/runs/eval-1",
+        created_at_unix_ms=101,
+        updated_at_unix_ms=202,
     )
     payload = job.to_dict()
 
     assert payload["schema_version"] == "melix.evaluation_job.v1"
     assert payload["job_id"] == "eval-1"
     assert payload["model_id"] == "melix-dev-text"
+    assert payload["task_kind"] == "text-generation"
+    assert payload["source_repo"] == "HuggingFaceH4/ultrachat_200k"
     assert payload["suite_id"] == "mmlu"
     assert payload["dataset_id"] == "mmlu-dev"
     assert payload["sample_size"] == 8
     assert payload["scoring_mode"] == "exact-match"
     assert payload["parameters"] == {"split": "validation"}
     assert payload["status"] == "completed"
+    assert payload["output_dir"] == "/tmp/melix/evaluation/runs/eval-1"
+    assert payload["created_at_unix_ms"] == 101
+    assert payload["updated_at_unix_ms"] == 202
 
 
 def test_build_evaluation_result_record_orders_metrics_stably() -> None:
@@ -57,9 +68,44 @@ def test_build_evaluation_result_record_orders_metrics_stably() -> None:
         sample_size=8,
         metrics={"eval.mmlu.loss": 0.25, "eval.mmlu.accuracy": 0.75},
         report_path="/tmp/mmlu.json",
+        units={"eval.mmlu.accuracy": "ratio", "eval.mmlu.loss": "loss"},
     )
 
-    assert [row["name"] for row in result.to_dict()["metrics"]] == [
+    metrics = result.to_dict()["metrics"]
+    assert [row["name"] for row in metrics] == [
         "eval.mmlu.accuracy",
         "eval.mmlu.loss",
     ]
+    assert metrics[0]["unit"] == "ratio"
+    assert metrics[1]["unit"] == "loss"
+
+
+def test_build_evaluation_sample_record_preserves_sample_payload() -> None:
+    sample = build_evaluation_sample_record(
+        job_id="eval-1",
+        suite_id="mmlu",
+        dataset_id="mmlu-dev",
+        sample_id="sample-1",
+        question="2+2?",
+        expected="4",
+        predicted="4",
+        raw_response="4",
+        correct=True,
+        time_s=0.0123,
+        parse_status="parsed",
+    )
+
+    assert sample.to_dict() == {
+        "schema_version": "melix.evaluation_sample.v1",
+        "job_id": "eval-1",
+        "suite_id": "mmlu",
+        "dataset_id": "mmlu-dev",
+        "sample_id": "sample-1",
+        "question": "2+2?",
+        "expected": "4",
+        "predicted": "4",
+        "raw_response": "4",
+        "correct": True,
+        "time_s": 0.0123,
+        "parse_status": "parsed",
+    }

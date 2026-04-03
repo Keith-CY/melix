@@ -1075,6 +1075,26 @@ struct DesktopDiagnosticsToolSectionView: View {
         await viewModel.exportSelectedBenchmarkCSV()
     }
 
+    func runEvaluation() async {
+        await viewModel.runEvaluation()
+    }
+
+    func refreshEvaluationResults() async {
+        await viewModel.refreshEvaluationHistory()
+    }
+
+    func exportEvaluationSummaryCSV() async {
+        await viewModel.exportSelectedEvaluationSummaryCSV()
+    }
+
+    func exportEvaluationSamplesCSV() async {
+        await viewModel.exportSelectedEvaluationSamplesCSV()
+    }
+
+    func exportEvaluationSamplesJSONL() async {
+        await viewModel.exportSelectedEvaluationSamplesJSONL()
+    }
+
     func refreshTooling() async {
         await viewModel.refreshModelOpsProductState()
     }
@@ -1087,8 +1107,16 @@ struct DesktopDiagnosticsToolSectionView: View {
         viewModel.selectBenchmarkHistory(jobID: jobID)
     }
 
-    func refreshBenchmarkHistoryIfNeeded() async {
-        if viewModel.benchmarkHistory.isEmpty {
+    func toggleEvaluationSuiteSelection(_ suiteID: String) {
+        viewModel.toggleEvaluationSuite(suiteID)
+    }
+
+    func selectEvaluationHistory(jobID: String) {
+        viewModel.selectEvaluationHistory(jobID: jobID)
+    }
+
+    func refreshDiagnosticsHistoryIfNeeded() async {
+        if viewModel.benchmarkHistory.isEmpty && viewModel.evaluationHistory.isEmpty {
             await viewModel.refreshBenchmarkHistory()
         }
     }
@@ -1113,6 +1141,26 @@ struct DesktopDiagnosticsToolSectionView: View {
         Task { await exportBenchmarkCSV() }
     }
 
+    private func startEvaluationTask() {
+        Task { await runEvaluation() }
+    }
+
+    private func startRefreshEvaluationResultsTask() {
+        Task { await refreshEvaluationResults() }
+    }
+
+    private func startExportEvaluationSummaryCSVTask() {
+        Task { await exportEvaluationSummaryCSV() }
+    }
+
+    private func startExportEvaluationSamplesCSVTask() {
+        Task { await exportEvaluationSamplesCSV() }
+    }
+
+    private func startExportEvaluationSamplesJSONLTask() {
+        Task { await exportEvaluationSamplesJSONL() }
+    }
+
     private func startRefreshToolingTask() {
         Task { await refreshTooling() }
     }
@@ -1120,20 +1168,38 @@ struct DesktopDiagnosticsToolSectionView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             GroupBox("Diagnostics Actions") {
-                HStack {
-                    Button("Inspect", action: startInspectTask)
-                    Button("Doctor", action: startDoctorTask)
-                    Button("Run Benchmark", action: startBenchmarkTask)
-                    .disabled(
-                        (
-                            viewModel.selectedBenchmarkTargetMode == .catalogModel
-                            && viewModel.benchmarkModels.isEmpty
-                        ) || viewModel.selectedBenchmarkSuiteIDs.isEmpty
-                    )
-                    Button("Refresh Results", action: startRefreshBenchmarkResultsTask)
-                    Button("Export CSV", action: startExportBenchmarkCSVTask)
-                    .disabled(viewModel.benchmarkHistory.isEmpty)
-                    Button("Refresh Tooling", action: startRefreshToolingTask)
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Button("Inspect", action: startInspectTask)
+                        Button("Doctor", action: startDoctorTask)
+                        Button("Run Benchmark", action: startBenchmarkTask)
+                            .disabled(
+                                (
+                                    viewModel.selectedBenchmarkTargetMode == .catalogModel
+                                    && viewModel.benchmarkModels.isEmpty
+                                ) || viewModel.selectedBenchmarkSuiteIDs.isEmpty
+                            )
+                        Button("Refresh Bench", action: startRefreshBenchmarkResultsTask)
+                        Button("Export Bench CSV", action: startExportBenchmarkCSVTask)
+                            .disabled(viewModel.benchmarkHistory.isEmpty)
+                    }
+                    HStack {
+                        Button("Run Evaluation", action: startEvaluationTask)
+                            .disabled(
+                                (
+                                    viewModel.selectedEvaluationTargetMode == .catalogModel
+                                    && viewModel.evaluationModels.isEmpty
+                                ) || viewModel.selectedEvaluationSuiteIDs.isEmpty
+                            )
+                        Button("Refresh Eval", action: startRefreshEvaluationResultsTask)
+                        Button("Export Eval Summary", action: startExportEvaluationSummaryCSVTask)
+                            .disabled(viewModel.evaluationHistory.isEmpty)
+                        Button("Export Eval Samples", action: startExportEvaluationSamplesCSVTask)
+                            .disabled(viewModel.evaluationHistory.isEmpty)
+                        Button("Export Eval JSONL", action: startExportEvaluationSamplesJSONLTask)
+                            .disabled(viewModel.evaluationHistory.isEmpty)
+                        Button("Refresh Tooling", action: startRefreshToolingTask)
+                    }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -1381,6 +1447,252 @@ struct DesktopDiagnosticsToolSectionView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
 
+            GroupBox("Evaluation Configuration") {
+                VStack(alignment: .leading, spacing: 12) {
+                    Picker(
+                        "Evaluation Target",
+                        selection: Binding(
+                            get: { viewModel.selectedEvaluationTargetMode },
+                            set: { viewModel.selectedEvaluationTargetMode = $0 }
+                        )
+                    ) {
+                        ForEach(RuntimeBenchmarkTargetMode.allCases) { mode in
+                            Text(mode.title).tag(mode)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+
+                    if viewModel.selectedEvaluationTargetMode == .catalogModel {
+                        if viewModel.evaluationModels.isEmpty {
+                            Text("No text-generation catalog models are available.")
+                                .foregroundStyle(.secondary)
+                        } else {
+                            Picker(
+                                "Evaluation Model",
+                                selection: Binding(
+                                    get: { viewModel.selectedEvaluationModelID },
+                                    set: { viewModel.selectedEvaluationModelID = $0 }
+                                )
+                            ) {
+                                ForEach(viewModel.evaluationModels) { model in
+                                    Text(model.alias.isEmpty ? model.modelID : "\(model.alias) • \(model.modelID)")
+                                        .tag(model.modelID)
+                                }
+                            }
+                            .pickerStyle(.menu)
+                        }
+                    } else {
+                        TextField(
+                            "Hugging Face Repo ID",
+                            text: Binding(
+                                get: { viewModel.evaluationHFRepoID },
+                                set: { viewModel.evaluationHFRepoID = $0 }
+                            )
+                        )
+                        .textFieldStyle(.roundedBorder)
+                    }
+
+                    Text(viewModel.evaluationTargetSummaryText)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 220), spacing: 12)], spacing: 12) {
+                        ForEach(viewModel.evaluationSuites) { suite in
+                            Button {
+                                toggleEvaluationSuiteSelection(suite.id)
+                            } label: {
+                                VStack(alignment: .leading, spacing: 8) {
+                                    HStack {
+                                        Text(suite.title)
+                                            .font(.headline)
+                                        Spacer()
+                                        Image(systemName: viewModel.selectedEvaluationSuiteIDs.contains(suite.id) ? "checkmark.circle.fill" : "circle")
+                                            .foregroundStyle(viewModel.selectedEvaluationSuiteIDs.contains(suite.id) ? Color.accentColor : .secondary)
+                                    }
+                                    Text(suite.datasetID)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                    Text("\(suite.scoreLabel) • \(suite.defaultsText)")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(12)
+                                .background(
+                                    viewModel.selectedEvaluationSuiteIDs.contains(suite.id)
+                                    ? Color.accentColor.opacity(0.12)
+                                    : Color.secondary.opacity(0.06),
+                                    in: RoundedRectangle(cornerRadius: 12)
+                                )
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+
+                    HStack(spacing: 16) {
+                        TextField(
+                            "Sample Size",
+                            text: Binding(
+                                get: { viewModel.evaluationSampleSize },
+                                set: { viewModel.evaluationSampleSize = $0 }
+                            )
+                        )
+                        .textFieldStyle(.roundedBorder)
+                        TextField(
+                            "Batch Factor",
+                            text: Binding(
+                                get: { viewModel.evaluationBatchFactor },
+                                set: { viewModel.evaluationBatchFactor = $0 }
+                            )
+                        )
+                        .textFieldStyle(.roundedBorder)
+                        TextField(
+                            "Few-shot",
+                            text: Binding(
+                                get: { viewModel.evaluationFewShot },
+                                set: { viewModel.evaluationFewShot = $0 }
+                            )
+                        )
+                        .textFieldStyle(.roundedBorder)
+                        TextField(
+                            "Seed",
+                            text: Binding(
+                                get: { viewModel.evaluationSeed },
+                                set: { viewModel.evaluationSeed = $0 }
+                            )
+                        )
+                        .textFieldStyle(.roundedBorder)
+                    }
+
+                    if let export = viewModel.lastEvaluationExport {
+                        Text("Evaluation export (\(export.formatTitle)): \(export.rowCount) rows • \(export.outputPath)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            GroupBox("Evaluation Results") {
+                VStack(alignment: .leading, spacing: 8) {
+                    if let selectedEntry = viewModel.selectedEvaluationHistoryEntry {
+                        Text("Selected eval \(selectedEntry.jobID) • \(selectedEntry.suiteTitle) • \(selectedEntry.createdAtText)")
+                            .font(.headline)
+                        let selectedSource = selectedEntry.sourceRepo.isEmpty ? selectedEntry.modelID : selectedEntry.sourceRepo
+                        Text("\(selectedEntry.taskTitle) • \(selectedSource) • \(selectedEntry.datasetID)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    if viewModel.evaluationMetricCards.isEmpty {
+                        Text("Run an evaluation or refresh persisted results to inspect scores and samples.")
+                            .foregroundStyle(.secondary)
+                    } else {
+                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 180), spacing: 12)], spacing: 12) {
+                            ForEach(viewModel.evaluationMetricCards.prefix(8)) { metric in
+                                VStack(alignment: .leading, spacing: 6) {
+                                    Text(metric.metricLabel)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                    Text(metric.valueText)
+                                        .font(.headline)
+                                        .monospacedDigit()
+                                    Text(metric.suiteTitle)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(12)
+                                .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 12))
+                            }
+                        }
+
+                        VStack(alignment: .leading, spacing: 10) {
+                            ForEach(viewModel.evaluationSamplePreview) { sample in
+                                VStack(alignment: .leading, spacing: 6) {
+                                    HStack {
+                                        Text(sample.sampleID)
+                                            .font(.headline)
+                                        Spacer()
+                                        Text(sample.correctText)
+                                            .font(.caption)
+                                            .foregroundStyle(sample.correctText == "Correct" ? .green : .secondary)
+                                    }
+                                    Text(sample.question)
+                                        .font(.caption)
+                                    Text("Expected: \(sample.expected)")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                    Text("Predicted: \(sample.predicted)")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                    if sample.rawResponse.isEmpty == false {
+                                        Text("Raw: \(sample.rawResponse)")
+                                            .font(.caption2)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                    Text("\(sample.parseStatus) • \(sample.timeText)")
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                }
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(12)
+                                .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 12))
+                            }
+                        }
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            GroupBox("Evaluation History") {
+                VStack(alignment: .leading, spacing: 10) {
+                    ForEach(viewModel.evaluationHistory.prefix(12)) { entry in
+                        Button {
+                            selectEvaluationHistory(jobID: entry.jobID)
+                        } label: {
+                            VStack(alignment: .leading, spacing: 6) {
+                                HStack {
+                                    Text("\(entry.suiteTitle) • \(entry.jobID)")
+                                        .font(.headline)
+                                    Spacer()
+                                    Text(entry.statusText)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                                let sourceLabel = entry.sourceRepo.isEmpty ? entry.modelID : entry.sourceRepo
+                                Text("\(entry.taskTitle) • \(sourceLabel) • \(entry.datasetID)")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                Text("sample \(entry.sampleSizeText) • \(entry.scoringModeText) • \(entry.metricCountText) • \(entry.createdAtText)")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                if entry.reportPath.isEmpty == false {
+                                    Text(entry.reportPath)
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(12)
+                            .background(
+                                viewModel.selectedEvaluationHistoryJobID == entry.jobID
+                                ? Color.accentColor.opacity(0.12)
+                                : Color.secondary.opacity(0.06),
+                                in: RoundedRectangle(cornerRadius: 12)
+                            )
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    if viewModel.evaluationHistory.isEmpty {
+                        Text("No persisted evaluation history yet.")
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
             GroupBox("Runtime Metrics Snapshot") {
                 VStack(alignment: .leading, spacing: 8) {
                     ForEach(foundation.benchMetrics.prefix(10)) { metric in
@@ -1400,7 +1712,7 @@ struct DesktopDiagnosticsToolSectionView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
-        .task(refreshBenchmarkHistoryIfNeeded)
+        .task(refreshDiagnosticsHistoryIfNeeded)
     }
 }
 

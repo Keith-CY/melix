@@ -18,6 +18,7 @@ class SubmissionPayload:
     benchmark_results: list[dict[str, object]]
     evaluation_jobs: list[dict[str, object]]
     evaluation_results: list[dict[str, object]]
+    evaluation_samples: list[dict[str, object]]
     submitted_at_unix_ms: int
 
     def to_dict(self) -> dict[str, object]:
@@ -28,6 +29,7 @@ class SubmissionPayload:
             "benchmark_results": list(self.benchmark_results),
             "evaluation_jobs": list(self.evaluation_jobs),
             "evaluation_results": list(self.evaluation_results),
+            "evaluation_samples": list(self.evaluation_samples),
             "submitted_at_unix_ms": self.submitted_at_unix_ms,
         }
 
@@ -44,5 +46,6 @@ def build_submission_payload(
         benchmark_results=bundle.get("benchmark_results", []),
         evaluation_jobs=bundle.get("evaluation_jobs", []),
         evaluation_results=bundle.get("evaluation_results", []),
+        evaluation_samples=bundle.get("evaluation_samples", []),
         submitted_at_unix_ms=int(time.time() * 1000),
     )

@@ -102,6 +102,59 @@ struct BenchmarkExportBundleTests {
         #expect(defaultRow.taskKind == "text-generation")
         #expect(defaultRow.sourceRepo.isEmpty)
     }
+
+    @Test("decodes evaluation history rows summary csv and sample exports")
+    func decodesEvaluationExports() throws {
+        let bundle = try ControlPlaneBenchmarkExportBundle.decode(json: benchmarkExportBundleJSON)
+
+        let entries = bundle.evaluationHistoryEntries()
+        let summaryRows = bundle.evaluationSummaryCSVRows(jobID: "eval-1")
+        let samples = bundle.evaluationSampleRows(jobID: "eval-1")
+        let summaryCSV = bundle.evaluationSummaryCSV(jobID: "eval-1")
+        let sampleCSV = bundle.evaluationSamplesCSV(jobID: "eval-1")
+        let sampleJSONL = try bundle.evaluationSamplesJSONL(jobID: "eval-1")
+
+        #expect(entries.count == 1)
+        #expect(entries[0].jobID == "eval-1")
+        #expect(entries[0].suiteID == "mmlu")
+        #expect(entries[0].taskKind == "text-generation")
+        #expect(entries[0].sourceRepo == "HuggingFaceH4/ultrachat_200k")
+        #expect(summaryRows.count == 1)
+        #expect(summaryRows[0].metricName == "eval.mmlu.accuracy")
+        #expect(summaryRows[0].metricValue == 0.75)
+        #expect(samples.count == 1)
+        #expect(samples[0].sampleID == "sample-1")
+        #expect(summaryCSV.contains("job_id,model_id,task_kind,source_repo,suite_id,dataset_id,sample_size,scoring_mode,metric_name,metric_value,unit,created_at_unix_ms"))
+        #expect(summaryCSV.contains("eval-1,melix-dev-text,text-generation,HuggingFaceH4/ultrachat_200k,mmlu,mmlu.dev.v1,8,multiple_choice_accuracy,eval.mmlu.accuracy,0.75,ratio,1712400000000"))
+        #expect(sampleCSV.contains("id,correct,expected,predicted,question,raw_response,time_s,parse_status"))
+        #expect(sampleCSV.contains("sample-1,true,4,4,2+2?,4,0.01,parsed"))
+        #expect(sampleJSONL.contains("\"sample_id\":\"sample-1\""))
+    }
+
+    @Test("evaluation exports fall back to parameters sort deterministically and emit empty headers")
+    func evaluationExportsFallBackToParametersSortDeterministicallyAndEmitEmptyHeaders() throws {
+        let bundle = try ControlPlaneBenchmarkExportBundle.decode(json: evaluationExportBundleFallbackJSON)
+
+        let entries = bundle.evaluationHistoryEntries()
+        let rows = bundle.evaluationSummaryCSVRows()
+        let samples = bundle.evaluationSampleRows()
+        let summaryCSV = bundle.evaluationSummaryCSV()
+        let sampleCSV = bundle.evaluationSamplesCSV()
+        let emptyBundle = try ControlPlaneBenchmarkExportBundle.decode(json: emptyEvaluationExportBundleJSON)
+
+        #expect(entries.map(\.jobID) == ["eval-z", "eval-b", "eval-a"])
+        #expect(entries[0].taskKind == "text-generation")
+        #expect(entries[1].taskKind == "text-generation")
+        #expect(entries[1].sourceRepo == "fallback/repo")
+        #expect(rows.map(\.jobID) == ["eval-a", "eval-b", "eval-z"])
+        #expect(rows[0].taskKind == "text-generation")
+        #expect(rows[1].sourceRepo == "fallback/repo")
+        #expect(samples.map(\.sampleID) == ["sample-1", "sample-2"])
+        #expect(summaryCSV.contains("job_id,model_id,task_kind,source_repo,suite_id,dataset_id,sample_size,scoring_mode,metric_name,metric_value,unit,created_at_unix_ms"))
+        #expect(sampleCSV.contains("id,correct,expected,predicted,question,raw_response,time_s,parse_status"))
+        #expect(emptyBundle.evaluationSummaryCSV() == "job_id,model_id,task_kind,source_repo,suite_id,dataset_id,sample_size,scoring_mode,metric_name,metric_value,unit,created_at_unix_ms\n")
+        #expect(emptyBundle.evaluationSamplesCSV() == "id,correct,expected,predicted,question,raw_response,time_s,parse_status\n")
+    }
 }
 
 private let benchmarkExportBundleJSON = """
@@ -181,7 +234,186 @@ private let benchmarkExportBundleJSON = """
       "report_path": "/tmp/melix/bench/runs/bench-2/bench-report.md",
       "report_markdown": "# Melix Bench\\n"
     }
+  ],
+  "evaluation_jobs": [
+    {
+      "schema_version": "melix.evaluation_job.v1",
+      "job_id": "eval-1",
+      "model_id": "melix-dev-text",
+      "task_kind": "text-generation",
+      "source_repo": "HuggingFaceH4/ultrachat_200k",
+      "suite_id": "mmlu",
+      "dataset_id": "mmlu.dev.v1",
+      "sample_size": 8,
+      "scoring_mode": "multiple_choice_accuracy",
+      "parameters": {
+        "few_shot": "4"
+      },
+      "status": "completed",
+      "output_dir": "/tmp/melix/evaluation/runs/eval-1",
+      "created_at_unix_ms": 1712400000000,
+      "updated_at_unix_ms": 1712400005000
+    }
+  ],
+  "evaluation_results": [
+    {
+      "schema_version": "melix.evaluation_result.v1",
+      "job_id": "eval-1",
+      "suite_id": "mmlu",
+      "dataset_id": "mmlu.dev.v1",
+      "sample_size": 8,
+      "metrics": [
+        {"name": "eval.mmlu.accuracy", "value": 0.75, "unit": "ratio"}
+      ],
+      "report_path": "/tmp/melix/evaluation/runs/eval-1/evaluation-result.json"
+    }
+  ],
+  "evaluation_samples": [
+    {
+      "schema_version": "melix.evaluation_sample.v1",
+      "job_id": "eval-1",
+      "suite_id": "mmlu",
+      "dataset_id": "mmlu.dev.v1",
+      "sample_id": "sample-1",
+      "question": "2+2?",
+      "expected": "4",
+      "predicted": "4",
+      "raw_response": "4",
+      "correct": true,
+      "time_s": 0.01,
+      "parse_status": "parsed"
+    }
   ]
+}
+"""
+
+private let evaluationExportBundleFallbackJSON = """
+{
+  "export_schema_version": "melix.benchmark_export.v1",
+  "benchmark_jobs": [],
+  "benchmark_results": [],
+  "evaluation_jobs": [
+    {
+      "schema_version": "melix.evaluation_job.v1",
+      "job_id": "eval-a",
+      "model_id": "melix-dev-text",
+      "suite_id": "mmlu",
+      "dataset_id": "mmlu.dev.v1",
+      "sample_size": 4,
+      "scoring_mode": "multiple_choice_accuracy",
+      "parameters": {
+        "task_kind": "text-generation",
+        "source_repo": "fallback/repo"
+      },
+      "status": "completed",
+      "created_at_unix_ms": 100,
+      "updated_at_unix_ms": 110
+    },
+    {
+      "schema_version": "melix.evaluation_job.v1",
+      "job_id": "eval-b",
+      "model_id": "melix-dev-text",
+      "task_kind": "text-generation",
+      "suite_id": "gsm8k",
+      "dataset_id": "gsm8k.dev.v1",
+      "sample_size": 6,
+      "scoring_mode": "exact_match",
+      "parameters": {
+        "source_repo": "fallback/repo"
+      },
+      "status": "completed",
+      "created_at_unix_ms": 100,
+      "updated_at_unix_ms": 120
+    },
+    {
+      "schema_version": "melix.evaluation_job.v1",
+      "job_id": "eval-z",
+      "model_id": "melix-dev-text",
+      "task_kind": "text-generation",
+      "source_repo": "explicit/repo",
+      "suite_id": "mbpp",
+      "dataset_id": "mbpp.dev.v1",
+      "sample_size": 2,
+      "scoring_mode": "pass_at_1",
+      "parameters": {},
+      "status": "completed",
+      "created_at_unix_ms": 200,
+      "updated_at_unix_ms": 210
+    }
+  ],
+  "evaluation_results": [
+    {
+      "schema_version": "melix.evaluation_result.v1",
+      "job_id": "eval-a",
+      "suite_id": "mmlu",
+      "dataset_id": "mmlu.dev.v1",
+      "sample_size": 4,
+      "metrics": [
+        {"name": "eval.mmlu.accuracy", "value": 0.5, "unit": "ratio"}
+      ]
+    },
+    {
+      "schema_version": "melix.evaluation_result.v1",
+      "job_id": "eval-b",
+      "suite_id": "gsm8k",
+      "dataset_id": "gsm8k.dev.v1",
+      "sample_size": 6,
+      "metrics": [
+        {"name": "eval.gsm8k.exact_match", "value": 0.25, "unit": "ratio"}
+      ]
+    },
+    {
+      "schema_version": "melix.evaluation_result.v1",
+      "job_id": "eval-z",
+      "suite_id": "mbpp",
+      "dataset_id": "mbpp.dev.v1",
+      "sample_size": 2,
+      "metrics": [
+        {"name": "eval.mbpp.pass_at_1", "value": 1.0, "unit": "ratio"}
+      ]
+    }
+  ],
+  "evaluation_samples": [
+    {
+      "schema_version": "melix.evaluation_sample.v1",
+      "job_id": "eval-a",
+      "suite_id": "mmlu",
+      "dataset_id": "mmlu.dev.v1",
+      "sample_id": "sample-2",
+      "question": "2+2?",
+      "expected": "4",
+      "predicted": "4",
+      "raw_response": "4",
+      "correct": true,
+      "time_s": 0.02,
+      "parse_status": "parsed"
+    },
+    {
+      "schema_version": "melix.evaluation_sample.v1",
+      "job_id": "eval-a",
+      "suite_id": "mmlu",
+      "dataset_id": "mmlu.dev.v1",
+      "sample_id": "sample-1",
+      "question": "3+3?",
+      "expected": "6",
+      "predicted": "6",
+      "raw_response": "6",
+      "correct": true,
+      "time_s": 0.01,
+      "parse_status": "parsed"
+    }
+  ]
+}
+"""
+
+private let emptyEvaluationExportBundleJSON = """
+{
+  "export_schema_version": "melix.benchmark_export.v1",
+  "benchmark_jobs": [],
+  "benchmark_results": [],
+  "evaluation_jobs": [],
+  "evaluation_results": [],
+  "evaluation_samples": []
 }
 """
 

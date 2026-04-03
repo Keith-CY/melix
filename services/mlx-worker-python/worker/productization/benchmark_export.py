@@ -29,16 +29,19 @@ def collect_evaluation_artifacts(jobs_root: Path) -> dict[str, object]:
     )
     jobs: list[dict[str, object]] = []
     results: list[dict[str, object]] = []
+    samples: list[dict[str, object]] = []
 
-    job_path = jobs_root / "evaluation-job.json"
-    if job_path.is_file():
-        jobs.append(json.loads(job_path.read_text(encoding="utf-8")))
+    _collect_evaluation_run(jobs_root, jobs=jobs, results=results, samples=samples)
+    runs_root = jobs_root / "runs"
+    if runs_root.is_dir():
+        for run_root in sorted(path for path in runs_root.iterdir() if path.is_dir()):
+            _collect_evaluation_run(run_root, jobs=jobs, results=results, samples=samples)
 
-    result_path = jobs_root / "evaluation-result.json"
-    if result_path.is_file():
-        results.append(json.loads(result_path.read_text(encoding="utf-8")))
-
-    return {"evaluation_jobs": jobs, "evaluation_results": results}
+    return {
+        "evaluation_jobs": jobs,
+        "evaluation_results": results,
+        "evaluation_samples": samples,
+    }
 
 
 def build_export_bundle(jobs_root: Path) -> dict[str, object]:
@@ -71,12 +74,6 @@ def build_comparison_table(runs: list[dict[str, object]]) -> str:
     seen: set[str] = set()
     for run in runs:
         for result in run.get("benchmark_results", []):
-            for metric in result.get("metrics", []):
-                name = metric.get("name", "")
-                if name and name not in seen:
-                    all_metric_names.append(name)
-                    seen.add(name)
-        for result in run.get("evaluation_results", []):
             for metric in result.get("metrics", []):
                 name = metric.get("name", "")
                 if name and name not in seen:
@@ -122,10 +119,6 @@ def _find_metric_value(
         for metric in result.get("metrics", []):
             if metric.get("name") == metric_name:
                 return float(metric["value"])
-    for result in run.get("evaluation_results", []):
-        for metric in result.get("metrics", []):
-            if metric.get("name") == metric_name:
-                return float(metric["value"])
     return None
 
 
@@ -155,3 +148,25 @@ def _collect_benchmark_run(
     for result_path in sorted(run_root.glob("bench-result-*.json")):
         if result_path.is_file():
             results.append(json.loads(result_path.read_text(encoding="utf-8")))
+
+
+def _collect_evaluation_run(
+    run_root: Path,
+    *,
+    jobs: list[dict[str, object]],
+    results: list[dict[str, object]],
+    samples: list[dict[str, object]],
+) -> None:
+    job_path = run_root / "evaluation-job.json"
+    if job_path.is_file():
+        jobs.append(json.loads(job_path.read_text(encoding="utf-8")))
+
+    result_path = run_root / "evaluation-result.json"
+    if result_path.is_file():
+        results.append(json.loads(result_path.read_text(encoding="utf-8")))
+
+    samples_path = run_root / "evaluation-samples.jsonl"
+    if samples_path.is_file():
+        for line in samples_path.read_text(encoding="utf-8").splitlines():
+            if line.strip():
+                samples.append(json.loads(line))

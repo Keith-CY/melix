@@ -36,6 +36,7 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
     private(set) var recordedActions: [String] = []
     private(set) var recordedModelOperationRequests: [RecordedModelOperationRequest] = []
     private(set) var recordedBenchRequests: [ControlPlaneBenchRequest] = []
+    private(set) var recordedEvaluationRequests: [ControlPlaneEvaluationRequest] = []
     private(set) var recordedExportOutputDirs: [String] = []
     private(set) var recordedGatewayAccessApplyRequests: [RecordedGatewayAccessApplyRequest] = []
     private(set) var recordedGatewayAccessClearRequests: [String] = []
@@ -51,6 +52,7 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
     private var modelOperationError: Error?
     private var doctorError: Error?
     private var benchError: Error?
+    private var evaluationError: Error?
     private var exportError: Error?
     private var chatError: Error?
     private var imageGenerateError: Error?
@@ -69,6 +71,25 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
         reportPath: "/tmp/melix-fake/bench-report.md",
         reportMarkdown: "# Melix Bench\n\n- bench.smoke.ttft_ms: 24.45 ms\n",
         metrics: ["bench.smoke.ttft_ms": 24.45]
+    )
+    private var evaluationResponse = ControlPlaneEvaluationResult(
+        job: {
+            var job = Melix_Controlplane_V1_EvaluationJobSummary()
+            job.jobID = "eval-fake"
+            job.modelID = "melix-dev-text"
+            job.taskKind = "text-generation"
+            job.sourceRepo = "cais/mmlu"
+            job.suiteID = "mmlu"
+            job.datasetID = "mmlu.dev.v1"
+            job.sampleSize = 8
+            job.scoringMode = "multiple_choice_accuracy"
+            job.status = "completed"
+            job.outputDir = "/tmp/melix-fake/evaluation/runs/eval-fake"
+            job.createdAtUnixMs = 1_712_000_000_000
+            job.updatedAtUnixMs = 1_712_000_001_000
+            return job
+        }(),
+        results: []
     )
     private var exportResult = ControlPlaneExportResult(
         exportBundleJSON: #"{"export_schema_version":"melix.benchmark_export.v1","benchmark_jobs":[],"benchmark_results":[]}"#
@@ -99,6 +120,7 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
         modelOperation: Error? = nil,
         doctor: Error? = nil,
         bench: Error? = nil,
+        evaluation: Error? = nil,
         exportResults: Error? = nil,
         chat: Error? = nil,
         imageGenerate: Error? = nil,
@@ -115,6 +137,7 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
         modelOperationError = modelOperation
         doctorError = doctor
         benchError = bench
+        evaluationError = evaluation
         exportError = exportResults
         chatError = chat
         imageGenerateError = imageGenerate
@@ -148,6 +171,10 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
 
     func configureBenchResponse(_ result: ControlPlaneBenchResult) {
         benchResponse = result
+    }
+
+    func configureEvaluationResponse(_ result: ControlPlaneEvaluationResult) {
+        evaluationResponse = result
     }
 
     func configureExportResult(_ result: ControlPlaneExportResult) {
@@ -419,6 +446,15 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
             throw benchError
         }
         return benchResponse
+    }
+
+    func runEvaluation(_ request: ControlPlaneEvaluationRequest) async throws -> ControlPlaneEvaluationResult {
+        recordedEvaluationRequests.append(request)
+        recordedActions.append("eval")
+        if let evaluationError {
+            throw evaluationError
+        }
+        return evaluationResponse
     }
 
     func exportResults(outputDir: String) async throws -> ControlPlaneExportResult {
@@ -837,6 +873,71 @@ func makeBenchmarkExportBundleJSON() -> String {
           "report_path": "/tmp/melix/bench/runs/bench-newer/bench-report.md",
           "report_markdown": "# Bench Newer\\n"
         }
+      ],
+      "evaluation_jobs": [
+        {
+          "schema_version": "melix.evaluation_job.v1",
+          "job_id": "eval-newer",
+          "model_id": "melix-dev-text-lora",
+          "task_kind": "text-generation",
+          "source_repo": "cais/mmlu",
+          "suite_id": "mmlu",
+          "dataset_id": "mmlu.dev.v1",
+          "sample_size": 8,
+          "scoring_mode": "multiple_choice_accuracy",
+          "parameters": {
+            "batch_factor": "2",
+            "few_shot": "3"
+          },
+          "status": "completed",
+          "output_dir": "/tmp/melix/evaluation/runs/eval-newer",
+          "created_at_unix_ms": 1712300000000,
+          "updated_at_unix_ms": 1712300005000
+        }
+      ],
+      "evaluation_results": [
+        {
+          "schema_version": "melix.evaluation_result.v1",
+          "job_id": "eval-newer",
+          "suite_id": "mmlu",
+          "dataset_id": "mmlu.dev.v1",
+          "sample_size": 8,
+          "metrics": [
+            {"name": "eval.mmlu.multiple_choice_accuracy", "value": 0.75, "unit": "ratio"},
+            {"name": "eval.mmlu.correct_count", "value": 6, "unit": "count"}
+          ],
+          "report_path": "/tmp/melix/evaluation/runs/eval-newer/evaluation-report.md"
+        }
+      ],
+      "evaluation_samples": [
+        {
+          "schema_version": "melix.evaluation_sample.v1",
+          "job_id": "eval-newer",
+          "suite_id": "mmlu",
+          "dataset_id": "mmlu.dev.v1",
+          "sample_id": "mmlu-0001",
+          "question": "What is 2 + 2?",
+          "expected": "4",
+          "predicted": "4",
+          "raw_response": "4",
+          "correct": true,
+          "time_s": 0.42,
+          "parse_status": "parsed"
+        },
+        {
+          "schema_version": "melix.evaluation_sample.v1",
+          "job_id": "eval-newer",
+          "suite_id": "mmlu",
+          "dataset_id": "mmlu.dev.v1",
+          "sample_id": "mmlu-0002",
+          "question": "Capital of France?",
+          "expected": "Paris",
+          "predicted": "Lyon",
+          "raw_response": "Lyon",
+          "correct": false,
+          "time_s": 0.51,
+          "parse_status": "parsed"
+        }
       ]
     }
     """
@@ -875,7 +976,10 @@ func makeBenchmarkExportBundleJSONWithoutResults() -> String {
           }
         }
       ],
-      "benchmark_results": []
+      "benchmark_results": [],
+      "evaluation_jobs": [],
+      "evaluation_results": [],
+      "evaluation_samples": []
     }
     """
 }

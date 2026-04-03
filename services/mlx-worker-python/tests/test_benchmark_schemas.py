@@ -71,12 +71,17 @@ def test_build_evaluation_job_and_result_remain_distinct_from_serving_shape() ->
     job = build_evaluation_job(
         job_id="eval-7",
         model_id="melix-dev-text",
+        task_kind="text-generation",
+        source_repo="HuggingFaceH4/ultrachat_200k",
         suite_id="mmlu",
         dataset_id="mmlu-dev",
         sample_size=64,
         scoring_mode="exact-match",
         parameters={"split": "validation"},
         status="completed",
+        output_dir="/tmp/melix-eval/runs/eval-7",
+        created_at_unix_ms=101,
+        updated_at_unix_ms=202,
     )
     result = build_evaluation_result(
         job_id="eval-7",
@@ -85,17 +90,21 @@ def test_build_evaluation_job_and_result_remain_distinct_from_serving_shape() ->
         sample_size=64,
         metrics={"eval.mmlu.accuracy": 0.72, "eval.mmlu.loss": 0.18},
         report_path="/tmp/melix-eval/mmlu.json",
+        units={"eval.mmlu.accuracy": "ratio", "eval.mmlu.loss": "loss"},
     )
 
     job_payload = job.to_dict()
     result_payload = result.to_dict()
 
     assert job_payload["schema_version"] == "melix.evaluation_job.v1"
+    assert job_payload["task_kind"] == "text-generation"
+    assert job_payload["source_repo"] == "HuggingFaceH4/ultrachat_200k"
     assert job_payload["suite_id"] == "mmlu"
     assert job_payload["dataset_id"] == "mmlu-dev"
     assert job_payload["sample_size"] == 64
+    assert job_payload["output_dir"] == "/tmp/melix-eval/runs/eval-7"
     assert result_payload["schema_version"] == "melix.evaluation_result.v1"
     assert result_payload["metrics"] == [
-        {"name": "eval.mmlu.accuracy", "unit": "", "value": 0.72},
-        {"name": "eval.mmlu.loss", "unit": "", "value": 0.18},
+        {"name": "eval.mmlu.accuracy", "unit": "ratio", "value": 0.72},
+        {"name": "eval.mmlu.loss", "unit": "loss", "value": 0.18},
     ]

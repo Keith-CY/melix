@@ -846,12 +846,50 @@ public actor ControlPlaneService {
             return errorResponse(for: request, code: "unavailable", message: "Model operations worker is unavailable.")
         }
 
+        let requestedModelID = command.modelID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let requestedHFRepoID = command.hfRepoID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let evaluationModel: Melix_Controlplane_V1_ModelSummary
+        do {
+            evaluationModel = try await resolvedBenchmarkModel(
+                preferredModelID: requestedModelID,
+                hfRepoID: requestedHFRepoID,
+                workerClient: workerClient
+            )
+        } catch {
+            let resolvedError = (error as? BenchmarkTargetResolutionError)
+                .map { ($0.code, $0.message) }
+                ?? ("not_found", "Evaluation target resolution failed: \(error)")
+            return errorResponse(for: request, code: resolvedError.0, message: resolvedError.1)
+        }
+
+        let taskKind = benchmarkTaskKind(for: evaluationModel)
+        guard taskKind == BenchmarkTaskKind.textGeneration.rawValue else {
+            return errorResponse(
+                for: request,
+                code: "unsupported_task_family",
+                message: "Evaluation currently supports text-generation targets only. Resolved task_kind=\(taskKind)."
+            )
+        }
+
+        let modelHandle: String
+        do {
+            modelHandle = try await benchmarkModelHandle(for: evaluationModel)
+        } catch {
+            return errorResponse(
+                for: request,
+                code: "not_found",
+                message: "No loaded evaluation target is available for \(evaluationModel.modelID)."
+            )
+        }
+
         var workerRequest = Melix_Worker_V1_RunEvaluationRequest()
-        workerRequest.modelHandle = await preferredModelOperationsHandle()
+        workerRequest.modelHandle = modelHandle
         workerRequest.suiteID = command.suiteID
         workerRequest.datasetID = command.datasetID
         workerRequest.sampleSize = command.sampleSize
         workerRequest.parameters = command.parameters
+        workerRequest.taskKind = taskKind
+        workerRequest.sourceRepo = benchmarkSourceRepo(for: evaluationModel)
 
         do {
             let workerResponse = try await workerClient.runEvaluation(request: workerRequest)
@@ -2017,6 +2055,11 @@ public actor ControlPlaneService {
         summary.scoringMode = job.scoringMode
         summary.parameters = job.parameters
         summary.status = job.status
+        summary.taskKind = job.taskKind
+        summary.sourceRepo = job.sourceRepo
+        summary.outputDir = job.outputDir
+        summary.createdAtUnixMs = job.createdAtUnixMs
+        summary.updatedAtUnixMs = job.updatedAtUnixMs
         return summary
     }
 

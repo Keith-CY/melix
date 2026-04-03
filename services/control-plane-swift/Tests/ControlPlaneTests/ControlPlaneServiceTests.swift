@@ -1274,8 +1274,10 @@ struct ControlPlaneServiceTests {
                 return event
             }(),
         ])
+        let catalog = ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels())
+        _ = await catalog.loadModel(id: "melix-dev-text", dispatchHandle: "melix-dev-text::explicit")
         let service = ControlPlaneService(
-            modelCatalog: ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels()),
+            modelCatalog: catalog,
             workerRegistry: WorkerRegistry(
                 defaultTextClient: NullWorkerClient(),
                 modelOperationsClient: modelOpsClient
@@ -2095,12 +2097,17 @@ struct ControlPlaneServiceTests {
             response.job.schemaVersion = "melix.evaluation_job.v1"
             response.job.jobID = "eval-123"
             response.job.modelID = "melix-dev-text"
+            response.job.taskKind = "text-generation"
+            response.job.sourceRepo = "HuggingFaceH4/ultrachat_200k"
             response.job.suiteID = "qa_smoke"
             response.job.datasetID = "qa_smoke.dev.v1"
             response.job.sampleSize = 8
             response.job.scoringMode = "deterministic_accuracy"
             response.job.parameters = ["judge": "deterministic"]
             response.job.status = "completed"
+            response.job.outputDir = "/tmp/melix/evaluation/runs/eval-123"
+            response.job.createdAtUnixMs = 1712400000000
+            response.job.updatedAtUnixMs = 1712400005000
             var result = Melix_Worker_V1_WorkerEvaluationResult()
             result.schemaVersion = "melix.evaluation_result.v1"
             result.jobID = "eval-123"
@@ -2115,18 +2122,23 @@ struct ControlPlaneServiceTests {
             response.results = [result]
             return response
         }())
+        let catalog = ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels())
+        _ = await catalog.loadModel(id: "melix-dev-text", dispatchHandle: "melix-dev-text::explicit")
         let service = ControlPlaneService(
-            modelCatalog: ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels()),
+            modelCatalog: catalog,
             workerRegistry: WorkerRegistry(
                 defaultTextClient: NullWorkerClient(),
                 modelOperationsClient: modelOpsClient
             )
         )
 
+        #expect(await catalog.dispatchHandle(for: "melix-dev-text") == "melix-dev-text::explicit")
         let response = try await service.execute(makeRunEvaluationRequest())
+        #expect(response.ok, "response error: \(response.error.code) \(response.error.message)")
         let lastRequest = try #require(await modelOpsClient.lastEvaluationRequest)
 
         #expect(response.ok)
+        #expect(lastRequest.taskKind == "text-generation")
         #expect(lastRequest.suiteID == "qa_smoke")
         #expect(lastRequest.datasetID == "qa_smoke.dev.v1")
         #expect(lastRequest.sampleSize == 8)
@@ -2136,6 +2148,9 @@ struct ControlPlaneServiceTests {
         #expect(response.ops.evaluationJob.suiteID == "qa_smoke")
         #expect(response.ops.evaluationJob.datasetID == "qa_smoke.dev.v1")
         #expect(response.ops.evaluationJob.sampleSize == 8)
+        #expect(response.ops.evaluationJob.taskKind == "text-generation")
+        #expect(response.ops.evaluationJob.sourceRepo == "HuggingFaceH4/ultrachat_200k")
+        #expect(response.ops.evaluationJob.outputDir == "/tmp/melix/evaluation/runs/eval-123")
         #expect(response.ops.evaluationJob.parameters["judge"] == "deterministic")
         #expect(response.ops.evaluationResults.count == 1)
         #expect(response.ops.evaluationResults[0].schemaVersion == "melix.evaluation_result.v1")
@@ -2146,6 +2161,71 @@ struct ControlPlaneServiceTests {
         #expect(response.ops.evaluationResults[0].metrics.count == 1)
         #expect(response.ops.evaluationResults[0].metrics[0].name == "eval.qa_smoke.accuracy")
         #expect(response.ops.evaluationResults[0].metrics[0].value == 1.0)
+    }
+
+    @Test("execute rejects unsupported evaluation task families and unresolved targets")
+    func executeRejectsUnsupportedEvaluationTaskFamiliesAndUnresolvedTargets() async throws {
+        let unsupportedClient = ScriptedModelOperationsWorkerClient()
+        await unsupportedClient.setHubModelCardResponse(
+            makeBenchmarkHubModelCardResponse(
+                repoID: "google/paligemma2-3b-ft-docci-448",
+                modelName: "paligemma2-3b-ft-docci-448",
+                pipelineTag: "image-to-text",
+                tags: ["paligemma", "image-to-text", "mlx"],
+                siblingFiles: [
+                    "config.json",
+                    "processor_config.json",
+                    "tokenizer.json",
+                ]
+            )
+        )
+        let unsupportedService = ControlPlaneService(
+            modelCatalog: ModelCatalog(seedModels: ModelCatalog.phaseSevenContractSeedModels()),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                modelOperationsClient: unsupportedClient
+            )
+        )
+
+        let unsupportedResponse = try await unsupportedService.execute(
+            makeRunEvaluationRequest(modelID: "", hfRepoID: "google/paligemma2-3b-ft-docci-448")
+        )
+
+        #expect(unsupportedResponse.ok == false)
+        #expect(unsupportedResponse.error.code == "unsupported_task_family")
+        #expect(unsupportedResponse.error.message.contains("Resolved task_kind=image-to-text"))
+
+        let missingService = ControlPlaneService(
+            modelCatalog: ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels()),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                modelOperationsClient: ScriptedModelOperationsWorkerClient()
+            )
+        )
+        let missingResponse = try await missingService.execute(
+            makeRunEvaluationRequest(modelID: "missing-model")
+        )
+
+        #expect(missingResponse.ok == false)
+        #expect(missingResponse.error.code == "not_found")
+        #expect(missingResponse.error.message.contains("missing-model"))
+    }
+
+    @Test("execute surfaces missing evaluation handles when the target cannot be loaded")
+    func executeSurfacesMissingEvaluationHandlesWhenTargetCannotBeLoaded() async throws {
+        let service = ControlPlaneService(
+            modelCatalog: ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels()),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                modelOperationsClient: ScriptedModelOperationsWorkerClient()
+            )
+        )
+
+        let response = try await service.execute(makeRunEvaluationRequest(modelID: "melix-dev-text"))
+
+        #expect(response.ok == false)
+        #expect(response.error.code == "not_found")
+        #expect(response.error.message.contains("No loaded evaluation target is available for melix-dev-text"))
     }
 
     @Test("execute handles ops.export_results through the model-operations worker")
@@ -4024,12 +4104,17 @@ struct ControlPlaneServiceTests {
         ]
     }
 
-    private func makeRunEvaluationRequest() -> Melix_Controlplane_V1_ControlPlaneRequest {
+    private func makeRunEvaluationRequest(
+        modelID: String = "melix-dev-text",
+        hfRepoID: String = ""
+    ) -> Melix_Controlplane_V1_ControlPlaneRequest {
         var request = Melix_Controlplane_V1_ControlPlaneRequest()
         request.requestID = "req-ops-evaluation"
         request.commandType = "ops.run_evaluation"
         request.ops = Melix_Controlplane_V1_OpsCommand()
         request.ops.runEvaluation = Melix_Controlplane_V1_RunEvaluation()
+        request.ops.runEvaluation.modelID = modelID
+        request.ops.runEvaluation.hfRepoID = hfRepoID
         request.ops.runEvaluation.suiteID = "qa_smoke"
         request.ops.runEvaluation.datasetID = "qa_smoke.dev.v1"
         request.ops.runEvaluation.sampleSize = 8

@@ -6,8 +6,10 @@ from dataclasses import dataclass, field
 from worker.productization.evaluation_schemas import (
     EvaluationJob,
     EvaluationResult,
+    EvaluationSample,
     build_evaluation_job_record,
     build_evaluation_result_record,
+    build_evaluation_sample_record,
 )
 
 
@@ -147,22 +149,32 @@ def build_evaluation_job(
     *,
     job_id: str,
     model_id: str,
+    task_kind: str = "text-generation",
+    source_repo: str = "",
     suite_id: str,
     dataset_id: str,
     sample_size: int,
     scoring_mode: str,
     parameters: dict[str, str],
     status: str,
+    output_dir: str = "",
+    created_at_unix_ms: int = 0,
+    updated_at_unix_ms: int = 0,
 ) -> EvaluationJob:
     return build_evaluation_job_record(
         job_id=job_id,
         model_id=model_id,
+        task_kind=task_kind,
+        source_repo=source_repo,
         suite_id=suite_id,
         dataset_id=dataset_id,
         sample_size=sample_size,
         scoring_mode=scoring_mode,
         parameters=parameters,
         status=status,
+        output_dir=output_dir,
+        created_at_unix_ms=created_at_unix_ms,
+        updated_at_unix_ms=updated_at_unix_ms,
     )
 
 
@@ -174,6 +186,7 @@ def build_evaluation_result(
     sample_size: int,
     metrics: dict[str, float],
     report_path: str,
+    units: dict[str, str] | None = None,
 ) -> EvaluationResult:
     return build_evaluation_result_record(
         job_id=job_id,
@@ -182,6 +195,36 @@ def build_evaluation_result(
         sample_size=sample_size,
         metrics=metrics,
         report_path=report_path,
+        units=units,
+    )
+
+
+def build_evaluation_sample(
+    *,
+    job_id: str,
+    suite_id: str,
+    dataset_id: str,
+    sample_id: str,
+    question: str,
+    expected: str,
+    predicted: str,
+    raw_response: str,
+    correct: bool,
+    time_s: float,
+    parse_status: str,
+) -> EvaluationSample:
+    return build_evaluation_sample_record(
+        job_id=job_id,
+        suite_id=suite_id,
+        dataset_id=dataset_id,
+        sample_id=sample_id,
+        question=question,
+        expected=expected,
+        predicted=predicted,
+        raw_response=raw_response,
+        correct=correct,
+        time_s=time_s,
+        parse_status=parse_status,
     )
 
 
