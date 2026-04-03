@@ -18,14 +18,15 @@ Run the repository-owned verification flow for the first executable M7 benchmark
 
 ## Operator Window And CLI
 
-The benchmark workflow is now available from both the native operator window and the public
-`melix` CLI.
+The canonical benchmark and evaluation workflows are now available from both the native operator
+window and the public `melix` CLI.
 
 Use the native operator window when you need:
 
 - explicit benchmark target model selection
 - curated suite multi-select
-- sample-size and batch-factor controls
+- benchmark context-length, batch-size, repeat, cache-profile, reasoning-mode, and structured-output controls
+- evaluation sample-size, batch-factor, few-shot, seed, scoring-mode, and code-exec-policy controls
 - persisted history review, metric cards, chart visualization, and CSV export
 
 Use the CLI for deterministic shell-driven execution:
@@ -35,19 +36,52 @@ swift run melix bench run \
   --model-id melix-dev-text::1 \
   --suite smoke \
   --suite latency \
+  --context-length 1024 \
+  --context-length 4096 \
+  --batch-size 2 \
+  --batch-size 4 \
+  --repeats 3 \
+  --cache-profile partial_prefix \
+  --reasoning-mode enabled \
+  --structured-output-mode json_schema \
   --sample-size 2 \
   --batch-factor 1
 
 swift run melix bench list --json
 
-swift run melix bench export-csv \
+swift run melix bench export-summary-csv \
   --job-id <benchmark-job-id> \
   --output /tmp/melix-benchmark.csv
+
+swift run melix eval run \
+  --model-id melix-dev-text::1 \
+  --suite mmlu \
+  --sample-size 12 \
+  --batch-factor 2 \
+  --few-shot 4 \
+  --seed 9 \
+  --scoring-mode multiple_choice_accuracy \
+  --code-exec-policy sandboxed
+
+swift run melix eval list --json
+
+swift run melix eval export-summary-csv \
+  --job-id <evaluation-job-id> \
+  --output /tmp/melix-evaluation-summary.csv
+
+swift run melix eval export-samples-csv \
+  --job-id <evaluation-job-id> \
+  --output /tmp/melix-evaluation-samples.csv
+
+swift run melix eval export-samples-jsonl \
+  --job-id <evaluation-job-id> \
+  --output /tmp/melix-evaluation-samples.jsonl
 ```
 
 Each benchmark run is persisted under `<jobs_root>/bench/runs/<job_id>/`. The shared export
 bundle used by both the native operator window and CLI also records dataset provenance, suite
-metadata, and cache-hit state for the curated Hugging Face suite inputs.
+metadata, canonical benchmark sweep rows, evaluation summary rows, and cache-hit state for the
+curated Hugging Face suite inputs.
 
 ## Python Verification
 
@@ -99,55 +133,112 @@ Run the focused control-plane benchmark or evaluation command tests using a scra
 HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/.build/ModuleCache.noindex" \
 swift test --package-path services/control-plane-swift \
   --scratch-path /tmp/melix-control-plane-m7-3-5-test \
-  --filter 'ControlPlaneServiceTests/executeHandlesOpsRunEvaluationThroughTheModelOperationsWorker|ControlPlaneServiceTests/executeHandlesOpsExportResultsThroughTheModelOperationsWorker|ControlPlaneServiceTests/executeHandlesOpsSubmitResultsThroughTheModelOperationsWorker'
+  --filter 'ControlPlaneServiceTests|BenchmarkExportBundleTests'
 ```
 
 Expected outcomes:
 
+- canonical benchmark fields are validated and forwarded to the worker request
 - `ops.run_evaluation` maps to the model-operations worker
 - typed `evaluationJob` and `evaluationResults` fields are populated on `OpsReply`
 - `ops.export_results` surfaces `exportBundleJson`
 - `ops.submit_results` surfaces `submissionJson`
+- canonical evaluation summary rows decode and export correctly from the shared bundle
 
 ## Export And Submit Semantics
 
 - `ExportResults` reads persisted benchmark artifacts from `model-ops/bench/` and persisted
   evaluation artifacts from `model-ops/evaluation/`, then writes `export-bundle.json` at the
   reported `export_path`.
+- `melix bench export-summary-csv` writes canonical benchmark summary rows. The shared export
+  bundle also preserves context-sweep and batch-sweep rows for the Window UI and future lab-style
+  analysis.
+- `melix eval export-summary-csv` writes canonical evaluation summary rows.
+- `melix eval export-samples-csv` and `melix eval export-samples-jsonl` export per-sample evidence
+  with `id`, `correct`, `expected`, `predicted`, `question`, `raw_response`, `time_s`, and
+  `parse_status`.
 - `SubmitResults` uses the same persisted artifact roots and returns a typed
   `melix.submission.v1` payload with stable device identity fields under `device`.
 - For this M7 closure, operator visibility includes the dedicated benchmark controls in the native
-  operator window together with `melix bench list` and `melix bench export-csv`.
+  operator window together with `melix bench list`, `melix bench export-summary-csv`, `melix eval
+  list`, and the evaluation export commands.
 
 ## Coverage
 
-Run changed-line coverage for the touched Python scope:
+Run changed-line coverage for the touched executable scope:
 
 ```bash
-PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" UV_CACHE_DIR="$(pwd)/.uv-cache" \
-uv run --project services/mlx-worker-python coverage erase
+HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/.build/ModuleCache.noindex" \
+swift test --enable-code-coverage --filter MelixCLITests
 
-PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" UV_CACHE_DIR="$(pwd)/.uv-cache" \
-uv run --project services/mlx-worker-python coverage run \
+python3 scripts/swift_changed_line_coverage.py \
+  --binary .build/arm64-apple-macosx/debug/melixPackageTests.xctest/Contents/MacOS/melixPackageTests \
+  --profdata .build/arm64-apple-macosx/debug/codecov/default.profdata \
+  --diff-from d1ceaba \
+  Sources/MelixCLICore/MelixCLI.swift \
+  tests/MelixCLITests/MelixCLIParserTests.swift \
+  tests/MelixCLITests/MelixCLIRunnerTests.swift
+
+HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/services/control-plane-swift/.build/ModuleCache.noindex" \
+swift test --package-path services/control-plane-swift --enable-code-coverage \
+  --filter 'ControlPlaneServiceTests|BenchmarkExportBundleTests'
+
+python3 scripts/swift_changed_line_coverage.py \
+  --binary services/control-plane-swift/.build/arm64-apple-macosx/debug/MelixControlPlanePackageTests.xctest/Contents/MacOS/MelixControlPlanePackageTests \
+  --profdata services/control-plane-swift/.build/arm64-apple-macosx/debug/codecov/default.profdata \
+  --diff-from d1ceaba \
+  services/control-plane-swift/Sources/XPCService/ControlPlaneService.swift \
+  services/control-plane-swift/Sources/XPCService/BenchmarkExportBundle.swift \
+  services/control-plane-swift/Sources/XPCService/ControlPlaneXPCClient.swift \
+  services/control-plane-swift/Tests/ControlPlaneTests/ControlPlaneServiceTests.swift \
+  services/control-plane-swift/Tests/ControlPlaneTests/BenchmarkExportBundleTests.swift
+
+HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/apps/macos-menubar/.build/ModuleCache.noindex" \
+swift test --package-path apps/macos-menubar --enable-code-coverage \
+  --filter 'RuntimeViewModelTests|DesktopFoundationViewTests|ControlPlaneXPCClientTests'
+
+python3 scripts/swift_changed_line_coverage.py \
+  --binary apps/macos-menubar/.build/arm64-apple-macosx/debug/MelixMacOSMenubarPackageTests.xctest/Contents/MacOS/MelixMacOSMenubarPackageTests \
+  --profdata apps/macos-menubar/.build/arm64-apple-macosx/debug/codecov/default.profdata \
+  --diff-from d1ceaba \
+  apps/macos-menubar/Sources/AppMain/Models/RuntimeViewModel.swift \
+  apps/macos-menubar/Sources/AppMain/Dashboard/DesktopWorkspaceShellView.swift \
+  apps/macos-menubar/Tests/MenuBarTests/RuntimeViewModelTests.swift \
+  apps/macos-menubar/Tests/MenuBarTests/DesktopFoundationViewTests.swift \
+  apps/macos-menubar/Tests/MenuBarTests/ControlPlaneXPCClientTests.swift
+
+PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" uv run --project services/mlx-worker-python coverage erase
+
+PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" uv run --project services/mlx-worker-python coverage run \
   --source=services/mlx-worker-python/worker \
   -m pytest \
   services/mlx-worker-python/tests/test_maintenance_service.py \
-  services/mlx-worker-python/tests/test_control_plane_bridge_phase5.py \
-  services/mlx-worker-python/tests/test_evaluation_core.py
+  services/mlx-worker-python/tests/test_benchmark_schemas.py \
+  services/mlx-worker-python/tests/test_benchmark_export.py \
+  services/mlx-worker-python/tests/test_evaluation_core.py \
+  services/mlx-worker-python/tests/test_evaluation_store.py \
+  services/mlx-worker-python/tests/test_submission_builder.py \
+  services/mlx-worker-python/tests/test_release_gates.py -q
 
-PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" UV_CACHE_DIR="$(pwd)/.uv-cache" \
-uv run --project services/mlx-worker-python coverage json -o /tmp/m7-3-5-task4-coverage.json
+PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" uv run --project services/mlx-worker-python coverage json \
+  -o /tmp/melix-coverage/bench-eval-contract-expansion-python.json
 
 python3 scripts/python_changed_line_coverage.py \
-  --coverage-json /tmp/m7-3-5-task4-coverage.json \
+  --coverage-json /tmp/melix-coverage/bench-eval-contract-expansion-python.json \
+  --diff-from d1ceaba \
+  services/mlx-worker-python/worker/engine/maintenance_core.py \
+  services/mlx-worker-python/worker/productization/benchmark_schemas.py \
+  services/mlx-worker-python/worker/productization/benchmark_export.py \
+  services/mlx-worker-python/worker/productization/submission_builder.py \
+  services/mlx-worker-python/worker/engine/evaluation_core.py \
   services/mlx-worker-python/worker/grpc_server.py \
-  services/mlx-worker-python/worker/control_plane_bridge.py \
-  services/mlx-worker-python/worker/engine/evaluation_core.py
+  services/mlx-worker-python/worker/productization/evaluation_schemas.py \
+  services/mlx-worker-python/worker/productization/evaluation_store.py
 ```
 
 Expected outcome:
 
-- changed-line coverage at or above `95%` for the touched Python scope
+- changed-line coverage at or above `95%` for the touched executable scope in each package slice
 
 ## Acceptance Checklist
 
@@ -156,4 +247,6 @@ Expected outcome:
 - evaluation jobs and results are persisted and machine-readable
 - control-plane evaluation command returns typed payloads
 - export and submission payloads are repository-owned and machine-readable
+- Window UI exposes the canonical benchmark and evaluation operator controls
+- CLI exposes canonical benchmark and evaluation run plus export commands
 - verification commands are repository-owned and reproducible

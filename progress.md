@@ -68,6 +68,36 @@
 - Metrics report for Task 4:
   - `services/mlx-worker-python/worker/engine/evaluation_core.py`, `services/mlx-worker-python/worker/grpc_server.py`, `services/mlx-worker-python/worker/productization/evaluation_schemas.py`, `services/mlx-worker-python/worker/productization/evaluation_store.py`, and `services/mlx-worker-python/worker/productization/benchmark_export.py`: aggregate changed-line coverage `100.00%` (`112/112`)
   - `services/control-plane-swift/Sources/XPCService/BenchmarkExportBundle.swift`, `services/control-plane-swift/Tests/ControlPlaneTests/BenchmarkExportBundleTests.swift`, and `tests/MelixCLITests/MelixCLIRunnerTests.swift`: aggregate changed-line coverage `100.00%` (`105/105`)
+- Closed Task 5, the Window UI productization slice for canonical benchmark and evaluation controls:
+  - added canonical benchmark controls for context lengths, batch sizes, repeats, cache profile, reasoning mode, and structured output mode
+  - added canonical evaluation controls for scoring mode and code execution policy alongside the existing few-shot and seed inputs
+  - wired the new Window UI state through `RuntimeViewModel` normalization helpers and forwarded the canonical request fields to the shared control-plane client
+  - aligned evaluation metric cards with canonical `score_name` / `score_value` summary rows and updated diagnostics rendering tests for the new controls
+  - passed reviewer gate with no blocking findings; the only residual risk is that `benchReasoningMode` and `benchStructuredOutputMode` still rely on Picker-backed valid values instead of explicit enum validation
+- Verification summary for Task 5:
+  - `swift test --package-path apps/macos-menubar --enable-code-coverage --filter 'RuntimeViewModelTests|DesktopFoundationViewTests|ControlPlaneXPCClientTests'`: `161 tests passed`
+- Metrics report for Task 5:
+  - `apps/macos-menubar/Sources/AppMain/Models/RuntimeViewModel.swift`, `apps/macos-menubar/Sources/AppMain/Dashboard/DesktopWorkspaceShellView.swift`, `apps/macos-menubar/Tests/MenuBarTests/RuntimeViewModelTests.swift`, `apps/macos-menubar/Tests/MenuBarTests/DesktopFoundationViewTests.swift`, and `apps/macos-menubar/Tests/MenuBarTests/ControlPlaneXPCClientTests.swift`: aggregate changed-line coverage `99.56%` (`448/450`)
+- Closed Task 6, the verification and documentation close-out slice:
+  - updated `docs/runbooks/m7-benchmark-and-evaluation-foundation.md` so the canonical `bench` / `eval` operator and CLI flows are documented in one repository-owned runbook
+  - updated `task_plan.md` so Tasks 5 and 6 are marked completed and the transaction is recorded as closed
+  - reran changed-line coverage for the full touched executable scope from `d1ceaba`
+  - reran repository verification before the final documentation commit
+- Verification summary for Task 6:
+  - `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/.build/ModuleCache.noindex" swift test --enable-code-coverage --filter MelixCLITests`: `41 tests passed`
+  - `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/services/control-plane-swift/.build/ModuleCache.noindex" swift test --package-path services/control-plane-swift --enable-code-coverage --filter 'ControlPlaneServiceTests|BenchmarkExportBundleTests'`: `123 tests passed`
+  - `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/apps/macos-menubar/.build/ModuleCache.noindex" swift test --package-path apps/macos-menubar --enable-code-coverage --filter 'RuntimeViewModelTests|DesktopFoundationViewTests|ControlPlaneXPCClientTests'`: `161 tests passed`
+  - `PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" uv run --project services/mlx-worker-python coverage run --source=services/mlx-worker-python/worker -m pytest services/mlx-worker-python/tests/test_maintenance_service.py services/mlx-worker-python/tests/test_benchmark_schemas.py services/mlx-worker-python/tests/test_benchmark_export.py services/mlx-worker-python/tests/test_evaluation_core.py services/mlx-worker-python/tests/test_evaluation_store.py services/mlx-worker-python/tests/test_submission_builder.py services/mlx-worker-python/tests/test_release_gates.py -q`: `101 passed in 30.04s`
+  - `make proto`: pass
+  - `make py-test`: `391 passed in 30.13s`
+  - `make swift-test`: failed outside the touched scope after the protocol package passed; `services/mlx-text-worker-swift` exited with unexpected signal `11` during `WorkerScaffoldTests`, and the same run emitted the pre-existing `warning: input verification failed` notes while processing `.o` files in that package
+  - `make integration-test`: `54 passed in 619.54s (0:10:19)`
+- Metrics report for Task 6:
+  - `Sources/MelixCLICore/MelixCLI.swift`, `tests/MelixCLITests/MelixCLIParserTests.swift`, and `tests/MelixCLITests/MelixCLIRunnerTests.swift`: aggregate changed-line coverage `97.21%` (`209/215`)
+  - `services/control-plane-swift/Sources/XPCService/ControlPlaneService.swift`, `services/control-plane-swift/Sources/XPCService/BenchmarkExportBundle.swift`, `services/control-plane-swift/Sources/XPCService/ControlPlaneXPCClient.swift`, `services/control-plane-swift/Tests/ControlPlaneTests/ControlPlaneServiceTests.swift`, and `services/control-plane-swift/Tests/ControlPlaneTests/BenchmarkExportBundleTests.swift`: aggregate changed-line coverage `99.77%` (`431/432`)
+  - `apps/macos-menubar/Sources/AppMain/Models/RuntimeViewModel.swift`, `apps/macos-menubar/Sources/AppMain/Dashboard/DesktopWorkspaceShellView.swift`, `apps/macos-menubar/Tests/MenuBarTests/RuntimeViewModelTests.swift`, `apps/macos-menubar/Tests/MenuBarTests/DesktopFoundationViewTests.swift`, and `apps/macos-menubar/Tests/MenuBarTests/ControlPlaneXPCClientTests.swift`: aggregate changed-line coverage `99.56%` (`448/450`)
+  - `services/mlx-worker-python/worker/engine/maintenance_core.py`, `services/mlx-worker-python/worker/productization/benchmark_schemas.py`, `services/mlx-worker-python/worker/productization/benchmark_export.py`, `services/mlx-worker-python/worker/productization/submission_builder.py`, `services/mlx-worker-python/worker/engine/evaluation_core.py`, `services/mlx-worker-python/worker/grpc_server.py`, `services/mlx-worker-python/worker/productization/evaluation_schemas.py`, and `services/mlx-worker-python/worker/productization/evaluation_store.py`: aggregate changed-line coverage `99.48%` (`385/387`)
+  - aggregate changed-line coverage for the full touched executable scope in the canonical bench/eval expansion transaction: `99.26%` (`1473/1484`)
 
 - Converted the canonical benchmark and evaluation contract into an executable implementation plan.
 - Added `docs/plans/2026-04-03-bench-eval-contract-expansion-implementation.md` with staged tasks for:

@@ -28,9 +28,11 @@ Execute `docs/plans/2026-04-03-bench-eval-contract-expansion-implementation.md` 
    - status: completed
    - evidence: `1f2ae84` and `9c04a66`
 5. Task 5: productize bench and eval controls in Window UI
-   - status: pending
+   - status: completed
+   - evidence: `5e3eca1`
 6. Task 6: run full verification, update docs, and close the transaction
-   - status: pending
+   - status: completed
+   - evidence: final verification recorded in `progress.md`
 
 ## Acceptance
 
@@ -51,6 +53,9 @@ Execute `docs/plans/2026-04-03-bench-eval-contract-expansion-implementation.md` 
   - landed Task 2 canonical bench request normalization across CLI and control plane
   - landed Task 3 canonical benchmark sweeps, truthful batch-row behavior, and export expansion in the Python worker
   - landed Task 4 canonical evaluation controls, persistence, and export alignment across worker and Swift export consumers
-- remaining slices:
-  - Window UI productization
-  - transaction-wide verification and close-out
+  - landed Task 5 Window UI productization for canonical benchmark and evaluation controls
+  - landed Task 6 repository verification, coverage closure, and documentation close-out
+- closed transaction notes:
+  - changed-line coverage for the full touched executable scope is `99.26%` (`1473/1484`)
+  - `make proto`, `make py-test`, and `make integration-test` passed
+  - `make swift-test` still fails outside the touched scope because `services/mlx-text-worker-swift` exits with signal `11` during `WorkerScaffoldTests`
