@@ -2,6 +2,19 @@
 
 ## 2026-04-03
 
+- Started the `bench matrix` transaction on top of the closed canonical `bench` / `eval` expansion.
+- Closed Slice 1, the contract and planning reset for experimental performance matrix work:
+  - updated `docs/benchmark-evaluation-contract.md` so `bench matrix` is now a canonical Melix workflow rather than a future-only note
+  - defined a separate matrix request, persistence, export, and Window UI contract distinct from product-facing `bench run`
+  - added `docs/plans/2026-04-03-bench-matrix-performance-lab.md` as the execution plan for the new transaction
+  - reset `task_plan.md` so the repository now tracks the active `bench matrix` work instead of the already-closed canonical `bench` / `eval` expansion
+  - updated `docs/README.md` so the new execution plan is discoverable from the documentation map
+- Verification summary for Slice 1:
+  - `git diff --check`: pass
+- Metrics report for Slice 1:
+  - changed-line coverage for the touched executable scope: `N/A`
+  - reason: this slice changes repository documentation and planning records only
+
 - Continued the benchmark and evaluation contract expansion transaction with the first two executable slices from `docs/plans/2026-04-03-bench-eval-contract-expansion-implementation.md`.
 - Closed Task 1, the protocol expansion slice for canonical bench and eval inputs:
   - added the canonical bench fields to `RunBench` and `RunBenchRequest`

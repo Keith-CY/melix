@@ -139,6 +139,7 @@ Current phase-status and planning documents:
 - `plans/2026-03-27-phase-6-vision-ocr-audio-transcription.md`
 - `plans/2026-03-27-phase-7-image-generation-editing.md`
 - `plans/2026-03-27-phase-8-desktop-productization-release.md`
+- `plans/2026-04-03-bench-matrix-performance-lab.md`
 
 Current roadmap and phase-status documents:
 

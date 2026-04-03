@@ -23,7 +23,6 @@ This contract does not define:
 
 - vision-language intelligence suites
 - one-command combined benchmark plus evaluation runs
-- research-only performance matrix workflows
 - leaderboard or community-submission APIs
 
 ## Product Split
@@ -38,6 +37,7 @@ It is responsible for:
 - continuous batching measurements
 - runtime latency and throughput metrics
 - task-aware runtime metrics such as preprocessing or artifact publication timing
+- experimental matrix-style load exploration through a distinct command surface
 
 It is not responsible for:
 
@@ -92,6 +92,13 @@ Melix benchmark and evaluation targets use the following task-aligned values:
 `eval` v1 is intentionally limited to `text-generation`.
 
 ## Performance Benchmark Contract
+
+Melix exposes two distinct performance workflows:
+
+- `bench run`: operator-facing product benchmark
+- `bench matrix run`: experimental performance matrix
+
+The two workflows share target resolution and task kinds, but they do not share one request or export schema.
 
 ### Required Inputs
 
@@ -226,6 +233,129 @@ These aliases are compatibility fields only. New UI surfaces and exports must pr
 - `repeat_index`
 - `created_at_unix_ms`
 
+## Performance Matrix Contract
+
+### Matrix Scope
+
+`bench matrix` is a research-oriented performance workflow for controlled serving experiments.
+
+It must not overload or silently alter the product-facing `bench run` contract.
+
+Matrix v1 covers these task kinds:
+
+- `text-generation`
+- `image-to-text`
+- `image-text-to-text`
+
+Matrix v1 does not cover:
+
+- `text-to-image`
+- `image-text-to-image`
+
+### Required Inputs
+
+Every `bench matrix run` request must include:
+
+- `target`: `model_id` or `hf_repo_id`
+- `task_kind`
+- at least one `suite_id`
+- at least one `context_length`
+- at least one `generation_length`
+- at least one `batch_size`
+- at least one `cache_profile`
+- at least one `reasoning_mode`
+- at least one `structured_output_mode`
+- at least one `concurrency_level`
+- `repeats`
+- exactly one load budget:
+  - `requests`
+  - `duration_seconds`
+
+### Normalized Input Fields
+
+The canonical normalized matrix request shape is:
+
+- `model_id: string`
+- `hf_repo_id: string`
+- `task_kind: string`
+- `suite_ids: string[]`
+- `context_lengths: int[]`
+- `generation_lengths: int[]`
+- `batch_sizes: int[]`
+- `cache_profiles: string[]`
+- `reasoning_modes: string[]`
+- `structured_output_modes: string[]`
+- `concurrency_levels: int[]`
+- `repeats: int`
+- `requests: int`
+- `duration_seconds: int`
+
+### Matrix Summary Outputs
+
+Each completed matrix cell must persist one summary row with:
+
+- `job_id`
+- `task_kind`
+- `source_repo`
+- `model_id`
+- `suite_id`
+- `context_length`
+- `generation_length`
+- `batch_size`
+- `cache_profile`
+- `reasoning_mode`
+- `structured_output_mode`
+- `concurrency_level`
+- `repeats`
+- `requests`
+- `duration_seconds`
+- `ttft_mean_ms`
+- `ttft_std_ms`
+- `request_latency_mean_ms`
+- `request_latency_std_ms`
+- `prefill_tokens_per_second_mean`
+- `decode_tokens_per_second_mean`
+- `throughput_requests_per_second`
+- `throughput_tokens_per_second`
+- `success_rate`
+- `peak_memory_bytes_max`
+- `queue_wait_mean_ms`
+- `queue_wait_p95_ms`
+- `created_at_unix_ms`
+
+### Matrix Request-Level Outputs
+
+Each completed matrix request row must persist:
+
+- `job_id`
+- `cell_id`
+- `task_kind`
+- `suite_id`
+- `context_length`
+- `generation_length`
+- `batch_size`
+- `cache_profile`
+- `reasoning_mode`
+- `structured_output_mode`
+- `concurrency_level`
+- `repeat_index`
+- `request_index`
+- `ttft_ms`
+- `request_latency_ms`
+- `prefill_tokens_per_second`
+- `decode_tokens_per_second`
+- `queue_wait_ms`
+- `peak_memory_bytes`
+- `status`
+- `error_code`
+- `created_at_unix_ms`
+
+### Matrix Export Formats
+
+`bench matrix export-summary-csv` must emit one row per completed matrix cell using the matrix summary fields.
+
+`bench matrix export-requests-csv` must emit one row per request observation using the matrix request-level fields.
+
 ## Intelligence Evaluation Contract
 
 ### Required Inputs
@@ -353,6 +483,7 @@ Melix may present benchmark and evaluation history together in a common run brow
 Every persisted run summary must include:
 
 - `run_kind`
+- `benchmark_mode`
 - `job_id`
 - `model_id`
 - `source_repo`
@@ -367,6 +498,11 @@ Every persisted run summary must include:
 - `benchmark`
 - `evaluation`
 
+`benchmark_mode` must be one of:
+
+- `standard`
+- `matrix`
+
 UI layers must not mix performance metrics and intelligence scores in one combined metric card set.
 
 ## Window UI Contract
@@ -377,6 +513,7 @@ The Window UI must expose separate operator surfaces for `bench` and `eval`.
 
 The performance surface must expose:
 
+- a `standard` or `matrix` mode selector
 - target selection
 - suite selection
 - context-length controls
@@ -386,6 +523,30 @@ The performance surface must expose:
 - batching-speedup visualization
 - history
 - summary CSV export
+
+### Performance Matrix Surface
+
+The matrix surface must expose:
+
+- target selection
+- suite selection
+- context-length multi-select
+- generation-length multi-select
+- batch-size multi-select
+- cache-profile multi-select
+- reasoning-mode multi-select
+- structured-output-mode multi-select
+- concurrency multi-select
+- repeats control
+- one load budget selector with:
+  - `requests`
+  - `duration_seconds`
+- matrix summary cards
+- matrix summary table
+- throughput and latency visualizations across selected dimensions
+- matrix history
+- summary CSV export
+- request CSV export
 
 ### Evaluation Surface
 
@@ -410,6 +571,10 @@ The public CLI surface is:
 - `melix bench run`
 - `melix bench list`
 - `melix bench export-summary-csv`
+- `melix bench matrix run`
+- `melix bench matrix list`
+- `melix bench matrix export-summary-csv`
+- `melix bench matrix export-requests-csv`
 - `melix eval run`
 - `melix eval list`
 - `melix eval export-summary-csv`
@@ -422,6 +587,8 @@ Human-readable output is required by default.
 
 ## Forward Compatibility
 
-Melix may add a research-oriented performance matrix workflow in the future, but that workflow must not overload the operator-facing `bench run` contract defined here.
+Future benchmark work may extend `bench matrix` to additional task kinds or add release-gate integration, but it must preserve:
 
-If added later, that workflow must use a distinct command surface and a distinct export schema.
+- the distinct `bench run` and `bench matrix` command surfaces
+- the distinct standard and matrix export schemas
+- explicit `benchmark_mode` persistence in shared run history
