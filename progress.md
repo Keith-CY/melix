@@ -2,6 +2,21 @@
 
 ## 2026-04-03
 
+- Converted the canonical benchmark and evaluation contract into an executable implementation plan.
+- Added `docs/plans/2026-04-03-bench-eval-contract-expansion-implementation.md` with staged tasks for:
+  - protocol expansion
+  - canonical bench request normalization
+  - canonical benchmark sweeps, metrics, and CSV export
+  - canonical eval controls and sample exports
+  - Window UI productization
+  - coverage, verification, and documentation closure
+- Reset `task_plan.md` so the repository reflects that the next transaction is implementation execution rather than additional contract definition.
+- Verification summary for the implementation plan capture:
+  - `git diff --check`: pass
+- Metrics report:
+  - changed-line coverage for the touched executable scope: `N/A`
+  - reason: this transaction changes repository documentation only and does not modify executable source files
+
 - Captured the next-step benchmark and evaluation I/O contract as a canonical repository specification.
 - Added `docs/benchmark-evaluation-contract.md` to define:
   - the explicit split between `bench` and `eval`
