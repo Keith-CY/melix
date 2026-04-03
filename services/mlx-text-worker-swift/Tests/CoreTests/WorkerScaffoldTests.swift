@@ -5372,6 +5372,18 @@ final class WorkerScaffoldTests: XCTestCase {
             )
         }
 
+        let benchMatrixResponse = try await withTestServerContextRPCCancellationHandle { handle in
+            try await services.maintenance.runBenchMatrix(
+                request: Melix_Worker_V1_RunBenchMatrixRequest(),
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_MaintenanceService.Method.RunBenchMatrix.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
         let evaluationResponse = try await withTestServerContextRPCCancellationHandle { handle in
             try await services.maintenance.runEvaluation(
                 request: Melix_Worker_V1_RunEvaluationRequest(),
@@ -5454,6 +5466,12 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(infoResponse.error.code, "unimplemented")
         XCTAssertFalse(doctorResponse.ok)
         XCTAssertEqual(doctorResponse.error.code, "unimplemented")
+        XCTAssertTrue(benchMatrixResponse.hasJob)
+        XCTAssertEqual(benchMatrixResponse.job.schemaVersion, "melix.benchmark_matrix_job.v1")
+        XCTAssertEqual(benchMatrixResponse.job.jobID, "swift-text-unimplemented")
+        XCTAssertEqual(benchMatrixResponse.job.benchmarkMode, "matrix")
+        XCTAssertEqual(benchMatrixResponse.job.status, "failed")
+        XCTAssertTrue(benchMatrixResponse.summaryRows.isEmpty)
         XCTAssertFalse(evaluationResponse.ok)
         XCTAssertEqual(evaluationResponse.error.code, "unimplemented")
         XCTAssertFalse(exportResponse.ok)

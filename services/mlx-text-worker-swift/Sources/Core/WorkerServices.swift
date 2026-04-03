@@ -558,6 +558,24 @@ final class MaintenanceRPCService: Melix_Worker_V1_MaintenanceService.SimpleServ
         return response
     }
 
+    func runBenchMatrix(
+        request: Melix_Worker_V1_RunBenchMatrixRequest,
+        context: GRPCCore.ServerContext
+    ) async throws -> Melix_Worker_V1_RunBenchMatrixResponse {
+        metrics.increment("swift_text.unimplemented_rpc_count")
+
+        var response = Melix_Worker_V1_RunBenchMatrixResponse()
+        response.job.schemaVersion = "melix.benchmark_matrix_job.v1"
+        response.job.jobID = request.modelHandle.isEmpty ? "swift-text-unimplemented" : request.modelHandle
+        response.job.modelID = request.modelHandle
+        response.job.taskKind = request.taskKind
+        response.job.sourceRepo = request.sourceRepo
+        response.job.suiteIds = request.suiteIds
+        response.job.benchmarkMode = "matrix"
+        response.job.status = "failed"
+        return response
+    }
+
     func runBench(
         request: Melix_Worker_V1_RunBenchRequest,
         response: GRPCCore.RPCWriter<Melix_Worker_V1_RunBenchEvent>,

@@ -77,6 +77,18 @@
   - `apps/macos-menubar/Tests/MenuBarTests/RuntimeViewModelTests.swift`: changed-line coverage `100.00%` (`226/226`)
   - aggregate changed-line coverage for the executable Window UI scope in Slice 4: `96.35%` (`1662/1725`)
 
+- Closed the Swift text-worker protocol follow-up discovered during Slice 5 verification:
+  - `make swift-test` surfaced that the new `RunBenchMatrix` worker RPC had been added to the shared maintenance protocol without a matching `MaintenanceRPCService` stub in `services/mlx-text-worker-swift`
+  - added a deterministic unimplemented `runBenchMatrix` stub to the Swift text worker so the package remains protocol-conformant while matrix execution stays owned by the Python worker family
+  - extended `WorkerScaffoldTests` so the maintenance scaffold now verifies the matrix RPC returns a typed failed job summary instead of silently drifting from the shared protocol
+- Verification summary for the Swift text-worker follow-up:
+  - `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/services/mlx-text-worker-swift/.build/ModuleCache.noindex" swift test --package-path services/mlx-text-worker-swift --enable-code-coverage --filter WorkerScaffoldTests/testMaintenanceRpcsReturnStructuredUnimplemented`: `1 test passed`
+  - the test run emitted the pre-existing `warning: input verification failed` notes while linking `WorkerBootstrap.swift.o`; the targeted test still passed
+- Metrics report for the Swift text-worker follow-up:
+  - `services/mlx-text-worker-swift/Sources/Core/WorkerServices.swift`: changed-line coverage `100.00%` (`14/14`)
+  - `services/mlx-text-worker-swift/Tests/CoreTests/WorkerScaffoldTests.swift`: changed-line coverage `100.00%` (`18/18`)
+  - aggregate changed-line coverage for the Swift text-worker follow-up scope: `100.00%` (`32/32`)
+
 - Continued the benchmark and evaluation contract expansion transaction with the first two executable slices from `docs/plans/2026-04-03-bench-eval-contract-expansion-implementation.md`.
 - Closed Task 1, the protocol expansion slice for canonical bench and eval inputs:
   - added the canonical bench fields to `RunBench` and `RunBenchRequest`
