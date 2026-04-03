@@ -548,8 +548,8 @@ struct MelixCLIRunnerTests {
 
         #expect(response["job_id"] as? String == "eval-1")
         #expect(response["row_count"] as? Int == 1)
-        #expect(summaryCSV.contains("job_id,model_id,task_kind,source_repo,suite_id,dataset_id,sample_size,scoring_mode,metric_name,metric_value,unit,created_at_unix_ms"))
-        #expect(summaryCSV.contains("eval-1,melix-dev-text,text-generation,HuggingFaceH4/ultrachat_200k,mmlu,mmlu.dev.v1,8,multiple_choice_accuracy,eval.mmlu.accuracy,0.75,ratio,1712400000000"))
+        #expect(summaryCSV.contains("job_id,model_id,task_kind,source_repo,suite_id,dataset_id,sample_size,score_name,score_value,correct_count,incorrect_count,duration_seconds,created_at_unix_ms"))
+        #expect(summaryCSV.contains("eval-1,melix-dev-text,text-generation,HuggingFaceH4/ultrachat_200k,mmlu,mmlu.dev.v1,8,eval.mmlu.accuracy,0.75,6,2,12.5,1712400000000"))
         #expect(samplesCSV.contains("id,correct,expected,predicted,question,raw_response,time_s,parse_status"))
         #expect(samplesCSV.contains("sample-1,true,4,4,2+2?,4,0.01,parsed"))
         #expect(samplesJSONL.contains("\"sample_id\":\"sample-1\""))
@@ -1041,6 +1041,23 @@ private func makeBenchmarkExportBundleJSON() -> String {
             {"name": "eval.mmlu.accuracy", "value": 0.75, "unit": "ratio"}
           ],
           "report_path": "/tmp/melix/evaluation/runs/eval-1/evaluation-result.json"
+        }
+      ],
+      "evaluation_summary_rows": [
+        {
+          "job_id": "eval-1",
+          "model_id": "melix-dev-text",
+          "task_kind": "text-generation",
+          "source_repo": "HuggingFaceH4/ultrachat_200k",
+          "suite_id": "mmlu",
+          "dataset_id": "mmlu.dev.v1",
+          "sample_size": 8,
+          "score_name": "eval.mmlu.accuracy",
+          "score_value": 0.75,
+          "correct_count": 6,
+          "incorrect_count": 2,
+          "duration_seconds": 12.5,
+          "created_at_unix_ms": 1712400000000
         }
       ],
       "evaluation_samples": [

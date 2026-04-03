@@ -120,12 +120,23 @@ struct BenchmarkExportBundleTests {
         #expect(entries[0].taskKind == "text-generation")
         #expect(entries[0].sourceRepo == "HuggingFaceH4/ultrachat_200k")
         #expect(summaryRows.count == 1)
-        #expect(summaryRows[0].metricName == "eval.mmlu.accuracy")
-        #expect(summaryRows[0].metricValue == 0.75)
+        #expect(summaryRows[0].jobID == "eval-1")
+        #expect(summaryRows[0].modelID == "melix-dev-text")
+        #expect(summaryRows[0].taskKind == "text-generation")
+        #expect(summaryRows[0].sourceRepo == "HuggingFaceH4/ultrachat_200k")
+        #expect(summaryRows[0].suiteID == "mmlu")
+        #expect(summaryRows[0].datasetID == "mmlu.dev.v1")
+        #expect(summaryRows[0].sampleSize == 8)
+        #expect(summaryRows[0].scoreName == "eval.mmlu.accuracy")
+        #expect(summaryRows[0].scoreValue == 0.75)
+        #expect(summaryRows[0].correctCount == 6)
+        #expect(summaryRows[0].incorrectCount == 2)
+        #expect(summaryRows[0].durationSeconds == 12.5)
+        #expect(summaryRows[0].createdAtUnixMS == 1712400000000)
         #expect(samples.count == 1)
         #expect(samples[0].sampleID == "sample-1")
-        #expect(summaryCSV.contains("job_id,model_id,task_kind,source_repo,suite_id,dataset_id,sample_size,scoring_mode,metric_name,metric_value,unit,created_at_unix_ms"))
-        #expect(summaryCSV.contains("eval-1,melix-dev-text,text-generation,HuggingFaceH4/ultrachat_200k,mmlu,mmlu.dev.v1,8,multiple_choice_accuracy,eval.mmlu.accuracy,0.75,ratio,1712400000000"))
+        #expect(summaryCSV.contains("job_id,model_id,task_kind,source_repo,suite_id,dataset_id,sample_size,score_name,score_value,correct_count,incorrect_count,duration_seconds,created_at_unix_ms"))
+        #expect(summaryCSV.contains("eval-1,melix-dev-text,text-generation,HuggingFaceH4/ultrachat_200k,mmlu,mmlu.dev.v1,8,eval.mmlu.accuracy,0.75,6,2,12.5,1712400000000"))
         #expect(sampleCSV.contains("id,correct,expected,predicted,question,raw_response,time_s,parse_status"))
         #expect(sampleCSV.contains("sample-1,true,4,4,2+2?,4,0.01,parsed"))
         #expect(sampleJSONL.contains("\"sample_id\":\"sample-1\""))
@@ -149,11 +160,46 @@ struct BenchmarkExportBundleTests {
         #expect(rows.map(\.jobID) == ["eval-a", "eval-b", "eval-z"])
         #expect(rows[0].taskKind == "text-generation")
         #expect(rows[1].sourceRepo == "fallback/repo")
+        #expect(rows[0].scoreName == "eval.mmlu.accuracy")
+        #expect(rows[0].scoreValue == 0.5)
+        #expect(rows[0].correctCount == 0)
+        #expect(rows[0].incorrectCount == 0)
+        #expect(rows[0].durationSeconds == 0)
         #expect(samples.map(\.sampleID) == ["sample-1", "sample-2"])
-        #expect(summaryCSV.contains("job_id,model_id,task_kind,source_repo,suite_id,dataset_id,sample_size,scoring_mode,metric_name,metric_value,unit,created_at_unix_ms"))
+        #expect(summaryCSV.contains("job_id,model_id,task_kind,source_repo,suite_id,dataset_id,sample_size,score_name,score_value,correct_count,incorrect_count,duration_seconds,created_at_unix_ms"))
         #expect(sampleCSV.contains("id,correct,expected,predicted,question,raw_response,time_s,parse_status"))
-        #expect(emptyBundle.evaluationSummaryCSV() == "job_id,model_id,task_kind,source_repo,suite_id,dataset_id,sample_size,scoring_mode,metric_name,metric_value,unit,created_at_unix_ms\n")
+        #expect(emptyBundle.evaluationSummaryCSV() == "job_id,model_id,task_kind,source_repo,suite_id,dataset_id,sample_size,score_name,score_value,correct_count,incorrect_count,duration_seconds,created_at_unix_ms\n")
         #expect(emptyBundle.evaluationSamplesCSV() == "id,correct,expected,predicted,question,raw_response,time_s,parse_status\n")
+    }
+
+    @Test("canonical evaluation summary rows are sorted deterministically")
+    func canonicalEvaluationSummaryRowsAreSortedDeterministically() throws {
+        let bundle = try ControlPlaneBenchmarkExportBundle.decode(
+            json: canonicalEvaluationSummaryRowsJSON
+        )
+
+        let rows = bundle.evaluationSummaryCSVRows()
+        let csv = bundle.evaluationSummaryCSV()
+
+        #expect(rows.map(\.jobID) == ["eval-a", "eval-b"])
+        #expect(rows[0].createdAtUnixMS == 1712400000000)
+        #expect(rows[1].createdAtUnixMS == 1712400000000)
+        #expect(csv.contains("job_id,model_id,task_kind,source_repo,suite_id,dataset_id,sample_size,score_name,score_value,correct_count,incorrect_count,duration_seconds,created_at_unix_ms"))
+        #expect(csv.contains("eval-a,melix-dev-text,text-generation,HuggingFaceH4/ultrachat_200k,mmlu,mmlu.dev.v1,8,eval.mmlu.accuracy,0.75,6,2,12.5,1712400000000"))
+        #expect(csv.contains("eval-b,melix-dev-text,text-generation,HuggingFaceH4/ultrachat_200k,gsm8k,gsm8k.dev.v1,8,eval.gsm8k.exact_match,0.5,5,3,9.75,1712400000000"))
+    }
+
+    @Test("canonical evaluation summary rows sort by timestamp before job id")
+    func canonicalEvaluationSummaryRowsSortByTimestampBeforeJobID() throws {
+        let bundle = try ControlPlaneBenchmarkExportBundle.decode(
+            json: canonicalEvaluationSummaryTimestampJSON
+        )
+
+        let rows = bundle.evaluationSummaryCSVRows()
+
+        #expect(rows.map(\.jobID) == ["eval-a", "eval-b"])
+        #expect(rows[0].createdAtUnixMS == 1712400000000)
+        #expect(rows[1].createdAtUnixMS == 1712400001000)
     }
 }
 
@@ -266,6 +312,23 @@ private let benchmarkExportBundleJSON = """
         {"name": "eval.mmlu.accuracy", "value": 0.75, "unit": "ratio"}
       ],
       "report_path": "/tmp/melix/evaluation/runs/eval-1/evaluation-result.json"
+    }
+  ],
+  "evaluation_summary_rows": [
+    {
+      "job_id": "eval-1",
+      "model_id": "melix-dev-text",
+      "task_kind": "text-generation",
+      "source_repo": "HuggingFaceH4/ultrachat_200k",
+      "suite_id": "mmlu",
+      "dataset_id": "mmlu.dev.v1",
+      "sample_size": 8,
+      "score_name": "eval.mmlu.accuracy",
+      "score_value": 0.75,
+      "correct_count": 6,
+      "incorrect_count": 2,
+      "duration_seconds": 12.5,
+      "created_at_unix_ms": 1712400000000
     }
   ],
   "evaluation_samples": [
@@ -414,6 +477,82 @@ private let emptyEvaluationExportBundleJSON = """
   "evaluation_jobs": [],
   "evaluation_results": [],
   "evaluation_samples": []
+}
+"""
+
+private let canonicalEvaluationSummaryRowsJSON = """
+{
+  "export_schema_version": "melix.benchmark_export.v1",
+  "evaluation_summary_rows": [
+    {
+      "job_id": "eval-b",
+      "model_id": "melix-dev-text",
+      "task_kind": "text-generation",
+      "source_repo": "HuggingFaceH4/ultrachat_200k",
+      "suite_id": "gsm8k",
+      "dataset_id": "gsm8k.dev.v1",
+      "sample_size": 8,
+      "score_name": "eval.gsm8k.exact_match",
+      "score_value": 0.5,
+      "correct_count": 5,
+      "incorrect_count": 3,
+      "duration_seconds": 9.75,
+      "created_at_unix_ms": 1712400000000
+    },
+    {
+      "job_id": "eval-a",
+      "model_id": "melix-dev-text",
+      "task_kind": "text-generation",
+      "source_repo": "HuggingFaceH4/ultrachat_200k",
+      "suite_id": "mmlu",
+      "dataset_id": "mmlu.dev.v1",
+      "sample_size": 8,
+      "score_name": "eval.mmlu.accuracy",
+      "score_value": 0.75,
+      "correct_count": 6,
+      "incorrect_count": 2,
+      "duration_seconds": 12.5,
+      "created_at_unix_ms": 1712400000000
+    }
+  ]
+}
+"""
+
+private let canonicalEvaluationSummaryTimestampJSON = """
+{
+  "export_schema_version": "melix.benchmark_export.v1",
+  "evaluation_summary_rows": [
+    {
+      "job_id": "eval-b",
+      "model_id": "melix-dev-text",
+      "task_kind": "text-generation",
+      "source_repo": "HuggingFaceH4/ultrachat_200k",
+      "suite_id": "gsm8k",
+      "dataset_id": "gsm8k.dev.v1",
+      "sample_size": 8,
+      "score_name": "eval.gsm8k.exact_match",
+      "score_value": 0.5,
+      "correct_count": 5,
+      "incorrect_count": 3,
+      "duration_seconds": 9.75,
+      "created_at_unix_ms": 1712400001000
+    },
+    {
+      "job_id": "eval-a",
+      "model_id": "melix-dev-text",
+      "task_kind": "text-generation",
+      "source_repo": "HuggingFaceH4/ultrachat_200k",
+      "suite_id": "mmlu",
+      "dataset_id": "mmlu.dev.v1",
+      "sample_size": 8,
+      "score_name": "eval.mmlu.accuracy",
+      "score_value": 0.75,
+      "correct_count": 6,
+      "incorrect_count": 2,
+      "duration_seconds": 12.5,
+      "created_at_unix_ms": 1712400000000
+    }
+  ]
 }
 """
 

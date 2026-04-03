@@ -310,11 +310,75 @@ public struct ControlPlaneEvaluationSummaryCSVRow: Codable, Equatable, Sendable 
     public let suiteID: String
     public let datasetID: String
     public let sampleSize: Int
-    public let scoringMode: String
-    public let metricName: String
-    public let metricValue: Double
-    public let unit: String
+    public let scoreName: String
+    public let scoreValue: Double
+    public let correctCount: Int
+    public let incorrectCount: Int
+    public let durationSeconds: Double
     public let createdAtUnixMS: Int64
+
+    public init(
+        jobID: String,
+        modelID: String,
+        taskKind: String,
+        sourceRepo: String,
+        suiteID: String,
+        datasetID: String,
+        sampleSize: Int,
+        scoreName: String,
+        scoreValue: Double,
+        correctCount: Int,
+        incorrectCount: Int,
+        durationSeconds: Double,
+        createdAtUnixMS: Int64
+    ) {
+        self.jobID = jobID
+        self.modelID = modelID
+        self.taskKind = taskKind
+        self.sourceRepo = sourceRepo
+        self.suiteID = suiteID
+        self.datasetID = datasetID
+        self.sampleSize = sampleSize
+        self.scoreName = scoreName
+        self.scoreValue = scoreValue
+        self.correctCount = correctCount
+        self.incorrectCount = incorrectCount
+        self.durationSeconds = durationSeconds
+        self.createdAtUnixMS = createdAtUnixMS
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case jobID = "job_id"
+        case modelID = "model_id"
+        case taskKind = "task_kind"
+        case sourceRepo = "source_repo"
+        case suiteID = "suite_id"
+        case datasetID = "dataset_id"
+        case sampleSize = "sample_size"
+        case scoreName = "score_name"
+        case scoreValue = "score_value"
+        case correctCount = "correct_count"
+        case incorrectCount = "incorrect_count"
+        case durationSeconds = "duration_seconds"
+        case createdAtUnixMS = "created_at_unix_ms"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        jobID = try container.decodeIfPresent(String.self, forKey: .jobID) ?? ""
+        modelID = try container.decodeIfPresent(String.self, forKey: .modelID) ?? ""
+        taskKind = try container.decodeIfPresent(String.self, forKey: .taskKind) ?? ""
+        sourceRepo = try container.decodeIfPresent(String.self, forKey: .sourceRepo) ?? ""
+        suiteID = try container.decodeIfPresent(String.self, forKey: .suiteID) ?? ""
+        datasetID = try container.decodeIfPresent(String.self, forKey: .datasetID) ?? ""
+        sampleSize = try container.decodeIfPresent(Int.self, forKey: .sampleSize) ?? 0
+        scoreName = try container.decodeIfPresent(String.self, forKey: .scoreName) ?? ""
+        scoreValue = try container.decodeIfPresent(Double.self, forKey: .scoreValue) ?? 0
+        correctCount = try container.decodeIfPresent(Int.self, forKey: .correctCount) ?? 0
+        incorrectCount = try container.decodeIfPresent(Int.self, forKey: .incorrectCount) ?? 0
+        durationSeconds = try container.decodeIfPresent(Double.self, forKey: .durationSeconds) ?? 0
+        createdAtUnixMS = try container.decodeIfPresent(Int64.self, forKey: .createdAtUnixMS) ?? 0
+    }
 }
 
 public struct ControlPlaneBenchmarkExportBundle: Codable, Equatable, Sendable {
@@ -324,6 +388,7 @@ public struct ControlPlaneBenchmarkExportBundle: Codable, Equatable, Sendable {
     public let benchmarkResults: [ControlPlaneBenchmarkResultRecord]
     public let evaluationJobs: [ControlPlaneEvaluationJobRecord]
     public let evaluationResults: [ControlPlaneEvaluationResultRecord]
+    public let evaluationSummaryRows: [ControlPlaneEvaluationSummaryCSVRow]
     public let evaluationSamples: [ControlPlaneEvaluationSampleRecord]
 
     enum CodingKeys: String, CodingKey {
@@ -333,6 +398,7 @@ public struct ControlPlaneBenchmarkExportBundle: Codable, Equatable, Sendable {
         case benchmarkResults = "benchmark_results"
         case evaluationJobs = "evaluation_jobs"
         case evaluationResults = "evaluation_results"
+        case evaluationSummaryRows = "evaluation_summary_rows"
         case evaluationSamples = "evaluation_samples"
     }
 
@@ -344,6 +410,7 @@ public struct ControlPlaneBenchmarkExportBundle: Codable, Equatable, Sendable {
         benchmarkResults = try container.decodeIfPresent([ControlPlaneBenchmarkResultRecord].self, forKey: .benchmarkResults) ?? []
         evaluationJobs = try container.decodeIfPresent([ControlPlaneEvaluationJobRecord].self, forKey: .evaluationJobs) ?? []
         evaluationResults = try container.decodeIfPresent([ControlPlaneEvaluationResultRecord].self, forKey: .evaluationResults) ?? []
+        evaluationSummaryRows = try container.decodeIfPresent([ControlPlaneEvaluationSummaryCSVRow].self, forKey: .evaluationSummaryRows) ?? []
         evaluationSamples = try container.decodeIfPresent([ControlPlaneEvaluationSampleRecord].self, forKey: .evaluationSamples) ?? []
     }
 
@@ -481,6 +548,18 @@ public struct ControlPlaneBenchmarkExportBundle: Codable, Equatable, Sendable {
     }
 
     public func evaluationSummaryCSVRows(jobID: String? = nil) -> [ControlPlaneEvaluationSummaryCSVRow] {
+        let canonicalRows = evaluationSummaryRows
+            .filter { jobID == nil || $0.jobID == jobID }
+            .sorted {
+                if $0.createdAtUnixMS == $1.createdAtUnixMS {
+                    return $0.jobID < $1.jobID
+                }
+                return $0.createdAtUnixMS < $1.createdAtUnixMS
+            }
+        if canonicalRows.isEmpty == false {
+            return canonicalRows
+        }
+
         let resultsByJob = Dictionary(grouping: evaluationResults, by: \.jobID)
         return evaluationJobs
             .filter { jobID == nil || $0.jobID == jobID }
@@ -490,9 +569,9 @@ public struct ControlPlaneBenchmarkExportBundle: Codable, Equatable, Sendable {
                 }
                 return $0.createdAtUnixMS < $1.createdAtUnixMS
             }
-            .flatMap { job in
+            .compactMap { job in
                 let result = resultsByJob[job.jobID]?.first
-                return (result?.metrics ?? []).sorted { $0.name < $1.name }.map { metric in
+                return result.map { result in
                     ControlPlaneEvaluationSummaryCSVRow(
                         jobID: job.jobID,
                         modelID: job.modelID,
@@ -501,10 +580,11 @@ public struct ControlPlaneBenchmarkExportBundle: Codable, Equatable, Sendable {
                         suiteID: job.suiteID,
                         datasetID: job.datasetID,
                         sampleSize: job.sampleSize,
-                        scoringMode: job.scoringMode,
-                        metricName: metric.name,
-                        metricValue: metric.value,
-                        unit: metric.unit,
+                        scoreName: result.metrics.first?.name ?? "",
+                        scoreValue: result.metrics.first?.value ?? 0,
+                        correctCount: 0,
+                        incorrectCount: 0,
+                        durationSeconds: 0,
                         createdAtUnixMS: job.createdAtUnixMS
                     )
                 }
@@ -513,7 +593,7 @@ public struct ControlPlaneBenchmarkExportBundle: Codable, Equatable, Sendable {
 
     public func evaluationSummaryCSV(jobID: String? = nil) -> String {
         let rows = evaluationSummaryCSVRows(jobID: jobID)
-        let header = "job_id,model_id,task_kind,source_repo,suite_id,dataset_id,sample_size,scoring_mode,metric_name,metric_value,unit,created_at_unix_ms"
+        let header = "job_id,model_id,task_kind,source_repo,suite_id,dataset_id,sample_size,score_name,score_value,correct_count,incorrect_count,duration_seconds,created_at_unix_ms"
         guard rows.isEmpty == false else {
             return header + "\n"
         }
@@ -526,10 +606,11 @@ public struct ControlPlaneBenchmarkExportBundle: Codable, Equatable, Sendable {
                 row.suiteID,
                 row.datasetID,
                 String(row.sampleSize),
-                row.scoringMode,
-                row.metricName,
-                String(row.metricValue),
-                row.unit,
+                row.scoreName,
+                String(row.scoreValue),
+                String(row.correctCount),
+                String(row.incorrectCount),
+                String(row.durationSeconds),
                 String(row.createdAtUnixMS),
             ]
             .map(Self.csvField)
