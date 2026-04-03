@@ -337,6 +337,13 @@ message RunBench {
   map<string, string> parameters = 2;
   string model_id = 3;
   string hf_repo_id = 4;
+  repeated uint32 context_lengths = 5;
+  uint32 generation_length = 6;
+  repeated uint32 batch_sizes = 7;
+  uint32 repeats = 8;
+  string cache_profile = 9;
+  string reasoning_mode = 10;
+  string structured_output_mode = 11;
 }
 message RunEvaluation {
   string suite_id = 1;
@@ -345,6 +352,10 @@ message RunEvaluation {
   map<string, string> parameters = 4;
   string model_id = 5;
   string hf_repo_id = 6;
+  uint32 few_shot = 7;
+  uint64 seed = 8;
+  string scoring_mode = 9;
+  string code_exec_policy = 10;
 }
 message SearchHubModels {
   string query = 1;

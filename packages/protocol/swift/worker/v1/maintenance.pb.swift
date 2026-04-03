@@ -386,6 +386,20 @@ public struct Melix_Worker_V1_RunBenchRequest: Sendable {
 
   public var sourceRepo: String = String()
 
+  public var contextLengths: [UInt32] = []
+
+  public var generationLength: UInt32 = 0
+
+  public var batchSizes: [UInt32] = []
+
+  public var repeats: UInt32 = 0
+
+  public var cacheProfile: String = String()
+
+  public var reasoningMode: String = String()
+
+  public var structuredOutputMode: String = String()
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -547,6 +561,14 @@ public struct Melix_Worker_V1_RunEvaluationRequest: Sendable {
   public var taskKind: String = String()
 
   public var sourceRepo: String = String()
+
+  public var fewShot: UInt32 = 0
+
+  public var seed: UInt64 = 0
+
+  public var scoringMode: String = String()
+
+  public var codeExecPolicy: String = String()
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -1681,7 +1703,7 @@ extension Melix_Worker_V1_RunDoctorResponse: SwiftProtobuf.Message, SwiftProtobu
 
 extension Melix_Worker_V1_RunBenchRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".RunBenchRequest"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}model_handle\0\u{1}suites\0\u{1}parameters\0\u{3}task_kind\0\u{3}source_repo\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}model_handle\0\u{1}suites\0\u{1}parameters\0\u{3}task_kind\0\u{3}source_repo\0\u{3}context_lengths\0\u{3}generation_length\0\u{3}batch_sizes\0\u{1}repeats\0\u{3}cache_profile\0\u{3}reasoning_mode\0\u{3}structured_output_mode\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -1694,6 +1716,13 @@ extension Melix_Worker_V1_RunBenchRequest: SwiftProtobuf.Message, SwiftProtobuf.
       case 3: try { try decoder.decodeMapField(fieldType: SwiftProtobuf._ProtobufMap<SwiftProtobuf.ProtobufString,SwiftProtobuf.ProtobufString>.self, value: &self.parameters) }()
       case 4: try { try decoder.decodeSingularStringField(value: &self.taskKind) }()
       case 5: try { try decoder.decodeSingularStringField(value: &self.sourceRepo) }()
+      case 6: try { try decoder.decodeRepeatedUInt32Field(value: &self.contextLengths) }()
+      case 7: try { try decoder.decodeSingularUInt32Field(value: &self.generationLength) }()
+      case 8: try { try decoder.decodeRepeatedUInt32Field(value: &self.batchSizes) }()
+      case 9: try { try decoder.decodeSingularUInt32Field(value: &self.repeats) }()
+      case 10: try { try decoder.decodeSingularStringField(value: &self.cacheProfile) }()
+      case 11: try { try decoder.decodeSingularStringField(value: &self.reasoningMode) }()
+      case 12: try { try decoder.decodeSingularStringField(value: &self.structuredOutputMode) }()
       default: break
       }
     }
@@ -1715,6 +1744,27 @@ extension Melix_Worker_V1_RunBenchRequest: SwiftProtobuf.Message, SwiftProtobuf.
     if !self.sourceRepo.isEmpty {
       try visitor.visitSingularStringField(value: self.sourceRepo, fieldNumber: 5)
     }
+    if !self.contextLengths.isEmpty {
+      try visitor.visitPackedUInt32Field(value: self.contextLengths, fieldNumber: 6)
+    }
+    if self.generationLength != 0 {
+      try visitor.visitSingularUInt32Field(value: self.generationLength, fieldNumber: 7)
+    }
+    if !self.batchSizes.isEmpty {
+      try visitor.visitPackedUInt32Field(value: self.batchSizes, fieldNumber: 8)
+    }
+    if self.repeats != 0 {
+      try visitor.visitSingularUInt32Field(value: self.repeats, fieldNumber: 9)
+    }
+    if !self.cacheProfile.isEmpty {
+      try visitor.visitSingularStringField(value: self.cacheProfile, fieldNumber: 10)
+    }
+    if !self.reasoningMode.isEmpty {
+      try visitor.visitSingularStringField(value: self.reasoningMode, fieldNumber: 11)
+    }
+    if !self.structuredOutputMode.isEmpty {
+      try visitor.visitSingularStringField(value: self.structuredOutputMode, fieldNumber: 12)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -1724,6 +1774,13 @@ extension Melix_Worker_V1_RunBenchRequest: SwiftProtobuf.Message, SwiftProtobuf.
     if lhs.parameters != rhs.parameters {return false}
     if lhs.taskKind != rhs.taskKind {return false}
     if lhs.sourceRepo != rhs.sourceRepo {return false}
+    if lhs.contextLengths != rhs.contextLengths {return false}
+    if lhs.generationLength != rhs.generationLength {return false}
+    if lhs.batchSizes != rhs.batchSizes {return false}
+    if lhs.repeats != rhs.repeats {return false}
+    if lhs.cacheProfile != rhs.cacheProfile {return false}
+    if lhs.reasoningMode != rhs.reasoningMode {return false}
+    if lhs.structuredOutputMode != rhs.structuredOutputMode {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -2018,7 +2075,7 @@ extension Melix_Worker_V1_BenchFailed: SwiftProtobuf.Message, SwiftProtobuf._Mes
 
 extension Melix_Worker_V1_RunEvaluationRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".RunEvaluationRequest"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}model_handle\0\u{3}suite_id\0\u{3}dataset_id\0\u{3}dataset_root\0\u{3}sample_size\0\u{1}parameters\0\u{3}task_kind\0\u{3}source_repo\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}model_handle\0\u{3}suite_id\0\u{3}dataset_id\0\u{3}dataset_root\0\u{3}sample_size\0\u{1}parameters\0\u{3}task_kind\0\u{3}source_repo\0\u{3}few_shot\0\u{1}seed\0\u{3}scoring_mode\0\u{3}code_exec_policy\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -2034,6 +2091,10 @@ extension Melix_Worker_V1_RunEvaluationRequest: SwiftProtobuf.Message, SwiftProt
       case 6: try { try decoder.decodeMapField(fieldType: SwiftProtobuf._ProtobufMap<SwiftProtobuf.ProtobufString,SwiftProtobuf.ProtobufString>.self, value: &self.parameters) }()
       case 7: try { try decoder.decodeSingularStringField(value: &self.taskKind) }()
       case 8: try { try decoder.decodeSingularStringField(value: &self.sourceRepo) }()
+      case 9: try { try decoder.decodeSingularUInt32Field(value: &self.fewShot) }()
+      case 10: try { try decoder.decodeSingularUInt64Field(value: &self.seed) }()
+      case 11: try { try decoder.decodeSingularStringField(value: &self.scoringMode) }()
+      case 12: try { try decoder.decodeSingularStringField(value: &self.codeExecPolicy) }()
       default: break
       }
     }
@@ -2064,6 +2125,18 @@ extension Melix_Worker_V1_RunEvaluationRequest: SwiftProtobuf.Message, SwiftProt
     if !self.sourceRepo.isEmpty {
       try visitor.visitSingularStringField(value: self.sourceRepo, fieldNumber: 8)
     }
+    if self.fewShot != 0 {
+      try visitor.visitSingularUInt32Field(value: self.fewShot, fieldNumber: 9)
+    }
+    if self.seed != 0 {
+      try visitor.visitSingularUInt64Field(value: self.seed, fieldNumber: 10)
+    }
+    if !self.scoringMode.isEmpty {
+      try visitor.visitSingularStringField(value: self.scoringMode, fieldNumber: 11)
+    }
+    if !self.codeExecPolicy.isEmpty {
+      try visitor.visitSingularStringField(value: self.codeExecPolicy, fieldNumber: 12)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -2076,6 +2149,10 @@ extension Melix_Worker_V1_RunEvaluationRequest: SwiftProtobuf.Message, SwiftProt
     if lhs.parameters != rhs.parameters {return false}
     if lhs.taskKind != rhs.taskKind {return false}
     if lhs.sourceRepo != rhs.sourceRepo {return false}
+    if lhs.fewShot != rhs.fewShot {return false}
+    if lhs.seed != rhs.seed {return false}
+    if lhs.scoringMode != rhs.scoringMode {return false}
+    if lhs.codeExecPolicy != rhs.codeExecPolicy {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

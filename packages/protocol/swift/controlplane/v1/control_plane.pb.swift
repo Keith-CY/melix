@@ -2584,6 +2584,20 @@ public struct Melix_Controlplane_V1_RunBench: Sendable {
 
   public var hfRepoID: String = String()
 
+  public var contextLengths: [UInt32] = []
+
+  public var generationLength: UInt32 = 0
+
+  public var batchSizes: [UInt32] = []
+
+  public var repeats: UInt32 = 0
+
+  public var cacheProfile: String = String()
+
+  public var reasoningMode: String = String()
+
+  public var structuredOutputMode: String = String()
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -2605,6 +2619,14 @@ public struct Melix_Controlplane_V1_RunEvaluation: Sendable {
   public var modelID: String = String()
 
   public var hfRepoID: String = String()
+
+  public var fewShot: UInt32 = 0
+
+  public var seed: UInt64 = 0
+
+  public var scoringMode: String = String()
+
+  public var codeExecPolicy: String = String()
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -7968,7 +7990,7 @@ extension Melix_Controlplane_V1_RunDoctor: SwiftProtobuf.Message, SwiftProtobuf.
 
 extension Melix_Controlplane_V1_RunBench: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".RunBench"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}suites\0\u{1}parameters\0\u{3}model_id\0\u{3}hf_repo_id\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}suites\0\u{1}parameters\0\u{3}model_id\0\u{3}hf_repo_id\0\u{3}context_lengths\0\u{3}generation_length\0\u{3}batch_sizes\0\u{1}repeats\0\u{3}cache_profile\0\u{3}reasoning_mode\0\u{3}structured_output_mode\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -7980,6 +8002,13 @@ extension Melix_Controlplane_V1_RunBench: SwiftProtobuf.Message, SwiftProtobuf._
       case 2: try { try decoder.decodeMapField(fieldType: SwiftProtobuf._ProtobufMap<SwiftProtobuf.ProtobufString,SwiftProtobuf.ProtobufString>.self, value: &self.parameters) }()
       case 3: try { try decoder.decodeSingularStringField(value: &self.modelID) }()
       case 4: try { try decoder.decodeSingularStringField(value: &self.hfRepoID) }()
+      case 5: try { try decoder.decodeRepeatedUInt32Field(value: &self.contextLengths) }()
+      case 6: try { try decoder.decodeSingularUInt32Field(value: &self.generationLength) }()
+      case 7: try { try decoder.decodeRepeatedUInt32Field(value: &self.batchSizes) }()
+      case 8: try { try decoder.decodeSingularUInt32Field(value: &self.repeats) }()
+      case 9: try { try decoder.decodeSingularStringField(value: &self.cacheProfile) }()
+      case 10: try { try decoder.decodeSingularStringField(value: &self.reasoningMode) }()
+      case 11: try { try decoder.decodeSingularStringField(value: &self.structuredOutputMode) }()
       default: break
       }
     }
@@ -7998,6 +8027,27 @@ extension Melix_Controlplane_V1_RunBench: SwiftProtobuf.Message, SwiftProtobuf._
     if !self.hfRepoID.isEmpty {
       try visitor.visitSingularStringField(value: self.hfRepoID, fieldNumber: 4)
     }
+    if !self.contextLengths.isEmpty {
+      try visitor.visitPackedUInt32Field(value: self.contextLengths, fieldNumber: 5)
+    }
+    if self.generationLength != 0 {
+      try visitor.visitSingularUInt32Field(value: self.generationLength, fieldNumber: 6)
+    }
+    if !self.batchSizes.isEmpty {
+      try visitor.visitPackedUInt32Field(value: self.batchSizes, fieldNumber: 7)
+    }
+    if self.repeats != 0 {
+      try visitor.visitSingularUInt32Field(value: self.repeats, fieldNumber: 8)
+    }
+    if !self.cacheProfile.isEmpty {
+      try visitor.visitSingularStringField(value: self.cacheProfile, fieldNumber: 9)
+    }
+    if !self.reasoningMode.isEmpty {
+      try visitor.visitSingularStringField(value: self.reasoningMode, fieldNumber: 10)
+    }
+    if !self.structuredOutputMode.isEmpty {
+      try visitor.visitSingularStringField(value: self.structuredOutputMode, fieldNumber: 11)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -8006,6 +8056,13 @@ extension Melix_Controlplane_V1_RunBench: SwiftProtobuf.Message, SwiftProtobuf._
     if lhs.parameters != rhs.parameters {return false}
     if lhs.modelID != rhs.modelID {return false}
     if lhs.hfRepoID != rhs.hfRepoID {return false}
+    if lhs.contextLengths != rhs.contextLengths {return false}
+    if lhs.generationLength != rhs.generationLength {return false}
+    if lhs.batchSizes != rhs.batchSizes {return false}
+    if lhs.repeats != rhs.repeats {return false}
+    if lhs.cacheProfile != rhs.cacheProfile {return false}
+    if lhs.reasoningMode != rhs.reasoningMode {return false}
+    if lhs.structuredOutputMode != rhs.structuredOutputMode {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -8013,7 +8070,7 @@ extension Melix_Controlplane_V1_RunBench: SwiftProtobuf.Message, SwiftProtobuf._
 
 extension Melix_Controlplane_V1_RunEvaluation: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".RunEvaluation"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}suite_id\0\u{3}dataset_id\0\u{3}sample_size\0\u{1}parameters\0\u{3}model_id\0\u{3}hf_repo_id\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}suite_id\0\u{3}dataset_id\0\u{3}sample_size\0\u{1}parameters\0\u{3}model_id\0\u{3}hf_repo_id\0\u{3}few_shot\0\u{1}seed\0\u{3}scoring_mode\0\u{3}code_exec_policy\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -8027,6 +8084,10 @@ extension Melix_Controlplane_V1_RunEvaluation: SwiftProtobuf.Message, SwiftProto
       case 4: try { try decoder.decodeMapField(fieldType: SwiftProtobuf._ProtobufMap<SwiftProtobuf.ProtobufString,SwiftProtobuf.ProtobufString>.self, value: &self.parameters) }()
       case 5: try { try decoder.decodeSingularStringField(value: &self.modelID) }()
       case 6: try { try decoder.decodeSingularStringField(value: &self.hfRepoID) }()
+      case 7: try { try decoder.decodeSingularUInt32Field(value: &self.fewShot) }()
+      case 8: try { try decoder.decodeSingularUInt64Field(value: &self.seed) }()
+      case 9: try { try decoder.decodeSingularStringField(value: &self.scoringMode) }()
+      case 10: try { try decoder.decodeSingularStringField(value: &self.codeExecPolicy) }()
       default: break
       }
     }
@@ -8051,6 +8112,18 @@ extension Melix_Controlplane_V1_RunEvaluation: SwiftProtobuf.Message, SwiftProto
     if !self.hfRepoID.isEmpty {
       try visitor.visitSingularStringField(value: self.hfRepoID, fieldNumber: 6)
     }
+    if self.fewShot != 0 {
+      try visitor.visitSingularUInt32Field(value: self.fewShot, fieldNumber: 7)
+    }
+    if self.seed != 0 {
+      try visitor.visitSingularUInt64Field(value: self.seed, fieldNumber: 8)
+    }
+    if !self.scoringMode.isEmpty {
+      try visitor.visitSingularStringField(value: self.scoringMode, fieldNumber: 9)
+    }
+    if !self.codeExecPolicy.isEmpty {
+      try visitor.visitSingularStringField(value: self.codeExecPolicy, fieldNumber: 10)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -8061,6 +8134,10 @@ extension Melix_Controlplane_V1_RunEvaluation: SwiftProtobuf.Message, SwiftProto
     if lhs.parameters != rhs.parameters {return false}
     if lhs.modelID != rhs.modelID {return false}
     if lhs.hfRepoID != rhs.hfRepoID {return false}
+    if lhs.fewShot != rhs.fewShot {return false}
+    if lhs.seed != rhs.seed {return false}
+    if lhs.scoringMode != rhs.scoringMode {return false}
+    if lhs.codeExecPolicy != rhs.codeExecPolicy {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

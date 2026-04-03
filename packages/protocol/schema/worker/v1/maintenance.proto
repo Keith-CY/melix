@@ -116,6 +116,13 @@ message RunBenchRequest {
   map<string, string> parameters = 3;
   string task_kind = 4;
   string source_repo = 5;
+  repeated uint32 context_lengths = 6;
+  uint32 generation_length = 7;
+  repeated uint32 batch_sizes = 8;
+  uint32 repeats = 9;
+  string cache_profile = 10;
+  string reasoning_mode = 11;
+  string structured_output_mode = 12;
 }
 
 message RunBenchEvent {
@@ -160,6 +167,10 @@ message RunEvaluationRequest {
   map<string, string> parameters = 6;
   string task_kind = 7;
   string source_repo = 8;
+  uint32 few_shot = 9;
+  uint64 seed = 10;
+  string scoring_mode = 11;
+  string code_exec_policy = 12;
 }
 
 message EvaluationMetricValue {

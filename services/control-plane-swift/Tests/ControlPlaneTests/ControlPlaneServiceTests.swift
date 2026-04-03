@@ -1684,6 +1684,48 @@ struct ControlPlaneServiceTests {
         #expect(snapshot.ops.metrics.values["bench.smoke.ttft_ms"] == 24.45)
     }
 
+    @Test("execute forwards canonical bench request fields to the worker request")
+    func executeForwardsCanonicalBenchRequestFieldsToTheWorkerRequest() async throws {
+        let reportPath = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("melix-bench-canonical-report.md").path
+        try "# Melix Bench\n".write(toFile: reportPath, atomically: true, encoding: .utf8)
+
+        let modelOpsClient = ScriptedModelOperationsWorkerClient()
+        await modelOpsClient.setBenchEvents([
+            {
+                var event = Melix_Worker_V1_RunBenchEvent()
+                event.started = Melix_Worker_V1_BenchStarted()
+                event.started.jobID = "bench-canonical"
+                return event
+            }(),
+            {
+                var event = Melix_Worker_V1_RunBenchEvent()
+                event.completed = Melix_Worker_V1_BenchCompleted()
+                event.completed.reportPath = reportPath
+                return event
+            }(),
+        ])
+        let catalog = ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels())
+        _ = await catalog.loadModel(id: "melix-dev-text", dispatchHandle: "melix-dev-text::explicit")
+        let service = ControlPlaneService(
+            modelCatalog: catalog,
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                modelOperationsClient: modelOpsClient
+            )
+        )
+
+        _ = try await service.execute(makeRunBenchRequest())
+        let lastRequest = try #require(await modelOpsClient.lastBenchRequest)
+
+        #expect(lastRequest.contextLengths == [1024, 4096])
+        #expect(lastRequest.generationLength == 128)
+        #expect(lastRequest.batchSizes == [2, 4])
+        #expect(lastRequest.repeats == 3)
+        #expect(lastRequest.cacheProfile == "partial_prefix")
+        #expect(lastRequest.reasoningMode == "enabled")
+        #expect(lastRequest.structuredOutputMode == "json_schema")
+    }
+
     @Test("execute routes ops.run_bench to the explicit requested model when model_id is provided")
     func executeRoutesOpsRunBenchToExplicitRequestedModel() async throws {
         let reportPath = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("melix-bench-explicit-report.md").path
@@ -2161,6 +2203,44 @@ struct ControlPlaneServiceTests {
         #expect(response.ops.evaluationResults[0].metrics.count == 1)
         #expect(response.ops.evaluationResults[0].metrics[0].name == "eval.qa_smoke.accuracy")
         #expect(response.ops.evaluationResults[0].metrics[0].value == 1.0)
+    }
+
+    @Test("execute forwards canonical evaluation request fields to the worker request")
+    func executeForwardsCanonicalEvaluationRequestFieldsToTheWorkerRequest() async throws {
+        let modelOpsClient = ScriptedModelOperationsWorkerClient()
+        await modelOpsClient.setEvaluationResponse({
+            var response = Melix_Worker_V1_RunEvaluationResponse()
+            response.ok = true
+            response.job = Melix_Worker_V1_WorkerEvaluationJob()
+            response.job.jobID = "eval-canonical"
+            response.job.modelID = "melix-dev-text"
+            response.job.suiteID = "qa_smoke"
+            response.job.datasetID = "qa_smoke.dev.v1"
+            response.job.sampleSize = 8
+            response.job.scoringMode = "multiple_choice_accuracy"
+            response.job.parameters = ["judge": "deterministic"]
+            response.job.status = "completed"
+            response.job.outputDir = "/tmp/melix/evaluation/runs/eval-canonical"
+            response.results = []
+            return response
+        }())
+        let catalog = ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels())
+        _ = await catalog.loadModel(id: "melix-dev-text", dispatchHandle: "melix-dev-text::explicit")
+        let service = ControlPlaneService(
+            modelCatalog: catalog,
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                modelOperationsClient: modelOpsClient
+            )
+        )
+
+        _ = try await service.execute(makeRunEvaluationRequest())
+        let lastRequest = try #require(await modelOpsClient.lastEvaluationRequest)
+
+        #expect(lastRequest.fewShot == 4)
+        #expect(lastRequest.seed == 7)
+        #expect(lastRequest.scoringMode == "multiple_choice_accuracy")
+        #expect(lastRequest.codeExecPolicy == "sandboxed")
     }
 
     @Test("execute rejects unsupported evaluation task families and unresolved targets")
@@ -4060,6 +4140,13 @@ struct ControlPlaneServiceTests {
         request.ops.runBench.modelID = modelID
         request.ops.runBench.hfRepoID = hfRepoID
         request.ops.runBench.suites = ["smoke", "latency"]
+        request.ops.runBench.contextLengths = [1024, 4096]
+        request.ops.runBench.generationLength = 128
+        request.ops.runBench.batchSizes = [2, 4]
+        request.ops.runBench.repeats = 3
+        request.ops.runBench.cacheProfile = "partial_prefix"
+        request.ops.runBench.reasoningMode = "enabled"
+        request.ops.runBench.structuredOutputMode = "json_schema"
         return request
     }
 
@@ -4118,6 +4205,10 @@ struct ControlPlaneServiceTests {
         request.ops.runEvaluation.suiteID = "qa_smoke"
         request.ops.runEvaluation.datasetID = "qa_smoke.dev.v1"
         request.ops.runEvaluation.sampleSize = 8
+        request.ops.runEvaluation.fewShot = 4
+        request.ops.runEvaluation.seed = 7
+        request.ops.runEvaluation.scoringMode = "multiple_choice_accuracy"
+        request.ops.runEvaluation.codeExecPolicy = "sandboxed"
         request.ops.runEvaluation.parameters = [
             "judge": "deterministic",
         ]

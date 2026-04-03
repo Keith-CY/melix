@@ -136,6 +136,40 @@ struct MelixCLIParserTests {
         #expect(options.json)
     }
 
+    @Test("parses bench run with canonical sweep and tuning inputs")
+    func parsesBenchRunWithCanonicalSweepAndTuningInputs() throws {
+        let command = try MelixCLIParser.parse([
+            "bench",
+            "run",
+            "--model-id", "melix-dev-text",
+            "--suite", "smoke",
+            "--context-length", "1024",
+            "--context-length", "4096",
+            "--generation-length", "128",
+            "--batch-size", "2",
+            "--batch-size", "4",
+            "--repeats", "3",
+            "--cache-profile", "partial_prefix",
+            "--reasoning-mode", "enabled",
+            "--structured-output-mode", "json_schema",
+        ])
+
+        guard case .benchRun(let options) = command else {
+            Issue.record("Expected benchRun command")
+            return
+        }
+
+        #expect(options.modelID == "melix-dev-text")
+        #expect(options.suites == ["smoke"])
+        #expect(options.parameters["context_lengths"] == "1024,4096")
+        #expect(options.parameters["generation_length"] == "128")
+        #expect(options.parameters["batch_sizes"] == "2,4")
+        #expect(options.parameters["repeats"] == "3")
+        #expect(options.parameters["cache_profile"] == "partial_prefix")
+        #expect(options.parameters["reasoning_mode"] == "enabled")
+        #expect(options.parameters["structured_output_mode"] == "json_schema")
+    }
+
     @Test("parses bench run with a direct Hugging Face repo target")
     func parsesBenchRunCommandForDirectHFRepo() throws {
         let command = try MelixCLIParser.parse([
@@ -217,6 +251,34 @@ struct MelixCLIParserTests {
         #expect(options.parameters["seed"] == "7")
         #expect(options.parameters["few_shot"] == "4")
         #expect(options.json)
+    }
+
+    @Test("parses eval run with canonical few-shot scoring and execution inputs")
+    func parsesEvalRunWithCanonicalFewShotScoringAndExecutionInputs() throws {
+        let command = try MelixCLIParser.parse([
+            "eval",
+            "run",
+            "--repo-id", "unsloth/gemma-4-E4B-it-MLX-8bit",
+            "--suite", "qa_smoke",
+            "--dataset-id", "qa_smoke.dev.v1",
+            "--few-shot", "4",
+            "--seed", "7",
+            "--scoring-mode", "multiple_choice_accuracy",
+            "--code-exec-policy", "sandboxed",
+        ])
+
+        guard case .evalRun(let options) = command else {
+            Issue.record("Expected evalRun command")
+            return
+        }
+
+        #expect(options.hfRepoID == "unsloth/gemma-4-E4B-it-MLX-8bit")
+        #expect(options.suites == ["qa_smoke"])
+        #expect(options.datasetID == "qa_smoke.dev.v1")
+        #expect(options.parameters["few_shot"] == "4")
+        #expect(options.parameters["seed"] == "7")
+        #expect(options.parameters["scoring_mode"] == "multiple_choice_accuracy")
+        #expect(options.parameters["code_exec_policy"] == "sandboxed")
     }
 
     @Test("parses eval list and export commands")
