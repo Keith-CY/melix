@@ -2057,10 +2057,11 @@ def test_run_bench_persists_job_manifest_and_per_suite_results(tmp_path: Path) -
     assert job_payload["suite_metadata"]["latency"]["dataset_path"] == "databricks/databricks-dolly-15k"
     assert smoke_payload == expected_results["smoke"]
     assert latency_payload == expected_results["latency"]
-    assert len(context_rows) == 8
-    assert len(batch_rows) == 16
+    assert len(context_rows) == 24
+    assert len(batch_rows) == 24
     assert {row["cache_profile"] for row in context_rows} == {"partial_prefix"}
-    assert all(row["speedup_vs_batch_1"] > 0.0 for row in batch_rows)
+    assert {row["batch_size"] for row in batch_rows} == {1}
+    assert all(row["speedup_vs_batch_1"] == 1.0 for row in batch_rows)
     assert job_payload["request_p95_ms"] >= job_payload["request_p50_ms"]
 
 

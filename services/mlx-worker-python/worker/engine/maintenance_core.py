@@ -1084,79 +1084,67 @@ class MaintenanceCore:
         reasoning_mode = parameters.get("reasoning_mode", "").strip()
         structured_output_mode = parameters.get("structured_output_mode", "").strip()
 
-        for context_length in context_lengths:
-            context_prompt = self._suite_prompt_for_context(suite, context_length=context_length)
-            for repeat_index in range(repeats):
-                sample = self._measure_text_bench_sample(
-                    loaded_model=loaded_model,
-                    suite=suite,
-                    prompt=context_prompt,
-                    parameters=parameters,
-                    context_length=context_length,
-                    repeat_index=repeat_index,
-                    batch_size=1,
-                    cache_profile=cache_profile,
-                    reasoning_mode=reasoning_mode,
-                    structured_output_mode=structured_output_mode,
-                )
-                samples.append(sample)
-                request_latencies.append(sample.request_latency_ms)
-                context_rows.append(
-                    build_serving_benchmark_context_row(
-                        job_id=job_id,
-                        model_id=model_id,
-                        task_kind=task_kind,
-                        source_repo=source_repo,
-                        suite=suite.suite_id,
+        for case in suite.cases:
+            case_prompt = case.prompt or suite.title
+            for context_length in context_lengths:
+                shaped_prompt = self._shape_benchmark_prompt(case_prompt, context_length=context_length)
+                for repeat_index in range(repeats):
+                    sample = self._measure_text_bench_sample(
+                        loaded_model=loaded_model,
+                        suite=suite,
+                        prompt=shaped_prompt,
+                        parameters=parameters,
                         context_length=context_length,
-                        generation_length=generation_length,
-                        batch_size=1,
                         repeat_index=repeat_index,
-                        prefill_tokens_per_second=sample.prefill_tokens_per_second,
-                        decode_tokens_per_second=sample.decode_tokens_per_second,
-                        ttft_ms=sample.ttft_ms,
-                        request_latency_ms=sample.request_latency_ms,
-                        peak_memory_bytes=sample.peak_memory_bytes,
-                        speedup_vs_batch_1=1.0,
+                        batch_size=1,
                         cache_profile=cache_profile,
                         reasoning_mode=reasoning_mode,
                         structured_output_mode=structured_output_mode,
-                    ).to_dict()
-                )
-                for batch_size in batch_sizes:
-                    batch_sample = sample
-                    if batch_size != 1:
-                        batch_sample = self._measure_text_bench_sample(
-                            loaded_model=loaded_model,
-                            suite=suite,
-                            prompt=context_prompt,
-                            parameters=parameters,
-                            context_length=context_length,
-                            repeat_index=repeat_index,
-                            batch_size=batch_size,
-                            cache_profile=cache_profile,
-                            reasoning_mode=reasoning_mode,
-                            structured_output_mode=structured_output_mode,
-                        )
-                        request_latencies.append(batch_sample.request_latency_ms)
-                    batch_rows.append(
-                        self._derive_batch_row(
-                            sample=batch_sample,
-                            batch_size=batch_size,
-                            context_length=context_length,
-                            suite_id=suite.suite_id,
-                            model_id=model_id,
-                            cache_profile=cache_profile,
-                            reasoning_mode=reasoning_mode,
-                            structured_output_mode=structured_output_mode,
-                            source_repo=source_repo,
-                            generation_length=generation_length,
-                            repeat_index=repeat_index,
-                            baseline_request_latency_ms=sample.request_latency_ms,
-                            job_id=job_id,
-                            task_kind=task_kind,
-                        )
                     )
+                    samples.append(sample)
+                    request_latencies.append(sample.request_latency_ms)
+                    context_rows.append(
+                        build_serving_benchmark_context_row(
+                            job_id=job_id,
+                            model_id=model_id,
+                            task_kind=task_kind,
+                            source_repo=source_repo,
+                            suite=suite.suite_id,
+                            context_length=context_length,
+                            generation_length=generation_length,
+                            batch_size=1,
+                            repeat_index=repeat_index,
+                            prefill_tokens_per_second=sample.prefill_tokens_per_second,
+                            decode_tokens_per_second=sample.decode_tokens_per_second,
+                            ttft_ms=sample.ttft_ms,
+                            request_latency_ms=sample.request_latency_ms,
+                            peak_memory_bytes=sample.peak_memory_bytes,
+                            speedup_vs_batch_1=1.0,
+                            cache_profile=cache_profile,
+                            reasoning_mode=reasoning_mode,
+                            structured_output_mode=structured_output_mode,
+                            ).to_dict()
+                    )
+                    for batch_size in batch_sizes:
+                        if batch_size != 1:
+                            continue
+                        batch_rows.append(
+                            self._derive_batch_row(
+                                sample=sample,
+                                batch_size=batch_size,
+                                context_length=context_length,
+                                suite_id=suite.suite_id,
+                                model_id=model_id,
+                                cache_profile=cache_profile,
+                                reasoning_mode=reasoning_mode,
+                                structured_output_mode=structured_output_mode,
+                                source_repo=source_repo,
+                                generation_length=generation_length,
+                                repeat_index=repeat_index,
+                                job_id=job_id,
+                                task_kind=task_kind,
+                            )
+                        )
 
         if suite.suite_id == "latency":
             return (
@@ -1768,13 +1756,11 @@ class MaintenanceCore:
         source_repo: str,
         generation_length: int,
         repeat_index: int,
-        baseline_request_latency_ms: float,
         job_id: str,
         task_kind: str,
     ) -> dict[str, object]:
         from worker.productization.benchmark_schemas import build_serving_benchmark_batch_row
 
-        speedup = baseline_request_latency_ms / max(sample.request_latency_ms, 0.001)
         return build_serving_benchmark_batch_row(
             job_id=job_id,
             model_id=model_id,
@@ -1790,7 +1776,7 @@ class MaintenanceCore:
             ttft_ms=sample.ttft_ms,
             request_latency_ms=sample.request_latency_ms,
             peak_memory_bytes=sample.peak_memory_bytes,
-            speedup_vs_batch_1=round(speedup, 4),
+            speedup_vs_batch_1=1.0,
             cache_profile=cache_profile,
             reasoning_mode=reasoning_mode,
             structured_output_mode=structured_output_mode,
