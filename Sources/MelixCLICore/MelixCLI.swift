@@ -63,6 +63,13 @@ public struct BenchRunOptions: Equatable, Sendable {
     public let modelID: String
     public let hfRepoID: String
     public let suites: [String]
+    public let contextLengths: [UInt32]
+    public let generationLength: UInt32
+    public let batchSizes: [UInt32]
+    public let repeats: UInt32
+    public let cacheProfile: String
+    public let reasoningMode: String
+    public let structuredOutputMode: String
     public let parameters: [String: String]
     public let json: Bool
 
@@ -70,12 +77,26 @@ public struct BenchRunOptions: Equatable, Sendable {
         modelID: String = "",
         hfRepoID: String = "",
         suites: [String] = [],
+        contextLengths: [UInt32] = [],
+        generationLength: UInt32 = 0,
+        batchSizes: [UInt32] = [],
+        repeats: UInt32 = 1,
+        cacheProfile: String = "",
+        reasoningMode: String = "",
+        structuredOutputMode: String = "",
         parameters: [String: String] = [:],
         json: Bool = false
     ) {
         self.modelID = modelID
         self.hfRepoID = hfRepoID
         self.suites = suites
+        self.contextLengths = ControlPlaneBenchRequest.normalizedBenchValues(contextLengths)
+        self.generationLength = generationLength
+        self.batchSizes = ControlPlaneBenchRequest.normalizedBenchValues(batchSizes)
+        self.repeats = repeats == 0 ? 1 : repeats
+        self.cacheProfile = cacheProfile
+        self.reasoningMode = reasoningMode
+        self.structuredOutputMode = structuredOutputMode
         self.parameters = parameters
         self.json = json
     }
@@ -206,7 +227,7 @@ public enum MelixCLIParser {
       melix lora list [--model-id MODEL_ID] [--json]
       melix lora train --model-id MODEL_ID (--dataset-uri PATH | --hf-dataset-path REPO) --adapter-name NAME [--target-repo REPO] [--rank N] [--alpha N] [--dropout N] [--target-modules CSV] [--num-layers N] [--batch-size N] [--epochs N] [--learning-rate N] [--max-seq-length N] [--hf-dataset-name NAME] [--hf-dataset-revision REV] [--hf-train-split SPLIT] [--hf-valid-split SPLIT] [--text-feature NAME] [--prompt-feature NAME] [--completion-feature NAME] [--chat-feature NAME] [--derived-model-alias NAME] [--response-only] [--mask-prompt] [--gradient-checkpointing] [--json]
       melix lora activate --model-id MODEL_ID --adapter-path PATH [--alias NAME] [--json]
-      melix bench run (--model-id MODEL_ID | --repo-id HF_REPO) [--suite SUITE ...] [--sample-size N] [--batch-factor N] [--json]
+      melix bench run (--model-id MODEL_ID | --repo-id HF_REPO) [--suite SUITE ...] [--context-length N ...] [--generation-length N] [--batch-size N ...] [--repeats N] [--cache-profile MODE] [--reasoning-mode MODE] [--structured-output-mode MODE] [--sample-size N] [--batch-factor N] [--json]
       melix bench list [--json]
       melix bench export-csv --job-id JOB_ID --output PATH [--json]
       melix eval run (--model-id MODEL_ID | --repo-id HF_REPO) [--suite SUITE ...] [--dataset-id DATASET_ID] [--sample-size N] [--batch-factor N] [--seed N] [--few-shot N] [--json]
@@ -309,7 +330,9 @@ public enum MelixCLIParser {
         guard let action = arguments.first else {
             throw MelixCLIError.usage(usageText)
         }
-        let values = try ArgumentCursor(arguments: Array(arguments.dropFirst())).parse()
+        let values = try ArgumentCursor(arguments: Array(arguments.dropFirst())).parse(
+            multiValueOptions: ["--suite", "--context-length", "--batch-size"]
+        )
         switch action {
         case "run":
             let modelID = values.single["--model-id"] ?? ""
@@ -318,6 +341,16 @@ public enum MelixCLIParser {
             guard explicitTargetCount == 1 else {
                 throw MelixCLIError.missingRequired("Exactly one of --model-id or --repo-id is required for melix bench run.")
             }
+            let contextLengths = try parseUInt32List(values.multi["--context-length"] ?? [], option: "--context-length")
+            let generationLength = try parseUInt32Value(values.single["--generation-length"], option: "--generation-length") ?? 0
+            let batchSizes = try parseUInt32List(values.multi["--batch-size"] ?? [], option: "--batch-size")
+            let repeats = try parseUInt32Value(values.single["--repeats"], option: "--repeats", defaultValue: 1) ?? 1
+            let cacheProfile = values.single["--cache-profile"] ?? ""
+            guard cacheProfile.isEmpty || ControlPlaneBenchRequest.validCacheProfiles.contains(cacheProfile) else {
+                throw MelixCLIError.usage("Invalid value for --cache-profile. Expected one of: \(ControlPlaneBenchRequest.validCacheProfiles.joined(separator: ", ")).")
+            }
+            let reasoningMode = values.single["--reasoning-mode"] ?? ""
+            let structuredOutputMode = values.single["--structured-output-mode"] ?? ""
             var parameters: [String: String] = [:]
             if let sampleSize = values.single["--sample-size"] {
                 parameters["sample_size"] = sampleSize
@@ -330,6 +363,13 @@ public enum MelixCLIParser {
                     modelID: modelID,
                     hfRepoID: hfRepoID,
                     suites: values.multi["--suite"] ?? [],
+                    contextLengths: contextLengths,
+                    generationLength: generationLength,
+                    batchSizes: batchSizes,
+                    repeats: repeats,
+                    cacheProfile: cacheProfile,
+                    reasoningMode: reasoningMode,
+                    structuredOutputMode: structuredOutputMode,
                     parameters: parameters,
                     json: values.flags.contains("--json")
                 )
@@ -359,7 +399,9 @@ public enum MelixCLIParser {
         guard let action = arguments.first else {
             throw MelixCLIError.usage(usageText)
         }
-        let values = try ArgumentCursor(arguments: Array(arguments.dropFirst())).parse()
+        let values = try ArgumentCursor(arguments: Array(arguments.dropFirst())).parse(
+            multiValueOptions: ["--suite"]
+        )
         switch action {
         case "run":
             let modelID = values.single["--model-id"] ?? ""
@@ -377,6 +419,12 @@ public enum MelixCLIParser {
             }
             if let fewShot = values.single["--few-shot"] {
                 parameters["few_shot"] = fewShot
+            }
+            if let scoringMode = values.single["--scoring-mode"] {
+                parameters["scoring_mode"] = scoringMode
+            }
+            if let codeExecPolicy = values.single["--code-exec-policy"] {
+                parameters["code_exec_policy"] = codeExecPolicy
             }
             let sampleSize = UInt32(values.single["--sample-size"] ?? "") ?? 0
             return .evalRun(
@@ -421,6 +469,32 @@ public enum MelixCLIParser {
             .replacingOccurrences(of: "--", with: "")
             .replacingOccurrences(of: "-", with: "_")
     }
+
+    private static func parseUInt32Value(
+        _ value: String?,
+        option: String,
+        defaultValue: UInt32? = nil
+    ) throws -> UInt32? {
+        guard let value else {
+            return defaultValue
+        }
+        guard let parsed = UInt32(value) else {
+            throw MelixCLIError.usage("Invalid value for \(option). Expected an unsigned integer.")
+        }
+        return parsed
+    }
+
+    private static func parseUInt32List(
+        _ values: [String],
+        option: String
+    ) throws -> [UInt32] {
+        try values.map { value in
+            guard let parsed = UInt32(value) else {
+                throw MelixCLIError.usage("Invalid value for \(option). Expected an unsigned integer.")
+            }
+            return parsed
+        }
+    }
 }
 
 private struct ParsedArguments {
@@ -432,7 +506,7 @@ private struct ParsedArguments {
 private struct ArgumentCursor {
     let arguments: [String]
 
-    func parse() throws -> ParsedArguments {
+    func parse(multiValueOptions: Set<String> = ["--suite"]) throws -> ParsedArguments {
         var result = ParsedArguments()
         var index = 0
         let valueLessFlags: Set<String> = ["--json", "--response-only", "--mask-prompt", "--gradient-checkpointing"]
@@ -451,7 +525,7 @@ private struct ArgumentCursor {
                 throw MelixCLIError.missingValue(token)
             }
             let value = arguments[valueIndex]
-            if token == "--suite" {
+            if multiValueOptions.contains(token) {
                 result.multi[token, default: []].append(value)
             } else {
                 result.single[token] = value
@@ -536,6 +610,13 @@ public actor MelixCLIRunner {
                     modelID: options.modelID,
                     hfRepoID: options.hfRepoID,
                     suites: options.suites,
+                    contextLengths: options.contextLengths,
+                    generationLength: options.generationLength,
+                    batchSizes: options.batchSizes,
+                    repeats: options.repeats,
+                    cacheProfile: options.cacheProfile,
+                    reasoningMode: options.reasoningMode,
+                    structuredOutputMode: options.structuredOutputMode,
                     parameters: options.parameters
                 )
             )

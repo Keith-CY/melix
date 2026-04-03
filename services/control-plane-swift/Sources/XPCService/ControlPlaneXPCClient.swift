@@ -83,18 +83,45 @@ public struct ControlPlaneBenchRequest: Equatable, Sendable {
     public let modelID: String
     public let hfRepoID: String
     public let suites: [String]
+    public let contextLengths: [UInt32]
+    public let generationLength: UInt32
+    public let batchSizes: [UInt32]
+    public let repeats: UInt32
+    public let cacheProfile: String
+    public let reasoningMode: String
+    public let structuredOutputMode: String
     public let parameters: [String: String]
 
     public init(
         modelID: String = "",
         hfRepoID: String = "",
         suites: [String] = [],
+        contextLengths: [UInt32] = [],
+        generationLength: UInt32 = 0,
+        batchSizes: [UInt32] = [],
+        repeats: UInt32 = 1,
+        cacheProfile: String = "",
+        reasoningMode: String = "",
+        structuredOutputMode: String = "",
         parameters: [String: String] = [:]
     ) {
         self.modelID = modelID
         self.hfRepoID = hfRepoID
         self.suites = suites
+        self.contextLengths = Self.normalizedBenchValues(contextLengths)
+        self.generationLength = generationLength
+        self.batchSizes = Self.normalizedBenchValues(batchSizes)
+        self.repeats = repeats == 0 ? 1 : repeats
+        self.cacheProfile = cacheProfile
+        self.reasoningMode = reasoningMode
+        self.structuredOutputMode = structuredOutputMode
         self.parameters = parameters
+    }
+
+    public static let validCacheProfiles: [String] = ["cold", "warm", "partial_prefix"]
+
+    public static func normalizedBenchValues(_ values: [UInt32]) -> [UInt32] {
+        Array(Set(values)).sorted()
     }
 }
 
@@ -638,6 +665,13 @@ public actor LocalControlPlaneXPCClient: ControlPlaneXPCClient {
         request.ops.runBench.modelID = bench.modelID
         request.ops.runBench.hfRepoID = bench.hfRepoID
         request.ops.runBench.suites = bench.suites
+        request.ops.runBench.contextLengths = bench.contextLengths
+        request.ops.runBench.generationLength = bench.generationLength
+        request.ops.runBench.batchSizes = bench.batchSizes
+        request.ops.runBench.repeats = bench.repeats
+        request.ops.runBench.cacheProfile = bench.cacheProfile
+        request.ops.runBench.reasoningMode = bench.reasoningMode
+        request.ops.runBench.structuredOutputMode = bench.structuredOutputMode
         request.ops.runBench.parameters = bench.parameters
         return request
     }
@@ -655,6 +689,10 @@ public actor LocalControlPlaneXPCClient: ControlPlaneXPCClient {
         request.ops.runEvaluation.suiteID = evaluation.suiteID
         request.ops.runEvaluation.datasetID = evaluation.datasetID
         request.ops.runEvaluation.sampleSize = evaluation.sampleSize
+        request.ops.runEvaluation.fewShot = UInt32(evaluation.parameters["few_shot"] ?? "") ?? 0
+        request.ops.runEvaluation.seed = UInt64(evaluation.parameters["seed"] ?? "") ?? 0
+        request.ops.runEvaluation.scoringMode = evaluation.parameters["scoring_mode"] ?? ""
+        request.ops.runEvaluation.codeExecPolicy = evaluation.parameters["code_exec_policy"] ?? ""
         request.ops.runEvaluation.parameters = evaluation.parameters
         return request
     }

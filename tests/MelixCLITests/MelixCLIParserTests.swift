@@ -161,13 +161,13 @@ struct MelixCLIParserTests {
 
         #expect(options.modelID == "melix-dev-text")
         #expect(options.suites == ["smoke"])
-        #expect(options.parameters["context_lengths"] == "1024,4096")
-        #expect(options.parameters["generation_length"] == "128")
-        #expect(options.parameters["batch_sizes"] == "2,4")
-        #expect(options.parameters["repeats"] == "3")
-        #expect(options.parameters["cache_profile"] == "partial_prefix")
-        #expect(options.parameters["reasoning_mode"] == "enabled")
-        #expect(options.parameters["structured_output_mode"] == "json_schema")
+        #expect(options.contextLengths == [1024, 4096])
+        #expect(options.generationLength == 128)
+        #expect(options.batchSizes == [2, 4])
+        #expect(options.repeats == 3)
+        #expect(options.cacheProfile == "partial_prefix")
+        #expect(options.reasoningMode == "enabled")
+        #expect(options.structuredOutputMode == "json_schema")
     }
 
     @Test("parses bench run with a direct Hugging Face repo target")
@@ -275,6 +275,7 @@ struct MelixCLIParserTests {
         #expect(options.hfRepoID == "unsloth/gemma-4-E4B-it-MLX-8bit")
         #expect(options.suites == ["qa_smoke"])
         #expect(options.datasetID == "qa_smoke.dev.v1")
+        #expect(options.sampleSize == 0)
         #expect(options.parameters["few_shot"] == "4")
         #expect(options.parameters["seed"] == "7")
         #expect(options.parameters["scoring_mode"] == "multiple_choice_accuracy")

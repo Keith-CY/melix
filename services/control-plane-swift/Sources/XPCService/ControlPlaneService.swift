@@ -728,6 +728,41 @@ public actor ControlPlaneService {
                 message: "No loaded benchmark target is available for \(modelLabel)."
             )
         }
+        let requestedSuites = Array(command.suites)
+        guard requestedSuites.isEmpty == false else {
+            return errorResponse(
+                for: request,
+                code: "invalid_argument",
+                message: "At least one benchmark suite is required."
+            )
+        }
+
+        let normalizedContextLengths = ControlPlaneBenchRequest.normalizedBenchValues(command.contextLengths)
+        guard normalizedContextLengths.isEmpty == false else {
+            return errorResponse(
+                for: request,
+                code: "invalid_argument",
+                message: "At least one benchmark context length is required."
+            )
+        }
+
+        guard command.repeats >= 1 else {
+            return errorResponse(
+                for: request,
+                code: "invalid_argument",
+                message: "Benchmark repeats must be at least 1."
+            )
+        }
+
+        guard command.cacheProfile.isEmpty || ControlPlaneBenchRequest.validCacheProfiles.contains(command.cacheProfile) else {
+            return errorResponse(
+                for: request,
+                code: "invalid_argument",
+                message: "Benchmark cache profile must be one of: \(ControlPlaneBenchRequest.validCacheProfiles.joined(separator: ", "))."
+            )
+        }
+
+        let normalizedBatchSizes = ControlPlaneBenchRequest.normalizedBenchValues(command.batchSizes)
         let modelHandle: String
         do {
             modelHandle = try await benchmarkModelHandle(for: benchmarkModel)
@@ -740,10 +775,16 @@ public actor ControlPlaneService {
         }
 
         var workerRequest = Melix_Worker_V1_RunBenchRequest()
-        let requestedSuites = command.suites.isEmpty ? ["smoke", "latency"] : Array(command.suites)
         workerRequest.modelHandle = modelHandle
         workerRequest.suites = requestedSuites
         workerRequest.parameters = command.parameters
+        workerRequest.contextLengths = normalizedContextLengths
+        workerRequest.generationLength = command.generationLength
+        workerRequest.batchSizes = normalizedBatchSizes
+        workerRequest.repeats = command.repeats
+        workerRequest.cacheProfile = command.cacheProfile
+        workerRequest.reasoningMode = command.reasoningMode
+        workerRequest.structuredOutputMode = command.structuredOutputMode
         workerRequest.taskKind = benchmarkTaskKind(for: benchmarkModel)
         workerRequest.sourceRepo = benchmarkSourceRepo(for: benchmarkModel)
 
@@ -887,6 +928,10 @@ public actor ControlPlaneService {
         workerRequest.suiteID = command.suiteID
         workerRequest.datasetID = command.datasetID
         workerRequest.sampleSize = command.sampleSize
+        workerRequest.fewShot = command.fewShot
+        workerRequest.seed = command.seed
+        workerRequest.scoringMode = command.scoringMode
+        workerRequest.codeExecPolicy = command.codeExecPolicy
         workerRequest.parameters = command.parameters
         workerRequest.taskKind = taskKind
         workerRequest.sourceRepo = benchmarkSourceRepo(for: evaluationModel)

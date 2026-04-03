@@ -2243,6 +2243,177 @@ struct ControlPlaneServiceTests {
         #expect(lastRequest.codeExecPolicy == "sandboxed")
     }
 
+    @Test("local control-plane xpc client forwards canonical bench and evaluation request fields")
+    func localControlPlaneXPCClientForwardsCanonicalBenchAndEvaluationRequestFields() async throws {
+        actor RecordingService: ControlPlaneExecuting {
+            private(set) var lastBenchRequest: Melix_Controlplane_V1_RunBench?
+            private(set) var lastEvaluationRequest: Melix_Controlplane_V1_RunEvaluation?
+
+            func handshake(_ request: Melix_Controlplane_V1_HandshakeRequest) async throws -> Melix_Controlplane_V1_HandshakeResponse {
+                _ = request
+                return Melix_Controlplane_V1_HandshakeResponse()
+            }
+
+            func subscribe(_ request: Melix_Controlplane_V1_SubscribeRequest) async -> ControlPlaneSubscription {
+                _ = request
+                return ControlPlaneSubscription(
+                    subscriptionID: "subscription",
+                    stream: AsyncStream { continuation in
+                        continuation.finish()
+                    }
+                )
+            }
+
+            func unsubscribe(_ subscriptionID: String) async {
+                _ = subscriptionID
+            }
+
+            func startChat(_ request: ControlPlaneChatRequest) async throws -> ControlPlaneChatExecution {
+                _ = request
+                return ControlPlaneChatExecution(
+                    requestID: "chat",
+                    modelID: "melix-dev-text",
+                    stream: AsyncThrowingStream { continuation in
+                        continuation.finish()
+                    }
+                )
+            }
+
+            func execute(_ request: Melix_Controlplane_V1_ControlPlaneRequest) async throws -> Melix_Controlplane_V1_ControlPlaneResponse {
+                var response = Melix_Controlplane_V1_ControlPlaneResponse()
+                response.requestID = request.requestID
+                response.commandType = request.commandType
+                response.ok = true
+                switch request.command {
+                case .ops(let command):
+                    switch command.kind {
+                    case .runBench(let bench):
+                        lastBenchRequest = bench
+                        response.ops.reportPath = "/tmp/melix/bench/report.md"
+                        response.ops.reportMarkdown = "# Bench\n"
+                    case .runEvaluation(let evaluation):
+                        lastEvaluationRequest = evaluation
+                        var job = Melix_Controlplane_V1_EvaluationJobSummary()
+                        job.jobID = "eval-1"
+                        response.ops.evaluationJob = job
+                    default:
+                        break
+                    }
+                default:
+                    break
+                }
+                return response
+            }
+        }
+
+        let service = RecordingService()
+        let client = LocalControlPlaneXPCClient(service: service)
+
+        _ = try await service.handshake(Melix_Controlplane_V1_HandshakeRequest())
+        let subscription = await service.subscribe(Melix_Controlplane_V1_SubscribeRequest())
+        await service.unsubscribe(subscription.subscriptionID)
+        let chatExecution = try await service.startChat(
+            ControlPlaneChatRequest(
+                modelID: "melix-dev-text",
+                messages: [.init(role: "user", content: "hello")]
+            )
+        )
+        #expect(chatExecution.requestID == "chat")
+        #expect(chatExecution.modelID == "melix-dev-text")
+        _ = try await service.execute(makeExportResultsRequest())
+
+        _ = try await client.runBench(
+            ControlPlaneBenchRequest(
+                modelID: "melix-dev-text",
+                suites: ["smoke"],
+                contextLengths: [4096, 1024],
+                generationLength: 128,
+                batchSizes: [4, 2],
+                repeats: 0,
+                cacheProfile: "partial_prefix",
+                reasoningMode: "enabled",
+                structuredOutputMode: "json_schema",
+                parameters: [
+                    "sample_size": "8",
+                    "batch_factor": "2",
+                ]
+            )
+        )
+        let benchRequest = try #require(await service.lastBenchRequest)
+
+        #expect(benchRequest.contextLengths == [1024, 4096])
+        #expect(benchRequest.generationLength == 128)
+        #expect(benchRequest.batchSizes == [2, 4])
+        #expect(benchRequest.repeats == 1)
+        #expect(benchRequest.cacheProfile == "partial_prefix")
+        #expect(benchRequest.reasoningMode == "enabled")
+        #expect(benchRequest.structuredOutputMode == "json_schema")
+
+        _ = try await client.runEvaluation(
+            ControlPlaneEvaluationRequest(
+                modelID: "melix-dev-text",
+                suiteID: "qa_smoke",
+                datasetID: "qa_smoke.dev.v1",
+                sampleSize: 8,
+                parameters: [
+                    "few_shot": "4",
+                    "seed": "7",
+                    "scoring_mode": "multiple_choice_accuracy",
+                    "code_exec_policy": "sandboxed",
+                ]
+            )
+        )
+        let evaluationRequest = try #require(await service.lastEvaluationRequest)
+
+        #expect(evaluationRequest.fewShot == 4)
+        #expect(evaluationRequest.seed == 7)
+        #expect(evaluationRequest.scoringMode == "multiple_choice_accuracy")
+        #expect(evaluationRequest.codeExecPolicy == "sandboxed")
+    }
+
+    @Test("execute rejects canonical bench request validation failures")
+    func executeRejectsCanonicalBenchRequestValidationFailures() async throws {
+        let modelOpsClient = ScriptedModelOperationsWorkerClient()
+        let catalog = ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels())
+        _ = await catalog.loadModel(id: "melix-dev-text", dispatchHandle: "melix-dev-text::explicit")
+        let service = ControlPlaneService(
+            modelCatalog: catalog,
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                modelOperationsClient: modelOpsClient
+            )
+        )
+
+        var request = makeRunBenchRequest(modelID: "melix-dev-text")
+
+        request.ops.runBench.suites = []
+        var response = try await service.execute(request)
+        #expect(!response.ok)
+        #expect(response.error.code == "invalid_argument")
+        #expect(response.error.message.contains("benchmark suite"))
+
+        request = makeRunBenchRequest(modelID: "melix-dev-text")
+        request.ops.runBench.contextLengths = []
+        response = try await service.execute(request)
+        #expect(!response.ok)
+        #expect(response.error.code == "invalid_argument")
+        #expect(response.error.message.contains("benchmark context length"))
+
+        request = makeRunBenchRequest(modelID: "melix-dev-text")
+        request.ops.runBench.repeats = 0
+        response = try await service.execute(request)
+        #expect(!response.ok)
+        #expect(response.error.code == "invalid_argument")
+        #expect(response.error.message.contains("Benchmark repeats"))
+
+        request = makeRunBenchRequest(modelID: "melix-dev-text")
+        request.ops.runBench.cacheProfile = "ancient"
+        response = try await service.execute(request)
+        #expect(!response.ok)
+        #expect(response.error.code == "invalid_argument")
+        #expect(response.error.message.contains("partial_prefix"))
+    }
+
     @Test("execute rejects unsupported evaluation task families and unresolved targets")
     func executeRejectsUnsupportedEvaluationTaskFamiliesAndUnresolvedTargets() async throws {
         let unsupportedClient = ScriptedModelOperationsWorkerClient()
