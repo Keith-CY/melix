@@ -53,6 +53,21 @@
   - `services/mlx-worker-python/worker/engine/maintenance_core.py`, `services/mlx-worker-python/worker/productization/benchmark_schemas.py`, `services/mlx-worker-python/worker/productization/benchmark_export.py`, and `services/mlx-worker-python/worker/productization/submission_builder.py`: aggregate changed-line coverage `100.00%` (`312/312`)
   - `services/mlx-worker-python/worker/engine/maintenance_core.py` follow-up delta in `f109442`: changed-line coverage `100.00%` (`13/13`)
   - `services/mlx-worker-python/tests/test_maintenance_service.py` follow-up delta in `f109442`: changed-line coverage `100.00%` (`4/4`)
+- Closed Task 4, the canonical evaluation controls, persistence, and export slice:
+  - extended evaluation job and result persistence with `few_shot`, `seed`, `code_exec_policy`, `incorrect_count`, and `duration_seconds`
+  - wired `few_shot`, `seed`, `scoring_mode`, and `code_exec_policy` through `evaluation_core.py` and the worker gRPC service
+  - persisted canonical evaluation summary JSON and summary CSV alongside sample CSV and JSONL exports
+  - extended benchmark export collection with `evaluation_summary_rows`
+  - aligned Swift-side evaluation export decoding and CLI export output with the canonical summary-row shape while preserving the old metric-based fallback for historical bundles
+- Verification summary for Task 4:
+  - `swift test --enable-code-coverage --filter MelixCLITests`: `41 tests passed`
+  - `swift test --package-path services/control-plane-swift --enable-code-coverage --filter ControlPlaneServiceTests`: `115 tests passed`
+  - `swift test --package-path services/control-plane-swift --enable-code-coverage --filter BenchmarkExportBundleTests`: `8 tests passed`
+  - `PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" uv run --project services/mlx-worker-python pytest services/mlx-worker-python/tests/test_evaluation_core.py services/mlx-worker-python/tests/test_evaluation_store.py services/mlx-worker-python/tests/test_benchmark_export.py -q`: `22 tests passed`
+  - `git diff --check`: pass
+- Metrics report for Task 4:
+  - `services/mlx-worker-python/worker/engine/evaluation_core.py`, `services/mlx-worker-python/worker/grpc_server.py`, `services/mlx-worker-python/worker/productization/evaluation_schemas.py`, `services/mlx-worker-python/worker/productization/evaluation_store.py`, and `services/mlx-worker-python/worker/productization/benchmark_export.py`: aggregate changed-line coverage `100.00%` (`112/112`)
+  - `services/control-plane-swift/Sources/XPCService/BenchmarkExportBundle.swift`, `services/control-plane-swift/Tests/ControlPlaneTests/BenchmarkExportBundleTests.swift`, and `tests/MelixCLITests/MelixCLIRunnerTests.swift`: aggregate changed-line coverage `100.00%` (`105/105`)
 
 - Converted the canonical benchmark and evaluation contract into an executable implementation plan.
 - Added `docs/plans/2026-04-03-bench-eval-contract-expansion-implementation.md` with staged tasks for:

@@ -25,7 +25,8 @@ Execute `docs/plans/2026-04-03-bench-eval-contract-expansion-implementation.md` 
    - status: completed
    - evidence: `497330a` and `f109442`
 4. Task 4: implement canonical evaluation controls, persistence, and exports
-   - status: pending
+   - status: completed
+   - evidence: `1f2ae84` and `9c04a66`
 5. Task 5: productize bench and eval controls in Window UI
    - status: pending
 6. Task 6: run full verification, update docs, and close the transaction
@@ -49,7 +50,7 @@ Execute `docs/plans/2026-04-03-bench-eval-contract-expansion-implementation.md` 
   - landed Task 1 protocol expansion for canonical bench and eval inputs
   - landed Task 2 canonical bench request normalization across CLI and control plane
   - landed Task 3 canonical benchmark sweeps, truthful batch-row behavior, and export expansion in the Python worker
+  - landed Task 4 canonical evaluation controls, persistence, and export alignment across worker and Swift export consumers
 - remaining slices:
-  - evaluation persistence and export controls
   - Window UI productization
   - transaction-wide verification and close-out
