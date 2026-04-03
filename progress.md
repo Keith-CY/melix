@@ -60,6 +60,23 @@
   - `services/mlx-worker-python/worker/productization/submission_builder.py`: changed-line coverage `100.00%` (`3/3`)
   - aggregate changed-line coverage for the executable Python scope in Slice 3: `100.00%` (`334/334`)
 
+- Closed Slice 4, the Window UI matrix controls and result-view surface:
+  - added a `Standard / Matrix` presentation-mode switch inside the Bench diagnostics workspace
+  - added matrix-specific controls for generation lengths, cache profiles, reasoning modes, structured-output modes, concurrency, repeats, and request-vs-duration load budgets
+  - added matrix run dispatch, history selection, summary cards, context and throughput charts, and per-run CSV export actions to `RuntimeViewModel`
+  - kept matrix rendering separate from the product-facing benchmark cards and charts so the existing `bench run` workspace semantics remain intact
+  - extended the menu-bar fake control-plane client and diagnostics tests so matrix history, charts, and action helpers are covered with repository-owned fixtures
+- Verification summary for Slice 4:
+  - `swift test --package-path apps/macos-menubar --filter 'RuntimeViewModelTests|DesktopFoundationViewTests'`: `24 tests passed`
+  - `swift test --package-path apps/macos-menubar --enable-code-coverage --filter 'RuntimeViewModelTests|DesktopFoundationViewTests'`: `24 tests passed`
+- Metrics report for Slice 4:
+  - `apps/macos-menubar/Sources/AppMain/Models/RuntimeViewModel.swift`: changed-line coverage `94.66%` (`479/506`)
+  - `apps/macos-menubar/Sources/AppMain/Dashboard/DesktopWorkspaceShellView.swift`: changed-line coverage `94.64%` (`618/653`)
+  - `apps/macos-menubar/Tests/MenuBarTests/TestSupport.swift`: changed-line coverage `99.57%` (`232/233`)
+  - `apps/macos-menubar/Tests/MenuBarTests/DesktopFoundationViewTests.swift`: changed-line coverage `100.00%` (`107/107`)
+  - `apps/macos-menubar/Tests/MenuBarTests/RuntimeViewModelTests.swift`: changed-line coverage `100.00%` (`226/226`)
+  - aggregate changed-line coverage for the executable Window UI scope in Slice 4: `96.35%` (`1662/1725`)
+
 - Continued the benchmark and evaluation contract expansion transaction with the first two executable slices from `docs/plans/2026-04-03-bench-eval-contract-expansion-implementation.md`.
 - Closed Task 1, the protocol expansion slice for canonical bench and eval inputs:
   - added the canonical bench fields to `RunBench` and `RunBenchRequest`

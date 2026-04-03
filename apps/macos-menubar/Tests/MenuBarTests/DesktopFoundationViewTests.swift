@@ -485,6 +485,44 @@ struct DesktopFoundationViewTests {
         #expect(viewModel.benchmarkChartPoints.count == 2)
     }
 
+    @Test("workspace diagnostics renders matrix benchmark controls history and charts")
+    @MainActor
+    func workspaceDiagnosticsRendersMatrixBenchmarkControlsHistoryAndCharts() async throws {
+        let client = FakeControlPlaneXPCClient()
+        var derivedModel = ModelCatalog.devTextModel()
+        derivedModel.modelID = "melix-dev-text-lora"
+        await client.configureSnapshot(
+            makeAudioSetupSnapshot(
+                models: [
+                    ModelCatalog.devTextModel(),
+                    derivedModel,
+                ]
+            )
+        )
+        await client.configureExportResult(
+            ControlPlaneExportResult(exportBundleJSON: makeBenchmarkExportBundleJSON())
+        )
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        viewModel.selectSurface(.tools)
+        viewModel.selectToolSection(.diagnostics)
+        viewModel.selectedBenchmarkPresentationMode = .matrix
+        viewModel.selectedBenchmarkSuiteIDs = ["smoke", "latency"]
+        await viewModel.refreshBenchmarkHistory()
+
+        let view = hostView(DesktopWorkspaceShellView(viewModel: viewModel))
+        let renderedTexts = renderedTextValues(in: view)
+
+        #expect(view.subviews.isEmpty == false)
+        #expect(renderedTexts.contains("Matrix"))
+        #expect(renderedTexts.contains("Requests"))
+        #expect(renderedTexts.contains("Duration"))
+        #expect(viewModel.benchmarkMatrixHistory.count == 2)
+        #expect(viewModel.benchmarkMatrixSummaryRows.count == 2)
+        #expect(viewModel.benchmarkMatrixContextChartPoints.count == 2)
+        #expect(viewModel.benchmarkMatrixThroughputChartPoints.count == 2)
+    }
+
     @Test("diagnostics tool section action helpers dispatch benchmark operations and render exported state")
     @MainActor
     func diagnosticsToolSectionActionHelpersDispatchBenchmarkOperations() async throws {
@@ -542,6 +580,81 @@ struct DesktopFoundationViewTests {
         #expect(viewModel.selectedBenchmarkHistoryJobID == "bench-older")
         #expect(viewModel.selectedEvaluationHistoryJobID == "eval-newer")
         #expect(viewModel.selectedBenchmarkSuiteIDs.contains("latency"))
+    }
+
+    @Test("diagnostics tool section action helpers dispatch matrix benchmark operations and exports")
+    @MainActor
+    func diagnosticsToolSectionActionHelpersDispatchMatrixBenchmarkOperations() async throws {
+        let client = FakeControlPlaneXPCClient()
+        var matrixJob = Melix_Controlplane_V1_BenchmarkMatrixJobSummary()
+        matrixJob.jobID = "matrix-newer"
+        matrixJob.modelID = "melix-dev-text"
+        matrixJob.taskKind = "text-generation"
+        matrixJob.sourceRepo = "databricks/databricks-dolly-15k"
+        matrixJob.suiteIds = ["smoke", "latency"]
+        matrixJob.benchmarkMode = "matrix"
+        matrixJob.status = "completed"
+        matrixJob.outputDir = "/tmp/melix/bench/matrix-runs/matrix-newer"
+        matrixJob.createdAtUnixMs = 1_712_250_000_000
+        matrixJob.updatedAtUnixMs = 1_712_250_000_500
+        var summaryRow = Melix_Controlplane_V1_BenchmarkMatrixSummaryRow()
+        summaryRow.jobID = "matrix-newer"
+        summaryRow.taskKind = "text-generation"
+        summaryRow.sourceRepo = "databricks/databricks-dolly-15k"
+        summaryRow.modelID = "melix-dev-text"
+        summaryRow.suiteID = "smoke"
+        summaryRow.contextLength = 1024
+        summaryRow.generationLength = 128
+        summaryRow.batchSize = 2
+        summaryRow.cacheProfile = "warm"
+        summaryRow.reasoningMode = "enabled"
+        summaryRow.structuredOutputMode = "json_schema"
+        summaryRow.concurrencyLevel = 1
+        summaryRow.repeats = 3
+        summaryRow.requests = 8
+        summaryRow.ttftMeanMs = 24.4
+        summaryRow.requestLatencyMeanMs = 33.8
+        summaryRow.prefillTokensPerSecondMean = 310
+        summaryRow.decodeTokensPerSecondMean = 62
+        summaryRow.throughputRequestsPerSecond = 4.8
+        summaryRow.throughputTokensPerSecond = 256
+        summaryRow.successRate = 1
+        summaryRow.peakMemoryBytesMax = 2_048_000_000
+        summaryRow.queueWaitMeanMs = 2.3
+        summaryRow.queueWaitP95Ms = 3.1
+        summaryRow.createdAtUnixMs = 1_712_250_000_000
+        await client.configureBenchMatrixResponse(
+            ControlPlaneBenchMatrixResult(job: matrixJob, summaryRows: [summaryRow])
+        )
+        await client.configureExportResult(
+            ControlPlaneExportResult(exportBundleJSON: makeBenchmarkExportBundleJSON())
+        )
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        viewModel.selectSurface(.tools)
+        viewModel.selectToolSection(.diagnostics)
+        viewModel.selectedBenchmarkPresentationMode = .matrix
+        viewModel.selectedBenchmarkSuiteIDs = ["smoke", "latency"]
+
+        let section = DesktopDiagnosticsToolSectionView(
+            viewModel: viewModel,
+            foundation: viewModel.desktopFoundationState
+        )
+        await section.runBenchmarkMatrix()
+        await section.refreshBenchmarkMatrixResults()
+        await section.exportBenchmarkMatrixSummaryCSV()
+        await section.exportBenchmarkMatrixRequestsCSV()
+        section.selectBenchmarkMatrixHistory(jobID: "matrix-newer")
+
+        let view = hostView(section)
+        let actions = await client.recordedActions
+
+        #expect(view.subviews.isEmpty == false)
+        #expect(actions.contains("bench.matrix"))
+        #expect(actions.contains("bench.export"))
+        #expect(viewModel.lastBenchmarkMatrixExport?.formatTitle == "requests.csv")
+        #expect(viewModel.selectedBenchmarkMatrixHistoryJobID == "matrix-newer")
+        #expect(viewModel.benchmarkMatrixHistory.isEmpty == false)
     }
 
     @Test("diagnostics tool section renders empty benchmark states and refreshes persisted history when needed")

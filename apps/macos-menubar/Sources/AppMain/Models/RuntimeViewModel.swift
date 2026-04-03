@@ -114,6 +114,42 @@ public enum RuntimeBenchmarkTargetMode: String, CaseIterable, Identifiable, Send
     }
 }
 
+public enum RuntimeBenchmarkPresentationMode: String, CaseIterable, Identifiable, Sendable {
+    case standard = "standard"
+    case matrix = "matrix"
+
+    public var id: String {
+        rawValue
+    }
+
+    public var title: String {
+        switch self {
+        case .standard:
+            return "Standard"
+        case .matrix:
+            return "Matrix"
+        }
+    }
+}
+
+public enum RuntimeBenchmarkMatrixLoadBudgetMode: String, CaseIterable, Identifiable, Sendable {
+    case requests = "requests"
+    case durationSeconds = "duration_seconds"
+
+    public var id: String {
+        rawValue
+    }
+
+    public var title: String {
+        switch self {
+        case .requests:
+            return "Requests"
+        case .durationSeconds:
+            return "Duration"
+        }
+    }
+}
+
 public enum RuntimeLoraDatasetSourceKind: String, CaseIterable, Identifiable, Sendable {
     case localPackage = "local_package"
     case huggingFaceDataset = "hf_dataset"
@@ -249,6 +285,59 @@ public struct RuntimeBenchmarkCSVExportState: Equatable, Sendable {
     public let rowCount: Int
 }
 
+public struct RuntimeBenchmarkMatrixHistoryEntryState: Identifiable, Equatable, Sendable {
+    public let id: String
+    public let jobID: String
+    public let modelID: String
+    public let taskKind: String
+    public let taskTitle: String
+    public let sourceRepo: String
+    public let suiteSummary: String
+    public let cellCountText: String
+    public let loadBudgetText: String
+    public let statusText: String
+    public let createdAtText: String
+    public let createdAtUnixMS: Int64
+}
+
+public struct RuntimeBenchmarkMatrixSummaryCardState: Identifiable, Equatable, Sendable {
+    public let id: String
+    public let title: String
+    public let valueText: String
+    public let detail: String
+}
+
+public struct RuntimeBenchmarkMatrixSummaryRowState: Identifiable, Equatable, Sendable {
+    public let id: String
+    public let suiteTitle: String
+    public let configurationSummary: String
+    public let latencyText: String
+    public let throughputText: String
+    public let successRateText: String
+    public let peakMemoryText: String
+    public let createdAtText: String
+    public let contextLength: Int
+    public let batchSize: Int
+    public let concurrencyLevel: Int
+    public let ttftMeanMS: Double
+    public let throughputTokensPerSecond: Double
+}
+
+public struct RuntimeBenchmarkMatrixChartPointState: Identifiable, Equatable, Sendable {
+    public let id: String
+    public let seriesTitle: String
+    public let xLabel: String
+    public let xValue: Int
+    public let yValue: Double
+    public let unit: String
+}
+
+public struct RuntimeBenchmarkMatrixExportState: Equatable, Sendable {
+    public let outputPath: String
+    public let rowCount: Int
+    public let formatTitle: String
+}
+
 public struct RuntimeEvaluationSuiteOptionState: Identifiable, Equatable, Sendable {
     public let id: String
     public let title: String
@@ -375,6 +464,12 @@ public final class RuntimeViewModel {
     public private(set) var benchmarkChartPoints: [RuntimeBenchmarkChartPointState] = []
     public private(set) var benchmarkMetricOptions: [String] = []
     public private(set) var lastBenchmarkCSVExport: RuntimeBenchmarkCSVExportState?
+    public private(set) var benchmarkMatrixHistory: [RuntimeBenchmarkMatrixHistoryEntryState] = []
+    public private(set) var benchmarkMatrixSummaryCards: [RuntimeBenchmarkMatrixSummaryCardState] = []
+    public private(set) var benchmarkMatrixSummaryRows: [RuntimeBenchmarkMatrixSummaryRowState] = []
+    public private(set) var benchmarkMatrixContextChartPoints: [RuntimeBenchmarkMatrixChartPointState] = []
+    public private(set) var benchmarkMatrixThroughputChartPoints: [RuntimeBenchmarkMatrixChartPointState] = []
+    public private(set) var lastBenchmarkMatrixExport: RuntimeBenchmarkMatrixExportState?
     public private(set) var evaluationHistory: [RuntimeEvaluationHistoryEntryState] = []
     public private(set) var evaluationMetricCards: [RuntimeEvaluationMetricCardState] = []
     public private(set) var evaluationSamplePreview: [RuntimeEvaluationSamplePreviewState] = []
@@ -396,6 +491,7 @@ public final class RuntimeViewModel {
     public var selectedChatModelID = "melix-dev-text"
     public var selectedLoraModelID = "melix-dev-text"
     public var selectedBenchmarkModelID = "melix-dev-text"
+    public var selectedBenchmarkPresentationMode: RuntimeBenchmarkPresentationMode = .standard
     public var selectedBenchmarkTargetMode: RuntimeBenchmarkTargetMode = .catalogModel
     public var selectedBenchmarkSuiteIDs: Set<String> = ["smoke"]
     public var selectedBenchContextLengths: [UInt32] = [1024, 4096]
@@ -409,6 +505,17 @@ public final class RuntimeViewModel {
     public var benchmarkHFRepoID = ""
     public var selectedBenchmarkHistoryJobID = ""
     public var selectedBenchmarkMetricName = ""
+    public var selectedBenchGenerationLengths: [UInt32] = [128, 256]
+    public var selectedBenchMatrixCacheProfiles: [String] = ["cold", "partial_prefix"]
+    public var selectedBenchMatrixReasoningModes: [String] = ["enabled"]
+    public var selectedBenchMatrixStructuredOutputModes: [String] = ["json_schema"]
+    public var selectedBenchMatrixConcurrencyLevels: [UInt32] = [1, 2]
+    public var selectedBenchmarkMatrixLoadBudgetMode: RuntimeBenchmarkMatrixLoadBudgetMode = .requests
+    public var benchMatrixRepeats = "3"
+    public var benchMatrixRequests = "8"
+    public var benchMatrixDurationSeconds = "60"
+    public var benchMatrixAllowLargeMatrix = false
+    public var selectedBenchmarkMatrixHistoryJobID = ""
     public var selectedEvaluationTargetMode: RuntimeBenchmarkTargetMode = .catalogModel
     public var selectedEvaluationModelID = "melix-dev-text"
     public var selectedEvaluationSuiteIDs: Set<String> = ["mmlu"]
@@ -586,6 +693,8 @@ public final class RuntimeViewModel {
 
     static let benchmarkContextLengthOptions: [UInt32] = [1024, 4096, 8192]
     static let benchmarkBatchSizeOptions: [UInt32] = [1, 2, 4, 8]
+    static let benchmarkGenerationLengthOptions: [UInt32] = [128, 256, 512]
+    static let benchmarkConcurrencyOptions: [UInt32] = [1, 2, 4]
     static let benchmarkCacheProfileOptions = ControlPlaneBenchRequest.validCacheProfiles
     static let benchmarkReasoningModeOptions: [String] = ["off", "enabled", "deep_reasoning"]
     static let benchmarkStructuredOutputModeOptions: [String] = ["off", "json_object", "json_schema"]
@@ -712,6 +821,46 @@ public final class RuntimeViewModel {
         notifyStateChanged()
     }
 
+    public func toggleBenchGenerationLength(_ generationLength: UInt32) {
+        selectedBenchGenerationLengths = Self.toggledValues(
+            generationLength,
+            in: selectedBenchGenerationLengths
+        )
+        notifyStateChanged()
+    }
+
+    public func toggleBenchMatrixCacheProfile(_ cacheProfile: String) {
+        selectedBenchMatrixCacheProfiles = Self.toggledStrings(
+            cacheProfile,
+            in: selectedBenchMatrixCacheProfiles
+        )
+        notifyStateChanged()
+    }
+
+    public func toggleBenchMatrixReasoningMode(_ reasoningMode: String) {
+        selectedBenchMatrixReasoningModes = Self.toggledStrings(
+            reasoningMode,
+            in: selectedBenchMatrixReasoningModes
+        )
+        notifyStateChanged()
+    }
+
+    public func toggleBenchMatrixStructuredOutputMode(_ structuredOutputMode: String) {
+        selectedBenchMatrixStructuredOutputModes = Self.toggledStrings(
+            structuredOutputMode,
+            in: selectedBenchMatrixStructuredOutputModes
+        )
+        notifyStateChanged()
+    }
+
+    public func toggleBenchMatrixConcurrencyLevel(_ concurrencyLevel: UInt32) {
+        selectedBenchMatrixConcurrencyLevels = Self.toggledValues(
+            concurrencyLevel,
+            in: selectedBenchMatrixConcurrencyLevels
+        )
+        notifyStateChanged()
+    }
+
     public func selectBenchmarkHistory(jobID: String) {
         selectedBenchmarkHistoryJobID = jobID
         rebuildBenchmarkDerivedState()
@@ -721,6 +870,12 @@ public final class RuntimeViewModel {
     public func selectBenchmarkMetric(_ metricName: String) {
         selectedBenchmarkMetricName = metricName
         rebuildBenchmarkDerivedState()
+        notifyStateChanged()
+    }
+
+    public func selectBenchmarkMatrixHistory(jobID: String) {
+        selectedBenchmarkMatrixHistoryJobID = jobID
+        rebuildBenchmarkMatrixDerivedState()
         notifyStateChanged()
     }
 
@@ -1224,6 +1379,32 @@ public final class RuntimeViewModel {
         }
     }
 
+    public var benchmarkMatrixCellCount: Int {
+        ControlPlaneBenchMatrixRequest(
+            suites: selectedBenchmarkSuiteIDs.sorted(),
+            contextLengths: normalizedBenchContextLengths(),
+            generationLengths: normalizedBenchGenerationLengths(),
+            batchSizes: normalizedBenchBatchSizes(),
+            cacheProfiles: normalizedBenchMatrixCacheProfiles(),
+            reasoningModes: normalizedBenchMatrixReasoningModes(),
+            structuredOutputModes: normalizedBenchMatrixStructuredOutputModes(),
+            concurrencyLevels: normalizedBenchMatrixConcurrencyLevels()
+        ).matrixCellCount
+    }
+
+    public var benchmarkMatrixCellCountText: String {
+        "\(benchmarkMatrixCellCount) cells"
+    }
+
+    public var benchmarkMatrixLoadBudgetSummaryText: String {
+        switch selectedBenchmarkMatrixLoadBudgetMode {
+        case .requests:
+            return "Requests • \(normalizedBenchMatrixRequests())"
+        case .durationSeconds:
+            return "Duration • \(normalizedBenchMatrixDurationSeconds())s"
+        }
+    }
+
     public var evaluationTargetTaskKind: String {
         "text-generation"
     }
@@ -1253,6 +1434,11 @@ public final class RuntimeViewModel {
     public var selectedBenchmarkHistoryEntry: RuntimeBenchmarkHistoryEntryState? {
         benchmarkHistory.first(where: { $0.jobID == selectedBenchmarkHistoryJobID })
             ?? benchmarkHistory.first
+    }
+
+    public var selectedBenchmarkMatrixHistoryEntry: RuntimeBenchmarkMatrixHistoryEntryState? {
+        benchmarkMatrixHistory.first(where: { $0.jobID == selectedBenchmarkMatrixHistoryJobID })
+            ?? benchmarkMatrixHistory.first
     }
 
     public var selectedEvaluationHistoryEntry: RuntimeEvaluationHistoryEntryState? {
@@ -2053,6 +2239,112 @@ public final class RuntimeViewModel {
         notifyStateChanged()
     }
 
+    public func runBenchMatrix() async {
+        let modelID = resolvedBenchmarkModelID()
+        let repoID = benchmarkHFRepoID.trimmingCharacters(in: .whitespacesAndNewlines)
+        switch selectedBenchmarkTargetMode {
+        case .catalogModel:
+            guard !modelID.isEmpty else {
+                recordLocalError("Select a benchmark-capable model before running Matrix.")
+                notifyStateChanged()
+                return
+            }
+        case .huggingFaceRepo:
+            guard !repoID.isEmpty else {
+                recordLocalError("Enter a Hugging Face repo before running Matrix.")
+                notifyStateChanged()
+                return
+            }
+        }
+
+        let taskKind = resolvedBenchmarkTaskKind()
+        guard ["text-generation", "image-to-text", "image-text-to-text"].contains(taskKind) else {
+            recordLocalError("Benchmark matrix supports only text-generation, image-to-text, and image-text-to-text targets.")
+            notifyStateChanged()
+            return
+        }
+
+        let suites = selectedBenchmarkSuiteIDs.sorted()
+        guard suites.isEmpty == false else {
+            recordLocalError("Select at least one matrix benchmark suite before running Matrix.")
+            notifyStateChanged()
+            return
+        }
+
+        let request = ControlPlaneBenchMatrixRequest(
+            modelID: selectedBenchmarkTargetMode == .catalogModel ? modelID : "",
+            hfRepoID: selectedBenchmarkTargetMode == .huggingFaceRepo ? repoID : "",
+            taskKind: taskKind,
+            suites: suites,
+            contextLengths: normalizedBenchContextLengths(),
+            generationLengths: normalizedBenchGenerationLengths(),
+            batchSizes: normalizedBenchBatchSizes(),
+            cacheProfiles: normalizedBenchMatrixCacheProfiles(),
+            reasoningModes: normalizedBenchMatrixReasoningModes(),
+            structuredOutputModes: normalizedBenchMatrixStructuredOutputModes(),
+            concurrencyLevels: normalizedBenchMatrixConcurrencyLevels(),
+            repeats: normalizedBenchMatrixRepeats(),
+            requests: selectedBenchmarkMatrixLoadBudgetMode == .requests ? normalizedBenchMatrixRequests() : 0,
+            durationSeconds: selectedBenchmarkMatrixLoadBudgetMode == .durationSeconds ? normalizedBenchMatrixDurationSeconds() : 0,
+            allowLargeMatrix: benchMatrixAllowLargeMatrix
+        )
+
+        guard request.requests > 0 || request.durationSeconds > 0 else {
+            let modeTitle = selectedBenchmarkMatrixLoadBudgetMode == .requests ? "requests" : "duration_seconds"
+            recordLocalError("Set a positive \(modeTitle) value before running Matrix.")
+            notifyStateChanged()
+            return
+        }
+        guard request.requests == 0 || request.durationSeconds == 0 else {
+            recordLocalError("Exactly one of requests or duration_seconds must be set for matrix benchmarks.")
+            notifyStateChanged()
+            return
+        }
+        guard request.allowLargeMatrix || request.matrixCellCount <= ControlPlaneBenchMatrixRequest.maxMatrixCellCount else {
+            recordLocalError("Matrix benchmark expands to \(request.matrixCellCount) cells; enable Allow Large Matrix to continue.")
+            notifyStateChanged()
+            return
+        }
+
+        let startedAt = Date()
+        do {
+            let result = try await client.runBenchMatrix(request)
+            selectedBenchmarkMatrixHistoryJobID = result.job.jobID
+            await metrics.record(
+                name: "menu.ops_bench_matrix_ms",
+                valueMs: Date().timeIntervalSince(startedAt) * 1_000
+            )
+            await refreshBenchmarkHistory(notify: false)
+        } catch {
+            recordLocalError(String(describing: error))
+        }
+        notifyStateChanged()
+    }
+
+    public func exportSelectedBenchmarkMatrixSummaryCSV() async {
+        await exportBenchmarkMatrixArtifact(
+            formatTitle: "summary.csv",
+            fileName: Self.benchmarkMatrixSummaryCSVFileName(jobID: selectedBenchmarkMatrixHistoryJobID),
+            builder: { bundle, jobID in
+                let rows = bundle.benchmarkMatrixSummaryCSVRows(jobID: jobID)
+                return (rows.count, bundle.benchmarkMatrixSummaryCSV(jobID: jobID))
+            },
+            missingRowsMessage: "No matrix benchmark summary rows are available for CSV export."
+        )
+    }
+
+    public func exportSelectedBenchmarkMatrixRequestsCSV() async {
+        await exportBenchmarkMatrixArtifact(
+            formatTitle: "requests.csv",
+            fileName: Self.benchmarkMatrixRequestsCSVFileName(jobID: selectedBenchmarkMatrixHistoryJobID),
+            builder: { bundle, jobID in
+                let rows = bundle.benchmarkMatrixRequestRows(jobID: jobID)
+                return (rows.count, bundle.benchmarkMatrixRequestsCSV(jobID: jobID))
+            },
+            missingRowsMessage: "No matrix benchmark request rows are available for CSV export."
+        )
+    }
+
     public func runEvaluation() async {
         let modelID = resolvedEvaluationModelID()
         let repoID = evaluationHFRepoID.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -2639,11 +2931,23 @@ public final class RuntimeViewModel {
             selectedBenchBatchSizes,
             defaultValues: Self.benchmarkBatchSizeOptions.filter { $0 > 1 }.prefix(2).map { $0 }
         )
+        selectedBenchGenerationLengths = Self.normalizedBenchValues(
+            selectedBenchGenerationLengths,
+            defaultValues: Self.benchmarkGenerationLengthOptions.prefix(2).map { $0 }
+        )
+        selectedBenchMatrixCacheProfiles = normalizedBenchMatrixCacheProfiles()
+        selectedBenchMatrixReasoningModes = normalizedBenchMatrixReasoningModes()
+        selectedBenchMatrixStructuredOutputModes = normalizedBenchMatrixStructuredOutputModes()
+        selectedBenchMatrixConcurrencyLevels = normalizedBenchMatrixConcurrencyLevels()
         benchRepeats = normalizedBenchRepeatsText()
+        benchMatrixRepeats = normalizedBenchMatrixRepeatsText()
+        benchMatrixRequests = normalizedBenchMatrixRequestsText()
+        benchMatrixDurationSeconds = normalizedBenchMatrixDurationSecondsText()
         benchCacheProfile = normalizedBenchCacheProfile()
         benchReasoningMode = normalizedBenchReasoningMode()
         benchStructuredOutputMode = normalizedBenchStructuredOutputMode()
         rebuildBenchmarkDerivedState()
+        rebuildBenchmarkMatrixDerivedState()
     }
 
     private func refreshEvaluationSelectionState() {
@@ -2669,10 +2973,11 @@ public final class RuntimeViewModel {
             let export = try await client.exportResults(outputDir: exportDirectory.path)
             let bundle = try ControlPlaneBenchmarkExportBundle.decode(json: export.exportBundleJSON)
             applyBenchmarkExportBundle(bundle)
-            await metrics.record(
-                name: "menu.bench_history_refresh_ms",
-                valueMs: Date().timeIntervalSince(startedAt) * 1_000
-            )
+            let elapsedMs = Date().timeIntervalSince(startedAt) * 1_000
+            await metrics.record(name: "menu.bench_history_refresh_ms", valueMs: elapsedMs)
+            if selectedBenchmarkPresentationMode == .matrix {
+                await metrics.record(name: "menu.bench_matrix_history_refresh_ms", valueMs: elapsedMs)
+            }
         } catch {
             recordLocalError(String(describing: error))
         }
@@ -2707,6 +3012,7 @@ public final class RuntimeViewModel {
             selectedBenchmarkHistoryJobID = benchmarkHistory.first?.jobID ?? ""
         }
         rebuildBenchmarkDerivedState()
+        rebuildBenchmarkMatrixDerivedState()
         rebuildEvaluationDerivedState()
     }
 
@@ -2751,6 +3057,48 @@ public final class RuntimeViewModel {
                 return lhs.createdAtUnixMS < rhs.createdAtUnixMS
             }
             .map(Self.makeBenchmarkChartPointState)
+    }
+
+    private func rebuildBenchmarkMatrixDerivedState() {
+        guard let benchmarkExportBundle else {
+            benchmarkMatrixHistory = []
+            benchmarkMatrixSummaryCards = []
+            benchmarkMatrixSummaryRows = []
+            benchmarkMatrixContextChartPoints = []
+            benchmarkMatrixThroughputChartPoints = []
+            lastBenchmarkMatrixExport = nil
+            if selectedBenchmarkMatrixHistoryJobID.isEmpty == false {
+                selectedBenchmarkMatrixHistoryJobID = ""
+            }
+            return
+        }
+
+        let matrixHistoryEntries = benchmarkExportBundle.benchmarkMatrixHistoryEntries()
+        benchmarkMatrixHistory = Self.makeBenchmarkMatrixHistoryEntryStates(from: matrixHistoryEntries)
+        let selectedHistoryJobID = selectedBenchmarkMatrixHistoryJobID.isEmpty
+            ? (benchmarkMatrixHistory.first?.jobID ?? "")
+            : selectedBenchmarkMatrixHistoryJobID
+        if selectedBenchmarkMatrixHistoryJobID != selectedHistoryJobID {
+            selectedBenchmarkMatrixHistoryJobID = selectedHistoryJobID
+        }
+
+        let selectedRows = benchmarkExportBundle.benchmarkMatrixSummaryCSVRows(jobID: selectedHistoryJobID.isEmpty ? nil : selectedHistoryJobID)
+        benchmarkMatrixSummaryRows = selectedRows.map(Self.makeBenchmarkMatrixSummaryRowState)
+        benchmarkMatrixSummaryCards = Self.makeBenchmarkMatrixSummaryCardStates(from: selectedRows)
+        benchmarkMatrixContextChartPoints = selectedRows.map(Self.makeBenchmarkMatrixContextChartPointState)
+            .sorted { lhs, rhs in
+                if lhs.xValue == rhs.xValue {
+                    return lhs.seriesTitle < rhs.seriesTitle
+                }
+                return lhs.xValue < rhs.xValue
+            }
+        benchmarkMatrixThroughputChartPoints = selectedRows.map(Self.makeBenchmarkMatrixThroughputChartPointState)
+            .sorted { lhs, rhs in
+                if lhs.xValue == rhs.xValue {
+                    return lhs.seriesTitle < rhs.seriesTitle
+                }
+                return lhs.xValue < rhs.xValue
+            }
     }
 
     private func rebuildEvaluationDerivedState() {
@@ -2842,6 +3190,65 @@ public final class RuntimeViewModel {
         return parameters
     }
 
+    private func normalizedBenchGenerationLengths() -> [UInt32] {
+        Self.normalizedBenchValues(
+            selectedBenchGenerationLengths,
+            defaultValues: Self.benchmarkGenerationLengthOptions.prefix(2).map { $0 }
+        )
+    }
+
+    private func normalizedBenchMatrixCacheProfiles() -> [String] {
+        let normalized = ControlPlaneBenchMatrixRequest.normalizedStringValues(selectedBenchMatrixCacheProfiles)
+        return normalized.isEmpty ? [Self.benchmarkCacheProfileOptions.first ?? "cold"] : normalized
+    }
+
+    private func normalizedBenchMatrixReasoningModes() -> [String] {
+        let normalized = ControlPlaneBenchMatrixRequest.normalizedStringValues(selectedBenchMatrixReasoningModes)
+        return normalized.isEmpty ? [Self.benchmarkReasoningModeOptions.first ?? "off"] : normalized
+    }
+
+    private func normalizedBenchMatrixStructuredOutputModes() -> [String] {
+        let normalized = ControlPlaneBenchMatrixRequest.normalizedStringValues(selectedBenchMatrixStructuredOutputModes)
+        return normalized.isEmpty ? [Self.benchmarkStructuredOutputModeOptions.first ?? "off"] : normalized
+    }
+
+    private func normalizedBenchMatrixConcurrencyLevels() -> [UInt32] {
+        Self.normalizedBenchValues(
+            selectedBenchMatrixConcurrencyLevels,
+            defaultValues: Self.benchmarkConcurrencyOptions.prefix(2).map { $0 }
+        )
+    }
+
+    private func normalizedBenchMatrixRepeats() -> UInt32 {
+        let trimmed = benchMatrixRepeats.trimmingCharacters(in: .whitespacesAndNewlines)
+        return max(1, UInt32(trimmed) ?? 1)
+    }
+
+    private func normalizedBenchMatrixRepeatsText() -> String {
+        let trimmed = benchMatrixRepeats.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "3" : trimmed
+    }
+
+    private func normalizedBenchMatrixRequests() -> UInt32 {
+        let trimmed = benchMatrixRequests.trimmingCharacters(in: .whitespacesAndNewlines)
+        return UInt32(trimmed) ?? 0
+    }
+
+    private func normalizedBenchMatrixRequestsText() -> String {
+        let trimmed = benchMatrixRequests.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "8" : trimmed
+    }
+
+    private func normalizedBenchMatrixDurationSeconds() -> UInt32 {
+        let trimmed = benchMatrixDurationSeconds.trimmingCharacters(in: .whitespacesAndNewlines)
+        return UInt32(trimmed) ?? 0
+    }
+
+    private func normalizedBenchMatrixDurationSecondsText() -> String {
+        let trimmed = benchMatrixDurationSeconds.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "60" : trimmed
+    }
+
     private func evaluationSampleSize(for suiteID: String) -> UInt32 {
         let rawSampleSize = evaluationSampleSize.trimmingCharacters(in: .whitespacesAndNewlines)
         if let sampleSize = UInt32(rawSampleSize), sampleSize > 0 {
@@ -2849,6 +3256,45 @@ public final class RuntimeViewModel {
         }
         let fallback = Self.evaluationSuiteOptions.first(where: { $0.id == suiteID })?.defaultSampleSize ?? 8
         return UInt32(fallback)
+    }
+
+    private func exportBenchmarkMatrixArtifact(
+        formatTitle: String,
+        fileName: String,
+        builder: (ControlPlaneBenchmarkExportBundle, String?) -> (Int, String),
+        missingRowsMessage: String
+    ) async {
+        let startedAt = Date()
+        do {
+            let exportDirectory = try Self.ensureBenchmarkExportDirectory()
+            let export = try await client.exportResults(outputDir: exportDirectory.path)
+            let bundle = try ControlPlaneBenchmarkExportBundle.decode(json: export.exportBundleJSON)
+            applyBenchmarkExportBundle(bundle)
+            let selectedJobID = selectedBenchmarkMatrixHistoryJobID.isEmpty ? nil : selectedBenchmarkMatrixHistoryJobID
+            let (rowCount, payload) = builder(bundle, selectedJobID)
+            guard rowCount > 0 else {
+                recordLocalError(missingRowsMessage)
+                notifyStateChanged()
+                return
+            }
+            let outputURL = exportDirectory.appendingPathComponent(fileName)
+            try payload.write(to: outputURL, atomically: true, encoding: .utf8)
+            lastBenchmarkMatrixExport = RuntimeBenchmarkMatrixExportState(
+                outputPath: outputURL.path,
+                rowCount: rowCount,
+                formatTitle: formatTitle
+            )
+            let metricName = formatTitle == "summary.csv"
+                ? "menu.bench_matrix_export_summary_csv_ms"
+                : "menu.bench_matrix_export_requests_csv_ms"
+            await metrics.record(
+                name: metricName,
+                valueMs: Date().timeIntervalSince(startedAt) * 1_000
+            )
+        } catch {
+            recordLocalError(String(describing: error))
+        }
+        notifyStateChanged()
     }
 
     private func exportEvaluationArtifact(
@@ -3718,6 +4164,145 @@ public final class RuntimeViewModel {
         )
     }
 
+    private static func makeBenchmarkMatrixHistoryEntryStates(
+        from entries: [ControlPlaneBenchmarkMatrixHistoryEntry]
+    ) -> [RuntimeBenchmarkMatrixHistoryEntryState] {
+        let grouped = Dictionary(grouping: entries, by: \.jobID)
+        return grouped.values
+            .compactMap { group in
+                guard let representative = group.max(by: { $0.createdAtUnixMS < $1.createdAtUnixMS }) else {
+                    return nil
+                }
+                let suiteTitles = Array(Set(group.map { benchmarkSuiteTitle(for: $0.suiteID, taskKind: $0.taskKind) })).sorted()
+                let suiteSummary = suiteTitles.count == 1
+                    ? (suiteTitles.first ?? representative.suiteID)
+                    : "\(suiteTitles.count) suites"
+                let loadBudgetText = representative.requests > 0
+                    ? "\(representative.requests) requests • \(representative.repeats)x repeats"
+                    : "\(representative.durationSeconds)s duration • \(representative.repeats)x repeats"
+                return RuntimeBenchmarkMatrixHistoryEntryState(
+                    id: representative.jobID,
+                    jobID: representative.jobID,
+                    modelID: representative.modelID,
+                    taskKind: representative.taskKind,
+                    taskTitle: benchmarkTaskTitle(for: representative.taskKind),
+                    sourceRepo: representative.sourceRepo,
+                    suiteSummary: suiteSummary,
+                    cellCountText: "\(group.count) cells",
+                    loadBudgetText: loadBudgetText,
+                    statusText: humanizeStatus(representative.status),
+                    createdAtText: benchmarkTimestampLabel(representative.createdAtUnixMS),
+                    createdAtUnixMS: representative.createdAtUnixMS
+                )
+            }
+            .sorted { lhs, rhs in
+                if lhs.createdAtUnixMS == rhs.createdAtUnixMS {
+                    return lhs.jobID > rhs.jobID
+                }
+                return lhs.createdAtUnixMS > rhs.createdAtUnixMS
+            }
+    }
+
+    private static func makeBenchmarkMatrixSummaryCardStates(
+        from rows: [ControlPlaneBenchmarkMatrixSummaryCSVRow]
+    ) -> [RuntimeBenchmarkMatrixSummaryCardState] {
+        guard rows.isEmpty == false else {
+            return []
+        }
+
+        let count = Double(rows.count)
+        let avgTTFT = rows.map(\.ttftMeanMS).reduce(0, +) / count
+        let avgLatency = rows.map(\.requestLatencyMeanMS).reduce(0, +) / count
+        let avgDecode = rows.map(\.decodeTokensPerSecondMean).reduce(0, +) / count
+        let avgThroughput = rows.map(\.throughputRequestsPerSecond).reduce(0, +) / count
+        let avgSuccess = rows.map(\.successRate).reduce(0, +) / count
+
+        return [
+            RuntimeBenchmarkMatrixSummaryCardState(
+                id: "cells",
+                title: "Cells",
+                valueText: "\(rows.count)",
+                detail: "Selected matrix combinations"
+            ),
+            RuntimeBenchmarkMatrixSummaryCardState(
+                id: "ttft",
+                title: "Avg TTFT",
+                valueText: String(format: "%.2f ms", avgTTFT),
+                detail: "Mean across selected cells"
+            ),
+            RuntimeBenchmarkMatrixSummaryCardState(
+                id: "latency",
+                title: "Avg Latency",
+                valueText: String(format: "%.2f ms", avgLatency),
+                detail: "Request latency mean"
+            ),
+            RuntimeBenchmarkMatrixSummaryCardState(
+                id: "decode",
+                title: "Avg Decode",
+                valueText: String(format: "%.2f tok/s", avgDecode),
+                detail: "Decode throughput mean"
+            ),
+            RuntimeBenchmarkMatrixSummaryCardState(
+                id: "throughput",
+                title: "Avg Throughput",
+                valueText: String(format: "%.2f req/s", avgThroughput),
+                detail: "Request throughput mean"
+            ),
+            RuntimeBenchmarkMatrixSummaryCardState(
+                id: "success",
+                title: "Avg Success",
+                valueText: String(format: "%.1f%%", avgSuccess * 100),
+                detail: "Success rate"
+            ),
+        ]
+    }
+
+    private static func makeBenchmarkMatrixSummaryRowState(
+        from row: ControlPlaneBenchmarkMatrixSummaryCSVRow
+    ) -> RuntimeBenchmarkMatrixSummaryRowState {
+        RuntimeBenchmarkMatrixSummaryRowState(
+            id: "\(row.jobID):\(row.suiteID):\(row.contextLength):\(row.generationLength):\(row.batchSize):\(row.concurrencyLevel)",
+            suiteTitle: benchmarkSuiteTitle(for: row.suiteID, taskKind: row.taskKind),
+            configurationSummary: "ctx \(row.contextLength) • gen \(row.generationLength) • batch \(row.batchSize) • conc \(row.concurrencyLevel) • \(humanizedControlTitle(row.cacheProfile)) • \(humanizedControlTitle(row.reasoningMode)) • \(humanizedControlTitle(row.structuredOutputMode))",
+            latencyText: String(format: "TTFT %.2f ms • Lat %.2f ms", row.ttftMeanMS, row.requestLatencyMeanMS),
+            throughputText: String(format: "Prefill %.2f • Decode %.2f • Req %.2f", row.prefillTokensPerSecondMean, row.decodeTokensPerSecondMean, row.throughputRequestsPerSecond),
+            successRateText: String(format: "%.1f%% success", row.successRate * 100),
+            peakMemoryText: "Peak \(formatBytes(row.peakMemoryBytesMax))",
+            createdAtText: benchmarkTimestampLabel(row.createdAtUnixMS),
+            contextLength: row.contextLength,
+            batchSize: row.batchSize,
+            concurrencyLevel: row.concurrencyLevel,
+            ttftMeanMS: row.ttftMeanMS,
+            throughputTokensPerSecond: row.throughputTokensPerSecond
+        )
+    }
+
+    private static func makeBenchmarkMatrixContextChartPointState(
+        from row: ControlPlaneBenchmarkMatrixSummaryCSVRow
+    ) -> RuntimeBenchmarkMatrixChartPointState {
+        RuntimeBenchmarkMatrixChartPointState(
+            id: "ctx:\(row.jobID):\(row.suiteID):\(row.contextLength):\(row.batchSize):\(row.concurrencyLevel)",
+            seriesTitle: "\(benchmarkSuiteTitle(for: row.suiteID, taskKind: row.taskKind)) • b\(row.batchSize)",
+            xLabel: String(row.contextLength),
+            xValue: row.contextLength,
+            yValue: row.ttftMeanMS,
+            unit: "ms"
+        )
+    }
+
+    private static func makeBenchmarkMatrixThroughputChartPointState(
+        from row: ControlPlaneBenchmarkMatrixSummaryCSVRow
+    ) -> RuntimeBenchmarkMatrixChartPointState {
+        RuntimeBenchmarkMatrixChartPointState(
+            id: "throughput:\(row.jobID):\(row.suiteID):\(row.batchSize):\(row.concurrencyLevel)",
+            seriesTitle: "\(benchmarkSuiteTitle(for: row.suiteID, taskKind: row.taskKind)) • c\(row.concurrencyLevel)",
+            xLabel: String(row.batchSize),
+            xValue: row.batchSize,
+            yValue: row.throughputTokensPerSecond,
+            unit: "tok/s"
+        )
+    }
+
     private static func makeEvaluationHistoryEntryState(
         from entry: ControlPlaneEvaluationHistoryEntry
     ) -> RuntimeEvaluationHistoryEntryState {
@@ -3817,6 +4402,21 @@ public final class RuntimeViewModel {
             return String(format: "%.2fs", milliseconds / 1_000)
         }
         return String(format: "%.0fms", milliseconds)
+    }
+
+    private static func formatBytes(_ bytes: UInt64) -> String {
+        guard bytes > 0 else {
+            return "0 B"
+        }
+        let formatter = ByteCountFormatter()
+        formatter.allowedUnits = [.useKB, .useMB, .useGB]
+        formatter.countStyle = .memory
+        formatter.includesUnit = true
+        return formatter.string(fromByteCount: Int64(bytes))
+    }
+
+    private static func humanizedControlTitle(_ value: String) -> String {
+        value.replacingOccurrences(of: "_", with: " ").capitalized
     }
 
     private static func benchmarkMetricLabel(_ metricName: String) -> String {
@@ -3970,6 +4570,17 @@ public final class RuntimeViewModel {
         return Array(set).sorted()
     }
 
+    private static func toggledStrings(_ value: String, in values: [String]) -> [String] {
+        let normalizedValue = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        var set = Set(ControlPlaneBenchMatrixRequest.normalizedStringValues(values))
+        if set.contains(normalizedValue) {
+            set.remove(normalizedValue)
+        } else if normalizedValue.isEmpty == false {
+            set.insert(normalizedValue)
+        }
+        return Array(set).sorted()
+    }
+
     private static func benchmarkTimestampLabel(_ unixMS: Int64) -> String {
         let date = Date(timeIntervalSince1970: Double(unixMS) / 1_000)
         return date.formatted(date: .abbreviated, time: .shortened)
@@ -4014,6 +4625,18 @@ public final class RuntimeViewModel {
         let sanitizedJobID = (jobID?.isEmpty == false ? jobID! : "all-runs")
             .replacingOccurrences(of: "/", with: "-")
         return "melix-benchmark-\(sanitizedJobID).csv"
+    }
+
+    private static func benchmarkMatrixSummaryCSVFileName(jobID: String?) -> String {
+        let sanitizedJobID = (jobID?.isEmpty == false ? jobID! : "all-runs")
+            .replacingOccurrences(of: "/", with: "-")
+        return "melix-benchmark-matrix-summary-\(sanitizedJobID).csv"
+    }
+
+    private static func benchmarkMatrixRequestsCSVFileName(jobID: String?) -> String {
+        let sanitizedJobID = (jobID?.isEmpty == false ? jobID! : "all-runs")
+            .replacingOccurrences(of: "/", with: "-")
+        return "melix-benchmark-matrix-requests-\(sanitizedJobID).csv"
     }
 
     private static func evaluationSummaryCSVFileName(jobID: String?) -> String {

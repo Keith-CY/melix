@@ -1075,6 +1075,22 @@ struct DesktopDiagnosticsToolSectionView: View {
         await viewModel.exportSelectedBenchmarkCSV()
     }
 
+    func runBenchmarkMatrix() async {
+        await viewModel.runBenchMatrix()
+    }
+
+    func refreshBenchmarkMatrixResults() async {
+        await viewModel.refreshBenchmarkHistory()
+    }
+
+    func exportBenchmarkMatrixSummaryCSV() async {
+        await viewModel.exportSelectedBenchmarkMatrixSummaryCSV()
+    }
+
+    func exportBenchmarkMatrixRequestsCSV() async {
+        await viewModel.exportSelectedBenchmarkMatrixRequestsCSV()
+    }
+
     func runEvaluation() async {
         await viewModel.runEvaluation()
     }
@@ -1107,6 +1123,10 @@ struct DesktopDiagnosticsToolSectionView: View {
         viewModel.selectBenchmarkHistory(jobID: jobID)
     }
 
+    func selectBenchmarkMatrixHistory(jobID: String) {
+        viewModel.selectBenchmarkMatrixHistory(jobID: jobID)
+    }
+
     func toggleEvaluationSuiteSelection(_ suiteID: String) {
         viewModel.toggleEvaluationSuite(suiteID)
     }
@@ -1116,7 +1136,7 @@ struct DesktopDiagnosticsToolSectionView: View {
     }
 
     func refreshDiagnosticsHistoryIfNeeded() async {
-        if viewModel.benchmarkHistory.isEmpty && viewModel.evaluationHistory.isEmpty {
+        if viewModel.benchmarkHistory.isEmpty && viewModel.benchmarkMatrixHistory.isEmpty && viewModel.evaluationHistory.isEmpty {
             await viewModel.refreshBenchmarkHistory()
         }
     }
@@ -1139,6 +1159,22 @@ struct DesktopDiagnosticsToolSectionView: View {
 
     private func startExportBenchmarkCSVTask() {
         Task { await exportBenchmarkCSV() }
+    }
+
+    private func startBenchmarkMatrixTask() {
+        Task { await runBenchmarkMatrix() }
+    }
+
+    private func startRefreshBenchmarkMatrixResultsTask() {
+        Task { await refreshBenchmarkMatrixResults() }
+    }
+
+    private func startExportBenchmarkMatrixSummaryCSVTask() {
+        Task { await exportBenchmarkMatrixSummaryCSV() }
+    }
+
+    private func startExportBenchmarkMatrixRequestsCSVTask() {
+        Task { await exportBenchmarkMatrixRequestsCSV() }
     }
 
     private func startEvaluationTask() {
@@ -1172,16 +1208,31 @@ struct DesktopDiagnosticsToolSectionView: View {
                     HStack {
                         Button("Inspect", action: startInspectTask)
                         Button("Doctor", action: startDoctorTask)
-                        Button("Run Benchmark", action: startBenchmarkTask)
-                            .disabled(
-                                (
-                                    viewModel.selectedBenchmarkTargetMode == .catalogModel
-                                    && viewModel.benchmarkModels.isEmpty
-                                ) || viewModel.selectedBenchmarkSuiteIDs.isEmpty
-                            )
-                        Button("Refresh Bench", action: startRefreshBenchmarkResultsTask)
-                        Button("Export Bench CSV", action: startExportBenchmarkCSVTask)
-                            .disabled(viewModel.benchmarkHistory.isEmpty)
+                        if viewModel.selectedBenchmarkPresentationMode == .standard {
+                            Button("Run Benchmark", action: startBenchmarkTask)
+                                .disabled(
+                                    (
+                                        viewModel.selectedBenchmarkTargetMode == .catalogModel
+                                        && viewModel.benchmarkModels.isEmpty
+                                    ) || viewModel.selectedBenchmarkSuiteIDs.isEmpty
+                                )
+                            Button("Refresh Bench", action: startRefreshBenchmarkResultsTask)
+                            Button("Export Bench CSV", action: startExportBenchmarkCSVTask)
+                                .disabled(viewModel.benchmarkHistory.isEmpty)
+                        } else {
+                            Button("Run Matrix", action: startBenchmarkMatrixTask)
+                                .disabled(
+                                    (
+                                        viewModel.selectedBenchmarkTargetMode == .catalogModel
+                                        && viewModel.benchmarkModels.isEmpty
+                                    ) || viewModel.selectedBenchmarkSuiteIDs.isEmpty
+                                )
+                            Button("Refresh Matrix", action: startRefreshBenchmarkMatrixResultsTask)
+                            Button("Export Matrix Summary", action: startExportBenchmarkMatrixSummaryCSVTask)
+                                .disabled(viewModel.benchmarkMatrixHistory.isEmpty)
+                            Button("Export Matrix Requests", action: startExportBenchmarkMatrixRequestsCSVTask)
+                                .disabled(viewModel.benchmarkMatrixHistory.isEmpty)
+                        }
                     }
                     HStack {
                         Button("Run Evaluation", action: startEvaluationTask)
@@ -1219,6 +1270,19 @@ struct DesktopDiagnosticsToolSectionView: View {
 
             GroupBox("Benchmark Configuration") {
                 VStack(alignment: .leading, spacing: 12) {
+                    Picker(
+                        "Benchmark Mode",
+                        selection: Binding(
+                            get: { viewModel.selectedBenchmarkPresentationMode },
+                            set: { viewModel.selectedBenchmarkPresentationMode = $0 }
+                        )
+                    ) {
+                        ForEach(RuntimeBenchmarkPresentationMode.allCases) { mode in
+                            Text(mode.title).tag(mode)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+
                     Picker(
                         "Benchmark Target",
                         selection: Binding(
@@ -1301,142 +1365,402 @@ struct DesktopDiagnosticsToolSectionView: View {
 
                     Divider()
 
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text("Performance Controls")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(.secondary)
-
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("Context Lengths")
-                                .font(.caption)
+                    if viewModel.selectedBenchmarkPresentationMode == .standard {
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text("Performance Controls")
+                                .font(.caption.weight(.semibold))
                                 .foregroundStyle(.secondary)
-                            LazyVGrid(columns: [GridItem(.adaptive(minimum: 88), spacing: 8)], spacing: 8) {
-                                ForEach(RuntimeViewModel.benchmarkContextLengthOptions, id: \.self) { contextLength in
-                                    Button {
-                                        viewModel.toggleBenchContextLength(contextLength)
-                                    } label: {
-                                        Text("\(contextLength)")
-                                            .font(.caption.weight(.semibold))
-                                            .foregroundStyle(.primary)
-                                            .frame(maxWidth: .infinity)
-                                            .padding(.vertical, 6)
-                                            .padding(.horizontal, 10)
-                                            .background(
-                                                viewModel.selectedBenchContextLengths.contains(contextLength)
-                                                ? Color.accentColor.opacity(0.16)
-                                                : Color.secondary.opacity(0.08),
-                                                in: Capsule()
-                                            )
+
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("Context Lengths")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                LazyVGrid(columns: [GridItem(.adaptive(minimum: 88), spacing: 8)], spacing: 8) {
+                                    ForEach(RuntimeViewModel.benchmarkContextLengthOptions, id: \.self) { contextLength in
+                                        Button {
+                                            viewModel.toggleBenchContextLength(contextLength)
+                                        } label: {
+                                            Text("\(contextLength)")
+                                                .font(.caption.weight(.semibold))
+                                                .foregroundStyle(.primary)
+                                                .frame(maxWidth: .infinity)
+                                                .padding(.vertical, 6)
+                                                .padding(.horizontal, 10)
+                                                .background(
+                                                    viewModel.selectedBenchContextLengths.contains(contextLength)
+                                                    ? Color.accentColor.opacity(0.16)
+                                                    : Color.secondary.opacity(0.08),
+                                                    in: Capsule()
+                                                )
+                                        }
+                                        .buttonStyle(.plain)
                                     }
-                                    .buttonStyle(.plain)
+                                }
+                            }
+
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("Batch Sizes")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                LazyVGrid(columns: [GridItem(.adaptive(minimum: 88), spacing: 8)], spacing: 8) {
+                                    ForEach(RuntimeViewModel.benchmarkBatchSizeOptions, id: \.self) { batchSize in
+                                        Button {
+                                            viewModel.toggleBenchBatchSize(batchSize)
+                                        } label: {
+                                            Text("\(batchSize)")
+                                                .font(.caption.weight(.semibold))
+                                                .foregroundStyle(.primary)
+                                                .frame(maxWidth: .infinity)
+                                                .padding(.vertical, 6)
+                                                .padding(.horizontal, 10)
+                                                .background(
+                                                    viewModel.selectedBenchBatchSizes.contains(batchSize)
+                                                    ? Color.accentColor.opacity(0.16)
+                                                    : Color.secondary.opacity(0.08),
+                                                    in: Capsule()
+                                                )
+                                        }
+                                        .buttonStyle(.plain)
+                                    }
                                 }
                             }
                         }
 
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("Batch Sizes")
+                        HStack(spacing: 16) {
+                            TextField(
+                                "Sample Size",
+                                text: Binding(
+                                    get: { viewModel.benchmarkSampleSize },
+                                    set: { viewModel.benchmarkSampleSize = $0 }
+                                )
+                            )
+                            .textFieldStyle(.roundedBorder)
+                            TextField(
+                                "Batch Factor",
+                                text: Binding(
+                                    get: { viewModel.benchmarkBatchFactor },
+                                    set: { viewModel.benchmarkBatchFactor = $0 }
+                                )
+                            )
+                            .textFieldStyle(.roundedBorder)
+                            TextField(
+                                "Repeats",
+                                text: Binding(
+                                    get: { viewModel.benchRepeats },
+                                    set: { viewModel.benchRepeats = $0 }
+                                )
+                            )
+                            .textFieldStyle(.roundedBorder)
+                        }
+
+                        HStack(spacing: 16) {
+                            Picker(
+                                "Cache Profile",
+                                selection: Binding(
+                                    get: { viewModel.benchCacheProfile },
+                                    set: { viewModel.benchCacheProfile = $0 }
+                                )
+                            ) {
+                                ForEach(RuntimeViewModel.benchmarkCacheProfileOptions, id: \.self) { option in
+                                    Text(option.replacingOccurrences(of: "_", with: " ").capitalized)
+                                        .tag(option)
+                                }
+                            }
+                            .pickerStyle(.menu)
+
+                            Picker(
+                                "Reasoning Mode",
+                                selection: Binding(
+                                    get: { viewModel.benchReasoningMode },
+                                    set: { viewModel.benchReasoningMode = $0 }
+                                )
+                            ) {
+                                ForEach(RuntimeViewModel.benchmarkReasoningModeOptions, id: \.self) { option in
+                                    Text(option.replacingOccurrences(of: "_", with: " ").capitalized)
+                                        .tag(option)
+                                }
+                            }
+                            .pickerStyle(.menu)
+
+                            Picker(
+                                "Structured Output",
+                                selection: Binding(
+                                    get: { viewModel.benchStructuredOutputMode },
+                                    set: { viewModel.benchStructuredOutputMode = $0 }
+                                )
+                            ) {
+                                ForEach(RuntimeViewModel.benchmarkStructuredOutputModeOptions, id: \.self) { option in
+                                    Text(option.replacingOccurrences(of: "_", with: " ").capitalized)
+                                        .tag(option)
+                                }
+                            }
+                            .pickerStyle(.menu)
+                        }
+
+                        if let export = viewModel.lastBenchmarkCSVExport {
+                            Text("CSV exported: \(export.rowCount) rows • \(export.outputPath)")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
-                            LazyVGrid(columns: [GridItem(.adaptive(minimum: 88), spacing: 8)], spacing: 8) {
-                                ForEach(RuntimeViewModel.benchmarkBatchSizeOptions, id: \.self) { batchSize in
-                                    Button {
-                                        viewModel.toggleBenchBatchSize(batchSize)
-                                    } label: {
-                                        Text("\(batchSize)")
-                                            .font(.caption.weight(.semibold))
-                                            .foregroundStyle(.primary)
-                                            .frame(maxWidth: .infinity)
-                                            .padding(.vertical, 6)
-                                            .padding(.horizontal, 10)
-                                            .background(
-                                                viewModel.selectedBenchBatchSizes.contains(batchSize)
-                                                ? Color.accentColor.opacity(0.16)
-                                                : Color.secondary.opacity(0.08),
-                                                in: Capsule()
-                                            )
+                                .textSelection(.enabled)
+                        }
+                    } else {
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text("Matrix Controls")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.secondary)
+
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("Context Lengths")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                LazyVGrid(columns: [GridItem(.adaptive(minimum: 88), spacing: 8)], spacing: 8) {
+                                    ForEach(RuntimeViewModel.benchmarkContextLengthOptions, id: \.self) { contextLength in
+                                        Button {
+                                            viewModel.toggleBenchContextLength(contextLength)
+                                        } label: {
+                                            Text("\(contextLength)")
+                                                .font(.caption.weight(.semibold))
+                                                .foregroundStyle(.primary)
+                                                .frame(maxWidth: .infinity)
+                                                .padding(.vertical, 6)
+                                                .padding(.horizontal, 10)
+                                                .background(
+                                                    viewModel.selectedBenchContextLengths.contains(contextLength)
+                                                    ? Color.accentColor.opacity(0.16)
+                                                    : Color.secondary.opacity(0.08),
+                                                    in: Capsule()
+                                                )
+                                        }
+                                        .buttonStyle(.plain)
                                     }
-                                    .buttonStyle(.plain)
+                                }
+                            }
+
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("Generation Lengths")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                LazyVGrid(columns: [GridItem(.adaptive(minimum: 88), spacing: 8)], spacing: 8) {
+                                    ForEach(RuntimeViewModel.benchmarkGenerationLengthOptions, id: \.self) { generationLength in
+                                        Button {
+                                            viewModel.toggleBenchGenerationLength(generationLength)
+                                        } label: {
+                                            Text("\(generationLength)")
+                                                .font(.caption.weight(.semibold))
+                                                .foregroundStyle(.primary)
+                                                .frame(maxWidth: .infinity)
+                                                .padding(.vertical, 6)
+                                                .padding(.horizontal, 10)
+                                                .background(
+                                                    viewModel.selectedBenchGenerationLengths.contains(generationLength)
+                                                    ? Color.accentColor.opacity(0.16)
+                                                    : Color.secondary.opacity(0.08),
+                                                    in: Capsule()
+                                                )
+                                        }
+                                        .buttonStyle(.plain)
+                                    }
+                                }
+                            }
+
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("Batch Sizes")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                LazyVGrid(columns: [GridItem(.adaptive(minimum: 88), spacing: 8)], spacing: 8) {
+                                    ForEach(RuntimeViewModel.benchmarkBatchSizeOptions, id: \.self) { batchSize in
+                                        Button {
+                                            viewModel.toggleBenchBatchSize(batchSize)
+                                        } label: {
+                                            Text("\(batchSize)")
+                                                .font(.caption.weight(.semibold))
+                                                .foregroundStyle(.primary)
+                                                .frame(maxWidth: .infinity)
+                                                .padding(.vertical, 6)
+                                                .padding(.horizontal, 10)
+                                                .background(
+                                                    viewModel.selectedBenchBatchSizes.contains(batchSize)
+                                                    ? Color.accentColor.opacity(0.16)
+                                                    : Color.secondary.opacity(0.08),
+                                                    in: Capsule()
+                                                )
+                                        }
+                                        .buttonStyle(.plain)
+                                    }
+                                }
+                            }
+
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("Cache Profiles")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                LazyVGrid(columns: [GridItem(.adaptive(minimum: 110), spacing: 8)], spacing: 8) {
+                                    ForEach(RuntimeViewModel.benchmarkCacheProfileOptions, id: \.self) { option in
+                                        Button {
+                                            viewModel.toggleBenchMatrixCacheProfile(option)
+                                        } label: {
+                                            Text(option.replacingOccurrences(of: "_", with: " ").capitalized)
+                                                .font(.caption.weight(.semibold))
+                                                .foregroundStyle(.primary)
+                                                .frame(maxWidth: .infinity)
+                                                .padding(.vertical, 6)
+                                                .padding(.horizontal, 10)
+                                                .background(
+                                                    viewModel.selectedBenchMatrixCacheProfiles.contains(option)
+                                                    ? Color.accentColor.opacity(0.16)
+                                                    : Color.secondary.opacity(0.08),
+                                                    in: Capsule()
+                                                )
+                                        }
+                                        .buttonStyle(.plain)
+                                    }
+                                }
+                            }
+
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("Reasoning Modes")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                LazyVGrid(columns: [GridItem(.adaptive(minimum: 120), spacing: 8)], spacing: 8) {
+                                    ForEach(RuntimeViewModel.benchmarkReasoningModeOptions, id: \.self) { option in
+                                        Button {
+                                            viewModel.toggleBenchMatrixReasoningMode(option)
+                                        } label: {
+                                            Text(option.replacingOccurrences(of: "_", with: " ").capitalized)
+                                                .font(.caption.weight(.semibold))
+                                                .foregroundStyle(.primary)
+                                                .frame(maxWidth: .infinity)
+                                                .padding(.vertical, 6)
+                                                .padding(.horizontal, 10)
+                                                .background(
+                                                    viewModel.selectedBenchMatrixReasoningModes.contains(option)
+                                                    ? Color.accentColor.opacity(0.16)
+                                                    : Color.secondary.opacity(0.08),
+                                                    in: Capsule()
+                                                )
+                                        }
+                                        .buttonStyle(.plain)
+                                    }
+                                }
+                            }
+
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("Structured Output")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                LazyVGrid(columns: [GridItem(.adaptive(minimum: 120), spacing: 8)], spacing: 8) {
+                                    ForEach(RuntimeViewModel.benchmarkStructuredOutputModeOptions, id: \.self) { option in
+                                        Button {
+                                            viewModel.toggleBenchMatrixStructuredOutputMode(option)
+                                        } label: {
+                                            Text(option.replacingOccurrences(of: "_", with: " ").capitalized)
+                                                .font(.caption.weight(.semibold))
+                                                .foregroundStyle(.primary)
+                                                .frame(maxWidth: .infinity)
+                                                .padding(.vertical, 6)
+                                                .padding(.horizontal, 10)
+                                                .background(
+                                                    viewModel.selectedBenchMatrixStructuredOutputModes.contains(option)
+                                                    ? Color.accentColor.opacity(0.16)
+                                                    : Color.secondary.opacity(0.08),
+                                                    in: Capsule()
+                                                )
+                                        }
+                                        .buttonStyle(.plain)
+                                    }
+                                }
+                            }
+
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("Concurrency Levels")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                LazyVGrid(columns: [GridItem(.adaptive(minimum: 88), spacing: 8)], spacing: 8) {
+                                    ForEach(RuntimeViewModel.benchmarkConcurrencyOptions, id: \.self) { option in
+                                        Button {
+                                            viewModel.toggleBenchMatrixConcurrencyLevel(option)
+                                        } label: {
+                                            Text("\(option)")
+                                                .font(.caption.weight(.semibold))
+                                                .foregroundStyle(.primary)
+                                                .frame(maxWidth: .infinity)
+                                                .padding(.vertical, 6)
+                                                .padding(.horizontal, 10)
+                                                .background(
+                                                    viewModel.selectedBenchMatrixConcurrencyLevels.contains(option)
+                                                    ? Color.accentColor.opacity(0.16)
+                                                    : Color.secondary.opacity(0.08),
+                                                    in: Capsule()
+                                                )
+                                        }
+                                        .buttonStyle(.plain)
+                                    }
                                 }
                             }
                         }
-                    }
 
-                    HStack(spacing: 16) {
-                        TextField(
-                            "Sample Size",
-                            text: Binding(
-                                get: { viewModel.benchmarkSampleSize },
-                                set: { viewModel.benchmarkSampleSize = $0 }
+                        HStack(spacing: 16) {
+                            TextField(
+                                "Repeats",
+                                text: Binding(
+                                    get: { viewModel.benchMatrixRepeats },
+                                    set: { viewModel.benchMatrixRepeats = $0 }
+                                )
                             )
-                        )
-                        .textFieldStyle(.roundedBorder)
-                        TextField(
-                            "Batch Factor",
-                            text: Binding(
-                                get: { viewModel.benchmarkBatchFactor },
-                                set: { viewModel.benchmarkBatchFactor = $0 }
-                            )
-                        )
-                        .textFieldStyle(.roundedBorder)
-                        TextField(
-                            "Repeats",
-                            text: Binding(
-                                get: { viewModel.benchRepeats },
-                                set: { viewModel.benchRepeats = $0 }
-                            )
-                        )
-                        .textFieldStyle(.roundedBorder)
-                    }
+                            .textFieldStyle(.roundedBorder)
 
-                    HStack(spacing: 16) {
-                        Picker(
-                            "Cache Profile",
-                            selection: Binding(
-                                get: { viewModel.benchCacheProfile },
-                                set: { viewModel.benchCacheProfile = $0 }
-                            )
-                        ) {
-                            ForEach(RuntimeViewModel.benchmarkCacheProfileOptions, id: \.self) { option in
-                                Text(option.replacingOccurrences(of: "_", with: " ").capitalized)
-                                    .tag(option)
+                            Picker(
+                                "Load Budget",
+                                selection: Binding(
+                                    get: { viewModel.selectedBenchmarkMatrixLoadBudgetMode },
+                                    set: { viewModel.selectedBenchmarkMatrixLoadBudgetMode = $0 }
+                                )
+                            ) {
+                                ForEach(RuntimeBenchmarkMatrixLoadBudgetMode.allCases) { mode in
+                                    Text(mode.title).tag(mode)
+                                }
+                            }
+                            .pickerStyle(.segmented)
+
+                            if viewModel.selectedBenchmarkMatrixLoadBudgetMode == .requests {
+                                TextField(
+                                    "Requests",
+                                    text: Binding(
+                                        get: { viewModel.benchMatrixRequests },
+                                        set: { viewModel.benchMatrixRequests = $0 }
+                                    )
+                                )
+                                .textFieldStyle(.roundedBorder)
+                            } else {
+                                TextField(
+                                    "Duration Seconds",
+                                    text: Binding(
+                                        get: { viewModel.benchMatrixDurationSeconds },
+                                        set: { viewModel.benchMatrixDurationSeconds = $0 }
+                                    )
+                                )
+                                .textFieldStyle(.roundedBorder)
                             }
                         }
-                        .pickerStyle(.menu)
 
-                        Picker(
-                            "Reasoning Mode",
-                            selection: Binding(
-                                get: { viewModel.benchReasoningMode },
-                                set: { viewModel.benchReasoningMode = $0 }
+                        Toggle(
+                            "Allow Large Matrix",
+                            isOn: Binding(
+                                get: { viewModel.benchMatrixAllowLargeMatrix },
+                                set: { viewModel.benchMatrixAllowLargeMatrix = $0 }
                             )
-                        ) {
-                            ForEach(RuntimeViewModel.benchmarkReasoningModeOptions, id: \.self) { option in
-                                Text(option.replacingOccurrences(of: "_", with: " ").capitalized)
-                                    .tag(option)
-                            }
-                        }
-                        .pickerStyle(.menu)
+                        )
 
-                        Picker(
-                            "Structured Output",
-                            selection: Binding(
-                                get: { viewModel.benchStructuredOutputMode },
-                                set: { viewModel.benchStructuredOutputMode = $0 }
-                            )
-                        ) {
-                            ForEach(RuntimeViewModel.benchmarkStructuredOutputModeOptions, id: \.self) { option in
-                                Text(option.replacingOccurrences(of: "_", with: " ").capitalized)
-                                    .tag(option)
-                            }
-                        }
-                        .pickerStyle(.menu)
-                    }
-
-                    if let export = viewModel.lastBenchmarkCSVExport {
-                        Text("CSV exported: \(export.rowCount) rows • \(export.outputPath)")
+                        Text("\(viewModel.benchmarkMatrixCellCountText) • \(viewModel.benchmarkMatrixLoadBudgetSummaryText)")
                             .font(.caption)
                             .foregroundStyle(.secondary)
-                            .textSelection(.enabled)
+
+                        if let export = viewModel.lastBenchmarkMatrixExport {
+                            Text("Matrix \(export.formatTitle) exported: \(export.rowCount) rows • \(export.outputPath)")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .textSelection(.enabled)
+                        }
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -1453,61 +1777,160 @@ struct DesktopDiagnosticsToolSectionView: View {
 
             GroupBox("Benchmark Results") {
                 VStack(alignment: .leading, spacing: 8) {
-                    if let selectedEntry = viewModel.selectedBenchmarkHistoryEntry {
-                        Text("Selected run \(selectedEntry.jobID) • \(selectedEntry.suiteTitle) • \(selectedEntry.createdAtText)")
-                            .font(.headline)
-                        let selectedSource = selectedEntry.sourceRepo.isEmpty ? selectedEntry.modelID : selectedEntry.sourceRepo
-                        Text("\(selectedEntry.taskTitle) • \(selectedSource) • \(selectedEntry.datasetLabel)")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-
-                    if viewModel.benchmarkMetricOptions.isEmpty {
-                        Text("Run a benchmark or refresh persisted results to visualize history.")
-                            .foregroundStyle(.secondary)
-                    } else {
-                        Picker(
-                            "Metric",
-                            selection: Binding(
-                                get: { viewModel.selectedBenchmarkMetricName },
-                                set: { viewModel.selectBenchmarkMetric($0) }
-                            )
-                        ) {
-                            ForEach(viewModel.benchmarkMetricOptions, id: \.self) { metricName in
-                                Text(metricName).tag(metricName)
-                            }
-                        }
-                        .pickerStyle(.menu)
-
-                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 180), spacing: 12)], spacing: 12) {
-                            ForEach(viewModel.benchmarkMetricCards.prefix(6)) { metric in
-                                VStack(alignment: .leading, spacing: 6) {
-                                    Text(metric.metricLabel)
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                    Text(metric.valueText)
-                                        .font(.headline)
-                                        .monospacedDigit()
-                                    Text(metric.suiteTitle)
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                }
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .padding(12)
-                                .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 12))
-                            }
+                    if viewModel.selectedBenchmarkPresentationMode == .standard {
+                        if let selectedEntry = viewModel.selectedBenchmarkHistoryEntry {
+                            Text("Selected run \(selectedEntry.jobID) • \(selectedEntry.suiteTitle) • \(selectedEntry.createdAtText)")
+                                .font(.headline)
+                            let selectedSource = selectedEntry.sourceRepo.isEmpty ? selectedEntry.modelID : selectedEntry.sourceRepo
+                            Text("\(selectedEntry.taskTitle) • \(selectedSource) • \(selectedEntry.datasetLabel)")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
                         }
 
-                        if viewModel.benchmarkChartPoints.isEmpty == false {
-                            Chart(viewModel.benchmarkChartPoints) { point in
-                                BarMark(
-                                    x: .value("Run", point.createdAtLabel),
-                                    y: .value("Value", point.value)
+                        if viewModel.benchmarkMetricOptions.isEmpty {
+                            Text("Run a benchmark or refresh persisted results to visualize history.")
+                                .foregroundStyle(.secondary)
+                        } else {
+                            Picker(
+                                "Metric",
+                                selection: Binding(
+                                    get: { viewModel.selectedBenchmarkMetricName },
+                                    set: { viewModel.selectBenchmarkMetric($0) }
                                 )
-                                .foregroundStyle(by: .value("Suite", point.suiteTitle))
+                            ) {
+                                ForEach(viewModel.benchmarkMetricOptions, id: \.self) { metricName in
+                                    Text(metricName).tag(metricName)
+                                }
                             }
-                            .frame(height: 240)
-                            .chartLegend(position: .bottom)
+                            .pickerStyle(.menu)
+
+                            LazyVGrid(columns: [GridItem(.adaptive(minimum: 180), spacing: 12)], spacing: 12) {
+                                ForEach(viewModel.benchmarkMetricCards.prefix(6)) { metric in
+                                    VStack(alignment: .leading, spacing: 6) {
+                                        Text(metric.metricLabel)
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                        Text(metric.valueText)
+                                            .font(.headline)
+                                            .monospacedDigit()
+                                        Text(metric.suiteTitle)
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .padding(12)
+                                    .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 12))
+                                }
+                            }
+
+                            if viewModel.benchmarkChartPoints.isEmpty == false {
+                                Chart(viewModel.benchmarkChartPoints) { point in
+                                    BarMark(
+                                        x: .value("Run", point.createdAtLabel),
+                                        y: .value("Value", point.value)
+                                    )
+                                    .foregroundStyle(by: .value("Suite", point.suiteTitle))
+                                }
+                                .frame(height: 240)
+                                .chartLegend(position: .bottom)
+                            }
+                        }
+                    } else {
+                        if let selectedEntry = viewModel.selectedBenchmarkMatrixHistoryEntry {
+                            Text("Selected matrix run \(selectedEntry.jobID) • \(selectedEntry.createdAtText)")
+                                .font(.headline)
+                            let selectedSource = selectedEntry.sourceRepo.isEmpty ? selectedEntry.modelID : selectedEntry.sourceRepo
+                            Text("\(selectedEntry.taskTitle) • \(selectedSource) • \(selectedEntry.suiteSummary) • \(selectedEntry.cellCountText)")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+
+                        if viewModel.benchmarkMatrixSummaryRows.isEmpty {
+                            Text("Run a matrix benchmark or refresh persisted results to inspect matrix summaries.")
+                                .foregroundStyle(.secondary)
+                        } else {
+                            LazyVGrid(columns: [GridItem(.adaptive(minimum: 180), spacing: 12)], spacing: 12) {
+                                ForEach(viewModel.benchmarkMatrixSummaryCards) { card in
+                                    VStack(alignment: .leading, spacing: 6) {
+                                        Text(card.title)
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                        Text(card.valueText)
+                                            .font(.headline)
+                                            .monospacedDigit()
+                                        Text(card.detail)
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .padding(12)
+                                    .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 12))
+                                }
+                            }
+
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("Summary Rows")
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(.secondary)
+                                ForEach(viewModel.benchmarkMatrixSummaryRows.prefix(12)) { row in
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        HStack {
+                                            Text(row.suiteTitle)
+                                                .font(.headline)
+                                            Spacer()
+                                            Text(row.createdAtText)
+                                                .font(.caption)
+                                                .foregroundStyle(.secondary)
+                                        }
+                                        Text(row.configurationSummary)
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                        Text("\(row.latencyText) • \(row.throughputText)")
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                        Text("\(row.successRateText) • \(row.peakMemoryText)")
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .padding(12)
+                                    .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 12))
+                                }
+                            }
+
+                            if viewModel.benchmarkMatrixContextChartPoints.isEmpty == false {
+                                VStack(alignment: .leading, spacing: 8) {
+                                    Text("Context vs TTFT")
+                                        .font(.caption.weight(.semibold))
+                                        .foregroundStyle(.secondary)
+                                    Chart(viewModel.benchmarkMatrixContextChartPoints) { point in
+                                        LineMark(
+                                            x: .value("Context", point.xValue),
+                                            y: .value("TTFT", point.yValue)
+                                        )
+                                        .foregroundStyle(by: .value("Series", point.seriesTitle))
+                                    }
+                                    .frame(height: 220)
+                                    .chartLegend(position: .bottom)
+                                }
+                            }
+
+                            if viewModel.benchmarkMatrixThroughputChartPoints.isEmpty == false {
+                                VStack(alignment: .leading, spacing: 8) {
+                                    Text("Batch / Concurrency Throughput")
+                                        .font(.caption.weight(.semibold))
+                                        .foregroundStyle(.secondary)
+                                    Chart(viewModel.benchmarkMatrixThroughputChartPoints) { point in
+                                        BarMark(
+                                            x: .value("Batch", point.xValue),
+                                            y: .value("Throughput", point.yValue)
+                                        )
+                                        .foregroundStyle(by: .value("Series", point.seriesTitle))
+                                    }
+                                    .frame(height: 220)
+                                    .chartLegend(position: .bottom)
+                                }
+                            }
                         }
                     }
                 }
@@ -1516,46 +1939,85 @@ struct DesktopDiagnosticsToolSectionView: View {
 
             GroupBox("Benchmark History") {
                 VStack(alignment: .leading, spacing: 10) {
-                    ForEach(viewModel.benchmarkHistory.prefix(12)) { entry in
-                        Button {
-                            selectBenchmarkHistory(jobID: entry.jobID)
-                        } label: {
-                            VStack(alignment: .leading, spacing: 6) {
-                                HStack {
-                                    Text("\(entry.suiteTitle) • \(entry.jobID)")
-                                        .font(.headline)
-                                    Spacer()
-                                    Text(entry.statusText)
+                    if viewModel.selectedBenchmarkPresentationMode == .standard {
+                        ForEach(viewModel.benchmarkHistory.prefix(12)) { entry in
+                            Button {
+                                selectBenchmarkHistory(jobID: entry.jobID)
+                            } label: {
+                                VStack(alignment: .leading, spacing: 6) {
+                                    HStack {
+                                        Text("\(entry.suiteTitle) • \(entry.jobID)")
+                                            .font(.headline)
+                                        Spacer()
+                                        Text(entry.statusText)
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                    let sourceLabel = entry.sourceRepo.isEmpty ? entry.modelID : entry.sourceRepo
+                                    Text("\(entry.taskTitle) • \(sourceLabel) • \(entry.datasetLabel)")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                    Text("sample \(entry.sampleSizeText) • batch \(entry.batchFactorText) • \(entry.metricCountText) • \(entry.createdAtText)")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                    if entry.reportPath.isEmpty == false {
+                                        Text(entry.reportPath)
+                                            .font(.caption2)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                }
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(12)
+                                .background(
+                                    viewModel.selectedBenchmarkHistoryJobID == entry.jobID
+                                    ? Color.accentColor.opacity(0.12)
+                                    : Color.secondary.opacity(0.06),
+                                    in: RoundedRectangle(cornerRadius: 12)
+                                )
+                            }
+                            .buttonStyle(.plain)
+                        }
+                        if viewModel.benchmarkHistory.isEmpty {
+                            Text("No persisted benchmark history yet.")
+                                .foregroundStyle(.secondary)
+                        }
+                    } else {
+                        ForEach(viewModel.benchmarkMatrixHistory.prefix(12)) { entry in
+                            Button {
+                                selectBenchmarkMatrixHistory(jobID: entry.jobID)
+                            } label: {
+                                VStack(alignment: .leading, spacing: 6) {
+                                    HStack {
+                                        Text("\(entry.suiteSummary) • \(entry.jobID)")
+                                            .font(.headline)
+                                        Spacer()
+                                        Text(entry.statusText)
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                    let sourceLabel = entry.sourceRepo.isEmpty ? entry.modelID : entry.sourceRepo
+                                    Text("\(entry.taskTitle) • \(sourceLabel)")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                    Text("\(entry.cellCountText) • \(entry.loadBudgetText) • \(entry.createdAtText)")
                                         .font(.caption)
                                         .foregroundStyle(.secondary)
                                 }
-                                let sourceLabel = entry.sourceRepo.isEmpty ? entry.modelID : entry.sourceRepo
-                                Text("\(entry.taskTitle) • \(sourceLabel) • \(entry.datasetLabel)")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                Text("sample \(entry.sampleSizeText) • batch \(entry.batchFactorText) • \(entry.metricCountText) • \(entry.createdAtText)")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                if entry.reportPath.isEmpty == false {
-                                    Text(entry.reportPath)
-                                        .font(.caption2)
-                                        .foregroundStyle(.secondary)
-                                }
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(12)
+                                .background(
+                                    viewModel.selectedBenchmarkMatrixHistoryJobID == entry.jobID
+                                    ? Color.accentColor.opacity(0.12)
+                                    : Color.secondary.opacity(0.06),
+                                    in: RoundedRectangle(cornerRadius: 12)
+                                )
                             }
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(12)
-                            .background(
-                                viewModel.selectedBenchmarkHistoryJobID == entry.jobID
-                                ? Color.accentColor.opacity(0.12)
-                                : Color.secondary.opacity(0.06),
-                                in: RoundedRectangle(cornerRadius: 12)
-                            )
+                            .buttonStyle(.plain)
                         }
-                        .buttonStyle(.plain)
-                    }
-                    if viewModel.benchmarkHistory.isEmpty {
-                        Text("No persisted benchmark history yet.")
-                            .foregroundStyle(.secondary)
+                        if viewModel.benchmarkMatrixHistory.isEmpty {
+                            Text("No persisted benchmark matrix history yet.")
+                                .foregroundStyle(.secondary)
+                        }
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)

@@ -30,9 +30,13 @@ Execute `docs/plans/2026-04-03-bench-matrix-performance-lab.md` so Melix gains a
      - worker responses expose typed matrix job summaries plus summary rows
      - export and submission bundles now carry matrix jobs, summary rows, and request rows
 4. Slice 4: Window UI matrix controls and result views
-   - status: in progress
+   - status: completed
+   - evidence:
+     - the diagnostics workspace now exposes a `Standard / Matrix` mode switch inside the Bench surface
+     - matrix runs can be launched from Window UI with explicit generation length, cache, reasoning, structured-output, concurrency, and load-budget controls
+     - matrix history, summary cards, charts, and CSV export actions are now available without regressing the existing product benchmark path
 5. Slice 5: verification, coverage, and documentation close-out
-   - status: pending
+   - status: in progress
 
 ## Acceptance
 
@@ -52,7 +56,6 @@ Execute `docs/plans/2026-04-03-bench-matrix-performance-lab.md` so Melix gains a
 
 - active slices:
   - Slice 1 reset the canonical contract and execution plan for `bench matrix`
-  - Slice 4 Window UI matrix controls and views are the current implementation focus
+  - Slice 4 closed with Window UI matrix controls, history, charts, and export actions
 - remaining slices:
-  - Window UI productization
   - transaction-wide verification and close-out

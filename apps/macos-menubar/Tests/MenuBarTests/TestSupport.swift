@@ -36,6 +36,7 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
     private(set) var recordedActions: [String] = []
     private(set) var recordedModelOperationRequests: [RecordedModelOperationRequest] = []
     private(set) var recordedBenchRequests: [ControlPlaneBenchRequest] = []
+    private(set) var recordedBenchMatrixRequests: [ControlPlaneBenchMatrixRequest] = []
     private(set) var recordedEvaluationRequests: [ControlPlaneEvaluationRequest] = []
     private(set) var recordedExportOutputDirs: [String] = []
     private(set) var recordedGatewayAccessApplyRequests: [RecordedGatewayAccessApplyRequest] = []
@@ -52,6 +53,7 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
     private var modelOperationError: Error?
     private var doctorError: Error?
     private var benchError: Error?
+    private var benchMatrixError: Error?
     private var evaluationError: Error?
     private var exportError: Error?
     private var chatError: Error?
@@ -71,6 +73,53 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
         reportPath: "/tmp/melix-fake/bench-report.md",
         reportMarkdown: "# Melix Bench\n\n- bench.smoke.ttft_ms: 24.45 ms\n",
         metrics: ["bench.smoke.ttft_ms": 24.45]
+    )
+    private var benchMatrixResponse = ControlPlaneBenchMatrixResult(
+        job: {
+            var job = Melix_Controlplane_V1_BenchmarkMatrixJobSummary()
+            job.jobID = "matrix-fake"
+            job.modelID = "melix-dev-text"
+            job.taskKind = "text-generation"
+            job.sourceRepo = "HuggingFaceH4/ultrachat_200k"
+            job.suiteIds = ["smoke"]
+            job.benchmarkMode = "matrix"
+            job.status = "completed"
+            job.outputDir = "/tmp/melix-fake/bench/matrix-runs/matrix-fake"
+            job.createdAtUnixMs = 1_712_000_000_000
+            job.updatedAtUnixMs = 1_712_000_001_000
+            return job
+        }(),
+        summaryRows: {
+            var row = Melix_Controlplane_V1_BenchmarkMatrixSummaryRow()
+            row.jobID = "matrix-fake"
+            row.taskKind = "text-generation"
+            row.sourceRepo = "HuggingFaceH4/ultrachat_200k"
+            row.modelID = "melix-dev-text"
+            row.suiteID = "smoke"
+            row.contextLength = 1024
+            row.generationLength = 128
+            row.batchSize = 2
+            row.cacheProfile = "cold"
+            row.reasoningMode = "enabled"
+            row.structuredOutputMode = "json_schema"
+            row.concurrencyLevel = 1
+            row.repeats = 3
+            row.requests = 8
+            row.ttftMeanMs = 24.4
+            row.ttftStdMs = 1.2
+            row.requestLatencyMeanMs = 33.8
+            row.requestLatencyStdMs = 1.1
+            row.prefillTokensPerSecondMean = 310.0
+            row.decodeTokensPerSecondMean = 62.0
+            row.throughputRequestsPerSecond = 4.8
+            row.throughputTokensPerSecond = 256.0
+            row.successRate = 1
+            row.peakMemoryBytesMax = 2_048_000_000
+            row.queueWaitMeanMs = 2.3
+            row.queueWaitP95Ms = 3.1
+            row.createdAtUnixMs = 1_712_000_000_000
+            return [row]
+        }()
     )
     private var evaluationResponse = ControlPlaneEvaluationResult(
         job: {
@@ -120,6 +169,7 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
         modelOperation: Error? = nil,
         doctor: Error? = nil,
         bench: Error? = nil,
+        benchMatrix: Error? = nil,
         evaluation: Error? = nil,
         exportResults: Error? = nil,
         chat: Error? = nil,
@@ -137,6 +187,7 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
         modelOperationError = modelOperation
         doctorError = doctor
         benchError = bench
+        benchMatrixError = benchMatrix
         evaluationError = evaluation
         exportError = exportResults
         chatError = chat
@@ -171,6 +222,10 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
 
     func configureBenchResponse(_ result: ControlPlaneBenchResult) {
         benchResponse = result
+    }
+
+    func configureBenchMatrixResponse(_ result: ControlPlaneBenchMatrixResult) {
+        benchMatrixResponse = result
     }
 
     func configureEvaluationResponse(_ result: ControlPlaneEvaluationResult) {
@@ -446,6 +501,15 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
             throw benchError
         }
         return benchResponse
+    }
+
+    func runBenchMatrix(_ request: ControlPlaneBenchMatrixRequest) async throws -> ControlPlaneBenchMatrixResult {
+        recordedBenchMatrixRequests.append(request)
+        recordedActions.append("bench.matrix")
+        if let benchMatrixError {
+            throw benchMatrixError
+        }
+        return benchMatrixResponse
     }
 
     func runEvaluation(_ request: ControlPlaneEvaluationRequest) async throws -> ControlPlaneEvaluationResult {
@@ -874,6 +938,176 @@ func makeBenchmarkExportBundleJSON() -> String {
           "report_markdown": "# Bench Newer\\n"
         }
       ],
+      "benchmark_matrix_jobs": [
+        {
+          "schema_version": "melix.benchmark_matrix_job.v1",
+          "job_id": "matrix-older",
+          "model_id": "melix-dev-text",
+          "task_kind": "text-generation",
+          "source_repo": "HuggingFaceH4/ultrachat_200k",
+          "suite_ids": ["smoke"],
+          "benchmark_mode": "matrix",
+          "status": "completed",
+          "output_dir": "/tmp/melix/bench/matrix-runs/matrix-older",
+          "created_at_unix_ms": 1712150000000,
+          "updated_at_unix_ms": 1712150005000
+        },
+        {
+          "schema_version": "melix.benchmark_matrix_job.v1",
+          "job_id": "matrix-newer",
+          "model_id": "melix-dev-text-lora",
+          "task_kind": "text-generation",
+          "source_repo": "databricks/databricks-dolly-15k",
+          "suite_ids": ["smoke", "latency"],
+          "benchmark_mode": "matrix",
+          "status": "completed",
+          "output_dir": "/tmp/melix/bench/matrix-runs/matrix-newer",
+          "created_at_unix_ms": 1712250000000,
+          "updated_at_unix_ms": 1712250005000
+        }
+      ],
+      "benchmark_matrix_summary_rows": [
+        {
+          "job_id": "matrix-older",
+          "task_kind": "text-generation",
+          "source_repo": "HuggingFaceH4/ultrachat_200k",
+          "model_id": "melix-dev-text",
+          "suite_id": "smoke",
+          "context_length": 1024,
+          "generation_length": 128,
+          "batch_size": 2,
+          "cache_profile": "cold",
+          "reasoning_mode": "enabled",
+          "structured_output_mode": "json_schema",
+          "concurrency_level": 1,
+          "repeats": 3,
+          "requests": 8,
+          "duration_seconds": 0,
+          "ttft_mean_ms": 24.4,
+          "ttft_std_ms": 1.2,
+          "request_latency_mean_ms": 33.8,
+          "request_latency_std_ms": 1.1,
+          "prefill_tokens_per_second_mean": 310.0,
+          "decode_tokens_per_second_mean": 62.0,
+          "throughput_requests_per_second": 4.8,
+          "throughput_tokens_per_second": 256.0,
+          "success_rate": 1.0,
+          "peak_memory_bytes_max": 2048000000,
+          "queue_wait_mean_ms": 2.3,
+          "queue_wait_p95_ms": 3.1,
+          "created_at_unix_ms": 1712150000000
+        },
+        {
+          "job_id": "matrix-newer",
+          "task_kind": "text-generation",
+          "source_repo": "databricks/databricks-dolly-15k",
+          "model_id": "melix-dev-text-lora",
+          "suite_id": "smoke",
+          "context_length": 1024,
+          "generation_length": 128,
+          "batch_size": 2,
+          "cache_profile": "warm",
+          "reasoning_mode": "enabled",
+          "structured_output_mode": "json_schema",
+          "concurrency_level": 1,
+          "repeats": 4,
+          "requests": 12,
+          "duration_seconds": 0,
+          "ttft_mean_ms": 21.4,
+          "ttft_std_ms": 0.9,
+          "request_latency_mean_ms": 29.1,
+          "request_latency_std_ms": 0.8,
+          "prefill_tokens_per_second_mean": 340.0,
+          "decode_tokens_per_second_mean": 66.0,
+          "throughput_requests_per_second": 5.4,
+          "throughput_tokens_per_second": 284.0,
+          "success_rate": 1.0,
+          "peak_memory_bytes_max": 1984000000,
+          "queue_wait_mean_ms": 1.8,
+          "queue_wait_p95_ms": 2.4,
+          "created_at_unix_ms": 1712250000000
+        },
+        {
+          "job_id": "matrix-newer",
+          "task_kind": "text-generation",
+          "source_repo": "databricks/databricks-dolly-15k",
+          "model_id": "melix-dev-text-lora",
+          "suite_id": "latency",
+          "context_length": 4096,
+          "generation_length": 256,
+          "batch_size": 4,
+          "cache_profile": "warm",
+          "reasoning_mode": "enabled",
+          "structured_output_mode": "json_schema",
+          "concurrency_level": 2,
+          "repeats": 4,
+          "requests": 12,
+          "duration_seconds": 0,
+          "ttft_mean_ms": 31.8,
+          "ttft_std_ms": 1.6,
+          "request_latency_mean_ms": 44.7,
+          "request_latency_std_ms": 1.2,
+          "prefill_tokens_per_second_mean": 420.0,
+          "decode_tokens_per_second_mean": 74.0,
+          "throughput_requests_per_second": 7.6,
+          "throughput_tokens_per_second": 512.0,
+          "success_rate": 0.98,
+          "peak_memory_bytes_max": 2368000000,
+          "queue_wait_mean_ms": 3.4,
+          "queue_wait_p95_ms": 4.9,
+          "created_at_unix_ms": 1712250000000
+        }
+      ],
+      "benchmark_matrix_request_rows": [
+        {
+          "job_id": "matrix-newer",
+          "cell_id": "matrix-newer:smoke:1024:128:2:1",
+          "task_kind": "text-generation",
+          "suite_id": "smoke",
+          "context_length": 1024,
+          "generation_length": 128,
+          "batch_size": 2,
+          "cache_profile": "warm",
+          "reasoning_mode": "enabled",
+          "structured_output_mode": "json_schema",
+          "concurrency_level": 1,
+          "repeat_index": 0,
+          "request_index": 0,
+          "ttft_ms": 21.1,
+          "request_latency_ms": 28.7,
+          "prefill_tokens_per_second": 336.0,
+          "decode_tokens_per_second": 65.0,
+          "queue_wait_ms": 1.7,
+          "peak_memory_bytes": 1983000000,
+          "status": "completed",
+          "error_code": "",
+          "created_at_unix_ms": 1712250000000
+        },
+        {
+          "job_id": "matrix-newer",
+          "cell_id": "matrix-newer:latency:4096:256:4:2",
+          "task_kind": "text-generation",
+          "suite_id": "latency",
+          "context_length": 4096,
+          "generation_length": 256,
+          "batch_size": 4,
+          "cache_profile": "warm",
+          "reasoning_mode": "enabled",
+          "structured_output_mode": "json_schema",
+          "concurrency_level": 2,
+          "repeat_index": 0,
+          "request_index": 0,
+          "ttft_ms": 31.4,
+          "request_latency_ms": 44.2,
+          "prefill_tokens_per_second": 416.0,
+          "decode_tokens_per_second": 73.0,
+          "queue_wait_ms": 3.1,
+          "peak_memory_bytes": 2367000000,
+          "status": "completed",
+          "error_code": "",
+          "created_at_unix_ms": 1712250000000
+        }
+      ],
       "evaluation_jobs": [
         {
           "schema_version": "melix.evaluation_job.v1",
@@ -977,6 +1211,9 @@ func makeBenchmarkExportBundleJSONWithoutResults() -> String {
         }
       ],
       "benchmark_results": [],
+      "benchmark_matrix_jobs": [],
+      "benchmark_matrix_summary_rows": [],
+      "benchmark_matrix_request_rows": [],
       "evaluation_jobs": [],
       "evaluation_results": [],
       "evaluation_samples": []

@@ -2195,6 +2195,241 @@ struct RuntimeViewModelTests {
         #expect(viewModel.lastError == "export failed")
     }
 
+    @Test("benchmark matrix configuration dispatches canonical controls history refresh and csv exports")
+    @MainActor
+    func benchmarkMatrixConfigurationDispatchesCanonicalControlsHistoryRefreshAndCSVExports() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let metrics = MenuBarMetricsStore()
+        let viewModel = RuntimeViewModel(client: client, metrics: metrics)
+        await client.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [
+                    makeModelSummary(modelID: "melix-dev-text", state: .modelWarm),
+                    makeModelSummary(modelID: "melix-dev-text-lora", state: .modelWarm),
+                ]
+            )
+        )
+        var matrixJob = Melix_Controlplane_V1_BenchmarkMatrixJobSummary()
+        matrixJob.jobID = "matrix-newer"
+        matrixJob.modelID = "melix-dev-text-lora"
+        matrixJob.taskKind = "text-generation"
+        matrixJob.sourceRepo = "databricks/databricks-dolly-15k"
+        matrixJob.suiteIds = ["smoke", "latency"]
+        matrixJob.benchmarkMode = "matrix"
+        matrixJob.status = "completed"
+        matrixJob.outputDir = "/tmp/melix/bench/matrix-runs/matrix-newer"
+        matrixJob.createdAtUnixMs = 1_712_250_000_000
+        matrixJob.updatedAtUnixMs = 1_712_250_000_500
+        var smokeRow = Melix_Controlplane_V1_BenchmarkMatrixSummaryRow()
+        smokeRow.jobID = "matrix-newer"
+        smokeRow.taskKind = "text-generation"
+        smokeRow.sourceRepo = "databricks/databricks-dolly-15k"
+        smokeRow.modelID = "melix-dev-text-lora"
+        smokeRow.suiteID = "smoke"
+        smokeRow.contextLength = 1024
+        smokeRow.generationLength = 128
+        smokeRow.batchSize = 2
+        smokeRow.cacheProfile = "warm"
+        smokeRow.reasoningMode = "enabled"
+        smokeRow.structuredOutputMode = "json_schema"
+        smokeRow.concurrencyLevel = 1
+        smokeRow.repeats = 4
+        smokeRow.requests = 12
+        smokeRow.ttftMeanMs = 21.4
+        smokeRow.requestLatencyMeanMs = 29.1
+        smokeRow.prefillTokensPerSecondMean = 340
+        smokeRow.decodeTokensPerSecondMean = 66
+        smokeRow.throughputRequestsPerSecond = 5.4
+        smokeRow.throughputTokensPerSecond = 284
+        smokeRow.successRate = 1
+        smokeRow.peakMemoryBytesMax = 1_984_000_000
+        smokeRow.queueWaitMeanMs = 1.8
+        smokeRow.queueWaitP95Ms = 2.4
+        smokeRow.createdAtUnixMs = 1_712_250_000_000
+        var latencyRow = smokeRow
+        latencyRow.suiteID = "latency"
+        latencyRow.contextLength = 4096
+        latencyRow.generationLength = 256
+        latencyRow.batchSize = 4
+        latencyRow.concurrencyLevel = 2
+        latencyRow.ttftMeanMs = 31.8
+        latencyRow.requestLatencyMeanMs = 44.7
+        latencyRow.decodeTokensPerSecondMean = 74
+        latencyRow.throughputRequestsPerSecond = 7.6
+        latencyRow.throughputTokensPerSecond = 512
+        await client.configureBenchMatrixResponse(
+            ControlPlaneBenchMatrixResult(job: matrixJob, summaryRows: [smokeRow, latencyRow])
+        )
+        await client.configureExportResult(
+            ControlPlaneExportResult(exportBundleJSON: makeBenchmarkExportBundleJSON())
+        )
+
+        await viewModel.start()
+        viewModel.selectedBenchmarkPresentationMode = .matrix
+        viewModel.selectedBenchmarkModelID = "melix-dev-text-lora"
+        viewModel.selectedBenchmarkSuiteIDs = ["smoke", "latency"]
+        viewModel.selectedBenchContextLengths = [4096, 1024, 1024]
+        viewModel.selectedBenchGenerationLengths = [256, 128, 256]
+        viewModel.selectedBenchBatchSizes = [4, 2, 4]
+        viewModel.selectedBenchMatrixCacheProfiles = ["warm", "cold", "warm"]
+        viewModel.selectedBenchMatrixReasoningModes = ["enabled", "off", "enabled"]
+        viewModel.selectedBenchMatrixStructuredOutputModes = ["json_schema", "off", "json_schema"]
+        viewModel.selectedBenchMatrixConcurrencyLevels = [2, 1, 2]
+        viewModel.benchMatrixRepeats = "4"
+        viewModel.selectedBenchmarkMatrixLoadBudgetMode = .requests
+        viewModel.benchMatrixRequests = "12"
+
+        await viewModel.runBenchMatrix()
+
+        let matrixRequest = try #require(await client.recordedBenchMatrixRequests.last)
+        #expect(matrixRequest.modelID == "melix-dev-text-lora")
+        #expect(matrixRequest.hfRepoID.isEmpty)
+        #expect(matrixRequest.taskKind == "text-generation")
+        #expect(matrixRequest.suites == ["latency", "smoke"])
+        #expect(matrixRequest.contextLengths == [1024, 4096])
+        #expect(matrixRequest.generationLengths == [128, 256])
+        #expect(matrixRequest.batchSizes == [2, 4])
+        #expect(matrixRequest.cacheProfiles == ["cold", "warm"])
+        #expect(matrixRequest.reasoningModes == ["enabled", "off"])
+        #expect(matrixRequest.structuredOutputModes == ["json_schema", "off"])
+        #expect(matrixRequest.concurrencyLevels == [1, 2])
+        #expect(matrixRequest.repeats == 4)
+        #expect(matrixRequest.requests == 12)
+        #expect(matrixRequest.durationSeconds == 0)
+        #expect(matrixRequest.matrixCellCount == 256)
+        #expect(viewModel.benchmarkMatrixHistory.count == 2)
+        #expect(viewModel.selectedBenchmarkMatrixHistoryEntry?.jobID == "matrix-newer")
+        #expect(viewModel.benchmarkMatrixSummaryRows.count == 2)
+        #expect(viewModel.benchmarkMatrixSummaryCards.count == 6)
+        #expect(viewModel.benchmarkMatrixContextChartPoints.count == 2)
+        #expect(viewModel.benchmarkMatrixThroughputChartPoints.count == 2)
+
+        await viewModel.exportSelectedBenchmarkMatrixSummaryCSV()
+
+        let summaryExport = try #require(viewModel.lastBenchmarkMatrixExport)
+        #expect(summaryExport.formatTitle == "summary.csv")
+        #expect(summaryExport.rowCount == 2)
+        #expect(FileManager.default.fileExists(atPath: summaryExport.outputPath))
+        let summaryCSV = try String(contentsOfFile: summaryExport.outputPath, encoding: .utf8)
+        #expect(summaryCSV.contains("matrix-newer"))
+
+        await viewModel.exportSelectedBenchmarkMatrixRequestsCSV()
+
+        let requestsExport = try #require(viewModel.lastBenchmarkMatrixExport)
+        #expect(requestsExport.formatTitle == "requests.csv")
+        #expect(requestsExport.rowCount == 2)
+        let requestsCSV = try String(contentsOfFile: requestsExport.outputPath, encoding: .utf8)
+        #expect(requestsCSV.contains("matrix-newer"))
+        #expect(await client.recordedActions.contains("bench.matrix"))
+        #expect(await client.recordedActions.contains("bench.export"))
+        #expect(await metrics.snapshot()["menu.ops_bench_matrix_ms"] != nil)
+        #expect(await metrics.snapshot()["menu.bench_matrix_history_refresh_ms"] != nil)
+        #expect(await metrics.snapshot()["menu.bench_matrix_export_summary_csv_ms"] != nil)
+        #expect(await metrics.snapshot()["menu.bench_matrix_export_requests_csv_ms"] != nil)
+    }
+
+    @Test("benchmark matrix supports direct repo duration mode and local guard rails")
+    @MainActor
+    func benchmarkMatrixDirectRepoDurationModeAndGuardRails() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+
+        viewModel.selectedBenchmarkPresentationMode = .matrix
+        viewModel.selectedBenchmarkTargetMode = .huggingFaceRepo
+        viewModel.benchmarkHFRepoID = "unsloth/gemma-4-E4B-it-MLX-8bit"
+        viewModel.selectedBenchmarkSuiteIDs = ["smoke"]
+        viewModel.selectedBenchmarkMatrixLoadBudgetMode = .durationSeconds
+        viewModel.benchMatrixDurationSeconds = "60"
+
+        await viewModel.runBenchMatrix()
+
+        let directRepoRequest = try #require(await client.recordedBenchMatrixRequests.last)
+        #expect(directRepoRequest.modelID.isEmpty)
+        #expect(directRepoRequest.hfRepoID == "unsloth/gemma-4-E4B-it-MLX-8bit")
+        #expect(directRepoRequest.taskKind == "image-text-to-text")
+        #expect(directRepoRequest.requests == 0)
+        #expect(directRepoRequest.durationSeconds == 60)
+
+        let missingRepoClient = FakeControlPlaneXPCClient()
+        let missingRepoViewModel = RuntimeViewModel(client: missingRepoClient)
+        await missingRepoViewModel.start()
+        missingRepoViewModel.selectedBenchmarkPresentationMode = .matrix
+        missingRepoViewModel.selectedBenchmarkTargetMode = .huggingFaceRepo
+        missingRepoViewModel.selectedBenchmarkSuiteIDs = ["smoke"]
+        await missingRepoViewModel.runBenchMatrix()
+        #expect(missingRepoViewModel.lastError == "Enter a Hugging Face repo before running Matrix.")
+
+        let imageClient = FakeControlPlaneXPCClient()
+        await imageClient.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [makeMenuBarImageModelSummary()]
+            )
+        )
+        let imageViewModel = RuntimeViewModel(client: imageClient)
+        await imageViewModel.start()
+        imageViewModel.selectedBenchmarkPresentationMode = .matrix
+        imageViewModel.selectedBenchmarkSuiteIDs = ["smoke"]
+        await imageViewModel.runBenchMatrix()
+        #expect(imageViewModel.lastError == "Benchmark matrix supports only text-generation, image-to-text, and image-text-to-text targets.")
+
+        let requestsClient = FakeControlPlaneXPCClient()
+        let requestsViewModel = RuntimeViewModel(client: requestsClient)
+        await requestsViewModel.start()
+        requestsViewModel.selectedBenchmarkPresentationMode = .matrix
+        requestsViewModel.selectedBenchmarkSuiteIDs = ["smoke"]
+        requestsViewModel.selectedBenchmarkMatrixLoadBudgetMode = .requests
+        requestsViewModel.benchMatrixRequests = "0"
+        await requestsViewModel.runBenchMatrix()
+        #expect(requestsViewModel.lastError == "Set a positive requests value before running Matrix.")
+    }
+
+    @Test("benchmark matrix control normalization fills defaults and toggles preserve selections")
+    @MainActor
+    func benchmarkMatrixControlNormalizationFillsDefaultsAndTogglesPreserveSelections() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [makeModelSummary(modelID: "melix-dev-text", state: .modelWarm)]
+            )
+        )
+        let viewModel = RuntimeViewModel(client: client)
+        viewModel.selectedBenchGenerationLengths = []
+        viewModel.selectedBenchMatrixCacheProfiles = []
+        viewModel.selectedBenchMatrixReasoningModes = []
+        viewModel.selectedBenchMatrixStructuredOutputModes = []
+        viewModel.selectedBenchMatrixConcurrencyLevels = []
+        viewModel.benchMatrixRepeats = ""
+        viewModel.benchMatrixRequests = ""
+        viewModel.benchMatrixDurationSeconds = ""
+
+        await viewModel.start()
+
+        #expect(viewModel.selectedBenchGenerationLengths == [128, 256])
+        #expect(viewModel.selectedBenchMatrixCacheProfiles == ["cold"])
+        #expect(viewModel.selectedBenchMatrixReasoningModes == ["off"])
+        #expect(viewModel.selectedBenchMatrixStructuredOutputModes == ["off"])
+        #expect(viewModel.selectedBenchMatrixConcurrencyLevels == [1, 2])
+        #expect(viewModel.benchMatrixRepeats == "3")
+        #expect(viewModel.benchMatrixRequests == "8")
+        #expect(viewModel.benchMatrixDurationSeconds == "60")
+        #expect(viewModel.benchmarkMatrixCellCount == 16)
+
+        viewModel.toggleBenchGenerationLength(512)
+        #expect(viewModel.selectedBenchGenerationLengths == [128, 256, 512])
+        viewModel.toggleBenchMatrixCacheProfile("warm")
+        #expect(viewModel.selectedBenchMatrixCacheProfiles == ["cold", "warm"])
+        viewModel.toggleBenchMatrixReasoningMode("enabled")
+        #expect(viewModel.selectedBenchMatrixReasoningModes == ["enabled", "off"])
+        viewModel.toggleBenchMatrixStructuredOutputMode("json_schema")
+        #expect(viewModel.selectedBenchMatrixStructuredOutputModes == ["json_schema", "off"])
+        viewModel.toggleBenchMatrixConcurrencyLevel(4)
+        #expect(viewModel.selectedBenchMatrixConcurrencyLevels == [1, 2, 4])
+    }
+
     @Test("evaluation configuration dispatches explicit suites history refresh and exports")
     @MainActor
     func evaluationConfigurationDispatchesExplicitSuitesHistoryRefreshAndExports() async throws {
