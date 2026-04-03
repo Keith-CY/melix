@@ -1714,7 +1714,12 @@ struct ControlPlaneServiceTests {
             )
         )
 
-        _ = try await service.execute(makeRunBenchRequest())
+        _ = try await service.execute(
+            makeRunBenchRequest(
+                contextLengths: [4096, 1024],
+                batchSizes: [4, 2]
+            )
+        )
         let lastRequest = try #require(await modelOpsClient.lastBenchRequest)
 
         #expect(lastRequest.contextLengths == [1024, 4096])
@@ -4301,7 +4306,15 @@ struct ControlPlaneServiceTests {
 
     private func makeRunBenchRequest(
         modelID: String = "",
-        hfRepoID: String = ""
+        hfRepoID: String = "",
+        suites: [String] = ["smoke", "latency"],
+        contextLengths: [UInt32] = [1024, 4096],
+        generationLength: UInt32 = 128,
+        batchSizes: [UInt32] = [2, 4],
+        repeats: UInt32 = 3,
+        cacheProfile: String = "partial_prefix",
+        reasoningMode: String = "enabled",
+        structuredOutputMode: String = "json_schema"
     ) -> Melix_Controlplane_V1_ControlPlaneRequest {
         var request = Melix_Controlplane_V1_ControlPlaneRequest()
         request.requestID = "req-ops-bench"
@@ -4310,14 +4323,14 @@ struct ControlPlaneServiceTests {
         request.ops.runBench = Melix_Controlplane_V1_RunBench()
         request.ops.runBench.modelID = modelID
         request.ops.runBench.hfRepoID = hfRepoID
-        request.ops.runBench.suites = ["smoke", "latency"]
-        request.ops.runBench.contextLengths = [1024, 4096]
-        request.ops.runBench.generationLength = 128
-        request.ops.runBench.batchSizes = [2, 4]
-        request.ops.runBench.repeats = 3
-        request.ops.runBench.cacheProfile = "partial_prefix"
-        request.ops.runBench.reasoningMode = "enabled"
-        request.ops.runBench.structuredOutputMode = "json_schema"
+        request.ops.runBench.suites = suites
+        request.ops.runBench.contextLengths = contextLengths
+        request.ops.runBench.generationLength = generationLength
+        request.ops.runBench.batchSizes = batchSizes
+        request.ops.runBench.repeats = repeats
+        request.ops.runBench.cacheProfile = cacheProfile
+        request.ops.runBench.reasoningMode = reasoningMode
+        request.ops.runBench.structuredOutputMode = structuredOutputMode
         return request
     }
 

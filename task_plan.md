@@ -2,41 +2,53 @@
 
 ## Goal
 
-Capture the concrete implementation plan for expanding Melix `bench` and `eval` so the running product matches `docs/benchmark-evaluation-contract.md`.
+Execute `docs/plans/2026-04-03-bench-eval-contract-expansion-implementation.md` so Melix benchmark and evaluation flows match `docs/benchmark-evaluation-contract.md`.
 
 ## Scope
 
-- write a staged implementation plan under `docs/plans/`
-- decompose protocol, CLI, control-plane, worker, UI, and verification work into commit-sized slices
-- update transaction tracking so the repository reflects that the next step is execution, not more contract design
+- complete protocol expansion for canonical `bench` and `eval` inputs
+- normalize canonical bench request handling across CLI and control plane
+- implement worker-side benchmark sweeps, metrics, and export shapes
+- implement evaluation controls, persistence, and export shapes
+- productize the new controls in the Window UI
+- close the transaction with verification, coverage, and updated repository records
 
 ## Phases
 
-1. Review the canonical benchmark and evaluation contract and current redesign plan
+1. Task 1: extend protocol surfaces for canonical bench and eval inputs
    - status: completed
-2. Write the executable implementation plan
+   - evidence: `ed65fe6`
+2. Task 2: implement canonical bench request normalization in CLI and control plane
    - status: completed
-3. Update transaction records for the docs-only planning slice
-   - status: completed
-4. Commit the implementation plan capture
+   - evidence: `d70d4a2` plus the follow-up Task 2 test and metrics close-out in the current working tree
+3. Task 3: implement canonical bench metrics, sweeps, and exports in the Python worker
+   - status: pending
+4. Task 4: implement canonical evaluation controls, persistence, and exports
+   - status: pending
+5. Task 5: productize bench and eval controls in Window UI
+   - status: pending
+6. Task 6: run full verification, update docs, and close the transaction
    - status: pending
 
 ## Acceptance
 
-- `docs/plans/2026-04-03-bench-eval-contract-expansion-implementation.md` exists
-- the plan decomposes the work into protocol, control-plane, worker, UI, and verification tasks
-- each task includes concrete files, commands, and commit boundaries
-- `progress.md` records this docs-only planning slice with explicit `N/A` coverage
+- protocol request surfaces include the canonical fields from `docs/benchmark-evaluation-contract.md`
+- `bench run` normalizes repeated context and batch inputs before worker dispatch
+- invalid bench cache profiles are rejected at the CLI and control-plane boundary
+- the active transaction keeps changed-line coverage at or above `95%` for touched executable scope before each commit
 
 ## Risks
 
-- the plan touches multiple subsystems, so execution will need tight commit discipline to avoid mixing protocol, runtime, and UI changes
+- the transaction spans CLI, shared client, control plane, worker, and Window UI, so partial commits can leave the contract temporarily split across layers
+- benchmark and evaluation productization share export surfaces, so schema drift can appear if the later worker tasks are landed without matching tests
 
 ## Outcome
 
 - completed slices:
-  - converted the benchmark and evaluation contract into a commit-sized implementation plan
-  - defined exact file targets, probes, verification commands, and commit boundaries
+  - landed Task 1 protocol expansion for canonical bench and eval inputs
+  - landed Task 2 canonical bench request normalization across CLI and control plane
 - remaining slices:
-  - commit the docs-only implementation plan capture
-  - choose the execution approach for the implementation work
+  - worker benchmark sweeps, canonical metrics, and exports
+  - evaluation persistence and export controls
+  - Window UI productization
+  - transaction-wide verification and close-out

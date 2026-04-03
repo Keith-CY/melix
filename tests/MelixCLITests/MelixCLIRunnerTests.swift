@@ -226,6 +226,8 @@ struct MelixCLIRunnerTests {
                 .init(
                     modelID: "melix-dev-text",
                     suites: ["smoke", "latency"],
+                    contextLengths: [2048],
+                    generationLength: 256,
                     parameters: [
                         "sample_size": "8",
                         "batch_factor": "2",
@@ -242,11 +244,52 @@ struct MelixCLIRunnerTests {
         #expect(benchRequest.modelID == "melix-dev-text")
         #expect(benchRequest.hfRepoID.isEmpty)
         #expect(benchRequest.suites == ["smoke", "latency"])
+        #expect(benchRequest.contextLengths == [2048])
+        #expect(benchRequest.generationLength == 256)
+        #expect(benchRequest.batchSizes.isEmpty)
+        #expect(benchRequest.repeats == 1)
         #expect(benchRequest.parameters["sample_size"] == "8")
         #expect(benchRequest.parameters["batch_factor"] == "2")
         #expect(payload["report_path"] as? String == "/tmp/melix/bench/job-3/report.md")
         #expect(payload["report_markdown"] as? String == "# Melix Bench\n")
         #expect(metrics["bench.smoke.ttft_ms"] == 24.45)
+    }
+
+    @Test("bench run forwards canonical normalized request values")
+    func benchRunForwardsCanonicalNormalizedRequestValues() async throws {
+        let client = StubControlPlaneXPCClient()
+        await client.setBenchResult(
+            .init(
+                reportPath: "/tmp/melix/bench/job-canonical/report.md",
+                reportMarkdown: "# Melix Bench\n",
+                metrics: [:]
+            )
+        )
+
+        _ = try await MelixCLIRunner(client: client).run(
+            .benchRun(
+                .init(
+                    modelID: "melix-dev-text",
+                    suites: ["smoke"],
+                    contextLengths: [4096, 1024],
+                    generationLength: 128,
+                    batchSizes: [4, 2],
+                    repeats: 0,
+                    cacheProfile: "partial_prefix",
+                    reasoningMode: "enabled",
+                    structuredOutputMode: "json_schema"
+                )
+            )
+        )
+        let benchRequest = try #require(await client.lastBenchRequest)
+
+        #expect(benchRequest.contextLengths == [1024, 4096])
+        #expect(benchRequest.generationLength == 128)
+        #expect(benchRequest.batchSizes == [2, 4])
+        #expect(benchRequest.repeats == 1)
+        #expect(benchRequest.cacheProfile == "partial_prefix")
+        #expect(benchRequest.reasoningMode == "enabled")
+        #expect(benchRequest.structuredOutputMode == "json_schema")
     }
 
     @Test("bench run forwards a direct Hugging Face repo target without preloading a catalog model")

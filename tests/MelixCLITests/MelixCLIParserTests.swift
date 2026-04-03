@@ -118,6 +118,8 @@ struct MelixCLIParserTests {
             "--model-id", "melix-dev-text",
             "--suite", "smoke",
             "--suite", "latency",
+            "--context-length", "2048",
+            "--generation-length", "256",
             "--sample-size", "8",
             "--batch-factor", "2",
             "--json",
@@ -131,6 +133,13 @@ struct MelixCLIParserTests {
         #expect(options.modelID == "melix-dev-text")
         #expect(options.hfRepoID.isEmpty)
         #expect(options.suites == ["smoke", "latency"])
+        #expect(options.contextLengths == [2048])
+        #expect(options.generationLength == 256)
+        #expect(options.batchSizes.isEmpty)
+        #expect(options.repeats == 1)
+        #expect(options.cacheProfile.isEmpty)
+        #expect(options.reasoningMode.isEmpty)
+        #expect(options.structuredOutputMode.isEmpty)
         #expect(options.parameters["sample_size"] == "8")
         #expect(options.parameters["batch_factor"] == "2")
         #expect(options.json)
@@ -143,11 +152,11 @@ struct MelixCLIParserTests {
             "run",
             "--model-id", "melix-dev-text",
             "--suite", "smoke",
-            "--context-length", "1024",
             "--context-length", "4096",
+            "--context-length", "1024",
             "--generation-length", "128",
-            "--batch-size", "2",
             "--batch-size", "4",
+            "--batch-size", "2",
             "--repeats", "3",
             "--cache-profile", "partial_prefix",
             "--reasoning-mode", "enabled",
@@ -168,6 +177,22 @@ struct MelixCLIParserTests {
         #expect(options.cacheProfile == "partial_prefix")
         #expect(options.reasoningMode == "enabled")
         #expect(options.structuredOutputMode == "json_schema")
+    }
+
+    @Test("rejects invalid bench cache profiles")
+    func rejectsInvalidBenchCacheProfiles() throws {
+        try assertError(
+            for: [
+                "bench",
+                "run",
+                "--model-id", "melix-dev-text",
+                "--suite", "smoke",
+                "--context-length", "1024",
+                "--generation-length", "128",
+                "--cache-profile", "hot",
+            ],
+            equals: .usage("Invalid value for --cache-profile. Expected one of: cold, warm, partial_prefix.")
+        )
     }
 
     @Test("parses bench run with a direct Hugging Face repo target")
