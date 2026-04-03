@@ -270,6 +270,36 @@ struct ControlPlaneXPCClientTests {
         }
     }
 
+    @Test("protocol default bench matrix helper reports an unimplemented error")
+    func protocolDefaultBenchMatrixHelperReportsUnimplemented() async throws {
+        let client = DefaultingControlPlaneXPCClient()
+
+        do {
+            _ = try await client.runBenchMatrix(
+                ControlPlaneBenchMatrixRequest(
+                    modelID: "melix-dev-text",
+                    suites: ["smoke"],
+                    contextLengths: [1024],
+                    generationLengths: [128],
+                    batchSizes: [2],
+                    cacheProfiles: ["cold"],
+                    reasoningModes: ["enabled"],
+                    structuredOutputModes: ["plain_text"],
+                    concurrencyLevels: [1],
+                    requests: 8
+                )
+            )
+            Issue.record("Expected the protocol default runBenchMatrix implementation to throw.")
+        } catch let error as ControlPlaneXPCClientError {
+            #expect(
+                error == .requestFailed(
+                    code: "unimplemented",
+                    message: "Bench matrix is not implemented for this control-plane client."
+                )
+            )
+        }
+    }
+
     @Test("local client builds quantize requests with a typed quant profile")
     func localClientBuildsQuantizeRequestsWithTypedQuantProfile() async throws {
         let service = RecordingExecuteControlPlaneService()
@@ -351,6 +381,76 @@ struct ControlPlaneXPCClientTests {
         #expect(bench.reportPath == reportPath)
         #expect(bench.reportMarkdown.contains("Melix Bench"))
         #expect(bench.metrics["bench.smoke.ttft_ms"] == 24.45)
+    }
+
+    @Test("local client runs bench matrix through control-plane execute")
+    func localClientRunsBenchMatrix() async throws {
+        let modelOpsClient = XPCScriptedModelOperationsWorkerClient()
+        await modelOpsClient.setBenchMatrixResponse({
+            var response = Melix_Worker_V1_RunBenchMatrixResponse()
+            response.job.schemaVersion = "melix.benchmark_matrix_job.v1"
+            response.job.jobID = "bench-matrix-456"
+            response.job.modelID = "melix-dev-text"
+            response.job.taskKind = "text-generation"
+            response.job.sourceRepo = "melix-dev-text"
+            response.job.suiteIds = ["smoke"]
+            response.job.benchmarkMode = "matrix"
+            response.job.status = "completed"
+            response.job.outputDir = "/tmp/melix/bench/matrix-runs/bench-matrix-456"
+            response.job.createdAtUnixMs = 1712200000000
+            response.job.updatedAtUnixMs = 1712200005000
+
+            var row = Melix_Worker_V1_BenchmarkMatrixSummaryRow()
+            row.jobID = "bench-matrix-456"
+            row.taskKind = "text-generation"
+            row.sourceRepo = "melix-dev-text"
+            row.modelID = "melix-dev-text"
+            row.suiteID = "smoke"
+            row.contextLength = 1024
+            row.generationLength = 128
+            row.batchSize = 2
+            row.cacheProfile = "cold"
+            row.reasoningMode = "enabled"
+            row.structuredOutputMode = "plain_text"
+            row.concurrencyLevel = 1
+            row.repeats = 2
+            row.requests = 8
+            row.ttftMeanMs = 24.45
+            response.summaryRows = [row]
+            return response
+        }())
+        let textClient = XPCScriptedChatWorkerClient(events: [])
+        let service = ControlPlaneService(
+            modelCatalog: ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels()),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: textClient,
+                modelOperationsClient: modelOpsClient
+            )
+        )
+        let client = LocalControlPlaneXPCClient(service: service)
+
+        let result = try await client.runBenchMatrix(
+            ControlPlaneBenchMatrixRequest(
+                modelID: "melix-dev-text",
+                suites: ["smoke"],
+                contextLengths: [1024],
+                generationLengths: [128],
+                batchSizes: [2],
+                cacheProfiles: ["cold"],
+                reasoningModes: ["enabled"],
+                structuredOutputModes: ["plain_text"],
+                concurrencyLevels: [1],
+                repeats: 2,
+                requests: 8
+            )
+        )
+        let forwarded = try #require(await modelOpsClient.lastBenchMatrixRequest)
+
+        #expect(forwarded.modelHandle == "melix-dev-text")
+        #expect(forwarded.contextLengths == [1024])
+        #expect(result.job.jobID == "bench-matrix-456")
+        #expect(result.summaryRows.count == 1)
+        #expect(result.summaryRows[0].ttftMeanMs == 24.45)
     }
 
     @Test("local client submits image generation through control-plane execute")
@@ -1281,6 +1381,8 @@ private actor XPCScriptedModelOperationsWorkerClient: WorkerRoutingClient, Model
     private var convertEvents: [Melix_Worker_V1_ConvertModelEvent] = []
     private var doctorResponse = Melix_Worker_V1_RunDoctorResponse()
     private var benchEvents: [Melix_Worker_V1_RunBenchEvent] = []
+    private var benchMatrixResponse = Melix_Worker_V1_RunBenchMatrixResponse()
+    private(set) var lastBenchMatrixRequest: Melix_Worker_V1_RunBenchMatrixRequest?
 
     func setInfoResponse(_ response: Melix_Worker_V1_GetModelInfoResponse) {
         infoResponse = response
@@ -1296,6 +1398,10 @@ private actor XPCScriptedModelOperationsWorkerClient: WorkerRoutingClient, Model
 
     func setBenchEvents(_ events: [Melix_Worker_V1_RunBenchEvent]) {
         benchEvents = events
+    }
+
+    func setBenchMatrixResponse(_ response: Melix_Worker_V1_RunBenchMatrixResponse) {
+        benchMatrixResponse = response
     }
 
     func canDispatchRequests() async -> Bool {
@@ -1373,6 +1479,13 @@ private actor XPCScriptedModelOperationsWorkerClient: WorkerRoutingClient, Model
             }
             continuation.finish()
         }
+    }
+
+    func runBenchMatrix(
+        request: Melix_Worker_V1_RunBenchMatrixRequest
+    ) async throws -> Melix_Worker_V1_RunBenchMatrixResponse {
+        lastBenchMatrixRequest = request
+        return benchMatrixResponse
     }
 
     func runEvaluation(

@@ -561,6 +561,8 @@ public actor ControlPlaneService {
             return await handleGetHubModelCard(request: request, command: getHubModelCard)
         case .runBench(let runBench):
             return await handleRunBench(request: request, command: runBench)
+        case .runBenchMatrix(let runBenchMatrix):
+            return await handleRunBenchMatrix(request: request, command: runBenchMatrix)
         case .runEvaluation(let runEvaluation):
             return await handleRunEvaluation(request: request, command: runEvaluation)
         case .cancelRequest(let cancelRequest):
@@ -873,6 +875,159 @@ public actor ControlPlaneService {
             return okResponse(for: request, ops: reply)
         } catch {
             return errorResponse(for: request, code: "unavailable", message: "Bench worker request failed: \(error)")
+        }
+    }
+
+    private func handleRunBenchMatrix(
+        request: Melix_Controlplane_V1_ControlPlaneRequest,
+        command: Melix_Controlplane_V1_RunBenchMatrix
+    ) async -> Melix_Controlplane_V1_ControlPlaneResponse {
+        guard
+            let workerRegistry,
+            let workerClient = await workerRegistry.client(for: .pythonModelOperations) as? any ModelOperationsWorkerClientProtocol
+        else {
+            return errorResponse(for: request, code: "unavailable", message: "Model operations worker is unavailable.")
+        }
+
+        let requestedModelID = command.modelID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let requestedHFRepoID = command.hfRepoID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let benchmarkModel: Melix_Controlplane_V1_ModelSummary
+        do {
+            benchmarkModel = try await resolvedBenchmarkModel(
+                preferredModelID: requestedModelID,
+                hfRepoID: requestedHFRepoID,
+                workerClient: workerClient
+            )
+        } catch let error as BenchmarkTargetResolutionError {
+            return errorResponse(for: request, code: error.code, message: error.message)
+        } catch {
+            return errorResponse(for: request, code: "not_found", message: "Benchmark target resolution failed: \(error)")
+        }
+
+        let suites = Array(Set(command.suiteIds.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty })).sorted()
+        let contextLengths = ControlPlaneBenchRequest.normalizedBenchValues(command.contextLengths)
+        let generationLengths = ControlPlaneBenchRequest.normalizedBenchValues(command.generationLengths)
+        let batchSizes = ControlPlaneBenchRequest.normalizedBenchValues(command.batchSizes)
+        let cacheProfiles = ControlPlaneBenchMatrixRequest.normalizedStringValues(command.cacheProfiles)
+        let reasoningModes = ControlPlaneBenchMatrixRequest.normalizedStringValues(command.reasoningModes)
+        let structuredOutputModes = ControlPlaneBenchMatrixRequest.normalizedStringValues(command.structuredOutputModes)
+        let concurrencyLevels = ControlPlaneBenchRequest.normalizedBenchValues(command.concurrencyLevels)
+
+        guard suites.isEmpty == false else {
+            return errorResponse(for: request, code: "invalid_argument", message: "At least one matrix benchmark suite is required.")
+        }
+        guard contextLengths.isEmpty == false else {
+            return errorResponse(for: request, code: "invalid_argument", message: "At least one matrix benchmark context length is required.")
+        }
+        guard generationLengths.isEmpty == false else {
+            return errorResponse(for: request, code: "invalid_argument", message: "At least one matrix benchmark generation length is required.")
+        }
+        guard batchSizes.isEmpty == false else {
+            return errorResponse(for: request, code: "invalid_argument", message: "At least one matrix benchmark batch size is required.")
+        }
+        guard cacheProfiles.isEmpty == false else {
+            return errorResponse(for: request, code: "invalid_argument", message: "At least one matrix benchmark cache profile is required.")
+        }
+        guard reasoningModes.isEmpty == false else {
+            return errorResponse(for: request, code: "invalid_argument", message: "At least one matrix benchmark reasoning mode is required.")
+        }
+        guard structuredOutputModes.isEmpty == false else {
+            return errorResponse(for: request, code: "invalid_argument", message: "At least one matrix benchmark structured output mode is required.")
+        }
+        guard concurrencyLevels.isEmpty == false else {
+            return errorResponse(for: request, code: "invalid_argument", message: "At least one matrix benchmark concurrency level is required.")
+        }
+        let loadBudgetCount = [command.requests > 0, command.durationSeconds > 0].filter(\.self).count
+        guard loadBudgetCount == 1 else {
+            return errorResponse(
+                for: request,
+                code: "invalid_argument",
+                message: "Exactly one of requests or duration_seconds must be set for matrix benchmarks."
+            )
+        }
+        for cacheProfile in cacheProfiles where ControlPlaneBenchRequest.validCacheProfiles.contains(cacheProfile) == false {
+            return errorResponse(
+                for: request,
+                code: "invalid_argument",
+                message: "Benchmark cache profile must be one of: \(ControlPlaneBenchRequest.validCacheProfiles.joined(separator: ", "))."
+            )
+        }
+
+        let taskKind = benchmarkTaskKind(for: benchmarkModel)
+        let supportedTaskKinds = Set([
+            BenchmarkTaskKind.textGeneration.rawValue,
+            BenchmarkTaskKind.imageToText.rawValue,
+            BenchmarkTaskKind.imageTextToText.rawValue,
+        ])
+        guard supportedTaskKinds.contains(taskKind) else {
+            return errorResponse(
+                for: request,
+                code: "unsupported_task_family",
+                message: "Benchmark matrix supports only text-generation, image-to-text, and image-text-to-text targets."
+            )
+        }
+
+        let normalizedRequest = ControlPlaneBenchMatrixRequest(
+            modelID: benchmarkModel.modelID,
+            hfRepoID: requestedHFRepoID,
+            taskKind: taskKind,
+            suites: suites,
+            contextLengths: contextLengths,
+            generationLengths: generationLengths,
+            batchSizes: batchSizes,
+            cacheProfiles: cacheProfiles,
+            reasoningModes: reasoningModes,
+            structuredOutputModes: structuredOutputModes,
+            concurrencyLevels: concurrencyLevels,
+            repeats: command.repeats,
+            requests: command.requests,
+            durationSeconds: command.durationSeconds,
+            allowLargeMatrix: command.allowLargeMatrix
+        )
+        guard normalizedRequest.allowLargeMatrix || normalizedRequest.matrixCellCount <= ControlPlaneBenchMatrixRequest.maxMatrixCellCount else {
+            return errorResponse(
+                for: request,
+                code: "invalid_argument",
+                message: "Matrix benchmark expands to \(normalizedRequest.matrixCellCount) cells; pass allow_large_matrix to continue."
+            )
+        }
+
+        let modelHandle: String
+        do {
+            modelHandle = try await benchmarkModelHandle(for: benchmarkModel)
+        } catch {
+            return errorResponse(
+                for: request,
+                code: "not_found",
+                message: "No loaded benchmark target is available for \(benchmarkModel.modelID)."
+            )
+        }
+
+        var workerRequest = Melix_Worker_V1_RunBenchMatrixRequest()
+        workerRequest.modelHandle = modelHandle
+        workerRequest.taskKind = taskKind
+        workerRequest.sourceRepo = benchmarkSourceRepo(for: benchmarkModel)
+        workerRequest.suiteIds = normalizedRequest.suites
+        workerRequest.contextLengths = normalizedRequest.contextLengths
+        workerRequest.generationLengths = normalizedRequest.generationLengths
+        workerRequest.batchSizes = normalizedRequest.batchSizes
+        workerRequest.cacheProfiles = normalizedRequest.cacheProfiles
+        workerRequest.reasoningModes = normalizedRequest.reasoningModes
+        workerRequest.structuredOutputModes = normalizedRequest.structuredOutputModes
+        workerRequest.concurrencyLevels = normalizedRequest.concurrencyLevels
+        workerRequest.repeats = normalizedRequest.repeats
+        workerRequest.requests = normalizedRequest.requests
+        workerRequest.durationSeconds = normalizedRequest.durationSeconds
+        workerRequest.allowLargeMatrix = normalizedRequest.allowLargeMatrix
+
+        do {
+            let workerResponse = try await workerClient.runBenchMatrix(request: workerRequest)
+            var reply = Melix_Controlplane_V1_OpsReply()
+            reply.benchmarkMatrixJob = makeBenchmarkMatrixJobSummary(from: workerResponse.job)
+            reply.benchmarkMatrixSummaryRows = workerResponse.summaryRows.map(makeBenchmarkMatrixSummaryRow)
+            return okResponse(for: request, ops: reply)
+        } catch {
+            return errorResponse(for: request, code: "unavailable", message: "Matrix benchmark worker request failed: \(error)")
         }
     }
 
@@ -2055,7 +2210,61 @@ public actor ControlPlaneService {
         summary.outputDir = outputDir
         summary.taskKind = taskKind
         summary.sourceRepo = sourceRepo
+        summary.benchmarkMode = "standard"
         return summary
+    }
+
+    private func makeBenchmarkMatrixJobSummary(
+        from workerSummary: Melix_Worker_V1_BenchmarkMatrixJobSummary
+    ) -> Melix_Controlplane_V1_BenchmarkMatrixJobSummary {
+        var summary = Melix_Controlplane_V1_BenchmarkMatrixJobSummary()
+        summary.schemaVersion = workerSummary.schemaVersion
+        summary.jobID = workerSummary.jobID
+        summary.modelID = workerSummary.modelID
+        summary.taskKind = workerSummary.taskKind
+        summary.sourceRepo = workerSummary.sourceRepo
+        summary.suiteIds = workerSummary.suiteIds
+        summary.benchmarkMode = workerSummary.benchmarkMode
+        summary.status = workerSummary.status
+        summary.outputDir = workerSummary.outputDir
+        summary.createdAtUnixMs = workerSummary.createdAtUnixMs
+        summary.updatedAtUnixMs = workerSummary.updatedAtUnixMs
+        return summary
+    }
+
+    private func makeBenchmarkMatrixSummaryRow(
+        from workerRow: Melix_Worker_V1_BenchmarkMatrixSummaryRow
+    ) -> Melix_Controlplane_V1_BenchmarkMatrixSummaryRow {
+        var row = Melix_Controlplane_V1_BenchmarkMatrixSummaryRow()
+        row.jobID = workerRow.jobID
+        row.taskKind = workerRow.taskKind
+        row.sourceRepo = workerRow.sourceRepo
+        row.modelID = workerRow.modelID
+        row.suiteID = workerRow.suiteID
+        row.contextLength = workerRow.contextLength
+        row.generationLength = workerRow.generationLength
+        row.batchSize = workerRow.batchSize
+        row.cacheProfile = workerRow.cacheProfile
+        row.reasoningMode = workerRow.reasoningMode
+        row.structuredOutputMode = workerRow.structuredOutputMode
+        row.concurrencyLevel = workerRow.concurrencyLevel
+        row.repeats = workerRow.repeats
+        row.requests = workerRow.requests
+        row.durationSeconds = workerRow.durationSeconds
+        row.ttftMeanMs = workerRow.ttftMeanMs
+        row.ttftStdMs = workerRow.ttftStdMs
+        row.requestLatencyMeanMs = workerRow.requestLatencyMeanMs
+        row.requestLatencyStdMs = workerRow.requestLatencyStdMs
+        row.prefillTokensPerSecondMean = workerRow.prefillTokensPerSecondMean
+        row.decodeTokensPerSecondMean = workerRow.decodeTokensPerSecondMean
+        row.throughputRequestsPerSecond = workerRow.throughputRequestsPerSecond
+        row.throughputTokensPerSecond = workerRow.throughputTokensPerSecond
+        row.successRate = workerRow.successRate
+        row.peakMemoryBytesMax = workerRow.peakMemoryBytesMax
+        row.queueWaitMeanMs = workerRow.queueWaitMeanMs
+        row.queueWaitP95Ms = workerRow.queueWaitP95Ms
+        row.createdAtUnixMs = workerRow.createdAtUnixMs
+        return row
     }
 
     private func makeBenchmarkResultSummaries(

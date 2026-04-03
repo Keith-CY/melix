@@ -26,6 +26,7 @@ public enum BridgeCommandKind: String, Sendable {
     case searchHubModels = "search-hub-models"
     case getHubModelCard = "get-hub-model-card"
     case runBench = "run-bench"
+    case runBenchMatrix = "run-bench-matrix"
     case runEvaluation = "run-evaluation"
     case exportResults = "export-results"
     case submitResults = "submit-results"
@@ -241,6 +242,16 @@ public struct PythonBridgeWorkerClient:
         request: Melix_Worker_V1_RunBenchRequest
     ) async throws -> AsyncThrowingStream<Melix_Worker_V1_RunBenchEvent, Error> {
         try await sendStream(kind: .runBench, request: request, as: Melix_Worker_V1_RunBenchEvent.self)
+    }
+
+    public func runBenchMatrix(
+        request: Melix_Worker_V1_RunBenchMatrixRequest
+    ) async throws -> Melix_Worker_V1_RunBenchMatrixResponse {
+        try await sendUnary(
+            kind: .runBenchMatrix,
+            request: request,
+            as: Melix_Worker_V1_RunBenchMatrixResponse.self
+        )
     }
 
     public func runEvaluation(

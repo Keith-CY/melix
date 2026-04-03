@@ -409,6 +409,306 @@ struct MelixCLIRunnerTests {
         }
     }
 
+    @Test("bench matrix run forwards normalized matrix inputs and returns JSON output")
+    func benchMatrixRunForwardsNormalizedInputsAndReturnsJSON() async throws {
+        let client = StubControlPlaneXPCClient()
+        await client.setBenchMatrixResult(
+            .init(
+                job: makeBenchmarkMatrixJobSummary(
+                    jobID: "bench-matrix-1",
+                    modelID: "unsloth/gemma-4-E4B-it-MLX-8bit",
+                    taskKind: "image-text-to-text",
+                    sourceRepo: "unsloth/gemma-4-E4B-it-MLX-8bit"
+                ),
+                summaryRows: [
+                    makeBenchmarkMatrixSummaryRow(
+                        jobID: "bench-matrix-1",
+                        taskKind: "image-text-to-text",
+                        sourceRepo: "unsloth/gemma-4-E4B-it-MLX-8bit",
+                        modelID: "unsloth/gemma-4-E4B-it-MLX-8bit",
+                        suiteID: "smoke",
+                        contextLength: 1024,
+                        generationLength: 128,
+                        batchSize: 2,
+                        cacheProfile: "cold",
+                        reasoningMode: "enabled",
+                        structuredOutputMode: "plain_text",
+                        concurrencyLevel: 1,
+                        repeats: 3,
+                        requests: 24,
+                        durationSeconds: 0,
+                        ttftMeanMS: 44.5
+                    ),
+                ]
+            )
+        )
+
+        let output = try await MelixCLIRunner(client: client).run(
+            .benchMatrixRun(
+                .init(
+                    hfRepoID: "unsloth/gemma-4-E4B-it-MLX-8bit",
+                    suites: ["latency", "smoke"],
+                    contextLengths: [4096, 1024],
+                    generationLengths: [256, 128],
+                    batchSizes: [4, 2],
+                    cacheProfiles: ["warm", "cold"],
+                    reasoningModes: ["enabled", "disabled"],
+                    structuredOutputModes: ["json_schema", "plain_text"],
+                    concurrencyLevels: [8, 1],
+                    repeats: 3,
+                    requests: 24,
+                    json: true
+                )
+            )
+        )
+        let request = try #require(await client.lastBenchMatrixRequest)
+        let payload = try #require(parseJSONObject(output))
+        let rows = try #require(payload["summary_rows"] as? [[String: Any]])
+        let job = try #require(payload["job"] as? [String: Any])
+
+        #expect(await client.loadedModelIDs.isEmpty)
+        #expect(request.modelID.isEmpty)
+        #expect(request.hfRepoID == "unsloth/gemma-4-E4B-it-MLX-8bit")
+        #expect(request.suites == ["latency", "smoke"])
+        #expect(request.contextLengths == [1024, 4096])
+        #expect(request.generationLengths == [128, 256])
+        #expect(request.batchSizes == [2, 4])
+        #expect(request.cacheProfiles == ["cold", "warm"])
+        #expect(request.reasoningModes == ["disabled", "enabled"])
+        #expect(request.structuredOutputModes == ["json_schema", "plain_text"])
+        #expect(request.concurrencyLevels == [1, 8])
+        #expect(request.repeats == 3)
+        #expect(request.requests == 24)
+        #expect(request.durationSeconds == 0)
+        #expect(job["job_id"] as? String == "bench-matrix-1")
+        #expect(rows.count == 1)
+        #expect(rows[0]["ttft_mean_ms"] as? Double == 44.5)
+    }
+
+    @Test("bench matrix run loads explicit models and renders tabular text output")
+    func benchMatrixRunLoadsExplicitModelsAndRendersTabularTextOutput() async throws {
+        let client = StubControlPlaneXPCClient()
+        await client.setBenchMatrixResult(
+            .init(
+                job: makeBenchmarkMatrixJobSummary(
+                    jobID: "bench-matrix-2",
+                    modelID: "melix-dev-text",
+                    taskKind: "text-generation",
+                    sourceRepo: "melix-dev-text"
+                ),
+                summaryRows: [
+                    makeBenchmarkMatrixSummaryRow(
+                        jobID: "bench-matrix-2",
+                        taskKind: "text-generation",
+                        sourceRepo: "melix-dev-text",
+                        modelID: "melix-dev-text",
+                        suiteID: "latency",
+                        contextLength: 2048,
+                        generationLength: 256,
+                        batchSize: 4,
+                        cacheProfile: "warm",
+                        reasoningMode: "disabled",
+                        structuredOutputMode: "json_schema",
+                        concurrencyLevel: 2,
+                        repeats: 2,
+                        requests: 0,
+                        durationSeconds: 45,
+                        ttftMeanMS: 51.2
+                    ),
+                ]
+            )
+        )
+
+        let output = try await MelixCLIRunner(client: client).run(
+            .benchMatrixRun(
+                .init(
+                    modelID: "melix-dev-text",
+                    suites: ["latency"],
+                    contextLengths: [2048],
+                    generationLengths: [256],
+                    batchSizes: [4],
+                    cacheProfiles: ["warm"],
+                    reasoningModes: ["disabled"],
+                    structuredOutputModes: ["json_schema"],
+                    concurrencyLevels: [2],
+                    repeats: 2,
+                    durationSeconds: 45
+                )
+            )
+        )
+
+        #expect(await client.loadedModelIDs == ["melix-dev-text"])
+        #expect(output.contains("job_id\tmodel_id\ttask_kind\tsource_repo\tsuite\tcontext_length"))
+        #expect(output.contains("bench-matrix-2\tmelix-dev-text\ttext-generation\tmelix-dev-text\tlatency\t2048\t256\t4\twarm\tdisabled\tjson_schema\t2\t2\tduration_seconds=45\t51.2"))
+    }
+
+    @Test("bench matrix run renders the empty state when no matrix rows are returned")
+    func benchMatrixRunRendersEmptyState() async throws {
+        let client = StubControlPlaneXPCClient()
+        await client.setBenchMatrixResult(
+            .init(
+                job: makeBenchmarkMatrixJobSummary(
+                    jobID: "bench-matrix-empty",
+                    modelID: "melix-dev-text",
+                    taskKind: "text-generation",
+                    sourceRepo: "melix-dev-text"
+                ),
+                summaryRows: []
+            )
+        )
+
+        let output = try await MelixCLIRunner(client: client).run(
+            .benchMatrixRun(
+                .init(
+                    hfRepoID: "unsloth/gemma-4-E4B-it-MLX-8bit",
+                    suites: ["smoke"],
+                    contextLengths: [1024],
+                    generationLengths: [128],
+                    batchSizes: [2],
+                    cacheProfiles: ["cold"],
+                    reasoningModes: ["enabled"],
+                    structuredOutputModes: ["plain_text"],
+                    concurrencyLevels: [1],
+                    requests: 8
+                )
+            )
+        )
+
+        #expect(output == "No benchmark matrix rows were returned.\n")
+    }
+
+    @Test("bench matrix list renders matrix history and returns JSON when requested")
+    func benchMatrixListRendersHistoryAndReturnsJSON() async throws {
+        let client = StubControlPlaneXPCClient()
+        await client.setExportResult(.init(exportBundleJSON: makeBenchmarkExportBundleJSON()))
+
+        let textOutput = try await MelixCLIRunner(client: client).run(.benchMatrixList(.init()))
+        let jsonOutput = try await MelixCLIRunner(client: client).run(.benchMatrixList(.init(json: true)))
+        let entries = try #require(parseJSONArray(jsonOutput))
+        let first = try #require(entries.first as? [String: Any])
+
+        #expect(textOutput.contains("job_id\tmodel_id\ttask_kind\tsource_repo\tsuite\tcontext_length\tgeneration_length\tbatch_size\tcache_profile\treasoning_mode\tstructured_output_mode\tconcurrency_level\trepeats\tload_budget\tstatus\tcreated_at_unix_ms"))
+        #expect(textOutput.contains("bench-matrix-1\tmelix-dev-text\ttext-generation\tHuggingFaceH4/ultrachat_200k\tsmoke\t1024\t128\t2\tcold\tenabled\tplain_text\t1\t3\trequests=24\tcompleted\t1712200000000"))
+        #expect(first["job_id"] as? String == "bench-matrix-1")
+        #expect(first["benchmark_mode"] as? String == "matrix")
+    }
+
+    @Test("bench matrix list renders an empty state when there is no matrix history")
+    func benchMatrixListRendersEmptyState() async throws {
+        let client = StubControlPlaneXPCClient()
+        await client.setExportResult(
+            .init(exportBundleJSON: #"{"export_schema_version":"melix.benchmark_export.v1","benchmark_matrix_jobs":[],"benchmark_matrix_summary_rows":[],"benchmark_matrix_request_rows":[]}"#)
+        )
+
+        let output = try await MelixCLIRunner(client: client).run(.benchMatrixList(.init()))
+
+        #expect(output == "No benchmark matrix runs found.\n")
+    }
+
+    @Test("bench matrix export-summary-csv writes filtered rows")
+    func benchMatrixExportSummaryCSVWritesFilteredRows() async throws {
+        let client = StubControlPlaneXPCClient()
+        await client.setExportResult(.init(exportBundleJSON: makeBenchmarkExportBundleJSON()))
+        let outputURL = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathComponent("bench-matrix-summary.csv")
+
+        let jsonOutput = try await MelixCLIRunner(client: client).run(
+            .benchMatrixExportSummaryCSV(
+                .init(jobID: "bench-matrix-1", outputPath: outputURL.path, json: true)
+            )
+        )
+        let response = try #require(parseJSONObject(jsonOutput))
+        let csv = try String(contentsOf: outputURL, encoding: .utf8)
+
+        #expect(response["job_id"] as? String == "bench-matrix-1")
+        #expect(response["row_count"] as? Int == 1)
+        #expect(csv.contains("job_id,task_kind,source_repo,model_id,suite_id,context_length,generation_length,batch_size,cache_profile,reasoning_mode,structured_output_mode,concurrency_level,repeats,requests,duration_seconds,ttft_mean_ms,ttft_std_ms,request_latency_mean_ms,request_latency_std_ms,prefill_tokens_per_second_mean,decode_tokens_per_second_mean,throughput_requests_per_second,throughput_tokens_per_second,success_rate,peak_memory_bytes_max,queue_wait_mean_ms,queue_wait_p95_ms,created_at_unix_ms"))
+        #expect(csv.contains("bench-matrix-1,text-generation,HuggingFaceH4/ultrachat_200k,melix-dev-text,smoke,1024,128,2,cold,enabled,plain_text,1,3,24,0,24.45,1.2,88.4,3.1,1400.0,58.2,3.8,221.5,1.0,2147483648,5.1,9.2,1712200000000"))
+    }
+
+    @Test("bench matrix export-summary-csv returns the written path in plain text")
+    func benchMatrixExportSummaryCSVReturnsTheWrittenPathInPlainText() async throws {
+        let client = StubControlPlaneXPCClient()
+        await client.setExportResult(.init(exportBundleJSON: makeBenchmarkExportBundleJSON()))
+        let outputURL = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathComponent("bench-matrix-summary.txt")
+
+        let output = try await MelixCLIRunner(client: client).run(
+            .benchMatrixExportSummaryCSV(.init(jobID: "bench-matrix-1", outputPath: outputURL.path))
+        )
+
+        #expect(output == outputURL.path + "\n")
+    }
+
+    @Test("bench matrix export-summary-csv fails when the requested job is missing")
+    func benchMatrixExportSummaryCSVFailsForMissingJob() async throws {
+        let client = StubControlPlaneXPCClient()
+        await client.setExportResult(.init(exportBundleJSON: makeBenchmarkExportBundleJSON()))
+
+        do {
+            _ = try await MelixCLIRunner(client: client).run(
+                .benchMatrixExportSummaryCSV(.init(jobID: "bench-matrix-missing", outputPath: "/tmp/missing.csv"))
+            )
+            Issue.record("Expected bench matrix export-summary-csv to fail when the job is missing.")
+        } catch let error as MelixCLIError {
+            #expect(error == .runtime("No benchmark matrix summary rows were found for job bench-matrix-missing."))
+        }
+    }
+
+    @Test("bench matrix export-requests-csv writes filtered rows")
+    func benchMatrixExportRequestsCSVWritesFilteredRows() async throws {
+        let client = StubControlPlaneXPCClient()
+        await client.setExportResult(.init(exportBundleJSON: makeBenchmarkExportBundleJSON()))
+        let outputURL = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathComponent("bench-matrix-requests.csv")
+
+        let jsonOutput = try await MelixCLIRunner(client: client).run(
+            .benchMatrixExportRequestsCSV(
+                .init(jobID: "bench-matrix-1", outputPath: outputURL.path, json: true)
+            )
+        )
+        let response = try #require(parseJSONObject(jsonOutput))
+        let csv = try String(contentsOf: outputURL, encoding: .utf8)
+
+        #expect(response["job_id"] as? String == "bench-matrix-1")
+        #expect(response["row_count"] as? Int == 1)
+        #expect(csv.contains("job_id,cell_id,task_kind,suite_id,context_length,generation_length,batch_size,cache_profile,reasoning_mode,structured_output_mode,concurrency_level,repeat_index,request_index,ttft_ms,request_latency_ms,prefill_tokens_per_second,decode_tokens_per_second,queue_wait_ms,peak_memory_bytes,status,error_code,created_at_unix_ms"))
+        #expect(csv.contains("bench-matrix-1,cell-1,text-generation,smoke,1024,128,2,cold,enabled,plain_text,1,0,0,24.45,88.4,1400.0,58.2,5.1,2147483648,completed,,1712200000000"))
+    }
+
+    @Test("bench matrix export-requests-csv returns the written path in plain text")
+    func benchMatrixExportRequestsCSVReturnsTheWrittenPathInPlainText() async throws {
+        let client = StubControlPlaneXPCClient()
+        await client.setExportResult(.init(exportBundleJSON: makeBenchmarkExportBundleJSON()))
+        let outputURL = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathComponent("bench-matrix-requests.txt")
+
+        let output = try await MelixCLIRunner(client: client).run(
+            .benchMatrixExportRequestsCSV(.init(jobID: "bench-matrix-1", outputPath: outputURL.path))
+        )
+
+        #expect(output == outputURL.path + "\n")
+    }
+
+    @Test("bench matrix export-requests-csv fails when the requested job is missing")
+    func benchMatrixExportRequestsCSVFailsForMissingJob() async throws {
+        let client = StubControlPlaneXPCClient()
+        await client.setExportResult(.init(exportBundleJSON: makeBenchmarkExportBundleJSON()))
+
+        do {
+            _ = try await MelixCLIRunner(client: client).run(
+                .benchMatrixExportRequestsCSV(.init(jobID: "bench-matrix-missing", outputPath: "/tmp/missing.csv"))
+            )
+            Issue.record("Expected bench matrix export-requests-csv to fail when the job is missing.")
+        } catch let error as MelixCLIError {
+            #expect(error == .runtime("No benchmark matrix request rows were found for job bench-matrix-missing."))
+        }
+    }
+
     @Test("eval run forwards sequential suite requests and returns JSON output")
     func evalRunForwardsSuiteRequestsAndReturnsJSON() async throws {
         let client = StubControlPlaneXPCClient()
@@ -767,12 +1067,17 @@ private actor StubControlPlaneXPCClient: ControlPlaneXPCClient {
 
     private(set) var lastModelOperationCall: ModelOperationCall?
     private(set) var lastBenchRequest: ControlPlaneBenchRequest?
+    private(set) var lastBenchMatrixRequest: ControlPlaneBenchMatrixRequest?
     private(set) var evaluationRequests: [ControlPlaneEvaluationRequest] = []
     private(set) var loadedModelIDs: [String] = []
 
     private var snapshot = makeServerSnapshot(models: [makeModelSummary(id: "melix-dev-text", kind: "text")])
     private var modelOperationResult = makeModelOperationResult()
     private var benchResult = ControlPlaneBenchResult(reportPath: "", reportMarkdown: "", metrics: [:])
+    private var benchMatrixResult = ControlPlaneBenchMatrixResult(
+        job: makeBenchmarkMatrixJobSummary(jobID: "", modelID: "", taskKind: "", sourceRepo: ""),
+        summaryRows: []
+    )
     private var evaluationResultsQueue: [ControlPlaneEvaluationResult] = []
     private var exportResult = ControlPlaneExportResult(exportBundleJSON: #"{"export_schema_version":"melix.benchmark_export.v1","benchmark_jobs":[],"benchmark_results":[]}"#)
 
@@ -786,6 +1091,10 @@ private actor StubControlPlaneXPCClient: ControlPlaneXPCClient {
 
     func setBenchResult(_ result: ControlPlaneBenchResult) {
         self.benchResult = result
+    }
+
+    func setBenchMatrixResult(_ result: ControlPlaneBenchMatrixResult) {
+        self.benchMatrixResult = result
     }
 
     func setEvaluationResults(_ results: [ControlPlaneEvaluationResult]) {
@@ -882,6 +1191,11 @@ private actor StubControlPlaneXPCClient: ControlPlaneXPCClient {
     func runBench(_ request: ControlPlaneBenchRequest) async throws -> ControlPlaneBenchResult {
         lastBenchRequest = request
         return benchResult
+    }
+
+    func runBenchMatrix(_ request: ControlPlaneBenchMatrixRequest) async throws -> ControlPlaneBenchMatrixResult {
+        lastBenchMatrixRequest = request
+        return benchMatrixResult
     }
 
     func runEvaluation(_ request: ControlPlaneEvaluationRequest) async throws -> ControlPlaneEvaluationResult {
@@ -1008,8 +1322,80 @@ private func makeBenchmarkExportBundleJSON() -> String {
           "report_path": "/tmp/melix/bench/runs/bench-1/bench-report.md",
           "report_markdown": "# Melix Bench\\n"
         }
-      ]
-      ,
+      ],
+      "benchmark_matrix_jobs": [
+        {
+          "schema_version": "melix.benchmark_matrix_job.v1",
+          "job_id": "bench-matrix-1",
+          "model_id": "melix-dev-text",
+          "task_kind": "text-generation",
+          "source_repo": "HuggingFaceH4/ultrachat_200k",
+          "suite_ids": ["smoke"],
+          "benchmark_mode": "matrix",
+          "status": "completed",
+          "output_dir": "/tmp/melix/bench/matrix-runs/bench-matrix-1",
+          "created_at_unix_ms": 1712200000000,
+          "updated_at_unix_ms": 1712200005000
+        }
+      ],
+      "benchmark_matrix_summary_rows": [
+        {
+          "job_id": "bench-matrix-1",
+          "task_kind": "text-generation",
+          "source_repo": "HuggingFaceH4/ultrachat_200k",
+          "model_id": "melix-dev-text",
+          "suite_id": "smoke",
+          "context_length": 1024,
+          "generation_length": 128,
+          "batch_size": 2,
+          "cache_profile": "cold",
+          "reasoning_mode": "enabled",
+          "structured_output_mode": "plain_text",
+          "concurrency_level": 1,
+          "repeats": 3,
+          "requests": 24,
+          "duration_seconds": 0,
+          "ttft_mean_ms": 24.45,
+          "ttft_std_ms": 1.2,
+          "request_latency_mean_ms": 88.4,
+          "request_latency_std_ms": 3.1,
+          "prefill_tokens_per_second_mean": 1400.0,
+          "decode_tokens_per_second_mean": 58.2,
+          "throughput_requests_per_second": 3.8,
+          "throughput_tokens_per_second": 221.5,
+          "success_rate": 1.0,
+          "peak_memory_bytes_max": 2147483648,
+          "queue_wait_mean_ms": 5.1,
+          "queue_wait_p95_ms": 9.2,
+          "created_at_unix_ms": 1712200000000
+        }
+      ],
+      "benchmark_matrix_request_rows": [
+        {
+          "job_id": "bench-matrix-1",
+          "cell_id": "cell-1",
+          "task_kind": "text-generation",
+          "suite_id": "smoke",
+          "context_length": 1024,
+          "generation_length": 128,
+          "batch_size": 2,
+          "cache_profile": "cold",
+          "reasoning_mode": "enabled",
+          "structured_output_mode": "plain_text",
+          "concurrency_level": 1,
+          "repeat_index": 0,
+          "request_index": 0,
+          "ttft_ms": 24.45,
+          "request_latency_ms": 88.4,
+          "prefill_tokens_per_second": 1400.0,
+          "decode_tokens_per_second": 58.2,
+          "queue_wait_ms": 5.1,
+          "peak_memory_bytes": 2147483648,
+          "status": "completed",
+          "error_code": "",
+          "created_at_unix_ms": 1712200000000
+        }
+      ],
       "evaluation_jobs": [
         {
           "schema_version": "melix.evaluation_job.v1",
@@ -1078,6 +1464,65 @@ private func makeBenchmarkExportBundleJSON() -> String {
       ]
     }
     """
+}
+
+private func makeBenchmarkMatrixJobSummary(
+    jobID: String,
+    modelID: String,
+    taskKind: String,
+    sourceRepo: String
+) -> Melix_Controlplane_V1_BenchmarkMatrixJobSummary {
+    var job = Melix_Controlplane_V1_BenchmarkMatrixJobSummary()
+    job.schemaVersion = "melix.benchmark_matrix_job.v1"
+    job.jobID = jobID
+    job.modelID = modelID
+    job.taskKind = taskKind
+    job.sourceRepo = sourceRepo
+    job.benchmarkMode = "matrix"
+    job.status = "completed"
+    job.outputDir = "/tmp/melix/bench/matrix-runs/\(jobID)"
+    job.createdAtUnixMs = 1712200000000
+    job.updatedAtUnixMs = 1712200005000
+    return job
+}
+
+private func makeBenchmarkMatrixSummaryRow(
+    jobID: String,
+    taskKind: String,
+    sourceRepo: String,
+    modelID: String,
+    suiteID: String,
+    contextLength: UInt32,
+    generationLength: UInt32,
+    batchSize: UInt32,
+    cacheProfile: String,
+    reasoningMode: String,
+    structuredOutputMode: String,
+    concurrencyLevel: UInt32,
+    repeats: UInt32,
+    requests: UInt32,
+    durationSeconds: UInt32,
+    ttftMeanMS: Double
+) -> Melix_Controlplane_V1_BenchmarkMatrixSummaryRow {
+    var row = Melix_Controlplane_V1_BenchmarkMatrixSummaryRow()
+    row.jobID = jobID
+    row.taskKind = taskKind
+    row.sourceRepo = sourceRepo
+    row.modelID = modelID
+    row.suiteID = suiteID
+    row.contextLength = contextLength
+    row.generationLength = generationLength
+    row.batchSize = batchSize
+    row.cacheProfile = cacheProfile
+    row.reasoningMode = reasoningMode
+    row.structuredOutputMode = structuredOutputMode
+    row.concurrencyLevel = concurrencyLevel
+    row.repeats = repeats
+    row.requests = requests
+    row.durationSeconds = durationSeconds
+    row.ttftMeanMs = ttftMeanMS
+    row.createdAtUnixMs = 1712200000000
+    return row
 }
 
 private func makeEmptyBenchmarkExportBundleJSON() -> String {

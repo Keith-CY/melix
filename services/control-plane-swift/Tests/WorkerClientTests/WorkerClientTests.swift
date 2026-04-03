@@ -58,6 +58,18 @@ struct WorkerClientTests {
         }
     }
 
+    @Test("model-operations default bench matrix helper throws unavailable")
+    func modelOperationsDefaultBenchMatrixHelperThrowsUnavailable() async throws {
+        let client = DefaultModelOperationsWorkerClient()
+
+        do {
+            _ = try await client.runBenchMatrix(request: Melix_Worker_V1_RunBenchMatrixRequest())
+            Issue.record("Expected default bench matrix implementation to fail.")
+        } catch let error as WorkerClientError {
+            #expect(error == .unavailable)
+        }
+    }
+
     @Test("worker memory evidence normalizes shared runtime stats fields")
     func workerMemoryEvidenceNormalizesSharedRuntimeStatsFields() {
         var stats = Melix_Worker_V1_RuntimeStats()
@@ -113,5 +125,90 @@ private struct DefaultUnloadWorkerClient: WorkerRoutingClient {
         var response = Melix_Worker_V1_LoadModelResponse()
         response.ok = true
         return response
+    }
+}
+
+private struct DefaultModelOperationsWorkerClient: ModelOperationsWorkerClientProtocol {
+    func canDispatchRequests() async -> Bool { true }
+
+    func generate(
+        request: Melix_Worker_V1_GenerateRequest
+    ) async throws -> AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error> {
+        AsyncThrowingStream { continuation in
+            continuation.finish()
+        }
+    }
+
+    func abort(requestID: String) async throws -> Bool { false }
+
+    func loadModel(
+        request: Melix_Worker_V1_LoadModelRequest
+    ) async throws -> Melix_Worker_V1_LoadModelResponse {
+        var response = Melix_Worker_V1_LoadModelResponse()
+        response.ok = true
+        return response
+    }
+
+    func getModelInfo(
+        request: Melix_Worker_V1_GetModelInfoRequest
+    ) async throws -> Melix_Worker_V1_GetModelInfoResponse {
+        _ = request
+        throw WorkerClientError.unavailable
+    }
+
+    func convertModel(
+        request: Melix_Worker_V1_ConvertModelRequest
+    ) async throws -> AsyncThrowingStream<Melix_Worker_V1_ConvertModelEvent, Error> {
+        _ = request
+        throw WorkerClientError.unavailable
+    }
+
+    func runDoctor(
+        request: Melix_Worker_V1_RunDoctorRequest
+    ) async throws -> Melix_Worker_V1_RunDoctorResponse {
+        _ = request
+        throw WorkerClientError.unavailable
+    }
+
+    func searchHubModels(
+        request: Melix_Worker_V1_SearchHubModelsRequest
+    ) async throws -> Melix_Worker_V1_SearchHubModelsResponse {
+        _ = request
+        throw WorkerClientError.unavailable
+    }
+
+    func getHubModelCard(
+        request: Melix_Worker_V1_GetHubModelCardRequest
+    ) async throws -> Melix_Worker_V1_GetHubModelCardResponse {
+        _ = request
+        throw WorkerClientError.unavailable
+    }
+
+    func runBench(
+        request: Melix_Worker_V1_RunBenchRequest
+    ) async throws -> AsyncThrowingStream<Melix_Worker_V1_RunBenchEvent, Error> {
+        _ = request
+        throw WorkerClientError.unavailable
+    }
+
+    func runEvaluation(
+        request: Melix_Worker_V1_RunEvaluationRequest
+    ) async throws -> Melix_Worker_V1_RunEvaluationResponse {
+        _ = request
+        throw WorkerClientError.unavailable
+    }
+
+    func exportResults(
+        request: Melix_Worker_V1_ExportResultsRequest
+    ) async throws -> Melix_Worker_V1_ExportResultsResponse {
+        _ = request
+        throw WorkerClientError.unavailable
+    }
+
+    func submitResults(
+        request: Melix_Worker_V1_SubmitResultsRequest
+    ) async throws -> Melix_Worker_V1_SubmitResultsResponse {
+        _ = request
+        throw WorkerClientError.unavailable
     }
 }

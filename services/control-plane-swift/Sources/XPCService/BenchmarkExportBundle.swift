@@ -157,6 +157,241 @@ public struct ControlPlaneBenchmarkCSVRow: Codable, Equatable, Sendable {
     public let createdAtUnixMS: Int64
 }
 
+public struct ControlPlaneBenchmarkMatrixJobRecord: Codable, Equatable, Sendable {
+    public let schemaVersion: String
+    public let jobID: String
+    public let modelID: String
+    public let taskKind: String
+    public let sourceRepo: String
+    public let suiteIDs: [String]
+    public let benchmarkMode: String
+    public let status: String
+    public let outputDir: String
+    public let createdAtUnixMS: Int64
+    public let updatedAtUnixMS: Int64
+
+    enum CodingKeys: String, CodingKey {
+        case schemaVersion = "schema_version"
+        case jobID = "job_id"
+        case modelID = "model_id"
+        case taskKind = "task_kind"
+        case sourceRepo = "source_repo"
+        case suiteIDs = "suite_ids"
+        case benchmarkMode = "benchmark_mode"
+        case status
+        case outputDir = "output_dir"
+        case createdAtUnixMS = "created_at_unix_ms"
+        case updatedAtUnixMS = "updated_at_unix_ms"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        schemaVersion = try container.decodeIfPresent(String.self, forKey: .schemaVersion) ?? ""
+        jobID = try container.decodeIfPresent(String.self, forKey: .jobID) ?? ""
+        modelID = try container.decodeIfPresent(String.self, forKey: .modelID) ?? ""
+        taskKind = try container.decodeIfPresent(String.self, forKey: .taskKind) ?? ""
+        sourceRepo = try container.decodeIfPresent(String.self, forKey: .sourceRepo) ?? ""
+        suiteIDs = try container.decodeIfPresent([String].self, forKey: .suiteIDs) ?? []
+        benchmarkMode = try container.decodeIfPresent(String.self, forKey: .benchmarkMode) ?? ""
+        status = try container.decodeIfPresent(String.self, forKey: .status) ?? ""
+        outputDir = try container.decodeIfPresent(String.self, forKey: .outputDir) ?? ""
+        createdAtUnixMS = try container.decodeIfPresent(Int64.self, forKey: .createdAtUnixMS) ?? 0
+        updatedAtUnixMS = try container.decodeIfPresent(Int64.self, forKey: .updatedAtUnixMS) ?? 0
+    }
+}
+
+public struct ControlPlaneBenchmarkMatrixSummaryCSVRow: Codable, Equatable, Sendable {
+    public let jobID: String
+    public let taskKind: String
+    public let sourceRepo: String
+    public let modelID: String
+    public let suiteID: String
+    public let contextLength: Int
+    public let generationLength: Int
+    public let batchSize: Int
+    public let cacheProfile: String
+    public let reasoningMode: String
+    public let structuredOutputMode: String
+    public let concurrencyLevel: Int
+    public let repeats: Int
+    public let requests: Int
+    public let durationSeconds: Int
+    public let ttftMeanMS: Double
+    public let ttftStdMS: Double
+    public let requestLatencyMeanMS: Double
+    public let requestLatencyStdMS: Double
+    public let prefillTokensPerSecondMean: Double
+    public let decodeTokensPerSecondMean: Double
+    public let throughputRequestsPerSecond: Double
+    public let throughputTokensPerSecond: Double
+    public let successRate: Double
+    public let peakMemoryBytesMax: UInt64
+    public let queueWaitMeanMS: Double
+    public let queueWaitP95MS: Double
+    public let createdAtUnixMS: Int64
+
+    enum CodingKeys: String, CodingKey {
+        case jobID = "job_id"
+        case taskKind = "task_kind"
+        case sourceRepo = "source_repo"
+        case modelID = "model_id"
+        case suiteID = "suite_id"
+        case contextLength = "context_length"
+        case generationLength = "generation_length"
+        case batchSize = "batch_size"
+        case cacheProfile = "cache_profile"
+        case reasoningMode = "reasoning_mode"
+        case structuredOutputMode = "structured_output_mode"
+        case concurrencyLevel = "concurrency_level"
+        case repeats
+        case requests
+        case durationSeconds = "duration_seconds"
+        case ttftMeanMS = "ttft_mean_ms"
+        case ttftStdMS = "ttft_std_ms"
+        case requestLatencyMeanMS = "request_latency_mean_ms"
+        case requestLatencyStdMS = "request_latency_std_ms"
+        case prefillTokensPerSecondMean = "prefill_tokens_per_second_mean"
+        case decodeTokensPerSecondMean = "decode_tokens_per_second_mean"
+        case throughputRequestsPerSecond = "throughput_requests_per_second"
+        case throughputTokensPerSecond = "throughput_tokens_per_second"
+        case successRate = "success_rate"
+        case peakMemoryBytesMax = "peak_memory_bytes_max"
+        case queueWaitMeanMS = "queue_wait_mean_ms"
+        case queueWaitP95MS = "queue_wait_p95_ms"
+        case createdAtUnixMS = "created_at_unix_ms"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        jobID = try container.decodeIfPresent(String.self, forKey: .jobID) ?? ""
+        taskKind = try container.decodeIfPresent(String.self, forKey: .taskKind) ?? ""
+        sourceRepo = try container.decodeIfPresent(String.self, forKey: .sourceRepo) ?? ""
+        modelID = try container.decodeIfPresent(String.self, forKey: .modelID) ?? ""
+        suiteID = try container.decodeIfPresent(String.self, forKey: .suiteID) ?? ""
+        contextLength = try container.decodeIfPresent(Int.self, forKey: .contextLength) ?? 0
+        generationLength = try container.decodeIfPresent(Int.self, forKey: .generationLength) ?? 0
+        batchSize = try container.decodeIfPresent(Int.self, forKey: .batchSize) ?? 0
+        cacheProfile = try container.decodeIfPresent(String.self, forKey: .cacheProfile) ?? ""
+        reasoningMode = try container.decodeIfPresent(String.self, forKey: .reasoningMode) ?? ""
+        structuredOutputMode = try container.decodeIfPresent(String.self, forKey: .structuredOutputMode) ?? ""
+        concurrencyLevel = try container.decodeIfPresent(Int.self, forKey: .concurrencyLevel) ?? 0
+        repeats = try container.decodeIfPresent(Int.self, forKey: .repeats) ?? 0
+        requests = try container.decodeIfPresent(Int.self, forKey: .requests) ?? 0
+        durationSeconds = try container.decodeIfPresent(Int.self, forKey: .durationSeconds) ?? 0
+        ttftMeanMS = try container.decodeIfPresent(Double.self, forKey: .ttftMeanMS) ?? 0
+        ttftStdMS = try container.decodeIfPresent(Double.self, forKey: .ttftStdMS) ?? 0
+        requestLatencyMeanMS = try container.decodeIfPresent(Double.self, forKey: .requestLatencyMeanMS) ?? 0
+        requestLatencyStdMS = try container.decodeIfPresent(Double.self, forKey: .requestLatencyStdMS) ?? 0
+        prefillTokensPerSecondMean = try container.decodeIfPresent(Double.self, forKey: .prefillTokensPerSecondMean) ?? 0
+        decodeTokensPerSecondMean = try container.decodeIfPresent(Double.self, forKey: .decodeTokensPerSecondMean) ?? 0
+        throughputRequestsPerSecond = try container.decodeIfPresent(Double.self, forKey: .throughputRequestsPerSecond) ?? 0
+        throughputTokensPerSecond = try container.decodeIfPresent(Double.self, forKey: .throughputTokensPerSecond) ?? 0
+        successRate = try container.decodeIfPresent(Double.self, forKey: .successRate) ?? 0
+        peakMemoryBytesMax = try container.decodeIfPresent(UInt64.self, forKey: .peakMemoryBytesMax) ?? 0
+        queueWaitMeanMS = try container.decodeIfPresent(Double.self, forKey: .queueWaitMeanMS) ?? 0
+        queueWaitP95MS = try container.decodeIfPresent(Double.self, forKey: .queueWaitP95MS) ?? 0
+        createdAtUnixMS = try container.decodeIfPresent(Int64.self, forKey: .createdAtUnixMS) ?? 0
+    }
+}
+
+public struct ControlPlaneBenchmarkMatrixRequestCSVRow: Codable, Equatable, Sendable {
+    public let jobID: String
+    public let cellID: String
+    public let taskKind: String
+    public let suiteID: String
+    public let contextLength: Int
+    public let generationLength: Int
+    public let batchSize: Int
+    public let cacheProfile: String
+    public let reasoningMode: String
+    public let structuredOutputMode: String
+    public let concurrencyLevel: Int
+    public let repeatIndex: Int
+    public let requestIndex: Int
+    public let ttftMS: Double
+    public let requestLatencyMS: Double
+    public let prefillTokensPerSecond: Double
+    public let decodeTokensPerSecond: Double
+    public let queueWaitMS: Double
+    public let peakMemoryBytes: UInt64
+    public let status: String
+    public let errorCode: String
+    public let createdAtUnixMS: Int64
+
+    enum CodingKeys: String, CodingKey {
+        case jobID = "job_id"
+        case cellID = "cell_id"
+        case taskKind = "task_kind"
+        case suiteID = "suite_id"
+        case contextLength = "context_length"
+        case generationLength = "generation_length"
+        case batchSize = "batch_size"
+        case cacheProfile = "cache_profile"
+        case reasoningMode = "reasoning_mode"
+        case structuredOutputMode = "structured_output_mode"
+        case concurrencyLevel = "concurrency_level"
+        case repeatIndex = "repeat_index"
+        case requestIndex = "request_index"
+        case ttftMS = "ttft_ms"
+        case requestLatencyMS = "request_latency_ms"
+        case prefillTokensPerSecond = "prefill_tokens_per_second"
+        case decodeTokensPerSecond = "decode_tokens_per_second"
+        case queueWaitMS = "queue_wait_ms"
+        case peakMemoryBytes = "peak_memory_bytes"
+        case status
+        case errorCode = "error_code"
+        case createdAtUnixMS = "created_at_unix_ms"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        jobID = try container.decodeIfPresent(String.self, forKey: .jobID) ?? ""
+        cellID = try container.decodeIfPresent(String.self, forKey: .cellID) ?? ""
+        taskKind = try container.decodeIfPresent(String.self, forKey: .taskKind) ?? ""
+        suiteID = try container.decodeIfPresent(String.self, forKey: .suiteID) ?? ""
+        contextLength = try container.decodeIfPresent(Int.self, forKey: .contextLength) ?? 0
+        generationLength = try container.decodeIfPresent(Int.self, forKey: .generationLength) ?? 0
+        batchSize = try container.decodeIfPresent(Int.self, forKey: .batchSize) ?? 0
+        cacheProfile = try container.decodeIfPresent(String.self, forKey: .cacheProfile) ?? ""
+        reasoningMode = try container.decodeIfPresent(String.self, forKey: .reasoningMode) ?? ""
+        structuredOutputMode = try container.decodeIfPresent(String.self, forKey: .structuredOutputMode) ?? ""
+        concurrencyLevel = try container.decodeIfPresent(Int.self, forKey: .concurrencyLevel) ?? 0
+        repeatIndex = try container.decodeIfPresent(Int.self, forKey: .repeatIndex) ?? 0
+        requestIndex = try container.decodeIfPresent(Int.self, forKey: .requestIndex) ?? 0
+        ttftMS = try container.decodeIfPresent(Double.self, forKey: .ttftMS) ?? 0
+        requestLatencyMS = try container.decodeIfPresent(Double.self, forKey: .requestLatencyMS) ?? 0
+        prefillTokensPerSecond = try container.decodeIfPresent(Double.self, forKey: .prefillTokensPerSecond) ?? 0
+        decodeTokensPerSecond = try container.decodeIfPresent(Double.self, forKey: .decodeTokensPerSecond) ?? 0
+        queueWaitMS = try container.decodeIfPresent(Double.self, forKey: .queueWaitMS) ?? 0
+        peakMemoryBytes = try container.decodeIfPresent(UInt64.self, forKey: .peakMemoryBytes) ?? 0
+        status = try container.decodeIfPresent(String.self, forKey: .status) ?? ""
+        errorCode = try container.decodeIfPresent(String.self, forKey: .errorCode) ?? ""
+        createdAtUnixMS = try container.decodeIfPresent(Int64.self, forKey: .createdAtUnixMS) ?? 0
+    }
+}
+
+public struct ControlPlaneBenchmarkMatrixHistoryEntry: Codable, Equatable, Sendable {
+    public let benchmarkMode: String
+    public let jobID: String
+    public let modelID: String
+    public let taskKind: String
+    public let sourceRepo: String
+    public let suiteID: String
+    public let contextLength: Int
+    public let generationLength: Int
+    public let batchSize: Int
+    public let cacheProfile: String
+    public let reasoningMode: String
+    public let structuredOutputMode: String
+    public let concurrencyLevel: Int
+    public let repeats: Int
+    public let requests: Int
+    public let durationSeconds: Int
+    public let status: String
+    public let createdAtUnixMS: Int64
+    public let updatedAtUnixMS: Int64
+}
+
 public struct ControlPlaneEvaluationJobRecord: Codable, Equatable, Sendable {
     public let schemaVersion: String
     public let jobID: String
@@ -386,6 +621,9 @@ public struct ControlPlaneBenchmarkExportBundle: Codable, Equatable, Sendable {
     public let exportedAtUnixMS: Int64
     public let benchmarkJobs: [ControlPlaneBenchmarkJobRecord]
     public let benchmarkResults: [ControlPlaneBenchmarkResultRecord]
+    public let benchmarkMatrixJobs: [ControlPlaneBenchmarkMatrixJobRecord]
+    public let benchmarkMatrixSummaryRows: [ControlPlaneBenchmarkMatrixSummaryCSVRow]
+    public let benchmarkMatrixRequestRecords: [ControlPlaneBenchmarkMatrixRequestCSVRow]
     public let evaluationJobs: [ControlPlaneEvaluationJobRecord]
     public let evaluationResults: [ControlPlaneEvaluationResultRecord]
     public let evaluationSummaryRows: [ControlPlaneEvaluationSummaryCSVRow]
@@ -396,6 +634,9 @@ public struct ControlPlaneBenchmarkExportBundle: Codable, Equatable, Sendable {
         case exportedAtUnixMS = "exported_at_unix_ms"
         case benchmarkJobs = "benchmark_jobs"
         case benchmarkResults = "benchmark_results"
+        case benchmarkMatrixJobs = "benchmark_matrix_jobs"
+        case benchmarkMatrixSummaryRows = "benchmark_matrix_summary_rows"
+        case benchmarkMatrixRequestRecords = "benchmark_matrix_request_rows"
         case evaluationJobs = "evaluation_jobs"
         case evaluationResults = "evaluation_results"
         case evaluationSummaryRows = "evaluation_summary_rows"
@@ -408,6 +649,9 @@ public struct ControlPlaneBenchmarkExportBundle: Codable, Equatable, Sendable {
         exportedAtUnixMS = try container.decodeIfPresent(Int64.self, forKey: .exportedAtUnixMS) ?? 0
         benchmarkJobs = try container.decodeIfPresent([ControlPlaneBenchmarkJobRecord].self, forKey: .benchmarkJobs) ?? []
         benchmarkResults = try container.decodeIfPresent([ControlPlaneBenchmarkResultRecord].self, forKey: .benchmarkResults) ?? []
+        benchmarkMatrixJobs = try container.decodeIfPresent([ControlPlaneBenchmarkMatrixJobRecord].self, forKey: .benchmarkMatrixJobs) ?? []
+        benchmarkMatrixSummaryRows = try container.decodeIfPresent([ControlPlaneBenchmarkMatrixSummaryCSVRow].self, forKey: .benchmarkMatrixSummaryRows) ?? []
+        benchmarkMatrixRequestRecords = try container.decodeIfPresent([ControlPlaneBenchmarkMatrixRequestCSVRow].self, forKey: .benchmarkMatrixRequestRecords) ?? []
         evaluationJobs = try container.decodeIfPresent([ControlPlaneEvaluationJobRecord].self, forKey: .evaluationJobs) ?? []
         evaluationResults = try container.decodeIfPresent([ControlPlaneEvaluationResultRecord].self, forKey: .evaluationResults) ?? []
         evaluationSummaryRows = try container.decodeIfPresent([ControlPlaneEvaluationSummaryCSVRow].self, forKey: .evaluationSummaryRows) ?? []
@@ -515,6 +759,143 @@ public struct ControlPlaneBenchmarkExportBundle: Codable, Equatable, Sendable {
                 row.metricName,
                 String(row.metricValue),
                 row.unit,
+                String(row.createdAtUnixMS),
+            ]
+            .map(Self.csvField)
+            .joined(separator: ",")
+        }
+        return ([header] + body).joined(separator: "\n") + "\n"
+    }
+
+    public func benchmarkMatrixHistoryEntries() -> [ControlPlaneBenchmarkMatrixHistoryEntry] {
+        let jobsByID = Dictionary(uniqueKeysWithValues: benchmarkMatrixJobs.map { ($0.jobID, $0) })
+        return benchmarkMatrixSummaryRows
+            .sorted {
+                if $0.createdAtUnixMS == $1.createdAtUnixMS {
+                    return ($0.jobID, $0.suiteID, $0.contextLength, $0.batchSize) < ($1.jobID, $1.suiteID, $1.contextLength, $1.batchSize)
+                }
+                return $0.createdAtUnixMS > $1.createdAtUnixMS
+            }
+            .map { row in
+                let job = jobsByID[row.jobID]
+                return ControlPlaneBenchmarkMatrixHistoryEntry(
+                    benchmarkMode: job?.benchmarkMode.isEmpty == false ? (job?.benchmarkMode ?? "") : "matrix",
+                    jobID: row.jobID,
+                    modelID: row.modelID,
+                    taskKind: row.taskKind,
+                    sourceRepo: row.sourceRepo,
+                    suiteID: row.suiteID,
+                    contextLength: row.contextLength,
+                    generationLength: row.generationLength,
+                    batchSize: row.batchSize,
+                    cacheProfile: row.cacheProfile,
+                    reasoningMode: row.reasoningMode,
+                    structuredOutputMode: row.structuredOutputMode,
+                    concurrencyLevel: row.concurrencyLevel,
+                    repeats: row.repeats,
+                    requests: row.requests,
+                    durationSeconds: row.durationSeconds,
+                    status: job?.status ?? "completed",
+                    createdAtUnixMS: row.createdAtUnixMS,
+                    updatedAtUnixMS: job?.updatedAtUnixMS ?? row.createdAtUnixMS
+                )
+            }
+    }
+
+    public func benchmarkMatrixSummaryCSVRows(jobID: String? = nil) -> [ControlPlaneBenchmarkMatrixSummaryCSVRow] {
+        benchmarkMatrixSummaryRows
+            .filter { jobID == nil || $0.jobID == jobID }
+            .sorted {
+                if $0.createdAtUnixMS == $1.createdAtUnixMS {
+                    return ($0.jobID, $0.suiteID, $0.contextLength, $0.batchSize) < ($1.jobID, $1.suiteID, $1.contextLength, $1.batchSize)
+                }
+                return $0.createdAtUnixMS < $1.createdAtUnixMS
+            }
+    }
+
+    public func benchmarkMatrixSummaryCSV(jobID: String? = nil) -> String {
+        let rows = benchmarkMatrixSummaryCSVRows(jobID: jobID)
+        let header = "job_id,task_kind,source_repo,model_id,suite_id,context_length,generation_length,batch_size,cache_profile,reasoning_mode,structured_output_mode,concurrency_level,repeats,requests,duration_seconds,ttft_mean_ms,ttft_std_ms,request_latency_mean_ms,request_latency_std_ms,prefill_tokens_per_second_mean,decode_tokens_per_second_mean,throughput_requests_per_second,throughput_tokens_per_second,success_rate,peak_memory_bytes_max,queue_wait_mean_ms,queue_wait_p95_ms,created_at_unix_ms"
+        guard rows.isEmpty == false else {
+            return header + "\n"
+        }
+        let body = rows.map { row in
+            [
+                row.jobID,
+                row.taskKind,
+                row.sourceRepo,
+                row.modelID,
+                row.suiteID,
+                String(row.contextLength),
+                String(row.generationLength),
+                String(row.batchSize),
+                row.cacheProfile,
+                row.reasoningMode,
+                row.structuredOutputMode,
+                String(row.concurrencyLevel),
+                String(row.repeats),
+                String(row.requests),
+                String(row.durationSeconds),
+                String(row.ttftMeanMS),
+                String(row.ttftStdMS),
+                String(row.requestLatencyMeanMS),
+                String(row.requestLatencyStdMS),
+                String(row.prefillTokensPerSecondMean),
+                String(row.decodeTokensPerSecondMean),
+                String(row.throughputRequestsPerSecond),
+                String(row.throughputTokensPerSecond),
+                String(row.successRate),
+                String(row.peakMemoryBytesMax),
+                String(row.queueWaitMeanMS),
+                String(row.queueWaitP95MS),
+                String(row.createdAtUnixMS),
+            ]
+            .map(Self.csvField)
+            .joined(separator: ",")
+        }
+        return ([header] + body).joined(separator: "\n") + "\n"
+    }
+
+    public func benchmarkMatrixRequestRows(jobID: String? = nil) -> [ControlPlaneBenchmarkMatrixRequestCSVRow] {
+        benchmarkMatrixRequestRecords
+            .filter { jobID == nil || $0.jobID == jobID }
+            .sorted {
+                if $0.createdAtUnixMS == $1.createdAtUnixMS {
+                    return ($0.jobID, $0.cellID, $0.repeatIndex, $0.requestIndex) < ($1.jobID, $1.cellID, $1.repeatIndex, $1.requestIndex)
+                }
+                return $0.createdAtUnixMS < $1.createdAtUnixMS
+            }
+    }
+
+    public func benchmarkMatrixRequestsCSV(jobID: String? = nil) -> String {
+        let rows = benchmarkMatrixRequestRows(jobID: jobID)
+        let header = "job_id,cell_id,task_kind,suite_id,context_length,generation_length,batch_size,cache_profile,reasoning_mode,structured_output_mode,concurrency_level,repeat_index,request_index,ttft_ms,request_latency_ms,prefill_tokens_per_second,decode_tokens_per_second,queue_wait_ms,peak_memory_bytes,status,error_code,created_at_unix_ms"
+        guard rows.isEmpty == false else {
+            return header + "\n"
+        }
+        let body = rows.map { row in
+            [
+                row.jobID,
+                row.cellID,
+                row.taskKind,
+                row.suiteID,
+                String(row.contextLength),
+                String(row.generationLength),
+                String(row.batchSize),
+                row.cacheProfile,
+                row.reasoningMode,
+                row.structuredOutputMode,
+                String(row.concurrencyLevel),
+                String(row.repeatIndex),
+                String(row.requestIndex),
+                String(row.ttftMS),
+                String(row.requestLatencyMS),
+                String(row.prefillTokensPerSecond),
+                String(row.decodeTokensPerSecond),
+                String(row.queueWaitMS),
+                String(row.peakMemoryBytes),
+                row.status,
+                row.errorCode,
                 String(row.createdAtUnixMS),
             ]
             .map(Self.csvField)

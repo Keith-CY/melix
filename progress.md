@@ -15,6 +15,33 @@
   - changed-line coverage for the touched executable scope: `N/A`
   - reason: this slice changes repository documentation and planning records only
 
+- Closed Slice 2, the protocol, CLI, and control-plane bench matrix surface:
+  - added `RunBenchMatrix` to the control-plane and worker protobuf schemas and regenerated the Swift, Python, and descriptor artifacts
+  - added `melix bench matrix run`, `melix bench matrix list`, `melix bench matrix export-summary-csv`, and `melix bench matrix export-requests-csv` to the shared CLI
+  - taught the shared local control-plane client to build and decode typed matrix benchmark requests and replies
+  - taught `ControlPlaneService` to validate matrix dimensions, normalize repeated values, enforce the matrix guardrail, and route matrix jobs through the model-operations worker
+  - taught the Python control-plane bridge to forward `run-bench-matrix` requests to the worker-side maintenance service
+  - added parser, runner, export-bundle, control-plane, worker-client, XPC client, and bridge coverage for the new matrix request path
+- Verification summary for Slice 2:
+  - `swift test --filter 'MelixCLIParserTests|MelixCLIRunnerTests'`: `55 tests passed`
+  - `swift test --package-path services/control-plane-swift --filter 'ControlPlaneServiceTests|BenchmarkExportBundleTests|WorkerClientTests|PythonBridgeWorkerClientTests'`: `215 tests passed`
+  - `swift test --package-path apps/macos-menubar --filter ControlPlaneXPCClientTests`: `27 tests passed`
+  - `PYTHONPATH="/Users/ChenYu/Documents/Github/melix:/Users/ChenYu/Documents/Github/melix/services/mlx-worker-python" uv run --project services/mlx-worker-python --extra mlx pytest services/mlx-worker-python/tests/test_control_plane_bridge_phase5.py -q`: `4 tests passed`
+  - `swift test --enable-code-coverage --filter 'MelixCLIParserTests|MelixCLIRunnerTests'`: `55 tests passed`
+  - `swift test --package-path services/control-plane-swift --enable-code-coverage --filter 'ControlPlaneServiceTests|BenchmarkExportBundleTests|WorkerClientTests|PythonBridgeWorkerClientTests'`: `215 tests passed`
+  - `swift test --package-path apps/macos-menubar --enable-code-coverage --filter ControlPlaneXPCClientTests`: `27 tests passed`
+  - `coverage run -m pytest services/mlx-worker-python/tests/test_control_plane_bridge_phase5.py -q`: `4 tests passed`
+- Metrics report for Slice 2:
+  - `Sources/MelixCLICore/MelixCLI.swift`: changed-line coverage `98.67%` (`297/301`)
+  - `services/control-plane-swift/Sources/WorkerClient/WorkerClient.swift`: changed-line coverage `100.00%` (`4/4`)
+  - `services/control-plane-swift/Sources/WorkerClient/PythonBridgeWorkerClient.swift`: changed-line coverage `100.00%` (`7/7`)
+  - `services/control-plane-swift/Sources/XPCService/BenchmarkExportBundle.swift`: changed-line coverage `100.00%` (`205/205`)
+  - `services/control-plane-swift/Sources/XPCService/ControlPlaneService.swift`: changed-line coverage `99.27%` (`136/137`)
+  - `services/control-plane-swift/Sources/XPCService/ControlPlaneXPCClient.swift`: changed-line coverage `100.00%` (`75/75`)
+  - `services/mlx-worker-python/worker/control_plane_bridge.py`: changed-line coverage `100.00%` (`4/4`)
+  - aggregate changed-line coverage for the handwritten executable scope in Slice 2: `99.32%` (`728/733`)
+  - generated protobuf schemas and generated protocol outputs are recorded as `N/A` for changed-line coverage because they are interface or generated artifacts rather than repository-owned executable logic
+
 - Continued the benchmark and evaluation contract expansion transaction with the first two executable slices from `docs/plans/2026-04-03-bench-eval-contract-expansion-implementation.md`.
 - Closed Task 1, the protocol expansion slice for canonical bench and eval inputs:
   - added the canonical bench fields to `RunBench` and `RunBenchRequest`

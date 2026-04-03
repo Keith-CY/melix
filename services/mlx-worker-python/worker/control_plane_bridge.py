@@ -45,6 +45,7 @@ def main() -> None:
             "search-hub-models",
             "get-hub-model-card",
             "run-bench",
+            "run-bench-matrix",
             "run-evaluation",
         ],
     )
@@ -141,6 +142,10 @@ def main() -> None:
                 request = maintenance_pb2.RunBenchRequest.FromString(request_bytes)
                 for event in stub.RunBench(request):
                     emit_message(event.SerializeToString())
+            elif args.command == "run-bench-matrix":
+                stub = maintenance_pb2_grpc.MaintenanceServiceStub(channel)
+                request = maintenance_pb2.RunBenchMatrixRequest.FromString(request_bytes)
+                emit_message(stub.RunBenchMatrix(request).SerializeToString())
             elif args.command == "run-evaluation":
                 stub = maintenance_pb2_grpc.MaintenanceServiceStub(channel)
                 request = maintenance_pb2.RunEvaluationRequest.FromString(request_bytes)

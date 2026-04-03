@@ -110,6 +110,69 @@ public struct BenchListOptions: Equatable, Sendable {
     }
 }
 
+public struct BenchMatrixRunOptions: Equatable, Sendable {
+    public let modelID: String
+    public let hfRepoID: String
+    public let taskKind: String
+    public let suites: [String]
+    public let contextLengths: [UInt32]
+    public let generationLengths: [UInt32]
+    public let batchSizes: [UInt32]
+    public let cacheProfiles: [String]
+    public let reasoningModes: [String]
+    public let structuredOutputModes: [String]
+    public let concurrencyLevels: [UInt32]
+    public let repeats: UInt32
+    public let requests: UInt32
+    public let durationSeconds: UInt32
+    public let allowLargeMatrix: Bool
+    public let json: Bool
+
+    public init(
+        modelID: String = "",
+        hfRepoID: String = "",
+        taskKind: String = "",
+        suites: [String] = [],
+        contextLengths: [UInt32] = [],
+        generationLengths: [UInt32] = [],
+        batchSizes: [UInt32] = [],
+        cacheProfiles: [String] = [],
+        reasoningModes: [String] = [],
+        structuredOutputModes: [String] = [],
+        concurrencyLevels: [UInt32] = [],
+        repeats: UInt32 = 1,
+        requests: UInt32 = 0,
+        durationSeconds: UInt32 = 0,
+        allowLargeMatrix: Bool = false,
+        json: Bool = false
+    ) {
+        self.modelID = modelID
+        self.hfRepoID = hfRepoID
+        self.taskKind = taskKind
+        self.suites = Array(Set(suites)).sorted()
+        self.contextLengths = ControlPlaneBenchRequest.normalizedBenchValues(contextLengths)
+        self.generationLengths = ControlPlaneBenchRequest.normalizedBenchValues(generationLengths)
+        self.batchSizes = ControlPlaneBenchRequest.normalizedBenchValues(batchSizes)
+        self.cacheProfiles = ControlPlaneBenchMatrixRequest.normalizedStringValues(cacheProfiles)
+        self.reasoningModes = ControlPlaneBenchMatrixRequest.normalizedStringValues(reasoningModes)
+        self.structuredOutputModes = ControlPlaneBenchMatrixRequest.normalizedStringValues(structuredOutputModes)
+        self.concurrencyLevels = ControlPlaneBenchRequest.normalizedBenchValues(concurrencyLevels)
+        self.repeats = repeats == 0 ? 1 : repeats
+        self.requests = requests
+        self.durationSeconds = durationSeconds
+        self.allowLargeMatrix = allowLargeMatrix
+        self.json = json
+    }
+}
+
+public struct BenchMatrixListOptions: Equatable, Sendable {
+    public let json: Bool
+
+    public init(json: Bool = false) {
+        self.json = json
+    }
+}
+
 public struct BenchExportCSVOptions: Equatable, Sendable {
     public let jobID: String
     public let outputPath: String
@@ -177,6 +240,10 @@ public enum MelixCLICommand: Equatable, Sendable {
     case benchRun(BenchRunOptions)
     case benchList(BenchListOptions)
     case benchExportCSV(BenchExportCSVOptions)
+    case benchMatrixRun(BenchMatrixRunOptions)
+    case benchMatrixList(BenchMatrixListOptions)
+    case benchMatrixExportSummaryCSV(BenchExportCSVOptions)
+    case benchMatrixExportRequestsCSV(BenchExportCSVOptions)
     case evalRun(EvalRunOptions)
     case evalList(EvalListOptions)
     case evalExportSummaryCSV(EvalExportOptions)
@@ -230,6 +297,10 @@ public enum MelixCLIParser {
       melix bench run (--model-id MODEL_ID | --repo-id HF_REPO) [--suite SUITE ...] [--context-length N ...] [--generation-length N] [--batch-size N ...] [--repeats N] [--cache-profile MODE] [--reasoning-mode MODE] [--structured-output-mode MODE] [--sample-size N] [--batch-factor N] [--json]
       melix bench list [--json]
       melix bench export-csv --job-id JOB_ID --output PATH [--json]
+      melix bench matrix run (--model-id MODEL_ID | --repo-id HF_REPO) --suite SUITE ... --context-length N ... --generation-length N ... --batch-size N ... --cache-profile MODE ... --reasoning-mode MODE ... --structured-output-mode MODE ... --concurrency N ... [--repeats N] (--requests N | --duration-seconds N) [--allow-large-matrix] [--json]
+      melix bench matrix list [--json]
+      melix bench matrix export-summary-csv --job-id JOB_ID --output PATH [--json]
+      melix bench matrix export-requests-csv --job-id JOB_ID --output PATH [--json]
       melix eval run (--model-id MODEL_ID | --repo-id HF_REPO) [--suite SUITE ...] [--dataset-id DATASET_ID] [--sample-size N] [--batch-factor N] [--seed N] [--few-shot N] [--json]
       melix eval list [--json]
       melix eval export-summary-csv --job-id JOB_ID --output PATH [--json]
@@ -330,6 +401,9 @@ public enum MelixCLIParser {
         guard let action = arguments.first else {
             throw MelixCLIError.usage(usageText)
         }
+        if action == "matrix" {
+            return try parseBenchMatrix(Array(arguments.dropFirst()))
+        }
         let values = try ArgumentCursor(arguments: Array(arguments.dropFirst())).parse(
             multiValueOptions: ["--suite", "--context-length", "--batch-size"]
         )
@@ -389,6 +463,122 @@ public enum MelixCLIParser {
                     outputPath: outputPath,
                     json: values.flags.contains("--json")
                 )
+            )
+        default:
+            throw MelixCLIError.usage(usageText)
+        }
+    }
+
+    private static func parseBenchMatrix(_ arguments: [String]) throws -> MelixCLICommand {
+        guard let action = arguments.first else {
+            throw MelixCLIError.usage(usageText)
+        }
+        let values = try ArgumentCursor(arguments: Array(arguments.dropFirst())).parse(
+            multiValueOptions: [
+                "--suite",
+                "--context-length",
+                "--generation-length",
+                "--batch-size",
+                "--cache-profile",
+                "--reasoning-mode",
+                "--structured-output-mode",
+                "--concurrency",
+            ]
+        )
+        switch action {
+        case "run":
+            let modelID = values.single["--model-id"] ?? ""
+            let hfRepoID = values.single["--repo-id"] ?? ""
+            let explicitTargetCount = [modelID, hfRepoID].filter { !$0.isEmpty }.count
+            guard explicitTargetCount == 1 else {
+                throw MelixCLIError.missingRequired("Exactly one of --model-id or --repo-id is required for melix bench matrix run.")
+            }
+            let contextLengths = try parseUInt32List(values.multi["--context-length"] ?? [], option: "--context-length")
+            let generationLengths = try parseUInt32List(values.multi["--generation-length"] ?? [], option: "--generation-length")
+            let batchSizes = try parseUInt32List(values.multi["--batch-size"] ?? [], option: "--batch-size")
+            let concurrencyLevels = try parseUInt32List(values.multi["--concurrency"] ?? [], option: "--concurrency")
+            let repeats = try parseUInt32Value(values.single["--repeats"], option: "--repeats", defaultValue: 1) ?? 1
+            let requests = try parseUInt32Value(values.single["--requests"], option: "--requests", defaultValue: 0) ?? 0
+            let durationSeconds = try parseUInt32Value(
+                values.single["--duration-seconds"],
+                option: "--duration-seconds",
+                defaultValue: 0
+            ) ?? 0
+            let loadBudgetCount = [requests > 0, durationSeconds > 0].filter(\.self).count
+            guard loadBudgetCount == 1 else {
+                throw MelixCLIError.missingRequired("Exactly one of --requests or --duration-seconds is required for melix bench matrix run.")
+            }
+            let cacheProfiles = values.multi["--cache-profile"] ?? []
+            for cacheProfile in cacheProfiles where ControlPlaneBenchRequest.validCacheProfiles.contains(cacheProfile) == false {
+                throw MelixCLIError.usage(
+                    "Invalid value for --cache-profile. Expected one of: \(ControlPlaneBenchRequest.validCacheProfiles.joined(separator: ", "))."
+                )
+            }
+            guard (values.multi["--suite"] ?? []).isEmpty == false else {
+                throw MelixCLIError.missingRequired("At least one --suite is required for melix bench matrix run.")
+            }
+            guard contextLengths.isEmpty == false else {
+                throw MelixCLIError.missingRequired("At least one --context-length is required for melix bench matrix run.")
+            }
+            guard generationLengths.isEmpty == false else {
+                throw MelixCLIError.missingRequired("At least one --generation-length is required for melix bench matrix run.")
+            }
+            guard batchSizes.isEmpty == false else {
+                throw MelixCLIError.missingRequired("At least one --batch-size is required for melix bench matrix run.")
+            }
+            guard cacheProfiles.isEmpty == false else {
+                throw MelixCLIError.missingRequired("At least one --cache-profile is required for melix bench matrix run.")
+            }
+            guard (values.multi["--reasoning-mode"] ?? []).isEmpty == false else {
+                throw MelixCLIError.missingRequired("At least one --reasoning-mode is required for melix bench matrix run.")
+            }
+            guard (values.multi["--structured-output-mode"] ?? []).isEmpty == false else {
+                throw MelixCLIError.missingRequired("At least one --structured-output-mode is required for melix bench matrix run.")
+            }
+            guard concurrencyLevels.isEmpty == false else {
+                throw MelixCLIError.missingRequired("At least one --concurrency is required for melix bench matrix run.")
+            }
+            return .benchMatrixRun(
+                BenchMatrixRunOptions(
+                    modelID: modelID,
+                    hfRepoID: hfRepoID,
+                    taskKind: values.single["--task-kind"] ?? "",
+                    suites: values.multi["--suite"] ?? [],
+                    contextLengths: contextLengths,
+                    generationLengths: generationLengths,
+                    batchSizes: batchSizes,
+                    cacheProfiles: cacheProfiles,
+                    reasoningModes: values.multi["--reasoning-mode"] ?? [],
+                    structuredOutputModes: values.multi["--structured-output-mode"] ?? [],
+                    concurrencyLevels: concurrencyLevels,
+                    repeats: repeats,
+                    requests: requests,
+                    durationSeconds: durationSeconds,
+                    allowLargeMatrix: values.flags.contains("--allow-large-matrix"),
+                    json: values.flags.contains("--json")
+                )
+            )
+        case "list":
+            return .benchMatrixList(BenchMatrixListOptions(json: values.flags.contains("--json")))
+        case "export-summary-csv":
+            guard let jobID = values.single["--job-id"], !jobID.isEmpty else {
+                throw MelixCLIError.missingRequired("--job-id is required for melix bench matrix export-summary-csv.")
+            }
+            guard let outputPath = values.single["--output"], !outputPath.isEmpty else {
+                throw MelixCLIError.missingRequired("--output is required for melix bench matrix export-summary-csv.")
+            }
+            return .benchMatrixExportSummaryCSV(
+                BenchExportCSVOptions(jobID: jobID, outputPath: outputPath, json: values.flags.contains("--json"))
+            )
+        case "export-requests-csv":
+            guard let jobID = values.single["--job-id"], !jobID.isEmpty else {
+                throw MelixCLIError.missingRequired("--job-id is required for melix bench matrix export-requests-csv.")
+            }
+            guard let outputPath = values.single["--output"], !outputPath.isEmpty else {
+                throw MelixCLIError.missingRequired("--output is required for melix bench matrix export-requests-csv.")
+            }
+            return .benchMatrixExportRequestsCSV(
+                BenchExportCSVOptions(jobID: jobID, outputPath: outputPath, json: values.flags.contains("--json"))
             )
         default:
             throw MelixCLIError.usage(usageText)
@@ -509,7 +699,13 @@ private struct ArgumentCursor {
     func parse(multiValueOptions: Set<String> = ["--suite"]) throws -> ParsedArguments {
         var result = ParsedArguments()
         var index = 0
-        let valueLessFlags: Set<String> = ["--json", "--response-only", "--mask-prompt", "--gradient-checkpointing"]
+        let valueLessFlags: Set<String> = [
+            "--json",
+            "--response-only",
+            "--mask-prompt",
+            "--gradient-checkpointing",
+            "--allow-large-matrix",
+        ]
         while index < arguments.count {
             let token = arguments[index]
             if valueLessFlags.contains(token) {
@@ -661,6 +857,80 @@ public actor MelixCLIRunner {
                 )
             }
             return outputURL.path + "\n"
+        case .benchMatrixRun(let options):
+            if !options.modelID.isEmpty {
+                _ = try await client.loadModel(modelID: options.modelID)
+            }
+            let result = try await client.runBenchMatrix(
+                ControlPlaneBenchMatrixRequest(
+                    modelID: options.modelID,
+                    hfRepoID: options.hfRepoID,
+                    taskKind: options.taskKind,
+                    suites: options.suites,
+                    contextLengths: options.contextLengths,
+                    generationLengths: options.generationLengths,
+                    batchSizes: options.batchSizes,
+                    cacheProfiles: options.cacheProfiles,
+                    reasoningModes: options.reasoningModes,
+                    structuredOutputModes: options.structuredOutputModes,
+                    concurrencyLevels: options.concurrencyLevels,
+                    repeats: options.repeats,
+                    requests: options.requests,
+                    durationSeconds: options.durationSeconds,
+                    allowLargeMatrix: options.allowLargeMatrix
+                )
+            )
+            if options.json {
+                return try prettyJSON(makeBenchmarkMatrixPayload(result))
+            }
+            return renderBenchmarkMatrixRun(result)
+        case .benchMatrixList(let options):
+            let bundle = try await benchmarkExportBundle()
+            let entries = bundle.benchmarkMatrixHistoryEntries()
+            if options.json {
+                return try prettyJSON(entries)
+            }
+            return renderBenchmarkMatrixHistory(entries)
+        case .benchMatrixExportSummaryCSV(let options):
+            let bundle = try await benchmarkExportBundle()
+            let rows = bundle.benchmarkMatrixSummaryCSVRows(jobID: options.jobID)
+            guard rows.isEmpty == false else {
+                throw MelixCLIError.runtime("No benchmark matrix summary rows were found for job \(options.jobID).")
+            }
+            let csv = bundle.benchmarkMatrixSummaryCSV(jobID: options.jobID)
+            let outputURL = URL(fileURLWithPath: options.outputPath)
+            try FileManager.default.createDirectory(
+                at: outputURL.deletingLastPathComponent(),
+                withIntermediateDirectories: true,
+                attributes: nil
+            )
+            try csv.write(to: outputURL, atomically: true, encoding: .utf8)
+            if options.json {
+                return try prettyJSON(
+                    BenchExportCSVResponse(jobID: options.jobID, outputPath: outputURL.path, rowCount: rows.count)
+                )
+            }
+            return outputURL.path + "\n"
+        case .benchMatrixExportRequestsCSV(let options):
+            let bundle = try await benchmarkExportBundle()
+            let rows = bundle.benchmarkMatrixRequestRows(jobID: options.jobID)
+            guard rows.isEmpty == false else {
+                throw MelixCLIError.runtime("No benchmark matrix request rows were found for job \(options.jobID).")
+            }
+            let csv = bundle.benchmarkMatrixRequestsCSV(jobID: options.jobID)
+            let outputURL = URL(fileURLWithPath: options.outputPath)
+            try FileManager.default.createDirectory(
+                at: outputURL.deletingLastPathComponent(),
+                withIntermediateDirectories: true,
+                attributes: nil
+            )
+            try csv.write(to: outputURL, atomically: true, encoding: .utf8)
+            if options.json {
+                return try prettyJSON(
+                    BenchExportCSVResponse(jobID: options.jobID, outputPath: outputURL.path, rowCount: rows.count)
+                )
+            }
+            return outputURL.path + "\n"
         case .evalRun(let options):
             let suites = options.suites.isEmpty ? ["mmlu"] : options.suites
             let results = try await runEvaluationSuites(options: options, suites: suites)
@@ -803,6 +1073,63 @@ public actor MelixCLIRunner {
         ] + lines).joined(separator: "\n") + "\n"
     }
 
+    private func renderBenchmarkMatrixRun(_ result: ControlPlaneBenchMatrixResult) -> String {
+        guard result.summaryRows.isEmpty == false else {
+            return "No benchmark matrix rows were returned.\n"
+        }
+        let lines = result.summaryRows.map { row in
+            [
+                row.jobID,
+                row.modelID,
+                row.taskKind.isEmpty ? "-" : row.taskKind,
+                row.sourceRepo.isEmpty ? "-" : row.sourceRepo,
+                row.suiteID,
+                String(row.contextLength),
+                String(row.generationLength),
+                String(row.batchSize),
+                row.cacheProfile,
+                row.reasoningMode,
+                row.structuredOutputMode,
+                String(row.concurrencyLevel),
+                String(row.repeats),
+                matrixLoadBudgetLabel(requests: Int(row.requests), durationSeconds: Int(row.durationSeconds)),
+                String(row.ttftMeanMs),
+            ].joined(separator: "\t")
+        }
+        return ([
+            "job_id\tmodel_id\ttask_kind\tsource_repo\tsuite\tcontext_length\tgeneration_length\tbatch_size\tcache_profile\treasoning_mode\tstructured_output_mode\tconcurrency_level\trepeats\tload_budget\tttft_mean_ms",
+        ] + lines).joined(separator: "\n") + "\n"
+    }
+
+    private func renderBenchmarkMatrixHistory(_ entries: [ControlPlaneBenchmarkMatrixHistoryEntry]) -> String {
+        guard entries.isEmpty == false else {
+            return "No benchmark matrix runs found.\n"
+        }
+        let lines = entries.map { entry in
+            [
+                entry.jobID,
+                entry.modelID,
+                entry.taskKind.isEmpty ? "-" : entry.taskKind,
+                entry.sourceRepo.isEmpty ? "-" : entry.sourceRepo,
+                entry.suiteID,
+                String(entry.contextLength),
+                String(entry.generationLength),
+                String(entry.batchSize),
+                entry.cacheProfile,
+                entry.reasoningMode,
+                entry.structuredOutputMode,
+                String(entry.concurrencyLevel),
+                String(entry.repeats),
+                matrixLoadBudgetLabel(requests: entry.requests, durationSeconds: entry.durationSeconds),
+                entry.status,
+                String(entry.createdAtUnixMS),
+            ].joined(separator: "\t")
+        }
+        return ([
+            "job_id\tmodel_id\ttask_kind\tsource_repo\tsuite\tcontext_length\tgeneration_length\tbatch_size\tcache_profile\treasoning_mode\tstructured_output_mode\tconcurrency_level\trepeats\tload_budget\tstatus\tcreated_at_unix_ms",
+        ] + lines).joined(separator: "\n") + "\n"
+    }
+
     private func renderEvaluationHistory(_ entries: [ControlPlaneEvaluationHistoryEntry]) -> String {
         guard entries.isEmpty == false else {
             return "No evaluation runs found.\n"
@@ -893,6 +1220,70 @@ public actor MelixCLIRunner {
                 ]
             },
         ]
+    }
+
+    private func makeBenchmarkMatrixPayload(_ result: ControlPlaneBenchMatrixResult) -> [String: Any] {
+        [
+            "job": [
+                "schema_version": result.job.schemaVersion,
+                "job_id": result.job.jobID,
+                "model_id": result.job.modelID,
+                "task_kind": result.job.taskKind,
+                "source_repo": result.job.sourceRepo,
+                "suite_ids": result.job.suiteIds,
+                "benchmark_mode": result.job.benchmarkMode,
+                "status": result.job.status,
+                "output_dir": result.job.outputDir,
+                "created_at_unix_ms": result.job.createdAtUnixMs,
+                "updated_at_unix_ms": result.job.updatedAtUnixMs,
+            ],
+            "summary_rows": result.summaryRows.map { row in
+                [
+                    "job_id": row.jobID,
+                    "task_kind": row.taskKind,
+                    "source_repo": row.sourceRepo,
+                    "model_id": row.modelID,
+                    "suite_id": row.suiteID,
+                    "context_length": Int(row.contextLength),
+                    "generation_length": Int(row.generationLength),
+                    "batch_size": Int(row.batchSize),
+                    "cache_profile": row.cacheProfile,
+                    "reasoning_mode": row.reasoningMode,
+                    "structured_output_mode": row.structuredOutputMode,
+                    "concurrency_level": Int(row.concurrencyLevel),
+                    "repeats": Int(row.repeats),
+                    "requests": Int(row.requests),
+                    "duration_seconds": Int(row.durationSeconds),
+                    "ttft_mean_ms": row.ttftMeanMs,
+                    "ttft_std_ms": row.ttftStdMs,
+                    "request_latency_mean_ms": row.requestLatencyMeanMs,
+                    "request_latency_std_ms": row.requestLatencyStdMs,
+                    "prefill_tokens_per_second_mean": row.prefillTokensPerSecondMean,
+                    "decode_tokens_per_second_mean": row.decodeTokensPerSecondMean,
+                    "throughput_requests_per_second": row.throughputRequestsPerSecond,
+                    "throughput_tokens_per_second": row.throughputTokensPerSecond,
+                    "success_rate": row.successRate,
+                    "peak_memory_bytes_max": row.peakMemoryBytesMax,
+                    "queue_wait_mean_ms": row.queueWaitMeanMs,
+                    "queue_wait_p95_ms": row.queueWaitP95Ms,
+                    "created_at_unix_ms": row.createdAtUnixMs,
+                ]
+            },
+        ]
+    }
+
+    private func matrixLoadBudgetLabel(requests: UInt32, durationSeconds: UInt32) -> String {
+        matrixLoadBudgetLabel(requests: Int(requests), durationSeconds: Int(durationSeconds))
+    }
+
+    private func matrixLoadBudgetLabel(requests: Int, durationSeconds: Int) -> String {
+        if requests > 0 {
+            return "requests=\(requests)"
+        }
+        if durationSeconds > 0 {
+            return "duration_seconds=\(durationSeconds)"
+        }
+        return "-"
     }
 
     private func prettyJSON(_ payload: [String: Any]) throws -> String {

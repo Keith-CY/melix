@@ -151,6 +151,7 @@ message OpsCommand {
     SubmitResults submit_results = 9;
     SearchHubModels search_hub_models = 10;
     GetHubModelCard get_hub_model_card = 11;
+    RunBenchMatrix run_bench_matrix = 12;
   }
 }
 
@@ -202,6 +203,8 @@ message OpsReply {
   string submission_json = 9;
   HubSearchResult hub_search = 10;
   HubModelCard hub_model_card = 11;
+  BenchmarkMatrixJobSummary benchmark_matrix_job = 12;
+  repeated BenchmarkMatrixSummaryRow benchmark_matrix_summary_rows = 13;
 }
 
 message PresetReply {
@@ -345,6 +348,23 @@ message RunBench {
   string reasoning_mode = 10;
   string structured_output_mode = 11;
 }
+message RunBenchMatrix {
+  string model_id = 1;
+  string hf_repo_id = 2;
+  string task_kind = 3;
+  repeated string suite_ids = 4;
+  repeated uint32 context_lengths = 5;
+  repeated uint32 generation_lengths = 6;
+  repeated uint32 batch_sizes = 7;
+  repeated string cache_profiles = 8;
+  repeated string reasoning_modes = 9;
+  repeated string structured_output_modes = 10;
+  repeated uint32 concurrency_levels = 11;
+  uint32 repeats = 12;
+  uint32 requests = 13;
+  uint32 duration_seconds = 14;
+  bool allow_large_matrix = 15;
+}
 message RunEvaluation {
   string suite_id = 1;
   string dataset_id = 2;
@@ -397,6 +417,7 @@ message BenchmarkJobSummary {
   int64 updated_at_unix_ms = 9;
   string task_kind = 10;
   string source_repo = 11;
+  string benchmark_mode = 12;
 }
 
 message BenchmarkResultSummary {
@@ -406,6 +427,51 @@ message BenchmarkResultSummary {
   repeated BenchmarkMetricValue metrics = 4;
   string report_path = 5;
   string report_markdown = 6;
+}
+
+message BenchmarkMatrixJobSummary {
+  string schema_version = 1;
+  string job_id = 2;
+  string model_id = 3;
+  string task_kind = 4;
+  string source_repo = 5;
+  repeated string suite_ids = 6;
+  string benchmark_mode = 7;
+  string status = 8;
+  string output_dir = 9;
+  int64 created_at_unix_ms = 10;
+  int64 updated_at_unix_ms = 11;
+}
+
+message BenchmarkMatrixSummaryRow {
+  string job_id = 1;
+  string task_kind = 2;
+  string source_repo = 3;
+  string model_id = 4;
+  string suite_id = 5;
+  uint32 context_length = 6;
+  uint32 generation_length = 7;
+  uint32 batch_size = 8;
+  string cache_profile = 9;
+  string reasoning_mode = 10;
+  string structured_output_mode = 11;
+  uint32 concurrency_level = 12;
+  uint32 repeats = 13;
+  uint32 requests = 14;
+  uint32 duration_seconds = 15;
+  double ttft_mean_ms = 16;
+  double ttft_std_ms = 17;
+  double request_latency_mean_ms = 18;
+  double request_latency_std_ms = 19;
+  double prefill_tokens_per_second_mean = 20;
+  double decode_tokens_per_second_mean = 21;
+  double throughput_requests_per_second = 22;
+  double throughput_tokens_per_second = 23;
+  double success_rate = 24;
+  uint64 peak_memory_bytes_max = 25;
+  double queue_wait_mean_ms = 26;
+  double queue_wait_p95_ms = 27;
+  int64 created_at_unix_ms = 28;
 }
 
 message EvaluationJobSummary {

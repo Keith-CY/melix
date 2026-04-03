@@ -246,6 +246,267 @@ struct MelixCLIParserTests {
         #expect(exportOptions.json)
     }
 
+    @Test("parses bench matrix run with canonical sweep and load-budget inputs")
+    func parsesBenchMatrixRunCommand() throws {
+        let command = try MelixCLIParser.parse([
+            "bench",
+            "matrix",
+            "run",
+            "--repo-id", "unsloth/gemma-4-E4B-it-MLX-8bit",
+            "--suite", "smoke",
+            "--suite", "latency",
+            "--context-length", "4096",
+            "--context-length", "1024",
+            "--generation-length", "256",
+            "--generation-length", "128",
+            "--batch-size", "4",
+            "--batch-size", "2",
+            "--cache-profile", "warm",
+            "--cache-profile", "cold",
+            "--reasoning-mode", "enabled",
+            "--reasoning-mode", "disabled",
+            "--structured-output-mode", "json_schema",
+            "--structured-output-mode", "plain_text",
+            "--concurrency", "8",
+            "--concurrency", "1",
+            "--repeats", "3",
+            "--requests", "24",
+            "--json",
+        ])
+
+        guard case .benchMatrixRun(let options) = command else {
+            Issue.record("Expected benchMatrixRun command")
+            return
+        }
+
+        #expect(options.modelID.isEmpty)
+        #expect(options.hfRepoID == "unsloth/gemma-4-E4B-it-MLX-8bit")
+        #expect(options.suites == ["latency", "smoke"])
+        #expect(options.contextLengths == [1024, 4096])
+        #expect(options.generationLengths == [128, 256])
+        #expect(options.batchSizes == [2, 4])
+        #expect(options.cacheProfiles == ["cold", "warm"])
+        #expect(options.reasoningModes == ["disabled", "enabled"])
+        #expect(options.structuredOutputModes == ["json_schema", "plain_text"])
+        #expect(options.concurrencyLevels == [1, 8])
+        #expect(options.repeats == 3)
+        #expect(options.requests == 24)
+        #expect(options.durationSeconds == 0)
+        #expect(options.allowLargeMatrix == false)
+        #expect(options.json)
+    }
+
+    @Test("parses bench matrix list and export commands")
+    func parsesBenchMatrixListAndExportCommands() throws {
+        let listCommand = try MelixCLIParser.parse([
+            "bench",
+            "matrix",
+            "list",
+            "--json",
+        ])
+        let summaryCommand = try MelixCLIParser.parse([
+            "bench",
+            "matrix",
+            "export-summary-csv",
+            "--job-id", "bench-matrix-1",
+            "--output", "/tmp/melix/bench-matrix-summary.csv",
+            "--json",
+        ])
+        let requestsCommand = try MelixCLIParser.parse([
+            "bench",
+            "matrix",
+            "export-requests-csv",
+            "--job-id", "bench-matrix-1",
+            "--output", "/tmp/melix/bench-matrix-requests.csv",
+        ])
+
+        guard case .benchMatrixList(let listOptions) = listCommand else {
+            Issue.record("Expected benchMatrixList command")
+            return
+        }
+        guard case .benchMatrixExportSummaryCSV(let summaryOptions) = summaryCommand else {
+            Issue.record("Expected benchMatrixExportSummaryCSV command")
+            return
+        }
+        guard case .benchMatrixExportRequestsCSV(let requestsOptions) = requestsCommand else {
+            Issue.record("Expected benchMatrixExportRequestsCSV command")
+            return
+        }
+
+        #expect(listOptions.json)
+        #expect(summaryOptions.jobID == "bench-matrix-1")
+        #expect(summaryOptions.outputPath == "/tmp/melix/bench-matrix-summary.csv")
+        #expect(summaryOptions.json)
+        #expect(requestsOptions.jobID == "bench-matrix-1")
+        #expect(requestsOptions.outputPath == "/tmp/melix/bench-matrix-requests.csv")
+        #expect(requestsOptions.json == false)
+    }
+
+    @Test("bench matrix parser rejects missing targets required dimensions and malformed exports")
+    func benchMatrixParserRejectsMissingTargetsRequiredDimensionsAndMalformedExports() throws {
+        try assertError(for: ["bench", "matrix"], equals: .usage(MelixCLIParser.usageText))
+        try assertError(for: ["bench", "matrix", "oops"], equals: .usage(MelixCLIParser.usageText))
+        try assertError(
+            for: [
+                "bench", "matrix", "run",
+                "--suite", "smoke",
+                "--context-length", "1024",
+                "--generation-length", "128",
+                "--batch-size", "2",
+                "--cache-profile", "warm",
+                "--reasoning-mode", "enabled",
+                "--structured-output-mode", "plain_text",
+                "--concurrency", "1",
+                "--requests", "8",
+            ],
+            equals: .missingRequired("Exactly one of --model-id or --repo-id is required for melix bench matrix run.")
+        )
+        try assertError(
+            for: [
+                "bench", "matrix", "run",
+                "--model-id", "melix-dev-text",
+                "--context-length", "1024",
+                "--generation-length", "128",
+                "--batch-size", "2",
+                "--cache-profile", "warm",
+                "--reasoning-mode", "enabled",
+                "--structured-output-mode", "plain_text",
+                "--concurrency", "1",
+                "--requests", "8",
+            ],
+            equals: .missingRequired("At least one --suite is required for melix bench matrix run.")
+        )
+        try assertError(
+            for: [
+                "bench", "matrix", "run",
+                "--model-id", "melix-dev-text",
+                "--suite", "smoke",
+                "--generation-length", "128",
+                "--batch-size", "2",
+                "--cache-profile", "warm",
+                "--reasoning-mode", "enabled",
+                "--structured-output-mode", "plain_text",
+                "--concurrency", "1",
+                "--requests", "8",
+            ],
+            equals: .missingRequired("At least one --context-length is required for melix bench matrix run.")
+        )
+        try assertError(
+            for: [
+                "bench", "matrix", "run",
+                "--model-id", "melix-dev-text",
+                "--suite", "smoke",
+                "--context-length", "1024",
+                "--batch-size", "2",
+                "--cache-profile", "warm",
+                "--reasoning-mode", "enabled",
+                "--structured-output-mode", "plain_text",
+                "--concurrency", "1",
+                "--requests", "8",
+            ],
+            equals: .missingRequired("At least one --generation-length is required for melix bench matrix run.")
+        )
+        try assertError(
+            for: [
+                "bench", "matrix", "run",
+                "--model-id", "melix-dev-text",
+                "--suite", "smoke",
+                "--context-length", "1024",
+                "--generation-length", "128",
+                "--cache-profile", "warm",
+                "--reasoning-mode", "enabled",
+                "--structured-output-mode", "plain_text",
+                "--concurrency", "1",
+                "--requests", "8",
+            ],
+            equals: .missingRequired("At least one --batch-size is required for melix bench matrix run.")
+        )
+        try assertError(
+            for: [
+                "bench", "matrix", "run",
+                "--model-id", "melix-dev-text",
+                "--suite", "smoke",
+                "--context-length", "1024",
+                "--generation-length", "128",
+                "--batch-size", "2",
+                "--reasoning-mode", "enabled",
+                "--structured-output-mode", "plain_text",
+                "--concurrency", "1",
+                "--requests", "8",
+            ],
+            equals: .missingRequired("At least one --cache-profile is required for melix bench matrix run.")
+        )
+        try assertError(
+            for: [
+                "bench", "matrix", "run",
+                "--model-id", "melix-dev-text",
+                "--suite", "smoke",
+                "--context-length", "1024",
+                "--generation-length", "128",
+                "--batch-size", "2",
+                "--cache-profile", "warm",
+                "--structured-output-mode", "plain_text",
+                "--concurrency", "1",
+                "--requests", "8",
+            ],
+            equals: .missingRequired("At least one --reasoning-mode is required for melix bench matrix run.")
+        )
+        try assertError(
+            for: [
+                "bench", "matrix", "run",
+                "--model-id", "melix-dev-text",
+                "--suite", "smoke",
+                "--context-length", "1024",
+                "--generation-length", "128",
+                "--batch-size", "2",
+                "--cache-profile", "warm",
+                "--reasoning-mode", "enabled",
+                "--concurrency", "1",
+                "--requests", "8",
+            ],
+            equals: .missingRequired("At least one --structured-output-mode is required for melix bench matrix run.")
+        )
+        try assertError(
+            for: [
+                "bench", "matrix", "run",
+                "--model-id", "melix-dev-text",
+                "--suite", "smoke",
+                "--context-length", "1024",
+                "--generation-length", "128",
+                "--batch-size", "2",
+                "--cache-profile", "warm",
+                "--reasoning-mode", "enabled",
+                "--structured-output-mode", "plain_text",
+                "--requests", "8",
+            ],
+            equals: .missingRequired("At least one --concurrency is required for melix bench matrix run.")
+        )
+        try assertError(
+            for: [
+                "bench", "matrix", "run",
+                "--model-id", "melix-dev-text",
+                "--suite", "smoke",
+                "--context-length", "1024",
+                "--generation-length", "128",
+                "--batch-size", "2",
+                "--cache-profile", "ancient",
+                "--reasoning-mode", "enabled",
+                "--structured-output-mode", "plain_text",
+                "--concurrency", "1",
+                "--requests", "8",
+            ],
+            equals: .usage("Invalid value for --cache-profile. Expected one of: cold, warm, partial_prefix.")
+        )
+        try assertError(
+            for: ["bench", "matrix", "export-summary-csv", "--job-id", "bench-matrix-1"],
+            equals: .missingRequired("--output is required for melix bench matrix export-summary-csv.")
+        )
+        try assertError(
+            for: ["bench", "matrix", "export-requests-csv", "--output", "/tmp/out.csv"],
+            equals: .missingRequired("--job-id is required for melix bench matrix export-requests-csv.")
+        )
+    }
+
     @Test("parses eval run with direct repo target and sampling controls")
     func parsesEvalRunCommand() throws {
         let command = try MelixCLIParser.parse([
@@ -407,6 +668,35 @@ struct MelixCLIParserTests {
         try assertError(
             for: ["bench", "export-csv", "--job-id", "bench-1"],
             equals: .missingRequired("--output is required for melix bench export-csv.")
+        )
+        try assertError(
+            for: ["bench", "matrix", "run", "--model-id", "melix-dev-text", "--suite", "smoke"],
+            equals: .missingRequired("Exactly one of --requests or --duration-seconds is required for melix bench matrix run.")
+        )
+        try assertError(
+            for: [
+                "bench", "matrix", "run",
+                "--model-id", "melix-dev-text",
+                "--suite", "smoke",
+                "--context-length", "1024",
+                "--generation-length", "128",
+                "--batch-size", "2",
+                "--cache-profile", "warm",
+                "--reasoning-mode", "enabled",
+                "--structured-output-mode", "plain_text",
+                "--concurrency", "1",
+                "--requests", "8",
+                "--duration-seconds", "30",
+            ],
+            equals: .missingRequired("Exactly one of --requests or --duration-seconds is required for melix bench matrix run.")
+        )
+        try assertError(
+            for: ["bench", "matrix", "export-summary-csv", "--output", "/tmp/out.csv"],
+            equals: .missingRequired("--job-id is required for melix bench matrix export-summary-csv.")
+        )
+        try assertError(
+            for: ["bench", "matrix", "export-requests-csv", "--job-id", "bench-matrix-1"],
+            equals: .missingRequired("--output is required for melix bench matrix export-requests-csv.")
         )
         try assertError(for: ["bench", "oops"], equals: .usage(MelixCLIParser.usageText))
         try assertError(

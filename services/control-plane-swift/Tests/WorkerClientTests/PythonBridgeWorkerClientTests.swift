@@ -456,6 +456,58 @@ struct PythonBridgeWorkerClientTests {
         #expect(benchEvents[1].completed.reportPath == "/tmp/model-ops/bench-report.md")
     }
 
+    @Test("model-ops bridge methods decode bench matrix responses")
+    func modelOpsBridgeMethodsDecodeBenchMatrixResponses() async throws {
+        var request = Melix_Worker_V1_RunBenchMatrixRequest()
+        request.modelHandle = "melix-dev-text::bridge"
+        request.suiteIds = ["smoke"]
+        request.contextLengths = [1024]
+        request.generationLengths = [128]
+        request.batchSizes = [2]
+        request.cacheProfiles = ["cold"]
+        request.reasoningModes = ["enabled"]
+        request.structuredOutputModes = ["plain_text"]
+        request.concurrencyLevels = [1]
+        request.repeats = 3
+        request.requests = 24
+
+        var response = Melix_Worker_V1_RunBenchMatrixResponse()
+        response.job = Melix_Worker_V1_BenchmarkMatrixJobSummary()
+        response.job.jobID = "bench-matrix-1"
+        response.job.modelID = "melix-dev-text"
+        response.job.taskKind = "text-generation"
+        response.job.sourceRepo = "HuggingFaceH4/ultrachat_200k"
+        response.job.benchmarkMode = "matrix"
+        response.job.status = "completed"
+        var row = Melix_Worker_V1_BenchmarkMatrixSummaryRow()
+        row.jobID = "bench-matrix-1"
+        row.suiteID = "smoke"
+        row.contextLength = 1024
+        row.generationLength = 128
+        row.batchSize = 2
+        row.cacheProfile = "cold"
+        row.reasoningMode = "enabled"
+        row.structuredOutputMode = "plain_text"
+        row.concurrencyLevel = 1
+        row.requests = 24
+        row.ttftMeanMs = 24.45
+        response.summaryRows = [row]
+
+        let runner = ScriptedBridgeRunner()
+        await runner.setUnaryResponse(
+            .runBenchMatrix,
+            line: bridgeMessageLine(message: try response.serializedData())
+        )
+
+        let client = PythonBridgeWorkerClient(socketPath: "/tmp/melix-test.sock", runner: runner)
+        let matrix = try await client.runBenchMatrix(request: request)
+
+        #expect(matrix.job.jobID == "bench-matrix-1")
+        #expect(matrix.job.benchmarkMode == "matrix")
+        #expect(matrix.summaryRows.count == 1)
+        #expect(matrix.summaryRows[0].ttftMeanMs == 24.45)
+    }
+
     @Test("model-ops bridge methods decode hub search and model card responses")
     func modelOpsBridgeMethodsDecodeHubSearchAndModelCardResponses() async throws {
         var searchRequest = Melix_Worker_V1_SearchHubModelsRequest()

@@ -125,6 +125,91 @@ public struct ControlPlaneBenchRequest: Equatable, Sendable {
     }
 }
 
+public struct ControlPlaneBenchMatrixResult: Equatable, Sendable {
+    public let job: Melix_Controlplane_V1_BenchmarkMatrixJobSummary
+    public let summaryRows: [Melix_Controlplane_V1_BenchmarkMatrixSummaryRow]
+
+    public init(
+        job: Melix_Controlplane_V1_BenchmarkMatrixJobSummary,
+        summaryRows: [Melix_Controlplane_V1_BenchmarkMatrixSummaryRow]
+    ) {
+        self.job = job
+        self.summaryRows = summaryRows
+    }
+}
+
+public struct ControlPlaneBenchMatrixRequest: Equatable, Sendable {
+    public let modelID: String
+    public let hfRepoID: String
+    public let taskKind: String
+    public let suites: [String]
+    public let contextLengths: [UInt32]
+    public let generationLengths: [UInt32]
+    public let batchSizes: [UInt32]
+    public let cacheProfiles: [String]
+    public let reasoningModes: [String]
+    public let structuredOutputModes: [String]
+    public let concurrencyLevels: [UInt32]
+    public let repeats: UInt32
+    public let requests: UInt32
+    public let durationSeconds: UInt32
+    public let allowLargeMatrix: Bool
+
+    public init(
+        modelID: String = "",
+        hfRepoID: String = "",
+        taskKind: String = "",
+        suites: [String] = [],
+        contextLengths: [UInt32] = [],
+        generationLengths: [UInt32] = [],
+        batchSizes: [UInt32] = [],
+        cacheProfiles: [String] = [],
+        reasoningModes: [String] = [],
+        structuredOutputModes: [String] = [],
+        concurrencyLevels: [UInt32] = [],
+        repeats: UInt32 = 1,
+        requests: UInt32 = 0,
+        durationSeconds: UInt32 = 0,
+        allowLargeMatrix: Bool = false
+    ) {
+        self.modelID = modelID
+        self.hfRepoID = hfRepoID
+        self.taskKind = taskKind
+        self.suites = Array(Set(suites)).sorted()
+        self.contextLengths = ControlPlaneBenchRequest.normalizedBenchValues(contextLengths)
+        self.generationLengths = ControlPlaneBenchRequest.normalizedBenchValues(generationLengths)
+        self.batchSizes = ControlPlaneBenchRequest.normalizedBenchValues(batchSizes)
+        self.cacheProfiles = Self.normalizedStringValues(cacheProfiles)
+        self.reasoningModes = Self.normalizedStringValues(reasoningModes)
+        self.structuredOutputModes = Self.normalizedStringValues(structuredOutputModes)
+        self.concurrencyLevels = ControlPlaneBenchRequest.normalizedBenchValues(concurrencyLevels)
+        self.repeats = repeats == 0 ? 1 : repeats
+        self.requests = requests
+        self.durationSeconds = durationSeconds
+        self.allowLargeMatrix = allowLargeMatrix
+    }
+
+    public static let maxMatrixCellCount: Int = 256
+
+    public static func normalizedStringValues(_ values: [String]) -> [String] {
+        Array(Set(values.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty })).sorted()
+    }
+
+    public var matrixCellCount: Int {
+        let counts = [
+            suites.count,
+            contextLengths.count,
+            generationLengths.count,
+            batchSizes.count,
+            cacheProfiles.count,
+            reasoningModes.count,
+            structuredOutputModes.count,
+            concurrencyLevels.count,
+        ]
+        return counts.reduce(1) { partial, count in partial * max(count, 1) }
+    }
+}
+
 public struct ControlPlaneEvaluationRequest: Equatable, Sendable {
     public let modelID: String
     public let hfRepoID: String
@@ -200,6 +285,7 @@ public protocol ControlPlaneXPCClient: Sendable {
     ) async throws -> Melix_Controlplane_V1_ImageJobSummary
     func runDoctor() async throws -> String
     func runBench(_ request: ControlPlaneBenchRequest) async throws -> ControlPlaneBenchResult
+    func runBenchMatrix(_ request: ControlPlaneBenchMatrixRequest) async throws -> ControlPlaneBenchMatrixResult
     func runEvaluation(_ request: ControlPlaneEvaluationRequest) async throws -> ControlPlaneEvaluationResult
     func exportResults(outputDir: String) async throws -> ControlPlaneExportResult
     func cancelRequest(requestID: String) async throws -> Bool
@@ -250,6 +336,14 @@ public extension ControlPlaneXPCClient {
         throw ControlPlaneXPCClientError.requestFailed(
             code: "unimplemented",
             message: "Bench is not implemented for this control-plane client."
+        )
+    }
+
+    func runBenchMatrix(_ request: ControlPlaneBenchMatrixRequest) async throws -> ControlPlaneBenchMatrixResult {
+        _ = request
+        throw ControlPlaneXPCClientError.requestFailed(
+            code: "unimplemented",
+            message: "Bench matrix is not implemented for this control-plane client."
         )
     }
 
@@ -445,6 +539,15 @@ public actor LocalControlPlaneXPCClient: ControlPlaneXPCClient {
                 reportPath: response.ops.reportPath,
                 reportMarkdown: response.ops.reportMarkdown,
                 metrics: response.ops.metrics.values
+            )
+        }
+    }
+
+    public func runBenchMatrix(_ request: ControlPlaneBenchMatrixRequest) async throws -> ControlPlaneBenchMatrixResult {
+        try await execute(makeRunBenchMatrixRequest(request)) { response in
+            ControlPlaneBenchMatrixResult(
+                job: response.ops.benchmarkMatrixJob,
+                summaryRows: Array(response.ops.benchmarkMatrixSummaryRows)
             )
         }
     }
@@ -673,6 +776,32 @@ public actor LocalControlPlaneXPCClient: ControlPlaneXPCClient {
         request.ops.runBench.reasoningMode = bench.reasoningMode
         request.ops.runBench.structuredOutputMode = bench.structuredOutputMode
         request.ops.runBench.parameters = bench.parameters
+        return request
+    }
+
+    private func makeRunBenchMatrixRequest(
+        _ bench: ControlPlaneBenchMatrixRequest
+    ) -> Melix_Controlplane_V1_ControlPlaneRequest {
+        var request = Melix_Controlplane_V1_ControlPlaneRequest()
+        request.requestID = "menubar-run-bench-matrix"
+        request.commandType = "ops.run_bench_matrix"
+        request.ops = Melix_Controlplane_V1_OpsCommand()
+        request.ops.runBenchMatrix = Melix_Controlplane_V1_RunBenchMatrix()
+        request.ops.runBenchMatrix.modelID = bench.modelID
+        request.ops.runBenchMatrix.hfRepoID = bench.hfRepoID
+        request.ops.runBenchMatrix.taskKind = bench.taskKind
+        request.ops.runBenchMatrix.suiteIds = bench.suites
+        request.ops.runBenchMatrix.contextLengths = bench.contextLengths
+        request.ops.runBenchMatrix.generationLengths = bench.generationLengths
+        request.ops.runBenchMatrix.batchSizes = bench.batchSizes
+        request.ops.runBenchMatrix.cacheProfiles = bench.cacheProfiles
+        request.ops.runBenchMatrix.reasoningModes = bench.reasoningModes
+        request.ops.runBenchMatrix.structuredOutputModes = bench.structuredOutputModes
+        request.ops.runBenchMatrix.concurrencyLevels = bench.concurrencyLevels
+        request.ops.runBenchMatrix.repeats = bench.repeats
+        request.ops.runBenchMatrix.requests = bench.requests
+        request.ops.runBenchMatrix.durationSeconds = bench.durationSeconds
+        request.ops.runBenchMatrix.allowLargeMatrix = bench.allowLargeMatrix
         return request
     }
 

@@ -1731,6 +1731,243 @@ struct ControlPlaneServiceTests {
         #expect(lastRequest.structuredOutputMode == "json_schema")
     }
 
+    @Test("execute handles ops.run_bench_matrix through the model-operations worker")
+    func executeHandlesOpsRunBenchMatrixThroughTheModelOperationsWorker() async throws {
+        let modelOpsClient = ScriptedModelOperationsWorkerClient()
+        await modelOpsClient.setBenchMatrixResponse(
+            makeBenchmarkMatrixResponse(jobID: "bench-matrix-123", modelID: "melix-dev-text")
+        )
+        let catalog = ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels())
+        _ = await catalog.loadModel(id: "melix-dev-text", dispatchHandle: "melix-dev-text::explicit")
+        let service = ControlPlaneService(
+            modelCatalog: catalog,
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                modelOperationsClient: modelOpsClient
+            )
+        )
+
+        let response = try await service.execute(makeRunBenchMatrixRequest())
+        let lastRequest = try #require(await modelOpsClient.lastBenchMatrixRequest)
+
+        #expect(response.ok)
+        #expect(lastRequest.modelHandle == "melix-dev-text::explicit")
+        #expect(lastRequest.suiteIds == ["smoke"])
+        #expect(lastRequest.requests == 24)
+        #expect(response.ops.benchmarkMatrixJob.jobID == "bench-matrix-123")
+        #expect(response.ops.benchmarkMatrixJob.benchmarkMode == "matrix")
+        #expect(response.ops.benchmarkMatrixSummaryRows.count == 1)
+        #expect(response.ops.benchmarkMatrixSummaryRows[0].ttftMeanMs == 24.45)
+    }
+
+    @Test("execute forwards canonical bench matrix request fields to the worker request")
+    func executeForwardsCanonicalBenchMatrixRequestFieldsToTheWorkerRequest() async throws {
+        let modelOpsClient = ScriptedModelOperationsWorkerClient()
+        await modelOpsClient.setBenchMatrixResponse(
+            makeBenchmarkMatrixResponse(jobID: "bench-matrix-canonical", modelID: "melix-dev-text")
+        )
+        let catalog = ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels())
+        _ = await catalog.loadModel(id: "melix-dev-text", dispatchHandle: "melix-dev-text::explicit")
+        let service = ControlPlaneService(
+            modelCatalog: catalog,
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                modelOperationsClient: modelOpsClient
+            )
+        )
+
+        _ = try await service.execute(
+            makeRunBenchMatrixRequest(
+                suites: ["latency", "smoke"],
+                contextLengths: [4096, 1024],
+                generationLengths: [256, 128],
+                batchSizes: [4, 2],
+                cacheProfiles: ["warm", "cold"],
+                reasoningModes: ["enabled", "disabled"],
+                structuredOutputModes: ["json_schema", "plain_text"],
+                concurrencyLevels: [8, 1],
+                repeats: 0,
+                requests: 0,
+                durationSeconds: 30,
+                allowLargeMatrix: true
+            )
+        )
+        let lastRequest = try #require(await modelOpsClient.lastBenchMatrixRequest)
+
+        #expect(lastRequest.suiteIds == ["latency", "smoke"])
+        #expect(lastRequest.contextLengths == [1024, 4096])
+        #expect(lastRequest.generationLengths == [128, 256])
+        #expect(lastRequest.batchSizes == [2, 4])
+        #expect(lastRequest.cacheProfiles == ["cold", "warm"])
+        #expect(lastRequest.reasoningModes == ["disabled", "enabled"])
+        #expect(lastRequest.structuredOutputModes == ["json_schema", "plain_text"])
+        #expect(lastRequest.concurrencyLevels == [1, 8])
+        #expect(lastRequest.repeats == 1)
+        #expect(lastRequest.requests == 0)
+        #expect(lastRequest.durationSeconds == 30)
+        #expect(lastRequest.allowLargeMatrix)
+    }
+
+    @Test("execute rejects ops.run_bench_matrix when load budget is missing")
+    func executeRejectsOpsRunBenchMatrixWhenLoadBudgetIsMissing() async throws {
+        let modelOpsClient = ScriptedModelOperationsWorkerClient()
+        let catalog = ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels())
+        _ = await catalog.loadModel(id: "melix-dev-text", dispatchHandle: "melix-dev-text::explicit")
+        let service = ControlPlaneService(
+            modelCatalog: catalog,
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                modelOperationsClient: modelOpsClient
+            )
+        )
+
+        let response = try await service.execute(
+            makeRunBenchMatrixRequest(requests: 0, durationSeconds: 0)
+        )
+
+        #expect(response.ok == false)
+        #expect(response.error.code == "invalid_argument")
+        #expect(response.error.message.contains("Exactly one of requests or duration_seconds"))
+        #expect(await modelOpsClient.lastBenchMatrixRequest == nil)
+    }
+
+    @Test("execute rejects bench matrix validation failures for required dimensions and cache profiles")
+    func executeRejectsBenchMatrixValidationFailuresForRequiredDimensionsAndCacheProfiles() async throws {
+        let modelOpsClient = ScriptedModelOperationsWorkerClient()
+        let catalog = ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels())
+        _ = await catalog.loadModel(id: "melix-dev-text", dispatchHandle: "melix-dev-text::explicit")
+        let service = ControlPlaneService(
+            modelCatalog: catalog,
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                modelOperationsClient: modelOpsClient
+            )
+        )
+
+        var request = makeRunBenchMatrixRequest(suites: [])
+        var response = try await service.execute(request)
+        #expect(!response.ok)
+        #expect(response.error.code == "invalid_argument")
+        #expect(response.error.message.contains("matrix benchmark suite"))
+
+        request = makeRunBenchMatrixRequest(contextLengths: [])
+        response = try await service.execute(request)
+        #expect(response.error.message.contains("context length"))
+
+        request = makeRunBenchMatrixRequest(generationLengths: [])
+        response = try await service.execute(request)
+        #expect(response.error.message.contains("generation length"))
+
+        request = makeRunBenchMatrixRequest(batchSizes: [])
+        response = try await service.execute(request)
+        #expect(response.error.message.contains("batch size"))
+
+        request = makeRunBenchMatrixRequest(cacheProfiles: [])
+        response = try await service.execute(request)
+        #expect(response.error.message.contains("cache profile"))
+
+        request = makeRunBenchMatrixRequest(reasoningModes: [])
+        response = try await service.execute(request)
+        #expect(response.error.message.contains("reasoning mode"))
+
+        request = makeRunBenchMatrixRequest(structuredOutputModes: [])
+        response = try await service.execute(request)
+        #expect(response.error.message.contains("structured output mode"))
+
+        request = makeRunBenchMatrixRequest(concurrencyLevels: [])
+        response = try await service.execute(request)
+        #expect(response.error.message.contains("concurrency level"))
+
+        request = makeRunBenchMatrixRequest(cacheProfiles: ["ancient"])
+        response = try await service.execute(request)
+        #expect(response.error.code == "invalid_argument")
+        #expect(response.error.message.contains("partial_prefix"))
+    }
+
+    @Test("execute rejects bench matrix targets that are unsupported or too large")
+    func executeRejectsBenchMatrixTargetsThatAreUnsupportedOrTooLarge() async throws {
+        let modelOpsClient = ScriptedModelOperationsWorkerClient()
+        let catalog = ModelCatalog(seedModels: ModelCatalog.phaseSevenContractSeedModels())
+        _ = await catalog.loadModel(id: "melix-dev-image", dispatchHandle: "melix-dev-image::python")
+        _ = await catalog.loadModel(id: "melix-dev-text", dispatchHandle: "melix-dev-text::explicit")
+        let service = ControlPlaneService(
+            modelCatalog: catalog,
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                modelOperationsClient: modelOpsClient
+            )
+        )
+
+        var response = try await service.execute(makeRunBenchMatrixRequest(modelID: "melix-dev-image"))
+        #expect(!response.ok)
+        #expect(response.error.code == "unsupported_task_family")
+        #expect(response.error.message.contains("text-generation, image-to-text, and image-text-to-text"))
+
+        response = try await service.execute(
+            makeRunBenchMatrixRequest(
+                suites: ["latency", "smoke"],
+                contextLengths: [512, 1024, 2048, 4096],
+                generationLengths: [64, 128, 256, 512],
+                batchSizes: [1, 2, 4, 8],
+                cacheProfiles: ["cold", "warm"],
+                reasoningModes: ["disabled", "enabled"],
+                structuredOutputModes: ["json_schema", "plain_text"],
+                concurrencyLevels: [1, 2]
+            )
+        )
+        #expect(!response.ok)
+        #expect(response.error.code == "invalid_argument")
+        #expect(response.error.message.contains("allow_large_matrix"))
+    }
+
+    @Test("execute maps bench matrix availability resolution and worker failures")
+    func executeMapsBenchMatrixAvailabilityResolutionAndWorkerFailures() async throws {
+        let catalog = ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels())
+        _ = await catalog.loadModel(id: "melix-dev-text", dispatchHandle: "melix-dev-text::explicit")
+
+        let unavailableService = ControlPlaneService(
+            modelCatalog: catalog,
+            workerRegistry: WorkerRegistry(defaultTextClient: NullWorkerClient())
+        )
+        var response = try await unavailableService.execute(makeRunBenchMatrixRequest())
+        #expect(!response.ok)
+        #expect(response.error.code == "unavailable")
+        #expect(response.error.message.contains("worker is unavailable"))
+
+        let modelOpsClient = ScriptedModelOperationsWorkerClient()
+        let service = ControlPlaneService(
+            modelCatalog: catalog,
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                modelOperationsClient: modelOpsClient
+            )
+        )
+
+        response = try await service.execute(makeRunBenchMatrixRequest(modelID: "missing-model"))
+        #expect(!response.ok)
+        #expect(response.error.code == "not_found")
+        #expect(response.error.message.contains("missing-model"))
+
+        let unloadedCatalog = ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels())
+        let unloadedService = ControlPlaneService(
+            modelCatalog: unloadedCatalog,
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                modelOperationsClient: modelOpsClient
+            )
+        )
+        response = try await unloadedService.execute(makeRunBenchMatrixRequest())
+        #expect(!response.ok)
+        #expect(response.error.code == "not_found")
+        #expect(response.error.message.contains("No loaded benchmark target is available for melix-dev-text."))
+
+        await modelOpsClient.setBenchMatrixError(WorkerClientError.unavailable)
+        response = try await service.execute(makeRunBenchMatrixRequest())
+        #expect(!response.ok)
+        #expect(response.error.code == "unavailable")
+        #expect(response.error.message.contains("Matrix benchmark worker request failed"))
+    }
+
     @Test("execute routes ops.run_bench to the explicit requested model when model_id is provided")
     func executeRoutesOpsRunBenchToExplicitRequestedModel() async throws {
         let reportPath = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("melix-bench-explicit-report.md").path
@@ -2252,6 +2489,7 @@ struct ControlPlaneServiceTests {
     func localControlPlaneXPCClientForwardsCanonicalBenchAndEvaluationRequestFields() async throws {
         actor RecordingService: ControlPlaneExecuting {
             private(set) var lastBenchRequest: Melix_Controlplane_V1_RunBench?
+            private(set) var lastBenchMatrixRequest: Melix_Controlplane_V1_RunBenchMatrix?
             private(set) var lastEvaluationRequest: Melix_Controlplane_V1_RunEvaluation?
 
             func handshake(_ request: Melix_Controlplane_V1_HandshakeRequest) async throws -> Melix_Controlplane_V1_HandshakeResponse {
@@ -2296,6 +2534,21 @@ struct ControlPlaneServiceTests {
                         lastBenchRequest = bench
                         response.ops.reportPath = "/tmp/melix/bench/report.md"
                         response.ops.reportMarkdown = "# Bench\n"
+                    case .runBenchMatrix(let matrix):
+                        lastBenchMatrixRequest = matrix
+                        var job = Melix_Controlplane_V1_BenchmarkMatrixJobSummary()
+                        job.schemaVersion = "melix.benchmark_matrix_job.v1"
+                        job.jobID = "bench-matrix-1"
+                        job.modelID = "melix-dev-text"
+                        job.taskKind = "text-generation"
+                        job.sourceRepo = "melix-dev-text"
+                        job.suiteIds = ["smoke"]
+                        job.benchmarkMode = "matrix"
+                        job.status = "completed"
+                        job.outputDir = "/tmp/melix/bench/matrix-runs/bench-matrix-1"
+                        job.createdAtUnixMs = 1712200000000
+                        job.updatedAtUnixMs = 1712200005000
+                        response.ops.benchmarkMatrixJob = job
                     case .runEvaluation(let evaluation):
                         lastEvaluationRequest = evaluation
                         var job = Melix_Controlplane_V1_EvaluationJobSummary()
@@ -2353,6 +2606,33 @@ struct ControlPlaneServiceTests {
         #expect(benchRequest.cacheProfile == "partial_prefix")
         #expect(benchRequest.reasoningMode == "enabled")
         #expect(benchRequest.structuredOutputMode == "json_schema")
+
+        _ = try await client.runBenchMatrix(
+            ControlPlaneBenchMatrixRequest(
+                modelID: "melix-dev-text",
+                suites: ["smoke"],
+                contextLengths: [4096, 1024],
+                generationLengths: [256, 128],
+                batchSizes: [4, 2],
+                cacheProfiles: ["warm", "cold"],
+                reasoningModes: ["enabled", "disabled"],
+                structuredOutputModes: ["json_schema", "plain_text"],
+                concurrencyLevels: [8, 1],
+                repeats: 0,
+                requests: 24
+            )
+        )
+        let matrixRequest = try #require(await service.lastBenchMatrixRequest)
+
+        #expect(matrixRequest.contextLengths == [1024, 4096])
+        #expect(matrixRequest.generationLengths == [128, 256])
+        #expect(matrixRequest.batchSizes == [2, 4])
+        #expect(matrixRequest.cacheProfiles == ["cold", "warm"])
+        #expect(matrixRequest.reasoningModes == ["disabled", "enabled"])
+        #expect(matrixRequest.structuredOutputModes == ["json_schema", "plain_text"])
+        #expect(matrixRequest.concurrencyLevels == [1, 8])
+        #expect(matrixRequest.repeats == 1)
+        #expect(matrixRequest.requests == 24)
 
         _ = try await client.runEvaluation(
             ControlPlaneEvaluationRequest(
@@ -4334,6 +4614,101 @@ struct ControlPlaneServiceTests {
         return request
     }
 
+    private func makeRunBenchMatrixRequest(
+        modelID: String = "melix-dev-text",
+        hfRepoID: String = "",
+        suites: [String] = ["smoke"],
+        contextLengths: [UInt32] = [1024, 4096],
+        generationLengths: [UInt32] = [128, 256],
+        batchSizes: [UInt32] = [2, 4],
+        cacheProfiles: [String] = ["cold", "warm"],
+        reasoningModes: [String] = ["enabled", "disabled"],
+        structuredOutputModes: [String] = ["plain_text", "json_schema"],
+        concurrencyLevels: [UInt32] = [1, 8],
+        repeats: UInt32 = 3,
+        requests: UInt32 = 24,
+        durationSeconds: UInt32 = 0,
+        allowLargeMatrix: Bool = false
+    ) -> Melix_Controlplane_V1_ControlPlaneRequest {
+        var request = Melix_Controlplane_V1_ControlPlaneRequest()
+        request.requestID = "req-ops-bench-matrix"
+        request.commandType = "ops.run_bench_matrix"
+        request.ops = Melix_Controlplane_V1_OpsCommand()
+        request.ops.runBenchMatrix = Melix_Controlplane_V1_RunBenchMatrix()
+        request.ops.runBenchMatrix.modelID = modelID
+        request.ops.runBenchMatrix.hfRepoID = hfRepoID
+        request.ops.runBenchMatrix.suiteIds = suites
+        request.ops.runBenchMatrix.contextLengths = contextLengths
+        request.ops.runBenchMatrix.generationLengths = generationLengths
+        request.ops.runBenchMatrix.batchSizes = batchSizes
+        request.ops.runBenchMatrix.cacheProfiles = cacheProfiles
+        request.ops.runBenchMatrix.reasoningModes = reasoningModes
+        request.ops.runBenchMatrix.structuredOutputModes = structuredOutputModes
+        request.ops.runBenchMatrix.concurrencyLevels = concurrencyLevels
+        request.ops.runBenchMatrix.repeats = repeats
+        request.ops.runBenchMatrix.requests = requests
+        request.ops.runBenchMatrix.durationSeconds = durationSeconds
+        request.ops.runBenchMatrix.allowLargeMatrix = allowLargeMatrix
+        return request
+    }
+
+    private func makeBenchmarkMatrixJobSummary(
+        jobID: String,
+        modelID: String
+    ) -> Melix_Controlplane_V1_BenchmarkMatrixJobSummary {
+        var job = Melix_Controlplane_V1_BenchmarkMatrixJobSummary()
+        job.schemaVersion = "melix.benchmark_matrix_job.v1"
+        job.jobID = jobID
+        job.modelID = modelID
+        job.taskKind = "text-generation"
+        job.sourceRepo = "HuggingFaceH4/ultrachat_200k"
+        job.suiteIds = ["smoke"]
+        job.benchmarkMode = "matrix"
+        job.status = "completed"
+        job.outputDir = "/tmp/melix/bench/matrix-runs/\(jobID)"
+        job.createdAtUnixMs = 1712200000000
+        job.updatedAtUnixMs = 1712200005000
+        return job
+    }
+
+    private func makeBenchmarkMatrixResponse(
+        jobID: String,
+        modelID: String
+    ) -> Melix_Worker_V1_RunBenchMatrixResponse {
+        var response = Melix_Worker_V1_RunBenchMatrixResponse()
+        response.job = Melix_Worker_V1_BenchmarkMatrixJobSummary()
+        response.job.schemaVersion = "melix.benchmark_matrix_job.v1"
+        response.job.jobID = jobID
+        response.job.modelID = modelID
+        response.job.taskKind = "text-generation"
+        response.job.sourceRepo = "HuggingFaceH4/ultrachat_200k"
+        response.job.suiteIds = ["smoke"]
+        response.job.benchmarkMode = "matrix"
+        response.job.status = "completed"
+        response.job.outputDir = "/tmp/melix/bench/matrix-runs/\(jobID)"
+        response.job.createdAtUnixMs = 1712200000000
+        response.job.updatedAtUnixMs = 1712200005000
+        var row = Melix_Worker_V1_BenchmarkMatrixSummaryRow()
+        row.jobID = jobID
+        row.taskKind = "text-generation"
+        row.sourceRepo = "HuggingFaceH4/ultrachat_200k"
+        row.modelID = modelID
+        row.suiteID = "smoke"
+        row.contextLength = 1024
+        row.generationLength = 128
+        row.batchSize = 2
+        row.cacheProfile = "cold"
+        row.reasoningMode = "enabled"
+        row.structuredOutputMode = "plain_text"
+        row.concurrencyLevel = 1
+        row.repeats = 3
+        row.requests = 24
+        row.ttftMeanMs = 24.45
+        row.createdAtUnixMs = 1712200000000
+        response.summaryRows = [row]
+        return response
+    }
+
     private func makeBenchmarkHubModelCardResponse(
         repoID: String,
         modelName: String,
@@ -5311,6 +5686,7 @@ private actor ScriptedModelOperationsWorkerClient: WorkerRoutingClient, ModelOpe
     private(set) var lastHubSearchRequest: Melix_Worker_V1_SearchHubModelsRequest?
     private(set) var lastHubModelCardRequest: Melix_Worker_V1_GetHubModelCardRequest?
     private(set) var lastBenchRequest: Melix_Worker_V1_RunBenchRequest?
+    private(set) var lastBenchMatrixRequest: Melix_Worker_V1_RunBenchMatrixRequest?
     private(set) var lastEvaluationRequest: Melix_Worker_V1_RunEvaluationRequest?
     private(set) var lastExportRequest: Melix_Worker_V1_ExportResultsRequest?
     private(set) var lastSubmitRequest: Melix_Worker_V1_SubmitResultsRequest?
@@ -5320,6 +5696,7 @@ private actor ScriptedModelOperationsWorkerClient: WorkerRoutingClient, ModelOpe
     private var hubSearchResponse = Melix_Worker_V1_SearchHubModelsResponse()
     private var hubModelCardResponse = Melix_Worker_V1_GetHubModelCardResponse()
     private var benchEvents: [Melix_Worker_V1_RunBenchEvent] = []
+    private var benchMatrixResponse = Melix_Worker_V1_RunBenchMatrixResponse()
     private var evaluationResponse = Melix_Worker_V1_RunEvaluationResponse()
     private var exportResponse = Melix_Worker_V1_ExportResultsResponse()
     private var submitResponse = Melix_Worker_V1_SubmitResultsResponse()
@@ -5329,6 +5706,7 @@ private actor ScriptedModelOperationsWorkerClient: WorkerRoutingClient, ModelOpe
     private var hubSearchError: Error?
     private var hubModelCardError: Error?
     private var benchError: Error?
+    private var benchMatrixError: Error?
     private var evaluationError: Error?
 
     func setInfoResponse(_ response: Melix_Worker_V1_GetModelInfoResponse) {
@@ -5353,6 +5731,10 @@ private actor ScriptedModelOperationsWorkerClient: WorkerRoutingClient, ModelOpe
 
     func setBenchEvents(_ events: [Melix_Worker_V1_RunBenchEvent]) {
         benchEvents = events
+    }
+
+    func setBenchMatrixResponse(_ response: Melix_Worker_V1_RunBenchMatrixResponse) {
+        benchMatrixResponse = response
     }
 
     func setEvaluationResponse(_ response: Melix_Worker_V1_RunEvaluationResponse) {
@@ -5381,6 +5763,10 @@ private actor ScriptedModelOperationsWorkerClient: WorkerRoutingClient, ModelOpe
 
     func setBenchError(_ error: Error?) {
         benchError = error
+    }
+
+    func setBenchMatrixError(_ error: Error?) {
+        benchMatrixError = error
     }
 
     func setEvaluationError(_ error: Error?) {
@@ -5488,6 +5874,16 @@ private actor ScriptedModelOperationsWorkerClient: WorkerRoutingClient, ModelOpe
             }
             continuation.finish()
         }
+    }
+
+    func runBenchMatrix(
+        request: Melix_Worker_V1_RunBenchMatrixRequest
+    ) async throws -> Melix_Worker_V1_RunBenchMatrixResponse {
+        lastBenchMatrixRequest = request
+        if let benchMatrixError {
+            throw benchMatrixError
+        }
+        return benchMatrixResponse
     }
 
     func runEvaluation(

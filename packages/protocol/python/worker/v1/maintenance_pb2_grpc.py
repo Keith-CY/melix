@@ -54,6 +54,11 @@ class MaintenanceServiceStub(object):
                 request_serializer=worker_dot_v1_dot_maintenance__pb2.RunBenchRequest.SerializeToString,
                 response_deserializer=worker_dot_v1_dot_maintenance__pb2.RunBenchEvent.FromString,
                 _registered_method=True)
+        self.RunBenchMatrix = channel.unary_unary(
+                '/melix.worker.v1.MaintenanceService/RunBenchMatrix',
+                request_serializer=worker_dot_v1_dot_maintenance__pb2.RunBenchMatrixRequest.SerializeToString,
+                response_deserializer=worker_dot_v1_dot_maintenance__pb2.RunBenchMatrixResponse.FromString,
+                _registered_method=True)
         self.RunEvaluation = channel.unary_unary(
                 '/melix.worker.v1.MaintenanceService/RunEvaluation',
                 request_serializer=worker_dot_v1_dot_maintenance__pb2.RunEvaluationRequest.SerializeToString,
@@ -103,6 +108,12 @@ class MaintenanceServiceServicer(object):
         raise NotImplementedError('Method not implemented!')
 
     def RunBench(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def RunBenchMatrix(self, request, context):
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -160,6 +171,11 @@ def add_MaintenanceServiceServicer_to_server(servicer, server):
                     servicer.RunBench,
                     request_deserializer=worker_dot_v1_dot_maintenance__pb2.RunBenchRequest.FromString,
                     response_serializer=worker_dot_v1_dot_maintenance__pb2.RunBenchEvent.SerializeToString,
+            ),
+            'RunBenchMatrix': grpc.unary_unary_rpc_method_handler(
+                    servicer.RunBenchMatrix,
+                    request_deserializer=worker_dot_v1_dot_maintenance__pb2.RunBenchMatrixRequest.FromString,
+                    response_serializer=worker_dot_v1_dot_maintenance__pb2.RunBenchMatrixResponse.SerializeToString,
             ),
             'RunEvaluation': grpc.unary_unary_rpc_method_handler(
                     servicer.RunEvaluation,
@@ -295,6 +311,33 @@ class MaintenanceService(object):
             '/melix.worker.v1.MaintenanceService/RunBench',
             worker_dot_v1_dot_maintenance__pb2.RunBenchRequest.SerializeToString,
             worker_dot_v1_dot_maintenance__pb2.RunBenchEvent.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def RunBenchMatrix(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/melix.worker.v1.MaintenanceService/RunBenchMatrix',
+            worker_dot_v1_dot_maintenance__pb2.RunBenchMatrixRequest.SerializeToString,
+            worker_dot_v1_dot_maintenance__pb2.RunBenchMatrixResponse.FromString,
             options,
             channel_credentials,
             insecure,
