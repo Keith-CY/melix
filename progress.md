@@ -89,6 +89,29 @@
   - `services/mlx-text-worker-swift/Tests/CoreTests/WorkerScaffoldTests.swift`: changed-line coverage `100.00%` (`18/18`)
   - aggregate changed-line coverage for the Swift text-worker follow-up scope: `100.00%` (`32/32`)
 
+- Closed Slice 5, the verification, coverage, and documentation close-out:
+  - updated `docs/runbooks/m7-benchmark-and-evaluation-foundation.md` so the repository-owned benchmark runbook now documents `bench matrix` CLI and Window UI flows alongside `bench run` and `eval run`
+  - reran focused changed-line coverage for the CLI, control-plane, Python worker, Window UI, and Swift text-worker follow-up scopes
+  - reran repository verification commands after the Swift text-worker protocol follow-up so the transaction closes on a passing `make proto`, `make py-test`, `make swift-test`, and `make integration-test`
+- Verification summary for Slice 5:
+  - `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/.build/ModuleCache.noindex" swift test --enable-code-coverage --filter 'MelixCLIParserTests|MelixCLIRunnerTests'`: `55 tests passed`
+  - `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/services/control-plane-swift/.build/ModuleCache.noindex" swift test --package-path services/control-plane-swift --enable-code-coverage --filter 'ControlPlaneServiceTests|BenchmarkExportBundleTests|WorkerClientTests|PythonBridgeWorkerClientTests'`: `215 tests passed`
+  - `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/apps/macos-menubar/.build/ModuleCache.noindex" swift test --package-path apps/macos-menubar --enable-code-coverage --filter 'RuntimeViewModelTests|DesktopFoundationViewTests|ControlPlaneXPCClientTests'`: `168 tests passed`
+  - `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/services/mlx-text-worker-swift/.build/ModuleCache.noindex" swift test --package-path services/mlx-text-worker-swift --enable-code-coverage --filter WorkerScaffoldTests/testMaintenanceRpcsReturnStructuredUnimplemented`: `1 test passed`
+  - `PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" uv run --project services/mlx-worker-python coverage run --source=services/mlx-worker-python/worker -m pytest services/mlx-worker-python/tests/test_control_plane_bridge_phase5.py services/mlx-worker-python/tests/test_benchmark_schemas.py services/mlx-worker-python/tests/test_benchmark_store.py services/mlx-worker-python/tests/test_benchmark_export.py services/mlx-worker-python/tests/test_maintenance_service.py -q`: `87 passed in 31.83s`
+  - `make proto`: pass
+  - `make py-test`: `402 passed in 33.67s`
+  - `make swift-test`: pass
+  - `make integration-test`: `54 passed in 623.41s (0:10:23)`
+  - Swift package verification continued to emit the pre-existing `warning: input verification failed` notes while linking `SwiftTextWorkerClient.swift.o`, `WorkerBootstrap.swift.o`, and the menu-bar test objects; the full test run still passed
+- Metrics report for Slice 5:
+  - CLI executable scope: changed-line coverage `98.58%` (`969/983`)
+  - control-plane executable scope: changed-line coverage `97.20%` (`797/820`)
+  - Window UI executable scope: changed-line coverage `96.50%` (`1765/1829`)
+  - Python worker executable scope: changed-line coverage `100.00%` (`338/338`)
+  - Swift text-worker follow-up scope: changed-line coverage `100.00%` (`32/32`)
+  - aggregate changed-line coverage for the full `bench matrix` transaction executable scope: `97.48%` (`3901/4002`)
+
 - Continued the benchmark and evaluation contract expansion transaction with the first two executable slices from `docs/plans/2026-04-03-bench-eval-contract-expansion-implementation.md`.
 - Closed Task 1, the protocol expansion slice for canonical bench and eval inputs:
   - added the canonical bench fields to `RunBench` and `RunBenchRequest`

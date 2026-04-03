@@ -5,10 +5,11 @@
 Run the repository-owned verification flow for the first executable M7 benchmark and evaluation foundation:
 
 - typed serving benchmark persistence
+- experimental `bench matrix` persistence and export
 - offline packaged evaluation execution
 - control-plane evaluation command wiring
 - export and submission payload shaping over persisted artifacts
-- operator-visible benchmark history, visualization, and CSV export through the Window UI and `melix` CLI
+- operator-visible benchmark history, matrix history, visualization, and CSV export through the Window UI and `melix` CLI
 
 ## Preconditions
 
@@ -24,8 +25,10 @@ window and the public `melix` CLI.
 Use the native operator window when you need:
 
 - explicit benchmark target model selection
+- a `Standard / Matrix` split between product benchmarks and research-style performance matrices
 - curated suite multi-select
 - benchmark context-length, batch-size, repeat, cache-profile, reasoning-mode, and structured-output controls
+- matrix generation-length, concurrency, and request-vs-duration load-budget controls
 - evaluation sample-size, batch-factor, few-shot, seed, scoring-mode, and code-exec-policy controls
 - persisted history review, metric cards, chart visualization, and CSV export
 
@@ -52,6 +55,32 @@ swift run melix bench list --json
 swift run melix bench export-summary-csv \
   --job-id <benchmark-job-id> \
   --output /tmp/melix-benchmark.csv
+
+swift run melix bench matrix run \
+  --model-id melix-dev-text::1 \
+  --suite smoke \
+  --context-length 1024 \
+  --generation-length 128 \
+  --generation-length 256 \
+  --batch-size 1 \
+  --batch-size 2 \
+  --cache-profile warm \
+  --reasoning-mode disabled \
+  --structured-output-mode plain_text \
+  --concurrency 1 \
+  --concurrency 2 \
+  --repeats 2 \
+  --requests 4
+
+swift run melix bench matrix list --json
+
+swift run melix bench matrix export-summary-csv \
+  --job-id <matrix-job-id> \
+  --output /tmp/melix-benchmark-matrix-summary.csv
+
+swift run melix bench matrix export-requests-csv \
+  --job-id <matrix-job-id> \
+  --output /tmp/melix-benchmark-matrix-requests.csv
 
 swift run melix eval run \
   --model-id melix-dev-text::1 \
@@ -82,6 +111,9 @@ Each benchmark run is persisted under `<jobs_root>/bench/runs/<job_id>/`. The sh
 bundle used by both the native operator window and CLI also records dataset provenance, suite
 metadata, canonical benchmark sweep rows, evaluation summary rows, and cache-hit state for the
 curated Hugging Face suite inputs.
+
+Each matrix run is persisted under `<jobs_root>/bench/matrix-runs/<job_id>/` with job JSON,
+summary JSON and CSV, plus request-row JSONL and CSV artifacts.
 
 ## Python Verification
 
@@ -153,6 +185,9 @@ Expected outcomes:
 - `melix bench export-summary-csv` writes canonical benchmark summary rows. The shared export
   bundle also preserves context-sweep and batch-sweep rows for the Window UI and future lab-style
   analysis.
+- `melix bench matrix export-summary-csv` writes matrix summary rows, and
+  `melix bench matrix export-requests-csv` writes the request-level observation table for one
+  persisted matrix run.
 - `melix eval export-summary-csv` writes canonical evaluation summary rows.
 - `melix eval export-samples-csv` and `melix eval export-samples-jsonl` export per-sample evidence
   with `id`, `correct`, `expected`, `predicted`, `question`, `raw_response`, `time_s`, and
@@ -243,10 +278,11 @@ Expected outcome:
 ## Acceptance Checklist
 
 - serving benchmark jobs persist durable JSON artifacts
+- matrix benchmark jobs persist durable JSON, CSV, and request-level observation artifacts
 - evaluation dataset packages run locally without network fetches
 - evaluation jobs and results are persisted and machine-readable
 - control-plane evaluation command returns typed payloads
 - export and submission payloads are repository-owned and machine-readable
-- Window UI exposes the canonical benchmark and evaluation operator controls
-- CLI exposes canonical benchmark and evaluation run plus export commands
+- Window UI exposes the canonical benchmark, matrix benchmark, and evaluation operator controls
+- CLI exposes canonical benchmark, matrix benchmark, and evaluation run plus export commands
 - verification commands are repository-owned and reproducible

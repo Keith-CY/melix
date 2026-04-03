@@ -36,7 +36,11 @@ Execute `docs/plans/2026-04-03-bench-matrix-performance-lab.md` so Melix gains a
      - matrix runs can be launched from Window UI with explicit generation length, cache, reasoning, structured-output, concurrency, and load-budget controls
      - matrix history, summary cards, charts, and CSV export actions are now available without regressing the existing product benchmark path
 5. Slice 5: verification, coverage, and documentation close-out
-   - status: in progress
+   - status: completed
+   - evidence:
+     - repository-owned benchmark runbook now documents `bench matrix` alongside the existing benchmark and evaluation flows
+     - focused changed-line coverage was rerun across CLI, control plane, Python worker, Window UI, and the Swift text-worker follow-up scope
+     - `make proto`, `make py-test`, `make swift-test`, and `make integration-test` all completed successfully during the close-out slice
 
 ## Acceptance
 
@@ -58,4 +62,4 @@ Execute `docs/plans/2026-04-03-bench-matrix-performance-lab.md` so Melix gains a
   - Slice 1 reset the canonical contract and execution plan for `bench matrix`
   - Slice 4 closed with Window UI matrix controls, history, charts, and export actions
 - remaining slices:
-  - transaction-wide verification and close-out
+  - none; the `bench matrix` transaction is closed
