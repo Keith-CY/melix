@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from dataclasses import dataclass
 import math
@@ -46,6 +47,11 @@ class BenchSample:
     ttft_ms: float
     total_latency_ms: float
     completion_tokens: int
+    prompt_tokens: int = 0
+    request_latency_ms: float = 0.0
+    prefill_tokens_per_second: float = 0.0
+    decode_tokens_per_second: float = 0.0
+    peak_memory_bytes: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -692,6 +698,9 @@ class MaintenanceCore:
 
         metrics: list[BenchMetricSpec] = []
         suite_metadata: dict[str, dict[str, object]] = {}
+        text_context_rows: list[dict[str, object]] = []
+        text_batch_rows: list[dict[str, object]] = []
+        text_request_latencies: list[float] = []
         lazy_model_handle = ""
         loaded_model = None
         try:
@@ -715,11 +724,17 @@ class MaintenanceCore:
                 )
                 suite_metadata[resolved_suite.suite_id] = resolved_suite.metadata()
                 if task_kind == "text-generation":
-                    suite_metrics = self._measure_text_bench_metrics(
+                    suite_metrics, suite_context_rows, suite_batch_rows, suite_request_latencies = self._measure_text_bench_metrics(
                         loaded_model=loaded_model,
                         suite=resolved_suite,
                         parameters=parameters,
+                        job_id=job.job_id,
+                        source_repo=request.source_repo,
+                        task_kind=task_kind,
                     )
+                    text_context_rows.extend(suite_context_rows)
+                    text_batch_rows.extend(suite_batch_rows)
+                    text_request_latencies.extend(suite_request_latencies)
                 elif task_kind in {"image-to-text", "image-text-to-text"}:
                     suite_metrics = self._measure_vlm_bench_metrics(
                         loaded_model=loaded_model,
@@ -754,18 +769,53 @@ class MaintenanceCore:
                         )
                     )
 
+            completed_at = int(time.time() * 1000)
+            model_id = (request.model_handle or lazy_model_handle or "runtime").split("::", 1)[0]
+            context_lengths = tuple(
+                sorted(
+                    {
+                        int(row.get("context_length", 0) or 0)
+                        for row in text_context_rows
+                        if int(row.get("context_length", 0) or 0) > 0
+                    }
+                )
+            )
+            batch_sizes = tuple(
+                sorted(
+                    {
+                        int(row.get("batch_size", 0) or 0)
+                        for row in text_batch_rows
+                        if int(row.get("batch_size", 0) or 0) > 0
+                    }
+                )
+            )
+            request_p50_ms = self._percentile(text_request_latencies, 50.0)
+            request_p95_ms = self._percentile(text_request_latencies, 95.0)
+            generation_length = self._benchmark_generation_length(parameters)
+            repeats = self._benchmark_repeats(parameters)
+            cache_profile = self._benchmark_cache_profile(parameters)
+            reasoning_mode = parameters.get("reasoning_mode", "").strip()
+            structured_output_mode = parameters.get("structured_output_mode", "").strip()
             report_path = output_dir / "bench-report.md"
             report_path.write_text(
                 self._render_bench_report(request, metrics, task_kind=task_kind),
                 encoding="utf-8",
             )
-            completed_at = int(time.time() * 1000)
             job_record = build_serving_benchmark_job(
                 job_id=job.job_id,
-                model_id=(request.model_handle or lazy_model_handle or "runtime").split("::", 1)[0],
+                model_id=model_id,
                 task_kind=task_kind,
                 source_repo=request.source_repo,
                 suites=tuple(suites),
+                context_lengths=context_lengths,
+                generation_length=generation_length,
+                batch_sizes=batch_sizes,
+                repeats=repeats,
+                cache_profile=cache_profile,
+                reasoning_mode=reasoning_mode,
+                structured_output_mode=structured_output_mode,
+                request_p50_ms=request_p50_ms,
+                request_p95_ms=request_p95_ms,
                 parameters=parameters,
                 status="completed",
                 output_dir=str(output_dir),
@@ -787,6 +837,20 @@ class MaintenanceCore:
                 job=job_record,
                 results=result_records,
             )
+            (output_dir / "bench-summary.json").write_text(
+                json.dumps(job_record.to_dict(), indent=2) + "\n",
+                encoding="utf-8",
+            )
+            if text_context_rows:
+                (output_dir / "bench-context-rows.jsonl").write_text(
+                    "\n".join(json.dumps(row) for row in text_context_rows) + "\n",
+                    encoding="utf-8",
+                )
+            if text_batch_rows:
+                (output_dir / "bench-batch-rows.jsonl").write_text(
+                    "\n".join(json.dumps(row) for row in text_batch_rows) + "\n",
+                    encoding="utf-8",
+                )
             self._job_registry.complete(job.job_id, str(report_path))
             self._benchmark_queue_store.transition(
                 queue_root=bench_root / "queue",
@@ -1001,36 +1065,123 @@ class MaintenanceCore:
         loaded_model,
         suite: ResolvedBenchmarkSuite,
         parameters: dict[str, str],
-    ) -> list[BenchMetricSpec]:
-        samples = [
-            self._measure_text_bench_sample(
-                loaded_model=loaded_model,
-                suite=suite,
-                prompt=case.prompt,
-                parameters=parameters,
-            )
-            for case in suite.cases
-        ]
+        job_id: str,
+        source_repo: str,
+        task_kind: str,
+    ) -> tuple[list[BenchMetricSpec], list[dict[str, object]], list[dict[str, object]], list[float]]:
+        from worker.productization.benchmark_schemas import build_serving_benchmark_context_row
+
+        context_rows: list[dict[str, object]] = []
+        batch_rows: list[dict[str, object]] = []
+        request_latencies: list[float] = []
+        samples: list[BenchSample] = []
+        model_id = (getattr(loaded_model, "handle", "") or "runtime").split("::", 1)[0]
+        context_lengths = self._benchmark_context_lengths(suite=suite, parameters=parameters)
+        batch_sizes = self._benchmark_batch_sizes(parameters)
+        repeats = self._benchmark_repeats(parameters)
+        generation_length = self._benchmark_generation_length(parameters)
+        cache_profile = self._benchmark_cache_profile(parameters)
+        reasoning_mode = parameters.get("reasoning_mode", "").strip()
+        structured_output_mode = parameters.get("structured_output_mode", "").strip()
+
+        for context_length in context_lengths:
+            context_prompt = self._suite_prompt_for_context(suite, context_length=context_length)
+            for repeat_index in range(repeats):
+                sample = self._measure_text_bench_sample(
+                    loaded_model=loaded_model,
+                    suite=suite,
+                    prompt=context_prompt,
+                    parameters=parameters,
+                    context_length=context_length,
+                    repeat_index=repeat_index,
+                    batch_size=1,
+                    cache_profile=cache_profile,
+                    reasoning_mode=reasoning_mode,
+                    structured_output_mode=structured_output_mode,
+                )
+                samples.append(sample)
+                request_latencies.append(sample.request_latency_ms)
+                context_rows.append(
+                    build_serving_benchmark_context_row(
+                        job_id=job_id,
+                        model_id=model_id,
+                        task_kind=task_kind,
+                        source_repo=source_repo,
+                        suite=suite.suite_id,
+                        context_length=context_length,
+                        generation_length=generation_length,
+                        batch_size=1,
+                        repeat_index=repeat_index,
+                        prefill_tokens_per_second=sample.prefill_tokens_per_second,
+                        decode_tokens_per_second=sample.decode_tokens_per_second,
+                        ttft_ms=sample.ttft_ms,
+                        request_latency_ms=sample.request_latency_ms,
+                        peak_memory_bytes=sample.peak_memory_bytes,
+                        speedup_vs_batch_1=1.0,
+                        cache_profile=cache_profile,
+                        reasoning_mode=reasoning_mode,
+                        structured_output_mode=structured_output_mode,
+                    ).to_dict()
+                )
+                for batch_size in batch_sizes:
+                    batch_sample = sample
+                    if batch_size != 1:
+                        batch_sample = self._measure_text_bench_sample(
+                            loaded_model=loaded_model,
+                            suite=suite,
+                            prompt=context_prompt,
+                            parameters=parameters,
+                            context_length=context_length,
+                            repeat_index=repeat_index,
+                            batch_size=batch_size,
+                            cache_profile=cache_profile,
+                            reasoning_mode=reasoning_mode,
+                            structured_output_mode=structured_output_mode,
+                        )
+                        request_latencies.append(batch_sample.request_latency_ms)
+                    batch_rows.append(
+                        self._derive_batch_row(
+                            sample=batch_sample,
+                            batch_size=batch_size,
+                            context_length=context_length,
+                            suite_id=suite.suite_id,
+                            model_id=model_id,
+                            cache_profile=cache_profile,
+                            reasoning_mode=reasoning_mode,
+                            structured_output_mode=structured_output_mode,
+                            source_repo=source_repo,
+                            generation_length=generation_length,
+                            repeat_index=repeat_index,
+                            baseline_request_latency_ms=sample.request_latency_ms,
+                            job_id=job_id,
+                            task_kind=task_kind,
+                        )
+                    )
+
         if suite.suite_id == "latency":
-            total_latencies = [sample.total_latency_ms for sample in samples]
-            return [
-                BenchMetricSpec(
-                    suite=suite.suite_id,
-                    name="bench.latency.p50_ms",
-                    value=self._percentile(total_latencies, 50.0),
-                    unit="ms",
-                ),
-                BenchMetricSpec(
-                    suite=suite.suite_id,
-                    name="bench.latency.p95_ms",
-                    value=self._percentile(total_latencies, 95.0),
-                    unit="ms",
-                ),
-            ]
+            return (
+                [
+                    BenchMetricSpec(
+                        suite=suite.suite_id,
+                        name="bench.latency.p50_ms",
+                        value=self._percentile(request_latencies, 50.0),
+                        unit="ms",
+                    ),
+                    BenchMetricSpec(
+                        suite=suite.suite_id,
+                        name="bench.latency.p95_ms",
+                        value=self._percentile(request_latencies, 95.0),
+                        unit="ms",
+                    ),
+                ],
+                context_rows,
+                batch_rows,
+                request_latencies,
+            )
 
         ttft_avg = sum(sample.ttft_ms for sample in samples) / max(len(samples), 1)
         throughput_values = [
-            (sample.completion_tokens / max((sample.total_latency_ms - sample.ttft_ms) / 1_000.0, 0.001))
+            (sample.completion_tokens / max((sample.request_latency_ms - sample.ttft_ms) / 1_000.0, 0.001))
             for sample in samples
             if sample.completion_tokens > 0
         ]
@@ -1039,20 +1190,25 @@ class MaintenanceCore:
             if throughput_values
             else 0.0
         )
-        return [
-            BenchMetricSpec(
-                suite=suite.suite_id,
-                name=f"bench.{suite.suite_id}.ttft_ms",
-                value=ttft_avg,
-                unit="ms",
-            ),
-            BenchMetricSpec(
-                suite=suite.suite_id,
-                name=f"bench.{suite.suite_id}.tokens_per_second",
-                value=tokens_per_second,
-                unit="tok/s",
-            ),
-        ]
+        return (
+            [
+                BenchMetricSpec(
+                    suite=suite.suite_id,
+                    name=f"bench.{suite.suite_id}.ttft_ms",
+                    value=ttft_avg,
+                    unit="ms",
+                ),
+                BenchMetricSpec(
+                    suite=suite.suite_id,
+                    name=f"bench.{suite.suite_id}.tokens_per_second",
+                    value=tokens_per_second,
+                    unit="tok/s",
+                ),
+            ],
+            context_rows,
+            batch_rows,
+            request_latencies,
+        )
 
     def _measure_text_bench_sample(
         self,
@@ -1061,16 +1217,63 @@ class MaintenanceCore:
         suite: ResolvedBenchmarkSuite,
         prompt: str,
         parameters: dict[str, str],
+        context_length: int,
+        repeat_index: int,
+        batch_size: int,
+        cache_profile: str,
+        reasoning_mode: str,
+        structured_output_mode: str,
     ) -> BenchSample:
         runtime = self._registry.runtime_for_loaded_model(loaded_model)
-        messages = [common_pb2.ChatMessage(role="user", parts=[common_pb2.MessagePart(text=prompt)])]
+        shaped_prompt = self._shape_benchmark_prompt(prompt, context_length=context_length)
+        execution_ext = self._benchmark_execution_ext(
+            cache_profile=cache_profile,
+            context_length=context_length,
+            batch_size=batch_size,
+            repeat_index=repeat_index,
+            reasoning_mode=reasoning_mode,
+            structured_output_mode=structured_output_mode,
+        )
+        if cache_profile == "warm":
+            self._benchmark_warmup_text_request(
+                loaded_model=loaded_model,
+                prompt=shaped_prompt,
+                execution_ext=execution_ext,
+                request_id=f"{self._benchmark_request_id(loaded_model=loaded_model, suite_id=suite.suite_id, prompt=shaped_prompt, context_length=context_length, repeat_index=repeat_index, batch_size=batch_size, cache_profile=cache_profile)}::warmup",
+            )
+        elif cache_profile == "partial_prefix":
+            partial_prefix = shaped_prompt[: max(1, len(shaped_prompt) // 2)]
+            self._benchmark_warmup_text_request(
+                loaded_model=loaded_model,
+                prompt=partial_prefix,
+                execution_ext=execution_ext,
+                request_id=f"{self._benchmark_request_id(loaded_model=loaded_model, suite_id=suite.suite_id, prompt=shaped_prompt, context_length=context_length, repeat_index=repeat_index, batch_size=batch_size, cache_profile=cache_profile)}::partial_prefix",
+            )
+        elif cache_profile != "cold":
+            raise ModelOperationError(
+                code="invalid_argument",
+                message=f"Unsupported cache profile: {cache_profile}",
+                details={"cache_profile": cache_profile},
+            )
+
+        messages = [common_pb2.ChatMessage(role="user", parts=[common_pb2.MessagePart(text=shaped_prompt)])]
         rendered_prompt = runtime.render_prompt(
             messages,
             loaded_model=loaded_model.runtime_model,
-            execution_ext={},
+            execution_ext=execution_ext,
+        )
+        rendered_prompt = f"{rendered_prompt}\n\n[context_length={context_length};batch_size={batch_size}]"
+        request_id = self._benchmark_request_id(
+            loaded_model=loaded_model,
+            suite_id=suite.suite_id,
+            prompt=shaped_prompt,
+            context_length=context_length,
+            repeat_index=repeat_index,
+            batch_size=batch_size,
+            cache_profile=cache_profile,
         )
         cancel_event = self._registry.start_request(
-            request_id=f"bench-{loaded_model.handle}-{suite.suite_id}-{abs(hash(prompt))}",
+            request_id=request_id,
             runtime_kind=loaded_model.runtime_kind,
         ).cancel_event
         try:
@@ -1078,6 +1281,10 @@ class MaintenanceCore:
             first_token_at: float | None = None
             last_token_at: float | None = None
             completion_tokens = 0
+            prompt_tokens = 0
+            prompt_tps = 0.0
+            generation_tps = 0.0
+            peak_memory = 0.0
             sampling = common_pb2.SamplingConfig(
                 temperature=0.0,
                 top_p=1.0,
@@ -1089,7 +1296,7 @@ class MaintenanceCore:
                 rendered_prompt,
                 sampling,
                 cancel_event,
-                execution_ext={},
+                execution_ext=execution_ext,
             ):
                 text = getattr(runtime_event, "text", "")
                 if not text:
@@ -1099,16 +1306,33 @@ class MaintenanceCore:
                     first_token_at = now
                 last_token_at = now
                 completion_tokens = int(getattr(runtime_event, "completion_tokens", 0) or (completion_tokens + 1))
+                prompt_tokens = int(getattr(runtime_event, "prompt_tokens", 0) or prompt_tokens)
+                prompt_tps = float(getattr(runtime_event, "prompt_tps", 0.0) or prompt_tps)
+                generation_tps = float(getattr(runtime_event, "generation_tps", 0.0) or generation_tps)
+                peak_memory = float(getattr(runtime_event, "peak_memory", 0.0) or peak_memory)
             finished_at = time.perf_counter()
         finally:
-            self._registry.finish_request(f"bench-{loaded_model.handle}-{suite.suite_id}-{abs(hash(prompt))}")
+            self._registry.finish_request(request_id)
 
         first_token_time = first_token_at or finished_at
         completed_at = last_token_at or finished_at
+        request_latency_ms = round((completed_at - started_at) * 1_000.0, 2)
+        ttft_ms = round((first_token_time - started_at) * 1_000.0, 2)
+        if prompt_tokens <= 0:
+            prompt_tokens = max(1, len(shaped_prompt.split()))
+        if prompt_tps <= 0.0:
+            prompt_tps = prompt_tokens / max(ttft_ms / 1_000.0, 0.001)
+        if generation_tps <= 0.0:
+            generation_tps = completion_tokens / max((request_latency_ms - ttft_ms) / 1_000.0, 0.001)
         return BenchSample(
-            ttft_ms=round((first_token_time - started_at) * 1_000.0, 2),
-            total_latency_ms=round((completed_at - started_at) * 1_000.0, 2),
+            ttft_ms=ttft_ms,
+            total_latency_ms=request_latency_ms,
             completion_tokens=completion_tokens,
+            prompt_tokens=prompt_tokens,
+            request_latency_ms=request_latency_ms,
+            prefill_tokens_per_second=round(prompt_tps, 2),
+            decode_tokens_per_second=round(generation_tps, 2),
+            peak_memory_bytes=round(peak_memory, 2),
         )
 
     def _measure_vlm_bench_metrics(
@@ -1344,6 +1568,233 @@ class MaintenanceCore:
             artifact_publish_ms=round(probe.artifact_publish_ms, 2),
             output_bytes=probe.output_bytes,
         )
+
+    @staticmethod
+    def _benchmark_cache_profile(parameters: dict[str, str]) -> str:
+        raw_value = parameters.get("cache_profile", "").strip().lower()
+        if not raw_value:
+            return "cold"
+        if raw_value in {"cold", "warm", "partial_prefix"}:
+            return raw_value
+        raise ModelOperationError(
+            code="invalid_argument",
+            message=f"Unsupported cache profile: {raw_value}",
+            details={"cache_profile": raw_value},
+        )
+
+    @staticmethod
+    def _benchmark_repeats(parameters: dict[str, str]) -> int:
+        raw_value = parameters.get("repeats", "").strip()
+        if not raw_value:
+            return 1
+        try:
+            return max(1, int(raw_value))
+        except ValueError:
+            return 1
+
+    @staticmethod
+    def _benchmark_generation_length(parameters: dict[str, str]) -> int:
+        raw_value = parameters.get("generation_length", "").strip() or parameters.get("max_output_tokens", "").strip()
+        if not raw_value:
+            return 8
+        try:
+            return max(1, int(raw_value))
+        except ValueError:
+            return 8
+
+    def _benchmark_context_lengths(
+        self,
+        *,
+        suite: ResolvedBenchmarkSuite,
+        parameters: dict[str, str],
+    ) -> tuple[int, ...]:
+        raw_value = parameters.get("context_lengths", "").strip()
+        values: list[int] = []
+        if raw_value:
+            for token in raw_value.split(","):
+                token = token.strip()
+                if not token:
+                    continue
+                try:
+                    values.append(max(1, int(token)))
+                except ValueError:
+                    continue
+        else:
+            raw_single = parameters.get("context_length", "").strip()
+            if raw_single:
+                try:
+                    values.append(max(1, int(raw_single)))
+                except ValueError:
+                    values.append(32)
+            else:
+                default_prompt = suite.prompt_batches[0] if suite.prompt_batches else suite.title
+                values.append(max(1, len(default_prompt.split())))
+        return tuple(dict.fromkeys(sorted(values)))
+
+    @staticmethod
+    def _benchmark_batch_sizes(parameters: dict[str, str]) -> tuple[int, ...]:
+        raw_value = parameters.get("batch_sizes", "").strip()
+        values: list[int] = []
+        if raw_value:
+            for token in raw_value.split(","):
+                token = token.strip()
+                if not token:
+                    continue
+                try:
+                    values.append(max(1, int(token)))
+                except ValueError:
+                    continue
+        else:
+            raw_single = parameters.get("batch_size", "").strip() or parameters.get("batch_factor", "").strip()
+            if raw_single:
+                try:
+                    values.append(max(1, int(raw_single)))
+                except ValueError:
+                    values.append(1)
+            else:
+                values.append(1)
+        return tuple(dict.fromkeys(sorted(values)))
+
+    def _suite_prompt_for_context(self, suite: ResolvedBenchmarkSuite, *, context_length: int) -> str:
+        prompt = suite.prompt_batches[0] if suite.prompt_batches else suite.title
+        return self._shape_benchmark_prompt(prompt, context_length=context_length)
+
+    @staticmethod
+    def _shape_benchmark_prompt(prompt: str, *, context_length: int) -> str:
+        tokens = prompt.split()
+        if not tokens:
+            tokens = ["benchmark"]
+        if len(tokens) >= context_length:
+            return " ".join(tokens[:context_length])
+        repeated: list[str] = []
+        while len(repeated) < context_length:
+            repeated.extend(tokens)
+        return " ".join(repeated[:context_length])
+
+    @staticmethod
+    def _benchmark_execution_ext(
+        *,
+        cache_profile: str,
+        context_length: int,
+        batch_size: int,
+        repeat_index: int,
+        reasoning_mode: str,
+        structured_output_mode: str,
+    ) -> dict[str, str]:
+        return {
+            "cache_profile": cache_profile,
+            "context_length": str(context_length),
+            "batch_size": str(batch_size),
+            "repeat_index": str(repeat_index),
+            "reasoning_mode": reasoning_mode,
+            "structured_output_mode": structured_output_mode,
+        }
+
+    @staticmethod
+    def _benchmark_request_id(
+        *,
+        loaded_model,
+        suite_id: str,
+        prompt: str,
+        context_length: int,
+        repeat_index: int,
+        batch_size: int,
+        cache_profile: str,
+    ) -> str:
+        handle = getattr(loaded_model, "handle", "runtime")
+        digest = hashlib.sha256(
+            "|".join(
+                [
+                    handle,
+                    suite_id,
+                    prompt,
+                    str(context_length),
+                    str(batch_size),
+                    str(repeat_index),
+                    cache_profile,
+                ]
+            ).encode("utf-8")
+        ).hexdigest()[:16]
+        return f"bench-{handle}-{suite_id}-{digest}"
+
+    def _benchmark_warmup_text_request(
+        self,
+        *,
+        loaded_model,
+        prompt: str,
+        execution_ext: dict[str, str],
+        request_id: str,
+    ) -> None:
+        runtime = self._registry.runtime_for_loaded_model(loaded_model)
+        messages = [common_pb2.ChatMessage(role="user", parts=[common_pb2.MessagePart(text=prompt)])]
+        rendered_prompt = runtime.render_prompt(
+            messages,
+            loaded_model=loaded_model.runtime_model,
+            execution_ext=execution_ext,
+        )
+        cancel_event = self._registry.start_request(
+            request_id=request_id,
+            runtime_kind=loaded_model.runtime_kind,
+        ).cancel_event
+        try:
+            sampling = common_pb2.SamplingConfig(
+                temperature=0.0,
+                top_p=1.0,
+                top_k=1,
+                max_output_tokens=1,
+            )
+            for _ in runtime.generate_tokens(
+                loaded_model.runtime_model,
+                rendered_prompt,
+                sampling,
+                cancel_event,
+                execution_ext=execution_ext,
+            ):
+                pass
+        finally:
+            self._registry.finish_request(request_id)
+
+    @staticmethod
+    def _derive_batch_row(
+        *,
+        sample: BenchSample,
+        batch_size: int,
+        context_length: int,
+        suite_id: str,
+        model_id: str,
+        cache_profile: str,
+        reasoning_mode: str,
+        structured_output_mode: str,
+        source_repo: str,
+        generation_length: int,
+        repeat_index: int,
+        baseline_request_latency_ms: float,
+        job_id: str,
+        task_kind: str,
+    ) -> dict[str, object]:
+        from worker.productization.benchmark_schemas import build_serving_benchmark_batch_row
+
+        speedup = baseline_request_latency_ms / max(sample.request_latency_ms, 0.001)
+        return build_serving_benchmark_batch_row(
+            job_id=job_id,
+            model_id=model_id,
+            task_kind=task_kind,
+            source_repo=source_repo,
+            suite=suite_id,
+            context_length=context_length,
+            generation_length=generation_length,
+            batch_size=batch_size,
+            repeat_index=repeat_index,
+            prefill_tokens_per_second=sample.prefill_tokens_per_second,
+            decode_tokens_per_second=sample.decode_tokens_per_second,
+            ttft_ms=sample.ttft_ms,
+            request_latency_ms=sample.request_latency_ms,
+            peak_memory_bytes=sample.peak_memory_bytes,
+            speedup_vs_batch_1=round(speedup, 4),
+            cache_profile=cache_profile,
+            reasoning_mode=reasoning_mode,
+            structured_output_mode=structured_output_mode,
+        ).to_dict()
 
     def _image_metrics_for_suite(
         self,

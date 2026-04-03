@@ -5,6 +5,9 @@ from pathlib import Path
 
 from worker.productization.benchmark_export import (
     build_comparison_table,
+    build_benchmark_batch_csv,
+    build_benchmark_context_csv,
+    build_benchmark_summary_csv,
     build_export_bundle,
     collect_benchmark_artifacts,
     collect_evaluation_artifacts,
@@ -14,14 +17,74 @@ from worker.productization.benchmark_export import (
 
 def _write_bench_fixtures(root: Path) -> None:
     root.mkdir(parents=True, exist_ok=True)
-    (root / "bench-job.json").write_text(
+    (root / "bench-summary.json").write_text(
         json.dumps({
             "schema_version": "melix.serving_benchmark_job.v1",
             "job_id": "bench-1",
             "model_id": "melix-dev-text",
+            "task_kind": "text-generation",
+            "source_repo": "HuggingFaceH4/ultrachat_200k",
             "suites": ["smoke"],
+            "context_lengths": [32],
+            "generation_length": 8,
+            "batch_sizes": [1],
+            "repeats": 1,
+            "cache_profile": "cold",
+            "reasoning_mode": "",
+            "structured_output_mode": "",
+            "request_p50_ms": 24.45,
+            "request_p95_ms": 24.45,
             "parameters": {},
             "status": "completed",
+            "output_dir": str(root),
+            "created_at_unix_ms": 101,
+            "updated_at_unix_ms": 202,
+        }) + "\n"
+    )
+    (root / "bench-context-rows.jsonl").write_text(
+        json.dumps({
+            "schema_version": "melix.serving_benchmark_context_row.v1",
+            "job_id": "bench-1",
+            "model_id": "melix-dev-text",
+            "task_kind": "text-generation",
+            "source_repo": "HuggingFaceH4/ultrachat_200k",
+            "suite": "smoke",
+            "context_length": 32,
+            "generation_length": 8,
+            "batch_size": 1,
+            "repeat_index": 0,
+            "prefill_tokens_per_second": 24.45,
+            "decode_tokens_per_second": 47.08,
+            "ttft_ms": 24.45,
+            "request_latency_ms": 24.45,
+            "peak_memory_bytes": 2048.0,
+            "speedup_vs_batch_1": 1.0,
+            "cache_profile": "cold",
+            "reasoning_mode": "",
+            "structured_output_mode": "",
+        }) + "\n"
+    )
+    (root / "bench-batch-rows.jsonl").write_text(
+        json.dumps({
+            "schema_version": "melix.serving_benchmark_batch_row.v1",
+            "job_id": "bench-1",
+            "model_id": "melix-dev-text",
+            "task_kind": "text-generation",
+            "source_repo": "HuggingFaceH4/ultrachat_200k",
+            "suite": "smoke",
+            "context_length": 32,
+            "generation_length": 8,
+            "batch_size": 1,
+            "repeat_index": 0,
+            "prefill_tokens_per_second": 24.45,
+            "decode_tokens_per_second": 47.08,
+            "ttft_ms": 24.45,
+            "request_latency_ms": 24.45,
+            "peak_memory_bytes": 2048.0,
+            "speedup_vs_batch_1": 1.0,
+            "cache_profile": "cold",
+            "reasoning_mode": "",
+            "structured_output_mode": "",
         }) + "\n"
     )
     (root / "bench-result-smoke.json").write_text(
@@ -40,17 +103,74 @@ def _write_bench_fixtures(root: Path) -> None:
 def _write_bench_run_fixture(root: Path, *, job_id: str, model_id: str, ttft_ms: float) -> None:
     run_root = root / "runs" / job_id
     run_root.mkdir(parents=True, exist_ok=True)
-    (run_root / "bench-job.json").write_text(
+    (run_root / "bench-summary.json").write_text(
         json.dumps({
             "schema_version": "melix.serving_benchmark_job.v1",
             "job_id": job_id,
             "model_id": model_id,
+            "task_kind": "text-generation",
+            "source_repo": "HuggingFaceH4/ultrachat_200k",
             "suites": ["smoke"],
+            "context_lengths": [32],
+            "generation_length": 8,
+            "batch_sizes": [1],
+            "repeats": 1,
+            "cache_profile": "cold",
+            "reasoning_mode": "",
+            "structured_output_mode": "",
+            "request_p50_ms": ttft_ms,
+            "request_p95_ms": ttft_ms,
             "parameters": {"sample_size": "4"},
             "status": "completed",
             "output_dir": str(run_root),
             "created_at_unix_ms": 101,
             "updated_at_unix_ms": 202,
+        }) + "\n"
+    )
+    (run_root / "bench-context-rows.jsonl").write_text(
+        json.dumps({
+            "schema_version": "melix.serving_benchmark_context_row.v1",
+            "job_id": job_id,
+            "model_id": model_id,
+            "task_kind": "text-generation",
+            "source_repo": "HuggingFaceH4/ultrachat_200k",
+            "suite": "smoke",
+            "context_length": 32,
+            "generation_length": 8,
+            "batch_size": 1,
+            "repeat_index": 0,
+            "prefill_tokens_per_second": 24.45,
+            "decode_tokens_per_second": 47.08,
+            "ttft_ms": ttft_ms,
+            "request_latency_ms": ttft_ms,
+            "peak_memory_bytes": 2048.0,
+            "speedup_vs_batch_1": 1.0,
+            "cache_profile": "cold",
+            "reasoning_mode": "",
+            "structured_output_mode": "",
+        }) + "\n"
+    )
+    (run_root / "bench-batch-rows.jsonl").write_text(
+        json.dumps({
+            "schema_version": "melix.serving_benchmark_batch_row.v1",
+            "job_id": job_id,
+            "model_id": model_id,
+            "task_kind": "text-generation",
+            "source_repo": "HuggingFaceH4/ultrachat_200k",
+            "suite": "smoke",
+            "context_length": 32,
+            "generation_length": 8,
+            "batch_size": 1,
+            "repeat_index": 0,
+            "prefill_tokens_per_second": 24.45,
+            "decode_tokens_per_second": 47.08,
+            "ttft_ms": ttft_ms,
+            "request_latency_ms": ttft_ms,
+            "peak_memory_bytes": 2048.0,
+            "speedup_vs_batch_1": 1.0,
+            "cache_profile": "cold",
+            "reasoning_mode": "",
+            "structured_output_mode": "",
         }) + "\n"
     )
     (run_root / "bench-result-smoke.json").write_text(
@@ -121,8 +241,32 @@ def test_collect_benchmark_artifacts_finds_persisted_bench_files(tmp_path: Path)
 
     assert len(result["benchmark_jobs"]) == 1
     assert result["benchmark_jobs"][0]["job_id"] == "bench-1"
+    assert result["benchmark_jobs"][0]["task_kind"] == "text-generation"
+    assert len(result["benchmark_summary_rows"]) == 1
+    assert len(result["benchmark_context_rows"]) == 1
+    assert len(result["benchmark_batch_rows"]) == 1
     assert len(result["benchmark_results"]) == 1
     assert result["benchmark_results"][0]["suite"] == "smoke"
+
+
+def test_collect_benchmark_artifacts_falls_back_to_legacy_job_json(tmp_path: Path) -> None:
+    root = tmp_path / "legacy"
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "bench-job.json").write_text(
+        json.dumps({
+            "schema_version": "melix.serving_benchmark_job.v1",
+            "job_id": "bench-legacy",
+            "model_id": "melix-dev-text",
+            "suites": ["smoke"],
+            "parameters": {},
+            "status": "completed",
+        }) + "\n"
+    )
+
+    result = collect_benchmark_artifacts(root)
+
+    assert len(result["benchmark_jobs"]) == 1
+    assert result["benchmark_jobs"][0]["job_id"] == "bench-legacy"
 
 
 def test_collect_benchmark_artifacts_reads_per_run_history_from_runs_directory(
@@ -136,6 +280,8 @@ def test_collect_benchmark_artifacts_reads_per_run_history_from_runs_directory(
 
     assert [job["job_id"] for job in result["benchmark_jobs"]] == ["bench-1", "bench-2"]
     assert [row["job_id"] for row in result["benchmark_results"]] == ["bench-1", "bench-2"]
+    assert [row["job_id"] for row in result["benchmark_context_rows"]] == ["bench-1", "bench-2"]
+    assert [row["job_id"] for row in result["benchmark_batch_rows"]] == ["bench-1", "bench-2"]
 
 
 def test_collect_evaluation_artifacts_finds_persisted_eval_files(tmp_path: Path) -> None:
@@ -174,6 +320,9 @@ def test_build_export_bundle_combines_benchmark_and_evaluation_artifacts(tmp_pat
     assert bundle["export_schema_version"] == "melix.benchmark_export.v1"
     assert isinstance(bundle["exported_at_unix_ms"], int)
     assert len(bundle["benchmark_jobs"]) == 1
+    assert len(bundle["benchmark_summary_rows"]) == 1
+    assert len(bundle["benchmark_context_rows"]) == 1
+    assert len(bundle["benchmark_batch_rows"]) == 1
     assert len(bundle["evaluation_jobs"]) == 1
     assert len(bundle["evaluation_samples"]) == 1
 
@@ -189,6 +338,7 @@ def test_build_export_bundle_collects_benchmark_and_evaluation_from_model_ops_ro
 
     assert len(bundle["benchmark_jobs"]) == 1
     assert len(bundle["benchmark_results"]) == 1
+    assert len(bundle["benchmark_summary_rows"]) == 1
     assert len(bundle["evaluation_jobs"]) == 1
     assert len(bundle["evaluation_results"]) == 1
     assert len(bundle["evaluation_samples"]) == 1
@@ -205,6 +355,61 @@ def test_write_export_bundle_persists_structured_json(tmp_path: Path) -> None:
     payload = json.loads(output.read_text(encoding="utf-8"))
     assert payload["export_schema_version"] == "melix.benchmark_export.v1"
     assert len(payload["benchmark_jobs"]) == 1
+
+
+def test_build_benchmark_summary_csv_uses_canonical_rows(tmp_path: Path) -> None:
+    _write_bench_fixtures(tmp_path)
+    bundle = build_export_bundle(tmp_path)
+
+    csv_text = build_benchmark_summary_csv(bundle)
+
+    assert "job_id,model_id,task_kind,source_repo" in csv_text.splitlines()[0]
+    assert "bench-1,melix-dev-text,text-generation,HuggingFaceH4/ultrachat_200k" in csv_text
+
+
+def test_build_benchmark_summary_csv_serializes_tuple_and_none_values() -> None:
+    bundle = {
+        "benchmark_summary_rows": [
+            {
+                "job_id": "bench-9",
+                "model_id": "melix-dev-text",
+                "task_kind": "text-generation",
+                "source_repo": "HuggingFaceH4/ultrachat_200k",
+                "suites": ("smoke", "latency"),
+                "context_lengths": (16, 32),
+                "generation_length": 8,
+                "batch_sizes": (1, 2),
+                "repeats": 2,
+                "cache_profile": "cold",
+                "reasoning_mode": None,
+                "structured_output_mode": None,
+                "request_p50_ms": 11.0,
+                "request_p95_ms": 12.0,
+                "status": "completed",
+                "output_dir": "/tmp",
+                "created_at_unix_ms": 1,
+                "updated_at_unix_ms": 2,
+            }
+        ]
+    }
+
+    csv_text = build_benchmark_summary_csv(bundle)
+
+    assert "smoke,latency" in csv_text
+    assert "16,32" in csv_text
+
+
+def test_build_benchmark_context_and_batch_csv_use_canonical_rows(tmp_path: Path) -> None:
+    _write_bench_fixtures(tmp_path)
+    bundle = build_export_bundle(tmp_path)
+
+    context_csv = build_benchmark_context_csv(bundle)
+    batch_csv = build_benchmark_batch_csv(bundle)
+
+    assert "context_length,generation_length,batch_size,repeat_index" in context_csv.splitlines()[0]
+    assert "context_length,generation_length,batch_size,repeat_index" in batch_csv.splitlines()[0]
+    assert "bench-1,melix-dev-text,text-generation,HuggingFaceH4/ultrachat_200k,smoke,32,8,1,0" in context_csv
+    assert "bench-1,melix-dev-text,text-generation,HuggingFaceH4/ultrachat_200k,smoke,32,8,1,0" in batch_csv
 
 
 def test_build_comparison_table_produces_markdown_with_metric_columns() -> None:

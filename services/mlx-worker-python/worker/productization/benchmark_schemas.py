@@ -39,6 +39,15 @@ class ServingBenchmarkJob:
     task_kind: str
     source_repo: str
     suites: tuple[str, ...]
+    context_lengths: tuple[int, ...]
+    generation_length: int
+    batch_sizes: tuple[int, ...]
+    repeats: int
+    cache_profile: str
+    reasoning_mode: str
+    structured_output_mode: str
+    request_p50_ms: float
+    request_p95_ms: float
     parameters: dict[str, str]
     status: str
     output_dir: str
@@ -54,6 +63,15 @@ class ServingBenchmarkJob:
             "task_kind": self.task_kind,
             "source_repo": self.source_repo,
             "suites": list(self.suites),
+            "context_lengths": list(self.context_lengths),
+            "generation_length": self.generation_length,
+            "batch_sizes": list(self.batch_sizes),
+            "repeats": self.repeats,
+            "cache_profile": self.cache_profile,
+            "reasoning_mode": self.reasoning_mode,
+            "structured_output_mode": self.structured_output_mode,
+            "request_p50_ms": self.request_p50_ms,
+            "request_p95_ms": self.request_p95_ms,
             "parameters": dict(self.parameters),
             "status": self.status,
             "output_dir": self.output_dir,
@@ -66,6 +84,98 @@ class ServingBenchmarkJob:
                 for suite_id, metadata in self.suite_metadata.items()
             }
         return payload
+
+
+@dataclass(frozen=True)
+class ServingBenchmarkContextRow:
+    schema_version: str
+    job_id: str
+    model_id: str
+    task_kind: str
+    source_repo: str
+    suite: str
+    context_length: int
+    generation_length: int
+    batch_size: int
+    repeat_index: int
+    prefill_tokens_per_second: float
+    decode_tokens_per_second: float
+    ttft_ms: float
+    request_latency_ms: float
+    peak_memory_bytes: float
+    speedup_vs_batch_1: float
+    cache_profile: str
+    reasoning_mode: str
+    structured_output_mode: str
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "schema_version": self.schema_version,
+            "job_id": self.job_id,
+            "model_id": self.model_id,
+            "task_kind": self.task_kind,
+            "source_repo": self.source_repo,
+            "suite": self.suite,
+            "context_length": self.context_length,
+            "generation_length": self.generation_length,
+            "batch_size": self.batch_size,
+            "repeat_index": self.repeat_index,
+            "prefill_tokens_per_second": self.prefill_tokens_per_second,
+            "decode_tokens_per_second": self.decode_tokens_per_second,
+            "ttft_ms": self.ttft_ms,
+            "request_latency_ms": self.request_latency_ms,
+            "peak_memory_bytes": self.peak_memory_bytes,
+            "speedup_vs_batch_1": self.speedup_vs_batch_1,
+            "cache_profile": self.cache_profile,
+            "reasoning_mode": self.reasoning_mode,
+            "structured_output_mode": self.structured_output_mode,
+        }
+
+
+@dataclass(frozen=True)
+class ServingBenchmarkBatchRow:
+    schema_version: str
+    job_id: str
+    model_id: str
+    task_kind: str
+    source_repo: str
+    suite: str
+    context_length: int
+    generation_length: int
+    batch_size: int
+    repeat_index: int
+    prefill_tokens_per_second: float
+    decode_tokens_per_second: float
+    ttft_ms: float
+    request_latency_ms: float
+    peak_memory_bytes: float
+    speedup_vs_batch_1: float
+    cache_profile: str
+    reasoning_mode: str
+    structured_output_mode: str
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "schema_version": self.schema_version,
+            "job_id": self.job_id,
+            "model_id": self.model_id,
+            "task_kind": self.task_kind,
+            "source_repo": self.source_repo,
+            "suite": self.suite,
+            "context_length": self.context_length,
+            "generation_length": self.generation_length,
+            "batch_size": self.batch_size,
+            "repeat_index": self.repeat_index,
+            "prefill_tokens_per_second": self.prefill_tokens_per_second,
+            "decode_tokens_per_second": self.decode_tokens_per_second,
+            "ttft_ms": self.ttft_ms,
+            "request_latency_ms": self.request_latency_ms,
+            "peak_memory_bytes": self.peak_memory_bytes,
+            "speedup_vs_batch_1": self.speedup_vs_batch_1,
+            "cache_profile": self.cache_profile,
+            "reasoning_mode": self.reasoning_mode,
+            "structured_output_mode": self.structured_output_mode,
+        }
 
 
 @dataclass(frozen=True)
@@ -95,6 +205,15 @@ def build_serving_benchmark_job(
     task_kind: str = "text-generation",
     source_repo: str = "",
     suites: tuple[str, ...],
+    context_lengths: tuple[int, ...] = (),
+    generation_length: int = 0,
+    batch_sizes: tuple[int, ...] = (),
+    repeats: int = 1,
+    cache_profile: str = "",
+    reasoning_mode: str = "",
+    structured_output_mode: str = "",
+    request_p50_ms: float = 0.0,
+    request_p95_ms: float = 0.0,
     parameters: dict[str, str],
     status: str,
     output_dir: str,
@@ -109,12 +228,109 @@ def build_serving_benchmark_job(
         task_kind=task_kind,
         source_repo=source_repo,
         suites=suites,
+        context_lengths=context_lengths,
+        generation_length=generation_length,
+        batch_sizes=batch_sizes,
+        repeats=repeats,
+        cache_profile=cache_profile,
+        reasoning_mode=reasoning_mode,
+        structured_output_mode=structured_output_mode,
+        request_p50_ms=request_p50_ms,
+        request_p95_ms=request_p95_ms,
         parameters=dict(parameters),
         status=status,
         output_dir=output_dir,
         created_at_unix_ms=created_at_unix_ms,
         updated_at_unix_ms=updated_at_unix_ms,
         suite_metadata=dict(suite_metadata or {}),
+    )
+
+
+def build_serving_benchmark_context_row(
+    *,
+    job_id: str,
+    model_id: str,
+    task_kind: str,
+    source_repo: str,
+    suite: str,
+    context_length: int,
+    generation_length: int,
+    batch_size: int,
+    repeat_index: int,
+    prefill_tokens_per_second: float,
+    decode_tokens_per_second: float,
+    ttft_ms: float,
+    request_latency_ms: float,
+    peak_memory_bytes: float,
+    speedup_vs_batch_1: float,
+    cache_profile: str,
+    reasoning_mode: str,
+    structured_output_mode: str,
+) -> ServingBenchmarkContextRow:
+    return ServingBenchmarkContextRow(
+        schema_version="melix.serving_benchmark_context_row.v1",
+        job_id=job_id,
+        model_id=model_id,
+        task_kind=task_kind,
+        source_repo=source_repo,
+        suite=suite,
+        context_length=context_length,
+        generation_length=generation_length,
+        batch_size=batch_size,
+        repeat_index=repeat_index,
+        prefill_tokens_per_second=prefill_tokens_per_second,
+        decode_tokens_per_second=decode_tokens_per_second,
+        ttft_ms=ttft_ms,
+        request_latency_ms=request_latency_ms,
+        peak_memory_bytes=peak_memory_bytes,
+        speedup_vs_batch_1=speedup_vs_batch_1,
+        cache_profile=cache_profile,
+        reasoning_mode=reasoning_mode,
+        structured_output_mode=structured_output_mode,
+    )
+
+
+def build_serving_benchmark_batch_row(
+    *,
+    job_id: str,
+    model_id: str,
+    task_kind: str,
+    source_repo: str,
+    suite: str,
+    context_length: int,
+    generation_length: int,
+    batch_size: int,
+    repeat_index: int,
+    prefill_tokens_per_second: float,
+    decode_tokens_per_second: float,
+    ttft_ms: float,
+    request_latency_ms: float,
+    peak_memory_bytes: float,
+    speedup_vs_batch_1: float,
+    cache_profile: str,
+    reasoning_mode: str,
+    structured_output_mode: str,
+) -> ServingBenchmarkBatchRow:
+    return ServingBenchmarkBatchRow(
+        schema_version="melix.serving_benchmark_batch_row.v1",
+        job_id=job_id,
+        model_id=model_id,
+        task_kind=task_kind,
+        source_repo=source_repo,
+        suite=suite,
+        context_length=context_length,
+        generation_length=generation_length,
+        batch_size=batch_size,
+        repeat_index=repeat_index,
+        prefill_tokens_per_second=prefill_tokens_per_second,
+        decode_tokens_per_second=decode_tokens_per_second,
+        ttft_ms=ttft_ms,
+        request_latency_ms=request_latency_ms,
+        peak_memory_bytes=peak_memory_bytes,
+        speedup_vs_batch_1=speedup_vs_batch_1,
+        cache_profile=cache_profile,
+        reasoning_mode=reasoning_mode,
+        structured_output_mode=structured_output_mode,
     )
 
 

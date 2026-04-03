@@ -3,6 +3,8 @@ from __future__ import annotations
 from worker.productization.benchmark_schemas import (
     build_evaluation_job,
     build_evaluation_result,
+    build_serving_benchmark_batch_row,
+    build_serving_benchmark_context_row,
     build_serving_benchmark_job,
     build_serving_benchmark_results,
 )
@@ -15,6 +17,15 @@ def test_build_serving_benchmark_job_preserves_identity_and_parameters() -> None
         task_kind="text-generation",
         source_repo="HuggingFaceH4/ultrachat_200k",
         suites=("smoke", "latency"),
+        context_lengths=(32, 64),
+        generation_length=16,
+        batch_sizes=(1, 2),
+        repeats=3,
+        cache_profile="partial_prefix",
+        reasoning_mode="step-by-step",
+        structured_output_mode="json",
+        request_p50_ms=12.5,
+        request_p95_ms=19.75,
         parameters={"sample_size": "32", "batch_factor": "2"},
         status="completed",
         output_dir="/tmp/melix-bench",
@@ -30,11 +41,106 @@ def test_build_serving_benchmark_job_preserves_identity_and_parameters() -> None
     assert payload["task_kind"] == "text-generation"
     assert payload["source_repo"] == "HuggingFaceH4/ultrachat_200k"
     assert payload["suites"] == ["smoke", "latency"]
+    assert payload["context_lengths"] == [32, 64]
+    assert payload["generation_length"] == 16
+    assert payload["batch_sizes"] == [1, 2]
+    assert payload["repeats"] == 3
+    assert payload["cache_profile"] == "partial_prefix"
+    assert payload["reasoning_mode"] == "step-by-step"
+    assert payload["structured_output_mode"] == "json"
+    assert payload["request_p50_ms"] == 12.5
+    assert payload["request_p95_ms"] == 19.75
     assert payload["parameters"] == {"sample_size": "32", "batch_factor": "2"}
     assert payload["status"] == "completed"
     assert payload["output_dir"] == "/tmp/melix-bench"
     assert payload["created_at_unix_ms"] == 101
     assert payload["updated_at_unix_ms"] == 202
+
+
+def test_build_serving_benchmark_context_and_batch_rows_include_canonical_fields() -> None:
+    context_row = build_serving_benchmark_context_row(
+        job_id="bench-123",
+        model_id="melix-dev-text",
+        task_kind="text-generation",
+        source_repo="HuggingFaceH4/ultrachat_200k",
+        suite="smoke",
+        context_length=64,
+        generation_length=16,
+        batch_size=1,
+        repeat_index=2,
+        prefill_tokens_per_second=24.5,
+        decode_tokens_per_second=51.25,
+        ttft_ms=11.2,
+        request_latency_ms=42.8,
+        peak_memory_bytes=4096.0,
+        speedup_vs_batch_1=1.0,
+        cache_profile="partial_prefix",
+        reasoning_mode="step-by-step",
+        structured_output_mode="json",
+    ).to_dict()
+    batch_row = build_serving_benchmark_batch_row(
+        job_id="bench-123",
+        model_id="melix-dev-text",
+        task_kind="text-generation",
+        source_repo="HuggingFaceH4/ultrachat_200k",
+        suite="smoke",
+        context_length=64,
+        generation_length=16,
+        batch_size=4,
+        repeat_index=2,
+        prefill_tokens_per_second=25.5,
+        decode_tokens_per_second=54.25,
+        ttft_ms=10.2,
+        request_latency_ms=39.8,
+        peak_memory_bytes=4096.0,
+        speedup_vs_batch_1=1.08,
+        cache_profile="partial_prefix",
+        reasoning_mode="step-by-step",
+        structured_output_mode="json",
+    ).to_dict()
+
+    assert context_row == {
+        "schema_version": "melix.serving_benchmark_context_row.v1",
+        "job_id": "bench-123",
+        "model_id": "melix-dev-text",
+        "task_kind": "text-generation",
+        "source_repo": "HuggingFaceH4/ultrachat_200k",
+        "suite": "smoke",
+        "context_length": 64,
+        "generation_length": 16,
+        "batch_size": 1,
+        "repeat_index": 2,
+        "prefill_tokens_per_second": 24.5,
+        "decode_tokens_per_second": 51.25,
+        "ttft_ms": 11.2,
+        "request_latency_ms": 42.8,
+        "peak_memory_bytes": 4096.0,
+        "speedup_vs_batch_1": 1.0,
+        "cache_profile": "partial_prefix",
+        "reasoning_mode": "step-by-step",
+        "structured_output_mode": "json",
+    }
+    assert batch_row == {
+        "schema_version": "melix.serving_benchmark_batch_row.v1",
+        "job_id": "bench-123",
+        "model_id": "melix-dev-text",
+        "task_kind": "text-generation",
+        "source_repo": "HuggingFaceH4/ultrachat_200k",
+        "suite": "smoke",
+        "context_length": 64,
+        "generation_length": 16,
+        "batch_size": 4,
+        "repeat_index": 2,
+        "prefill_tokens_per_second": 25.5,
+        "decode_tokens_per_second": 54.25,
+        "ttft_ms": 10.2,
+        "request_latency_ms": 39.8,
+        "peak_memory_bytes": 4096.0,
+        "speedup_vs_batch_1": 1.08,
+        "cache_profile": "partial_prefix",
+        "reasoning_mode": "step-by-step",
+        "structured_output_mode": "json",
+    }
 
 
 def test_build_serving_benchmark_results_groups_metrics_by_suite() -> None:

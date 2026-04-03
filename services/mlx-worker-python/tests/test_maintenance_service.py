@@ -132,6 +132,34 @@ class EmptyThenTokenBenchmarkBackend:
         yield RuntimeTokenEvent(text="token", completion_tokens=1)
 
 
+class RecordingBenchmarkBackend:
+    runtime_name = "recording-benchmark"
+
+    def __init__(self) -> None:
+        self.prompts: list[str] = []
+
+    def load_model(self, model_spec):
+        return {"model_id": model_spec.model_id, "model_path": model_spec.model_path}
+
+    def estimate_resident_bytes(self, model_spec) -> int:
+        return 1_024
+
+    def generate_tokens(self, loaded_model, prompt: str, sampling, cancel_event):
+        _ = loaded_model
+        _ = sampling
+        self.prompts.append(prompt)
+        if cancel_event.is_set():
+            return
+        yield RuntimeTokenEvent(
+            text="token",
+            completion_tokens=1,
+            prompt_tokens=len(prompt.split()),
+            prompt_tps=1.0,
+            generation_tps=1.0,
+            peak_memory=1_024.0,
+        )
+
+
 class FakeBenchmarkHFDatasetFetcher:
     def __init__(self) -> None:
         self.calls: list[tuple[str, dict[str, str]]] = []
@@ -1438,12 +1466,132 @@ def test_benchmark_helper_defaults_cover_invalid_parameters_and_sparse_samples(t
         suite=resolved_suite,
         prompt=resolved_suite.prompt_batches[0],
         parameters={"max_output_tokens": "not-a-number"},
+        context_length=16,
+        repeat_index=0,
+        batch_size=1,
+        cache_profile="cold",
+        reasoning_mode="",
+        structured_output_mode="",
     )
 
     assert sample.completion_tokens == 1
     assert resolved_suite.sample_size == 1
     assert resolved_suite.batch_factor == 1
     assert MaintenanceCore._benchmark_max_output_tokens({"max_output_tokens": "oops"}) == 8
+
+
+def test_benchmark_partial_prefix_cache_profile_uses_a_shorter_warmup_prompt(tmp_path: Path) -> None:
+    catalog = BenchmarkSuiteCatalog(hf_dataset_fetcher=FakeBenchmarkHFDatasetFetcher())
+    suite = catalog.resolve_suite(
+        "smoke",
+        jobs_root=tmp_path / "model-ops",
+        parameters={"sample_size": "1", "batch_factor": "1"},
+    )
+
+    warm_backend = RecordingBenchmarkBackend()
+    warm_registry = WorkerRegistry(
+        runtime=MLXTextRuntime(backend=warm_backend),
+        model_catalog=WorkerModelCatalog(),
+    )
+    warm_core = MaintenanceCore(
+        warm_registry,
+        jobs_root=tmp_path / "warm-model-ops",
+        benchmark_suite_catalog=catalog,
+    )
+    warm_loaded = warm_registry.load_model(WorkerModelCatalog.dev_text_model())
+    warm_core._measure_text_bench_sample(
+        loaded_model=warm_loaded,
+        suite=suite,
+        prompt=suite.prompt_batches[0],
+        parameters={"max_output_tokens": "4"},
+        context_length=32,
+        repeat_index=0,
+        batch_size=1,
+        cache_profile="warm",
+        reasoning_mode="",
+        structured_output_mode="",
+    )
+
+    partial_backend = RecordingBenchmarkBackend()
+    partial_registry = WorkerRegistry(
+        runtime=MLXTextRuntime(backend=partial_backend),
+        model_catalog=WorkerModelCatalog(),
+    )
+    partial_core = MaintenanceCore(
+        partial_registry,
+        jobs_root=tmp_path / "partial-model-ops",
+        benchmark_suite_catalog=catalog,
+    )
+    partial_loaded = partial_registry.load_model(WorkerModelCatalog.dev_text_model())
+    partial_core._measure_text_bench_sample(
+        loaded_model=partial_loaded,
+        suite=suite,
+        prompt=suite.prompt_batches[0],
+        parameters={"max_output_tokens": "4"},
+        context_length=32,
+        repeat_index=0,
+        batch_size=1,
+        cache_profile="partial_prefix",
+        reasoning_mode="",
+        structured_output_mode="",
+    )
+
+    assert len(warm_backend.prompts) == 2
+    assert len(partial_backend.prompts) == 2
+    assert len(partial_backend.prompts[0]) < len(warm_backend.prompts[0])
+    assert partial_backend.prompts[0] != warm_backend.prompts[0]
+
+
+def test_benchmark_helper_parsers_cover_invalid_and_boundary_inputs(tmp_path: Path) -> None:
+    catalog = BenchmarkSuiteCatalog(hf_dataset_fetcher=FakeBenchmarkHFDatasetFetcher())
+    suite = catalog.resolve_suite(
+        "smoke",
+        jobs_root=tmp_path / "model-ops",
+        parameters={"sample_size": "1", "batch_factor": "1"},
+    )
+    core = MaintenanceCore(
+        WorkerRegistry(
+            runtime=MLXTextRuntime(backend=RecordingBenchmarkBackend()),
+            model_catalog=WorkerModelCatalog(),
+        ),
+        jobs_root=tmp_path / "helper-model-ops",
+        benchmark_suite_catalog=catalog,
+    )
+
+    with pytest.raises(ModelOperationError):
+        MaintenanceCore._benchmark_cache_profile({"cache_profile": "invalid"})
+    assert MaintenanceCore._benchmark_repeats({"repeats": "oops"}) == 1
+    assert MaintenanceCore._benchmark_generation_length({"generation_length": "oops"}) == 8
+    assert core._benchmark_context_lengths(
+        suite=suite,
+        parameters={"context_lengths": "8, bad, 4"},
+    ) == (4, 8)
+    assert core._benchmark_context_lengths(
+        suite=suite,
+        parameters={"context_lengths": "8, , 4"},
+    ) == (4, 8)
+    assert core._benchmark_context_lengths(
+        suite=suite,
+        parameters={"context_length": "oops"},
+    ) == (32,)
+    assert core._benchmark_batch_sizes({"batch_sizes": "1, bad, 2"}) == (1, 2)
+    assert core._benchmark_batch_sizes({"batch_sizes": "1, , 2"}) == (1, 2)
+    assert core._benchmark_batch_sizes({"batch_size": "oops"}) == (1,)
+    assert core._shape_benchmark_prompt("", context_length=3) == "benchmark benchmark benchmark"
+    assert core._shape_benchmark_prompt("one two three", context_length=2) == "one two"
+    with pytest.raises(ModelOperationError):
+        core._measure_text_bench_sample(
+            loaded_model=core._registry.load_model(WorkerModelCatalog.dev_text_model()),
+            suite=suite,
+            prompt=suite.prompt_batches[0],
+            parameters={"max_output_tokens": "4"},
+            context_length=16,
+            repeat_index=0,
+            batch_size=1,
+            cache_profile="invalid",
+            reasoning_mode="",
+            structured_output_mode="",
+        )
 
 
 def test_text_backed_vlm_models_force_text_benchmark_task_kind(tmp_path: Path) -> None:
@@ -1802,6 +1950,15 @@ def test_run_bench_persists_job_manifest_and_per_suite_results(tmp_path: Path) -
             maintenance_pb2.RunBenchRequest(
                 model_handle="melix-dev-text::1",
                 suites=["smoke", "latency"],
+                parameters={
+                    "context_lengths": "16,32",
+                    "batch_sizes": "1,2",
+                    "repeats": "2",
+                    "cache_profile": "partial_prefix",
+                    "generation_length": "16",
+                    "reasoning_mode": "step-by-step",
+                    "structured_output_mode": "json",
+                },
             ),
             context=None,
         )
@@ -1809,16 +1966,42 @@ def test_run_bench_persists_job_manifest_and_per_suite_results(tmp_path: Path) -
 
     report_path = Path(events[-1].completed.report_path)
     run_dir = tmp_path / "model-ops" / "bench" / "runs" / events[0].started.job_id
+    bench_parameters = {
+        "context_lengths": "16,32",
+        "batch_sizes": "1,2",
+        "repeats": "2",
+        "cache_profile": "partial_prefix",
+        "generation_length": "16",
+        "reasoning_mode": "step-by-step",
+        "structured_output_mode": "json",
+    }
     job_manifest = run_dir / "bench-job.json"
+    summary_manifest = run_dir / "bench-summary.json"
+    context_rows_path = run_dir / "bench-context-rows.jsonl"
+    batch_rows_path = run_dir / "bench-batch-rows.jsonl"
     smoke_result = run_dir / "bench-result-smoke.json"
     latency_result = run_dir / "bench-result-latency.json"
 
     assert job_manifest.exists() is True
+    assert summary_manifest.exists() is True
+    assert context_rows_path.exists() is True
+    assert batch_rows_path.exists() is True
     assert smoke_result.exists() is True
     assert latency_result.exists() is True
     assert report_path.parent == run_dir
 
     job_payload = json.loads(job_manifest.read_text(encoding="utf-8"))
+    summary_payload = json.loads(summary_manifest.read_text(encoding="utf-8"))
+    context_rows = [
+        json.loads(line)
+        for line in context_rows_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    batch_rows = [
+        json.loads(line)
+        for line in batch_rows_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
     smoke_payload = json.loads(smoke_result.read_text(encoding="utf-8"))
     latency_payload = json.loads(latency_result.read_text(encoding="utf-8"))
     report_markdown = report_path.read_text(encoding="utf-8")
@@ -1836,8 +2019,19 @@ def test_run_bench_persists_job_manifest_and_per_suite_results(tmp_path: Path) -
     expected_job = build_serving_benchmark_job(
         job_id=events[0].started.job_id,
         model_id="melix-dev-text",
+        task_kind="text-generation",
+        source_repo="",
         suites=("smoke", "latency"),
-        parameters={},
+        context_lengths=tuple(job_payload["context_lengths"]),
+        generation_length=job_payload["generation_length"],
+        batch_sizes=tuple(job_payload["batch_sizes"]),
+        repeats=job_payload["repeats"],
+        cache_profile=job_payload["cache_profile"],
+        reasoning_mode=job_payload["reasoning_mode"],
+        structured_output_mode=job_payload["structured_output_mode"],
+        request_p50_ms=job_payload["request_p50_ms"],
+        request_p95_ms=job_payload["request_p95_ms"],
+        parameters=bench_parameters,
         status="completed",
         output_dir=str(run_dir),
         created_at_unix_ms=job_payload["created_at_unix_ms"],
@@ -1856,12 +2050,18 @@ def test_run_bench_persists_job_manifest_and_per_suite_results(tmp_path: Path) -
     }
 
     assert job_payload == expected_job.to_dict()
+    assert summary_payload == job_payload
     assert job_payload["created_at_unix_ms"] > 0
     assert job_payload["updated_at_unix_ms"] >= job_payload["created_at_unix_ms"]
     assert job_payload["suite_metadata"]["smoke"]["dataset_path"] == "HuggingFaceH4/ultrachat_200k"
     assert job_payload["suite_metadata"]["latency"]["dataset_path"] == "databricks/databricks-dolly-15k"
     assert smoke_payload == expected_results["smoke"]
     assert latency_payload == expected_results["latency"]
+    assert len(context_rows) == 8
+    assert len(batch_rows) == 16
+    assert {row["cache_profile"] for row in context_rows} == {"partial_prefix"}
+    assert all(row["speedup_vs_batch_1"] > 0.0 for row in batch_rows)
+    assert job_payload["request_p95_ms"] >= job_payload["request_p50_ms"]
 
 
 def test_run_bench_records_curated_hf_suite_cache_hits_across_runs(tmp_path: Path) -> None:
