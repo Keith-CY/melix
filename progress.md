@@ -40,6 +40,19 @@
 - Metrics report for the Task 2 follow-up:
   - `tests/MelixCLITests/MelixCLIParserTests.swift` and `tests/MelixCLITests/MelixCLIRunnerTests.swift`: aggregate changed-line coverage `100.00%` (`66/66`)
   - `services/control-plane-swift/Tests/ControlPlaneTests/ControlPlaneServiceTests.swift`: changed-line coverage `100.00%` (`14/14`)
+- Closed Task 3, the canonical benchmark sweep, metrics, and export slice in the Python worker:
+  - expanded the benchmark persistence model to distinguish run summaries, context rows, and batch rows
+  - persisted canonical bench summary fields including `context_lengths`, `generation_length`, `batch_sizes`, `repeats`, `cache_profile`, `reasoning_mode`, `structured_output_mode`, `request_p50_ms`, and `request_p95_ms`
+  - wrote benchmark summary, context-row, and batch-row artifacts to the per-run output directory and carried those rows into export and submission bundles
+  - added summary, context, and batch CSV builders for the canonical benchmark export shape
+  - made text benchmark prompt selection use the resolved suite cases so `sample_size` and curated prompt sets continue to affect measurements
+  - made text benchmark batch rows truthful on the current runtime path by emitting only real `batch_size == 1` rows until the runtime exposes true batch execution support
+- Verification summary for Task 3:
+  - `PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" uv run --project services/mlx-worker-python pytest services/mlx-worker-python/tests/test_maintenance_service.py services/mlx-worker-python/tests/test_benchmark_schemas.py services/mlx-worker-python/tests/test_benchmark_export.py -q`: `71 passed in 33.46s`
+- Metrics report for Task 3:
+  - `services/mlx-worker-python/worker/engine/maintenance_core.py`, `services/mlx-worker-python/worker/productization/benchmark_schemas.py`, `services/mlx-worker-python/worker/productization/benchmark_export.py`, and `services/mlx-worker-python/worker/productization/submission_builder.py`: aggregate changed-line coverage `100.00%` (`312/312`)
+  - `services/mlx-worker-python/worker/engine/maintenance_core.py` follow-up delta in `f109442`: changed-line coverage `100.00%` (`13/13`)
+  - `services/mlx-worker-python/tests/test_maintenance_service.py` follow-up delta in `f109442`: changed-line coverage `100.00%` (`4/4`)
 
 - Converted the canonical benchmark and evaluation contract into an executable implementation plan.
 - Added `docs/plans/2026-04-03-bench-eval-contract-expansion-implementation.md` with staged tasks for:
