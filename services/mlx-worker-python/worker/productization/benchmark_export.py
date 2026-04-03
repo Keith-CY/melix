@@ -56,17 +56,19 @@ def collect_evaluation_artifacts(jobs_root: Path) -> dict[str, object]:
     )
     jobs: list[dict[str, object]] = []
     results: list[dict[str, object]] = []
+    summaries: list[dict[str, object]] = []
     samples: list[dict[str, object]] = []
 
-    _collect_evaluation_run(jobs_root, jobs=jobs, results=results, samples=samples)
+    _collect_evaluation_run(jobs_root, jobs=jobs, results=results, summaries=summaries, samples=samples)
     runs_root = jobs_root / "runs"
     if runs_root.is_dir():
         for run_root in sorted(path for path in runs_root.iterdir() if path.is_dir()):
-            _collect_evaluation_run(run_root, jobs=jobs, results=results, samples=samples)
+            _collect_evaluation_run(run_root, jobs=jobs, results=results, summaries=summaries, samples=samples)
 
     return {
         "evaluation_jobs": jobs,
         "evaluation_results": results,
+        "evaluation_summary_rows": summaries,
         "evaluation_samples": samples,
     }
 
@@ -80,6 +82,47 @@ def build_export_bundle(jobs_root: Path) -> dict[str, object]:
         **benchmark,
         **evaluation,
     }
+
+
+def build_evaluation_summary_csv(bundle: dict[str, object]) -> str:
+    rows = [row for row in bundle.get("evaluation_summary_rows", []) if isinstance(row, dict)]
+    return _rows_to_csv(
+        rows,
+        [
+            "job_id",
+            "task_kind",
+            "source_repo",
+            "model_id",
+            "suite_id",
+            "dataset_id",
+            "score_name",
+            "score_value",
+            "sample_size",
+            "correct_count",
+            "incorrect_count",
+            "duration_seconds",
+            "created_at_unix_ms",
+        ],
+    )
+
+
+def build_evaluation_samples_csv(bundle: dict[str, object]) -> str:
+    rows = [row for row in bundle.get("evaluation_samples", []) if isinstance(row, dict)]
+    return _rows_to_csv(
+        rows,
+        [
+            "job_id",
+            "suite_id",
+            "id",
+            "correct",
+            "expected",
+            "predicted",
+            "question",
+            "raw_response",
+            "time_s",
+            "parse_status",
+        ],
+    )
 
 
 def build_benchmark_summary_csv(bundle: dict[str, object]) -> str:
@@ -290,6 +333,7 @@ def _collect_evaluation_run(
     *,
     jobs: list[dict[str, object]],
     results: list[dict[str, object]],
+    summaries: list[dict[str, object]],
     samples: list[dict[str, object]],
 ) -> None:
     job_path = run_root / "evaluation-job.json"
@@ -298,10 +342,43 @@ def _collect_evaluation_run(
 
     result_path = run_root / "evaluation-result.json"
     if result_path.is_file():
-        results.append(json.loads(result_path.read_text(encoding="utf-8")))
+        result = json.loads(result_path.read_text(encoding="utf-8"))
+        results.append(result)
+
+    summary_path = run_root / "evaluation-summary.json"
+    if summary_path.is_file():
+        summaries.append(json.loads(summary_path.read_text(encoding="utf-8")))
+    elif job_path.is_file() and result_path.is_file():
+        summaries.append(_build_evaluation_summary_row(jobs[-1], results[-1]))
 
     samples_path = run_root / "evaluation-samples.jsonl"
     if samples_path.is_file():
         for line in samples_path.read_text(encoding="utf-8").splitlines():
             if line.strip():
                 samples.append(json.loads(line))
+
+
+def _build_evaluation_summary_row(job: dict[str, object], result: dict[str, object]) -> dict[str, object]:
+    metrics = result.get("metrics", [])
+    score_name = str(result.get("score_name") or "")
+    score_value = result.get("score_value", 0.0)
+    if not score_name and isinstance(metrics, list) and metrics:
+        first_metric = metrics[0] if isinstance(metrics[0], dict) else {}
+        score_name = str(first_metric.get("name", ""))
+        score_value = first_metric.get("value", 0.0)
+    return {
+        "schema_version": result.get("schema_version", "melix.evaluation_summary.v1"),
+        "job_id": job.get("job_id", ""),
+        "task_kind": job.get("task_kind", ""),
+        "source_repo": job.get("source_repo", ""),
+        "model_id": job.get("model_id", ""),
+        "suite_id": job.get("suite_id", ""),
+        "dataset_id": job.get("dataset_id", ""),
+        "score_name": score_name,
+        "score_value": score_value,
+        "sample_size": result.get("sample_size", job.get("sample_size", 0)),
+        "correct_count": result.get("correct_count", 0),
+        "incorrect_count": result.get("incorrect_count", 0),
+        "duration_seconds": result.get("duration_seconds", 0.0),
+        "created_at_unix_ms": job.get("created_at_unix_ms", 0),
+    }

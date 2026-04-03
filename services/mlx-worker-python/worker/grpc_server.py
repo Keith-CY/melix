@@ -265,6 +265,10 @@ class WorkerMaintenanceService(maintenance_pb2_grpc.MaintenanceServiceServicer):
                 suite_id=request.suite_id,
                 dataset_root=Path(request.dataset_root) if request.dataset_root else self._default_dataset_root(request.dataset_id),
                 sample_size=request.sample_size,
+                few_shot=int(request.few_shot) if request.few_shot else None,
+                seed=int(request.seed) if request.seed else None,
+                scoring_mode=request.scoring_mode or None,
+                code_exec_policy=request.code_exec_policy or None,
                 parameters=parameters,
             )
         except Exception as exc:

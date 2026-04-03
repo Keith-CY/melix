@@ -435,7 +435,13 @@ struct MelixCLIRunnerTests {
                     modelID: "melix-dev-text",
                     suites: ["mmlu", "gsm8k"],
                     sampleSize: 8,
-                    parameters: ["batch_factor": "2", "few_shot": "4"],
+                    parameters: [
+                        "batch_factor": "2",
+                        "few_shot": "4",
+                        "seed": "7",
+                        "scoring_mode": "multiple_choice_accuracy",
+                        "code_exec_policy": "sandboxed",
+                    ],
                     json: true
                 )
             )
@@ -448,6 +454,10 @@ struct MelixCLIRunnerTests {
         #expect(requests[0].datasetID == "mmlu.dev.v1")
         #expect(requests[0].sampleSize == 8)
         #expect(requests[0].parameters["batch_factor"] == "2")
+        #expect(requests[0].parameters["few_shot"] == "4")
+        #expect(requests[0].parameters["seed"] == "7")
+        #expect(requests[0].parameters["scoring_mode"] == "multiple_choice_accuracy")
+        #expect(requests[0].parameters["code_exec_policy"] == "sandboxed")
         #expect(requests[1].suiteID == "gsm8k")
         #expect(requests[1].datasetID == "gsm8k.dev.v1")
         let firstRun = try #require(payload.first as? [String: Any])

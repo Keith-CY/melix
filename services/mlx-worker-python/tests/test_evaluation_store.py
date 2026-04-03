@@ -8,6 +8,11 @@ from worker.productization.evaluation_schemas import (
     build_evaluation_result_record,
     build_evaluation_sample_record,
 )
+from worker.productization.benchmark_export import (
+    build_evaluation_samples_csv,
+    build_evaluation_summary_csv,
+    collect_evaluation_artifacts,
+)
 from worker.productization.evaluation_store import EvaluationStore
 
 
@@ -24,6 +29,9 @@ def test_persist_result_writes_expected_artifact_names_and_payloads(tmp_path: Pa
         dataset_id="mmlu-dev",
         sample_size=2,
         scoring_mode="deterministic_accuracy",
+        few_shot=4,
+        seed=7,
+        code_exec_policy="sandboxed",
         parameters={"dataset_root": str(tmp_path / "datasets" / "mmlu-dev")},
         status="completed",
         output_dir=str(run_root),
@@ -35,6 +43,11 @@ def test_persist_result_writes_expected_artifact_names_and_payloads(tmp_path: Pa
         suite_id="mmlu",
         dataset_id="mmlu-dev",
         sample_size=2,
+        score_name="accuracy",
+        score_value=1.0,
+        correct_count=2,
+        incorrect_count=0,
+        duration_seconds=0.25,
         metrics={"eval.mmlu.accuracy": 1.0},
         report_path=str(run_root / "evaluation-result.json"),
         units={"eval.mmlu.accuracy": "ratio"},
@@ -62,13 +75,28 @@ def test_persist_result_writes_expected_artifact_names_and_payloads(tmp_path: Pa
 
     assert persisted["job"] == run_root / "evaluation-job.json"
     assert persisted["result"] == run_root / "evaluation-result.json"
+    assert persisted["summary_json"] == run_root / "evaluation-summary.json"
+    assert persisted["summary_csv"] == run_root / "evaluation-summary.csv"
     assert persisted["samples_jsonl"] == run_root / "evaluation-samples.jsonl"
     assert persisted["samples_csv"] == run_root / "evaluation-samples.csv"
     assert json.loads(persisted["job"].read_text(encoding="utf-8")) == job.to_dict()
     assert json.loads(persisted["result"].read_text(encoding="utf-8")) == result.to_dict()
+    assert json.loads(persisted["summary_json"].read_text(encoding="utf-8"))["correct_count"] == 2
     assert json.loads(persisted["samples_jsonl"].read_text(encoding="utf-8").strip()) == sample.to_dict()
+    assert persisted["summary_csv"].read_text(encoding="utf-8").startswith(
+        "job_id,task_kind,source_repo,model_id,suite_id,dataset_id,score_name,score_value,sample_size,correct_count,incorrect_count,duration_seconds,created_at_unix_ms\n"
+    )
     assert persisted["samples_csv"].read_text(encoding="utf-8").startswith(
         "id,correct,expected,predicted,question,raw_response,time_s,parse_status\n"
+    )
+
+    export_bundle = collect_evaluation_artifacts(jobs_root)
+    assert len(export_bundle["evaluation_summary_rows"]) == 1
+    assert build_evaluation_summary_csv(export_bundle).startswith(
+        "job_id,task_kind,source_repo,model_id,suite_id,dataset_id,score_name,score_value,sample_size,correct_count,incorrect_count,duration_seconds,created_at_unix_ms\r\n"
+    )
+    assert build_evaluation_samples_csv(export_bundle).startswith(
+        "job_id,suite_id,id,correct,expected,predicted,question,raw_response,time_s,parse_status\r\n"
     )
 
 
