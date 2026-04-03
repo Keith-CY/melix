@@ -1900,6 +1900,56 @@ struct RuntimeViewModelTests {
         #expect(await metrics.snapshot()["menu.bench_export_csv_ms"] != nil)
     }
 
+    @Test("benchmark configuration forwards canonical context lengths batch sizes repeats cache reasoning and structured output controls")
+    @MainActor
+    func benchmarkConfigurationForwardsCanonicalControls() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let metrics = MenuBarMetricsStore()
+        let viewModel = RuntimeViewModel(client: client, metrics: metrics)
+        await client.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [
+                    makeModelSummary(modelID: "melix-dev-text", state: .modelWarm),
+                    makeModelSummary(modelID: "melix-dev-text-lora", state: .modelWarm),
+                ]
+            )
+        )
+        await client.configureBenchResponse(
+            ControlPlaneBenchResult(
+                reportPath: "/tmp/melix/bench/runs/bench-newer/bench-report.md",
+                reportMarkdown: "# Melix Bench\n",
+                metrics: ["bench.smoke.tokens_per_second": 61.20]
+            )
+        )
+        await client.configureExportResult(
+            ControlPlaneExportResult(exportBundleJSON: makeBenchmarkExportBundleJSON())
+        )
+
+        await viewModel.start()
+        viewModel.selectedBenchmarkModelID = "melix-dev-text-lora"
+        viewModel.selectedBenchmarkSuiteIDs = ["smoke"]
+        viewModel.selectedBenchContextLengths = [4096, 1024, 1024]
+        viewModel.selectedBenchBatchSizes = [4, 2, 4]
+        viewModel.benchRepeats = "3"
+        viewModel.benchCacheProfile = "partial_prefix"
+        viewModel.benchReasoningMode = "enabled"
+        viewModel.benchStructuredOutputMode = "json_schema"
+
+        await viewModel.runBench()
+
+        let request = try #require(await client.recordedBenchRequests.last)
+        #expect(request.contextLengths == [1024, 4096])
+        #expect(request.batchSizes == [2, 4])
+        #expect(request.repeats == 3)
+        #expect(request.cacheProfile == "partial_prefix")
+        #expect(request.reasoningMode == "enabled")
+        #expect(request.structuredOutputMode == "json_schema")
+        #expect(viewModel.benchmarkHistory.count == 3)
+        #expect(viewModel.benchmarkMetricCards.count == 3)
+        #expect(await metrics.snapshot()["menu.ops_bench_ms"] != nil)
+    }
+
     @Test("benchmark selection state falls back and benchmark guard rails surface local errors")
     @MainActor
     func benchmarkSelectionStateFallsBackAndGuardRailsSurfaceLocalErrors() async throws {
@@ -1947,6 +1997,51 @@ struct RuntimeViewModelTests {
         let imageBenchRequest = try #require(await imageOnlyClient.recordedBenchRequests.last)
         #expect(imageBenchRequest.modelID == "melix-dev-image")
         #expect(imageOnlyViewModel.lastError == nil)
+    }
+
+    @Test("benchmark and evaluation control normalization fills defaults and preserves toggle state")
+    @MainActor
+    func benchmarkAndEvaluationControlNormalizationFillsDefaultsAndPreservesToggleState() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [
+                    makeModelSummary(modelID: "melix-dev-text", state: .modelWarm),
+                ]
+            )
+        )
+
+        let viewModel = RuntimeViewModel(client: client)
+        viewModel.selectedBenchContextLengths = []
+        viewModel.selectedBenchBatchSizes = []
+        viewModel.benchRepeats = ""
+        viewModel.benchCacheProfile = ""
+        viewModel.benchReasoningMode = "  enabled  "
+        viewModel.benchStructuredOutputMode = " json_schema "
+        viewModel.evaluationScoringMode = ""
+        viewModel.evaluationCodeExecPolicy = ""
+
+        await viewModel.start()
+
+        #expect(viewModel.selectedBenchContextLengths == [1024, 4096])
+        #expect(viewModel.selectedBenchBatchSizes == [2, 4])
+        #expect(viewModel.benchRepeats == "3")
+        #expect(viewModel.benchCacheProfile == "cold")
+        #expect(viewModel.benchReasoningMode == "enabled")
+        #expect(viewModel.benchStructuredOutputMode == "json_schema")
+        #expect(viewModel.evaluationScoringMode == "multiple_choice_accuracy")
+        #expect(viewModel.evaluationCodeExecPolicy == "sandboxed")
+
+        viewModel.toggleBenchContextLength(1024)
+        #expect(viewModel.selectedBenchContextLengths == [4096])
+        viewModel.toggleBenchContextLength(1024)
+        #expect(viewModel.selectedBenchContextLengths == [1024, 4096])
+
+        viewModel.toggleBenchBatchSize(4)
+        #expect(viewModel.selectedBenchBatchSizes == [2])
+        viewModel.toggleBenchBatchSize(4)
+        #expect(viewModel.selectedBenchBatchSizes == [2, 4])
     }
 
     @Test("benchmark direct repo mode dispatches hf repo ids and infers multimodal suite family")
@@ -2139,13 +2234,13 @@ struct RuntimeViewModelTests {
         #expect(evaluationRequests.allSatisfy { $0.parameters["seed"] == "7" })
         #expect(viewModel.evaluationHistory.count == 1)
         #expect(viewModel.selectedEvaluationHistoryEntry?.jobID == "eval-newer")
-        #expect(viewModel.evaluationMetricCards.count == 2)
+        #expect(viewModel.evaluationMetricCards.count == 1)
         #expect(viewModel.evaluationSamplePreview.count == 2)
 
         await viewModel.exportSelectedEvaluationSummaryCSV()
         let summaryExport = try #require(viewModel.lastEvaluationExport)
         #expect(summaryExport.formatTitle == "summary.csv")
-        #expect(summaryExport.rowCount == 2)
+        #expect(summaryExport.rowCount == 1)
         #expect(FileManager.default.fileExists(atPath: summaryExport.outputPath))
 
         await viewModel.exportSelectedEvaluationSamplesCSV()
@@ -2165,6 +2260,47 @@ struct RuntimeViewModelTests {
         #expect(await metrics.snapshot()["menu.eval_history_refresh_ms"] != nil)
         #expect(await metrics.snapshot()["menu.eval_export_csv_ms"] != nil)
         #expect(await metrics.snapshot()["menu.eval_export_jsonl_ms"] != nil)
+    }
+
+    @Test("evaluation configuration forwards few shot seed scoring mode and code execution policy controls")
+    @MainActor
+    func evaluationConfigurationForwardsCanonicalControls() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let metrics = MenuBarMetricsStore()
+        let viewModel = RuntimeViewModel(client: client, metrics: metrics)
+        await client.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [
+                    makeModelSummary(modelID: "melix-dev-text", state: .modelWarm),
+                    makeModelSummary(modelID: "melix-dev-text-lora", state: .modelWarm),
+                ]
+            )
+        )
+        await client.configureExportResult(
+            ControlPlaneExportResult(exportBundleJSON: makeBenchmarkExportBundleJSON())
+        )
+
+        await viewModel.start()
+        viewModel.selectedEvaluationModelID = "melix-dev-text-lora"
+        viewModel.selectedEvaluationSuiteIDs = ["mmlu"]
+        viewModel.evaluationSampleSize = "12"
+        viewModel.evaluationBatchFactor = "2"
+        viewModel.evaluationFewShot = "4"
+        viewModel.evaluationSeed = "9"
+        viewModel.evaluationScoringMode = "multiple_choice_accuracy"
+        viewModel.evaluationCodeExecPolicy = "sandboxed"
+
+        await viewModel.runEvaluation()
+
+        let request = try #require(await client.recordedEvaluationRequests.last)
+        #expect(request.parameters["few_shot"] == "4")
+        #expect(request.parameters["seed"] == "9")
+        #expect(request.parameters["scoring_mode"] == "multiple_choice_accuracy")
+        #expect(request.parameters["code_exec_policy"] == "sandboxed")
+        #expect(viewModel.evaluationHistory.count == 1)
+        #expect(viewModel.evaluationMetricCards.count == 1)
+        #expect(await metrics.snapshot()["menu.ops_eval_ms"] != nil)
     }
 
     @Test("evaluation selection state and guard rails cover catalog and direct repo flows")

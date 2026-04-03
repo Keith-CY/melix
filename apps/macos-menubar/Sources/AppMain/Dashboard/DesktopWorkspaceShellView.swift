@@ -1299,6 +1299,68 @@ struct DesktopDiagnosticsToolSectionView: View {
                         }
                     }
 
+                    Divider()
+
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Performance Controls")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Context Lengths")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            LazyVGrid(columns: [GridItem(.adaptive(minimum: 88), spacing: 8)], spacing: 8) {
+                                ForEach(RuntimeViewModel.benchmarkContextLengthOptions, id: \.self) { contextLength in
+                                    Button {
+                                        viewModel.toggleBenchContextLength(contextLength)
+                                    } label: {
+                                        Text("\(contextLength)")
+                                            .font(.caption.weight(.semibold))
+                                            .foregroundStyle(.primary)
+                                            .frame(maxWidth: .infinity)
+                                            .padding(.vertical, 6)
+                                            .padding(.horizontal, 10)
+                                            .background(
+                                                viewModel.selectedBenchContextLengths.contains(contextLength)
+                                                ? Color.accentColor.opacity(0.16)
+                                                : Color.secondary.opacity(0.08),
+                                                in: Capsule()
+                                            )
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+                            }
+                        }
+
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Batch Sizes")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            LazyVGrid(columns: [GridItem(.adaptive(minimum: 88), spacing: 8)], spacing: 8) {
+                                ForEach(RuntimeViewModel.benchmarkBatchSizeOptions, id: \.self) { batchSize in
+                                    Button {
+                                        viewModel.toggleBenchBatchSize(batchSize)
+                                    } label: {
+                                        Text("\(batchSize)")
+                                            .font(.caption.weight(.semibold))
+                                            .foregroundStyle(.primary)
+                                            .frame(maxWidth: .infinity)
+                                            .padding(.vertical, 6)
+                                            .padding(.horizontal, 10)
+                                            .background(
+                                                viewModel.selectedBenchBatchSizes.contains(batchSize)
+                                                ? Color.accentColor.opacity(0.16)
+                                                : Color.secondary.opacity(0.08),
+                                                in: Capsule()
+                                            )
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+                            }
+                        }
+                    }
+
                     HStack(spacing: 16) {
                         TextField(
                             "Sample Size",
@@ -1316,6 +1378,58 @@ struct DesktopDiagnosticsToolSectionView: View {
                             )
                         )
                         .textFieldStyle(.roundedBorder)
+                        TextField(
+                            "Repeats",
+                            text: Binding(
+                                get: { viewModel.benchRepeats },
+                                set: { viewModel.benchRepeats = $0 }
+                            )
+                        )
+                        .textFieldStyle(.roundedBorder)
+                    }
+
+                    HStack(spacing: 16) {
+                        Picker(
+                            "Cache Profile",
+                            selection: Binding(
+                                get: { viewModel.benchCacheProfile },
+                                set: { viewModel.benchCacheProfile = $0 }
+                            )
+                        ) {
+                            ForEach(RuntimeViewModel.benchmarkCacheProfileOptions, id: \.self) { option in
+                                Text(option.replacingOccurrences(of: "_", with: " ").capitalized)
+                                    .tag(option)
+                            }
+                        }
+                        .pickerStyle(.menu)
+
+                        Picker(
+                            "Reasoning Mode",
+                            selection: Binding(
+                                get: { viewModel.benchReasoningMode },
+                                set: { viewModel.benchReasoningMode = $0 }
+                            )
+                        ) {
+                            ForEach(RuntimeViewModel.benchmarkReasoningModeOptions, id: \.self) { option in
+                                Text(option.replacingOccurrences(of: "_", with: " ").capitalized)
+                                    .tag(option)
+                            }
+                        }
+                        .pickerStyle(.menu)
+
+                        Picker(
+                            "Structured Output",
+                            selection: Binding(
+                                get: { viewModel.benchStructuredOutputMode },
+                                set: { viewModel.benchStructuredOutputMode = $0 }
+                            )
+                        ) {
+                            ForEach(RuntimeViewModel.benchmarkStructuredOutputModeOptions, id: \.self) { option in
+                                Text(option.replacingOccurrences(of: "_", with: " ").capitalized)
+                                    .tag(option)
+                            }
+                        }
+                        .pickerStyle(.menu)
                     }
 
                     if let export = viewModel.lastBenchmarkCSVExport {
@@ -1529,6 +1643,13 @@ struct DesktopDiagnosticsToolSectionView: View {
                         }
                     }
 
+                    Divider()
+
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Evaluation Controls")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+
                     HStack(spacing: 16) {
                         TextField(
                             "Sample Size",
@@ -1562,6 +1683,26 @@ struct DesktopDiagnosticsToolSectionView: View {
                             )
                         )
                         .textFieldStyle(.roundedBorder)
+                    }
+
+                        HStack(spacing: 16) {
+                            TextField(
+                                "Scoring Mode",
+                                text: Binding(
+                                    get: { viewModel.evaluationScoringMode },
+                                    set: { viewModel.evaluationScoringMode = $0 }
+                                )
+                            )
+                            .textFieldStyle(.roundedBorder)
+                            TextField(
+                                "Code Exec Policy",
+                                text: Binding(
+                                    get: { viewModel.evaluationCodeExecPolicy },
+                                    set: { viewModel.evaluationCodeExecPolicy = $0 }
+                                )
+                            )
+                            .textFieldStyle(.roundedBorder)
+                        }
                     }
 
                     if let export = viewModel.lastEvaluationExport {

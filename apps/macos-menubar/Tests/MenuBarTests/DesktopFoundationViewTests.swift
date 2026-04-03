@@ -616,6 +616,34 @@ struct DesktopFoundationViewTests {
         #expect(viewModel.benchmarkTargetSummaryText.contains("unsloth/gemma-4-E4B-it-MLX-8bit"))
     }
 
+    @Test("workspace diagnostics renders canonical benchmark and evaluation controls")
+    @MainActor
+    func workspaceDiagnosticsRendersCanonicalBenchmarkAndEvaluationControls() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureSnapshot(
+            makeAudioSetupSnapshot(models: [ModelCatalog.devTextModel()])
+        )
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        viewModel.selectSurface(.tools)
+        viewModel.selectToolSection(.diagnostics)
+
+        let view = hostView(DesktopWorkspaceShellView(viewModel: viewModel))
+        let renderedTexts = renderedTextValues(in: view)
+
+        #expect(view.subviews.isEmpty == false)
+        #expect(renderedTexts.contains("Catalog Model"))
+        #expect(renderedTexts.contains("Hugging Face Repo"))
+        #expect(renderedTexts.contains("Melix Dev Text • melix-dev-text"))
+        #expect(renderedTexts.contains("3"))
+        #expect(renderedTexts.contains("Partial Prefix"))
+        #expect(renderedTexts.contains("Enabled"))
+        #expect(renderedTexts.contains("Json Schema"))
+        #expect(renderedTexts.contains("multiple_choice_accuracy"))
+        #expect(renderedTexts.contains("sandboxed"))
+
+    }
+
     @Test("workspace diagnostics renders evaluation configuration history and sample previews")
     @MainActor
     func workspaceDiagnosticsRendersEvaluationConfigurationHistoryAndSamples() async throws {
@@ -634,7 +662,7 @@ struct DesktopFoundationViewTests {
 
         #expect(view.subviews.isEmpty == false)
         #expect(viewModel.evaluationHistory.count == 1)
-        #expect(viewModel.evaluationMetricCards.count == 2)
+        #expect(viewModel.evaluationMetricCards.count == 1)
         #expect(viewModel.evaluationSamplePreview.count == 2)
     }
 
@@ -1257,6 +1285,41 @@ private func hostView<Content: View>(_ rootView: Content) -> NSView {
     view.frame = NSRect(x: 0, y: 0, width: 1200, height: 800)
     view.layoutSubtreeIfNeeded()
     return view
+}
+
+@MainActor
+private func renderedTextValues(in rootView: NSView) -> [String] {
+    var values: [String] = []
+
+    func appendValue(_ value: String) {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty == false {
+            values.append(trimmed)
+        }
+    }
+
+    func visit(_ view: NSView) {
+        if let textField = view as? NSTextField {
+            appendValue(textField.stringValue)
+        }
+        if let button = view as? NSButton {
+            appendValue(button.title)
+        }
+        if let popup = view as? NSPopUpButton {
+            appendValue(popup.title)
+        }
+        if let segmented = view as? NSSegmentedControl {
+            for index in 0..<segmented.segmentCount {
+                appendValue(segmented.label(forSegment: index) ?? "")
+            }
+        }
+        for subview in view.subviews {
+            visit(subview)
+        }
+    }
+
+    visit(rootView)
+    return values
 }
 
 private func makeAudioSetupSnapshot(

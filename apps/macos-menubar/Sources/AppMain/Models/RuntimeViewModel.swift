@@ -398,6 +398,12 @@ public final class RuntimeViewModel {
     public var selectedBenchmarkModelID = "melix-dev-text"
     public var selectedBenchmarkTargetMode: RuntimeBenchmarkTargetMode = .catalogModel
     public var selectedBenchmarkSuiteIDs: Set<String> = ["smoke"]
+    public var selectedBenchContextLengths: [UInt32] = [1024, 4096]
+    public var selectedBenchBatchSizes: [UInt32] = [2, 4]
+    public var benchRepeats = "3"
+    public var benchCacheProfile = "partial_prefix"
+    public var benchReasoningMode = "enabled"
+    public var benchStructuredOutputMode = "json_schema"
     public var benchmarkSampleSize = ""
     public var benchmarkBatchFactor = ""
     public var benchmarkHFRepoID = ""
@@ -410,6 +416,8 @@ public final class RuntimeViewModel {
     public var evaluationBatchFactor = ""
     public var evaluationSeed = ""
     public var evaluationFewShot = ""
+    public var evaluationScoringMode = "multiple_choice_accuracy"
+    public var evaluationCodeExecPolicy = "sandboxed"
     public var evaluationHFRepoID = ""
     public var selectedEvaluationHistoryJobID = ""
     public var loraDatasetSourceKind: RuntimeLoraDatasetSourceKind = .localPackage
@@ -576,6 +584,12 @@ public final class RuntimeViewModel {
         ),
     ]
 
+    static let benchmarkContextLengthOptions: [UInt32] = [1024, 4096, 8192]
+    static let benchmarkBatchSizeOptions: [UInt32] = [1, 2, 4, 8]
+    static let benchmarkCacheProfileOptions = ControlPlaneBenchRequest.validCacheProfiles
+    static let benchmarkReasoningModeOptions: [String] = ["off", "enabled", "deep_reasoning"]
+    static let benchmarkStructuredOutputModeOptions: [String] = ["off", "json_object", "json_schema"]
+
     private static let evaluationSuiteOptions = [
         RuntimeEvaluationSuiteOptionState(
             id: "mmlu",
@@ -679,6 +693,22 @@ public final class RuntimeViewModel {
             selectedBenchmarkSuiteIDs.insert(suiteID)
         }
         rebuildBenchmarkDerivedState()
+        notifyStateChanged()
+    }
+
+    public func toggleBenchContextLength(_ contextLength: UInt32) {
+        selectedBenchContextLengths = Self.toggledValues(
+            contextLength,
+            in: selectedBenchContextLengths
+        )
+        notifyStateChanged()
+    }
+
+    public func toggleBenchBatchSize(_ batchSize: UInt32) {
+        selectedBenchBatchSizes = Self.toggledValues(
+            batchSize,
+            in: selectedBenchBatchSizes
+        )
         notifyStateChanged()
     }
 
@@ -1948,6 +1978,7 @@ public final class RuntimeViewModel {
             notifyStateChanged()
             return
         }
+        let contextLengths = normalizedBenchContextLengths()
         let startedAt = Date()
         do {
             let result = try await client.runBench(
@@ -1955,6 +1986,12 @@ public final class RuntimeViewModel {
                     modelID: selectedBenchmarkTargetMode == .catalogModel ? modelID : "",
                     hfRepoID: selectedBenchmarkTargetMode == .huggingFaceRepo ? repoID : "",
                     suites: suites,
+                    contextLengths: contextLengths,
+                    batchSizes: normalizedBenchBatchSizes(),
+                    repeats: normalizedBenchRepeats(),
+                    cacheProfile: normalizedBenchCacheProfile(),
+                    reasoningMode: normalizedBenchReasoningMode(),
+                    structuredOutputMode: normalizedBenchStructuredOutputMode(),
                     parameters: benchmarkParameters()
                 )
             )
@@ -2594,6 +2631,18 @@ public final class RuntimeViewModel {
         if selectedBenchmarkSuiteIDs.isEmpty {
             selectedBenchmarkSuiteIDs = ["smoke"]
         }
+        selectedBenchContextLengths = Self.normalizedBenchValues(
+            selectedBenchContextLengths,
+            defaultValues: Self.benchmarkContextLengthOptions.prefix(2).map { $0 }
+        )
+        selectedBenchBatchSizes = Self.normalizedBenchValues(
+            selectedBenchBatchSizes,
+            defaultValues: Self.benchmarkBatchSizeOptions.filter { $0 > 1 }.prefix(2).map { $0 }
+        )
+        benchRepeats = normalizedBenchRepeatsText()
+        benchCacheProfile = normalizedBenchCacheProfile()
+        benchReasoningMode = normalizedBenchReasoningMode()
+        benchStructuredOutputMode = normalizedBenchStructuredOutputMode()
         rebuildBenchmarkDerivedState()
     }
 
@@ -2608,6 +2657,8 @@ public final class RuntimeViewModel {
         if selectedEvaluationSuiteIDs.isEmpty {
             selectedEvaluationSuiteIDs = ["mmlu"]
         }
+        evaluationScoringMode = normalizedEvaluationScoringMode()
+        evaluationCodeExecPolicy = normalizedEvaluationCodeExecPolicy()
         rebuildEvaluationDerivedState()
     }
 
@@ -2779,6 +2830,14 @@ public final class RuntimeViewModel {
         let fewShot = evaluationFewShot.trimmingCharacters(in: .whitespacesAndNewlines)
         if fewShot.isEmpty == false {
             parameters["few_shot"] = fewShot
+        }
+        let scoringMode = normalizedEvaluationScoringMode()
+        if scoringMode.isEmpty == false {
+            parameters["scoring_mode"] = scoringMode
+        }
+        let codeExecPolicy = normalizedEvaluationCodeExecPolicy()
+        if codeExecPolicy.isEmpty == false {
+            parameters["code_exec_policy"] = codeExecPolicy
         }
         return parameters
     }
@@ -3686,13 +3745,13 @@ public final class RuntimeViewModel {
         from row: ControlPlaneEvaluationSummaryCSVRow
     ) -> RuntimeEvaluationMetricCardState {
         RuntimeEvaluationMetricCardState(
-            id: "\(row.jobID):\(row.suiteID):\(row.metricName)",
+            id: "\(row.jobID):\(row.suiteID):\(row.scoreName)",
             suiteTitle: evaluationSuiteTitle(for: row.suiteID),
-            metricName: row.metricName,
-            metricLabel: benchmarkMetricLabel(row.metricName),
-            value: row.metricValue,
-            valueText: String(format: "%.2f %@", row.metricValue, row.unit),
-            unit: row.unit
+            metricName: row.scoreName,
+            metricLabel: evaluationScoreLabel(row.scoreName),
+            value: row.scoreValue,
+            valueText: String(format: "%.2f", row.scoreValue),
+            unit: "score"
         )
     }
 
@@ -3765,16 +3824,16 @@ public final class RuntimeViewModel {
         return normalized.replacingOccurrences(of: "_", with: " ")
     }
 
+    private static func evaluationScoreLabel(_ scoreName: String) -> String {
+        scoreName.replacingOccurrences(of: "_", with: " ").capitalized
+    }
+
     private static func evaluationSuiteTitle(for suiteID: String) -> String {
         evaluationSuiteOptions.first(where: { $0.id == suiteID })?.title ?? suiteID
     }
 
     private static func evaluationScoringModeLabel(_ scoringMode: String) -> String {
-        let normalized = scoringMode.replacingOccurrences(of: "_", with: " ")
-        guard let first = normalized.first else {
-            return "Unknown"
-        }
-        return String(first).uppercased() + normalized.dropFirst()
+        scoringMode.replacingOccurrences(of: "_", with: " ").capitalized
     }
 
     private static func benchmarkSuiteTitle(for suiteID: String, taskKind: String) -> String {
@@ -3841,6 +3900,74 @@ public final class RuntimeViewModel {
             return "text-to-image"
         }
         return "text-generation"
+    }
+
+    private static func normalizedBenchValues(
+        _ values: [UInt32],
+        defaultValues: [UInt32]
+    ) -> [UInt32] {
+        let normalized = Array(Set(values.filter { $0 > 0 })).sorted()
+        return normalized.isEmpty ? defaultValues : normalized
+    }
+
+    private func normalizedBenchContextLengths() -> [UInt32] {
+        Self.normalizedBenchValues(
+            selectedBenchContextLengths,
+            defaultValues: Self.benchmarkContextLengthOptions.prefix(2).map { $0 }
+        )
+    }
+
+    private func normalizedBenchBatchSizes() -> [UInt32] {
+        Self.normalizedBenchValues(
+            selectedBenchBatchSizes,
+            defaultValues: Self.benchmarkBatchSizeOptions.filter { $0 > 1 }.prefix(2).map { $0 }
+        )
+    }
+
+    private func normalizedBenchRepeats() -> UInt32 {
+        let trimmed = benchRepeats.trimmingCharacters(in: .whitespacesAndNewlines)
+        return max(1, UInt32(trimmed) ?? 1)
+    }
+
+    private func normalizedBenchRepeatsText() -> String {
+        let trimmed = benchRepeats.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "3" : trimmed
+    }
+
+    private func normalizedBenchCacheProfile() -> String {
+        let trimmed = benchCacheProfile.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.isEmpty == false else {
+            return Self.benchmarkCacheProfileOptions.first ?? "cold"
+        }
+        return Self.benchmarkCacheProfileOptions.contains(trimmed) ? trimmed : (Self.benchmarkCacheProfileOptions.first ?? "cold")
+    }
+
+    private func normalizedBenchReasoningMode() -> String {
+        benchReasoningMode.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func normalizedBenchStructuredOutputMode() -> String {
+        benchStructuredOutputMode.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func normalizedEvaluationScoringMode() -> String {
+        let trimmed = evaluationScoringMode.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "multiple_choice_accuracy" : trimmed
+    }
+
+    private func normalizedEvaluationCodeExecPolicy() -> String {
+        let trimmed = evaluationCodeExecPolicy.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "sandboxed" : trimmed
+    }
+
+    private static func toggledValues(_ value: UInt32, in values: [UInt32]) -> [UInt32] {
+        var set = Set(values)
+        if set.contains(value) {
+            set.remove(value)
+        } else {
+            set.insert(value)
+        }
+        return Array(set).sorted()
     }
 
     private static func benchmarkTimestampLabel(_ unixMS: Int64) -> String {

@@ -340,7 +340,12 @@ struct ControlPlaneXPCClientTests {
         let client = LocalControlPlaneXPCClient(service: service)
 
         let doctor = try await client.runDoctor()
-        let bench = try await client.runBench()
+        let bench = try await client.runBench(
+            ControlPlaneBenchRequest(
+                suites: ["smoke"],
+                contextLengths: [1024]
+            )
+        )
 
         #expect(doctor.contains("Melix Doctor"))
         #expect(bench.reportPath == reportPath)
