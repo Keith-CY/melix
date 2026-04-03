@@ -7,6 +7,8 @@ from worker.productization.benchmark_export import (
     build_comparison_table,
     build_benchmark_batch_csv,
     build_benchmark_context_csv,
+    build_benchmark_matrix_requests_csv,
+    build_benchmark_matrix_summary_csv,
     build_benchmark_summary_csv,
     build_export_bundle,
     collect_benchmark_artifacts,
@@ -187,6 +189,84 @@ def _write_bench_run_fixture(root: Path, *, job_id: str, model_id: str, ttft_ms:
     )
 
 
+def _write_bench_matrix_run_fixture(root: Path, *, job_id: str) -> None:
+    run_root = root / "matrix-runs" / job_id
+    run_root.mkdir(parents=True, exist_ok=True)
+    (run_root / "bench-matrix-job.json").write_text(
+        json.dumps({
+            "schema_version": "melix.benchmark_matrix_job.v1",
+            "job_id": job_id,
+            "model_id": "melix-dev-text",
+            "task_kind": "text-generation",
+            "source_repo": "HuggingFaceH4/ultrachat_200k",
+            "suite_ids": ["smoke"],
+            "benchmark_mode": "matrix",
+            "status": "completed",
+            "output_dir": str(run_root),
+            "created_at_unix_ms": 111,
+            "updated_at_unix_ms": 222,
+        }) + "\n"
+    )
+    (run_root / "bench-matrix-summary.jsonl").write_text(
+        json.dumps({
+            "job_id": job_id,
+            "task_kind": "text-generation",
+            "source_repo": "HuggingFaceH4/ultrachat_200k",
+            "model_id": "melix-dev-text",
+            "suite_id": "smoke",
+            "context_length": 1024,
+            "generation_length": 128,
+            "batch_size": 2,
+            "cache_profile": "cold",
+            "reasoning_mode": "enabled",
+            "structured_output_mode": "plain_text",
+            "concurrency_level": 1,
+            "repeats": 3,
+            "requests": 24,
+            "duration_seconds": 0,
+            "ttft_mean_ms": 24.45,
+            "ttft_std_ms": 1.2,
+            "request_latency_mean_ms": 88.4,
+            "request_latency_std_ms": 3.1,
+            "prefill_tokens_per_second_mean": 1400.0,
+            "decode_tokens_per_second_mean": 58.2,
+            "throughput_requests_per_second": 3.8,
+            "throughput_tokens_per_second": 221.5,
+            "success_rate": 1.0,
+            "peak_memory_bytes_max": 2147483648,
+            "queue_wait_mean_ms": 5.1,
+            "queue_wait_p95_ms": 9.2,
+            "created_at_unix_ms": 111,
+        }) + "\n"
+    )
+    (run_root / "bench-matrix-requests.jsonl").write_text(
+        json.dumps({
+            "job_id": job_id,
+            "cell_id": "cell-1",
+            "task_kind": "text-generation",
+            "suite_id": "smoke",
+            "context_length": 1024,
+            "generation_length": 128,
+            "batch_size": 2,
+            "cache_profile": "cold",
+            "reasoning_mode": "enabled",
+            "structured_output_mode": "plain_text",
+            "concurrency_level": 1,
+            "repeat_index": 0,
+            "request_index": 0,
+            "ttft_ms": 24.45,
+            "request_latency_ms": 88.4,
+            "prefill_tokens_per_second": 1400.0,
+            "decode_tokens_per_second": 58.2,
+            "queue_wait_ms": 5.1,
+            "peak_memory_bytes": 2147483648,
+            "status": "completed",
+            "error_code": "",
+            "created_at_unix_ms": 111,
+        }) + "\n"
+    )
+
+
 def _write_eval_fixtures(root: Path) -> None:
     root.mkdir(parents=True, exist_ok=True)
     (root / "evaluation-job.json").write_text(
@@ -284,6 +364,20 @@ def test_collect_benchmark_artifacts_reads_per_run_history_from_runs_directory(
     assert [row["job_id"] for row in result["benchmark_batch_rows"]] == ["bench-1", "bench-2"]
 
 
+def test_collect_benchmark_artifacts_reads_matrix_run_history_from_matrix_runs_directory(
+    tmp_path: Path,
+) -> None:
+    bench_root = tmp_path / "bench"
+    _write_bench_matrix_run_fixture(bench_root, job_id="bench-matrix-1")
+    _write_bench_matrix_run_fixture(bench_root, job_id="bench-matrix-2")
+
+    result = collect_benchmark_artifacts(tmp_path)
+
+    assert [job["job_id"] for job in result["benchmark_matrix_jobs"]] == ["bench-matrix-1", "bench-matrix-2"]
+    assert [row["job_id"] for row in result["benchmark_matrix_summary_rows"]] == ["bench-matrix-1", "bench-matrix-2"]
+    assert [row["job_id"] for row in result["benchmark_matrix_request_rows"]] == ["bench-matrix-1", "bench-matrix-2"]
+
+
 def test_collect_evaluation_artifacts_finds_persisted_eval_files(tmp_path: Path) -> None:
     _write_eval_fixtures(tmp_path)
 
@@ -313,6 +407,7 @@ def test_collect_evaluation_artifacts_reads_per_run_history_from_runs_directory(
 
 def test_build_export_bundle_combines_benchmark_and_evaluation_artifacts(tmp_path: Path) -> None:
     _write_bench_fixtures(tmp_path)
+    _write_bench_matrix_run_fixture(tmp_path / "bench", job_id="bench-matrix-1")
     _write_eval_fixtures(tmp_path)
 
     bundle = build_export_bundle(tmp_path)
@@ -323,6 +418,9 @@ def test_build_export_bundle_combines_benchmark_and_evaluation_artifacts(tmp_pat
     assert len(bundle["benchmark_summary_rows"]) == 1
     assert len(bundle["benchmark_context_rows"]) == 1
     assert len(bundle["benchmark_batch_rows"]) == 1
+    assert len(bundle["benchmark_matrix_jobs"]) == 1
+    assert len(bundle["benchmark_matrix_summary_rows"]) == 1
+    assert len(bundle["benchmark_matrix_request_rows"]) == 1
     assert len(bundle["evaluation_jobs"]) == 1
     assert len(bundle["evaluation_samples"]) == 1
 
@@ -332,6 +430,7 @@ def test_build_export_bundle_collects_benchmark_and_evaluation_from_model_ops_ro
 ) -> None:
     jobs_root = tmp_path / "model-ops"
     _write_bench_fixtures(jobs_root / "bench")
+    _write_bench_matrix_run_fixture(jobs_root / "bench", job_id="bench-matrix-1")
     _write_eval_fixtures(jobs_root / "evaluation")
 
     bundle = build_export_bundle(jobs_root)
@@ -339,6 +438,9 @@ def test_build_export_bundle_collects_benchmark_and_evaluation_from_model_ops_ro
     assert len(bundle["benchmark_jobs"]) == 1
     assert len(bundle["benchmark_results"]) == 1
     assert len(bundle["benchmark_summary_rows"]) == 1
+    assert len(bundle["benchmark_matrix_jobs"]) == 1
+    assert len(bundle["benchmark_matrix_summary_rows"]) == 1
+    assert len(bundle["benchmark_matrix_request_rows"]) == 1
     assert len(bundle["evaluation_jobs"]) == 1
     assert len(bundle["evaluation_results"]) == 1
     assert len(bundle["evaluation_samples"]) == 1
@@ -410,6 +512,19 @@ def test_build_benchmark_context_and_batch_csv_use_canonical_rows(tmp_path: Path
     assert "context_length,generation_length,batch_size,repeat_index" in batch_csv.splitlines()[0]
     assert "bench-1,melix-dev-text,text-generation,HuggingFaceH4/ultrachat_200k,smoke,32,8,1,0" in context_csv
     assert "bench-1,melix-dev-text,text-generation,HuggingFaceH4/ultrachat_200k,smoke,32,8,1,0" in batch_csv
+
+
+def test_build_benchmark_matrix_summary_and_requests_csv_use_canonical_rows(tmp_path: Path) -> None:
+    _write_bench_matrix_run_fixture(tmp_path / "bench", job_id="bench-matrix-1")
+    bundle = build_export_bundle(tmp_path)
+
+    summary_csv = build_benchmark_matrix_summary_csv(bundle)
+    requests_csv = build_benchmark_matrix_requests_csv(bundle)
+
+    assert "job_id,task_kind,source_repo,model_id,suite_id,context_length" in summary_csv.splitlines()[0]
+    assert "job_id,cell_id,task_kind,suite_id,context_length,generation_length" in requests_csv.splitlines()[0]
+    assert "bench-matrix-1,text-generation,HuggingFaceH4/ultrachat_200k,melix-dev-text,smoke,1024,128,2,cold,enabled,plain_text,1,3,24,0,24.45,1.2,88.4,3.1,1400.0,58.2,3.8,221.5,1.0,2147483648,5.1,9.2,111" in summary_csv
+    assert "bench-matrix-1,cell-1,text-generation,smoke,1024,128,2,cold,enabled,plain_text,1,0,0,24.45,88.4,1400.0,58.2,5.1,2147483648,completed,,111" in requests_csv
 
 
 def test_build_comparison_table_produces_markdown_with_metric_columns() -> None:

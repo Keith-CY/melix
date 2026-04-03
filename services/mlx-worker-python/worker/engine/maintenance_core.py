@@ -865,6 +865,342 @@ class MaintenanceCore:
             if lazy_model_handle and loaded_model is not None and lazy_model_handle == loaded_model.handle:
                 self._registry.unload_model(lazy_model_handle)
 
+    def bench_matrix_response(
+        self,
+        request: maintenance_pb2.RunBenchMatrixRequest,
+    ) -> maintenance_pb2.RunBenchMatrixResponse:
+        from worker.productization.benchmark_schemas import (
+            build_benchmark_matrix_job,
+            build_benchmark_matrix_request_row,
+            build_benchmark_matrix_summary_row,
+        )
+        from worker.productization.benchmark_store import BenchmarkStore
+
+        suite_ids = self._normalized_string_values(request.suite_ids, default=("smoke",))
+        context_lengths = self._positive_sorted_values(request.context_lengths, default=(1024,))
+        generation_lengths = self._positive_sorted_values(request.generation_lengths, default=(128,))
+        batch_sizes = self._positive_sorted_values(request.batch_sizes, default=(1,))
+        cache_profiles = self._normalized_string_values(request.cache_profiles, default=("cold",))
+        reasoning_modes = self._normalized_string_values(request.reasoning_modes, default=("default",))
+        structured_output_modes = self._normalized_string_values(
+            request.structured_output_modes,
+            default=("plain_text",),
+        )
+        concurrency_levels = self._positive_sorted_values(request.concurrency_levels, default=(1,))
+        repeats = max(int(request.repeats or 0), 1)
+        requests = int(request.requests or 0)
+        duration_seconds = int(request.duration_seconds or 0)
+        if (requests > 0) == (duration_seconds > 0):
+            raise ModelOperationError(
+                code="invalid_argument",
+                message="Provide exactly one matrix load budget.",
+                details={"requests": requests, "duration_seconds": duration_seconds},
+            )
+
+        bench_root = (self._jobs_root / "bench").resolve()
+        bench_root.mkdir(parents=True, exist_ok=True)
+
+        job = self._job_registry.start("bench-matrix", request.model_handle or "runtime", "")
+        output_dir = (bench_root / "matrix-runs" / job.job_id).resolve()
+        output_dir.mkdir(parents=True, exist_ok=True)
+        self._job_registry.set_output_dir(job.job_id, str(output_dir))
+        queued_at = int(time.time() * 1000)
+        queue_parameters = {
+            "context_lengths": ",".join(str(value) for value in context_lengths),
+            "generation_lengths": ",".join(str(value) for value in generation_lengths),
+            "batch_sizes": ",".join(str(value) for value in batch_sizes),
+            "cache_profiles": ",".join(cache_profiles),
+            "reasoning_modes": ",".join(reasoning_modes),
+            "structured_output_modes": ",".join(structured_output_modes),
+            "concurrency_levels": ",".join(str(value) for value in concurrency_levels),
+            "repeats": str(repeats),
+            "requests": str(requests),
+            "duration_seconds": str(duration_seconds),
+        }
+        self._benchmark_queue_store.enqueue(
+            queue_root=bench_root / "matrix-queue",
+            record=BenchmarkQueueRecord(
+                queue_item_id=job.job_id,
+                job_kind="benchmark_matrix",
+                model_id=(request.model_handle or "runtime").split("::", 1)[0],
+                suite_ids=tuple(suite_ids),
+                parameters=queue_parameters,
+                status="queued",
+                created_at_unix_ms=queued_at,
+                updated_at_unix_ms=queued_at,
+            ),
+        )
+        self._benchmark_queue_store.transition(
+            queue_root=bench_root / "matrix-queue",
+            queue_item_id=job.job_id,
+            status="running",
+            updated_at_unix_ms=queued_at + 1,
+        )
+
+        lazy_model_handle = ""
+        loaded_model = None
+        try:
+            lazy_model_handle, loaded_model = self._resolve_benchmark_loaded_model(request.model_handle)
+            task_kind = self._resolved_benchmark_matrix_task_kind(
+                request=request,
+                loaded_model=loaded_model,
+            )
+            if task_kind not in {"text-generation", "image-to-text", "image-text-to-text"}:
+                raise ModelOperationError(
+                    code="unsupported_task_family",
+                    message=f"Unsupported benchmark matrix task kind: {task_kind}",
+                    details={"task_kind": task_kind},
+                )
+
+            model_id = (request.model_handle or lazy_model_handle or "runtime").split("::", 1)[0]
+            summary_rows = []
+            request_rows = []
+            cell_counter = 0
+            for suite_id in suite_ids:
+                resolved_suite = self._benchmark_suite_catalog.resolve_suite(
+                    suite_id,
+                    jobs_root=self._jobs_root,
+                    parameters={},
+                    task_kind=task_kind,
+                )
+                cases = list(resolved_suite.cases)
+                for context_length in context_lengths:
+                    for generation_length in generation_lengths:
+                        for batch_size in batch_sizes:
+                            for cache_profile in cache_profiles:
+                                for reasoning_mode in reasoning_modes:
+                                    for structured_output_mode in structured_output_modes:
+                                        for concurrency_level in concurrency_levels:
+                                            cell_counter += 1
+                                            cell_id = f"cell-{cell_counter}"
+                                            row_count = self._benchmark_matrix_request_count(
+                                                requests=requests,
+                                                duration_seconds=duration_seconds,
+                                                repeats=repeats,
+                                                concurrency_level=concurrency_level,
+                                            )
+                                            cell_rows = []
+                                            for request_index in range(row_count):
+                                                repeat_index = request_index % repeats
+                                                created_at_unix_ms = int(time.time() * 1000)
+                                                case = (
+                                                    cases[request_index % len(cases)]
+                                                    if cases
+                                                    else None
+                                                )
+                                                try:
+                                                    sample = self._measure_benchmark_matrix_sample(
+                                                        loaded_model=loaded_model,
+                                                        suite=resolved_suite,
+                                                        case=case,
+                                                        task_kind=task_kind,
+                                                        context_length=context_length,
+                                                        generation_length=generation_length,
+                                                        batch_size=batch_size,
+                                                        repeat_index=repeat_index,
+                                                        cache_profile=cache_profile,
+                                                        reasoning_mode=reasoning_mode,
+                                                        structured_output_mode=structured_output_mode,
+                                                    )
+                                                    row = build_benchmark_matrix_request_row(
+                                                        job_id=job.job_id,
+                                                        cell_id=cell_id,
+                                                        task_kind=task_kind,
+                                                        suite_id=resolved_suite.suite_id,
+                                                        context_length=context_length,
+                                                        generation_length=generation_length,
+                                                        batch_size=batch_size,
+                                                        cache_profile=cache_profile,
+                                                        reasoning_mode=reasoning_mode,
+                                                        structured_output_mode=structured_output_mode,
+                                                        concurrency_level=concurrency_level,
+                                                        repeat_index=repeat_index,
+                                                        request_index=request_index,
+                                                        ttft_ms=sample.ttft_ms,
+                                                        request_latency_ms=sample.request_latency_ms,
+                                                        prefill_tokens_per_second=sample.prefill_tokens_per_second,
+                                                        decode_tokens_per_second=sample.decode_tokens_per_second,
+                                                        queue_wait_ms=0.0,
+                                                        peak_memory_bytes=int(sample.peak_memory_bytes),
+                                                        status="completed",
+                                                        error_code="",
+                                                        created_at_unix_ms=created_at_unix_ms,
+                                                    )
+                                                except Exception as exc:
+                                                    row = build_benchmark_matrix_request_row(
+                                                        job_id=job.job_id,
+                                                        cell_id=cell_id,
+                                                        task_kind=task_kind,
+                                                        suite_id=resolved_suite.suite_id,
+                                                        context_length=context_length,
+                                                        generation_length=generation_length,
+                                                        batch_size=batch_size,
+                                                        cache_profile=cache_profile,
+                                                        reasoning_mode=reasoning_mode,
+                                                        structured_output_mode=structured_output_mode,
+                                                        concurrency_level=concurrency_level,
+                                                        repeat_index=repeat_index,
+                                                        request_index=request_index,
+                                                        ttft_ms=0.0,
+                                                        request_latency_ms=0.0,
+                                                        prefill_tokens_per_second=0.0,
+                                                        decode_tokens_per_second=0.0,
+                                                        queue_wait_ms=0.0,
+                                                        peak_memory_bytes=0,
+                                                        status="failed",
+                                                        error_code=getattr(exc, "code", "runtime_error"),
+                                                        created_at_unix_ms=created_at_unix_ms,
+                                                    )
+                                                cell_rows.append(row)
+                                                request_rows.append(row)
+
+                                            completed_rows = [row for row in cell_rows if row.status == "completed"]
+                                            request_latencies = [row.request_latency_ms for row in completed_rows]
+                                            ttft_values = [row.ttft_ms for row in completed_rows]
+                                            prefill_values = [
+                                                row.prefill_tokens_per_second for row in completed_rows
+                                            ]
+                                            decode_values = [
+                                                row.decode_tokens_per_second for row in completed_rows
+                                            ]
+                                            queue_wait_values = [row.queue_wait_ms for row in completed_rows]
+                                            peak_memory_values = [
+                                                float(row.peak_memory_bytes) for row in completed_rows
+                                            ]
+                                            total_latency_seconds = sum(request_latencies) / 1_000.0
+                                            throughput_requests_per_second = (
+                                                len(completed_rows) / max(total_latency_seconds, 0.001)
+                                                if completed_rows
+                                                else 0.0
+                                            )
+                                            decode_mean = self._mean(decode_values)
+                                            summary_rows.append(
+                                                build_benchmark_matrix_summary_row(
+                                                    job_id=job.job_id,
+                                                    task_kind=task_kind,
+                                                    source_repo=request.source_repo,
+                                                    model_id=model_id,
+                                                    suite_id=resolved_suite.suite_id,
+                                                    context_length=context_length,
+                                                    generation_length=generation_length,
+                                                    batch_size=batch_size,
+                                                    cache_profile=cache_profile,
+                                                    reasoning_mode=reasoning_mode,
+                                                    structured_output_mode=structured_output_mode,
+                                                    concurrency_level=concurrency_level,
+                                                    repeats=repeats,
+                                                    requests=requests,
+                                                    duration_seconds=duration_seconds,
+                                                    ttft_mean_ms=self._mean(ttft_values),
+                                                    ttft_std_ms=self._stddev(ttft_values),
+                                                    request_latency_mean_ms=self._mean(request_latencies),
+                                                    request_latency_std_ms=self._stddev(request_latencies),
+                                                    prefill_tokens_per_second_mean=self._mean(prefill_values),
+                                                    decode_tokens_per_second_mean=decode_mean,
+                                                    throughput_requests_per_second=round(
+                                                        throughput_requests_per_second,
+                                                        2,
+                                                    ),
+                                                    throughput_tokens_per_second=round(
+                                                        decode_mean * throughput_requests_per_second,
+                                                        2,
+                                                    ),
+                                                    success_rate=round(
+                                                        len(completed_rows) / max(len(cell_rows), 1),
+                                                        4,
+                                                    ),
+                                                    peak_memory_bytes_max=int(max(peak_memory_values, default=0.0)),
+                                                    queue_wait_mean_ms=self._mean(queue_wait_values),
+                                                    queue_wait_p95_ms=self._percentile(queue_wait_values, 95.0),
+                                                    created_at_unix_ms=queued_at,
+                                                )
+                                            )
+
+            completed_at = int(time.time() * 1000)
+            job_record = build_benchmark_matrix_job(
+                job_id=job.job_id,
+                model_id=model_id,
+                task_kind=task_kind,
+                source_repo=request.source_repo,
+                suite_ids=suite_ids,
+                status="completed",
+                output_dir=str(output_dir),
+                created_at_unix_ms=queued_at,
+                updated_at_unix_ms=completed_at,
+            )
+            if self._benchmark_store is None:
+                self._benchmark_store = BenchmarkStore()
+            self._benchmark_store.persist_benchmark_matrix(
+                jobs_root=output_dir,
+                job=job_record,
+                summary_rows=tuple(summary_rows),
+                request_rows=tuple(request_rows),
+            )
+            self._job_registry.complete(job.job_id, str(output_dir / "bench-matrix-summary.csv"))
+            self._benchmark_queue_store.transition(
+                queue_root=bench_root / "matrix-queue",
+                queue_item_id=job.job_id,
+                status="completed",
+                updated_at_unix_ms=completed_at,
+            )
+
+            response = maintenance_pb2.RunBenchMatrixResponse()
+            response.job.schema_version = job_record.schema_version
+            response.job.job_id = job_record.job_id
+            response.job.model_id = job_record.model_id
+            response.job.task_kind = job_record.task_kind
+            response.job.source_repo = job_record.source_repo
+            response.job.suite_ids.extend(job_record.suite_ids)
+            response.job.benchmark_mode = job_record.benchmark_mode
+            response.job.status = job_record.status
+            response.job.output_dir = job_record.output_dir
+            response.job.created_at_unix_ms = job_record.created_at_unix_ms
+            response.job.updated_at_unix_ms = job_record.updated_at_unix_ms
+            for row in summary_rows:
+                row_message = response.summary_rows.add()
+                row_message.job_id = row.job_id
+                row_message.task_kind = row.task_kind
+                row_message.source_repo = row.source_repo
+                row_message.model_id = row.model_id
+                row_message.suite_id = row.suite_id
+                row_message.context_length = row.context_length
+                row_message.generation_length = row.generation_length
+                row_message.batch_size = row.batch_size
+                row_message.cache_profile = row.cache_profile
+                row_message.reasoning_mode = row.reasoning_mode
+                row_message.structured_output_mode = row.structured_output_mode
+                row_message.concurrency_level = row.concurrency_level
+                row_message.repeats = row.repeats
+                row_message.requests = row.requests
+                row_message.duration_seconds = row.duration_seconds
+                row_message.ttft_mean_ms = row.ttft_mean_ms
+                row_message.ttft_std_ms = row.ttft_std_ms
+                row_message.request_latency_mean_ms = row.request_latency_mean_ms
+                row_message.request_latency_std_ms = row.request_latency_std_ms
+                row_message.prefill_tokens_per_second_mean = row.prefill_tokens_per_second_mean
+                row_message.decode_tokens_per_second_mean = row.decode_tokens_per_second_mean
+                row_message.throughput_requests_per_second = row.throughput_requests_per_second
+                row_message.throughput_tokens_per_second = row.throughput_tokens_per_second
+                row_message.success_rate = row.success_rate
+                row_message.peak_memory_bytes_max = row.peak_memory_bytes_max
+                row_message.queue_wait_mean_ms = row.queue_wait_mean_ms
+                row_message.queue_wait_p95_ms = row.queue_wait_p95_ms
+                row_message.created_at_unix_ms = row.created_at_unix_ms
+            return response
+        except Exception as exc:
+            completed_at = int(time.time() * 1000)
+            self._job_registry.fail(job.job_id, getattr(exc, "code", "runtime_error"), str(exc))
+            self._benchmark_queue_store.transition(
+                queue_root=bench_root / "matrix-queue",
+                queue_item_id=job.job_id,
+                status="failed",
+                updated_at_unix_ms=completed_at,
+            )
+            raise
+        finally:
+            if lazy_model_handle and loaded_model is not None and lazy_model_handle == loaded_model.handle:
+                self._registry.unload_model(lazy_model_handle)
+
     @staticmethod
     def _artifact_path(operation: str, output_dir: Path) -> Path:
         filename = {
@@ -1058,6 +1394,135 @@ class MaintenanceCore:
             ).strip()
             return image_task_kind or "text-to-image"
         return "text-generation"
+
+    @staticmethod
+    def _resolved_benchmark_matrix_task_kind(
+        *,
+        request: maintenance_pb2.RunBenchMatrixRequest,
+        loaded_model,
+    ) -> str:
+        runtime_metadata = {}
+        runtime_model = getattr(loaded_model, "runtime_model", None)
+        if isinstance(runtime_model, dict):
+            raw_metadata = runtime_model.get("metadata")
+            if isinstance(raw_metadata, dict):
+                runtime_metadata = {
+                    str(key): str(value)
+                    for key, value in raw_metadata.items()
+                }
+        if runtime_metadata.get("melix.vlm.execution_mode", "").strip() == "text_backed":
+            return "text-generation"
+        explicit = getattr(request, "task_kind", "").strip()
+        if explicit:
+            return explicit
+        model_kind = getattr(getattr(loaded_model, "spec", None), "model_kind", "").strip()
+        if model_kind == "vlm":
+            return "image-text-to-text"
+        if model_kind == "ocr":
+            return "image-to-text"
+        return "text-generation"
+
+    @staticmethod
+    def _positive_sorted_values(values, *, default: tuple[int, ...]) -> tuple[int, ...]:
+        normalized = sorted(
+            {
+                int(value)
+                for value in values
+                if int(value) > 0
+            }
+        )
+        return tuple(normalized) or default
+
+    @staticmethod
+    def _normalized_string_values(values, *, default: tuple[str, ...]) -> tuple[str, ...]:
+        normalized = sorted(
+            {
+                str(value).strip()
+                for value in values
+                if str(value).strip()
+            }
+        )
+        return tuple(normalized) or default
+
+    @staticmethod
+    def _benchmark_matrix_request_count(
+        *,
+        requests: int,
+        duration_seconds: int,
+        repeats: int,
+        concurrency_level: int,
+    ) -> int:
+        if requests > 0:
+            return max(requests, 1)
+        return max(repeats, max(duration_seconds, 1) * max(concurrency_level, 1))
+
+    def _measure_benchmark_matrix_sample(
+        self,
+        *,
+        loaded_model,
+        suite: ResolvedBenchmarkSuite,
+        case,
+        task_kind: str,
+        context_length: int,
+        generation_length: int,
+        batch_size: int,
+        repeat_index: int,
+        cache_profile: str,
+        reasoning_mode: str,
+        structured_output_mode: str,
+    ) -> BenchSample:
+        parameters = {"max_output_tokens": str(generation_length)}
+        if task_kind == "text-generation":
+            prompt = ""
+            if case is not None:
+                prompt = getattr(case, "prompt", "") or ""
+            prompt = prompt or suite.title
+            return self._measure_text_bench_sample(
+                loaded_model=loaded_model,
+                suite=suite,
+                prompt=prompt,
+                parameters=parameters,
+                context_length=context_length,
+                repeat_index=repeat_index,
+                batch_size=batch_size,
+                cache_profile=cache_profile,
+                reasoning_mode=reasoning_mode,
+                structured_output_mode=structured_output_mode,
+            )
+        if task_kind in {"image-to-text", "image-text-to-text"}:
+            if case is None:
+                raise ModelOperationError(
+                    code="benchmark_failed",
+                    message="Benchmark matrix suite did not provide a VLM case.",
+                )
+            sample = self._measure_vlm_bench_sample(
+                loaded_model=loaded_model,
+                suite=suite,
+                case=case,
+                parameters=parameters,
+            )
+            request_latency_ms = sample.request_latency_ms or sample.total_latency_ms
+            decode_tokens_per_second = sample.decode_tokens_per_second
+            if decode_tokens_per_second <= 0.0:
+                decode_tokens_per_second = round(
+                    sample.completion_tokens / max((request_latency_ms - sample.ttft_ms) / 1_000.0, 0.001),
+                    2,
+                )
+            return BenchSample(
+                ttft_ms=sample.ttft_ms,
+                total_latency_ms=sample.total_latency_ms,
+                completion_tokens=sample.completion_tokens,
+                prompt_tokens=sample.prompt_tokens,
+                request_latency_ms=request_latency_ms,
+                prefill_tokens_per_second=sample.prefill_tokens_per_second,
+                decode_tokens_per_second=decode_tokens_per_second,
+                peak_memory_bytes=sample.peak_memory_bytes,
+            )
+        raise ModelOperationError(
+            code="unsupported_task_family",
+            message=f"Unsupported benchmark matrix task kind: {task_kind}",
+            details={"task_kind": task_kind},
+        )
 
     def _measure_text_bench_metrics(
         self,
@@ -1853,6 +2318,20 @@ class MaintenanceCore:
             return round(lower_value, 2)
         weight = rank - lower_index
         return round(lower_value + (upper_value - lower_value) * weight, 2)
+
+    @staticmethod
+    def _mean(values: list[float]) -> float:
+        if not values:
+            return 0.0
+        return round(sum(values) / len(values), 2)
+
+    @staticmethod
+    def _stddev(values: list[float]) -> float:
+        if len(values) <= 1:
+            return 0.0
+        mean = sum(values) / len(values)
+        variance = sum((value - mean) ** 2 for value in values) / len(values)
+        return round(math.sqrt(variance), 2)
 
     @staticmethod
     def _render_bench_report(

@@ -253,6 +253,10 @@ class WorkerMaintenanceService(maintenance_pb2_grpc.MaintenanceServiceServicer):
     def RunBench(self, request, context):
         yield from self._core.bench_events(request)
 
+    def RunBenchMatrix(self, request, context):
+        _ = context
+        return self._core.bench_matrix_response(request)
+
     def RunEvaluation(self, request, context):
         try:
             parameters = dict(request.parameters)

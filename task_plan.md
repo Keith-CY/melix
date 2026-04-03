@@ -24,9 +24,13 @@ Execute `docs/plans/2026-04-03-bench-matrix-performance-lab.md` so Melix gains a
      - `melix bench matrix run|list|export-summary-csv|export-requests-csv` landed in the shared CLI
      - control-plane validation, export decoding, Python bridge, and local XPC client paths are verified with changed-line coverage above `95%`
 3. Slice 3: worker-side matrix runner, persistence, and export
-   - status: in progress
+   - status: completed
+   - evidence:
+     - matrix runs persist under `<jobs_root>/bench/matrix-runs/<job_id>/`
+     - worker responses expose typed matrix job summaries plus summary rows
+     - export and submission bundles now carry matrix jobs, summary rows, and request rows
 4. Slice 4: Window UI matrix controls and result views
-   - status: pending
+   - status: in progress
 5. Slice 5: verification, coverage, and documentation close-out
    - status: pending
 
@@ -48,8 +52,7 @@ Execute `docs/plans/2026-04-03-bench-matrix-performance-lab.md` so Melix gains a
 
 - active slices:
   - Slice 1 reset the canonical contract and execution plan for `bench matrix`
-  - Slice 3 worker execution, persistence, and export are implemented and being closed with coverage and commit hygiene
+  - Slice 4 Window UI matrix controls and views are the current implementation focus
 - remaining slices:
-  - worker-side matrix execution and export
   - Window UI productization
   - transaction-wide verification and close-out

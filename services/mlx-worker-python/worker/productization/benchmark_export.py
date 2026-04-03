@@ -20,6 +20,9 @@ def collect_benchmark_artifacts(jobs_root: Path) -> dict[str, object]:
     context_rows: list[dict[str, object]] = []
     batch_rows: list[dict[str, object]] = []
     results: list[dict[str, object]] = []
+    matrix_jobs: list[dict[str, object]] = []
+    matrix_summary_rows: list[dict[str, object]] = []
+    matrix_request_rows: list[dict[str, object]] = []
 
     _collect_benchmark_run(
         jobs_root,
@@ -28,6 +31,17 @@ def collect_benchmark_artifacts(jobs_root: Path) -> dict[str, object]:
         batch_rows=batch_rows,
         results=results,
     )
+    matrix_roots = [jobs_root]
+    nested_bench_root = jobs_root / "bench"
+    if nested_bench_root.is_dir() and nested_bench_root != jobs_root:
+        matrix_roots.append(nested_bench_root)
+    for matrix_root in matrix_roots:
+        _collect_benchmark_matrix_run(
+            matrix_root,
+            jobs=matrix_jobs,
+            summary_rows=matrix_summary_rows,
+            request_rows=matrix_request_rows,
+        )
     runs_root = jobs_root / "runs"
     if runs_root.is_dir():
         for run_root in sorted(path for path in runs_root.iterdir() if path.is_dir()):
@@ -38,6 +52,16 @@ def collect_benchmark_artifacts(jobs_root: Path) -> dict[str, object]:
                 batch_rows=batch_rows,
                 results=results,
             )
+    for matrix_root in matrix_roots:
+        matrix_runs_root = matrix_root / "matrix-runs"
+        if matrix_runs_root.is_dir():
+            for run_root in sorted(path for path in matrix_runs_root.iterdir() if path.is_dir()):
+                _collect_benchmark_matrix_run(
+                    run_root,
+                    jobs=matrix_jobs,
+                    summary_rows=matrix_summary_rows,
+                    request_rows=matrix_request_rows,
+                )
 
     return {
         "benchmark_jobs": summary_rows,
@@ -45,6 +69,9 @@ def collect_benchmark_artifacts(jobs_root: Path) -> dict[str, object]:
         "benchmark_context_rows": context_rows,
         "benchmark_batch_rows": batch_rows,
         "benchmark_results": results,
+        "benchmark_matrix_jobs": matrix_jobs,
+        "benchmark_matrix_summary_rows": matrix_summary_rows,
+        "benchmark_matrix_request_rows": matrix_request_rows,
     }
 
 
@@ -160,6 +187,16 @@ def build_benchmark_context_csv(bundle: dict[str, object]) -> str:
 def build_benchmark_batch_csv(bundle: dict[str, object]) -> str:
     rows = [row for row in bundle.get("benchmark_batch_rows", []) if isinstance(row, dict)]
     return _rows_to_csv(rows, _canonical_benchmark_row_columns())
+
+
+def build_benchmark_matrix_summary_csv(bundle: dict[str, object]) -> str:
+    rows = [row for row in bundle.get("benchmark_matrix_summary_rows", []) if isinstance(row, dict)]
+    return _rows_to_csv(rows, _canonical_benchmark_matrix_summary_columns())
+
+
+def build_benchmark_matrix_requests_csv(bundle: dict[str, object]) -> str:
+    rows = [row for row in bundle.get("benchmark_matrix_request_rows", []) if isinstance(row, dict)]
+    return _rows_to_csv(rows, _canonical_benchmark_matrix_request_columns())
 
 
 def write_export_bundle(jobs_root: Path, output_path: Path) -> Path:
@@ -286,6 +323,34 @@ def _collect_benchmark_run(
             results.append(json.loads(result_path.read_text(encoding="utf-8")))
 
 
+def _collect_benchmark_matrix_run(
+    run_root: Path,
+    *,
+    jobs: list[dict[str, object]],
+    summary_rows: list[dict[str, object]],
+    request_rows: list[dict[str, object]],
+) -> None:
+    job_path = run_root / "bench-matrix-job.json"
+    if job_path.is_file():
+        jobs.append(json.loads(job_path.read_text(encoding="utf-8")))
+
+    summary_path = run_root / "bench-matrix-summary.jsonl"
+    if summary_path.is_file():
+        for line in summary_path.read_text(encoding="utf-8").splitlines():
+            if line.strip():
+                row = json.loads(line)
+                if isinstance(row, dict):
+                    summary_rows.append(row)
+
+    requests_path = run_root / "bench-matrix-requests.jsonl"
+    if requests_path.is_file():
+        for line in requests_path.read_text(encoding="utf-8").splitlines():
+            if line.strip():
+                row = json.loads(line)
+                if isinstance(row, dict):
+                    request_rows.append(row)
+
+
 def _rows_to_csv(rows: list[dict[str, object]], fieldnames: list[str]) -> str:
     buffer = io.StringIO()
     writer = csv.DictWriter(buffer, fieldnames=fieldnames, extrasaction="ignore")
@@ -315,6 +380,66 @@ def _canonical_benchmark_row_columns() -> list[str]:
         "cache_profile",
         "reasoning_mode",
         "structured_output_mode",
+    ]
+
+
+def _canonical_benchmark_matrix_summary_columns() -> list[str]:
+    return [
+        "job_id",
+        "task_kind",
+        "source_repo",
+        "model_id",
+        "suite_id",
+        "context_length",
+        "generation_length",
+        "batch_size",
+        "cache_profile",
+        "reasoning_mode",
+        "structured_output_mode",
+        "concurrency_level",
+        "repeats",
+        "requests",
+        "duration_seconds",
+        "ttft_mean_ms",
+        "ttft_std_ms",
+        "request_latency_mean_ms",
+        "request_latency_std_ms",
+        "prefill_tokens_per_second_mean",
+        "decode_tokens_per_second_mean",
+        "throughput_requests_per_second",
+        "throughput_tokens_per_second",
+        "success_rate",
+        "peak_memory_bytes_max",
+        "queue_wait_mean_ms",
+        "queue_wait_p95_ms",
+        "created_at_unix_ms",
+    ]
+
+
+def _canonical_benchmark_matrix_request_columns() -> list[str]:
+    return [
+        "job_id",
+        "cell_id",
+        "task_kind",
+        "suite_id",
+        "context_length",
+        "generation_length",
+        "batch_size",
+        "cache_profile",
+        "reasoning_mode",
+        "structured_output_mode",
+        "concurrency_level",
+        "repeat_index",
+        "request_index",
+        "ttft_ms",
+        "request_latency_ms",
+        "prefill_tokens_per_second",
+        "decode_tokens_per_second",
+        "queue_wait_ms",
+        "peak_memory_bytes",
+        "status",
+        "error_code",
+        "created_at_unix_ms",
     ]
 
 

@@ -42,6 +42,24 @@
   - aggregate changed-line coverage for the handwritten executable scope in Slice 2: `99.32%` (`728/733`)
   - generated protobuf schemas and generated protocol outputs are recorded as `N/A` for changed-line coverage because they are interface or generated artifacts rather than repository-owned executable logic
 
+- Closed Slice 3, the worker-side matrix runner, persistence, and export surface:
+  - added typed matrix execution in `maintenance_core.py`, including per-cell request rows, aggregated summary rows, and task-aware validation
+  - persisted matrix runs under `<jobs_root>/bench/matrix-runs/<job_id>/` with job JSON, summary JSONL/CSV, and request JSONL/CSV artifacts
+  - exposed matrix execution through the worker gRPC service
+  - extended benchmark export and submission builders to carry matrix jobs, matrix summary rows, and matrix request rows
+  - added worker tests for successful matrix runs, VLM matrix coverage, export/submission collection, invalid load budgets, failed sample rows, and matrix task-kind resolution
+- Verification summary for Slice 3:
+  - `PYTHONPATH="/Users/ChenYu/Documents/Github/melix:/Users/ChenYu/Documents/Github/melix/services/mlx-worker-python" uv run --project services/mlx-worker-python --extra mlx pytest services/mlx-worker-python/tests/test_maintenance_service.py -q`: `60 tests passed`
+  - `PYTHONPATH="/Users/ChenYu/Documents/Github/melix:/Users/ChenYu/Documents/Github/melix/services/mlx-worker-python" uv run --project services/mlx-worker-python --extra mlx coverage run -m pytest services/mlx-worker-python/tests/test_benchmark_schemas.py services/mlx-worker-python/tests/test_benchmark_store.py services/mlx-worker-python/tests/test_benchmark_export.py services/mlx-worker-python/tests/test_maintenance_service.py -q`: `83 tests passed`
+- Metrics report for Slice 3:
+  - `services/mlx-worker-python/worker/engine/maintenance_core.py`: changed-line coverage `100.00%` (`192/192`)
+  - `services/mlx-worker-python/worker/grpc_server.py`: changed-line coverage `100.00%` (`3/3`)
+  - `services/mlx-worker-python/worker/productization/benchmark_export.py`: changed-line coverage `100.00%` (`42/42`)
+  - `services/mlx-worker-python/worker/productization/benchmark_schemas.py`: changed-line coverage `100.00%` (`80/80`)
+  - `services/mlx-worker-python/worker/productization/benchmark_store.py`: changed-line coverage `100.00%` (`14/14`)
+  - `services/mlx-worker-python/worker/productization/submission_builder.py`: changed-line coverage `100.00%` (`3/3`)
+  - aggregate changed-line coverage for the executable Python scope in Slice 3: `100.00%` (`334/334`)
+
 - Continued the benchmark and evaluation contract expansion transaction with the first two executable slices from `docs/plans/2026-04-03-bench-eval-contract-expansion-implementation.md`.
 - Closed Task 1, the protocol expansion slice for canonical bench and eval inputs:
   - added the canonical bench fields to `RunBench` and `RunBenchRequest`
