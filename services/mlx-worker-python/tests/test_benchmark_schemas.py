@@ -12,6 +12,8 @@ def test_build_serving_benchmark_job_preserves_identity_and_parameters() -> None
     job = build_serving_benchmark_job(
         job_id="bench-123",
         model_id="melix-dev-text",
+        task_kind="text-generation",
+        source_repo="HuggingFaceH4/ultrachat_200k",
         suites=("smoke", "latency"),
         parameters={"sample_size": "32", "batch_factor": "2"},
         status="completed",
@@ -25,6 +27,8 @@ def test_build_serving_benchmark_job_preserves_identity_and_parameters() -> None
     assert payload["schema_version"] == "melix.serving_benchmark_job.v1"
     assert payload["job_id"] == "bench-123"
     assert payload["model_id"] == "melix-dev-text"
+    assert payload["task_kind"] == "text-generation"
+    assert payload["source_repo"] == "HuggingFaceH4/ultrachat_200k"
     assert payload["suites"] == ["smoke", "latency"]
     assert payload["parameters"] == {"sample_size": "32", "batch_factor": "2"}
     assert payload["status"] == "completed"

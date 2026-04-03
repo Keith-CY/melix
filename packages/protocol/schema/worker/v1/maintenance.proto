@@ -114,6 +114,8 @@ message RunBenchRequest {
   string model_handle = 1;
   repeated string suites = 2;
   map<string, string> parameters = 3;
+  string task_kind = 4;
+  string source_repo = 5;
 }
 
 message RunBenchEvent {

@@ -4,10 +4,11 @@ import json
 from dataclasses import dataclass
 import math
 from pathlib import Path
+from threading import Event
 import time
 from typing import Iterator
 
-from packages.protocol.python.worker.v1 import common_pb2, maintenance_pb2
+from packages.protocol.python.worker.v1 import common_pb2, inference_pb2, maintenance_pb2
 
 from worker.model_ops.adapter_activation_pipeline import AdapterActivationPipeline
 from worker.model_ops.download_pipeline import DownloadPipeline
@@ -45,6 +46,13 @@ class BenchSample:
     ttft_ms: float
     total_latency_ms: float
     completion_tokens: int
+
+
+@dataclass(frozen=True)
+class ImageBenchSample:
+    latency_ms: float
+    artifact_publish_ms: float
+    output_bytes: int
 
 
 def _split_capability_values(raw_value: str) -> list[str]:
@@ -682,33 +690,59 @@ class MaintenanceCore:
             updated_at_unix_ms=queued_at + 1,
         )
 
-        benchmark_mode = parameters.get("benchmark_mode", "text")
         metrics: list[BenchMetricSpec] = []
         suite_metadata: dict[str, dict[str, object]] = {}
         lazy_model_handle = ""
         loaded_model = None
         try:
-            if benchmark_mode != "vlm":
-                lazy_model_handle, loaded_model = self._resolve_benchmark_loaded_model(request.model_handle)
+            lazy_model_handle, loaded_model = self._resolve_benchmark_loaded_model(request.model_handle)
+            task_kind = self._resolved_benchmark_task_kind(
+                request=request,
+                parameters=parameters,
+                loaded_model=loaded_model,
+            )
             for index, suite in enumerate(suites, start=1):
                 pct = index / max(len(suites), 1)
                 self._job_registry.progress(job.job_id, suite, pct)
                 yield maintenance_pb2.RunBenchEvent(
                     progress=maintenance_pb2.BenchProgress(suite=suite, pct=pct)
                 )
-                if benchmark_mode == "vlm":
-                    suite_metrics = self._bench_metrics_for_vlm_suite(suite)
-                else:
-                    resolved_suite = self._benchmark_suite_catalog.resolve_suite(
-                        suite,
-                        jobs_root=self._jobs_root,
-                        parameters=parameters,
-                    )
-                    suite_metadata[resolved_suite.suite_id] = resolved_suite.metadata()
+                resolved_suite = self._benchmark_suite_catalog.resolve_suite(
+                    suite,
+                    jobs_root=self._jobs_root,
+                    parameters=parameters,
+                    task_kind=task_kind,
+                )
+                suite_metadata[resolved_suite.suite_id] = resolved_suite.metadata()
+                if task_kind == "text-generation":
                     suite_metrics = self._measure_text_bench_metrics(
                         loaded_model=loaded_model,
                         suite=resolved_suite,
                         parameters=parameters,
+                    )
+                elif task_kind in {"image-to-text", "image-text-to-text"}:
+                    suite_metrics = self._measure_vlm_bench_metrics(
+                        loaded_model=loaded_model,
+                        suite=resolved_suite,
+                        parameters=parameters,
+                    )
+                elif task_kind == "text-to-image":
+                    suite_metrics = self._measure_image_generation_bench_metrics(
+                        loaded_model=loaded_model,
+                        suite=resolved_suite,
+                        parameters=parameters,
+                    )
+                elif task_kind == "image-text-to-image":
+                    suite_metrics = self._measure_image_edit_bench_metrics(
+                        loaded_model=loaded_model,
+                        suite=resolved_suite,
+                        parameters=parameters,
+                    )
+                else:
+                    raise ModelOperationError(
+                        code="unsupported_task_family",
+                        message=f"Unsupported benchmark task kind: {task_kind}",
+                        details={"task_kind": task_kind},
                     )
                 for metric in suite_metrics:
                     metrics.append(metric)
@@ -721,11 +755,16 @@ class MaintenanceCore:
                     )
 
             report_path = output_dir / "bench-report.md"
-            report_path.write_text(self._render_bench_report(request, metrics), encoding="utf-8")
+            report_path.write_text(
+                self._render_bench_report(request, metrics, task_kind=task_kind),
+                encoding="utf-8",
+            )
             completed_at = int(time.time() * 1000)
             job_record = build_serving_benchmark_job(
                 job_id=job.job_id,
                 model_id=(request.model_handle or lazy_model_handle or "runtime").split("::", 1)[0],
+                task_kind=task_kind,
+                source_repo=request.source_repo,
                 suites=tuple(suites),
                 parameters=parameters,
                 status="completed",
@@ -920,6 +959,42 @@ class MaintenanceCore:
         loaded_model = self._registry.load_model(model_spec)
         return loaded_model.handle, loaded_model
 
+    @staticmethod
+    def _resolved_benchmark_task_kind(
+        *,
+        request: maintenance_pb2.RunBenchRequest,
+        parameters: dict[str, str],
+        loaded_model,
+    ) -> str:
+        runtime_metadata = {}
+        runtime_model = getattr(loaded_model, "runtime_model", None)
+        if isinstance(runtime_model, dict):
+            raw_metadata = runtime_model.get("metadata")
+            if isinstance(raw_metadata, dict):
+                runtime_metadata = {
+                    str(key): str(value)
+                    for key, value in raw_metadata.items()
+                }
+        if runtime_metadata.get("melix.vlm.execution_mode", "").strip() == "text_backed":
+            return "text-generation"
+        explicit = getattr(request, "task_kind", "").strip()
+        if explicit:
+            return explicit
+        if parameters.get("benchmark_mode", "").strip().lower() == "vlm":
+            return "image-text-to-text"
+        model_kind = getattr(getattr(loaded_model, "spec", None), "model_kind", "").strip()
+        if model_kind == "vlm":
+            return "image-text-to-text"
+        if model_kind == "ocr":
+            return "image-to-text"
+        if model_kind == "image":
+            image_task_kind = getattr(getattr(loaded_model, "spec", None), "ext", {}).get(
+                "melix.image.task_kind",
+                "",
+            ).strip()
+            return image_task_kind or "text-to-image"
+        return "text-generation"
+
     def _measure_text_bench_metrics(
         self,
         *,
@@ -931,10 +1006,10 @@ class MaintenanceCore:
             self._measure_text_bench_sample(
                 loaded_model=loaded_model,
                 suite=suite,
-                prompt=prompt,
+                prompt=case.prompt,
                 parameters=parameters,
             )
-            for prompt in suite.prompt_batches
+            for case in suite.cases
         ]
         if suite.suite_id == "latency":
             total_latencies = [sample.total_latency_ms for sample in samples]
@@ -1036,6 +1111,285 @@ class MaintenanceCore:
             completion_tokens=completion_tokens,
         )
 
+    def _measure_vlm_bench_metrics(
+        self,
+        *,
+        loaded_model,
+        suite: ResolvedBenchmarkSuite,
+        parameters: dict[str, str],
+    ) -> list[BenchMetricSpec]:
+        samples = [
+            self._measure_vlm_bench_sample(
+                loaded_model=loaded_model,
+                suite=suite,
+                case=case,
+                parameters=parameters,
+            )
+            for case in suite.cases
+        ]
+        if suite.suite_id == "latency":
+            total_latencies = [sample.total_latency_ms for sample in samples]
+            return [
+                BenchMetricSpec(
+                    suite=suite.suite_id,
+                    name="bench.latency.image_p50_ms",
+                    value=self._percentile(total_latencies, 50.0),
+                    unit="ms",
+                ),
+                BenchMetricSpec(
+                    suite=suite.suite_id,
+                    name="bench.latency.image_p95_ms",
+                    value=self._percentile(total_latencies, 95.0),
+                    unit="ms",
+                ),
+            ]
+
+        ttft_avg = sum(sample.ttft_ms for sample in samples) / max(len(samples), 1)
+        throughput_values = [
+            (sample.completion_tokens / max((sample.total_latency_ms - sample.ttft_ms) / 1_000.0, 0.001))
+            for sample in samples
+            if sample.completion_tokens > 0
+        ]
+        tokens_per_second = sum(throughput_values) / max(len(throughput_values), 1)
+        return [
+            BenchMetricSpec(
+                suite=suite.suite_id,
+                name=f"bench.{suite.suite_id}.image_ttft_ms",
+                value=ttft_avg,
+                unit="ms",
+            ),
+            BenchMetricSpec(
+                suite=suite.suite_id,
+                name=f"bench.{suite.suite_id}.vlm_tokens_per_second",
+                value=tokens_per_second,
+                unit="tok/s",
+            ),
+        ]
+
+    def _measure_vlm_bench_sample(
+        self,
+        *,
+        loaded_model,
+        suite: ResolvedBenchmarkSuite,
+        case,
+        parameters: dict[str, str],
+    ) -> BenchSample:
+        runtime = self._registry.runtime_for_loaded_model(loaded_model)
+        parts = [
+            common_pb2.MessagePart(
+                image_uri=image_uri,
+                media=common_pb2.MediaMetadata(
+                    media_type=common_pb2.MEDIA_TYPE_IMAGE,
+                    source_kind=common_pb2.MEDIA_SOURCE_URI,
+                    filename=Path(image_uri).name,
+                ),
+            )
+            for image_uri in case.image_uris
+        ]
+        if case.prompt:
+            parts.insert(0, common_pb2.MessagePart(text=case.prompt))
+        messages = [common_pb2.ChatMessage(role="user", parts=parts)]
+        prepared = runtime.render_prompt(
+            messages,
+            loaded_model=loaded_model.runtime_model,
+            execution_ext={},
+        )
+        request_id = f"bench-{loaded_model.handle}-{suite.suite_id}-{abs(hash((case.prompt, case.image_uris)))}"
+        cancel_event = self._registry.start_request(
+            request_id=request_id,
+            runtime_kind=loaded_model.runtime_kind,
+        ).cancel_event
+        try:
+            started_at = time.perf_counter()
+            first_token_at: float | None = None
+            last_token_at: float | None = None
+            completion_tokens = 0
+            sampling = common_pb2.SamplingConfig(
+                temperature=0.0,
+                top_p=1.0,
+                top_k=1,
+                max_output_tokens=self._benchmark_max_output_tokens(parameters),
+            )
+            for runtime_event in runtime.generate_tokens(
+                loaded_model.runtime_model,
+                prepared,
+                sampling,
+                cancel_event,
+                execution_ext={},
+            ):
+                text = getattr(runtime_event, "text", "")
+                if not text:
+                    continue
+                now = time.perf_counter()
+                if first_token_at is None:
+                    first_token_at = now
+                last_token_at = now
+                completion_tokens = int(getattr(runtime_event, "completion_tokens", 0) or (completion_tokens + 1))
+            finished_at = time.perf_counter()
+        finally:
+            self._registry.finish_request(request_id)
+
+        first_token_time = first_token_at or finished_at
+        completed_at = last_token_at or finished_at
+        return BenchSample(
+            ttft_ms=round((first_token_time - started_at) * 1_000.0, 2),
+            total_latency_ms=round((completed_at - started_at) * 1_000.0, 2),
+            completion_tokens=completion_tokens,
+        )
+
+    def _measure_image_generation_bench_metrics(
+        self,
+        *,
+        loaded_model,
+        suite: ResolvedBenchmarkSuite,
+        parameters: dict[str, str],
+    ) -> list[BenchMetricSpec]:
+        samples = [
+            self._measure_image_generation_bench_sample(
+                loaded_model=loaded_model,
+                suite=suite,
+                case=case,
+                parameters=parameters,
+            )
+            for case in suite.cases
+        ]
+        return self._image_metrics_for_suite(suite=suite, samples=samples)
+
+    def _measure_image_edit_bench_metrics(
+        self,
+        *,
+        loaded_model,
+        suite: ResolvedBenchmarkSuite,
+        parameters: dict[str, str],
+    ) -> list[BenchMetricSpec]:
+        samples = [
+            self._measure_image_edit_bench_sample(
+                loaded_model=loaded_model,
+                suite=suite,
+                case=case,
+                parameters=parameters,
+            )
+            for case in suite.cases
+        ]
+        return self._image_metrics_for_suite(suite=suite, samples=samples)
+
+    def _measure_image_generation_bench_sample(
+        self,
+        *,
+        loaded_model,
+        suite: ResolvedBenchmarkSuite,
+        case,
+        parameters: dict[str, str],
+    ) -> ImageBenchSample:
+        runtime = self._registry.runtime_for_loaded_model(loaded_model)
+        request = inference_pb2.ImageGenerateRequest(
+            id=common_pb2.RequestIdentity(
+                request_id=f"bench-{loaded_model.handle}-{suite.suite_id}-{abs(hash(case.prompt))}"
+            ),
+            model_handle=loaded_model.handle,
+            prompt=case.prompt,
+            size=parameters.get("image_size", "1024x1024"),
+            n=1,
+            response_format=parameters.get("response_format", "png"),
+            artifact_namespace="bench",
+        )
+        result = runtime.generate_images(
+            loaded_model.runtime_model,
+            request,
+            job_id=f"{request.id.request_id}::image-generate",
+            images_root=self._jobs_root / "bench" / "artifacts",
+            cancel_event=Event(),
+        )
+        probe = runtime.last_probe_snapshot()
+        _ = result
+        return ImageBenchSample(
+            latency_ms=round(probe.job_latency_ms, 2),
+            artifact_publish_ms=round(probe.artifact_publish_ms, 2),
+            output_bytes=probe.output_bytes,
+        )
+
+    def _measure_image_edit_bench_sample(
+        self,
+        *,
+        loaded_model,
+        suite: ResolvedBenchmarkSuite,
+        case,
+        parameters: dict[str, str],
+    ) -> ImageBenchSample:
+        runtime = self._registry.runtime_for_loaded_model(loaded_model)
+        request = inference_pb2.ImageEditRequest(
+            id=common_pb2.RequestIdentity(
+                request_id=f"bench-{loaded_model.handle}-{suite.suite_id}-{abs(hash((case.prompt, case.source_image_uri)))}"
+            ),
+            model_handle=loaded_model.handle,
+            prompt=case.prompt,
+            image_uri=case.source_image_uri,
+            mask_uri=case.mask_uri,
+            strength=1.0,
+            size=parameters.get("image_size", "1024x1024"),
+            n=1,
+            response_format=parameters.get("response_format", "png"),
+        )
+        result = runtime.edit_image(
+            loaded_model.runtime_model,
+            request,
+            job_id=f"{request.id.request_id}::image-edit",
+            images_root=self._jobs_root / "bench" / "artifacts",
+            cancel_event=Event(),
+        )
+        probe = runtime.last_probe_snapshot()
+        _ = result
+        return ImageBenchSample(
+            latency_ms=round(probe.job_latency_ms, 2),
+            artifact_publish_ms=round(probe.artifact_publish_ms, 2),
+            output_bytes=probe.output_bytes,
+        )
+
+    def _image_metrics_for_suite(
+        self,
+        *,
+        suite: ResolvedBenchmarkSuite,
+        samples: list[ImageBenchSample],
+    ) -> list[BenchMetricSpec]:
+        latencies = [sample.latency_ms for sample in samples]
+        artifact_publish = [sample.artifact_publish_ms for sample in samples]
+        output_bytes = [float(sample.output_bytes) for sample in samples]
+        if suite.suite_id == "latency":
+            return [
+                BenchMetricSpec(
+                    suite=suite.suite_id,
+                    name="bench.latency.image_job_p50_ms",
+                    value=self._percentile(latencies, 50.0),
+                    unit="ms",
+                ),
+                BenchMetricSpec(
+                    suite=suite.suite_id,
+                    name="bench.latency.image_job_p95_ms",
+                    value=self._percentile(latencies, 95.0),
+                    unit="ms",
+                ),
+            ]
+        return [
+            BenchMetricSpec(
+                suite=suite.suite_id,
+                name=f"bench.{suite.suite_id}.image_job_latency_ms",
+                value=sum(latencies) / max(len(latencies), 1),
+                unit="ms",
+            ),
+            BenchMetricSpec(
+                suite=suite.suite_id,
+                name=f"bench.{suite.suite_id}.image_artifact_publish_ms",
+                value=sum(artifact_publish) / max(len(artifact_publish), 1),
+                unit="ms",
+            ),
+            BenchMetricSpec(
+                suite=suite.suite_id,
+                name=f"bench.{suite.suite_id}.image_output_bytes",
+                value=sum(output_bytes) / max(len(output_bytes), 1),
+                unit="bytes",
+            ),
+        ]
+
     @staticmethod
     def _benchmark_max_output_tokens(parameters: dict[str, str]) -> int:
         raw_value = parameters.get("max_output_tokens", "").strip()
@@ -1064,36 +1418,19 @@ class MaintenanceCore:
         return round(lower_value + (upper_value - lower_value) * weight, 2)
 
     @staticmethod
-    def _bench_metrics_for_vlm_suite(suite: str) -> list[BenchMetricSpec]:
-        if suite == "latency":
-            return [
-                BenchMetricSpec(suite=suite, name="bench.latency.image_p50_ms", value=62.35, unit="ms"),
-                BenchMetricSpec(suite=suite, name="bench.latency.image_p95_ms", value=89.44, unit="ms"),
-            ]
-        return [
-            BenchMetricSpec(suite=suite, name=f"bench.{suite}.image_ttft_ms", value=48.90, unit="ms"),
-            BenchMetricSpec(
-                suite=suite,
-                name=f"bench.{suite}.vlm_tokens_per_second",
-                value=23.54,
-                unit="tok/s",
-            ),
-        ]
-
-    @staticmethod
     def _render_bench_report(
         request: maintenance_pb2.RunBenchRequest,
         metrics: list[BenchMetricSpec],
+        *,
+        task_kind: str,
     ) -> str:
-        raw_parameters = getattr(request, "parameters", None)
-        parameters = dict(raw_parameters) if raw_parameters else {}
-        benchmark_mode = parameters.get("benchmark_mode", "text")
         lines = [
             "# Melix Bench",
             "",
             f"- model_handle: {request.model_handle or 'runtime'}",
             f"- suites: {', '.join(request.suites) if request.suites else 'smoke'}",
-            f"- benchmark_mode: {benchmark_mode}",
+            f"- task_kind: {task_kind}",
+            f"- source_repo: {getattr(request, 'source_repo', '').strip()}",
             "",
         ]
         for metric in metrics:

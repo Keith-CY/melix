@@ -61,17 +61,20 @@ public struct LoraActivateOptions: Equatable, Sendable {
 
 public struct BenchRunOptions: Equatable, Sendable {
     public let modelID: String
+    public let hfRepoID: String
     public let suites: [String]
     public let parameters: [String: String]
     public let json: Bool
 
     public init(
-        modelID: String,
+        modelID: String = "",
+        hfRepoID: String = "",
         suites: [String] = [],
         parameters: [String: String] = [:],
         json: Bool = false
     ) {
         self.modelID = modelID
+        self.hfRepoID = hfRepoID
         self.suites = suites
         self.parameters = parameters
         self.json = json
@@ -148,7 +151,7 @@ public enum MelixCLIParser {
       melix lora list [--model-id MODEL_ID] [--json]
       melix lora train --model-id MODEL_ID (--dataset-uri PATH | --hf-dataset-path REPO) --adapter-name NAME [--target-repo REPO] [--rank N] [--alpha N] [--dropout N] [--target-modules CSV] [--num-layers N] [--batch-size N] [--epochs N] [--learning-rate N] [--max-seq-length N] [--hf-dataset-name NAME] [--hf-dataset-revision REV] [--hf-train-split SPLIT] [--hf-valid-split SPLIT] [--text-feature NAME] [--prompt-feature NAME] [--completion-feature NAME] [--chat-feature NAME] [--derived-model-alias NAME] [--response-only] [--mask-prompt] [--gradient-checkpointing] [--json]
       melix lora activate --model-id MODEL_ID --adapter-path PATH [--alias NAME] [--json]
-      melix bench run --model-id MODEL_ID [--suite SUITE ...] [--sample-size N] [--batch-factor N] [--json]
+      melix bench run (--model-id MODEL_ID | --repo-id HF_REPO) [--suite SUITE ...] [--sample-size N] [--batch-factor N] [--json]
       melix bench list [--json]
       melix bench export-csv --job-id JOB_ID --output PATH [--json]
     """
@@ -249,8 +252,11 @@ public enum MelixCLIParser {
         let values = try ArgumentCursor(arguments: Array(arguments.dropFirst())).parse()
         switch action {
         case "run":
-            guard let modelID = values.single["--model-id"], !modelID.isEmpty else {
-                throw MelixCLIError.missingRequired("--model-id is required for melix bench run.")
+            let modelID = values.single["--model-id"] ?? ""
+            let hfRepoID = values.single["--repo-id"] ?? ""
+            let explicitTargetCount = [modelID, hfRepoID].filter { !$0.isEmpty }.count
+            guard explicitTargetCount == 1 else {
+                throw MelixCLIError.missingRequired("Exactly one of --model-id or --repo-id is required for melix bench run.")
             }
             var parameters: [String: String] = [:]
             if let sampleSize = values.single["--sample-size"] {
@@ -262,6 +268,7 @@ public enum MelixCLIParser {
             return .benchRun(
                 BenchRunOptions(
                     modelID: modelID,
+                    hfRepoID: hfRepoID,
                     suites: values.multi["--suite"] ?? [],
                     parameters: parameters,
                     json: values.flags.contains("--json")
@@ -337,8 +344,17 @@ private struct ArgumentCursor {
 public actor MelixCLIRunner {
     private let client: any ControlPlaneXPCClient
 
-    public init(client: any ControlPlaneXPCClient = LocalControlPlaneXPCClient()) {
-        self.client = client
+    public init(
+        client: (any ControlPlaneXPCClient)? = nil,
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        serviceBuilder: (@Sendable ([String: String]) -> any ControlPlaneExecuting)? = nil
+    ) {
+        if let client {
+            self.client = client
+        } else {
+            let resolvedServiceBuilder = serviceBuilder ?? MelixCLILocalRuntime.makeService
+            self.client = LocalControlPlaneXPCClient(service: resolvedServiceBuilder(environment))
+        }
     }
 
     public func run(_ command: MelixCLICommand) async throws -> String {
@@ -391,10 +407,13 @@ public actor MelixCLIRunner {
             )
             return options.json ? result.manifestJson : result.outputPath
         case .benchRun(let options):
-            _ = try await client.loadModel(modelID: options.modelID)
+            if !options.modelID.isEmpty {
+                _ = try await client.loadModel(modelID: options.modelID)
+            }
             let result = try await client.runBench(
                 ControlPlaneBenchRequest(
                     modelID: options.modelID,
+                    hfRepoID: options.hfRepoID,
                     suites: options.suites,
                     parameters: options.parameters
                 )
@@ -487,6 +506,8 @@ public actor MelixCLIRunner {
             [
                 entry.jobID,
                 entry.modelID,
+                entry.taskKind.isEmpty ? "-" : entry.taskKind,
+                entry.sourceRepo.isEmpty ? "-" : entry.sourceRepo,
                 entry.suiteID,
                 benchmarkDatasetLabel(entry),
                 entry.sampleSize.map(String.init) ?? "-",
@@ -496,7 +517,7 @@ public actor MelixCLIRunner {
             ].joined(separator: "\t")
         }
         return ([
-            "job_id\tmodel_id\tsuite\tdataset\tsample_size\tbatch_factor\tstatus\tcreated_at_unix_ms",
+            "job_id\tmodel_id\ttask_kind\tsource_repo\tsuite\tdataset\tsample_size\tbatch_factor\tstatus\tcreated_at_unix_ms",
         ] + lines).joined(separator: "\n") + "\n"
     }
 
@@ -533,4 +554,48 @@ private struct BenchExportCSVResponse: Encodable {
     let jobID: String
     let outputPath: String
     let rowCount: Int
+}
+
+private enum MelixCLILocalRuntime {
+    static func makeService(environment: [String: String]) -> any ControlPlaneExecuting {
+        let modelCatalog = ModelCatalog(seedModels: ModelCatalog.phaseSevenContractSeedModels())
+        let metricsStore = MetricsStore(exportPath: environment["MELIX_CONTROL_PLANE_METRICS_PATH"])
+        let mcpToolCatalog = MCPToolCatalog.load(environment: environment)
+        let gatewayAccessPolicyStore = GatewayAccessPolicyStore(GatewayAccessPolicy.load(environment: environment))
+
+        let swiftTextWorkerClient = SwiftTextWorkerClient(
+            socketPath: environment["MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH"] ?? "/var/run/melix/swift-text-worker.sock"
+        )
+        let pythonCompatibilityClient = PythonBridgeWorkerClient(
+            socketPath: environment["MELIX_WORKER_SOCKET_PATH"] ?? "/tmp/melix-worker.sock",
+            repoRoot: repoRoot(environment: environment),
+            processEnvironment: environment
+        )
+        let workerRegistry = WorkerRegistry(
+            defaultTextClient: swiftTextWorkerClient,
+            pythonCompatibilityClient: pythonCompatibilityClient,
+            modelCatalog: modelCatalog
+        )
+
+        return ControlPlaneService(
+            modelCatalog: modelCatalog,
+            metricsStore: metricsStore,
+            workerRegistry: workerRegistry,
+            mcpToolCatalog: mcpToolCatalog,
+            gatewayAccessPolicyStore: gatewayAccessPolicyStore
+        )
+    }
+
+    private static func repoRoot(environment: [String: String]) -> String {
+        if let repoRoot = environment["MELIX_REPO_ROOT"]?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !repoRoot.isEmpty {
+            return repoRoot
+        }
+
+        return URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .path
+    }
 }

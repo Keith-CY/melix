@@ -1944,7 +1944,134 @@ struct RuntimeViewModelTests {
 
         await imageOnlyViewModel.runBench()
 
-        #expect(imageOnlyViewModel.lastError == "Select a text model before running Benchmark.")
+        let imageBenchRequest = try #require(await imageOnlyClient.recordedBenchRequests.last)
+        #expect(imageBenchRequest.modelID == "melix-dev-image")
+        #expect(imageOnlyViewModel.lastError == nil)
+    }
+
+    @Test("benchmark direct repo mode dispatches hf repo ids and infers multimodal suite family")
+    @MainActor
+    func benchmarkDirectRepoModeDispatchesHFRepoIDs() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+
+        viewModel.selectedBenchmarkTargetMode = .huggingFaceRepo
+        viewModel.benchmarkHFRepoID = "unsloth/gemma-4-E4B-it-MLX-8bit"
+        viewModel.selectedBenchmarkSuiteIDs = ["smoke", "latency"]
+
+        #expect(viewModel.benchmarkTargetTaskKind == "image-text-to-text")
+        #expect(viewModel.benchmarkSuites.map(\.title).contains("Docs Images VLM Smoke"))
+
+        await viewModel.runBench()
+
+        let request = try #require(await client.recordedBenchRequests.last)
+        #expect(request.modelID.isEmpty)
+        #expect(request.hfRepoID == "unsloth/gemma-4-E4B-it-MLX-8bit")
+        #expect(Set(request.suites) == Set(["smoke", "latency"]))
+    }
+
+    @Test("benchmark target summaries and task inference cover catalog fallback and repo families")
+    @MainActor
+    func benchmarkTargetSummariesAndTaskInferenceCoverFallbacksAndRepoFamilies() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let audioOnlyModel = makeCapabilityModelSummary(
+            modelID: "melix-dev-audio",
+            kind: "audio",
+            state: .modelWarm,
+            features: ["transcribe"]
+        )
+        await client.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [audioOnlyModel]
+            )
+        )
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+
+        #expect(viewModel.benchmarkTargetTaskKind == "text-generation")
+        #expect(viewModel.benchmarkTargetSummaryText == "Select a benchmark-capable catalog model.")
+
+        viewModel.selectedBenchmarkTargetMode = .huggingFaceRepo
+        #expect(viewModel.benchmarkTargetSummaryText == "Enter a Hugging Face repo to detect a supported benchmark task.")
+
+        viewModel.benchmarkHFRepoID = "google/paligemma2-3b-ft-docci-448"
+        #expect(viewModel.benchmarkTargetTaskKind == "image-text-to-text")
+        #expect(viewModel.benchmarkTargetTaskTitle == "Image + Text to Text")
+
+        viewModel.benchmarkHFRepoID = "mlx-community/ocr-demo"
+        #expect(viewModel.benchmarkTargetTaskKind == "image-to-text")
+        #expect(viewModel.benchmarkTargetTaskTitle == "Image to Text")
+
+        viewModel.benchmarkHFRepoID = "mlx-community/sdxl-edit"
+        #expect(viewModel.benchmarkTargetTaskKind == "image-text-to-image")
+        #expect(viewModel.benchmarkTargetTaskTitle == "Image + Text to Image")
+
+        viewModel.benchmarkHFRepoID = "black-forest-labs/FLUX.1-schnell"
+        #expect(viewModel.benchmarkTargetTaskKind == "text-to-image")
+        #expect(viewModel.benchmarkTargetTaskTitle == "Text to Image")
+    }
+
+    @Test("benchmark task inference covers catalog OCR and image model families")
+    @MainActor
+    func benchmarkTaskInferenceCoversCatalogOCRAndImageFamilies() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let ocrModel = makeCapabilityModelSummary(
+            modelID: "melix-dev-ocr",
+            kind: "ocr",
+            state: .modelWarm,
+            features: ["vision", "caption"]
+        )
+        var imageModel = makeMenuBarImageModelSummary(modelID: "melix-dev-image")
+        imageModel.settings.ext["melix.image.task_kind"] = "image-text-to-image"
+        await client.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [ocrModel, imageModel]
+            )
+        )
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+
+        viewModel.selectedBenchmarkModelID = "melix-dev-ocr"
+        #expect(viewModel.benchmarkTargetTaskKind == "image-to-text")
+        #expect(viewModel.benchmarkTargetTaskTitle == "Image to Text")
+
+        viewModel.selectedBenchmarkModelID = "melix-dev-image"
+        #expect(viewModel.benchmarkTargetTaskKind == "image-text-to-image")
+        #expect(viewModel.benchmarkTargetTaskTitle == "Image + Text to Image")
+        #expect(viewModel.benchmarkTargetSummaryText.contains("melix-dev-image"))
+    }
+
+    @Test("benchmark run guard rails require an explicit catalog model or Hugging Face repo target")
+    @MainActor
+    func benchmarkRunGuardRailsRequireExplicitTargets() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let audioOnlyModel = makeCapabilityModelSummary(
+            modelID: "melix-dev-audio",
+            kind: "audio",
+            state: .modelWarm,
+            features: ["transcribe"]
+        )
+        await client.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [audioOnlyModel]
+            )
+        )
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+
+        viewModel.selectedBenchmarkSuiteIDs = ["smoke"]
+        await viewModel.runBench()
+        #expect(viewModel.lastError == "Select a benchmark-capable model before running Benchmark.")
+
+        viewModel.selectedBenchmarkTargetMode = .huggingFaceRepo
+        viewModel.benchmarkHFRepoID = ""
+        viewModel.selectedBenchmarkSuiteIDs = ["smoke"]
+        await viewModel.runBench()
+        #expect(viewModel.lastError == "Enter a Hugging Face repo before running Benchmark.")
     }
 
     @Test("benchmark history refresh and csv export surface export failures and empty rows")

@@ -662,6 +662,7 @@ class WorkerModelCatalog:
             max_context=4096,
             ext={
                 **_vision_capability_metadata(family_id),
+                "melix.vlm.backend_id": "deterministic",
                 "vision_family_id": family_id,
                 "vision_prompt_profile_id": (
                     "paligemma-caption-v1" if family_id == "paligemma-v1" else "llava-chatml-v1"
@@ -741,6 +742,18 @@ class WorkerModelCatalog:
             parser_mode="text",
             reasoning_mode="off",
             max_context=4096,
+            ext={
+                "melix.image.backend_id": "deterministic",
+                "melix.image.task_kind": "text-to-image",
+                **_capability_metadata(
+                    adapter_set_hash="image-family-deterministic-v1",
+                    route_kind="python_image",
+                    capability_class="image_generation",
+                    supported_modalities=("text", "image"),
+                    supported_tasks=("image_generate", "image_edit"),
+                    supported_parsers=("text",),
+                ),
+            },
         )
 
     @staticmethod

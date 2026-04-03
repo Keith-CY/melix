@@ -1702,6 +1702,7 @@ audio-tts = [
 mlx = [
     { name = "mlx" },
     { name = "mlx-lm" },
+    { name = "mlx-vlm" },
 ]
 
 [package.metadata]
@@ -1714,6 +1715,7 @@ requires-dist = [
     { name = "mlx-audio", marker = "extra == 'audio-stt'", specifier = "==0.2.6" },
     { name = "mlx-audio", marker = "extra == 'audio-tts'", specifier = "==0.2.6" },
     { name = "mlx-lm", marker = "extra == 'mlx'", specifier = ">=0.22.0" },
+    { name = "mlx-vlm", marker = "extra == 'mlx'", git = "https://github.com/Blaizzy/mlx-vlm.git?rev=43b9b2078b7027e7622f34a434b2d94aada7eaad" },
     { name = "protobuf", specifier = ">=5.29.0" },
     { name = "pytest", specifier = ">=8.3.0" },
 ]
@@ -1886,8 +1888,8 @@ wheels = [
 
 [[package]]
 name = "mlx-vlm"
-version = "0.4.2"
-source = { registry = "https://pypi.org/simple" }
+version = "0.4.3"
+source = { git = "https://github.com/Blaizzy/mlx-vlm.git?rev=43b9b2078b7027e7622f34a434b2d94aada7eaad#43b9b2078b7027e7622f34a434b2d94aada7eaad" }
 dependencies = [
     { name = "datasets" },
     { name = "fastapi" },
@@ -1902,10 +1904,6 @@ dependencies = [
     { name = "tqdm" },
     { name = "transformers" },
     { name = "uvicorn" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/d1/92/ecd9747a9a4cfe36332d58a563881530bc676d97618b5d906ffcb914c8db/mlx_vlm-0.4.2.tar.gz", hash = "sha256:31c84b4321c8f17cecb0457fa18d5c0689820a66af191926d240e7df9756453e", size = 663079 }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/a3/2a/0261c23bf7c9243173aad75d7ed7d3e8ffbea47fd1347b2251e5343ded28/mlx_vlm-0.4.2-py3-none-any.whl", hash = "sha256:b843f20206478f97796b752ddcf9f744cebb188de5fd65e3d818e01eaf1a57c0", size = 817515 },
 ]
 
 [[package]]

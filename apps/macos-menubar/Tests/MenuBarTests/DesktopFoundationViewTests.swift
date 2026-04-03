@@ -555,9 +555,56 @@ struct DesktopFoundationViewTests {
         let view = hostView(section)
 
         #expect(view.subviews.isEmpty == false)
-        #expect(viewModel.benchmarkModels.isEmpty)
+        #expect(viewModel.benchmarkModels.isEmpty == false)
+        #expect(viewModel.benchmarkModels.first?.modelID == "melix-dev-image")
         #expect(viewModel.benchmarkHistory.isEmpty)
         #expect(await client.recordedActions.contains("bench.export"))
+    }
+
+    @Test("diagnostics tool section renders the empty catalog benchmark message when no benchmark models are available")
+    @MainActor
+    func diagnosticsToolSectionRendersEmptyCatalogBenchmarkMessage() async throws {
+        let client = FakeControlPlaneXPCClient()
+        var audioOnlyModel = Melix_Controlplane_V1_ModelSummary()
+        audioOnlyModel.modelID = "melix-dev-audio"
+        audioOnlyModel.kind = "audio"
+        audioOnlyModel.state = .modelWarm
+        audioOnlyModel.features = ["transcribe"]
+        await client.configureSnapshot(makeAudioSetupSnapshot(models: [audioOnlyModel]))
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        viewModel.selectSurface(.tools)
+        viewModel.selectToolSection(.diagnostics)
+
+        let section = DesktopDiagnosticsToolSectionView(
+            viewModel: viewModel,
+            foundation: viewModel.desktopFoundationState
+        )
+        let view = hostView(section)
+
+        #expect(view.subviews.isEmpty == false)
+        #expect(viewModel.benchmarkModels.isEmpty)
+    }
+
+    @Test("diagnostics tool section renders the direct Hugging Face repo benchmark target input")
+    @MainActor
+    func diagnosticsToolSectionRendersDirectHFRepoBenchmarkInput() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        viewModel.selectSurface(.tools)
+        viewModel.selectToolSection(.diagnostics)
+        viewModel.selectedBenchmarkTargetMode = .huggingFaceRepo
+        viewModel.benchmarkHFRepoID = "unsloth/gemma-4-E4B-it-MLX-8bit"
+
+        let section = DesktopDiagnosticsToolSectionView(
+            viewModel: viewModel,
+            foundation: viewModel.desktopFoundationState
+        )
+        let view = hostView(section)
+
+        #expect(view.subviews.isEmpty == false)
+        #expect(viewModel.benchmarkTargetSummaryText.contains("unsloth/gemma-4-E4B-it-MLX-8bit"))
     }
 
     @Test("tools tab renders pending adapter registry and history rows")

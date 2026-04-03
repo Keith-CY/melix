@@ -57,5 +57,7 @@ Close the remaining M7 gaps on `main`, make LoRA product-ready across Window UI 
   - controlled Hugging Face benchmark suites and M7 closure
   - benchmark CLI listing and CSV export closure
   - benchmark Window UI visualization closure
+  - post-close VLM benchmark compatibility for direct Hugging Face repos, including Gemma 4 text-backed fallback and direct proof coverage for `unsloth/gemma-4-E4B-it-MLX-8bit`
 - Remaining slices:
-  - final verification, metrics, and progress closure
+  - commit the verified post-close direct-HF and VLM benchmark compatibility slice
+  - start the benchmark and evaluation redesign follow-up in a new transaction after this working tree is clean

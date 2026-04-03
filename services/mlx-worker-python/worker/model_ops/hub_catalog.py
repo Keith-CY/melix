@@ -288,8 +288,11 @@ def _is_mlx_compatible(
         tag.lower()
         for tag in _string_list(card_data.get("tags"))
     }
+    lowered_repo_id = repo_id.lower()
     if "mlx" in lowered_tags or "mlx" in card_tags:
         return True
     if library_name.lower() == "mlx":
+        return True
+    if "mlx" in lowered_repo_id:
         return True
     return repo_id.startswith("mlx-community/")

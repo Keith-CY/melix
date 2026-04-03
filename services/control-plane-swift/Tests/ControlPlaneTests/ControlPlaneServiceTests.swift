@@ -1721,6 +1721,296 @@ struct ControlPlaneServiceTests {
         #expect(response.ops.benchmarkJob.modelID == "melix-dev-text")
     }
 
+    @Test("execute imports a direct Hugging Face benchmark target and routes gemma4 to the VLM benchmark path")
+    func executeImportsDirectHFBenchmarkTargetForGemma4() async throws {
+        let reportPath = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("melix-bench-gemma4-report.md").path
+        try "# Melix Bench\n".write(toFile: reportPath, atomically: true, encoding: .utf8)
+
+        let modelOpsClient = ScriptedModelOperationsWorkerClient()
+        await modelOpsClient.setHubModelCardResponse({
+            var response = Melix_Worker_V1_GetHubModelCardResponse()
+            response.ok = true
+            response.card = Melix_Worker_V1_HubModelCard()
+            response.card.repoID = "unsloth/gemma-4-E4B-it-MLX-8bit"
+            response.card.author = "unsloth"
+            response.card.modelName = "gemma-4-E4B-it-MLX-8bit"
+            response.card.pipelineTag = "image-text-to-text"
+            response.card.mlxCompatible = true
+            response.card.tags = ["gemma4", "image-text-to-text", "mlx"]
+            response.card.siblingFiles = [
+                "config.json",
+                "tokenizer.json",
+                "tokenizer_config.json",
+                "model.safetensors.index.json",
+            ]
+            return response
+        }())
+        await modelOpsClient.setBenchEvents([
+            {
+                var event = Melix_Worker_V1_RunBenchEvent()
+                event.started = Melix_Worker_V1_BenchStarted()
+                event.started.jobID = "bench-gemma4"
+                return event
+            }(),
+            {
+                var event = Melix_Worker_V1_RunBenchEvent()
+                event.completed = Melix_Worker_V1_BenchCompleted()
+                event.completed.reportPath = reportPath
+                return event
+            }(),
+        ])
+        let pythonRuntimeClient = ScriptedChatWorkerClient(events: [])
+        let service = ControlPlaneService(
+            modelCatalog: ModelCatalog(seedModels: ModelCatalog.phaseSevenContractSeedModels()),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                pythonCompatibilityClient: pythonRuntimeClient,
+                modelOperationsClient: modelOpsClient
+            )
+        )
+
+        let response = try await service.execute(
+            makeRunBenchRequest(hfRepoID: "unsloth/gemma-4-E4B-it-MLX-8bit")
+        )
+        let lastCardRequest = try #require(await modelOpsClient.lastHubModelCardRequest)
+        let lastLoadRequest = try #require(await pythonRuntimeClient.lastLoadModelRequest)
+        let lastBenchRequest = try #require(await modelOpsClient.lastBenchRequest)
+
+        #expect(response.ok)
+        #expect(lastCardRequest.repoID == "unsloth/gemma-4-E4B-it-MLX-8bit")
+        #expect(lastLoadRequest.model.modelID == "unsloth/gemma-4-E4B-it-MLX-8bit")
+        #expect(lastLoadRequest.model.modelKind == "vlm")
+        #expect(lastLoadRequest.model.ext["melix.benchmark.task_kind"] == "text-generation")
+        #expect(lastLoadRequest.model.ext["melix.vlm.execution_mode"] == "text_backed")
+        #expect(lastLoadRequest.model.ext["vision_family_id"] == "gemma4-v1")
+        #expect(lastBenchRequest.taskKind == "text-generation")
+        #expect(lastBenchRequest.sourceRepo == "unsloth/gemma-4-E4B-it-MLX-8bit")
+        #expect(response.ops.benchmarkJob.modelID == "unsloth/gemma-4-E4B-it-MLX-8bit")
+        #expect(response.ops.benchmarkJob.taskKind == "text-generation")
+        #expect(response.ops.benchmarkJob.sourceRepo == "unsloth/gemma-4-E4B-it-MLX-8bit")
+    }
+
+    @Test("execute imports image-to-text benchmark targets as OCR-capable VLM models")
+    func executeImportsDirectImageToTextBenchmarkTarget() async throws {
+        let reportPath = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("melix-bench-ocr-report.md").path
+        try "# OCR Bench\n".write(toFile: reportPath, atomically: true, encoding: .utf8)
+
+        let modelOpsClient = ScriptedModelOperationsWorkerClient()
+        await modelOpsClient.setHubModelCardResponse(
+            makeBenchmarkHubModelCardResponse(
+                repoID: "google/paligemma2-3b-ft-docci-448",
+                modelName: "paligemma2-3b-ft-docci-448",
+                pipelineTag: "image-to-text",
+                tags: ["paligemma", "image-to-text", "mlx"],
+                siblingFiles: [
+                    "config.json",
+                    "processor_config.json",
+                    "tokenizer.json",
+                ]
+            )
+        )
+        await modelOpsClient.setBenchEvents(makeBenchmarkLifecycleEvents(jobID: "bench-ocr", reportPath: reportPath))
+        let pythonRuntimeClient = ScriptedChatWorkerClient(events: [])
+        let service = ControlPlaneService(
+            modelCatalog: ModelCatalog(seedModels: ModelCatalog.phaseSevenContractSeedModels()),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                pythonCompatibilityClient: pythonRuntimeClient,
+                modelOperationsClient: modelOpsClient
+            )
+        )
+
+        let response = try await service.execute(
+            makeRunBenchRequest(hfRepoID: "google/paligemma2-3b-ft-docci-448")
+        )
+        let lastLoadRequest = try #require(await pythonRuntimeClient.lastLoadModelRequest)
+        let lastBenchRequest = try #require(await modelOpsClient.lastBenchRequest)
+
+        #expect(response.ok)
+        #expect(lastLoadRequest.model.modelKind == "vlm")
+        #expect(lastLoadRequest.model.ext["vision_family_id"] == "paligemma-v1")
+        #expect(lastLoadRequest.model.ext["vision_prompt_profile_id"] == "paligemma-caption-v1")
+        #expect(lastLoadRequest.model.ext["vision_tokenization_mode"] == "prefix")
+        #expect(lastLoadRequest.model.ext["vision_supports_tool_calls"] == "false")
+        #expect(lastBenchRequest.taskKind == "image-to-text")
+        #expect(lastBenchRequest.sourceRepo == "google/paligemma2-3b-ft-docci-448")
+        #expect(response.ops.benchmarkJob.taskKind == "image-to-text")
+    }
+
+    @Test("execute imports text-to-image benchmark targets through the image route")
+    func executeImportsDirectTextToImageBenchmarkTarget() async throws {
+        let reportPath = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("melix-bench-t2i-report.md").path
+        try "# T2I Bench\n".write(toFile: reportPath, atomically: true, encoding: .utf8)
+
+        let modelOpsClient = ScriptedModelOperationsWorkerClient()
+        await modelOpsClient.setHubModelCardResponse(
+            makeBenchmarkHubModelCardResponse(
+                repoID: "mlx-community/FLUX.1-schnell-4bit",
+                modelName: "FLUX.1-schnell-4bit",
+                pipelineTag: "text-to-image",
+                tags: ["flux", "text-to-image", "mlx"],
+                siblingFiles: ["config.json"]
+            )
+        )
+        await modelOpsClient.setBenchEvents(makeBenchmarkLifecycleEvents(jobID: "bench-t2i", reportPath: reportPath))
+        let pythonRuntimeClient = ScriptedChatWorkerClient(events: [])
+        let service = ControlPlaneService(
+            modelCatalog: ModelCatalog(seedModels: ModelCatalog.phaseSevenContractSeedModels()),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                pythonCompatibilityClient: pythonRuntimeClient,
+                modelOperationsClient: modelOpsClient
+            )
+        )
+
+        let response = try await service.execute(
+            makeRunBenchRequest(hfRepoID: "mlx-community/FLUX.1-schnell-4bit")
+        )
+        let lastLoadRequest = try #require(await pythonRuntimeClient.lastLoadModelRequest)
+        let lastBenchRequest = try #require(await modelOpsClient.lastBenchRequest)
+
+        #expect(response.ok)
+        #expect(lastLoadRequest.model.modelKind == "image")
+        #expect(lastLoadRequest.model.ext["melix.image.backend_id"] == "deterministic")
+        #expect(lastLoadRequest.model.ext["melix.image.task_kind"] == "text-to-image")
+        #expect(lastBenchRequest.taskKind == "text-to-image")
+        #expect(response.ops.benchmarkJob.taskKind == "text-to-image")
+    }
+
+    @Test("execute imports image-text-to-image benchmark targets through the image route")
+    func executeImportsDirectImageEditBenchmarkTarget() async throws {
+        let reportPath = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("melix-bench-edit-report.md").path
+        try "# Edit Bench\n".write(toFile: reportPath, atomically: true, encoding: .utf8)
+
+        let modelOpsClient = ScriptedModelOperationsWorkerClient()
+        await modelOpsClient.setHubModelCardResponse(
+            makeBenchmarkHubModelCardResponse(
+                repoID: "mlx-community/sdxl-edit",
+                modelName: "sdxl-edit",
+                pipelineTag: "image-text-to-image",
+                tags: ["sdxl", "edit", "mlx"],
+                siblingFiles: ["config.json"]
+            )
+        )
+        await modelOpsClient.setBenchEvents(makeBenchmarkLifecycleEvents(jobID: "bench-edit", reportPath: reportPath))
+        let pythonRuntimeClient = ScriptedChatWorkerClient(events: [])
+        let service = ControlPlaneService(
+            modelCatalog: ModelCatalog(seedModels: ModelCatalog.phaseSevenContractSeedModels()),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                pythonCompatibilityClient: pythonRuntimeClient,
+                modelOperationsClient: modelOpsClient
+            )
+        )
+
+        let response = try await service.execute(
+            makeRunBenchRequest(hfRepoID: "mlx-community/sdxl-edit")
+        )
+        let lastLoadRequest = try #require(await pythonRuntimeClient.lastLoadModelRequest)
+        let lastBenchRequest = try #require(await modelOpsClient.lastBenchRequest)
+
+        #expect(response.ok)
+        #expect(lastLoadRequest.model.modelKind == "image")
+        #expect(lastLoadRequest.model.ext["melix.image.task_kind"] == "image-text-to-image")
+        #expect(lastBenchRequest.taskKind == "image-text-to-image")
+        #expect(response.ops.benchmarkJob.taskKind == "image-text-to-image")
+    }
+
+    @Test("execute rejects non-MLX benchmark hub targets during direct import")
+    func executeRejectsNonMLXBenchmarkHubTargets() async throws {
+        let modelOpsClient = ScriptedModelOperationsWorkerClient()
+        await modelOpsClient.setHubModelCardResponse(
+            makeBenchmarkHubModelCardResponse(
+                repoID: "openai/non-mlx-model",
+                modelName: "non-mlx-model",
+                pipelineTag: "text-generation",
+                mlxCompatible: false
+            )
+        )
+        let service = ControlPlaneService(
+            modelCatalog: ModelCatalog(seedModels: ModelCatalog.phaseSevenContractSeedModels()),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                modelOperationsClient: modelOpsClient
+            )
+        )
+
+        let response = try await service.execute(
+            makeRunBenchRequest(hfRepoID: "openai/non-mlx-model")
+        )
+
+        #expect(response.ok == false)
+        #expect(response.error.code == "unsupported_model_family")
+        #expect(response.error.message == "Hub repo openai/non-mlx-model is not MLX-compatible.")
+    }
+
+    @Test("execute rejects unsupported direct benchmark task families and surfaces worker failures")
+    func executeRejectsUnsupportedBenchmarkTaskFamiliesAndHubFailures() async throws {
+        let unsupportedClient = ScriptedModelOperationsWorkerClient()
+        await unsupportedClient.setHubModelCardResponse(
+            makeBenchmarkHubModelCardResponse(
+                repoID: "mlx-community/image-classifier",
+                modelName: "image-classifier",
+                pipelineTag: "image-classification"
+            )
+        )
+        let unsupportedService = ControlPlaneService(
+            modelCatalog: ModelCatalog(seedModels: ModelCatalog.phaseSevenContractSeedModels()),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                modelOperationsClient: unsupportedClient
+            )
+        )
+
+        let unsupportedResponse = try await unsupportedService.execute(
+            makeRunBenchRequest(hfRepoID: "mlx-community/image-classifier")
+        )
+
+        #expect(unsupportedResponse.ok == false)
+        #expect(unsupportedResponse.error.code == "unsupported_task_family")
+        #expect(unsupportedResponse.error.message.contains("pipeline_tag=image-classification"))
+
+        let failedClient = ScriptedModelOperationsWorkerClient()
+        await failedClient.setHubModelCardError(WorkerClientError.unavailable)
+        let failedService = ControlPlaneService(
+            modelCatalog: ModelCatalog(seedModels: ModelCatalog.phaseSevenContractSeedModels()),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                modelOperationsClient: failedClient
+            )
+        )
+
+        let failedResponse = try await failedService.execute(
+            makeRunBenchRequest(hfRepoID: "mlx-community/failing-target")
+        )
+
+        #expect(failedResponse.ok == false)
+        #expect(failedResponse.error.code == "unavailable")
+        #expect(failedResponse.error.message.contains("Hub model card worker request failed"))
+
+        let workerDeclaredFailureClient = ScriptedModelOperationsWorkerClient()
+        await workerDeclaredFailureClient.setHubModelCardResponse({
+            var response = Melix_Worker_V1_GetHubModelCardResponse()
+            response.ok = false
+            return response
+        }())
+        let workerDeclaredFailureService = ControlPlaneService(
+            modelCatalog: ModelCatalog(seedModels: ModelCatalog.phaseSevenContractSeedModels()),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                modelOperationsClient: workerDeclaredFailureClient
+            )
+        )
+
+        let workerDeclaredFailureResponse = try await workerDeclaredFailureService.execute(
+            makeRunBenchRequest(hfRepoID: "mlx-community/blank-card-error")
+        )
+
+        #expect(workerDeclaredFailureResponse.ok == false)
+        #expect(workerDeclaredFailureResponse.error.code == "unknown")
+        #expect(workerDeclaredFailureResponse.error.message == "Hub model card request failed.")
+    }
+
     @Test("execute rejects ops.run_bench when the requested model is not loaded")
     func executeRejectsOpsRunBenchWhenRequestedModelIsNotLoaded() async throws {
         let modelOpsClient = ScriptedModelOperationsWorkerClient()
@@ -3678,15 +3968,60 @@ struct ControlPlaneServiceTests {
         return request
     }
 
-    private func makeRunBenchRequest(modelID: String = "") -> Melix_Controlplane_V1_ControlPlaneRequest {
+    private func makeRunBenchRequest(
+        modelID: String = "",
+        hfRepoID: String = ""
+    ) -> Melix_Controlplane_V1_ControlPlaneRequest {
         var request = Melix_Controlplane_V1_ControlPlaneRequest()
         request.requestID = "req-ops-bench"
         request.commandType = "ops.run_bench"
         request.ops = Melix_Controlplane_V1_OpsCommand()
         request.ops.runBench = Melix_Controlplane_V1_RunBench()
         request.ops.runBench.modelID = modelID
+        request.ops.runBench.hfRepoID = hfRepoID
         request.ops.runBench.suites = ["smoke", "latency"]
         return request
+    }
+
+    private func makeBenchmarkHubModelCardResponse(
+        repoID: String,
+        modelName: String,
+        pipelineTag: String,
+        mlxCompatible: Bool = true,
+        tags: [String] = ["mlx"],
+        siblingFiles: [String] = ["config.json", "tokenizer.json"]
+    ) -> Melix_Worker_V1_GetHubModelCardResponse {
+        var response = Melix_Worker_V1_GetHubModelCardResponse()
+        response.ok = true
+        response.card = Melix_Worker_V1_HubModelCard()
+        response.card.repoID = repoID
+        response.card.author = repoID.split(separator: "/").first.map(String.init) ?? "mlx-community"
+        response.card.modelName = modelName
+        response.card.pipelineTag = pipelineTag
+        response.card.mlxCompatible = mlxCompatible
+        response.card.tags = tags
+        response.card.siblingFiles = siblingFiles
+        return response
+    }
+
+    private func makeBenchmarkLifecycleEvents(
+        jobID: String,
+        reportPath: String
+    ) -> [Melix_Worker_V1_RunBenchEvent] {
+        [
+            {
+                var event = Melix_Worker_V1_RunBenchEvent()
+                event.started = Melix_Worker_V1_BenchStarted()
+                event.started.jobID = jobID
+                return event
+            }(),
+            {
+                var event = Melix_Worker_V1_RunBenchEvent()
+                event.completed = Melix_Worker_V1_BenchCompleted()
+                event.completed.reportPath = reportPath
+                return event
+            }(),
+        ]
     }
 
     private func makeRunEvaluationRequest() -> Melix_Controlplane_V1_ControlPlaneRequest {

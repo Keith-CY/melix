@@ -2582,6 +2582,8 @@ public struct Melix_Controlplane_V1_RunBench: Sendable {
 
   public var modelID: String = String()
 
+  public var hfRepoID: String = String()
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -2731,6 +2733,10 @@ public struct Melix_Controlplane_V1_BenchmarkJobSummary: Sendable {
   public var createdAtUnixMs: Int64 = 0
 
   public var updatedAtUnixMs: Int64 = 0
+
+  public var taskKind: String = String()
+
+  public var sourceRepo: String = String()
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -7948,7 +7954,7 @@ extension Melix_Controlplane_V1_RunDoctor: SwiftProtobuf.Message, SwiftProtobuf.
 
 extension Melix_Controlplane_V1_RunBench: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".RunBench"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}suites\0\u{1}parameters\0\u{3}model_id\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}suites\0\u{1}parameters\0\u{3}model_id\0\u{3}hf_repo_id\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -7959,6 +7965,7 @@ extension Melix_Controlplane_V1_RunBench: SwiftProtobuf.Message, SwiftProtobuf._
       case 1: try { try decoder.decodeRepeatedStringField(value: &self.suites) }()
       case 2: try { try decoder.decodeMapField(fieldType: SwiftProtobuf._ProtobufMap<SwiftProtobuf.ProtobufString,SwiftProtobuf.ProtobufString>.self, value: &self.parameters) }()
       case 3: try { try decoder.decodeSingularStringField(value: &self.modelID) }()
+      case 4: try { try decoder.decodeSingularStringField(value: &self.hfRepoID) }()
       default: break
       }
     }
@@ -7974,6 +7981,9 @@ extension Melix_Controlplane_V1_RunBench: SwiftProtobuf.Message, SwiftProtobuf._
     if !self.modelID.isEmpty {
       try visitor.visitSingularStringField(value: self.modelID, fieldNumber: 3)
     }
+    if !self.hfRepoID.isEmpty {
+      try visitor.visitSingularStringField(value: self.hfRepoID, fieldNumber: 4)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -7981,6 +7991,7 @@ extension Melix_Controlplane_V1_RunBench: SwiftProtobuf.Message, SwiftProtobuf._
     if lhs.suites != rhs.suites {return false}
     if lhs.parameters != rhs.parameters {return false}
     if lhs.modelID != rhs.modelID {return false}
+    if lhs.hfRepoID != rhs.hfRepoID {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -8281,7 +8292,7 @@ extension Melix_Controlplane_V1_BenchmarkMetricValue: SwiftProtobuf.Message, Swi
 
 extension Melix_Controlplane_V1_BenchmarkJobSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".BenchmarkJobSummary"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}schema_version\0\u{3}job_id\0\u{3}model_id\0\u{1}suites\0\u{1}parameters\0\u{1}status\0\u{3}output_dir\0\u{3}created_at_unix_ms\0\u{3}updated_at_unix_ms\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}schema_version\0\u{3}job_id\0\u{3}model_id\0\u{1}suites\0\u{1}parameters\0\u{1}status\0\u{3}output_dir\0\u{3}created_at_unix_ms\0\u{3}updated_at_unix_ms\0\u{3}task_kind\0\u{3}source_repo\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -8298,6 +8309,8 @@ extension Melix_Controlplane_V1_BenchmarkJobSummary: SwiftProtobuf.Message, Swif
       case 7: try { try decoder.decodeSingularStringField(value: &self.outputDir) }()
       case 8: try { try decoder.decodeSingularInt64Field(value: &self.createdAtUnixMs) }()
       case 9: try { try decoder.decodeSingularInt64Field(value: &self.updatedAtUnixMs) }()
+      case 10: try { try decoder.decodeSingularStringField(value: &self.taskKind) }()
+      case 11: try { try decoder.decodeSingularStringField(value: &self.sourceRepo) }()
       default: break
       }
     }
@@ -8331,6 +8344,12 @@ extension Melix_Controlplane_V1_BenchmarkJobSummary: SwiftProtobuf.Message, Swif
     if self.updatedAtUnixMs != 0 {
       try visitor.visitSingularInt64Field(value: self.updatedAtUnixMs, fieldNumber: 9)
     }
+    if !self.taskKind.isEmpty {
+      try visitor.visitSingularStringField(value: self.taskKind, fieldNumber: 10)
+    }
+    if !self.sourceRepo.isEmpty {
+      try visitor.visitSingularStringField(value: self.sourceRepo, fieldNumber: 11)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -8344,6 +8363,8 @@ extension Melix_Controlplane_V1_BenchmarkJobSummary: SwiftProtobuf.Message, Swif
     if lhs.outputDir != rhs.outputDir {return false}
     if lhs.createdAtUnixMs != rhs.createdAtUnixMs {return false}
     if lhs.updatedAtUnixMs != rhs.updatedAtUnixMs {return false}
+    if lhs.taskKind != rhs.taskKind {return false}
+    if lhs.sourceRepo != rhs.sourceRepo {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

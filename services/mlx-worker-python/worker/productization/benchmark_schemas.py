@@ -34,6 +34,8 @@ class ServingBenchmarkJob:
     schema_version: str
     job_id: str
     model_id: str
+    task_kind: str
+    source_repo: str
     suites: tuple[str, ...]
     parameters: dict[str, str]
     status: str
@@ -47,6 +49,8 @@ class ServingBenchmarkJob:
             "schema_version": self.schema_version,
             "job_id": self.job_id,
             "model_id": self.model_id,
+            "task_kind": self.task_kind,
+            "source_repo": self.source_repo,
             "suites": list(self.suites),
             "parameters": dict(self.parameters),
             "status": self.status,
@@ -86,6 +90,8 @@ def build_serving_benchmark_job(
     *,
     job_id: str,
     model_id: str,
+    task_kind: str = "text-generation",
+    source_repo: str = "",
     suites: tuple[str, ...],
     parameters: dict[str, str],
     status: str,
@@ -98,6 +104,8 @@ def build_serving_benchmark_job(
         schema_version=_SERVING_BENCHMARK_JOB_SCHEMA_VERSION,
         job_id=job_id,
         model_id=model_id,
+        task_kind=task_kind,
+        source_repo=source_repo,
         suites=suites,
         parameters=dict(parameters),
         status=status,

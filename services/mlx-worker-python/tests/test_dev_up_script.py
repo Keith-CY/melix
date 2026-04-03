@@ -311,6 +311,8 @@ def test_run_wait_for_worker_ready_builds_expected_uv_command(
         "run",
         "--project",
         f"{tmp_path}/services/mlx-worker-python",
+        "--extra",
+        "mlx",
         "python",
         f"{tmp_path}/scripts/wait_for_worker_ready.py",
         "--socket-path",

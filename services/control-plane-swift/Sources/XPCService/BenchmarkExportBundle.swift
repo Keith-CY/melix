@@ -79,6 +79,8 @@ public struct ControlPlaneBenchmarkJobRecord: Codable, Equatable, Sendable {
     public let schemaVersion: String
     public let jobID: String
     public let modelID: String
+    public let taskKind: String
+    public let sourceRepo: String
     public let suites: [String]
     public let parameters: [String: String]
     public let status: String
@@ -91,6 +93,8 @@ public struct ControlPlaneBenchmarkJobRecord: Codable, Equatable, Sendable {
         case schemaVersion = "schema_version"
         case jobID = "job_id"
         case modelID = "model_id"
+        case taskKind = "task_kind"
+        case sourceRepo = "source_repo"
         case suites
         case parameters
         case status
@@ -105,6 +109,8 @@ public struct ControlPlaneBenchmarkJobRecord: Codable, Equatable, Sendable {
         schemaVersion = try container.decodeIfPresent(String.self, forKey: .schemaVersion) ?? ""
         jobID = try container.decodeIfPresent(String.self, forKey: .jobID) ?? ""
         modelID = try container.decodeIfPresent(String.self, forKey: .modelID) ?? ""
+        taskKind = try container.decodeIfPresent(String.self, forKey: .taskKind) ?? ""
+        sourceRepo = try container.decodeIfPresent(String.self, forKey: .sourceRepo) ?? ""
         suites = try container.decodeIfPresent([String].self, forKey: .suites) ?? []
         parameters = try container.decodeIfPresent([String: String].self, forKey: .parameters) ?? [:]
         status = try container.decodeIfPresent(String.self, forKey: .status) ?? ""
@@ -118,6 +124,8 @@ public struct ControlPlaneBenchmarkJobRecord: Codable, Equatable, Sendable {
 public struct ControlPlaneBenchmarkHistoryEntry: Codable, Equatable, Sendable {
     public let jobID: String
     public let modelID: String
+    public let taskKind: String
+    public let sourceRepo: String
     public let suiteID: String
     public let suiteTitle: String
     public let datasetRepo: String
@@ -135,6 +143,8 @@ public struct ControlPlaneBenchmarkHistoryEntry: Codable, Equatable, Sendable {
 public struct ControlPlaneBenchmarkCSVRow: Codable, Equatable, Sendable {
     public let jobID: String
     public let modelID: String
+    public let taskKind: String
+    public let sourceRepo: String
     public let suiteID: String
     public let datasetRepo: String
     public let datasetConfig: String
@@ -191,6 +201,8 @@ public struct ControlPlaneBenchmarkExportBundle: Codable, Equatable, Sendable {
                     return ControlPlaneBenchmarkHistoryEntry(
                         jobID: job.jobID,
                         modelID: job.modelID,
+                        taskKind: normalizedTaskKind(for: job),
+                        sourceRepo: normalizedSourceRepo(for: job, metadata: metadata),
                         suiteID: suiteID,
                         suiteTitle: metadata?.title ?? suiteID,
                         datasetRepo: metadata?.datasetPath ?? "",
@@ -228,6 +240,8 @@ public struct ControlPlaneBenchmarkExportBundle: Codable, Equatable, Sendable {
                         ControlPlaneBenchmarkCSVRow(
                             jobID: job.jobID,
                             modelID: job.modelID,
+                            taskKind: normalizedTaskKind(for: job),
+                            sourceRepo: normalizedSourceRepo(for: job, metadata: metadata),
                             suiteID: suiteID,
                             datasetRepo: metadata?.datasetPath ?? "",
                             datasetConfig: metadata?.datasetName ?? "",
@@ -246,7 +260,7 @@ public struct ControlPlaneBenchmarkExportBundle: Codable, Equatable, Sendable {
 
     public func benchmarkCSV(jobID: String? = nil) -> String {
         let rows = benchmarkCSVRows(jobID: jobID)
-        let header = "job_id,model_id,suite_id,dataset_repo,dataset_config,dataset_split,sample_size,batch_factor,metric_name,metric_value,unit,created_at_unix_ms"
+        let header = "job_id,model_id,task_kind,source_repo,suite_id,dataset_repo,dataset_config,dataset_split,sample_size,batch_factor,metric_name,metric_value,unit,created_at_unix_ms"
         guard rows.isEmpty == false else {
             return header + "\n"
         }
@@ -254,6 +268,8 @@ public struct ControlPlaneBenchmarkExportBundle: Codable, Equatable, Sendable {
             [
                 row.jobID,
                 row.modelID,
+                row.taskKind,
+                row.sourceRepo,
                 row.suiteID,
                 row.datasetRepo,
                 row.datasetConfig,
@@ -276,6 +292,26 @@ public struct ControlPlaneBenchmarkExportBundle: Codable, Equatable, Sendable {
             return nil
         }
         return Int(rawValue)
+    }
+
+    private func normalizedTaskKind(for job: ControlPlaneBenchmarkJobRecord) -> String {
+        if !job.taskKind.isEmpty {
+            return job.taskKind
+        }
+        if let parameterTaskKind = job.parameters["task_kind"], !parameterTaskKind.isEmpty {
+            return parameterTaskKind
+        }
+        return "text-generation"
+    }
+
+    private func normalizedSourceRepo(
+        for job: ControlPlaneBenchmarkJobRecord,
+        metadata: ControlPlaneBenchmarkSuiteMetadata?
+    ) -> String {
+        if !job.sourceRepo.isEmpty {
+            return job.sourceRepo
+        }
+        return metadata?.datasetPath ?? ""
     }
 
     private static func sortJobsNewestFirst(

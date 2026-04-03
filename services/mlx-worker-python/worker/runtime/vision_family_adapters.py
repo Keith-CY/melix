@@ -130,6 +130,19 @@ _VISION_FAMILY_ADAPTERS: dict[str, VisionFamilyAdapter] = {
             prompt_token_bias=2,
         )
     ),
+    "gemma4-v1": VisionFamilyAdapter(
+        descriptor=VisionFamilyDescriptor(
+            family_id="gemma4-v1",
+            prompt_profile_id="gemma4-chatml-v1",
+            tokenization_mode="interleaved",
+            max_images_per_prompt=8,
+            supports_tool_calls=True,
+            multimodal_adapter_hash="vision-family-gemma4-v1",
+            default_prompt_text="Describe the image.",
+            image_token_divisor=8,
+            prompt_token_bias=1,
+        )
+    ),
 }
 
 

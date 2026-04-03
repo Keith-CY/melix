@@ -240,12 +240,42 @@ struct MelixCLIRunnerTests {
 
         #expect(await client.loadedModelIDs == ["melix-dev-text"])
         #expect(benchRequest.modelID == "melix-dev-text")
+        #expect(benchRequest.hfRepoID.isEmpty)
         #expect(benchRequest.suites == ["smoke", "latency"])
         #expect(benchRequest.parameters["sample_size"] == "8")
         #expect(benchRequest.parameters["batch_factor"] == "2")
         #expect(payload["report_path"] as? String == "/tmp/melix/bench/job-3/report.md")
         #expect(payload["report_markdown"] as? String == "# Melix Bench\n")
         #expect(metrics["bench.smoke.ttft_ms"] == 24.45)
+    }
+
+    @Test("bench run forwards a direct Hugging Face repo target without preloading a catalog model")
+    func benchRunForDirectHFRepoSkipsModelPreload() async throws {
+        let client = StubControlPlaneXPCClient()
+        await client.setBenchResult(
+            .init(
+                reportPath: "/tmp/melix/bench/job-vlm/report.md",
+                reportMarkdown: "# Melix Bench\n",
+                metrics: ["bench.smoke.first_token_ms": 88.2]
+            )
+        )
+
+        let output = try await MelixCLIRunner(client: client).run(
+            .benchRun(
+                .init(
+                    hfRepoID: "unsloth/gemma-4-E4B-it-MLX-8bit",
+                    suites: ["smoke"],
+                    json: true
+                )
+            )
+        )
+        let benchRequest = try #require(await client.lastBenchRequest)
+        let payload = try #require(parseJSONObject(output))
+
+        #expect(await client.loadedModelIDs.isEmpty)
+        #expect(benchRequest.modelID.isEmpty)
+        #expect(benchRequest.hfRepoID == "unsloth/gemma-4-E4B-it-MLX-8bit")
+        #expect(payload["report_path"] as? String == "/tmp/melix/bench/job-vlm/report.md")
     }
 
     @Test("bench run returns plain markdown or the report path depending on the response")
@@ -290,11 +320,13 @@ struct MelixCLIRunnerTests {
             ($0 as? [String: Any])?["job_id"] as? String == "bench-1"
         }) as? [String: Any])
 
-        #expect(textOutput.contains("job_id\tmodel_id\tsuite\tdataset"))
-        #expect(textOutput.contains("bench-1\tmelix-dev-text\tsmoke\tHuggingFaceH4/ultrachat_200k/default:train_sft\t4\t2\tcompleted\t1712100000000"))
+        #expect(textOutput.contains("job_id\tmodel_id\ttask_kind\tsource_repo\tsuite\tdataset"))
+        #expect(textOutput.contains("bench-1\tmelix-dev-text\ttext-generation\tHuggingFaceH4/ultrachat_200k\tsmoke\tHuggingFaceH4/ultrachat_200k/default:train_sft\t4\t2\tcompleted\t1712100000000"))
         #expect(benchOneEntry["job_id"] as? String == "bench-1")
         #expect(benchOneEntry["suite_id"] as? String == "smoke")
         #expect(benchOneEntry["dataset_repo"] as? String == "HuggingFaceH4/ultrachat_200k")
+        #expect(benchOneEntry["task_kind"] as? String == "text-generation")
+        #expect(benchOneEntry["source_repo"] as? String == "HuggingFaceH4/ultrachat_200k")
     }
 
     @Test("bench export-csv writes filtered benchmark metric rows and returns JSON metadata")
@@ -314,9 +346,9 @@ struct MelixCLIRunnerTests {
         #expect(response["job_id"] as? String == "bench-1")
         #expect(response["output_path"] as? String == outputURL.path)
         #expect(response["row_count"] as? Int == 2)
-        #expect(csv.contains("job_id,model_id,suite_id,dataset_repo,dataset_config,dataset_split,sample_size,batch_factor,metric_name,metric_value,unit,created_at_unix_ms"))
-        #expect(csv.contains("bench-1,melix-dev-text,smoke,HuggingFaceH4/ultrachat_200k,default,train_sft,4,2,bench.smoke.tokens_per_second,47.08,tok/s,1712100000000"))
-        #expect(csv.contains("bench-1,melix-dev-text,smoke,HuggingFaceH4/ultrachat_200k,default,train_sft,4,2,bench.smoke.ttft_ms,24.45,ms,1712100000000"))
+        #expect(csv.contains("job_id,model_id,task_kind,source_repo,suite_id,dataset_repo,dataset_config,dataset_split,sample_size,batch_factor,metric_name,metric_value,unit,created_at_unix_ms"))
+        #expect(csv.contains("bench-1,melix-dev-text,text-generation,HuggingFaceH4/ultrachat_200k,smoke,HuggingFaceH4/ultrachat_200k,default,train_sft,4,2,bench.smoke.tokens_per_second,47.08,tok/s,1712100000000"))
+        #expect(csv.contains("bench-1,melix-dev-text,text-generation,HuggingFaceH4/ultrachat_200k,smoke,HuggingFaceH4/ultrachat_200k,default,train_sft,4,2,bench.smoke.ttft_ms,24.45,ms,1712100000000"))
     }
 
     @Test("bench export-csv fails when the requested job is not present")
@@ -332,6 +364,61 @@ struct MelixCLIRunnerTests {
         } catch let error as MelixCLIError {
             #expect(error == .runtime("No benchmark metrics were found for job bench-missing."))
         }
+    }
+
+    @Test("runner default live client path uses the supplied environment-backed service builder")
+    func runnerDefaultLiveClientPathUsesServiceBuilder() async throws {
+        let recorder = EnvironmentRecorder()
+        let runner = MelixCLIRunner(
+            environment: [
+                "MELIX_REPO_ROOT": "/tmp/melix-repo",
+                "MELIX_WORKER_SOCKET_PATH": "/tmp/melix-python.sock",
+                "MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH": "/tmp/melix-swift.sock",
+            ],
+            serviceBuilder: { environment in
+                recorder.record(environment)
+                return ExportResultsOnlyControlPlaneService(exportBundleJSON: makeBenchmarkExportBundleJSON())
+            }
+        )
+
+        let output = try await runner.run(.benchList(.init()))
+        let environment = try #require(recorder.environment)
+
+        #expect(environment["MELIX_REPO_ROOT"] == "/tmp/melix-repo")
+        #expect(environment["MELIX_WORKER_SOCKET_PATH"] == "/tmp/melix-python.sock")
+        #expect(environment["MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH"] == "/tmp/melix-swift.sock")
+        #expect(output.contains("bench-1\tmelix-dev-text\ttext-generation\tHuggingFaceH4/ultrachat_200k\tsmoke"))
+    }
+
+    @Test("default runner instantiates the built-in local runtime with an explicit repo root")
+    func defaultRunnerInstantiatesLocalRuntimeWithExplicitRepoRoot() {
+        let repoRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .path
+
+        _ = MelixCLIRunner(
+            environment: [
+                "MELIX_REPO_ROOT": repoRoot,
+                "MELIX_WORKER_SOCKET_PATH": "/tmp/melix-python.sock",
+                "MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH": "/tmp/melix-swift.sock",
+            ]
+        )
+
+        #expect(Bool(true))
+    }
+
+    @Test("default runner falls back to the repository path when MELIX_REPO_ROOT is absent")
+    func defaultRunnerInstantiatesLocalRuntimeWithFallbackRepoRoot() {
+        _ = MelixCLIRunner(
+            environment: [
+                "MELIX_WORKER_SOCKET_PATH": "/tmp/melix-python.sock",
+                "MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH": "/tmp/melix-swift.sock",
+            ]
+        )
+
+        #expect(Bool(true))
     }
 
     @Test("lora list fails when the server snapshot has no models")
@@ -394,6 +481,76 @@ struct MelixCLIRunnerTests {
         #expect(cancelled == false)
         #expect(parseJSONObject("not-json") == nil)
         #expect(parseJSONObject(#"{"ok":true}"#)?["ok"] as? Bool == true)
+    }
+}
+
+private final class EnvironmentRecorder: @unchecked Sendable {
+    private(set) var environment: [String: String]?
+
+    func record(_ environment: [String: String]) {
+        self.environment = environment
+    }
+}
+
+private actor ExportResultsOnlyControlPlaneService: ControlPlaneExecuting {
+    private let exportBundleJSON: String
+
+    init(exportBundleJSON: String) {
+        self.exportBundleJSON = exportBundleJSON
+    }
+
+    func handshake(
+        _ request: Melix_Controlplane_V1_HandshakeRequest
+    ) async throws -> Melix_Controlplane_V1_HandshakeResponse {
+        _ = request
+        return Melix_Controlplane_V1_HandshakeResponse()
+    }
+
+    func subscribe(
+        _ request: Melix_Controlplane_V1_SubscribeRequest
+    ) async -> ControlPlaneSubscription {
+        _ = request
+        return ControlPlaneSubscription(
+            subscriptionID: "sub-export-only",
+            stream: AsyncStream { continuation in
+                continuation.finish()
+            }
+        )
+    }
+
+    func unsubscribe(_ subscriptionID: String) async {
+        _ = subscriptionID
+    }
+
+    func startChat(
+        _ request: ControlPlaneChatRequest
+    ) async throws -> ControlPlaneChatExecution {
+        _ = request
+        return ControlPlaneChatExecution(
+            requestID: "export-only-chat",
+            modelID: "melix-dev-text",
+            stream: AsyncThrowingStream { continuation in
+                continuation.finish()
+            }
+        )
+    }
+
+    func execute(
+        _ request: Melix_Controlplane_V1_ControlPlaneRequest
+    ) async throws -> Melix_Controlplane_V1_ControlPlaneResponse {
+        guard case .ops(let command) = request.command,
+              case .exportResults = command.kind
+        else {
+            Issue.record("Unexpected control-plane command for export-only CLI service.")
+            return Melix_Controlplane_V1_ControlPlaneResponse()
+        }
+
+        var response = Melix_Controlplane_V1_ControlPlaneResponse()
+        response.requestID = request.requestID
+        response.commandType = request.commandType
+        response.ok = true
+        response.ops.exportBundleJson = exportBundleJSON
+        return response
     }
 }
 
@@ -598,6 +755,8 @@ private func makeBenchmarkExportBundleJSON() -> String {
           "schema_version": "melix.serving_benchmark_job.v1",
           "job_id": "bench-1",
           "model_id": "melix-dev-text",
+          "task_kind": "text-generation",
+          "source_repo": "HuggingFaceH4/ultrachat_200k",
           "suites": ["smoke"],
           "parameters": {
             "sample_size": "4",

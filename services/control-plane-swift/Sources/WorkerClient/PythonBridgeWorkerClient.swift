@@ -378,6 +378,10 @@ public enum BootstrapWorkerPreparation {
         "melix.audio.output_formats",
         "melix.audio.supports_instructions",
     ]
+    private static let imageExtKeys = [
+        "melix.image.backend_id",
+        "melix.image.task_kind",
+    ]
     private static let capabilityExtKeys = [
         "melix.capability.route_kind",
         "melix.capability.class",
@@ -433,6 +437,10 @@ public enum BootstrapWorkerPreparation {
         let baseSpec: Melix_Worker_V1_ModelSpec
         if let builtIn = modelSpec(for: summary.modelID) {
             baseSpec = builtIn
+        } else if let generic = genericVLMModel(from: summary) {
+            baseSpec = generic
+        } else if let generic = genericImageModel(from: summary) {
+            baseSpec = generic
         } else if let generic = genericTextModel(from: summary) {
             baseSpec = generic
         } else {
@@ -453,6 +461,9 @@ public enum BootstrapWorkerPreparation {
             applyExtOverride(for: key, from: summary, to: &spec)
         }
         for key in audioExtKeys {
+            applyExtOverride(for: key, from: summary, to: &spec)
+        }
+        for key in imageExtKeys {
             applyExtOverride(for: key, from: summary, to: &spec)
         }
         for key in capabilityExtKeys {
@@ -505,6 +516,56 @@ public enum BootstrapWorkerPreparation {
         model.modelKind = "text"
         model.revision = summary.settings.ext["melix.model_revision"] ?? "derived"
         model.tokenizerHash = summary.settings.ext["melix.tokenizer_hash"] ?? "tok-derived"
+        model.quantProfileID = summary.quantProfileID
+        model.parserMode = summary.settings.ext["melix.parser_mode"] ?? "text"
+        model.reasoningMode = summary.settings.ext["melix.reasoning_mode"] ?? "off"
+        model.maxContext = summary.maxContext
+        model.ext.merge(summary.settings.ext) { _, new in new }
+        return model
+    }
+
+    private static func genericVLMModel(
+        from summary: Melix_Controlplane_V1_ModelSummary
+    ) -> Melix_Worker_V1_ModelSpec? {
+        guard summary.kind == "vlm" else {
+            return nil
+        }
+        let modelPath = summary.settings.ext["melix.model_path"]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !modelPath.isEmpty else {
+            return nil
+        }
+
+        var model = Melix_Worker_V1_ModelSpec()
+        model.modelID = summary.modelID
+        model.modelPath = modelPath
+        model.modelKind = "vlm"
+        model.revision = summary.settings.ext["melix.model_revision"] ?? "imported"
+        model.tokenizerHash = summary.settings.ext["melix.tokenizer_hash"] ?? "tok-vlm-imported"
+        model.quantProfileID = summary.quantProfileID
+        model.parserMode = summary.settings.ext["melix.parser_mode"] ?? "text"
+        model.reasoningMode = summary.settings.ext["melix.reasoning_mode"] ?? "off"
+        model.maxContext = summary.maxContext
+        model.ext.merge(summary.settings.ext) { _, new in new }
+        return model
+    }
+
+    private static func genericImageModel(
+        from summary: Melix_Controlplane_V1_ModelSummary
+    ) -> Melix_Worker_V1_ModelSpec? {
+        guard summary.kind == "image" else {
+            return nil
+        }
+        let modelPath = summary.settings.ext["melix.model_path"]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !modelPath.isEmpty else {
+            return nil
+        }
+
+        var model = Melix_Worker_V1_ModelSpec()
+        model.modelID = summary.modelID
+        model.modelPath = modelPath
+        model.modelKind = "image"
+        model.revision = summary.settings.ext["melix.model_revision"] ?? "imported"
+        model.tokenizerHash = summary.settings.ext["melix.tokenizer_hash"] ?? "tok-image-imported"
         model.quantProfileID = summary.quantProfileID
         model.parserMode = summary.settings.ext["melix.parser_mode"] ?? "text"
         model.reasoningMode = summary.settings.ext["melix.reasoning_mode"] ?? "off"
@@ -1035,6 +1096,8 @@ public struct ProcessWorkerBridgeRunner: WorkerBridgeRunning, Sendable {
                 "run",
                 "--project",
                 "\(repoRoot)/services/mlx-worker-python",
+                "--extra",
+                "mlx",
                 "python",
                 "\(repoRoot)/services/mlx-worker-python/worker/control_plane_bridge.py",
                 command.kind.rawValue,

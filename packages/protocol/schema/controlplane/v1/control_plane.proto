@@ -336,6 +336,7 @@ message RunBench {
   repeated string suites = 1;
   map<string, string> parameters = 2;
   string model_id = 3;
+  string hf_repo_id = 4;
 }
 message RunEvaluation {
   string suite_id = 1;
@@ -381,6 +382,8 @@ message BenchmarkJobSummary {
   string output_dir = 7;
   int64 created_at_unix_ms = 8;
   int64 updated_at_unix_ms = 9;
+  string task_kind = 10;
+  string source_repo = 11;
 }
 
 message BenchmarkResultSummary {

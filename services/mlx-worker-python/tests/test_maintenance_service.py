@@ -4,8 +4,11 @@ import json
 from pathlib import Path
 import threading
 import time
+from types import SimpleNamespace
 
-from packages.protocol.python.worker.v1 import maintenance_pb2
+import pytest
+
+from packages.protocol.python.worker.v1 import common_pb2, maintenance_pb2
 
 from worker.grpc_server import WorkerMaintenanceService
 from worker.model_ops.adapter_activation_pipeline import AdapterActivationPipeline
@@ -170,6 +173,16 @@ class FakeBenchmarkHFDatasetFetcher:
                     "rows": [
                         {"row": {"instruction": "List two colors.", "response": "Red and blue."}},
                         {"row": {"instruction": "List two animals.", "response": "Cat and dog."}},
+                    ]
+                }
+            return {"splits": [{"dataset": dataset, "config": "default", "split": "train"}]}
+
+        if dataset == "huggingface/documentation-images":
+            if endpoint == "rows":
+                return {
+                    "rows": [
+                        {"row": {"image": {"src": "https://example.com/doc-image-1.jpg"}}},
+                        {"row": {"image": {"src": "https://example.com/doc-image-2.jpg"}}},
                     ]
                 }
             return {"splits": [{"dataset": dataset, "config": "default", "split": "train"}]}
@@ -1431,8 +1444,63 @@ def test_benchmark_helper_defaults_cover_invalid_parameters_and_sparse_samples(t
     assert resolved_suite.sample_size == 1
     assert resolved_suite.batch_factor == 1
     assert MaintenanceCore._benchmark_max_output_tokens({"max_output_tokens": "oops"}) == 8
+
+
+def test_text_backed_vlm_models_force_text_benchmark_task_kind(tmp_path: Path) -> None:
+    service = build_service(tmp_path)
+    loaded = SimpleNamespace(
+        spec=common_pb2.ModelSpec(model_id="unsloth/gemma-4-E4B-it-MLX-8bit", model_kind="vlm"),
+        runtime_model={"metadata": {"melix.vlm.execution_mode": "text_backed"}},
+    )
+
+    task_kind = service._core._resolved_benchmark_task_kind(
+        request=maintenance_pb2.RunBenchRequest(task_kind="image-text-to-text"),
+        parameters={},
+        loaded_model=loaded,
+    )
+
+    assert task_kind == "text-generation"
     assert MaintenanceCore._percentile([], 95.0) == 0.0
     assert MaintenanceCore._percentile([1.234], 95.0) == 1.23
+
+
+def test_resolved_benchmark_task_kind_covers_explicit_mode_and_model_kind_branches(tmp_path: Path) -> None:
+    service = build_service(tmp_path)
+
+    explicit = service._core._resolved_benchmark_task_kind(
+        request=maintenance_pb2.RunBenchRequest(task_kind="image-text-to-text"),
+        parameters={},
+        loaded_model=SimpleNamespace(spec=common_pb2.ModelSpec(model_kind="text"), runtime_model={}),
+    )
+    via_parameter = service._core._resolved_benchmark_task_kind(
+        request=maintenance_pb2.RunBenchRequest(),
+        parameters={"benchmark_mode": "vlm"},
+        loaded_model=SimpleNamespace(spec=common_pb2.ModelSpec(model_kind="text"), runtime_model={}),
+    )
+    ocr = service._core._resolved_benchmark_task_kind(
+        request=maintenance_pb2.RunBenchRequest(),
+        parameters={},
+        loaded_model=SimpleNamespace(spec=common_pb2.ModelSpec(model_kind="ocr"), runtime_model={}),
+    )
+    image_default = service._core._resolved_benchmark_task_kind(
+        request=maintenance_pb2.RunBenchRequest(),
+        parameters={},
+        loaded_model=SimpleNamespace(spec=common_pb2.ModelSpec(model_kind="image"), runtime_model={}),
+    )
+    image_edit = service._core._resolved_benchmark_task_kind(
+        request=maintenance_pb2.RunBenchRequest(),
+        parameters={},
+        loaded_model=SimpleNamespace(
+            spec=common_pb2.ModelSpec(model_kind="image", ext={"melix.image.task_kind": "image-text-to-image"}),
+            runtime_model={},
+        ),
+    )
+
+    assert explicit == "image-text-to-text"
+    assert via_parameter == "image-text-to-text"
+    assert ocr == "image-to-text"
+    assert image_default == "text-to-image"
+    assert image_edit == "image-text-to-image"
 
 
 def test_run_evaluation_returns_typed_job_and_result(tmp_path: Path) -> None:
@@ -1860,13 +1928,31 @@ def test_run_bench_persists_completed_queue_state(tmp_path: Path) -> None:
 
 
 def test_bench_events_vlm_mode_produces_vlm_metrics(tmp_path: Path) -> None:
+    image_path = tmp_path / "doc-image-1.txt"
+    image_path.write_text("benchmark vision sample", encoding="utf-8")
+
+    class LocalImageBenchmarkFetcher(FakeBenchmarkHFDatasetFetcher):
+        def __call__(self, endpoint: str, params: dict[str, str]) -> dict[str, object]:
+            dataset = params.get("dataset", "")
+            if dataset == "huggingface/documentation-images":
+                if endpoint == "rows":
+                    return {"rows": [{"row": {"image": {"src": str(image_path)}}}]}
+                return {"splits": [{"dataset": dataset, "config": "default", "split": "train"}]}
+            return super().__call__(endpoint, params)
+
     registry = WorkerRegistry(model_catalog=WorkerModelCatalog())
-    core = MaintenanceCore(registry, jobs_root=tmp_path / "model-ops")
+    core = MaintenanceCore(
+        registry,
+        jobs_root=tmp_path / "model-ops",
+        benchmark_suite_catalog=BenchmarkSuiteCatalog(
+            hf_dataset_fetcher=LocalImageBenchmarkFetcher()
+        ),
+    )
 
     events = list(
         core.bench_events(
             maintenance_pb2.RunBenchRequest(
-                model_handle="melix-dev-text::1",
+                model_handle="melix-dev-vlm::1",
                 suites=["smoke"],
                 parameters={"benchmark_mode": "vlm"},
             )
@@ -1884,7 +1970,150 @@ def test_bench_events_vlm_mode_produces_vlm_metrics(tmp_path: Path) -> None:
 
     report_event = next(event for event in events if event.HasField("completed"))
     report_content = Path(report_event.completed.report_path).read_text(encoding="utf-8")
-    assert "benchmark_mode: vlm" in report_content
+    assert "task_kind: image-text-to-text" in report_content
+
+
+def test_bench_events_vlm_latency_suite_produces_percentile_metrics(tmp_path: Path) -> None:
+    image_path = tmp_path / "doc-image-1.png"
+    image_path.write_bytes(b"\x89PNG\r\n\x1a\nbenchmark")
+
+    class LocalImageBenchmarkFetcher(FakeBenchmarkHFDatasetFetcher):
+        def __call__(self, endpoint: str, params: dict[str, str]) -> dict[str, object]:
+            dataset = params.get("dataset", "")
+            if dataset == "huggingface/documentation-images":
+                if endpoint == "rows":
+                    return {"rows": [{"row": {"image": {"src": str(image_path)}}}]}
+                return {"splits": [{"dataset": dataset, "config": "default", "split": "validation"}]}
+            return super().__call__(endpoint, params)
+
+    core = MaintenanceCore(
+        WorkerRegistry(model_catalog=WorkerModelCatalog()),
+        jobs_root=tmp_path / "model-ops",
+        benchmark_suite_catalog=BenchmarkSuiteCatalog(
+            hf_dataset_fetcher=LocalImageBenchmarkFetcher()
+        ),
+    )
+
+    events = list(
+        core.bench_events(
+            maintenance_pb2.RunBenchRequest(
+                model_handle="melix-dev-vlm::1",
+                suites=["latency"],
+                parameters={"benchmark_mode": "vlm"},
+            )
+        )
+    )
+
+    metric_names = [event.metric.name for event in events if event.HasField("metric")]
+    assert "bench.latency.image_p50_ms" in metric_names
+    assert "bench.latency.image_p95_ms" in metric_names
+
+
+def test_bench_events_image_generation_mode_produces_image_metrics(tmp_path: Path) -> None:
+    core = MaintenanceCore(
+        WorkerRegistry(model_catalog=WorkerModelCatalog()),
+        jobs_root=tmp_path / "model-ops",
+        benchmark_suite_catalog=BenchmarkSuiteCatalog(
+            hf_dataset_fetcher=FakeBenchmarkHFDatasetFetcher()
+        ),
+    )
+
+    events = list(
+        core.bench_events(
+            maintenance_pb2.RunBenchRequest(
+                model_handle="melix-dev-image::1",
+                suites=["smoke", "latency"],
+            )
+        )
+    )
+
+    metric_names = [event.metric.name for event in events if event.HasField("metric")]
+    assert "bench.smoke.image_job_latency_ms" in metric_names
+    assert "bench.smoke.image_artifact_publish_ms" in metric_names
+    assert "bench.smoke.image_output_bytes" in metric_names
+    assert "bench.latency.image_job_p50_ms" in metric_names
+    assert "bench.latency.image_job_p95_ms" in metric_names
+
+    report_event = next(event for event in events if event.HasField("completed"))
+    report_content = Path(report_event.completed.report_path).read_text(encoding="utf-8")
+    assert "task_kind: text-to-image" in report_content
+
+
+def test_bench_events_image_edit_mode_produces_edit_metrics(tmp_path: Path) -> None:
+    source_image_path = tmp_path / "source.png"
+    source_image_path.write_bytes(b"\x89PNG\r\n\x1a\nsource")
+
+    class LocalEditImageFetcher(FakeBenchmarkHFDatasetFetcher):
+        def __call__(self, endpoint: str, params: dict[str, str]) -> dict[str, object]:
+            dataset = params.get("dataset", "")
+            if dataset == "huggingface/documentation-images":
+                if endpoint == "rows":
+                    return {"rows": [{"row": {"image": {"path": str(source_image_path)}}}]}
+                return {"splits": [{"dataset": dataset, "config": "default", "split": "train"}]}
+            return super().__call__(endpoint, params)
+
+    registry = WorkerRegistry(model_catalog=WorkerModelCatalog())
+    edit_model = WorkerModelCatalog.dev_image_model()
+    edit_model.model_id = "melix-dev-image-edit"
+    edit_model.ext["melix.image.task_kind"] = "image-text-to-image"
+    registry.model_catalog._models[edit_model.model_id] = edit_model
+
+    core = MaintenanceCore(
+        registry,
+        jobs_root=tmp_path / "model-ops",
+        benchmark_suite_catalog=BenchmarkSuiteCatalog(
+            hf_dataset_fetcher=LocalEditImageFetcher()
+        ),
+    )
+
+    events = list(
+        core.bench_events(
+            maintenance_pb2.RunBenchRequest(
+                model_handle="melix-dev-image-edit::1",
+                suites=["smoke"],
+            )
+        )
+    )
+
+    metric_names = [event.metric.name for event in events if event.HasField("metric")]
+    assert "bench.smoke.image_job_latency_ms" in metric_names
+    assert "bench.smoke.image_artifact_publish_ms" in metric_names
+    assert "bench.smoke.image_output_bytes" in metric_names
+
+    report_event = next(event for event in events if event.HasField("completed"))
+    report_content = Path(report_event.completed.report_path).read_text(encoding="utf-8")
+    assert "task_kind: image-text-to-image" in report_content
+
+
+def test_bench_events_rejects_unsupported_task_family_after_suite_resolution(tmp_path: Path) -> None:
+    core = MaintenanceCore(
+        WorkerRegistry(model_catalog=WorkerModelCatalog()),
+        jobs_root=tmp_path / "model-ops",
+        benchmark_suite_catalog=BenchmarkSuiteCatalog(
+            hf_dataset_fetcher=FakeBenchmarkHFDatasetFetcher()
+        ),
+    )
+    fake_loaded_model = SimpleNamespace(
+        handle="melix-dev-text::1",
+        spec=common_pb2.ModelSpec(model_id="melix-dev-text", model_kind="text"),
+        runtime_model={},
+    )
+    fake_suite = SimpleNamespace(suite_id="smoke", metadata=lambda: {}, cases=())
+    core._resolve_benchmark_loaded_model = lambda model_handle: ("", fake_loaded_model)  # type: ignore[method-assign]
+    core._benchmark_suite_catalog.resolve_suite = lambda *args, **kwargs: fake_suite  # type: ignore[method-assign]
+
+    with pytest.raises(ModelOperationError) as error:
+        list(
+            core.bench_events(
+                maintenance_pb2.RunBenchRequest(
+                    model_handle="melix-dev-text::1",
+                    suites=["smoke"],
+                    task_kind="unsupported-task",
+                )
+            )
+        )
+
+    assert error.value.code == "unsupported_task_family"
 
 
 def test_bench_events_forwards_parameters_to_queue_record(tmp_path: Path) -> None:

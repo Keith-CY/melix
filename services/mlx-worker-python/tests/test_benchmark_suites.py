@@ -5,7 +5,11 @@ from pathlib import Path
 import pytest
 
 from worker.model_ops.errors import ModelOperationError
-from worker.productization.benchmark_suites import BenchmarkSuiteCatalog
+import worker.productization.benchmark_suites as benchmark_suites
+from worker.productization.benchmark_suites import (
+    BenchmarkSuiteCatalog,
+    BenchmarkSuiteDefinition,
+)
 
 
 class FakeBenchmarkSuiteFetcher:
@@ -53,6 +57,16 @@ class FakeBenchmarkSuiteFetcher:
                 }
             return {"splits": [{"dataset": dataset, "config": "default", "split": "train"}]}
 
+        if dataset == "huggingface/documentation-images":
+            if endpoint == "rows":
+                return {
+                    "rows": [
+                        {"row": {"image": {"src": "https://example.com/doc-image-1.jpg"}}},
+                        {"row": {"image": {"src": "https://example.com/doc-image-2.jpg"}}},
+                    ]
+                }
+            return {"splits": [{"dataset": dataset, "config": "default", "split": "train"}]}
+
         raise AssertionError(f"Unexpected benchmark fetch: endpoint={endpoint} dataset={dataset}")
 
 
@@ -78,8 +92,7 @@ def test_benchmark_suite_catalog_materializes_curated_hf_suite_and_reuses_cache(
     assert first.sample_size == 2
     assert first.batch_factor == 2
     assert len(first.prompt_batches) == 2
-    assert "Say hi." in first.prompt_batches[0]
-    assert "Say bye." in first.prompt_batches[0]
+    assert first.prompt_batches[0] == "Say hi.\n\nSay bye."
     assert first.metadata()["dataset_uri"].startswith("hf://HuggingFaceH4/ultrachat_200k")
 
 
@@ -90,4 +103,236 @@ def test_benchmark_suite_catalog_raises_typed_error_for_unknown_suite(tmp_path: 
         catalog.resolve_suite("missing-suite", jobs_root=tmp_path, parameters={})
 
     assert error.value.code == "invalid_benchmark_suite"
-    assert error.value.details == {"suite_id": "missing-suite"}
+    assert error.value.details == {"suite_id": "missing-suite", "task_kind": "text-generation"}
+
+
+def test_benchmark_suite_catalog_materializes_vlm_suite_with_image_uris(tmp_path: Path) -> None:
+    catalog = BenchmarkSuiteCatalog(hf_dataset_fetcher=FakeBenchmarkSuiteFetcher())
+
+    suite = catalog.resolve_suite(
+        "smoke",
+        jobs_root=tmp_path,
+        parameters={"sample_size": "2", "batch_factor": "2"},
+        task_kind="image-text-to-text",
+    )
+
+    assert suite.task_kind == "image-text-to-text"
+    assert suite.dataset_path == "huggingface/documentation-images"
+    assert suite.cache_hit is False
+    assert len(suite.cases) == 2
+    assert suite.cases[0].prompt == "Describe the image in one sentence."
+    assert len(suite.cases[0].image_uris) == 2
+    assert suite.cases[0].image_uris[0] == "https://example.com/doc-image-1.jpg"
+
+
+def test_benchmark_suite_catalog_materializes_text_to_image_and_image_edit_suites(tmp_path: Path) -> None:
+    catalog = BenchmarkSuiteCatalog(hf_dataset_fetcher=FakeBenchmarkSuiteFetcher())
+
+    generation_suite = catalog.resolve_suite(
+        "smoke",
+        jobs_root=tmp_path,
+        parameters={"sample_size": "2"},
+        task_kind="text-to-image",
+    )
+    edit_suite = catalog.resolve_suite(
+        "smoke",
+        jobs_root=tmp_path,
+        parameters={"sample_size": "2"},
+        task_kind="image-text-to-image",
+    )
+
+    assert generation_suite.task_kind == "text-to-image"
+    assert [case.prompt for case in generation_suite.cases] == [
+        "List two colors.",
+        "List two animals.",
+    ]
+    assert edit_suite.task_kind == "image-text-to-image"
+    assert edit_suite.cases[0].prompt == "Edit the image to look like a watercolor painting."
+    assert edit_suite.cases[0].source_image_uri == "https://example.com/doc-image-1.jpg"
+
+
+def test_benchmark_suite_catalog_raises_typed_errors_for_empty_materialization_and_missing_images(
+    tmp_path: Path,
+) -> None:
+    class EmptyRowsFetcher:
+        def __call__(self, endpoint: str, params: dict[str, str]) -> dict[str, object]:
+            if endpoint == "rows":
+                return {"rows": []}
+            return {"splits": [{"dataset": params.get("dataset", ""), "config": "default", "split": "train"}]}
+
+    class MissingImageFetcher:
+        def __call__(self, endpoint: str, params: dict[str, str]) -> dict[str, object]:
+            if endpoint == "rows":
+                return {"rows": [{"row": {"instruction": "No image here."}}]}
+            return {"splits": [{"dataset": params.get("dataset", ""), "config": "default", "split": "train"}]}
+
+    with pytest.raises(ModelOperationError) as empty_rows_error:
+        BenchmarkSuiteCatalog(hf_dataset_fetcher=EmptyRowsFetcher()).resolve_suite(
+            "smoke",
+            jobs_root=tmp_path,
+            parameters={},
+        )
+    assert empty_rows_error.value.code == "hf_dataset_fetch_failed"
+
+    with pytest.raises(ModelOperationError) as missing_generation_images:
+        BenchmarkSuiteCatalog(hf_dataset_fetcher=MissingImageFetcher()).resolve_suite(
+            "smoke",
+            jobs_root=tmp_path,
+            parameters={},
+            task_kind="image-text-to-text",
+        )
+    assert missing_generation_images.value.code == "invalid_benchmark_suite"
+
+    with pytest.raises(ModelOperationError) as missing_edit_images:
+        BenchmarkSuiteCatalog(hf_dataset_fetcher=MissingImageFetcher()).resolve_suite(
+            "smoke",
+            jobs_root=tmp_path,
+            parameters={},
+            task_kind="image-text-to-image",
+        )
+    assert missing_edit_images.value.code == "invalid_benchmark_suite"
+
+
+def test_text_prompt_and_image_uri_helpers_cover_messages_defaults_and_path_shapes() -> None:
+    messages_definition = BenchmarkSuiteDefinition(
+        task_kind="text-generation",
+        suite_id="messages",
+        title="Messages",
+        dataset_path="dataset/messages",
+        dataset_name="default",
+        dataset_revision="main",
+        dataset_split="train",
+        prompt_feature="messages",
+        text_feature="",
+        image_feature="",
+        source_image_feature="",
+        mask_feature="",
+        default_prompt="",
+        default_sample_size=1,
+        default_batch_factor=1,
+    )
+    text_definition = BenchmarkSuiteDefinition(
+        task_kind="text-generation",
+        suite_id="text-only",
+        title="Text",
+        dataset_path="dataset/text",
+        dataset_name="default",
+        dataset_revision="main",
+        dataset_split="train",
+        prompt_feature="",
+        text_feature="text",
+        image_feature="",
+        source_image_feature="",
+        mask_feature="",
+        default_prompt="fallback prompt",
+        default_sample_size=1,
+        default_batch_factor=1,
+    )
+
+    prompts = benchmark_suites._text_prompts(
+        messages_definition,
+        [
+            {
+                "messages": [
+                    {"role": "system", "content": "Stay brief."},
+                    {"role": "user", "content": "Explain colors."},
+                    {"role": "assistant", "content": "Red and blue."},
+                ]
+            }
+        ],
+    )
+    assert prompts == ["Stay brief.\nExplain colors."]
+    assert benchmark_suites._text_prompts(text_definition, [{"text": "plain prompt"}]) == ["plain prompt"]
+    assert benchmark_suites._text_prompts(text_definition, [{}]) == ["fallback prompt"]
+
+    with pytest.raises(ModelOperationError) as missing_prompt_error:
+        benchmark_suites._text_prompts(
+            BenchmarkSuiteDefinition(
+                task_kind="text-generation",
+                suite_id="empty",
+                title="Empty",
+                dataset_path="dataset/empty",
+                dataset_name="default",
+                dataset_revision="main",
+                dataset_split="train",
+                prompt_feature="",
+                text_feature="",
+                image_feature="",
+                source_image_feature="",
+                mask_feature="",
+                default_prompt="",
+                default_sample_size=1,
+                default_batch_factor=1,
+            ),
+            [{}],
+        )
+    assert missing_prompt_error.value.code == "invalid_benchmark_suite"
+
+    assert benchmark_suites._image_uri_from_value(" https://example.com/image.png ") == "https://example.com/image.png"
+    assert benchmark_suites._image_uri_from_value({"src": "https://example.com/src.jpg"}) == "https://example.com/src.jpg"
+    assert benchmark_suites._image_uri_from_value({"path": "/tmp/local-image.png"}) == "/tmp/local-image.png"
+    assert benchmark_suites._image_uris([{"image": {"path": "/tmp/local-image.png"}}], "image") == ["/tmp/local-image.png"]
+    assert benchmark_suites._image_uris([{"image": "ignored"}], "") == []
+
+
+def test_benchmark_suite_dataset_helpers_cover_split_resolution_and_http_failures(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    definition = BenchmarkSuiteDefinition(
+        task_kind="text-generation",
+        suite_id="smoke",
+        title="Smoke",
+        dataset_path="demo/dataset",
+        dataset_name="",
+        dataset_revision="main",
+        dataset_split="validation",
+        prompt_feature="prompt",
+        text_feature="",
+        image_feature="",
+        source_image_feature="",
+        mask_feature="",
+        default_prompt="",
+        default_sample_size=1,
+        default_batch_factor=1,
+    )
+
+    resolved_name = benchmark_suites._resolve_dataset_name(
+        definition,
+        lambda endpoint, params: {
+            "splits": [
+                {"split": "train", "config": "train-default"},
+                {"split": "validation", "config": "validation-default"},
+            ]
+        },
+    )
+    assert resolved_name == "validation-default"
+
+    class FakeResponse:
+        def __init__(self, payload: str) -> None:
+            self.payload = payload
+
+        def read(self) -> bytes:
+            return self.payload.encode("utf-8")
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+    monkeypatch.setattr(
+        benchmark_suites,
+        "urlopen",
+        lambda request, timeout=20.0: FakeResponse('["not-a-dict"]'),
+    )
+    with pytest.raises(ModelOperationError) as invalid_json_error:
+        benchmark_suites._fetch_hf_dataset_server_json("rows", {"dataset": "demo/dataset"})
+    assert invalid_json_error.value.code == "hf_dataset_fetch_failed"
+
+    def raise_os_error(request, timeout=20.0):
+        raise OSError("network down")
+
+    monkeypatch.setattr(benchmark_suites, "urlopen", raise_os_error)
+    with pytest.raises(ModelOperationError) as fetch_error:
+        benchmark_suites._fetch_hf_dataset_server_json("rows", {"dataset": "demo/dataset"})
+    assert fetch_error.value.code == "hf_dataset_fetch_failed"

@@ -382,6 +382,10 @@ public struct Melix_Worker_V1_RunBenchRequest: Sendable {
 
   public var parameters: Dictionary<String,String> = [:]
 
+  public var taskKind: String = String()
+
+  public var sourceRepo: String = String()
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -1658,7 +1662,7 @@ extension Melix_Worker_V1_RunDoctorResponse: SwiftProtobuf.Message, SwiftProtobu
 
 extension Melix_Worker_V1_RunBenchRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".RunBenchRequest"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}model_handle\0\u{1}suites\0\u{1}parameters\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}model_handle\0\u{1}suites\0\u{1}parameters\0\u{3}task_kind\0\u{3}source_repo\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -1669,6 +1673,8 @@ extension Melix_Worker_V1_RunBenchRequest: SwiftProtobuf.Message, SwiftProtobuf.
       case 1: try { try decoder.decodeSingularStringField(value: &self.modelHandle) }()
       case 2: try { try decoder.decodeRepeatedStringField(value: &self.suites) }()
       case 3: try { try decoder.decodeMapField(fieldType: SwiftProtobuf._ProtobufMap<SwiftProtobuf.ProtobufString,SwiftProtobuf.ProtobufString>.self, value: &self.parameters) }()
+      case 4: try { try decoder.decodeSingularStringField(value: &self.taskKind) }()
+      case 5: try { try decoder.decodeSingularStringField(value: &self.sourceRepo) }()
       default: break
       }
     }
@@ -1684,6 +1690,12 @@ extension Melix_Worker_V1_RunBenchRequest: SwiftProtobuf.Message, SwiftProtobuf.
     if !self.parameters.isEmpty {
       try visitor.visitMapField(fieldType: SwiftProtobuf._ProtobufMap<SwiftProtobuf.ProtobufString,SwiftProtobuf.ProtobufString>.self, value: self.parameters, fieldNumber: 3)
     }
+    if !self.taskKind.isEmpty {
+      try visitor.visitSingularStringField(value: self.taskKind, fieldNumber: 4)
+    }
+    if !self.sourceRepo.isEmpty {
+      try visitor.visitSingularStringField(value: self.sourceRepo, fieldNumber: 5)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -1691,6 +1703,8 @@ extension Melix_Worker_V1_RunBenchRequest: SwiftProtobuf.Message, SwiftProtobuf.
     if lhs.modelHandle != rhs.modelHandle {return false}
     if lhs.suites != rhs.suites {return false}
     if lhs.parameters != rhs.parameters {return false}
+    if lhs.taskKind != rhs.taskKind {return false}
+    if lhs.sourceRepo != rhs.sourceRepo {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

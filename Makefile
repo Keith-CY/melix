@@ -13,7 +13,7 @@ PHASE8_METRICS_ARGS ?=
 
 bootstrap:
 	mkdir -p "$(UV_CACHE_DIR)" "$(SWIFT_HOME)" "$(CLANG_MODULE_CACHE_PATH)"
-	UV_CACHE_DIR="$(UV_CACHE_DIR)" uv sync --project services/mlx-worker-python
+	UV_CACHE_DIR="$(UV_CACHE_DIR)" uv sync --project services/mlx-worker-python --extra mlx
 
 proto:
 	./scripts/proto_gen.sh
@@ -27,11 +27,11 @@ swift-test:
 
 py-test:
 	mkdir -p "$(UV_CACHE_DIR)"
-	PYTHONPATH="$(ROOT):$(ROOT)/services/mlx-worker-python" UV_CACHE_DIR="$(UV_CACHE_DIR)" uv run --project services/mlx-worker-python pytest services/mlx-worker-python/tests -q
+	PYTHONPATH="$(ROOT):$(ROOT)/services/mlx-worker-python" UV_CACHE_DIR="$(UV_CACHE_DIR)" uv run --project services/mlx-worker-python --extra mlx pytest services/mlx-worker-python/tests -q
 
 integration-test:
 	mkdir -p "$(UV_CACHE_DIR)"
-	PYTHONPATH="$(ROOT):$(ROOT)/services/mlx-worker-python" UV_CACHE_DIR="$(UV_CACHE_DIR)" uv run --project services/mlx-worker-python pytest tests/integration -q
+	PYTHONPATH="$(ROOT):$(ROOT)/services/mlx-worker-python" UV_CACHE_DIR="$(UV_CACHE_DIR)" uv run --project services/mlx-worker-python --extra mlx pytest tests/integration -q
 
 swift-coverage:
 	mkdir -p "$(SWIFT_HOME)" "$(CLANG_MODULE_CACHE_PATH)"
@@ -44,39 +44,39 @@ swift-coverage:
 
 py-coverage:
 	mkdir -p "$(UV_CACHE_DIR)"
-	PYTHONPATH="$(ROOT):$(ROOT)/services/mlx-worker-python" UV_CACHE_DIR="$(UV_CACHE_DIR)" uv run --project services/mlx-worker-python coverage run --source=services/mlx-worker-python/worker,phase8_runtime_probes,phase8_metrics_report -m pytest services/mlx-worker-python/tests -q
-	PYTHONPATH="$(ROOT):$(ROOT)/services/mlx-worker-python" UV_CACHE_DIR="$(UV_CACHE_DIR)" uv run --project services/mlx-worker-python coverage report --include='services/mlx-worker-python/worker/*,scripts/phase8_runtime_probes.py,scripts/phase8_metrics_report.py'
+	PYTHONPATH="$(ROOT):$(ROOT)/services/mlx-worker-python" UV_CACHE_DIR="$(UV_CACHE_DIR)" uv run --project services/mlx-worker-python --extra mlx coverage run --source=services/mlx-worker-python/worker,phase8_runtime_probes,phase8_metrics_report -m pytest services/mlx-worker-python/tests -q
+	PYTHONPATH="$(ROOT):$(ROOT)/services/mlx-worker-python" UV_CACHE_DIR="$(UV_CACHE_DIR)" uv run --project services/mlx-worker-python --extra mlx coverage report --include='services/mlx-worker-python/worker/*,scripts/phase8_runtime_probes.py,scripts/phase8_metrics_report.py'
 
 coverage: swift-coverage py-coverage
 
 phase1-metrics:
 	mkdir -p "$(UV_CACHE_DIR)"
-	PYTHONPATH="$(ROOT):$(ROOT)/services/mlx-worker-python" UV_CACHE_DIR="$(UV_CACHE_DIR)" uv run --project services/mlx-worker-python python scripts/phase1_metrics_report.py $(PHASE1_METRICS_ARGS)
+	PYTHONPATH="$(ROOT):$(ROOT)/services/mlx-worker-python" UV_CACHE_DIR="$(UV_CACHE_DIR)" uv run --project services/mlx-worker-python --extra mlx python scripts/phase1_metrics_report.py $(PHASE1_METRICS_ARGS)
 
 phase2-metrics:
 	mkdir -p "$(UV_CACHE_DIR)"
-	PYTHONPATH="$(ROOT):$(ROOT)/services/mlx-worker-python" UV_CACHE_DIR="$(UV_CACHE_DIR)" uv run --project services/mlx-worker-python python scripts/phase2_metrics_report.py $(PHASE2_METRICS_ARGS)
+	PYTHONPATH="$(ROOT):$(ROOT)/services/mlx-worker-python" UV_CACHE_DIR="$(UV_CACHE_DIR)" uv run --project services/mlx-worker-python --extra mlx python scripts/phase2_metrics_report.py $(PHASE2_METRICS_ARGS)
 
 phase5-metrics:
 	mkdir -p "$(UV_CACHE_DIR)"
-	PYTHONPATH="$(ROOT):$(ROOT)/services/mlx-worker-python" UV_CACHE_DIR="$(UV_CACHE_DIR)" uv run --project services/mlx-worker-python python scripts/phase5_control_plane_metrics.py
+	PYTHONPATH="$(ROOT):$(ROOT)/services/mlx-worker-python" UV_CACHE_DIR="$(UV_CACHE_DIR)" uv run --project services/mlx-worker-python --extra mlx python scripts/phase5_control_plane_metrics.py
 
 phase6-metrics:
 	mkdir -p "$(UV_CACHE_DIR)"
-	PYTHONPATH="$(ROOT):$(ROOT)/services/mlx-worker-python" UV_CACHE_DIR="$(UV_CACHE_DIR)" uv run --project services/mlx-worker-python python scripts/phase6_metrics_report.py
+	PYTHONPATH="$(ROOT):$(ROOT)/services/mlx-worker-python" UV_CACHE_DIR="$(UV_CACHE_DIR)" uv run --project services/mlx-worker-python --extra mlx python scripts/phase6_metrics_report.py
 
 phase7-metrics:
 	mkdir -p "$(UV_CACHE_DIR)"
-	PYTHONPATH="$(ROOT):$(ROOT)/services/mlx-worker-python" UV_CACHE_DIR="$(UV_CACHE_DIR)" uv run --project services/mlx-worker-python python scripts/phase7_metrics_report.py
+	PYTHONPATH="$(ROOT):$(ROOT)/services/mlx-worker-python" UV_CACHE_DIR="$(UV_CACHE_DIR)" uv run --project services/mlx-worker-python --extra mlx python scripts/phase7_metrics_report.py
 
 phase8-install-smoke:
 	mkdir -p "$(UV_CACHE_DIR)"
-	PYTHONPATH="$(ROOT):$(ROOT)/services/mlx-worker-python" UV_CACHE_DIR="$(UV_CACHE_DIR)" uv run --project services/mlx-worker-python python scripts/phase8_install_smoke.py $(PHASE8_INSTALL_SMOKE_ARGS)
+	PYTHONPATH="$(ROOT):$(ROOT)/services/mlx-worker-python" UV_CACHE_DIR="$(UV_CACHE_DIR)" uv run --project services/mlx-worker-python --extra mlx python scripts/phase8_install_smoke.py $(PHASE8_INSTALL_SMOKE_ARGS)
 
 phase8-release-gate:
 	mkdir -p "$(UV_CACHE_DIR)"
-	PYTHONPATH="$(ROOT):$(ROOT)/services/mlx-worker-python" UV_CACHE_DIR="$(UV_CACHE_DIR)" uv run --project services/mlx-worker-python python scripts/phase8_release_gate.py $(PHASE8_RELEASE_GATE_ARGS)
+	PYTHONPATH="$(ROOT):$(ROOT)/services/mlx-worker-python" UV_CACHE_DIR="$(UV_CACHE_DIR)" uv run --project services/mlx-worker-python --extra mlx python scripts/phase8_release_gate.py $(PHASE8_RELEASE_GATE_ARGS)
 
 phase8-metrics:
 	mkdir -p "$(UV_CACHE_DIR)"
-	PYTHONPATH="$(ROOT):$(ROOT)/services/mlx-worker-python" UV_CACHE_DIR="$(UV_CACHE_DIR)" uv run --project services/mlx-worker-python python scripts/phase8_metrics_report.py $(PHASE8_METRICS_ARGS)
+	PYTHONPATH="$(ROOT):$(ROOT)/services/mlx-worker-python" UV_CACHE_DIR="$(UV_CACHE_DIR)" uv run --project services/mlx-worker-python --extra mlx python scripts/phase8_metrics_report.py $(PHASE8_METRICS_ARGS)

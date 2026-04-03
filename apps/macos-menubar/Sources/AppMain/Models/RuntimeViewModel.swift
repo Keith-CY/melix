@@ -96,6 +96,24 @@ public struct RuntimeDoctorReportState: Equatable, Sendable {
     public let markdown: String
 }
 
+public enum RuntimeBenchmarkTargetMode: String, CaseIterable, Identifiable, Sendable {
+    case catalogModel = "catalog_model"
+    case huggingFaceRepo = "hf_repo"
+
+    public var id: String {
+        rawValue
+    }
+
+    public var title: String {
+        switch self {
+        case .catalogModel:
+            return "Catalog Model"
+        case .huggingFaceRepo:
+            return "Hugging Face Repo"
+        }
+    }
+}
+
 public enum RuntimeLoraDatasetSourceKind: String, CaseIterable, Identifiable, Sendable {
     case localPackage = "local_package"
     case huggingFaceDataset = "hf_dataset"
@@ -167,6 +185,7 @@ public struct RuntimeBenchReportState: Equatable, Sendable {
 
 public struct RuntimeBenchmarkSuiteOptionState: Identifiable, Equatable, Sendable {
     public let id: String
+    public let taskKind: String
     public let title: String
     public let datasetPath: String
     public let datasetName: String
@@ -187,6 +206,9 @@ public struct RuntimeBenchmarkHistoryEntryState: Identifiable, Equatable, Sendab
     public let id: String
     public let jobID: String
     public let modelID: String
+    public let taskKind: String
+    public let taskTitle: String
+    public let sourceRepo: String
     public let suiteID: String
     public let suiteTitle: String
     public let datasetLabel: String
@@ -201,6 +223,7 @@ public struct RuntimeBenchmarkHistoryEntryState: Identifiable, Equatable, Sendab
 
 public struct RuntimeBenchmarkMetricCardState: Identifiable, Equatable, Sendable {
     public let id: String
+    public let taskKind: String
     public let suiteTitle: String
     public let metricName: String
     public let metricLabel: String
@@ -212,6 +235,7 @@ public struct RuntimeBenchmarkMetricCardState: Identifiable, Equatable, Sendable
 public struct RuntimeBenchmarkChartPointState: Identifiable, Equatable, Sendable {
     public let id: String
     public let jobID: String
+    public let taskKind: String
     public let suiteTitle: String
     public let metricName: String
     public let value: Double
@@ -308,9 +332,11 @@ public final class RuntimeViewModel {
     public var selectedChatModelID = "melix-dev-text"
     public var selectedLoraModelID = "melix-dev-text"
     public var selectedBenchmarkModelID = "melix-dev-text"
+    public var selectedBenchmarkTargetMode: RuntimeBenchmarkTargetMode = .catalogModel
     public var selectedBenchmarkSuiteIDs: Set<String> = ["smoke"]
     public var benchmarkSampleSize = ""
     public var benchmarkBatchFactor = ""
+    public var benchmarkHFRepoID = ""
     public var selectedBenchmarkHistoryJobID = ""
     public var selectedBenchmarkMetricName = ""
     public var loraDatasetSourceKind: RuntimeLoraDatasetSourceKind = .localPackage
@@ -377,6 +403,7 @@ public final class RuntimeViewModel {
     private static let benchmarkSuiteOptions = [
         RuntimeBenchmarkSuiteOptionState(
             id: "smoke",
+            taskKind: "text-generation",
             title: "UltraChat Smoke",
             datasetPath: "HuggingFaceH4/ultrachat_200k",
             datasetName: "default",
@@ -386,11 +413,92 @@ public final class RuntimeViewModel {
         ),
         RuntimeBenchmarkSuiteOptionState(
             id: "latency",
+            taskKind: "text-generation",
             title: "Dolly Latency",
             datasetPath: "databricks/databricks-dolly-15k",
             datasetName: "default",
             datasetSplit: "train",
             defaultSampleSize: 5,
+            defaultBatchFactor: 1
+        ),
+        RuntimeBenchmarkSuiteOptionState(
+            id: "smoke",
+            taskKind: "image-to-text",
+            title: "Docs Images OCR Smoke",
+            datasetPath: "huggingface/documentation-images",
+            datasetName: "default",
+            datasetSplit: "train",
+            defaultSampleSize: 1,
+            defaultBatchFactor: 1
+        ),
+        RuntimeBenchmarkSuiteOptionState(
+            id: "latency",
+            taskKind: "image-to-text",
+            title: "Docs Images OCR Latency",
+            datasetPath: "huggingface/documentation-images",
+            datasetName: "default",
+            datasetSplit: "validation",
+            defaultSampleSize: 4,
+            defaultBatchFactor: 1
+        ),
+        RuntimeBenchmarkSuiteOptionState(
+            id: "smoke",
+            taskKind: "image-text-to-text",
+            title: "Docs Images VLM Smoke",
+            datasetPath: "huggingface/documentation-images",
+            datasetName: "default",
+            datasetSplit: "train",
+            defaultSampleSize: 1,
+            defaultBatchFactor: 1
+        ),
+        RuntimeBenchmarkSuiteOptionState(
+            id: "latency",
+            taskKind: "image-text-to-text",
+            title: "Docs Images VLM Latency",
+            datasetPath: "huggingface/documentation-images",
+            datasetName: "default",
+            datasetSplit: "validation",
+            defaultSampleSize: 4,
+            defaultBatchFactor: 1
+        ),
+        RuntimeBenchmarkSuiteOptionState(
+            id: "smoke",
+            taskKind: "text-to-image",
+            title: "Dolly Text-to-Image Smoke",
+            datasetPath: "databricks/databricks-dolly-15k",
+            datasetName: "default",
+            datasetSplit: "train",
+            defaultSampleSize: 1,
+            defaultBatchFactor: 1
+        ),
+        RuntimeBenchmarkSuiteOptionState(
+            id: "latency",
+            taskKind: "text-to-image",
+            title: "UltraChat Text-to-Image Latency",
+            datasetPath: "HuggingFaceH4/ultrachat_200k",
+            datasetName: "default",
+            datasetSplit: "train_sft",
+            defaultSampleSize: 4,
+            defaultBatchFactor: 1
+        ),
+        RuntimeBenchmarkSuiteOptionState(
+            id: "smoke",
+            taskKind: "image-text-to-image",
+            title: "Docs Images Edit Smoke",
+            datasetPath: "huggingface/documentation-images",
+            datasetName: "default",
+            datasetSplit: "train",
+            defaultSampleSize: 1,
+            defaultBatchFactor: 1
+        ),
+        RuntimeBenchmarkSuiteOptionState(
+            id: "latency",
+            taskKind: "image-text-to-image",
+            title: "Docs Images Edit Latency",
+            datasetPath: "huggingface/documentation-images",
+            datasetName: "default",
+            datasetSplit: "validation",
+            defaultSampleSize: 4,
             defaultBatchFactor: 1
         ),
     ]
@@ -893,7 +1001,33 @@ public final class RuntimeViewModel {
     }
 
     public var benchmarkSuites: [RuntimeBenchmarkSuiteOptionState] {
-        Self.benchmarkSuiteOptions
+        Self.benchmarkSuiteOptions.filter { $0.taskKind == resolvedBenchmarkTaskKind() }
+    }
+
+    public var benchmarkTargetTaskKind: String {
+        resolvedBenchmarkTaskKind()
+    }
+
+    public var benchmarkTargetTaskTitle: String {
+        Self.benchmarkTaskTitle(for: resolvedBenchmarkTaskKind())
+    }
+
+    public var benchmarkTargetSummaryText: String {
+        switch selectedBenchmarkTargetMode {
+        case .catalogModel:
+            guard let model = latestSnapshot.models.first(where: { $0.modelID == resolvedBenchmarkModelID() }) else {
+                return "Select a benchmark-capable catalog model."
+            }
+            let alias = model.settings.alias.trimmingCharacters(in: .whitespacesAndNewlines)
+            let label = alias.isEmpty ? model.modelID : "\(alias) • \(model.modelID)"
+            return "\(benchmarkTargetTaskTitle) • \(label)"
+        case .huggingFaceRepo:
+            let repoID = benchmarkHFRepoID.trimmingCharacters(in: .whitespacesAndNewlines)
+            if repoID.isEmpty {
+                return "Enter a Hugging Face repo to detect a supported benchmark task."
+            }
+            return "\(benchmarkTargetTaskTitle) • \(repoID)"
+        }
     }
 
     public var selectedBenchmarkHistoryEntry: RuntimeBenchmarkHistoryEntryState? {
@@ -1598,10 +1732,20 @@ public final class RuntimeViewModel {
 
     public func runBench() async {
         let modelID = resolvedBenchmarkModelID()
-        guard !modelID.isEmpty else {
-            recordLocalError("Select a text model before running Benchmark.")
-            notifyStateChanged()
-            return
+        let repoID = benchmarkHFRepoID.trimmingCharacters(in: .whitespacesAndNewlines)
+        switch selectedBenchmarkTargetMode {
+        case .catalogModel:
+            guard !modelID.isEmpty else {
+                recordLocalError("Select a benchmark-capable model before running Benchmark.")
+                notifyStateChanged()
+                return
+            }
+        case .huggingFaceRepo:
+            guard !repoID.isEmpty else {
+                recordLocalError("Enter a Hugging Face repo before running Benchmark.")
+                notifyStateChanged()
+                return
+            }
         }
         let suites = selectedBenchmarkSuiteIDs.sorted()
         guard suites.isEmpty == false else {
@@ -1613,7 +1757,8 @@ public final class RuntimeViewModel {
         do {
             let result = try await client.runBench(
                 ControlPlaneBenchRequest(
-                    modelID: modelID,
+                    modelID: selectedBenchmarkTargetMode == .catalogModel ? modelID : "",
+                    hfRepoID: selectedBenchmarkTargetMode == .huggingFaceRepo ? repoID : "",
                     suites: suites,
                     parameters: benchmarkParameters()
                 )
@@ -2200,7 +2345,7 @@ public final class RuntimeViewModel {
             selectedBenchmarkMetricName = preferredMetricName
         }
 
-        let suiteFilter = selectedBenchmarkSuiteIDs.isEmpty ? Set(Self.benchmarkSuiteOptions.map(\.id)) : selectedBenchmarkSuiteIDs
+        let suiteFilter = selectedBenchmarkSuiteIDs.isEmpty ? Set(benchmarkSuites.map(\.id)) : selectedBenchmarkSuiteIDs
         benchmarkChartPoints = allRows
             .filter { row in
                 row.metricName == selectedBenchmarkMetricName && suiteFilter.contains(row.suiteID)
@@ -2219,6 +2364,19 @@ public final class RuntimeViewModel {
             return selectedBenchmarkModelID
         }
         return benchmarkModels.first?.modelID ?? ""
+    }
+
+    private func resolvedBenchmarkTaskKind() -> String {
+        switch selectedBenchmarkTargetMode {
+        case .catalogModel:
+            let modelID = resolvedBenchmarkModelID()
+            guard let model = latestSnapshot.models.first(where: { $0.modelID == modelID }) else {
+                return "text-generation"
+            }
+            return Self.benchmarkTaskKind(for: model)
+        case .huggingFaceRepo:
+            return Self.inferredTaskKind(forRepoID: benchmarkHFRepoID)
+        }
     }
 
     private func benchmarkParameters() -> [String: String] {
@@ -3017,6 +3175,9 @@ public final class RuntimeViewModel {
             id: "\(entry.jobID):\(entry.suiteID)",
             jobID: entry.jobID,
             modelID: entry.modelID,
+            taskKind: entry.taskKind,
+            taskTitle: benchmarkTaskTitle(for: entry.taskKind),
+            sourceRepo: entry.sourceRepo,
             suiteID: entry.suiteID,
             suiteTitle: entry.suiteTitle,
             datasetLabel: datasetParts + splitSuffix,
@@ -3035,7 +3196,8 @@ public final class RuntimeViewModel {
     ) -> RuntimeBenchmarkMetricCardState {
         RuntimeBenchmarkMetricCardState(
             id: "\(row.jobID):\(row.suiteID):\(row.metricName)",
-            suiteTitle: benchmarkSuiteTitle(for: row.suiteID),
+            taskKind: row.taskKind,
+            suiteTitle: benchmarkSuiteTitle(for: row.suiteID, taskKind: row.taskKind),
             metricName: row.metricName,
             metricLabel: benchmarkMetricLabel(row.metricName),
             value: row.metricValue,
@@ -3050,7 +3212,8 @@ public final class RuntimeViewModel {
         RuntimeBenchmarkChartPointState(
             id: "\(row.jobID):\(row.suiteID):\(row.metricName)",
             jobID: row.jobID,
-            suiteTitle: benchmarkSuiteTitle(for: row.suiteID),
+            taskKind: row.taskKind,
+            suiteTitle: benchmarkSuiteTitle(for: row.suiteID, taskKind: row.taskKind),
             metricName: row.metricName,
             value: row.metricValue,
             unit: row.unit,
@@ -3112,8 +3275,70 @@ public final class RuntimeViewModel {
         return normalized.replacingOccurrences(of: "_", with: " ")
     }
 
-    private static func benchmarkSuiteTitle(for suiteID: String) -> String {
-        benchmarkSuiteOptions.first(where: { $0.id == suiteID })?.title ?? suiteID
+    private static func benchmarkSuiteTitle(for suiteID: String, taskKind: String) -> String {
+        benchmarkSuiteOptions.first(where: { $0.id == suiteID && $0.taskKind == taskKind })?.title
+            ?? benchmarkSuiteOptions.first(where: { $0.id == suiteID })?.title
+            ?? suiteID
+    }
+
+    private static func benchmarkTaskTitle(for taskKind: String) -> String {
+        switch taskKind {
+        case "image-to-text":
+            return "Image to Text"
+        case "image-text-to-text":
+            return "Image + Text to Text"
+        case "text-to-image":
+            return "Text to Image"
+        case "image-text-to-image":
+            return "Image + Text to Image"
+        default:
+            return "Text Generation"
+        }
+    }
+
+    private static func benchmarkTaskKind(for model: Melix_Controlplane_V1_ModelSummary) -> String {
+        switch model.kind {
+        case "vlm":
+            return "image-text-to-text"
+        case "ocr":
+            return "image-to-text"
+        case "image", "image_generation":
+            let imageTaskKind = model.settings.ext["melix.image.task_kind"]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            return imageTaskKind.isEmpty ? "text-to-image" : imageTaskKind
+        default:
+            return "text-generation"
+        }
+    }
+
+    private static func inferredTaskKind(forRepoID repoID: String) -> String {
+        let normalized = repoID.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard normalized.isEmpty == false else {
+            return "text-generation"
+        }
+        if normalized.contains("gemma-4")
+            || normalized.contains("gemma4")
+            || normalized.contains("paligemma")
+            || normalized.contains("llava")
+            || normalized.contains("vision")
+            || normalized.contains("vlm") {
+            return "image-text-to-text"
+        }
+        if normalized.contains("ocr") {
+            return "image-to-text"
+        }
+        if normalized.contains("inpaint")
+            || normalized.contains("edit")
+            || normalized.contains("img2img") {
+            return "image-text-to-image"
+        }
+        if normalized.contains("stable-diffusion")
+            || normalized.contains("sdxl")
+            || normalized.contains("flux")
+            || normalized.contains("text-to-image")
+            || normalized.contains("t2i") {
+            return "text-to-image"
+        }
+        return "text-generation"
     }
 
     private static func benchmarkTimestampLabel(_ unixMS: Int64) -> String {
@@ -3122,7 +3347,12 @@ public final class RuntimeViewModel {
     }
 
     private static func isBenchmarkEligibleModel(_ model: RuntimeModelRow) -> Bool {
-        model.kind == "text"
+        switch model.kind {
+        case "text", "vlm", "ocr", "image", "image_generation":
+            return true
+        default:
+            return false
+        }
     }
 
     private static func ensureBenchmarkExportDirectory() throws -> URL {

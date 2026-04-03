@@ -747,6 +747,8 @@ func makeBenchmarkExportBundleJSON() -> String {
           "schema_version": "melix.serving_benchmark_job.v1",
           "job_id": "bench-older",
           "model_id": "melix-dev-text",
+          "task_kind": "text-generation",
+          "source_repo": "HuggingFaceH4/ultrachat_200k",
           "suites": ["smoke"],
           "parameters": {
             "sample_size": "2",
@@ -771,6 +773,8 @@ func makeBenchmarkExportBundleJSON() -> String {
           "schema_version": "melix.serving_benchmark_job.v1",
           "job_id": "bench-newer",
           "model_id": "melix-dev-text-lora",
+          "task_kind": "text-generation",
+          "source_repo": "databricks/databricks-dolly-15k",
           "suites": ["smoke", "latency"],
           "parameters": {
             "sample_size": "6",
@@ -848,6 +852,8 @@ func makeBenchmarkExportBundleJSONWithoutResults() -> String {
           "schema_version": "melix.serving_benchmark_job.v1",
           "job_id": "bench-empty",
           "model_id": "melix-dev-text",
+          "task_kind": "text-generation",
+          "source_repo": "HuggingFaceH4/ultrachat_200k",
           "suites": ["smoke"],
           "parameters": {
             "sample_size": "1",

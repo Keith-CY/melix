@@ -81,15 +81,18 @@ public struct ControlPlaneBenchResult: Equatable, Sendable {
 
 public struct ControlPlaneBenchRequest: Equatable, Sendable {
     public let modelID: String
+    public let hfRepoID: String
     public let suites: [String]
     public let parameters: [String: String]
 
     public init(
         modelID: String = "",
+        hfRepoID: String = "",
         suites: [String] = [],
         parameters: [String: String] = [:]
     ) {
         self.modelID = modelID
+        self.hfRepoID = hfRepoID
         self.suites = suites
         self.parameters = parameters
     }
@@ -577,6 +580,7 @@ public actor LocalControlPlaneXPCClient: ControlPlaneXPCClient {
         request.ops = Melix_Controlplane_V1_OpsCommand()
         request.ops.runBench = Melix_Controlplane_V1_RunBench()
         request.ops.runBench.modelID = bench.modelID
+        request.ops.runBench.hfRepoID = bench.hfRepoID
         request.ops.runBench.suites = bench.suites
         request.ops.runBench.parameters = bench.parameters
         return request

@@ -7,6 +7,126 @@ private struct ModelLoadOutcome {
     let error: Melix_Controlplane_V1_ErrorStatus?
 }
 
+private struct BenchmarkTargetResolutionError: Error {
+    let code: String
+    let message: String
+}
+
+private enum BenchmarkTaskKind: String {
+    case textGeneration = "text-generation"
+    case imageToText = "image-to-text"
+    case imageTextToText = "image-text-to-text"
+    case textToImage = "text-to-image"
+    case imageTextToImage = "image-text-to-image"
+
+    var importedModelKind: String {
+        switch self {
+        case .textGeneration:
+            return "text"
+        case .imageToText, .imageTextToText:
+            return "vlm"
+        case .textToImage, .imageTextToImage:
+            return "image"
+        }
+    }
+
+    var capabilityClass: Melix_Controlplane_V1_ModelCapabilityClass {
+        switch self {
+        case .textGeneration:
+            return .modelCapabilityText
+        case .imageToText, .imageTextToText:
+            return .modelCapabilityVlm
+        case .textToImage, .imageTextToImage:
+            return .modelCapabilityImageGeneration
+        }
+    }
+
+    var routeClass: Melix_Controlplane_V1_WorkerRouteClass {
+        switch self {
+        case .textGeneration:
+            return .workerRoutePythonTextCompatibility
+        case .imageToText, .imageTextToText:
+            return .workerRoutePythonVlm
+        case .textToImage, .imageTextToImage:
+            return .workerRoutePythonImage
+        }
+    }
+
+    var capabilityIdentifier: String {
+        switch self {
+        case .textGeneration:
+            return "text"
+        case .imageToText, .imageTextToText:
+            return "vlm"
+        case .textToImage, .imageTextToImage:
+            return "image_generation"
+        }
+    }
+
+    var metricsPrefix: String {
+        switch self {
+        case .textGeneration:
+            return "text"
+        case .imageToText, .imageTextToText:
+            return "vision"
+        case .textToImage, .imageTextToImage:
+            return "image"
+        }
+    }
+
+    var supportedModalities: [String] {
+        switch self {
+        case .textGeneration:
+            return ["text"]
+        case .imageToText, .imageTextToText, .textToImage, .imageTextToImage:
+            return ["text", "image"]
+        }
+    }
+
+    var supportedTasks: [String] {
+        switch self {
+        case .textGeneration:
+            return ["generate"]
+        case .imageToText:
+            return ["vlm", "generate", "image_to_text"]
+        case .imageTextToText:
+            return ["vlm", "generate", "image_text_to_text"]
+        case .textToImage:
+            return ["image_generate"]
+        case .imageTextToImage:
+            return ["image_edit"]
+        }
+    }
+
+    var supportedParsers: [String] {
+        switch self {
+        case .textGeneration:
+            return ["text"]
+        case .imageToText:
+            return ["text"]
+        case .imageTextToText:
+            return ["text", "qwen"]
+        case .textToImage, .imageTextToImage:
+            return ["text"]
+        }
+    }
+
+    var features: [String] {
+        switch self {
+        case .textGeneration:
+            return ["chat"]
+        case .imageToText:
+            return ["vision", "caption"]
+        case .imageTextToText:
+            return ["vision", "chat"]
+        case .textToImage:
+            return ["image_generate", "artifact_jobs"]
+        case .imageTextToImage:
+            return ["image_edit", "artifact_jobs"]
+        }
+    }
+}
+
 public actor ControlPlaneService {
     public let serverVersion: String
     private let daemonInstanceID: String
@@ -584,9 +704,24 @@ public actor ControlPlaneService {
         }
 
         let requestedModelID = command.modelID.trimmingCharacters(in: .whitespacesAndNewlines)
-        let benchmarkModelID = await resolvedBenchmarkModelID(preferred: requestedModelID)
-        guard !benchmarkModelID.isEmpty else {
-            let modelLabel = requestedModelID.isEmpty ? "preferred benchmark model" : requestedModelID
+        let requestedHFRepoID = command.hfRepoID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let benchmarkModel: Melix_Controlplane_V1_ModelSummary
+        do {
+            benchmarkModel = try await resolvedBenchmarkModel(
+                preferredModelID: requestedModelID,
+                hfRepoID: requestedHFRepoID,
+                workerClient: workerClient
+            )
+        } catch let error as BenchmarkTargetResolutionError {
+            return errorResponse(for: request, code: error.code, message: error.message)
+        } catch {
+            return errorResponse(for: request, code: "not_found", message: "Benchmark target resolution failed: \(error)")
+        }
+
+        guard !benchmarkModel.modelID.isEmpty else {
+            let modelLabel = requestedHFRepoID.isEmpty
+                ? (requestedModelID.isEmpty ? "preferred benchmark model" : requestedModelID)
+                : requestedHFRepoID
             return errorResponse(
                 for: request,
                 code: "not_found",
@@ -595,12 +730,12 @@ public actor ControlPlaneService {
         }
         let modelHandle: String
         do {
-            modelHandle = try await benchmarkModelHandle(for: benchmarkModelID)
+            modelHandle = try await benchmarkModelHandle(for: benchmarkModel)
         } catch {
             return errorResponse(
                 for: request,
                 code: "not_found",
-                message: "No loaded benchmark target is available for \(benchmarkModelID)."
+                message: "No loaded benchmark target is available for \(benchmarkModel.modelID)."
             )
         }
 
@@ -609,6 +744,8 @@ public actor ControlPlaneService {
         workerRequest.modelHandle = modelHandle
         workerRequest.suites = requestedSuites
         workerRequest.parameters = command.parameters
+        workerRequest.taskKind = benchmarkTaskKind(for: benchmarkModel)
+        workerRequest.sourceRepo = benchmarkSourceRepo(for: benchmarkModel)
 
         do {
             let stream = try await workerClient.runBench(request: workerRequest)
@@ -623,11 +760,13 @@ public actor ControlPlaneService {
                     benchJobID = started.jobID
                     reply.benchmarkJob = makeBenchmarkJobSummary(
                         jobID: started.jobID,
-                        modelID: benchmarkModelID,
+                        modelID: benchmarkModel.modelID,
                         suites: requestedSuites,
                         parameters: command.parameters,
                         status: "running",
-                        outputDir: ""
+                        outputDir: "",
+                        taskKind: workerRequest.taskKind,
+                        sourceRepo: workerRequest.sourceRepo
                     )
                 case .progress(let progress):
                     await publishBenchProgress(jobID: benchJobID, suite: progress.suite, pct: progress.pct)
@@ -643,11 +782,13 @@ public actor ControlPlaneService {
                     let resolvedJobID = benchJobID.isEmpty ? "bench-unknown" : benchJobID
                     reply.benchmarkJob = makeBenchmarkJobSummary(
                         jobID: resolvedJobID,
-                        modelID: benchmarkModelID,
+                        modelID: benchmarkModel.modelID,
                         suites: requestedSuites,
                         parameters: command.parameters,
                         status: "completed",
-                        outputDir: URL(fileURLWithPath: completed.reportPath).deletingLastPathComponent().path
+                        outputDir: URL(fileURLWithPath: completed.reportPath).deletingLastPathComponent().path,
+                        taskKind: workerRequest.taskKind,
+                        sourceRepo: workerRequest.sourceRepo
                     )
                     reply.benchmarkResults = makeBenchmarkResultSummaries(
                         jobID: resolvedJobID,
@@ -661,11 +802,13 @@ public actor ControlPlaneService {
                     let resolvedJobID = benchJobID.isEmpty ? "bench-unknown" : benchJobID
                     reply.benchmarkJob = makeBenchmarkJobSummary(
                         jobID: resolvedJobID,
-                        modelID: benchmarkModelID,
+                        modelID: benchmarkModel.modelID,
                         suites: requestedSuites,
                         parameters: command.parameters,
                         status: "failed",
-                        outputDir: ""
+                        outputDir: "",
+                        taskKind: workerRequest.taskKind,
+                        sourceRepo: workerRequest.sourceRepo
                     )
                 case nil:
                     break
@@ -1566,13 +1709,235 @@ public actor ControlPlaneService {
         return models.first?.modelID ?? ""
     }
 
-    private func benchmarkModelHandle(for modelID: String) async throws -> String {
-        try await OnDemandModelLoader.ensureTextModelReady(
-            modelID: modelID,
+    private func resolvedBenchmarkModel(
+        preferredModelID modelID: String,
+        hfRepoID: String,
+        workerClient: any ModelOperationsWorkerClientProtocol
+    ) async throws -> Melix_Controlplane_V1_ModelSummary {
+        if !hfRepoID.isEmpty {
+            return try await importBenchmarkTargetFromHub(repoID: hfRepoID, workerClient: workerClient)
+        }
+        let benchmarkModelID = await resolvedBenchmarkModelID(preferred: modelID)
+        guard let benchmarkModel = await modelCatalog.model(id: benchmarkModelID) else {
+            throw BenchmarkTargetResolutionError(
+                code: "not_found",
+                message: "No loaded benchmark target is available for \(benchmarkModelID.isEmpty ? "preferred benchmark model" : benchmarkModelID)."
+            )
+        }
+        return benchmarkModel
+    }
+
+    private func benchmarkModelHandle(for model: Melix_Controlplane_V1_ModelSummary) async throws -> String {
+        try await OnDemandModelLoader.ensureModelReady(
+            modelID: model.modelID,
             modelCatalog: modelCatalog,
             workerRegistry: workerRegistry,
-            metricsStore: metricsStore
+            metricsStore: metricsStore,
+            loadReason: "lazy_benchmark_load",
+            metricsPrefix: benchmarkMetricsPrefix(for: model),
+            requiresTextCapability: false
         )
+    }
+
+    private func benchmarkTaskKind(for model: Melix_Controlplane_V1_ModelSummary) -> String {
+        for key in ["melix.benchmark.task_kind", "melix.task_kind"] {
+            if let explicitTaskKind = model.settings.ext[key]?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !explicitTaskKind.isEmpty {
+                return explicitTaskKind
+            }
+        }
+
+        switch model.kind {
+        case "text":
+            return BenchmarkTaskKind.textGeneration.rawValue
+        case "ocr":
+            return BenchmarkTaskKind.imageToText.rawValue
+        case "vlm":
+            return BenchmarkTaskKind.imageTextToText.rawValue
+        case "image":
+            return BenchmarkTaskKind.textToImage.rawValue
+        default:
+            return BenchmarkTaskKind.textGeneration.rawValue
+        }
+    }
+
+    private func benchmarkSourceRepo(for model: Melix_Controlplane_V1_ModelSummary) -> String {
+        for key in ["melix.hf_repo_id", "melix.source_repo", "melix.model_path"] {
+            if let value = model.settings.ext[key]?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !value.isEmpty {
+                return value
+            }
+        }
+        return ""
+    }
+
+    private func benchmarkMetricsPrefix(for model: Melix_Controlplane_V1_ModelSummary) -> String {
+        switch benchmarkTaskKind(for: model) {
+        case BenchmarkTaskKind.textGeneration.rawValue:
+            return BenchmarkTaskKind.textGeneration.metricsPrefix
+        case BenchmarkTaskKind.imageToText.rawValue,
+             BenchmarkTaskKind.imageTextToText.rawValue:
+            return BenchmarkTaskKind.imageTextToText.metricsPrefix
+        case BenchmarkTaskKind.textToImage.rawValue,
+             BenchmarkTaskKind.imageTextToImage.rawValue:
+            return BenchmarkTaskKind.textToImage.metricsPrefix
+        default:
+            return "model"
+        }
+    }
+
+    private func importBenchmarkTargetFromHub(
+        repoID: String,
+        workerClient: any ModelOperationsWorkerClientProtocol
+    ) async throws -> Melix_Controlplane_V1_ModelSummary {
+        if let existing = await modelCatalog.model(id: repoID) {
+            return existing
+        }
+
+        var workerRequest = Melix_Worker_V1_GetHubModelCardRequest()
+        workerRequest.repoID = repoID
+        let workerResponse: Melix_Worker_V1_GetHubModelCardResponse
+        do {
+            workerResponse = try await workerClient.getHubModelCard(request: workerRequest)
+        } catch {
+            throw BenchmarkTargetResolutionError(
+                code: "unavailable",
+                message: "Hub model card worker request failed: \(error)"
+            )
+        }
+
+        guard workerResponse.ok else {
+            throw BenchmarkTargetResolutionError(
+                code: workerResponse.error.code.isEmpty ? "unknown" : workerResponse.error.code,
+                message: workerResponse.error.message.isEmpty
+                    ? "Hub model card request failed."
+                    : workerResponse.error.message
+            )
+        }
+        guard workerResponse.card.mlxCompatible else {
+            throw BenchmarkTargetResolutionError(
+                code: "unsupported_model_family",
+                message: "Hub repo \(repoID) is not MLX-compatible."
+            )
+        }
+
+        let taskKind = try benchmarkTaskKind(from: workerResponse.card)
+        let imported = makeImportedBenchmarkModel(card: workerResponse.card, taskKind: taskKind)
+        return await modelCatalog.registerModel(imported, reason: "hub_benchmark_import")
+    }
+
+    private func benchmarkTaskKind(
+        from card: Melix_Worker_V1_HubModelCard
+    ) throws -> BenchmarkTaskKind {
+        let pipelineTag = card.pipelineTag.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        switch pipelineTag {
+        case BenchmarkTaskKind.textGeneration.rawValue:
+            return .textGeneration
+        case BenchmarkTaskKind.imageToText.rawValue:
+            return .imageToText
+        case BenchmarkTaskKind.imageTextToText.rawValue:
+            return .imageTextToText
+        case BenchmarkTaskKind.textToImage.rawValue:
+            return .textToImage
+        case BenchmarkTaskKind.imageTextToImage.rawValue:
+            return .imageTextToImage
+        default:
+            throw BenchmarkTargetResolutionError(
+                code: "unsupported_task_family",
+                message: "Hub repo \(card.repoID) declares unsupported pipeline_tag=\(card.pipelineTag)."
+            )
+        }
+    }
+
+    private func makeImportedBenchmarkModel(
+        card: Melix_Worker_V1_HubModelCard,
+        taskKind: BenchmarkTaskKind
+    ) -> Melix_Controlplane_V1_ModelSummary {
+        let benchmarkTaskKind = inferredBenchmarkTaskKind(for: card, taskKind: taskKind)
+        var model = Melix_Controlplane_V1_ModelSummary()
+        model.modelID = card.repoID
+        model.kind = taskKind.importedModelKind
+        model.state = .modelDiscovered
+        model.capabilityClass = taskKind.capabilityClass
+        model.routeClass = taskKind.routeClass
+        model.features = taskKind.features
+        model.supportedModalities = taskKind.supportedModalities
+        model.supportedTasks = taskKind.supportedTasks
+        model.settings.alias = card.modelName.isEmpty ? card.repoID : card.modelName
+        model.settings.memoryPolicy = .memoryResidencyEvictable
+        model.maxContext = taskKind == .textGeneration ? 8192 : 4096
+        model.settings.ext["melix.source_kind"] = "hf_repo"
+        model.settings.ext["melix.hf_repo_id"] = card.repoID
+        model.settings.ext["melix.source_repo"] = card.repoID
+        model.settings.ext["melix.task_kind"] = taskKind.rawValue
+        if benchmarkTaskKind != taskKind.rawValue {
+            model.settings.ext["melix.benchmark.task_kind"] = benchmarkTaskKind
+        }
+        model.settings.ext["melix.model_path"] = card.repoID
+        model.settings.ext["melix.model_revision"] = "main"
+        model.settings.ext["melix.tokenizer_hash"] = "hf.\(card.repoID.replacingOccurrences(of: "/", with: "."))"
+        model.settings.ext["melix.capability.route_kind"] = WorkerRouteKind(routeClass: taskKind.routeClass)?.rawValue ?? ""
+        model.settings.ext["melix.capability.class"] = taskKind.capabilityIdentifier
+        model.settings.ext["melix.capability.supported_modalities"] = taskKind.supportedModalities.joined(separator: ",")
+        model.settings.ext["melix.capability.supported_tasks"] = taskKind.supportedTasks.joined(separator: ",")
+        model.settings.ext["melix.capability.supported_parsers"] = taskKind.supportedParsers.joined(separator: ",")
+
+        switch taskKind {
+        case .textGeneration:
+            break
+        case .imageToText, .imageTextToText:
+            let familyID = benchmarkVisionFamilyID(for: card)
+            model.settings.ext["vision_family_id"] = familyID
+            model.settings.ext["vision_prompt_profile_id"] = familyID == "paligemma-v1"
+                ? "paligemma-caption-v1"
+                : (familyID == "gemma4-v1" ? "gemma4-chatml-v1" : "llava-chatml-v1")
+            model.settings.ext["vision_tokenization_mode"] = familyID == "paligemma-v1" ? "prefix" : "interleaved"
+            model.settings.ext["vision_max_images_per_prompt"] = familyID == "paligemma-v1" ? "1" : "8"
+            model.settings.ext["vision_supports_tool_calls"] = familyID == "paligemma-v1" ? "false" : "true"
+            model.settings.ext["melix.multimodal_adapter_hash"] = "vision-family-\(familyID)"
+            model.settings.ext["melix.vlm.backend_id"] = "mlx_vlm"
+            if benchmarkTaskKind == BenchmarkTaskKind.textGeneration.rawValue {
+                model.settings.ext["melix.vlm.execution_mode"] = "text_backed"
+            }
+        case .textToImage, .imageTextToImage:
+            model.settings.ext["melix.image.backend_id"] = "deterministic"
+            model.settings.ext["melix.image.task_kind"] = taskKind.rawValue
+        }
+
+        return model
+    }
+
+    private func inferredBenchmarkTaskKind(
+        for card: Melix_Worker_V1_HubModelCard,
+        taskKind: BenchmarkTaskKind
+    ) -> String {
+        switch taskKind {
+        case .imageToText, .imageTextToText:
+            let siblingFiles = Set(card.siblingFiles.map { $0.lowercased() })
+            let hasMultimodalProcessorFiles =
+                siblingFiles.contains("processor_config.json")
+                || siblingFiles.contains("preprocessor_config.json")
+            if !hasMultimodalProcessorFiles {
+                return BenchmarkTaskKind.textGeneration.rawValue
+            }
+        default:
+            break
+        }
+        return taskKind.rawValue
+    }
+
+    private func benchmarkVisionFamilyID(
+        for card: Melix_Worker_V1_HubModelCard
+    ) -> String {
+        let normalizedTags = Set(card.tags.map { $0.lowercased() })
+        let normalizedRepoID = card.repoID.lowercased()
+        if normalizedTags.contains("gemma4") || normalizedRepoID.contains("gemma-4") {
+            return "gemma4-v1"
+        }
+        if normalizedTags.contains("paligemma") || normalizedRepoID.contains("paligemma") {
+            return "paligemma-v1"
+        }
+        return "llava-v1"
     }
 
     private func publishBenchProgress(jobID: String, suite: String, pct: Float) async {
@@ -1593,7 +1958,9 @@ public actor ControlPlaneService {
         suites: [String],
         parameters: [String: String],
         status: String,
-        outputDir: String
+        outputDir: String,
+        taskKind: String,
+        sourceRepo: String
     ) -> Melix_Controlplane_V1_BenchmarkJobSummary {
         var summary = Melix_Controlplane_V1_BenchmarkJobSummary()
         summary.schemaVersion = "melix.serving_benchmark_job.v1"
@@ -1603,6 +1970,8 @@ public actor ControlPlaneService {
         summary.parameters = parameters
         summary.status = status
         summary.outputDir = outputDir
+        summary.taskKind = taskKind
+        summary.sourceRepo = sourceRepo
         return summary
     }
 

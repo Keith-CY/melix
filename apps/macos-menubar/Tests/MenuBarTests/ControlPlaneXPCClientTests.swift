@@ -497,6 +497,28 @@ struct ControlPlaneXPCClientTests {
         #expect(request.ops.runBench.parameters["batch_factor"] == "2")
     }
 
+    @Test("runBench builds ops.run_bench request with a direct Hugging Face repo target")
+    func runBenchBuildsTypedRequestWithDirectHFRepoTarget() async throws {
+        let service = RecordingExecuteControlPlaneService()
+        let client = LocalControlPlaneXPCClient(service: service)
+
+        _ = try await client.runBench(
+            ControlPlaneBenchRequest(
+                hfRepoID: "unsloth/gemma-4-E4B-it-MLX-8bit",
+                suites: ["smoke"],
+                parameters: [
+                    "sample_size": "1",
+                ]
+            )
+        )
+        let request = try #require(await service.lastExecuteRequest)
+
+        #expect(request.ops.runBench.modelID.isEmpty)
+        #expect(request.ops.runBench.hfRepoID == "unsloth/gemma-4-E4B-it-MLX-8bit")
+        #expect(request.ops.runBench.suites == ["smoke"])
+        #expect(request.ops.runBench.parameters["sample_size"] == "1")
+    }
+
     @Test("exportResults builds ops.export_results request and returns the export bundle json")
     func exportResultsBuildsTypedRequest() async throws {
         let service = RecordingExecuteControlPlaneService()

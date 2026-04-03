@@ -1124,7 +1124,12 @@ struct DesktopDiagnosticsToolSectionView: View {
                     Button("Inspect", action: startInspectTask)
                     Button("Doctor", action: startDoctorTask)
                     Button("Run Benchmark", action: startBenchmarkTask)
-                    .disabled(viewModel.benchmarkModels.isEmpty || viewModel.selectedBenchmarkSuiteIDs.isEmpty)
+                    .disabled(
+                        (
+                            viewModel.selectedBenchmarkTargetMode == .catalogModel
+                            && viewModel.benchmarkModels.isEmpty
+                        ) || viewModel.selectedBenchmarkSuiteIDs.isEmpty
+                    )
                     Button("Refresh Results", action: startRefreshBenchmarkResultsTask)
                     Button("Export CSV", action: startExportBenchmarkCSVTask)
                     .disabled(viewModel.benchmarkHistory.isEmpty)
@@ -1148,24 +1153,52 @@ struct DesktopDiagnosticsToolSectionView: View {
 
             GroupBox("Benchmark Configuration") {
                 VStack(alignment: .leading, spacing: 12) {
-                    if viewModel.benchmarkModels.isEmpty {
-                        Text("No text models are available for benchmark execution.")
-                            .foregroundStyle(.secondary)
-                    } else {
-                        Picker(
-                            "Benchmark Model",
-                            selection: Binding(
-                                get: { viewModel.selectedBenchmarkModelID },
-                                set: { viewModel.selectedBenchmarkModelID = $0 }
-                            )
-                        ) {
-                            ForEach(viewModel.benchmarkModels) { model in
-                                Text(model.alias.isEmpty ? model.modelID : "\(model.alias) • \(model.modelID)")
-                                    .tag(model.modelID)
-                            }
+                    Picker(
+                        "Benchmark Target",
+                        selection: Binding(
+                            get: { viewModel.selectedBenchmarkTargetMode },
+                            set: { viewModel.selectedBenchmarkTargetMode = $0 }
+                        )
+                    ) {
+                        ForEach(RuntimeBenchmarkTargetMode.allCases) { mode in
+                            Text(mode.title).tag(mode)
                         }
-                        .pickerStyle(.menu)
                     }
+                    .pickerStyle(.segmented)
+
+                    if viewModel.selectedBenchmarkTargetMode == .catalogModel {
+                        if viewModel.benchmarkModels.isEmpty {
+                            Text("No benchmark-capable catalog models are available.")
+                                .foregroundStyle(.secondary)
+                        } else {
+                            Picker(
+                                "Benchmark Model",
+                                selection: Binding(
+                                    get: { viewModel.selectedBenchmarkModelID },
+                                    set: { viewModel.selectedBenchmarkModelID = $0 }
+                                )
+                            ) {
+                                ForEach(viewModel.benchmarkModels) { model in
+                                    Text(model.alias.isEmpty ? model.modelID : "\(model.alias) • \(model.modelID)")
+                                        .tag(model.modelID)
+                                }
+                            }
+                            .pickerStyle(.menu)
+                        }
+                    } else {
+                        TextField(
+                            "Hugging Face Repo ID",
+                            text: Binding(
+                                get: { viewModel.benchmarkHFRepoID },
+                                set: { viewModel.benchmarkHFRepoID = $0 }
+                            )
+                        )
+                        .textFieldStyle(.roundedBorder)
+                    }
+
+                    Text(viewModel.benchmarkTargetSummaryText)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
 
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 220), spacing: 12)], spacing: 12) {
                         ForEach(viewModel.benchmarkSuites) { suite in
@@ -1243,7 +1276,8 @@ struct DesktopDiagnosticsToolSectionView: View {
                     if let selectedEntry = viewModel.selectedBenchmarkHistoryEntry {
                         Text("Selected run \(selectedEntry.jobID) • \(selectedEntry.suiteTitle) • \(selectedEntry.createdAtText)")
                             .font(.headline)
-                        Text("\(selectedEntry.modelID) • \(selectedEntry.datasetLabel)")
+                        let selectedSource = selectedEntry.sourceRepo.isEmpty ? selectedEntry.modelID : selectedEntry.sourceRepo
+                        Text("\(selectedEntry.taskTitle) • \(selectedSource) • \(selectedEntry.datasetLabel)")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -1315,7 +1349,8 @@ struct DesktopDiagnosticsToolSectionView: View {
                                         .font(.caption)
                                         .foregroundStyle(.secondary)
                                 }
-                                Text("\(entry.modelID) • \(entry.datasetLabel)")
+                                let sourceLabel = entry.sourceRepo.isEmpty ? entry.modelID : entry.sourceRepo
+                                Text("\(entry.taskTitle) • \(sourceLabel) • \(entry.datasetLabel)")
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                                 Text("sample \(entry.sampleSizeText) • batch \(entry.batchFactorText) • \(entry.metricCountText) • \(entry.createdAtText)")

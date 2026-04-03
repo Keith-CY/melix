@@ -15,6 +15,28 @@ enum OnDemandModelLoader {
         metricsStore: MetricsStore,
         memoryBudgetBytes: UInt64 = 0
     ) async throws -> String {
+        try await ensureModelReady(
+            modelID: modelID,
+            modelCatalog: modelCatalog,
+            workerRegistry: workerRegistry,
+            metricsStore: metricsStore,
+            memoryBudgetBytes: memoryBudgetBytes,
+            loadReason: "lazy_text_load",
+            metricsPrefix: "text",
+            requiresTextCapability: true
+        )
+    }
+
+    static func ensureModelReady(
+        modelID: String,
+        modelCatalog: ModelCatalog,
+        workerRegistry: WorkerRegistry?,
+        metricsStore: MetricsStore,
+        memoryBudgetBytes: UInt64 = 0,
+        loadReason: String = "lazy_model_load",
+        metricsPrefix: String = "model",
+        requiresTextCapability: Bool = false
+    ) async throws -> String {
         _ = await evictModelsIfNeededForLoad(
             targetModelID: modelID,
             modelCatalog: modelCatalog,
@@ -29,18 +51,20 @@ enum OnDemandModelLoader {
         guard let model = await modelCatalog.model(id: modelID) else {
             throw OnDemandModelLoadError.modelNotReady
         }
-        guard model.kind == "text" || model.capabilityClass == .modelCapabilityText else {
+        if requiresTextCapability,
+           !(model.kind == "text" || model.capabilityClass == .modelCapabilityText) {
             throw OnDemandModelLoadError.modelNotReady
         }
         guard let modelSpec = BootstrapWorkerPreparation.modelSpec(for: model) else {
             throw OnDemandModelLoadError.modelNotReady
         }
         guard let workerRegistry,
-              let workerClient = await workerRegistry.client(forModelID: modelID) else {
+              let route = await workerRegistry.route(for: model),
+              let workerClient = await workerRegistry.client(for: route) else {
             throw OnDemandModelLoadError.workerUnavailable
         }
 
-        _ = await modelCatalog.beginLoad(id: modelID, reason: "lazy_text_load")
+        _ = await modelCatalog.beginLoad(id: modelID, reason: loadReason)
         var request = Melix_Worker_V1_LoadModelRequest()
         request.model = modelSpec
         request.memoryBudgetBytes = memoryBudgetBytes
@@ -52,14 +76,14 @@ enum OnDemandModelLoader {
         do {
             response = try await workerClient.loadModel(request: request)
         } catch {
-            _ = await modelCatalog.recordLoadFailed(id: modelID, reason: "lazy_text_load_failed")
+            _ = await modelCatalog.recordLoadFailed(id: modelID, reason: "\(loadReason)_failed")
             throw OnDemandModelLoadError.workerUnavailable
         }
         guard response.ok, !response.modelHandle.isEmpty else {
             let failureReason = if response.error.code.isEmpty {
-                "lazy_text_load_failed"
+                "\(loadReason)_failed"
             } else {
-                "lazy_text_load_\(sanitizeTransitionReasonComponent(response.error.code))"
+                "\(loadReason)_\(sanitizeTransitionReasonComponent(response.error.code))"
             }
             _ = await modelCatalog.recordLoadFailed(id: modelID, reason: failureReason)
             throw OnDemandModelLoadError.workerUnavailable
@@ -70,14 +94,14 @@ enum OnDemandModelLoader {
             dispatchHandle: response.modelHandle,
             pinRequested: request.pinOnLoad,
             workerResidency: response.hasResidency ? response.residency : nil,
-            reason: "lazy_text_load"
+            reason: loadReason
         )
 
         let elapsedMs = Date().timeIntervalSince(startedAt) * 1000
-        await metricsStore.set(elapsedMs, forKey: "control_plane.text_first_load_ms")
+        await metricsStore.set(elapsedMs, forKey: "control_plane.\(metricsPrefix)_first_load_ms")
         await metricsStore.set(
             Double(response.estimatedResidentBytes),
-            forKey: "control_plane.text_first_load_estimated_resident_bytes"
+            forKey: "control_plane.\(metricsPrefix)_first_load_estimated_resident_bytes"
         )
 
         let residentBytes: Double
@@ -89,7 +113,7 @@ enum OnDemandModelLoader {
         }
         await metricsStore.set(
             residentBytes,
-            forKey: "control_plane.text_first_load_resident_bytes"
+            forKey: "control_plane.\(metricsPrefix)_first_load_resident_bytes"
         )
 
         return response.modelHandle

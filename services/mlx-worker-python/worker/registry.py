@@ -16,6 +16,7 @@ from worker.runtime.deterministic_image_generation_runtime import DeterministicI
 from worker.runtime.audio_runtime_protocols import SpeechRuntimeProtocol, TranscriptionRuntimeProtocol
 from worker.runtime.mlx_audio_runtime import MLXAudioSpeechRuntime, MLXAudioTranscriptionRuntime
 from worker.runtime.mlx_text_runtime import MLXTextRuntime
+from worker.runtime.mlx_vlm_runtime import MLXVLMRuntime
 from worker.runtime.deterministic_embedding_runtime import DeterministicEmbeddingRuntime
 from worker.runtime.deterministic_rerank_runtime import DeterministicRerankRuntime
 
@@ -59,6 +60,7 @@ class WorkerRegistry:
         rerank_runtime: DeterministicRerankRuntime | None = None,
         ocr_runtime: DeterministicOCRRuntime | None = None,
         vlm_runtime: DeterministicVLMRuntime | None = None,
+        mlx_vlm_runtime: MLXVLMRuntime | None = None,
         transcription_runtime: TranscriptionRuntimeProtocol | None = None,
         speech_runtime: SpeechRuntimeProtocol | None = None,
         mlx_audio_transcription_runtime: TranscriptionRuntimeProtocol | None = None,
@@ -74,6 +76,7 @@ class WorkerRegistry:
         self.rerank_runtime = rerank_runtime or DeterministicRerankRuntime()
         self.ocr_runtime = ocr_runtime or DeterministicOCRRuntime()
         self.vlm_runtime = vlm_runtime or DeterministicVLMRuntime()
+        self.mlx_vlm_runtime = mlx_vlm_runtime or MLXVLMRuntime()
         audio_execution_gate = Lock()
         self.transcription_runtime = transcription_runtime or DeterministicTranscriptionRuntime()
         self.speech_runtime = speech_runtime or DeterministicSpeechRuntime()
@@ -407,7 +410,14 @@ class WorkerRegistry:
         if model_spec.model_kind == "ocr":
             return "ocr", self.ocr_runtime
         if model_spec.model_kind == "vlm":
-            return "vlm", self.vlm_runtime
+            backend_id = self._vlm_backend_id_for_model(model_spec)
+            if backend_id == "deterministic":
+                return "vlm", self.vlm_runtime
+            if backend_id == "mlx_vlm":
+                return "vlm", self.mlx_vlm_runtime
+            raise RuntimeError(
+                f"Vision-language model {model_spec.model_id} declares unsupported backend {backend_id!r}."
+            )
         if model_spec.model_kind == "transcription":
             backend_id = self._audio_backend_id_for_model(model_spec)
             if backend_id == "deterministic":
@@ -440,6 +450,15 @@ class WorkerRegistry:
         raise RuntimeError(
             f"Audio model {model_spec.model_id} requires an explicit melix.audio.backend_id."
         )
+
+    @staticmethod
+    def _vlm_backend_id_for_model(model_spec: common_pb2.ModelSpec) -> str:
+        backend_id = model_spec.ext.get("melix.vlm.backend_id", "").strip()
+        if backend_id:
+            return backend_id
+        if model_spec.model_id == "melix-dev-vlm":
+            return "deterministic"
+        return "mlx_vlm"
 
     def _loaded_model_summary(self, loaded: LoadedModel) -> runtime_pb2.LoadedModelSummary:
         summary = runtime_pb2.LoadedModelSummary()

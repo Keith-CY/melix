@@ -110,7 +110,7 @@ struct MelixCLIParserTests {
         #expect(options.parameters["derived_model_alias"] == "melix-dev-text-ultrachat")
     }
 
-    @Test("parses bench run with explicit model suites and tuning parameters")
+    @Test("parses bench run with an explicit model target suites and tuning parameters")
     func parsesBenchRunCommand() throws {
         let command = try MelixCLIParser.parse([
             "bench",
@@ -129,9 +129,31 @@ struct MelixCLIParserTests {
         }
 
         #expect(options.modelID == "melix-dev-text")
+        #expect(options.hfRepoID.isEmpty)
         #expect(options.suites == ["smoke", "latency"])
         #expect(options.parameters["sample_size"] == "8")
         #expect(options.parameters["batch_factor"] == "2")
+        #expect(options.json)
+    }
+
+    @Test("parses bench run with a direct Hugging Face repo target")
+    func parsesBenchRunCommandForDirectHFRepo() throws {
+        let command = try MelixCLIParser.parse([
+            "bench",
+            "run",
+            "--repo-id", "unsloth/gemma-4-E4B-it-MLX-8bit",
+            "--suite", "smoke",
+            "--json",
+        ])
+
+        guard case .benchRun(let options) = command else {
+            Issue.record("Expected benchRun command")
+            return
+        }
+
+        #expect(options.modelID.isEmpty)
+        #expect(options.hfRepoID == "unsloth/gemma-4-E4B-it-MLX-8bit")
+        #expect(options.suites == ["smoke"])
         #expect(options.json)
     }
 
@@ -209,7 +231,11 @@ struct MelixCLIParserTests {
         )
         try assertError(
             for: ["bench", "run"],
-            equals: .missingRequired("--model-id is required for melix bench run.")
+            equals: .missingRequired("Exactly one of --model-id or --repo-id is required for melix bench run.")
+        )
+        try assertError(
+            for: ["bench", "run", "--model-id", "melix-dev-text", "--repo-id", "unsloth/gemma-4-E4B-it-MLX-8bit"],
+            equals: .missingRequired("Exactly one of --model-id or --repo-id is required for melix bench run.")
         )
         try assertError(
             for: ["bench", "export-csv", "--output", "/tmp/out.csv"],

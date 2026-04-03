@@ -15,17 +15,23 @@ struct BenchmarkExportBundleTests {
         #expect(entries.count == 2)
         #expect(entries[0].jobID == "bench-2")
         #expect(entries[0].suiteID == "latency")
+        #expect(entries[0].taskKind == "image-text-to-text")
+        #expect(entries[0].sourceRepo == "unsloth/gemma-4-E4B-it-MLX-8bit")
         #expect(entries[0].datasetRepo == "databricks/databricks-dolly-15k")
         #expect(entries[1].jobID == "bench-1")
+        #expect(entries[1].taskKind == "text-generation")
+        #expect(entries[1].sourceRepo == "HuggingFaceH4/ultrachat_200k")
         #expect(entries[1].datasetConfig == "default")
         #expect(entries[1].sampleSize == 4)
         #expect(rows.count == 2)
         #expect(rows[0].jobID == "bench-1")
+        #expect(rows[0].taskKind == "text-generation")
+        #expect(rows[0].sourceRepo == "HuggingFaceH4/ultrachat_200k")
         #expect(rows[0].suiteID == "smoke")
         #expect(rows[0].metricName == "bench.smoke.tokens_per_second")
         #expect(rows[0].metricValue == 47.08)
-        #expect(csv.contains("job_id,model_id,suite_id,dataset_repo,dataset_config,dataset_split,sample_size,batch_factor,metric_name,metric_value,unit,created_at_unix_ms"))
-        #expect(csv.contains("bench-1,melix-dev-text,smoke,HuggingFaceH4/ultrachat_200k,default,train_sft,4,2,bench.smoke.ttft_ms,24.45,ms,1712100000000"))
+        #expect(csv.contains("job_id,model_id,task_kind,source_repo,suite_id,dataset_repo,dataset_config,dataset_split,sample_size,batch_factor,metric_name,metric_value,unit,created_at_unix_ms"))
+        #expect(csv.contains("bench-1,melix-dev-text,text-generation,HuggingFaceH4/ultrachat_200k,smoke,HuggingFaceH4/ultrachat_200k,default,train_sft,4,2,bench.smoke.ttft_ms,24.45,ms,1712100000000"))
     }
 
     @Test("surfaces invalid json and emits the csv header for empty benchmark history")
@@ -48,7 +54,7 @@ struct BenchmarkExportBundleTests {
             json: #"{"export_schema_version":"melix.benchmark_export.v1","benchmark_jobs":[],"benchmark_results":[]}"#
         )
         #expect(emptyBundle?.benchmarkHistoryEntries() == [])
-        #expect(emptyBundle?.benchmarkCSV() == "job_id,model_id,suite_id,dataset_repo,dataset_config,dataset_split,sample_size,batch_factor,metric_name,metric_value,unit,created_at_unix_ms\n")
+        #expect(emptyBundle?.benchmarkCSV() == "job_id,model_id,task_kind,source_repo,suite_id,dataset_repo,dataset_config,dataset_split,sample_size,batch_factor,metric_name,metric_value,unit,created_at_unix_ms\n")
     }
 
     @Test("falls back to job parameters, sorts deterministically, and quotes csv fields")
@@ -67,10 +73,34 @@ struct BenchmarkExportBundleTests {
         #expect(historyEntries[2].datasetConfig == #"cfg, "quoted""#)
 
         #expect(rows.map(\.jobID) == ["bench-c", "bench-a", "bench-b"])
+        #expect(rows[0].taskKind == "image-text-to-image")
+        #expect(rows[0].sourceRepo == "mlx-community/sdxl-edit")
         #expect(rows[1].sampleSize == 7)
         #expect(rows[1].batchFactor == 4)
         #expect(rows[2].batchFactor == nil)
         #expect(csv.contains(#""cfg, ""quoted""""#))
+    }
+
+    @Test("falls back to task kind parameters and metadata source repos when explicit fields are absent")
+    func fallsBackToTaskKindParametersAndMetadataSourceRepos() throws {
+        let bundle = try ControlPlaneBenchmarkExportBundle.decode(json: benchmarkExportBundleImplicitTaskJSON)
+
+        let entries = bundle.benchmarkHistoryEntries()
+        let rows = bundle.benchmarkCSVRows()
+        let parameterRow = try #require(rows.first(where: { $0.jobID == "bench-implicit-param" }))
+        let defaultRow = try #require(rows.first(where: { $0.jobID == "bench-implicit-default" }))
+
+        #expect(entries.count == 2)
+        #expect(entries[0].jobID == "bench-implicit-param")
+        #expect(entries[0].taskKind == "image-to-text")
+        #expect(entries[0].sourceRepo == "huggingface/documentation-images")
+        #expect(entries[1].jobID == "bench-implicit-default")
+        #expect(entries[1].taskKind == "text-generation")
+        #expect(entries[1].sourceRepo.isEmpty)
+        #expect(parameterRow.taskKind == "image-to-text")
+        #expect(parameterRow.sourceRepo == "huggingface/documentation-images")
+        #expect(defaultRow.taskKind == "text-generation")
+        #expect(defaultRow.sourceRepo.isEmpty)
     }
 }
 
@@ -83,6 +113,8 @@ private let benchmarkExportBundleJSON = """
       "schema_version": "melix.serving_benchmark_job.v1",
       "job_id": "bench-1",
       "model_id": "melix-dev-text",
+      "task_kind": "text-generation",
+      "source_repo": "HuggingFaceH4/ultrachat_200k",
       "suites": ["smoke"],
       "parameters": {
         "sample_size": "4",
@@ -107,6 +139,8 @@ private let benchmarkExportBundleJSON = """
       "schema_version": "melix.serving_benchmark_job.v1",
       "job_id": "bench-2",
       "model_id": "melix-dev-text-lora",
+      "task_kind": "image-text-to-text",
+      "source_repo": "unsloth/gemma-4-E4B-it-MLX-8bit",
       "suites": [],
       "parameters": {},
       "status": "completed",
@@ -160,6 +194,8 @@ private let benchmarkExportBundleFallbackJSON = """
       "schema_version": "melix.serving_benchmark_job.v1",
       "job_id": "bench-a",
       "model_id": "melix-dev-text-a",
+      "task_kind": "text-generation",
+      "source_repo": "repo/fallback-a",
       "suites": [],
       "parameters": {
         "sample_size": "7",
@@ -175,6 +211,8 @@ private let benchmarkExportBundleFallbackJSON = """
       "schema_version": "melix.serving_benchmark_job.v1",
       "job_id": "bench-b",
       "model_id": "melix-dev-text-b",
+      "task_kind": "image-to-text",
+      "source_repo": "repo/fallback-b",
       "suites": [],
       "parameters": {
         "sample_size": "5"
@@ -189,6 +227,8 @@ private let benchmarkExportBundleFallbackJSON = """
       "schema_version": "melix.serving_benchmark_job.v1",
       "job_id": "bench-c",
       "model_id": "melix-dev-text-c",
+      "task_kind": "image-text-to-image",
+      "source_repo": "mlx-community/sdxl-edit",
       "suites": ["quoted"],
       "parameters": {},
       "status": "completed",
@@ -237,6 +277,73 @@ private let benchmarkExportBundleFallbackJSON = """
       ],
       "report_path": "/tmp/melix/bench/runs/bench-c/bench-report.md",
       "report_markdown": "# Bench C\\n"
+    }
+  ]
+}
+"""
+
+private let benchmarkExportBundleImplicitTaskJSON = """
+{
+  "export_schema_version": "melix.benchmark_export.v1",
+  "exported_at_unix_ms": 1712401234567,
+  "benchmark_jobs": [
+    {
+      "schema_version": "melix.serving_benchmark_job.v1",
+      "job_id": "bench-implicit-param",
+      "model_id": "melix-dev-ocr",
+      "suites": ["smoke"],
+      "parameters": {
+        "task_kind": "image-to-text",
+        "sample_size": "1"
+      },
+      "status": "completed",
+      "output_dir": "/tmp/melix/bench/runs/bench-implicit-param",
+      "created_at_unix_ms": 1712400000000,
+      "updated_at_unix_ms": 1712400001000,
+      "suite_metadata": {
+        "smoke": {
+          "title": "Docs Images OCR Smoke",
+          "dataset_path": "huggingface/documentation-images",
+          "dataset_name": "default",
+          "dataset_split": "train",
+          "sample_size": 1,
+          "batch_factor": 1
+        }
+      }
+    },
+    {
+      "schema_version": "melix.serving_benchmark_job.v1",
+      "job_id": "bench-implicit-default",
+      "model_id": "melix-dev-text",
+      "suites": ["smoke"],
+      "parameters": {},
+      "status": "completed",
+      "output_dir": "/tmp/melix/bench/runs/bench-implicit-default",
+      "created_at_unix_ms": 1712390000000,
+      "updated_at_unix_ms": 1712390001000,
+      "suite_metadata": {}
+    }
+  ],
+  "benchmark_results": [
+    {
+      "schema_version": "melix.serving_benchmark_result.v1",
+      "job_id": "bench-implicit-param",
+      "suite": "smoke",
+      "metrics": [
+        {"name": "bench.smoke.ttft_ms", "value": 42.0, "unit": "ms"}
+      ],
+      "report_path": "/tmp/melix/bench/runs/bench-implicit-param/bench-report.md",
+      "report_markdown": "# OCR Bench\\n"
+    },
+    {
+      "schema_version": "melix.serving_benchmark_result.v1",
+      "job_id": "bench-implicit-default",
+      "suite": "smoke",
+      "metrics": [
+        {"name": "bench.smoke.tokens_per_second", "value": 12.0, "unit": "tok/s"}
+      ],
+      "report_path": "/tmp/melix/bench/runs/bench-implicit-default/bench-report.md",
+      "report_markdown": "# Default Bench\\n"
     }
   ]
 }

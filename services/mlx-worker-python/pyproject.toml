@@ -16,6 +16,7 @@ dependencies = [
 mlx = [
   "mlx>=0.25.0",
   "mlx-lm>=0.22.0",
+  "mlx-vlm @ git+https://github.com/Blaizzy/mlx-vlm.git@43b9b2078b7027e7622f34a434b2d94aada7eaad",
 ]
 audio-stt = [
   "mlx-audio==0.2.6",

@@ -905,6 +905,70 @@ struct PythonBridgeWorkerClientTests {
         #expect(spec.ext["tool_parser_mode"] == nil)
     }
 
+    @Test("bootstrap worker preparation builds generic VLM specs for imported Hugging Face models")
+    func bootstrapWorkerPreparationBuildsGenericVLMSpecsForImportedHuggingFaceModels() throws {
+        var summary = Melix_Controlplane_V1_ModelSummary()
+        summary.modelID = "unsloth/gemma-4-E4B-it-MLX-8bit"
+        summary.kind = "vlm"
+        summary.maxContext = 4096
+        summary.settings.alias = "gemma-4-E4B-it-MLX-8bit"
+        summary.settings.ext["melix.model_path"] = "unsloth/gemma-4-E4B-it-MLX-8bit"
+        summary.settings.ext["melix.model_revision"] = "main"
+        summary.settings.ext["melix.tokenizer_hash"] = "hf.unsloth.gemma-4-E4B-it-MLX-8bit"
+        summary.settings.ext["melix.vlm.backend_id"] = "mlx_vlm"
+        summary.settings.ext["melix.hf_repo_id"] = "unsloth/gemma-4-E4B-it-MLX-8bit"
+        summary.settings.ext["melix.task_kind"] = "image-text-to-text"
+        summary.settings.ext["vision_family_id"] = "gemma4-v1"
+        summary.settings.ext["vision_prompt_profile_id"] = "gemma4-chatml-v1"
+        summary.settings.ext["vision_tokenization_mode"] = "interleaved"
+        summary.settings.ext["vision_max_images_per_prompt"] = "8"
+        summary.settings.ext["vision_supports_tool_calls"] = "true"
+        summary.settings.ext["melix.multimodal_adapter_hash"] = "vision-family-gemma4-v1"
+        summary.settings.ext["melix.capability.route_kind"] = "python_vlm"
+        summary.settings.ext["melix.capability.class"] = "vlm"
+        summary.settings.ext["melix.capability.supported_modalities"] = "text,image"
+        summary.settings.ext["melix.capability.supported_tasks"] = "vlm,generate,image_text_to_text"
+        summary.settings.ext["melix.capability.supported_parsers"] = "text,qwen"
+
+        let spec = try #require(BootstrapWorkerPreparation.modelSpec(for: summary))
+
+        #expect(spec.modelID == "unsloth/gemma-4-E4B-it-MLX-8bit")
+        #expect(spec.modelPath == "unsloth/gemma-4-E4B-it-MLX-8bit")
+        #expect(spec.modelKind == "vlm")
+        #expect(spec.revision == "main")
+        #expect(spec.ext["melix.vlm.backend_id"] == "mlx_vlm")
+        #expect(spec.ext["vision_family_id"] == "gemma4-v1")
+        #expect(spec.ext["melix.task_kind"] == "image-text-to-text")
+    }
+
+    @Test("bootstrap worker preparation builds generic image specs for imported Hugging Face models")
+    func bootstrapWorkerPreparationBuildsGenericImageSpecsForImportedHuggingFaceModels() throws {
+        var summary = Melix_Controlplane_V1_ModelSummary()
+        summary.modelID = "mlx-community/sdxl-turbo"
+        summary.kind = "image"
+        summary.maxContext = 4096
+        summary.settings.alias = "sdxl-turbo"
+        summary.settings.ext["melix.model_path"] = "mlx-community/sdxl-turbo"
+        summary.settings.ext["melix.model_revision"] = "main"
+        summary.settings.ext["melix.tokenizer_hash"] = "hf.mlx-community.sdxl-turbo"
+        summary.settings.ext["melix.image.backend_id"] = "deterministic"
+        summary.settings.ext["melix.image.task_kind"] = "text-to-image"
+        summary.settings.ext["melix.hf_repo_id"] = "mlx-community/sdxl-turbo"
+        summary.settings.ext["melix.capability.route_kind"] = "python_image"
+        summary.settings.ext["melix.capability.class"] = "image_generation"
+        summary.settings.ext["melix.capability.supported_modalities"] = "text,image"
+        summary.settings.ext["melix.capability.supported_tasks"] = "image_generate"
+        summary.settings.ext["melix.capability.supported_parsers"] = "text"
+
+        let spec = try #require(BootstrapWorkerPreparation.modelSpec(for: summary))
+
+        #expect(spec.modelID == "mlx-community/sdxl-turbo")
+        #expect(spec.modelPath == "mlx-community/sdxl-turbo")
+        #expect(spec.modelKind == "image")
+        #expect(spec.ext["melix.image.backend_id"] == "deterministic")
+        #expect(spec.ext["melix.image.task_kind"] == "text-to-image")
+    }
+
     @Test("bootstrap worker preparation carries embedding family metadata into worker model specs")
     func bootstrapWorkerPreparationCarriesEmbeddingFamilyMetadataIntoWorkerModelSpecs() throws {
         var summary = ModelCatalog.devEmbeddingModel()
@@ -1340,6 +1404,9 @@ private func makeProcessBridgeFixtureRepo() throws -> URL {
     version = "0.1.0"
     requires-python = ">=3.12"
     dependencies = []
+
+    [project.optional-dependencies]
+    mlx = []
     """.write(
         to: root.appendingPathComponent("services/mlx-worker-python/pyproject.toml"),
         atomically: true,

@@ -120,6 +120,41 @@
   - `services/mlx-worker-python/tests/test_runtime_edges.py`: changed-line coverage `100.00%` (`24/24`)
   - `README.md`, `docs/runbooks/m7-benchmark-and-evaluation-foundation.md`, `docs/runbooks/phase-8-lora-adapter-workflow.md`, `docs/runbooks/phase-8-product-acceptance.md`, `docs/plans/2026-04-03-m7-lora-benchmark-cli-productization.md`, and `task_plan.md` are documentation-only and excluded from executable changed-line coverage
   - aggregate changed-line coverage for the executable touched scope in this slice: `100.00%` (`24/24`)
+- Landed the post-close VLM benchmark compatibility follow-up for Hugging Face direct-repo benchmarking:
+  - upgraded the worker `mlx-vlm` dependency to an upstream commit that includes `gemma4`
+  - added a Gemma 4 text-backed compatibility loader in `MLXVLMRuntime` for MLX exports that advertise `image-text-to-text` but only ship language weights
+  - taught benchmark target import to preserve VLM routing while overriding benchmark task selection to `text-generation` when multimodal processor files are missing
+  - verified `melix bench run --repo-id unsloth/gemma-4-E4B-it-MLX-8bit --suite smoke --sample-size 1 --batch-factor 1 --json` against the local stack
+- Verification summary for the VLM benchmark compatibility follow-up:
+  - `PYTHONPATH=/Users/ChenYu/Documents/Github/melix:/Users/ChenYu/Documents/Github/melix/services/mlx-worker-python uv run --project services/mlx-worker-python --extra mlx pytest services/mlx-worker-python/tests/test_mlx_vlm_runtime.py services/mlx-worker-python/tests/test_maintenance_service.py -q`: `51 passed`
+  - `HOME=/Users/ChenYu/Documents/Github/melix/.swift-home CLANG_MODULE_CACHE_PATH=/Users/ChenYu/Documents/Github/melix/.build/ModuleCache.noindex swift test --package-path services/control-plane-swift --scratch-path /tmp/melix-control-plane-build --filter ControlPlaneServiceTests`: `104 tests passed`
+  - live proof benchmark:
+    - `bench.smoke.ttft_ms = 2452.66`
+    - `bench.smoke.tokens_per_second = 60.19`
+    - `task_kind = text-generation`
+    - `source_repo = unsloth/gemma-4-E4B-it-MLX-8bit`
+- Metrics report:
+  - changed-line coverage for the touched executable scope: pending repository-wide coverage regeneration for the active uncommitted working tree
+  - reason: the benchmark compatibility follow-up was implemented on top of an already-large productization working tree, so a fresh changed-line coverage snapshot still needs to be regenerated before the next commit
+- Regenerated the touched-scope coverage evidence for the still-uncommitted direct-HF and VLM benchmark compatibility working tree:
+  - fixed `services/control-plane-swift/Tests/WorkerClientTests/PythonBridgeWorkerClientTests.swift` so the process-bridge fixture declares the `mlx` optional dependency expected by the current `uv run --extra mlx` bridge contract
+  - fixed `services/mlx-worker-python/worker/engine/maintenance_core.py` benchmark report rendering so persisted `task_kind` follows the resolved runtime task instead of re-deriving from request defaults
+  - added targeted Python coverage for benchmark suite prompt extraction, task-aware benchmark metrics, direct-VLM registry defaults, and the updated `dev_up.py` `uv run --extra mlx` invocation
+  - added targeted Swift coverage for local CLI runtime construction, benchmark export fallbacks, direct-repo request wiring, direct Hugging Face benchmark imports across OCR, VLM, image generation, and image edit families, and Window UI benchmark target selection states
+- Verification summary for the coverage-regeneration follow-up:
+  - `PYTHONPATH=/Users/ChenYu/Documents/Github/melix:/Users/ChenYu/Documents/Github/melix/services/mlx-worker-python UV_CACHE_DIR=/Users/ChenYu/Documents/Github/melix/.uv-cache uv run --project services/mlx-worker-python --extra mlx coverage run --source=services/mlx-worker-python/worker -m pytest services/mlx-worker-python/tests -q`: `378 passed in 8.17s`
+  - `HOME=/Users/ChenYu/Documents/Github/melix/.swift-home CLANG_MODULE_CACHE_PATH=/Users/ChenYu/Documents/Github/melix/.build/ModuleCache.noindex swift test --enable-code-coverage --filter MelixCLITests`: `29 tests passed`
+  - `HOME=/Users/ChenYu/Documents/Github/melix/.swift-home CLANG_MODULE_CACHE_PATH=/Users/ChenYu/Documents/Github/melix/.build/ModuleCache.noindex swift test --package-path services/control-plane-swift --enable-code-coverage --filter 'BenchmarkExportBundleTests|ControlPlaneServiceTests|PythonBridgeWorkerClientTests|OnDemandModelLoaderTests'`: `165 tests passed`
+  - `HOME=/Users/ChenYu/Documents/Github/melix/.swift-home CLANG_MODULE_CACHE_PATH=/Users/ChenYu/Documents/Github/melix/.build/ModuleCache.noindex swift test --package-path apps/macos-menubar --enable-code-coverage --filter 'RuntimeViewModelTests|DesktopFoundationViewTests|ControlPlaneXPCClientTests'`: `151 tests passed`
+- Metrics report:
+  - `services/mlx-worker-python/worker/engine/maintenance_core.py`, `services/mlx-worker-python/worker/model_ops/hub_catalog.py`, `services/mlx-worker-python/worker/model_registry/catalog.py`, `services/mlx-worker-python/worker/productization/benchmark_schemas.py`, `services/mlx-worker-python/worker/productization/benchmark_suites.py`, `services/mlx-worker-python/worker/registry.py`, `services/mlx-worker-python/worker/runtime/vision_family_adapters.py`, and `services/mlx-worker-python/worker/runtime/mlx_vlm_runtime.py`: aggregate changed-line coverage `97.07%` (`265/273`)
+  - `Sources/MelixCLICore/MelixCLI.swift`: changed-line coverage `100.00%` (`61/61`)
+  - `services/control-plane-swift/Sources/WorkerClient/OnDemandModelLoader.swift`, `services/control-plane-swift/Sources/WorkerClient/PythonBridgeWorkerClient.swift`, `services/control-plane-swift/Sources/XPCService/BenchmarkExportBundle.swift`, and `services/control-plane-swift/Sources/XPCService/ControlPlaneService.swift`: aggregate changed-line coverage `94.25%` (`410/435`)
+  - `services/control-plane-swift/Sources/XPCService/ControlPlaneXPCClient.swift`: changed-line coverage `100.00%` (`2/2`) measured from the Window UI test binary because the consumer tests live in `apps/macos-menubar`
+  - `apps/macos-menubar/Sources/AppMain/Dashboard/DesktopWorkspaceShellView.swift` and `apps/macos-menubar/Sources/AppMain/Models/RuntimeViewModel.swift`: aggregate changed-line coverage `97.93%` (`189/193`)
+  - aggregate changed-line coverage for the touched executable Swift scope: `95.80%` (`662/691`)
+  - aggregate changed-line coverage for the touched executable Python and Swift scope: `96.16%` (`927/964`)
+  - `Makefile`, protocol schemas, generated protobuf outputs, `packages/protocol/descriptors/melix.pb`, `services/mlx-worker-python/pyproject.toml`, `uv.lock`, and `scripts/dev_up.py` are excluded from executable changed-line coverage because they are generated, manifest, or non-measurable support-file changes in this transaction
 
 ## 2026-04-01
 
