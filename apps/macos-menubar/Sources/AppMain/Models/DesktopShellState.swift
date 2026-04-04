@@ -119,6 +119,11 @@ public struct DesktopServerSessionState: Codable, Identifiable, Equatable, Senda
     public var lifecycle: DesktopServerSessionLifecycle
     public var lastError: String
     public var lastKnownModelStateText: String
+    public var activeAuthSessionCount: Int
+    public var rememberedAuthSessionCount: Int
+    public var expiredRememberedSessionCount: Int
+    public var authSessionRetentionSeconds: Int
+    public var lastAuthSessionSignOutLatencyMs: Double
     public var createdAt: Date
     public var updatedAt: Date
 
@@ -139,6 +144,11 @@ public struct DesktopServerSessionState: Codable, Identifiable, Equatable, Senda
         lifecycle: DesktopServerSessionLifecycle = .draft,
         lastError: String = "",
         lastKnownModelStateText: String = "",
+        activeAuthSessionCount: Int = 0,
+        rememberedAuthSessionCount: Int = 0,
+        expiredRememberedSessionCount: Int = 0,
+        authSessionRetentionSeconds: Int = 0,
+        lastAuthSessionSignOutLatencyMs: Double = 0,
         createdAt: Date = Date(),
         updatedAt: Date = Date()
     ) {
@@ -158,6 +168,11 @@ public struct DesktopServerSessionState: Codable, Identifiable, Equatable, Senda
         self.lifecycle = lifecycle
         self.lastError = lastError
         self.lastKnownModelStateText = lastKnownModelStateText
+        self.activeAuthSessionCount = activeAuthSessionCount
+        self.rememberedAuthSessionCount = rememberedAuthSessionCount
+        self.expiredRememberedSessionCount = expiredRememberedSessionCount
+        self.authSessionRetentionSeconds = authSessionRetentionSeconds
+        self.lastAuthSessionSignOutLatencyMs = lastAuthSessionSignOutLatencyMs
         self.createdAt = createdAt
         self.updatedAt = updatedAt
     }
@@ -203,6 +218,101 @@ public struct DesktopServerSessionState: Codable, Identifiable, Equatable, Senda
 
     public var isRunning: Bool {
         lifecycle == .running
+    }
+
+    public var persistentSessionSummaryText: String {
+        let retentionText = authSessionRetentionSeconds > 0 ? " TTL \(authSessionRetentionSeconds)s." : ""
+        if rememberedAuthSessionCount > 0 {
+            let expiredText = expiredRememberedSessionCount > 0
+                ? " \(expiredRememberedSessionCount) expired pruned."
+                : ""
+            return "\(rememberedAuthSessionCount) remembered sessions active, \(activeAuthSessionCount) total active.\(expiredText)\(retentionText)"
+        }
+        if activeAuthSessionCount > 0 {
+            return "\(activeAuthSessionCount) gateway sessions active.\(retentionText)"
+        }
+        return "No remembered gateway sessions.\(retentionText)"
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case title
+        case modelID = "model_id"
+        case host
+        case port
+        case authMode = "auth_mode"
+        case authTokenHint = "auth_token_hint"
+        case sharedAccessState = "shared_access_state"
+        case accessKeyCount = "access_key_count"
+        case accessKeyHints = "access_key_hints"
+        case rateLimitPerMinute = "rate_limit_per_minute"
+        case timeoutSeconds = "timeout_seconds"
+        case servingDefaults = "serving_defaults"
+        case lifecycle
+        case lastError = "last_error"
+        case lastKnownModelStateText = "last_known_model_state_text"
+        case activeAuthSessionCount = "active_auth_session_count"
+        case rememberedAuthSessionCount = "remembered_auth_session_count"
+        case expiredRememberedSessionCount = "expired_remembered_session_count"
+        case authSessionRetentionSeconds = "auth_session_retention_seconds"
+        case lastAuthSessionSignOutLatencyMs = "last_auth_session_sign_out_latency_ms"
+        case createdAt = "created_at"
+        case updatedAt = "updated_at"
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        title = try container.decode(String.self, forKey: .title)
+        modelID = try container.decode(String.self, forKey: .modelID)
+        host = try container.decodeIfPresent(String.self, forKey: .host) ?? "127.0.0.1"
+        port = try container.decodeIfPresent(Int.self, forKey: .port) ?? 8080
+        authMode = try container.decodeIfPresent(DesktopServerAuthMode.self, forKey: .authMode) ?? .none
+        authTokenHint = try container.decodeIfPresent(String.self, forKey: .authTokenHint) ?? ""
+        sharedAccessState = try container.decodeIfPresent(DesktopSharedAccessState.self, forKey: .sharedAccessState) ?? .localOnly
+        accessKeyCount = try container.decodeIfPresent(Int.self, forKey: .accessKeyCount) ?? 0
+        accessKeyHints = try container.decodeIfPresent([String].self, forKey: .accessKeyHints) ?? []
+        rateLimitPerMinute = try container.decodeIfPresent(Int.self, forKey: .rateLimitPerMinute) ?? 120
+        timeoutSeconds = try container.decodeIfPresent(Int.self, forKey: .timeoutSeconds) ?? 120
+        servingDefaults = try container.decodeIfPresent(DesktopServerServingDefaultsState.self, forKey: .servingDefaults)
+            ?? DesktopServerServingDefaultsState()
+        lifecycle = try container.decodeIfPresent(DesktopServerSessionLifecycle.self, forKey: .lifecycle) ?? .draft
+        lastError = try container.decodeIfPresent(String.self, forKey: .lastError) ?? ""
+        lastKnownModelStateText = try container.decodeIfPresent(String.self, forKey: .lastKnownModelStateText) ?? ""
+        activeAuthSessionCount = try container.decodeIfPresent(Int.self, forKey: .activeAuthSessionCount) ?? 0
+        rememberedAuthSessionCount = try container.decodeIfPresent(Int.self, forKey: .rememberedAuthSessionCount) ?? 0
+        expiredRememberedSessionCount = try container.decodeIfPresent(Int.self, forKey: .expiredRememberedSessionCount) ?? 0
+        authSessionRetentionSeconds = try container.decodeIfPresent(Int.self, forKey: .authSessionRetentionSeconds) ?? 0
+        lastAuthSessionSignOutLatencyMs = try container.decodeIfPresent(Double.self, forKey: .lastAuthSessionSignOutLatencyMs) ?? 0
+        createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
+        updatedAt = try container.decodeIfPresent(Date.self, forKey: .updatedAt) ?? Date()
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(title, forKey: .title)
+        try container.encode(modelID, forKey: .modelID)
+        try container.encode(host, forKey: .host)
+        try container.encode(port, forKey: .port)
+        try container.encode(authMode, forKey: .authMode)
+        try container.encode(authTokenHint, forKey: .authTokenHint)
+        try container.encode(sharedAccessState, forKey: .sharedAccessState)
+        try container.encode(accessKeyCount, forKey: .accessKeyCount)
+        try container.encode(accessKeyHints, forKey: .accessKeyHints)
+        try container.encode(rateLimitPerMinute, forKey: .rateLimitPerMinute)
+        try container.encode(timeoutSeconds, forKey: .timeoutSeconds)
+        try container.encode(servingDefaults, forKey: .servingDefaults)
+        try container.encode(lifecycle, forKey: .lifecycle)
+        try container.encode(lastError, forKey: .lastError)
+        try container.encode(lastKnownModelStateText, forKey: .lastKnownModelStateText)
+        try container.encode(activeAuthSessionCount, forKey: .activeAuthSessionCount)
+        try container.encode(rememberedAuthSessionCount, forKey: .rememberedAuthSessionCount)
+        try container.encode(expiredRememberedSessionCount, forKey: .expiredRememberedSessionCount)
+        try container.encode(authSessionRetentionSeconds, forKey: .authSessionRetentionSeconds)
+        try container.encode(lastAuthSessionSignOutLatencyMs, forKey: .lastAuthSessionSignOutLatencyMs)
+        try container.encode(createdAt, forKey: .createdAt)
+        try container.encode(updatedAt, forKey: .updatedAt)
     }
 }
 

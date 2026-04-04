@@ -13,6 +13,12 @@ enum MelixControlPlaneBootstrap {
         let gatewayAccessPolicy = GatewayAccessPolicy.load(environment: ProcessInfo.processInfo.environment)
         let gatewayAccessPolicyStore = GatewayAccessPolicyStore(gatewayAccessPolicy)
         let metricsStore = MetricsStore(exportPath: bootstrapEnvironment.controlPlaneMetricsPath)
+        let persistentAuthSessionStore = PersistentAuthSessionStore(
+            environment: ProcessInfo.processInfo.environment,
+            metricsStore: metricsStore
+        )
+        _ = try? await persistentAuthSessionStore.restorePersistedSessions()
+        try? await persistentAuthSessionStore.reconcile(with: gatewayAccessPolicy)
         await metricsStore.set(
             Date().timeIntervalSince(mcpLoadStartedAt) * 1000,
             forKey: "mcp.config_load_latency_ms"
@@ -29,6 +35,22 @@ enum MelixControlPlaneBootstrap {
         await metricsStore.set(0, forKey: "gateway.auth_validation_failures")
         await metricsStore.set(0, forKey: "shared_access.accepted_client_count")
         await metricsStore.set(0, forKey: "shared_access.rejected_request_count")
+        await metricsStore.set(0, forKey: "persistent_session.active_session_count")
+        await metricsStore.set(0, forKey: "persistent_session.remembered_session_count")
+        await metricsStore.set(0, forKey: "persistent_session.expired_session_count")
+        await metricsStore.set(0, forKey: "persistent_session.restore_success_rate")
+        await metricsStore.set(0, forKey: "persistent_session.sign_out_latency_ms")
+        await metricsStore.set(
+            Double(
+                max(
+                    Int(
+                        ProcessInfo.processInfo.environment["MELIX_PERSISTENT_AUTH_SESSION_TTL_SECONDS"] ?? ""
+                    ) ?? 2_592_000,
+                    1
+                )
+            ),
+            forKey: "persistent_session.retention_ttl_seconds"
+        )
         let eventHub = EventSubscriptionHub()
         let sessionGraphStore = SessionGraphStore(metricsStore: metricsStore)
         let cacheMetadataStore = CacheMetadataStore()
@@ -71,7 +93,8 @@ enum MelixControlPlaneBootstrap {
             imageJobReadModel: imageJobReadModel,
             imageJobAdmissionController: imageJobAdmissionController,
             mcpToolCatalog: mcpToolCatalog,
-            gatewayAccessPolicyStore: gatewayAccessPolicyStore
+            gatewayAccessPolicyStore: gatewayAccessPolicyStore,
+            persistentAuthSessionStore: persistentAuthSessionStore
         )
 
         let handler = OpenAIHandler(
@@ -92,7 +115,8 @@ enum MelixControlPlaneBootstrap {
             imageJobAdmissionController: imageJobAdmissionController,
             cacheMetadataStore: cacheMetadataStore,
             mcpToolCatalog: mcpToolCatalog,
-            gatewayAccessPolicyStore: gatewayAccessPolicyStore
+            gatewayAccessPolicyStore: gatewayAccessPolicyStore,
+            persistentAuthSessionStore: persistentAuthSessionStore
         )
 
         let server = try BootstrapHTTPServer(
@@ -319,6 +343,8 @@ private final class BootstrapHTTPServer: @unchecked Sendable {
             method = .get
         case "POST":
             method = .post
+        case "DELETE":
+            method = .delete
         default:
             return .failure(.invalid)
         }

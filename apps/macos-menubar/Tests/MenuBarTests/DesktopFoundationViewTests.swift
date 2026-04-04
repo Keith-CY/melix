@@ -320,6 +320,32 @@ struct DesktopFoundationViewTests {
         )
     }
 
+    @Test("gateway access summary renders persistent session summary and sign-out latency")
+    @MainActor
+    func gatewayAccessSummaryRendersPersistentSessionSummaryAndSignOutLatency() throws {
+        let session = DesktopServerSessionState(
+            id: "persistent-session",
+            title: "Persistent Session",
+            modelID: "melix-dev-text",
+            authMode: .apiKeys,
+            authTokenHint: "desktop-agent",
+            sharedAccessState: .enabled,
+            accessKeyCount: 1,
+            accessKeyHints: ["desktop-agent"],
+            lifecycle: .running,
+            activeAuthSessionCount: 3,
+            rememberedAuthSessionCount: 2,
+            expiredRememberedSessionCount: 1,
+            authSessionRetentionSeconds: 86_400,
+            lastAuthSessionSignOutLatencyMs: 14
+        )
+
+        let view = hostView(DesktopServerGatewayAccessSummaryView(session: session))
+
+        #expect(view.subviews.isEmpty == false)
+        #expect(session.persistentSessionSummaryText.contains("2 remembered sessions active"))
+    }
+
     @Test("tools tab renders model information and operations state")
     @MainActor
     func toolsTabRendersModelInformationAndOperationsState() async throws {

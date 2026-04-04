@@ -5,6 +5,7 @@ import MelixWorkerProtocol
 public enum HTTPMethod: String, Sendable {
     case get = "GET"
     case post = "POST"
+    case delete = "DELETE"
 }
 
 public enum HTTPBody: Sendable {
@@ -47,6 +48,24 @@ public struct HTTPResponse: Sendable {
     }
 }
 
+private enum GatewayAuthorizationContext: Sendable {
+    case localTrusted
+    case credential(keyID: String, via: GatewayAccessPolicy.RequiredHeader)
+    case session(token: String, metadata: PersistentAuthSessionMetadata)
+}
+
+private enum GatewayAuthorizationRoute {
+    case health
+    case standard
+    case createSession
+    case currentSession
+}
+
+private enum GatewayAuthorizationResolution {
+    case success(GatewayAuthorizationContext)
+    case failure(HTTPResponse)
+}
+
 public struct OpenAIHandler: Sendable {
     private let modelCatalog: ModelCatalog
     private let requestCoordinator: RequestCoordinator
@@ -61,6 +80,7 @@ public struct OpenAIHandler: Sendable {
     private let mcpToolCatalog: MCPToolCatalog
     private let audioAssetManager: AudioAssetManager
     private let gatewayAccessPolicyStore: GatewayAccessPolicyStore
+    private let persistentAuthSessionStore: PersistentAuthSessionStore?
     private let decoder: JSONDecoder
     private let encoder: JSONEncoder
 
@@ -78,7 +98,8 @@ public struct OpenAIHandler: Sendable {
         mcpToolCatalog: MCPToolCatalog = .empty,
         gatewayAccessPolicy: GatewayAccessPolicy = .localTrust,
         audioAssetManager: AudioAssetManager = AudioAssetManager(),
-        gatewayAccessPolicyStore: GatewayAccessPolicyStore? = nil
+        gatewayAccessPolicyStore: GatewayAccessPolicyStore? = nil,
+        persistentAuthSessionStore: PersistentAuthSessionStore? = nil
     ) {
         self.modelCatalog = modelCatalog
         self.requestCoordinator = requestCoordinator
@@ -96,69 +117,103 @@ public struct OpenAIHandler: Sendable {
         self.mcpToolCatalog = mcpToolCatalog
         self.audioAssetManager = audioAssetManager
         self.gatewayAccessPolicyStore = gatewayAccessPolicyStore ?? GatewayAccessPolicyStore(gatewayAccessPolicy)
+        self.persistentAuthSessionStore = persistentAuthSessionStore
         self.decoder = JSONDecoder()
         self.encoder = JSONEncoder()
         self.encoder.outputFormatting = [.sortedKeys]
     }
 
     public func handle(_ request: HTTPRequest) async throws -> HTTPResponse {
-        if let authorizationFailure = await authorizationFailureResponse(for: request) {
+        let authorization = await authorizationContext(for: request)
+        switch authorization {
+        case .failure(let authorizationFailure):
             return authorizationFailure
-        }
-
-        switch (request.method, request.path) {
-        case (.get, "/v1/models"):
-            return try await handleModels()
-        case (.get, "/health"):
-            return try await handleHealth()
-        case (.get, "/v1/cache/stats"):
-            return try await handleCacheStats()
-        case (.post, "/v1/chat/completions"):
-            return try await handleChatCompletions(request)
-        case (.post, "/v1/completions"):
-            return try await handleCompletions(request)
-        case (.post, "/v1/responses"):
-            return try await handleResponses(request)
-        case (.post, "/v1/messages"):
-            return try await handleMessages(request)
-        case (.post, "/v1/embeddings"):
-            return try await handleEmbeddings(request)
-        case (.post, "/v1/rerank"):
-            return try await handleRerank(request)
-        case (.post, "/v1/audio/transcriptions"):
-            return try await handleAudioTranscriptions(request)
-        case (.post, "/v1/audio/speech"):
-            return try await handleAudioSpeech(request)
-        case (.post, "/v1/images/generations"):
-            return try await handleImageGenerations(request)
-        case (.post, "/v1/images/edits"):
-            return try await handleImageEdits(request)
-        default:
-            return jsonResponse(
-                statusCode: 404,
-                payload: ["error": ["code": "not_found", "message": "Unknown route."]]
-            )
+        case .success(let authorizationContext):
+            switch (request.method, request.path) {
+            case (.get, "/v1/models"):
+                return try await handleModels()
+            case (.get, "/health"):
+                return try await handleHealth()
+            case (.get, "/v1/cache/stats"):
+                return try await handleCacheStats()
+            case (.post, "/v1/melix/auth/session"):
+                return try await handleCreateAuthSession(request, authorization: authorizationContext)
+            case (.get, "/v1/melix/auth/session"):
+                return try await handleCurrentAuthSession(authorization: authorizationContext)
+            case (.delete, "/v1/melix/auth/session"):
+                return try await handleDeleteAuthSession(authorization: authorizationContext)
+            case (.post, "/v1/chat/completions"):
+                return try await handleChatCompletions(request)
+            case (.post, "/v1/completions"):
+                return try await handleCompletions(request)
+            case (.post, "/v1/responses"):
+                return try await handleResponses(request)
+            case (.post, "/v1/messages"):
+                return try await handleMessages(request)
+            case (.post, "/v1/embeddings"):
+                return try await handleEmbeddings(request)
+            case (.post, "/v1/rerank"):
+                return try await handleRerank(request)
+            case (.post, "/v1/audio/transcriptions"):
+                return try await handleAudioTranscriptions(request)
+            case (.post, "/v1/audio/speech"):
+                return try await handleAudioSpeech(request)
+            case (.post, "/v1/images/generations"):
+                return try await handleImageGenerations(request)
+            case (.post, "/v1/images/edits"):
+                return try await handleImageEdits(request)
+            default:
+                return jsonResponse(
+                    statusCode: 404,
+                    payload: ["error": ["code": "not_found", "message": "Unknown route."]]
+                )
+            }
         }
     }
 
-    private func authorizationFailureResponse(for request: HTTPRequest) async -> HTTPResponse? {
-        guard request.path != "/health" else {
-            return nil
+    private func authorizationContext(
+        for request: HTTPRequest
+    ) async -> GatewayAuthorizationResolution {
+        let route = authorizationRoute(for: request)
+        guard route != .health else {
+            return .success(.localTrusted)
+        }
+        let gatewayAccessPolicy = await gatewayAccessPolicyStore.currentPolicy()
+        if
+            route != .createSession,
+            let sessionToken = header(named: PersistentAuthSessionStore.sessionHeaderName, in: request.headers),
+            let persistentAuthSessionStore
+        {
+            switch await persistentAuthSessionStore.validateSessionToken(sessionToken, policy: gatewayAccessPolicy) {
+            case .success(let metadata):
+                return .success(.session(token: sessionToken, metadata: metadata))
+            case .failure(let failure):
+                return .failure(await authSessionFailureResponse(for: failure))
+            }
+        } else if route == .currentSession {
+            return .failure(missingAuthSessionResponse())
         }
 
-        let gatewayAccessPolicy = await gatewayAccessPolicyStore.currentPolicy()
         switch gatewayAccessPolicy.authorize(headers: request.headers) {
         case .success(let outcome):
-            if case .authenticated = outcome, gatewayAccessPolicy.mode == .apiKeys, gatewayAccessPolicy.sharedAccessEnabled {
-                await metricsStore.increment("shared_access.accepted_client_count")
+            switch outcome {
+            case .localTrusted:
+                if route == .createSession {
+                    return .failure(authSessionUnsupportedResponse())
+                }
+                return .success(.localTrusted)
+            case let .authenticated(keyID, via):
+                if gatewayAccessPolicy.mode == .apiKeys, gatewayAccessPolicy.sharedAccessEnabled {
+                    await metricsStore.increment("shared_access.accepted_client_count")
+                }
+                return .success(.credential(keyID: keyID, via: via))
             }
-            return nil
         case .failure(let failure):
             await metricsStore.increment("gateway.auth_validation_failures")
             if gatewayAccessPolicy.mode == .apiKeys || hasNonEmptyHeader(named: "x-api-key", in: request.headers) {
                 await metricsStore.increment("shared_access.rejected_request_count")
             }
-            return jsonResponse(
+            return .failure(jsonResponse(
                 statusCode: failure.statusCode,
                 payload: [
                     "error": [
@@ -166,7 +221,7 @@ public struct OpenAIHandler: Sendable {
                         "message": failure.message,
                     ],
                 ]
-            )
+            ))
         }
     }
 
@@ -248,6 +303,89 @@ public struct OpenAIHandler: Sendable {
             headers: ["content-type": "application/json"],
             body: .data(data)
         )
+    }
+
+    private func handleCreateAuthSession(
+        _ request: HTTPRequest,
+        authorization: GatewayAuthorizationContext
+    ) async throws -> HTTPResponse {
+        guard case let .credential(keyID, _) = authorization else {
+            return authSessionUnsupportedResponse()
+        }
+        guard let persistentAuthSessionStore else {
+            return jsonResponse(
+                statusCode: 503,
+                payload: [
+                    "error": [
+                        "code": "auth_session_unavailable",
+                        "message": "Persistent auth sessions are unavailable.",
+                    ]
+                ]
+            )
+        }
+
+        let createRequest = try decoder.decode(OpenAICreateAuthSessionRequest.self, from: request.body)
+        let issued = try await persistentAuthSessionStore.issueSession(
+            keyID: keyID,
+            rememberMe: createRequest.rememberMe
+        )
+        let response = OpenAIAuthSessionResponse(
+            session: OpenAIAuthSessionPayload(metadata: issued.metadata),
+            resume: OpenAIAuthSessionResumePayload(
+                header: PersistentAuthSessionStore.sessionHeaderName,
+                token: issued.token
+            )
+        )
+        let data = try encoder.encode(response)
+        return HTTPResponse(
+            statusCode: 200,
+            headers: ["content-type": "application/json"],
+            body: .data(data)
+        )
+    }
+
+    private func handleCurrentAuthSession(
+        authorization: GatewayAuthorizationContext
+    ) async throws -> HTTPResponse {
+        guard case let .session(_, metadata) = authorization else {
+            return missingAuthSessionResponse()
+        }
+        let response = OpenAIAuthSessionResponse(
+            session: OpenAIAuthSessionPayload(metadata: metadata),
+            resume: nil
+        )
+        let data = try encoder.encode(response)
+        return HTTPResponse(
+            statusCode: 200,
+            headers: ["content-type": "application/json"],
+            body: .data(data)
+        )
+    }
+
+    private func handleDeleteAuthSession(
+        authorization: GatewayAuthorizationContext
+    ) async throws -> HTTPResponse {
+        guard case let .session(token, _) = authorization else {
+            return missingAuthSessionResponse()
+        }
+        guard let persistentAuthSessionStore else {
+            return missingAuthSessionResponse()
+        }
+        switch try await persistentAuthSessionStore.revokeSessionToken(token) {
+        case .success(let metadata):
+            let response = OpenAIAuthSessionResponse(
+                session: OpenAIAuthSessionPayload(metadata: metadata),
+                resume: nil
+            )
+            let data = try encoder.encode(response)
+            return HTTPResponse(
+                statusCode: 200,
+                headers: ["content-type": "application/json"],
+                body: .data(data)
+            )
+        case .failure(let failure):
+            return await authSessionFailureResponse(for: failure)
+        }
     }
 
     private func handleChatCompletions(_ request: HTTPRequest) async throws -> HTTPResponse {
@@ -1195,6 +1333,101 @@ public struct OpenAIHandler: Sendable {
         }
     }
 
+    private func header(
+        named expectedName: String,
+        in headers: [String: String]
+    ) -> String? {
+        headers.first { key, value in
+            key.caseInsensitiveCompare(expectedName) == .orderedSame && value.isEmpty == false
+        }?.value
+    }
+
+    private func authorizationRoute(for request: HTTPRequest) -> GatewayAuthorizationRoute {
+        switch (request.method, request.path) {
+        case (.get, "/health"):
+            return .health
+        case (.post, "/v1/melix/auth/session"):
+            return .createSession
+        case (.get, "/v1/melix/auth/session"), (.delete, "/v1/melix/auth/session"):
+            return .currentSession
+        default:
+            return .standard
+        }
+    }
+
+    private func authSessionUnsupportedResponse() -> HTTPResponse {
+        jsonResponse(
+            statusCode: 403,
+            payload: [
+                "error": [
+                    "code": "auth_session_requires_configured_gateway_auth",
+                    "message": "Remember-me sessions require a configured gateway credential.",
+                ]
+            ]
+        )
+    }
+
+    private func missingAuthSessionResponse() -> HTTPResponse {
+        jsonResponse(
+            statusCode: 401,
+            payload: [
+                "error": [
+                    "code": "missing_session",
+                    "message": "The requested gateway session is missing.",
+                    "session_state": [
+                        "state": "missing",
+                    ],
+                ]
+            ]
+        )
+    }
+
+    private func authSessionFailureResponse(
+        for failure: PersistentAuthSessionValidationFailure
+    ) async -> HTTPResponse {
+        await metricsStore.increment("gateway.auth_validation_failures")
+        let payload: [String: Any]
+        switch failure {
+        case .missingSession:
+            payload = [
+                "error": [
+                    "code": "missing_session",
+                    "message": "The requested gateway session is missing.",
+                    "session_state": [
+                        "state": "missing",
+                    ],
+                ]
+            ]
+        case let .revokedSession(sessionID, keyID, rememberMe):
+            payload = [
+                "error": [
+                    "code": "revoked_session",
+                    "message": "The requested gateway session has been revoked.",
+                    "session_state": [
+                        "state": "revoked",
+                        "session_id": sessionID,
+                        "key_id": keyID,
+                        "remember_me": rememberMe,
+                    ],
+                ]
+            ]
+        case let .expiredSession(sessionID, keyID, rememberMe):
+            payload = [
+                "error": [
+                    "code": "expired_session",
+                    "message": "The requested gateway session has expired.",
+                    "session_state": [
+                        "state": "expired",
+                        "session_id": sessionID,
+                        "key_id": keyID,
+                        "remember_me": rememberMe,
+                    ],
+                ]
+            ]
+        }
+        return jsonResponse(statusCode: 401, payload: payload)
+    }
+
     private func imageArtifactRef(
         from artifact: Melix_Worker_V1_ImageArtifactMetadata
     ) -> Melix_Controlplane_V1_ImageArtifactRef {
@@ -1560,6 +1793,57 @@ private struct CacheStatsResponse: Codable {
         case l2RestoreHitRate = "l2_restore_hit_rate"
         case activeCacheMode = "active_cache_mode"
     }
+}
+
+private struct OpenAICreateAuthSessionRequest: Codable {
+    let rememberMe: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case rememberMe = "remember_me"
+    }
+}
+
+private struct OpenAIAuthSessionResponse: Codable {
+    let session: OpenAIAuthSessionPayload
+    let resume: OpenAIAuthSessionResumePayload?
+}
+
+private struct OpenAIAuthSessionPayload: Codable {
+    let sessionID: String
+    let keyID: String
+    let rememberMe: Bool
+    let createdAtUnixMs: Int64
+    let expiresAtUnixMs: Int64
+    let revokedAtUnixMs: Int64
+    let lastRestoredAtUnixMs: Int64
+    let state: String
+
+    init(metadata: PersistentAuthSessionMetadata) {
+        sessionID = metadata.sessionID
+        keyID = metadata.keyID
+        rememberMe = metadata.rememberMe
+        createdAtUnixMs = metadata.createdAtUnixMs
+        expiresAtUnixMs = metadata.expiresAtUnixMs
+        revokedAtUnixMs = metadata.revokedAtUnixMs
+        lastRestoredAtUnixMs = metadata.lastRestoredAtUnixMs
+        state = metadata.state
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case sessionID = "session_id"
+        case keyID = "key_id"
+        case rememberMe = "remember_me"
+        case createdAtUnixMs = "created_at_unix_ms"
+        case expiresAtUnixMs = "expires_at_unix_ms"
+        case revokedAtUnixMs = "revoked_at_unix_ms"
+        case lastRestoredAtUnixMs = "last_restored_at_unix_ms"
+        case state
+    }
+}
+
+private struct OpenAIAuthSessionResumePayload: Codable {
+    let header: String
+    let token: String
 }
 
 private struct OpenAIEmbeddingsRequest: Codable {

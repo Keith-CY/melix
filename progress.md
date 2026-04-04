@@ -2,6 +2,33 @@
 
 ## 2026-04-04
 
+- Closed the `M9.4` persistent-session foundation transaction:
+  - added `services/control-plane-swift/Sources/HTTPGateway/OpenAI/PersistentAuthSessionStore.swift` to persist hashed remember-me gateway sessions under `MELIX_HOME/state/persistent-auth-sessions.json` or `~/.melix/state/persistent-auth-sessions.json`
+  - restored remembered sessions during bootstrap, reconciled them against live gateway policy updates, initialized `persistent_session.*` metrics, and extended the control-plane HTTP parser to accept `DELETE` for sign-out
+  - added gateway session create, inspect, and sign-out routes in `OpenAIHandler.swift`, including structured `missing`, `revoked`, and `expired` session-state payloads
+  - projected remembered-session counts, retention TTL, expiry pruning, and sign-out latency into the menu bar server-session shell and gateway-access summary
+  - added `docs/runbooks/persistent-sessions.md`, `scripts/m9_persistent_session_smoke.py`, `tests/test_m9_persistent_session_smoke.py`, and `tests/integration/test_persistent_sessions.py`
+- Verification summary for `M9.4`:
+  - `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/.build/ModuleCache.noindex" swift test --package-path services/control-plane-swift --filter 'PersistentAuthSessionStoreTests|OpenAIHandlerTests|ControlPlaneServiceTests'`: `224 tests in 3 suites passed`
+  - `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/.build/ModuleCache.noindex" swift test --package-path services/control-plane-swift --enable-code-coverage --filter 'PersistentAuthSessionStoreTests|OpenAIHandlerTests|ControlPlaneServiceTests'`: `224 tests in 3 suites passed`
+  - `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/.build/ModuleCache.noindex" swift test --package-path apps/macos-menubar --scratch-path "$(pwd)/.build/menubar-scratch" --filter 'RuntimeViewModelTests|DesktopFoundationViewTests'`: `144 tests in 2 suites passed`
+  - `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/.build/ModuleCache.noindex" swift test --package-path apps/macos-menubar --enable-code-coverage --scratch-path "$(pwd)/.build/menubar-coverage" --filter 'RuntimeViewModelTests|DesktopFoundationViewTests'`: `144 tests in 2 suites passed`
+  - `PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" UV_CACHE_DIR="$(pwd)/.uv-cache" uv run --project services/mlx-worker-python pytest tests/integration/test_persistent_sessions.py -q`: `2 passed in 43.28s`
+  - `PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" UV_CACHE_DIR="$(pwd)/.uv-cache" uv run --project services/mlx-worker-python pytest tests/test_m9_persistent_session_smoke.py -q`: `2 passed in 0.04s`
+  - `PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" UV_CACHE_DIR="$(pwd)/.uv-cache" uv run --project services/mlx-worker-python python scripts/m9_persistent_session_smoke.py --json`: pass
+  - verification note: a first parallel rerun of the integration test and smoke script collided on the fixed local control-plane port and produced `POSIXErrorCode(rawValue: 48): Address already in use`; the authoritative integration result above is the sequential rerun after the smoke script exited
+- Metrics report for `M9.4`:
+  - smoke metrics from `scripts/m9_persistent_session_smoke.py --json`:
+    - `persistent_session.active_session_count = 0`
+    - `persistent_session.remembered_session_count = 0`
+    - `persistent_session.expired_session_count = 0`
+    - `persistent_session.restore_success_rate = 0`
+    - `persistent_session.sign_out_latency_ms = 0.8280277252197266`
+  - `services/control-plane-swift/Sources/Bootstrap/main.swift`, `services/control-plane-swift/Sources/HTTPGateway/OpenAI/GatewayAccessPolicy.swift`, `services/control-plane-swift/Sources/HTTPGateway/OpenAI/OpenAIHandler.swift`, `services/control-plane-swift/Sources/HTTPGateway/OpenAI/PersistentAuthSessionStore.swift`, `services/control-plane-swift/Sources/XPCService/ControlPlaneService.swift`, `services/control-plane-swift/Tests/ControlPlaneTests/ControlPlaneServiceTests.swift`, `services/control-plane-swift/Tests/HTTPGatewayTests/OpenAIHandlerTests.swift`, and `services/control-plane-swift/Tests/HTTPGatewayTests/PersistentAuthSessionStoreTests.swift`: aggregate changed-line coverage `99.15%` (`1047/1056`)
+  - `apps/macos-menubar/Sources/AppMain/Models/DesktopShellState.swift`, `apps/macos-menubar/Sources/AppMain/Models/RuntimeViewModel.swift`, `apps/macos-menubar/Sources/AppMain/Dashboard/DesktopWorkspaceShellView.swift`, `apps/macos-menubar/Tests/MenuBarTests/RuntimeViewModelTests.swift`, and `apps/macos-menubar/Tests/MenuBarTests/DesktopFoundationViewTests.swift`: aggregate changed-line coverage `100.00%` (`183/183`)
+  - `tests/integration/test_persistent_sessions.py`, `tests/test_m9_persistent_session_smoke.py`, and `scripts/m9_persistent_session_smoke.py`: aggregate changed-line coverage `95.48%` (`190/199`)
+  - aggregate changed-line coverage for the touched executable scope in `M9.4`: `98.75%` (`1420/1438`)
+
 - Closed the live benchmark repair transaction for direct Hugging Face benchmark targets:
   - fixed `services/mlx-worker-python/worker/control_plane_bridge.py` so the Python maintenance bridge now forwards `export-results` and `submit-results`
   - added bridge regressions in `services/mlx-worker-python/tests/test_control_plane_bridge_phase5.py` and `services/control-plane-swift/Tests/WorkerClientTests/PythonBridgeWorkerClientTests.swift`

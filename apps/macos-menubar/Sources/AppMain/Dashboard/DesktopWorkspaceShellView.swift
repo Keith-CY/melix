@@ -2440,6 +2440,14 @@ struct DesktopServerGatewayAccessSummaryView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
+                Text(session.persistentSessionSummaryText)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                if session.lastAuthSessionSignOutLatencyMs > 0 {
+                    Text("Last sign-out latency: \(String(format: "%.2f", session.lastAuthSessionSignOutLatencyMs)) ms")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }

@@ -146,6 +146,7 @@ public actor ControlPlaneService {
     private let mcpToolCatalog: MCPToolCatalog
     private let audioAssetManager: AudioAssetManager
     private let gatewayAccessPolicyStore: GatewayAccessPolicyStore
+    private let persistentAuthSessionStore: PersistentAuthSessionStore?
 
     public init(
         serverVersion: String = "0.1.0",
@@ -166,7 +167,8 @@ public actor ControlPlaneService {
         mcpToolCatalog: MCPToolCatalog = .empty,
         gatewayAccessPolicy: GatewayAccessPolicy = .localTrust,
         audioAssetManager: AudioAssetManager = AudioAssetManager(),
-        gatewayAccessPolicyStore: GatewayAccessPolicyStore? = nil
+        gatewayAccessPolicyStore: GatewayAccessPolicyStore? = nil,
+        persistentAuthSessionStore: PersistentAuthSessionStore? = nil
     ) {
         let resolvedSchedulerReadModel = schedulerReadModel ?? SchedulerReadModel(
             metricsStore: metricsStore,
@@ -211,6 +213,7 @@ public actor ControlPlaneService {
         self.mcpToolCatalog = mcpToolCatalog
         self.audioAssetManager = audioAssetManager
         self.gatewayAccessPolicyStore = gatewayAccessPolicyStore ?? GatewayAccessPolicyStore(gatewayAccessPolicy)
+        self.persistentAuthSessionStore = persistentAuthSessionStore
     }
 
     public func handshake(
@@ -1237,6 +1240,9 @@ public actor ControlPlaneService {
             with: policy,
             serverSessionID: appliedPolicyServerSessionID(policy: policy, command: command)
         )
+        if let persistentAuthSessionStore {
+            try? await persistentAuthSessionStore.reconcile(with: appliedPolicy)
+        }
         await metricsStore.set(appliedPolicy.metricModeCode, forKey: "gateway.auth_mode_code")
         await metricsStore.set(Double(appliedPolicy.acceptedAPIKeyCount), forKey: "gateway.accepted_api_key_count")
         await metricsStore.set(appliedPolicy.sharedAccessEnabled ? 1 : 0, forKey: "shared_access.enabled")

@@ -436,6 +436,11 @@ private struct GatewayAccessProjection: Equatable, Sendable {
     let sharedAccessState: DesktopSharedAccessState
     let accessKeyCount: Int
     let accessKeyHints: [String]
+    let activeAuthSessionCount: Int
+    let rememberedAuthSessionCount: Int
+    let expiredRememberedSessionCount: Int
+    let authSessionRetentionSeconds: Int
+    let lastAuthSessionSignOutLatencyMs: Double
 }
 
 @MainActor
@@ -3391,6 +3396,11 @@ public final class RuntimeViewModel {
         session.sharedAccessState = projection.sharedAccessState
         session.accessKeyCount = projection.accessKeyCount
         session.accessKeyHints = projection.accessKeyHints
+        session.activeAuthSessionCount = projection.activeAuthSessionCount
+        session.rememberedAuthSessionCount = projection.rememberedAuthSessionCount
+        session.expiredRememberedSessionCount = projection.expiredRememberedSessionCount
+        session.authSessionRetentionSeconds = projection.authSessionRetentionSeconds
+        session.lastAuthSessionSignOutLatencyMs = projection.lastAuthSessionSignOutLatencyMs
     }
 
     private static func gatewayAccessProjection(
@@ -3402,6 +3412,11 @@ public final class RuntimeViewModel {
 
         let summary = snapshot.gatewayAccess
         let keyHints = summary.keys.map(\.tokenHint).filter { !$0.isEmpty }
+        let activeAuthSessionCount = Int(snapshot.metrics.values["persistent_session.active_session_count"] ?? 0)
+        let rememberedAuthSessionCount = Int(snapshot.metrics.values["persistent_session.remembered_session_count"] ?? 0)
+        let expiredRememberedSessionCount = Int(snapshot.metrics.values["persistent_session.expired_session_count"] ?? 0)
+        let authSessionRetentionSeconds = Int(snapshot.metrics.values["persistent_session.retention_ttl_seconds"] ?? 0)
+        let lastAuthSessionSignOutLatencyMs = snapshot.metrics.values["persistent_session.sign_out_latency_ms"] ?? 0
 
         switch summary.mode {
         case .none:
@@ -3410,7 +3425,12 @@ public final class RuntimeViewModel {
                 authTokenHint: "",
                 sharedAccessState: .localOnly,
                 accessKeyCount: 0,
-                accessKeyHints: []
+                accessKeyHints: [],
+                activeAuthSessionCount: activeAuthSessionCount,
+                rememberedAuthSessionCount: rememberedAuthSessionCount,
+                expiredRememberedSessionCount: expiredRememberedSessionCount,
+                authSessionRetentionSeconds: authSessionRetentionSeconds,
+                lastAuthSessionSignOutLatencyMs: lastAuthSessionSignOutLatencyMs
             )
         case .bearerToken:
             return GatewayAccessProjection(
@@ -3418,7 +3438,12 @@ public final class RuntimeViewModel {
                 authTokenHint: keyHints.first ?? "melix-api-key",
                 sharedAccessState: .localOnly,
                 accessKeyCount: max(keyHints.count, 1),
-                accessKeyHints: keyHints
+                accessKeyHints: keyHints,
+                activeAuthSessionCount: activeAuthSessionCount,
+                rememberedAuthSessionCount: rememberedAuthSessionCount,
+                expiredRememberedSessionCount: expiredRememberedSessionCount,
+                authSessionRetentionSeconds: authSessionRetentionSeconds,
+                lastAuthSessionSignOutLatencyMs: lastAuthSessionSignOutLatencyMs
             )
         case .apiKeys:
             let sharedState: DesktopSharedAccessState = summary.sharedAccessEnabled ? .enabled : .configuredDisabled
@@ -3429,7 +3454,12 @@ public final class RuntimeViewModel {
                 authTokenHint: keyHints.first ?? "",
                 sharedAccessState: sharedState,
                 accessKeyCount: keyCount,
-                accessKeyHints: keyHints
+                accessKeyHints: keyHints,
+                activeAuthSessionCount: activeAuthSessionCount,
+                rememberedAuthSessionCount: rememberedAuthSessionCount,
+                expiredRememberedSessionCount: expiredRememberedSessionCount,
+                authSessionRetentionSeconds: authSessionRetentionSeconds,
+                lastAuthSessionSignOutLatencyMs: lastAuthSessionSignOutLatencyMs
             )
         default:
             return nil

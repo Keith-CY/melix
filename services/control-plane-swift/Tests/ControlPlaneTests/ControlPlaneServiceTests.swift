@@ -165,6 +165,109 @@ struct ControlPlaneServiceTests {
         #expect(response.snapshot.gatewayAccess.keys.contains(where: { $0.tokenHint == "sk-codex" }) == false)
     }
 
+    @Test("persistent auth session restore prunes expired and malformed records while keeping active remembered sessions")
+    func persistentAuthSessionRestorePrunesExpiredAndMalformedRecordsWhileKeepingActiveRememberedSessions() async throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-persistent-session-restore-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let storeURL = temporaryRoot.appendingPathComponent("persistent-auth-sessions.json")
+        let payload = """
+        {
+          "schema_version": 1,
+          "sessions": [
+            {
+              "created_at_unix_ms": 1000,
+              "expires_at_unix_ms": 60000,
+              "key_id": "codex",
+              "last_restored_at_unix_ms": 0,
+              "remember_me": true,
+              "revoked_at_unix_ms": 0,
+              "session_id": "session-active",
+              "token_hash": "hash-active"
+            },
+            {
+              "created_at_unix_ms": 1000,
+              "expires_at_unix_ms": 1500,
+              "key_id": "expired",
+              "last_restored_at_unix_ms": 0,
+              "remember_me": true,
+              "revoked_at_unix_ms": 0,
+              "session_id": "session-expired",
+              "token_hash": "hash-expired"
+            },
+            "malformed-entry"
+          ]
+        }
+        """
+        try #require(payload.data(using: .utf8)).write(to: storeURL)
+
+        let metricsStore = MetricsStore()
+        let store = PersistentAuthSessionStore(
+            storeURL: storeURL,
+            metricsStore: metricsStore,
+            retentionTTLSeconds: 3600,
+            nowUnixMs: { 2_000 }
+        )
+
+        let result = try await store.restorePersistedSessions()
+
+        #expect(result.restoredSessionCount == 1)
+        #expect(result.expiredSessionCount == 1)
+        #expect(result.malformedRecordCount == 1)
+        #expect(await metricsStore.value(forKey: "persistent_session.active_session_count") == 1)
+        #expect(await metricsStore.value(forKey: "persistent_session.remembered_session_count") == 1)
+        #expect(await metricsStore.value(forKey: "persistent_session.expired_session_count") == 1)
+        #expect(await metricsStore.value(forKey: "persistent_session.retention_ttl_seconds") == 3600)
+    }
+
+    @Test("applying a new gateway policy revokes remembered sessions that no longer match the keyring")
+    func applyingANewGatewayPolicyRevokesRememberedSessionsThatNoLongerMatchTheKeyring() async throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-persistent-session-reconcile-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let metricsStore = MetricsStore()
+        let store = PersistentAuthSessionStore(
+            storeURL: temporaryRoot.appendingPathComponent("persistent-auth-sessions.json"),
+            metricsStore: metricsStore,
+            retentionTTLSeconds: 3600,
+            nowUnixMs: { 10_000 }
+        )
+        let issued = try await store.issueSession(keyID: "desktop-agent", rememberMe: true)
+        let service = ControlPlaneService(
+            metricsStore: metricsStore,
+            gatewayAccessPolicy: GatewayAccessPolicy(
+                mode: .apiKeys,
+                sharedAccessEnabled: true,
+                keys: [
+                    .init(keyID: "desktop-agent", label: "Desktop Agent", tokenHint: "desktop-agent", token: "sk-desktop"),
+                ]
+            ),
+            persistentAuthSessionStore: store
+        )
+
+        var request = Melix_Controlplane_V1_ControlPlaneRequest()
+        request.requestID = "apply-gateway-access"
+        request.commandType = "server.apply_gateway_access"
+        request.targetID = "server-session-1"
+        request.server = Melix_Controlplane_V1_ServerCommand()
+        request.server.applyGatewayAccess = Melix_Controlplane_V1_ApplyGatewayAccess()
+        request.server.applyGatewayAccess.serverSessionID = "server-session-1"
+        request.server.applyGatewayAccess.mode = .none
+        request.server.applyGatewayAccess.sharedAccessEnabled = false
+        let response = try await service.execute(request)
+        let validation = await store.validateSessionToken(
+            issued.token,
+            policy: GatewayAccessPolicy.localTrust
+        )
+
+        #expect(response.ok)
+        #expect(validation == .failure(.revokedSession(sessionID: issued.metadata.sessionID, keyID: "desktop-agent", rememberMe: true)))
+    }
+
     @Test("execute handles server.get_snapshot")
     func executeHandlesServerSnapshot() async throws {
         let service = ControlPlaneService()

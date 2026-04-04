@@ -297,6 +297,273 @@ struct OpenAIHandlerTests {
         #expect(authorized.statusCode == 200)
     }
 
+    @Test("gateway auth sessions can be created reused and revoked")
+    func gatewayAuthSessionsCanBeCreatedReusedAndRevoked() async throws {
+        let metricsStore = MetricsStore()
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-gateway-auth-session-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let handler = OpenAIHandler(
+            modelCatalog: ModelCatalog(seedModels: [warmModel()]),
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: ScriptedWorkerClient(events: [])),
+                abortRegistry: AbortRegistry()
+            ),
+            metricsStore: metricsStore,
+            gatewayAccessPolicy: GatewayAccessPolicy(
+                mode: .apiKeys,
+                sharedAccessEnabled: true,
+                keys: [
+                    .init(keyID: "codex", label: "Codex", tokenHint: "codex", token: "sk-codex"),
+                ]
+            ),
+            persistentAuthSessionStore: PersistentAuthSessionStore(
+                storeURL: temporaryRoot.appendingPathComponent("persistent-auth-sessions.json"),
+                metricsStore: metricsStore,
+                retentionTTLSeconds: 3600,
+                nowUnixMs: { 1_000 }
+            )
+        )
+
+        let createResponse = try await handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/melix/auth/session",
+                headers: [
+                    "content-type": "application/json",
+                    "x-api-key": "sk-codex",
+                ],
+                body: try #require("{\"remember_me\":true}".data(using: .utf8))
+            )
+        )
+        let createPayload = try await jsonPayload(from: createResponse.body)
+        let sessionToken = try #require((createPayload["resume"] as? [String: Any])?["token"] as? String)
+
+        let modelsResponse = try await handler.handle(
+            HTTPRequest(
+                method: .get,
+                path: "/v1/models",
+                headers: ["X-Melix-Session": sessionToken],
+                body: Data()
+            )
+        )
+        let inspectResponse = try await handler.handle(
+            HTTPRequest(
+                method: .get,
+                path: "/v1/melix/auth/session",
+                headers: ["X-Melix-Session": sessionToken],
+                body: Data()
+            )
+        )
+        let signOutResponse = try await handler.handle(
+            HTTPRequest(
+                method: .delete,
+                path: "/v1/melix/auth/session",
+                headers: ["X-Melix-Session": sessionToken],
+                body: Data()
+            )
+        )
+        let rejectedResponse = try await handler.handle(
+            HTTPRequest(
+                method: .get,
+                path: "/v1/models",
+                headers: ["X-Melix-Session": sessionToken],
+                body: Data()
+            )
+        )
+        let rejectedPayload = try await jsonPayload(from: rejectedResponse.body)
+        let error = try #require(rejectedPayload["error"] as? [String: Any])
+        let sessionState = try #require(error["session_state"] as? [String: Any])
+
+        #expect(createResponse.statusCode == 200)
+        #expect(modelsResponse.statusCode == 200)
+        #expect(inspectResponse.statusCode == 200)
+        #expect(signOutResponse.statusCode == 200)
+        #expect(rejectedResponse.statusCode == 401)
+        #expect(error["code"] as? String == "revoked_session")
+        #expect(sessionState["state"] as? String == "revoked")
+        #expect(await metricsStore.value(forKey: "persistent_session.active_session_count") == 0)
+    }
+
+    @Test("gateway auth session routes reject missing unsupported and unavailable session flows")
+    func gatewayAuthSessionRoutesRejectMissingUnsupportedAndUnavailableSessionFlows() async throws {
+        let metricsStore = MetricsStore()
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-gateway-auth-errors-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let sessionStore = PersistentAuthSessionStore(
+            storeURL: temporaryRoot.appendingPathComponent("persistent-auth-sessions.json"),
+            metricsStore: metricsStore,
+            retentionTTLSeconds: 3600,
+            nowUnixMs: { 1_000 }
+        )
+        let sessionAwareHandler = OpenAIHandler(
+            modelCatalog: ModelCatalog(seedModels: [warmModel()]),
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: ScriptedWorkerClient(events: [])),
+                abortRegistry: AbortRegistry()
+            ),
+            metricsStore: metricsStore,
+            gatewayAccessPolicy: GatewayAccessPolicy(
+                mode: .apiKeys,
+                sharedAccessEnabled: true,
+                keys: [
+                    .init(keyID: "codex", label: "Codex", tokenHint: "codex", token: "sk-codex"),
+                ]
+            ),
+            persistentAuthSessionStore: sessionStore
+        )
+
+        let missingCurrentSession = try await sessionAwareHandler.handle(
+            HTTPRequest(
+                method: .get,
+                path: "/v1/melix/auth/session",
+                headers: [:],
+                body: Data()
+            )
+        )
+        let missingCurrentPayload = try await jsonPayload(from: missingCurrentSession.body)
+        let missingCurrentError = try #require(missingCurrentPayload["error"] as? [String: Any])
+
+        let missingSessionOnModels = try await sessionAwareHandler.handle(
+            HTTPRequest(
+                method: .get,
+                path: "/v1/models",
+                headers: ["x-melix-session": "melix_sess_missing"],
+                body: Data()
+            )
+        )
+        let missingSessionPayload = try await jsonPayload(from: missingSessionOnModels.body)
+        let missingSessionError = try #require(missingSessionPayload["error"] as? [String: Any])
+        let missingSessionState = try #require(missingSessionError["session_state"] as? [String: Any])
+
+        let localTrustHandler = OpenAIHandler(
+            modelCatalog: ModelCatalog(seedModels: [warmModel()]),
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: ScriptedWorkerClient(events: [])),
+                abortRegistry: AbortRegistry()
+            ),
+            metricsStore: metricsStore,
+            gatewayAccessPolicy: .localTrust,
+            persistentAuthSessionStore: sessionStore
+        )
+        let unsupportedCreateResponse = try await localTrustHandler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/melix/auth/session",
+                headers: ["content-type": "application/json"],
+                body: try #require("{\"remember_me\":true}".data(using: .utf8))
+            )
+        )
+        let unsupportedCreatePayload = try await jsonPayload(from: unsupportedCreateResponse.body)
+        let unsupportedCreateError = try #require(unsupportedCreatePayload["error"] as? [String: Any])
+
+        let unavailableHandler = OpenAIHandler(
+            modelCatalog: ModelCatalog(seedModels: [warmModel()]),
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: ScriptedWorkerClient(events: [])),
+                abortRegistry: AbortRegistry()
+            ),
+            metricsStore: metricsStore,
+            gatewayAccessPolicy: GatewayAccessPolicy(
+                mode: .apiKeys,
+                sharedAccessEnabled: true,
+                keys: [
+                    .init(keyID: "codex", label: "Codex", tokenHint: "codex", token: "sk-codex"),
+                ]
+            )
+        )
+        let unavailableCreateResponse = try await unavailableHandler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/melix/auth/session",
+                headers: [
+                    "content-type": "application/json",
+                    "x-api-key": "sk-codex",
+                ],
+                body: try #require("{\"remember_me\":true}".data(using: .utf8))
+            )
+        )
+        let unavailableCreatePayload = try await jsonPayload(from: unavailableCreateResponse.body)
+        let unavailableCreateError = try #require(unavailableCreatePayload["error"] as? [String: Any])
+
+        #expect(missingCurrentSession.statusCode == 401)
+        #expect(missingCurrentError["code"] as? String == "missing_session")
+        #expect(missingSessionOnModels.statusCode == 401)
+        #expect(missingSessionError["code"] as? String == "missing_session")
+        #expect(missingSessionState["state"] as? String == "missing")
+        #expect(unsupportedCreateResponse.statusCode == 403)
+        #expect(unsupportedCreateError["code"] as? String == "auth_session_requires_configured_gateway_auth")
+        #expect(unavailableCreateResponse.statusCode == 503)
+        #expect(unavailableCreateError["code"] as? String == "auth_session_unavailable")
+    }
+
+    @Test("expired gateway auth sessions return structured session metadata")
+    func expiredGatewayAuthSessionsReturnStructuredSessionMetadata() async throws {
+        let metricsStore = MetricsStore()
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-gateway-auth-expired-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let clock = TestNowUnixMSSequence([1_000, 1_000, 5_000, 5_000, 5_000])
+        let handler = OpenAIHandler(
+            modelCatalog: ModelCatalog(seedModels: [warmModel()]),
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: ScriptedWorkerClient(events: [])),
+                abortRegistry: AbortRegistry()
+            ),
+            metricsStore: metricsStore,
+            gatewayAccessPolicy: GatewayAccessPolicy(
+                mode: .apiKeys,
+                sharedAccessEnabled: true,
+                keys: [
+                    .init(keyID: "codex", label: "Codex", tokenHint: "codex", token: "sk-codex"),
+                ]
+            ),
+            persistentAuthSessionStore: PersistentAuthSessionStore(
+                storeURL: temporaryRoot.appendingPathComponent("persistent-auth-sessions.json"),
+                metricsStore: metricsStore,
+                retentionTTLSeconds: 1,
+                nowUnixMs: { clock.next() }
+            )
+        )
+
+        let createResponse = try await handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/melix/auth/session",
+                headers: [
+                    "content-type": "application/json",
+                    "x-api-key": "sk-codex",
+                ],
+                body: try #require("{\"remember_me\":true}".data(using: .utf8))
+            )
+        )
+        let createPayload = try await jsonPayload(from: createResponse.body)
+        let sessionToken = try #require((createPayload["resume"] as? [String: Any])?["token"] as? String)
+
+        let expiredResponse = try await handler.handle(
+            HTTPRequest(
+                method: .get,
+                path: "/v1/models",
+                headers: ["X-Melix-Session": sessionToken],
+                body: Data()
+            )
+        )
+        let expiredPayload = try await jsonPayload(from: expiredResponse.body)
+        let error = try #require(expiredPayload["error"] as? [String: Any])
+        let sessionState = try #require(error["session_state"] as? [String: Any])
+
+        #expect(expiredResponse.statusCode == 401)
+        #expect(error["code"] as? String == "expired_session")
+        #expect(sessionState["state"] as? String == "expired")
+    }
+
     @Test("POST /v1/chat/completions translates into a worker generate request")
     func postChatCompletionsTranslatesAndStreams() async throws {
         let catalog = ModelCatalog(seedModels: [warmModel()])
@@ -5453,4 +5720,27 @@ private func jsonObject(from body: HTTPBody) async throws -> (errorCode: String,
     let code = try #require(error["code"] as? String)
     let message = try #require(error["message"] as? String)
     return (code, message)
+}
+
+private func jsonPayload(from body: HTTPBody) async throws -> [String: Any] {
+    let data = try await collectBodyData(body)
+    return try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+}
+
+private final class TestNowUnixMSSequence: @unchecked Sendable {
+    private var values: [Int64]
+    private let lock = NSLock()
+
+    init(_ values: [Int64]) {
+        self.values = values
+    }
+
+    func next() -> Int64 {
+        lock.lock()
+        defer { lock.unlock() }
+        if values.isEmpty {
+            return 0
+        }
+        return values.removeFirst()
+    }
 }

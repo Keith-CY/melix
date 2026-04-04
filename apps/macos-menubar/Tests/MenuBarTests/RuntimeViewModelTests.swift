@@ -675,6 +675,64 @@ struct RuntimeViewModelTests {
         #expect(authReference.contains("desktop-agent, codex"))
     }
 
+    @Test("persistent session metrics hydrate remembered-session operator state")
+    @MainActor
+    func persistentSessionMetricsHydrateRememberedSessionOperatorState() async throws {
+        var snapshot = makeSnapshot(
+            serverState: .serverReady,
+            models: [makeModelSummary(state: .modelWarm)],
+            gatewayAccess: makeGatewayAccessSummary(
+                mode: .apiKeys,
+                sharedAccessEnabled: true,
+                acceptedApiKeyCount: 1,
+                keyHints: ["desktop-agent"]
+            )
+        )
+        snapshot.metrics.values["persistent_session.active_session_count"] = 3
+        snapshot.metrics.values["persistent_session.remembered_session_count"] = 2
+        snapshot.metrics.values["persistent_session.expired_session_count"] = 1
+        snapshot.metrics.values["persistent_session.retention_ttl_seconds"] = 86_400
+        snapshot.metrics.values["persistent_session.sign_out_latency_ms"] = 14
+
+        let client = SnapshotControlPlaneXPCClient(snapshot: snapshot)
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+
+        let session = try #require(viewModel.selectedServerSession)
+        #expect(session.activeAuthSessionCount == 3)
+        #expect(session.rememberedAuthSessionCount == 2)
+        #expect(session.expiredRememberedSessionCount == 1)
+        #expect(session.authSessionRetentionSeconds == 86_400)
+        #expect(session.lastAuthSessionSignOutLatencyMs == 14)
+        #expect(session.persistentSessionSummaryText.contains("2 remembered"))
+    }
+
+    @Test("persistent session summary covers active-only and empty session states")
+    func persistentSessionSummaryCoversActiveOnlyAndEmptyStates() {
+        let activeOnly = DesktopServerSessionState(
+            id: "active-only",
+            title: "Active Only",
+            modelID: "melix-dev-text",
+            activeAuthSessionCount: 1,
+            rememberedAuthSessionCount: 0,
+            expiredRememberedSessionCount: 0,
+            authSessionRetentionSeconds: 300
+        )
+        let empty = DesktopServerSessionState(
+            id: "empty",
+            title: "Empty",
+            modelID: "melix-dev-text",
+            activeAuthSessionCount: 0,
+            rememberedAuthSessionCount: 0,
+            expiredRememberedSessionCount: 0,
+            authSessionRetentionSeconds: 60
+        )
+
+        #expect(activeOnly.persistentSessionSummaryText == "1 gateway sessions active. TTL 300s.")
+        #expect(empty.persistentSessionSummaryText == "No remembered gateway sessions. TTL 60s.")
+    }
+
     @Test("switching auth mode away from shared access restores local-only trust state")
     @MainActor
     func switchingAuthModeAwayFromSharedAccessRestoresLocalOnlyTrustState() async throws {
