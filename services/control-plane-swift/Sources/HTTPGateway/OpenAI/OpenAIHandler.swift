@@ -279,7 +279,7 @@ public struct OpenAIHandler: Sendable {
         imageJobAdmissionController: (any ImageJobAdmissionControlling)? = nil,
         cacheMetadataStore: CacheMetadataStore? = nil,
         translator: ChatRequestTranslator = ChatRequestTranslator(),
-        sseWriter: SSEStreamWriter = SSEStreamWriter(),
+        sseWriter: SSEStreamWriter? = nil,
         mcpToolCatalog: MCPToolCatalog = .empty,
         gatewayAccessPolicy: GatewayAccessPolicy = .localTrust,
         audioAssetManager: AudioAssetManager = AudioAssetManager(),
@@ -298,7 +298,7 @@ public struct OpenAIHandler: Sendable {
         )
         self.cacheMetadataStore = cacheMetadataStore
         self.translator = translator
-        self.sseWriter = sseWriter
+        self.sseWriter = sseWriter ?? SSEStreamWriter(metricsStore: metricsStore)
         self.mcpToolCatalog = mcpToolCatalog
         self.audioAssetManager = audioAssetManager
         self.gatewayAccessPolicyStore = gatewayAccessPolicyStore ?? GatewayAccessPolicyStore(gatewayAccessPolicy)
@@ -547,6 +547,14 @@ public struct OpenAIHandler: Sendable {
         let requestStartedAt = Date()
         do {
             let chatRequest = try decoder.decode(OpenAIChatCompletionsRequest.self, from: request.body)
+            if let resumeRequestID = chatRequest.resumeRequestID?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !resumeRequestID.isEmpty {
+                return try await resumeStreamResponse(
+                    requestID: resumeRequestID,
+                    modelID: chatRequest.model,
+                    shape: .chatCompletions
+                )
+            }
             let normalized = if chatRequest.messages.contains(where: \.hasMultimodalContent) {
                 try translator.normalizeMultimodalChat(chatRequest)
             } else {
@@ -661,6 +669,43 @@ public struct OpenAIHandler: Sendable {
         } catch let error as HTTPRequestHandlingError {
             return httpErrorResponse(for: error)
         }
+    }
+
+    private func resumeStreamResponse(
+        requestID: String,
+        modelID: String,
+        shape: SSEStreamWriter.StreamShape
+    ) async throws -> HTTPResponse {
+        let execution: CoordinatedChatExecution
+
+        do {
+            execution = try await requestCoordinator.resumeChatCompletion(requestID: requestID)
+        } catch let error as RequestCoordinatorError {
+            return jsonResponse(statusCode: error.statusCode, payload: [
+                "error": [
+                    "code": error.errorCode,
+                    "message": error.errorMessage,
+                ],
+            ])
+        }
+
+        let stream = sseWriter.encode(
+            stream: execution.stream,
+            requestID: execution.requestID,
+            modelID: execution.modelID.isEmpty ? modelID : execution.modelID,
+            shape: shape,
+            options: SSEStreamWriter.StreamOptions(includeUsage: true)
+        )
+
+        return HTTPResponse(
+            statusCode: 200,
+            headers: [
+                "content-type": "text/event-stream; charset=utf-8",
+                "cache-control": "no-cache",
+                "connection": "keep-alive",
+            ],
+            body: .stream(stream)
+        )
     }
 
     private func handleEmbeddings(_ request: HTTPRequest) async throws -> HTTPResponse {
@@ -1328,8 +1373,7 @@ public struct OpenAIHandler: Sendable {
             toolParser: ToolParserSelection(executionExt: translated.workerRequest.execution.ext),
             options: SSEStreamWriter.StreamOptions(
                 includeUsage: translated.workerRequest.execution.ext["melix.stream.include_usage"] == "true"
-            ),
-            onDisconnect: execution.onStreamDisconnect
+            )
         )
 
         return HTTPResponse(
@@ -2513,6 +2557,8 @@ private extension RequestCoordinatorError {
         switch self {
         case .requestAlreadyActive:
             return 409
+        case .requestNotResumable:
+            return 409
         case .workerUnavailable:
             return 503
         }
@@ -2522,6 +2568,8 @@ private extension RequestCoordinatorError {
         switch self {
         case .requestAlreadyActive:
             return "request_already_active"
+        case .requestNotResumable:
+            return "request_not_resumable"
         case .workerUnavailable:
             return "worker_unavailable"
         }
@@ -2531,6 +2579,8 @@ private extension RequestCoordinatorError {
         switch self {
         case .requestAlreadyActive:
             return "A text generation request is already active."
+        case .requestNotResumable:
+            return "The disconnected request is no longer eligible for resume."
         case .workerUnavailable:
             return "The worker cannot accept requests."
         }

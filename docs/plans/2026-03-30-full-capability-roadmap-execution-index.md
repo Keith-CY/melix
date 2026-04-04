@@ -128,7 +128,7 @@ The roadmap extension in `M10-M17` includes milestone-level plans plus decompose
 - `M9.5` `docs/plans/2026-03-30-m9-5-rich-output-sanitization.md`
   Status: completed. Shared sanitizer rules, gateway and operator enforcement coverage, runbook guidance, metrics assertions, and changed-line coverage evidence are recorded in the repository.
 - `M9.6` `docs/plans/2026-03-30-m9-6-connection-lifecycle-hardening.md`
-  Status: pending. First executable slice is the lifecycle policy object plus keepalive and disconnect-path tests.
+  Status: completed. Lifecycle policy loading, bounded disconnect grace, resumable chat streaming, repository-owned smoke and integration evidence, runbook guidance, and changed-line coverage evidence are recorded in the repository.
 - `M9.7` `docs/plans/2026-03-30-m9-7-security-and-stability-closure-audit.md`
   Status: pending. First executable slice is the typed closure-audit schema and repository-owned JSON emitter.
 - `M9.8` `docs/plans/2026-03-30-m9-8-ecosystem-and-security-release-gates.md`

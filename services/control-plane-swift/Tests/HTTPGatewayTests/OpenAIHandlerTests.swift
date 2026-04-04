@@ -5069,6 +5069,75 @@ struct OpenAIHandlerTests {
         #expect(try await coordinator.cancel(requestID: "req-duplicate"))
     }
 
+    @Test("chat completions can resume a disconnected request via resume_request_id")
+    func chatCompletionsCanResumeADisconnectedRequestViaResumeRequestID() async throws {
+        let workerClient = BlockingOpenAIWorkerClient()
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(defaultTextClient: workerClient),
+            abortRegistry: AbortRegistry(),
+            lifecyclePolicy: ConnectionLifecyclePolicy(
+                keepaliveInterval: 0.01,
+                disconnectGracePeriod: 0.1
+            )
+        )
+        let handler = OpenAIHandler(
+            modelCatalog: ModelCatalog(seedModels: [warmModel()]),
+            requestCoordinator: coordinator,
+            translator: ChatRequestTranslator(requestIDGenerator: { "req-http-resume" }),
+            sseWriter: SSEStreamWriter(
+                now: { Date(timeIntervalSince1970: 123) },
+                lifecyclePolicy: ConnectionLifecyclePolicy(
+                    keepaliveInterval: 0.01,
+                    disconnectGracePeriod: 0.1
+                )
+            )
+        )
+
+        let firstBody = try #require(
+            """
+            {
+              "model": "melix-dev-text",
+              "stream": true,
+              "messages": [
+                { "role": "user", "content": "Hello" }
+              ]
+            }
+            """.data(using: .utf8)
+        )
+
+        let first = try await handler.handle(
+            HTTPRequest(method: .post, path: "/v1/chat/completions", headers: [:], body: firstBody)
+        )
+        let firstChunk = try await collectFirstStreamChunk(first.body)
+
+        let secondBody = try #require(
+            """
+            {
+              "model": "melix-dev-text",
+              "stream": true,
+              "resume_request_id": "req-http-resume",
+              "messages": [
+                { "role": "user", "content": "Hello" }
+              ]
+            }
+            """.data(using: .utf8)
+        )
+
+        let second = try await handler.handle(
+            HTTPRequest(method: .post, path: "/v1/chat/completions", headers: [:], body: secondBody)
+        )
+        await workerClient.emitToken(requestID: "req-http-resume", text: "resumed")
+        await workerClient.finish(requestID: "req-http-resume", assistantText: "resumed")
+        let secondPayload = try await collectBody(second.body)
+
+        #expect(first.statusCode == 200)
+        #expect(firstChunk.contains(": keepalive"))
+        #expect(second.statusCode == 200)
+        #expect(secondPayload.contains("\"content\":\"resumed\""))
+        #expect(secondPayload.contains("data: [DONE]"))
+        #expect(await workerClient.generatedRequestIDs == ["req-http-resume"])
+    }
+
     @Test("handler applies workflow-aware shaping and records shaping metrics")
     func handlerAppliesWorkflowAwareShapingAndRecordsMetrics() async throws {
         let workerClient = ScriptedWorkerClient(events: [
@@ -5722,6 +5791,7 @@ private actor UnavailableWorkerClient: WorkerRoutingClient {
 
 private actor BlockingOpenAIWorkerClient: WorkerRoutingClient {
     private(set) var generatedRequestIDs: [String] = []
+    private var continuations: [String: AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error>.Continuation] = [:]
 
     func canDispatchRequests() async -> Bool {
         true
@@ -5731,11 +5801,15 @@ private actor BlockingOpenAIWorkerClient: WorkerRoutingClient {
         request: Melix_Worker_V1_GenerateRequest
     ) async throws -> AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error> {
         generatedRequestIDs.append(request.execution.id.requestID)
-        return AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error> { _ in }
+        let requestID = request.execution.id.requestID
+        return AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error> { continuation in
+            continuations[requestID] = continuation
+        }
     }
 
     func abort(requestID: String) async throws -> Bool {
-        true
+        continuations.removeValue(forKey: requestID)?.finish()
+        return true
     }
 
     func loadModel(
@@ -5745,6 +5819,30 @@ private actor BlockingOpenAIWorkerClient: WorkerRoutingClient {
         response.ok = true
         response.modelHandle = "melix-dev-text::swift"
         return response
+    }
+
+    func emitToken(requestID: String, text: String) {
+        guard let continuation = continuations[requestID] else {
+            return
+        }
+        var event = Melix_Worker_V1_ExecuteEvent()
+        event.requestID = requestID
+        event.tokenDelta = Melix_Worker_V1_TokenDelta()
+        event.tokenDelta.text = text
+        continuation.yield(event)
+    }
+
+    func finish(requestID: String, assistantText: String) {
+        guard let continuation = continuations.removeValue(forKey: requestID) else {
+            return
+        }
+        var event = Melix_Worker_V1_ExecuteEvent()
+        event.requestID = requestID
+        event.completed = Melix_Worker_V1_Completed()
+        event.completed.finishReason = "stop"
+        event.completed.assistantText = assistantText
+        continuation.yield(event)
+        continuation.finish()
     }
 }
 
@@ -5786,6 +5884,17 @@ private func collectBodyData(_ body: HTTPBody) async throws -> Data {
             data.append(chunk)
         }
         return data
+    }
+}
+
+private func collectFirstStreamChunk(_ body: HTTPBody) async throws -> String {
+    switch body {
+    case .data(let data):
+        return try #require(String(data: data, encoding: .utf8))
+    case .stream(let stream):
+        var iterator = stream.makeAsyncIterator()
+        let chunk = try #require(await iterator.next())
+        return try #require(String(data: chunk, encoding: .utf8))
     }
 }
 

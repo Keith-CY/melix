@@ -154,6 +154,7 @@ Recent decision records:
 
 Current runbooks:
 
+- `runbooks/connection-lifecycle.md`
 - `runbooks/m7-benchmark-and-evaluation-foundation.md`
 - `runbooks/m6-acceleration-benchmarks.md`
 - `runbooks/external-agent-integrations.md`

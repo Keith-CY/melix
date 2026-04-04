@@ -2,6 +2,46 @@
 
 ## 2026-04-04
 
+- Closed the `M9.6` connection-lifecycle hardening transaction:
+  - added a repository-owned `ConnectionLifecyclePolicy` in `services/control-plane-swift/Sources/HTTPGateway/SSE/ConnectionLifecyclePolicy.swift` and wired it through `SSEStreamWriter`, `RequestCoordinator`, `ControlPlaneChatExecution`, `ControlPlaneService`, and the HTTP chat handler so keepalive cadence, disconnect grace, retry policy, and resume buffering now share one typed contract
+  - hardened resumable chat execution tracking so transient HTTP disconnects open a bounded resume window, successful resume preserves request identity, terminal expiry rejects stale resume attempts with `request_not_resumable`, and the race between disconnect expiry and stale resume is closed by making terminal-ineligible requests explicit in the coordinator
+  - added repository-owned evidence in `services/control-plane-swift/Tests/HTTPGatewayTests/ConnectionLifecyclePolicyTests.swift`, `tests/integration/test_connection_lifecycle.py`, `scripts/m9_connection_smoke.py`, `tests/test_m9_connection_smoke.py`, and `docs/runbooks/connection-lifecycle.md`
+  - registered the new runbook from `docs/runbooks/README.md` and the documentation map from `docs/README.md`
+- Verification summary for `M9.6`:
+  - `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/.build/ModuleCache.noindex" swift test --package-path services/control-plane-swift --filter 'ConnectionLifecyclePolicyTests|SSEStreamWriterTests|RequestCoordinatorTests|OpenAIHandlerTests|ControlPlaneChatExecutionTests|ControlPlaneServiceTests'`: `288 tests in 6 suites passed`
+  - `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/.build/ModuleCache.noindex" swift test --package-path services/control-plane-swift --enable-code-coverage --filter 'ConnectionLifecyclePolicyTests|SSEStreamWriterTests|RequestCoordinatorTests|OpenAIHandlerTests|ControlPlaneChatExecutionTests|ControlPlaneServiceTests'`: `288 tests in 6 suites passed`
+  - `PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" UV_CACHE_DIR="$(pwd)/.uv-cache" uv run --project services/mlx-worker-python pytest tests/integration/test_recovery_flows.py tests/integration/test_connection_lifecycle.py tests/test_m9_connection_smoke.py -q`: `11 passed in 117.39s (0:01:57)`
+  - `PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" UV_CACHE_DIR="$(pwd)/.uv-cache" uv run --project services/mlx-worker-python python scripts/m9_connection_smoke.py --json`: `ok = true`
+  - `git diff --check`: pass
+  - verification note: the focused Swift runs still emitted the pre-existing `warning: input verification failed` linker notes while processing `SwiftTextWorkerClient.swift.o`, and `RequestCoordinator.swift` still emits the existing `no 'async' operations occur within 'await' expression` warnings for the local continuation registration helpers; the authoritative commands above completed successfully
+- Metrics report for `M9.6`:
+  - repository-owned smoke metrics from `scripts/m9_connection_smoke.py --json` recorded:
+    - `disconnect.keepalive_gap_ms = 8.082032203674316`
+    - `disconnect.recovery_latency_ms = 12.388944625854492`
+    - `disconnect.resume_success_rate = 100`
+    - `disconnect.terminal_failure_count = 1`
+  - Swift executable scope changed-line coverage:
+    - `services/control-plane-swift/Sources/HTTPGateway/OpenAI/OpenAIHandler.swift`
+    - `services/control-plane-swift/Sources/HTTPGateway/SSE/SSEStreamWriter.swift`
+    - `services/control-plane-swift/Sources/HTTPGateway/SSE/ConnectionLifecyclePolicy.swift`
+    - `services/control-plane-swift/Sources/Requests/ChatRequestTranslator.swift`
+    - `services/control-plane-swift/Sources/Requests/RequestCoordinator.swift`
+    - `services/control-plane-swift/Sources/XPCService/ControlPlaneChatExecution.swift`
+    - `services/control-plane-swift/Sources/XPCService/ControlPlaneService.swift`
+    - `services/control-plane-swift/Tests/HTTPGatewayTests/ConnectionLifecyclePolicyTests.swift`
+    - `services/control-plane-swift/Tests/HTTPGatewayTests/OpenAIHandlerTests.swift`
+    - `services/control-plane-swift/Tests/HTTPGatewayTests/RequestCoordinatorTests.swift`
+    - `services/control-plane-swift/Tests/HTTPGatewayTests/SSEStreamWriterTests.swift`
+    - `services/control-plane-swift/Tests/ControlPlaneTests/ControlPlaneChatExecutionTests.swift`
+    - `services/control-plane-swift/Tests/ControlPlaneTests/ControlPlaneServiceTests.swift`
+    - changed-line coverage `95.49%` (`826/865`)
+  - Python executable scope changed-line coverage:
+    - `tests/integration/test_connection_lifecycle.py`
+    - `scripts/m9_connection_smoke.py`
+    - `tests/test_m9_connection_smoke.py`
+    - changed-line coverage `95.00%` (`304/320`)
+  - aggregate changed-line coverage for the touched executable scope in `M9.6`: `95.36%` (`1130/1185`)
+
 - Closed the `M9.5` rich-output sanitization transaction:
   - added repository-owned rich-output sanitizer coverage in `services/control-plane-swift/Sources/HTTPGateway/OpenAI/OpenAIHandler.swift`, including fenced-code preservation, HTML-fragment stripping, unsafe URI rejection, and recursive JSON string sanitization for both handwritten and typed gateway responses
   - added gateway contract tests in `services/control-plane-swift/Tests/HTTPGatewayTests/RichOutputSanitizerTests.swift` and `services/control-plane-swift/Tests/HTTPGatewayTests/OpenAIHandlerTests.swift`, including metrics assertions for sanitized auth-session payloads

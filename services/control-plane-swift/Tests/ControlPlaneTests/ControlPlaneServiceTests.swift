@@ -3950,6 +3950,60 @@ struct ControlPlaneServiceTests {
         }))
     }
 
+    @Test("startChat can resume a disconnected request through resumeRequestID")
+    func startChatCanResumeADisconnectedRequestThroughResumeRequestID() async throws {
+        let modelCatalog = ModelCatalog()
+        _ = await modelCatalog.loadModel(id: "melix-dev-text")
+        let textClient = BlockingAbortTextWorkerClient()
+        let service = ControlPlaneService(
+            modelCatalog: modelCatalog,
+            workerRegistry: WorkerRegistry(defaultTextClient: textClient)
+        )
+
+        let initial = try await service.startChat(
+            ControlPlaneChatRequest(
+                modelID: "melix-dev-text",
+                messages: [.init(role: "user", content: "hello")]
+            )
+        )
+        let initialConsumer = Task {
+            do {
+                for try await _ in initial.stream {
+                }
+            } catch {
+            }
+        }
+        await Task.yield()
+        initialConsumer.cancel()
+        _ = await initialConsumer.result
+
+        let resumed = try await service.startChat(
+            ControlPlaneChatRequest(
+                modelID: "melix-dev-text",
+                messages: [.init(role: "user", content: "hello")],
+                resumeRequestID: initial.requestID
+            )
+        )
+        let resumedCollector = Task {
+            var events: [ControlPlaneChatStreamEvent] = []
+            for try await event in resumed.stream {
+                events.append(event)
+            }
+            return events
+        }
+
+        await textClient.emitToken(requestID: initial.requestID, text: "resumed")
+        await textClient.finishDecode(requestID: initial.requestID, assistantText: "resumed")
+
+        let resumedEvents = try await resumedCollector.value
+
+        #expect(resumed.requestID == initial.requestID)
+        #expect(resumedEvents.contains(where: {
+            if case .tokenDelta("resumed") = $0 { return true }
+            return false
+        }))
+    }
+
     @Test("startChat applies model OCR defaults for OCR models")
     func startChatAppliesModelOCRDefaultsForOCRModels() async throws {
         var ocrModel = ModelCatalog.devOCRModel()
@@ -5675,6 +5729,30 @@ private actor BlockingAbortTextWorkerClient: WorkerRoutingClient {
         var response = Melix_Worker_V1_LoadModelResponse()
         response.modelHandle = request.model.modelID
         return response
+    }
+
+    func emitToken(requestID: String, text: String) {
+        guard let continuation = continuations[requestID] else {
+            return
+        }
+        var event = Melix_Worker_V1_ExecuteEvent()
+        event.requestID = requestID
+        event.tokenDelta = Melix_Worker_V1_TokenDelta()
+        event.tokenDelta.text = text
+        continuation.yield(event)
+    }
+
+    func finishDecode(requestID: String, assistantText: String) {
+        guard let continuation = continuations.removeValue(forKey: requestID) else {
+            return
+        }
+        var event = Melix_Worker_V1_ExecuteEvent()
+        event.requestID = requestID
+        event.completed = Melix_Worker_V1_Completed()
+        event.completed.finishReason = "stop"
+        event.completed.assistantText = assistantText
+        continuation.yield(event)
+        continuation.finish()
     }
 }
 

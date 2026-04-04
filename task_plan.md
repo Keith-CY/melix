@@ -2,47 +2,49 @@
 
 ## Goal
 
-Land the first executable `M9.5` slice by adding a shared rich-output sanitizer and applying it to gateway payloads plus operator-facing rendering or export boundaries.
+Land the first executable `M9.6` slice by hardening chat-stream connection lifecycle behavior with a typed lifecycle policy, resumable disconnect grace handling, measurable keepalive gaps, and repository-owned recovery evidence.
 
 ## Scope
 
-- add a shared deterministic sanitizer to `MelixControlPlaneCore`
-- sanitize gateway JSON payload text before it reaches downstream rendering surfaces
-- sanitize app-side doctor or benchmark reports, chat transcript and markdown export, evaluation sample previews, and local error or event text
-- add a deterministic smoke script and runbook for blocked HTML fragments and unsafe URI schemes
-- close the slice with targeted verification, changed-line coverage, and roadmap status records
+- add a repository-owned `ConnectionLifecyclePolicy` to centralize keepalive cadence, disconnect grace, retry, and resume eligibility rules
+- refactor chat execution coordination so a disconnected stream can remain resume-eligible during a bounded grace window instead of being aborted immediately
+- expose lifecycle state through the control-plane chat execution path and HTTP chat resume requests
+- record `disconnect.keepalive_gap_ms`, `disconnect.recovery_latency_ms`, `disconnect.resume_success_rate`, and `disconnect.terminal_failure_count`
+- add focused Swift tests, live integration coverage, a deterministic smoke script, and a runbook for connection lifecycle recovery
 
 ## Phases
 
-1. Shared sanitizer and gateway enforcement
+1. Lifecycle policy and resumable request coordination
    - status: completed
    - evidence:
-     - active plan: `docs/plans/2026-04-04-m9-5-rich-output-sanitization-slice.md`
-     - landed shared sanitizer rules in `services/control-plane-swift/Sources/HTTPGateway/OpenAI/OpenAIHandler.swift`
-     - gateway JSON payload and typed JSON response tests now cover HTML stripping, unsafe URI rejection, fenced-code preservation, idempotency, and metrics counters
-2. App-side rendering and export sanitization
+     - active plan: `docs/plans/2026-04-04-m9-6-connection-lifecycle-slice.md`
+     - targets: `SSEStreamWriter`, `RequestCoordinator`, `ControlPlaneChatExecution`, and `OpenAIHandler` chat streaming path
+     - TDD order: add failing Swift tests for keepalive-gap metrics, disconnect grace, resume success, and terminal disconnect failure before implementation
+2. Integration, smoke, and operator evidence
    - status: completed
    - evidence:
-     - target surfaces: chat transcript rows, chat markdown export, doctor and benchmark report state, evaluation sample previews, and local errors
-     - menu-bar tests now cover sanitized exports, report state, preview state, and desktop log projection
-3. Verification and milestone closure
+     - add `tests/integration/test_connection_lifecycle.py`
+     - add `scripts/m9_connection_smoke.py`
+     - add `docs/runbooks/connection-lifecycle.md`
+3. Verification and milestone bookkeeping
    - status: completed
    - evidence:
-     - runbook: `docs/runbooks/rich-output-sanitization.md`
-     - success metrics: `sanitized_output.enforcement_count`, `sanitized_output.blocked_html_fragment_count`, and `sanitized_output.unsafe_uri_rejection_count`
-     - focused Swift verification and changed-line coverage close the touched executable scope without adding a duplicate Python sanitizer implementation
+     - focused Swift and integration verification
+     - changed-line coverage for touched executable scope at or above `95%`
+     - metrics and roadmap status recorded in `progress.md` and the execution index
 
 ## Acceptance
 
-- unsafe HTML fragments never reach operator-facing report, transcript, or export surfaces
-- unsafe URI schemes are removed while safe markdown-like content remains readable
-- repeated sanitization is idempotent
-- the touched executable scope closes with changed-line coverage of at least `95%`
+- transient chat-stream disconnects enter a bounded resume window instead of aborting immediately
+- a resumed chat execution preserves request identity and continues deterministically from the in-flight stream state
+- keepalive cadence and disconnect outcomes are observable through repository-owned metrics
+- terminal disconnect expiry yields an explicit failure path instead of silent cancellation
 
 ## Risks
 
-- over-sanitization can damage useful diagnostic markdown or code fences unless fenced-code preservation is handled explicitly
-- sanitization must happen at boundary layers only; mutating worker truth or export bundle schemas would increase regression surface unnecessarily
+- resumable stream hubs can easily leak continuations or worker requests if termination handling is not centralized
+- replaying buffered events must avoid corrupting ordering guarantees for resumed consumers
+- disconnect grace timers must not turn explicit operator cancellation into false-positive recovery attempts
 
 ## Outcome
 

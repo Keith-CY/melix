@@ -48,8 +48,8 @@ struct RequestCoordinatorTests {
         #expect(await workerClient.abortedRequestIDs == ["req-cancel"])
     }
 
-    @Test("stream disconnect handler triggers worker abort and records disconnect metrics")
-    func streamDisconnectHandlerTriggersWorkerAbortAndRecordsDisconnectMetrics() async throws {
+    @Test("stream disconnect handler records disconnect metrics and opens a resume grace window")
+    func streamDisconnectHandlerRecordsDisconnectMetricsAndOpensAResumeGraceWindow() async throws {
         let workerClient = BlockingWorkerClient()
         let schedulerReadModel = SchedulerReadModel()
         let metricsStore = MetricsStore()
@@ -57,7 +57,11 @@ struct RequestCoordinatorTests {
             workerRegistry: WorkerRegistry(defaultTextClient: workerClient),
             abortRegistry: AbortRegistry(),
             schedulerReadModel: schedulerReadModel,
-            metricsStore: metricsStore
+            metricsStore: metricsStore,
+            lifecyclePolicy: ConnectionLifecyclePolicy(
+                keepaliveInterval: 15,
+                disconnectGracePeriod: 0.05
+            )
         )
 
         let execution = try await coordinator.startChatCompletion(
@@ -66,24 +70,130 @@ struct RequestCoordinatorTests {
         let onStreamDisconnect = try #require(execution.onStreamDisconnect)
         await onStreamDisconnect()
 
+        let metrics = await metricsStore.snapshot()
+        let progress = await schedulerReadModel.progressSnapshot(for: "req-disconnect")
+
+        #expect(await workerClient.abortedRequestIDs.isEmpty)
+        #expect(metrics.values["http.stream_disconnect_count", default: 0] == 1)
+        #expect(metrics.values["http.stream_disconnect_ms", default: -1] >= 0)
+        #expect(progress?.phase != .requestAborted)
+    }
+
+    @Test("disconnect grace keeps a request resume-eligible until a new consumer attaches")
+    func disconnectGraceKeepsRequestResumeEligibleUntilANewConsumerAttaches() async throws {
+        let workerClient = PhaseAwareWorkerClient()
+        let schedulerReadModel = SchedulerReadModel()
+        let metricsStore = MetricsStore()
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(defaultTextClient: workerClient),
+            abortRegistry: AbortRegistry(),
+            schedulerReadModel: schedulerReadModel,
+            metricsStore: metricsStore,
+            lifecyclePolicy: ConnectionLifecyclePolicy(
+                keepaliveInterval: 15,
+                disconnectGracePeriod: 0.1
+            )
+        )
+
+        let execution = try await coordinator.startChatCompletion(
+            makeTranslatedChatRequest(requestID: "req-resume-grace")
+        )
+        let initialConsumer = Task {
+            do {
+                for try await _ in execution.stream {
+                }
+            } catch {
+            }
+        }
+        await Task.yield()
+        initialConsumer.cancel()
+        _ = await initialConsumer.result
         for _ in 0..<100 {
-            if await workerClient.abortedRequestIDs == ["req-disconnect"] {
+            let metrics = await metricsStore.snapshot()
+            if metrics.values["http.stream_disconnect_count", default: 0] >= 1 {
                 break
             }
             try? await Task.sleep(nanoseconds: 10_000_000)
         }
 
+        let resumedExecution = try await coordinator.resumeChatCompletion(requestID: "req-resume-grace")
+        let resumedCollector = Task {
+            var events: [Melix_Worker_V1_ExecuteEvent] = []
+            for try await event in resumedExecution.stream {
+                events.append(event)
+            }
+            return events
+        }
+
+        await workerClient.emitToken(requestID: "req-resume-grace", text: "resumed")
+        await workerClient.finishDecode(requestID: "req-resume-grace", assistantText: "resumed")
+
+        let resumedEvents = try await resumedCollector.value
+        try? await Task.sleep(nanoseconds: 150_000_000)
+        let metrics = await metricsStore.snapshot()
+
+        #expect(resumedExecution.requestID == "req-resume-grace")
+        #expect(resumedEvents.contains { event in
+            guard case .tokenDelta(let delta) = event.payload else {
+                return false
+            }
+            return delta.text == "resumed"
+        })
+        #expect(await workerClient.abortedRequestIDs.isEmpty)
+        #expect(metrics.values["disconnect.recovery_latency_ms", default: -1] >= 0)
+        #expect(metrics.values["disconnect.resume_success_rate", default: 0] == 100)
+    }
+
+    @Test("disconnect grace expiry aborts the worker and records a terminal lifecycle failure")
+    func disconnectGraceExpiryAbortsTheWorkerAndRecordsATerminalLifecycleFailure() async throws {
+        let workerClient = PhaseAwareWorkerClient()
+        let schedulerReadModel = SchedulerReadModel()
+        let metricsStore = MetricsStore()
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(defaultTextClient: workerClient),
+            abortRegistry: AbortRegistry(),
+            schedulerReadModel: schedulerReadModel,
+            metricsStore: metricsStore,
+            lifecyclePolicy: ConnectionLifecyclePolicy(
+                keepaliveInterval: 15,
+                disconnectGracePeriod: 0.02
+            )
+        )
+
+        let execution = try await coordinator.startChatCompletion(
+            makeTranslatedChatRequest(requestID: "req-resume-timeout")
+        )
+        let initialConsumer = Task {
+            do {
+                for try await _ in execution.stream {
+                }
+            } catch {
+            }
+        }
+        await Task.yield()
+        initialConsumer.cancel()
+        _ = await initialConsumer.result
+
+        try? await Task.sleep(nanoseconds: 80_000_000)
+
+        do {
+            _ = try await coordinator.resumeChatCompletion(requestID: "req-resume-timeout")
+            Issue.record("Expected expired disconnect grace to reject resume.")
+        } catch let error as RequestCoordinatorError {
+            #expect(error == .requestNotResumable)
+        }
+
         let metrics = await metricsStore.snapshot()
         let terminalProgress = await waitForProgress(
             schedulerReadModel: schedulerReadModel,
-            requestID: "req-disconnect",
-            phase: .requestAborted
+            requestID: "req-resume-timeout",
+            phase: .requestFailed
         )
 
-        #expect(await workerClient.abortedRequestIDs == ["req-disconnect"])
-        #expect(metrics.values["http.stream_disconnect_count", default: 0] == 1)
-        #expect(metrics.values["http.stream_disconnect_ms", default: -1] >= 0)
-        #expect(terminalProgress?.phase == .requestAborted)
+        #expect(await workerClient.abortedRequestIDs == ["req-resume-timeout"])
+        #expect(metrics.values["disconnect.terminal_failure_count", default: 0] == 1)
+        #expect(metrics.values["disconnect.resume_success_rate", default: 0] == 0)
+        #expect(terminalProgress?.phase == .requestFailed)
     }
 
     @Test("queued request cancellation succeeds before a worker is bound")

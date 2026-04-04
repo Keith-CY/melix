@@ -277,6 +277,22 @@ public actor ControlPlaneService {
             throw ControlPlaneChatExecutionError.unavailable
         }
 
+        if let resumeRequestID = request.resumeRequestID?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !resumeRequestID.isEmpty {
+            let execution: CoordinatedChatExecution
+            do {
+                execution = try await requestCoordinator.resumeChatCompletion(requestID: resumeRequestID)
+            } catch {
+                throw ControlPlaneChatExecutionError.unavailable
+            }
+            return ControlPlaneChatExecution(
+                requestID: execution.requestID,
+                modelID: execution.modelID,
+                stream: mappedChatStream(from: execution.stream),
+                lifecycle: execution.lifecycle
+            )
+        }
+
         let normalized = try chatTranslator.normalize(
             OpenAIChatCompletionsRequest(
                 model: request.modelID,
@@ -325,10 +341,21 @@ public actor ControlPlaneService {
         )
         let execution = try await requestCoordinator.startChatCompletion(translated)
 
-        let stream = AsyncThrowingStream<ControlPlaneChatStreamEvent, Error> { continuation in
+        return ControlPlaneChatExecution(
+            requestID: execution.requestID,
+            modelID: execution.modelID,
+            stream: mappedChatStream(from: execution.stream),
+            lifecycle: execution.lifecycle
+        )
+    }
+
+    private func mappedChatStream(
+        from stream: AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error>
+    ) -> AsyncThrowingStream<ControlPlaneChatStreamEvent, Error> {
+        AsyncThrowingStream<ControlPlaneChatStreamEvent, Error> { continuation in
             let forwardTask = Task {
                 do {
-                    for try await event in execution.stream {
+                    for try await event in stream {
                         guard let mapped = ControlPlaneChatStreamEvent(executeEvent: event) else {
                             continue
                         }
@@ -344,12 +371,6 @@ public actor ControlPlaneService {
                 forwardTask.cancel()
             }
         }
-
-        return ControlPlaneChatExecution(
-            requestID: execution.requestID,
-            modelID: execution.modelID,
-            stream: stream
-        )
     }
 
     public func unsubscribe(_ subscriptionID: String) async {

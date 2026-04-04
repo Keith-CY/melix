@@ -345,6 +345,7 @@ public struct OpenAIChatCompletionsRequest: Codable, Sendable {
     public let temperature: Double?
     public let topP: Double?
     public let maxTokens: UInt32?
+    public let resumeRequestID: String?
     public let stopSequences: [String]?
     public let sessionID: String?
     public let branchID: String?
@@ -367,6 +368,7 @@ public struct OpenAIChatCompletionsRequest: Codable, Sendable {
         case temperature
         case topP = "top_p"
         case maxTokens = "max_tokens"
+        case resumeRequestID = "resume_request_id"
         case stop
         case stopSequences = "stop_sequences"
         case sessionID = "session_id"
@@ -391,6 +393,7 @@ public struct OpenAIChatCompletionsRequest: Codable, Sendable {
         temperature: Double? = nil,
         topP: Double? = nil,
         maxTokens: UInt32? = nil,
+        resumeRequestID: String? = nil,
         stopSequences: [String]? = nil,
         sessionID: String? = nil,
         branchID: String? = nil,
@@ -412,6 +415,7 @@ public struct OpenAIChatCompletionsRequest: Codable, Sendable {
         self.temperature = temperature
         self.topP = topP
         self.maxTokens = maxTokens
+        self.resumeRequestID = resumeRequestID
         self.stopSequences = stopSequences
         self.sessionID = sessionID
         self.branchID = branchID
@@ -436,6 +440,7 @@ public struct OpenAIChatCompletionsRequest: Codable, Sendable {
         self.temperature = try container.decodeIfPresent(Double.self, forKey: .temperature)
         self.topP = try container.decodeIfPresent(Double.self, forKey: .topP)
         self.maxTokens = try container.decodeIfPresent(UInt32.self, forKey: .maxTokens)
+        self.resumeRequestID = try container.decodeIfPresent(String.self, forKey: .resumeRequestID)
         self.stopSequences = try Self.decodeStopSequences(from: container)
         self.sessionID = try container.decodeIfPresent(String.self, forKey: .sessionID)
         self.branchID = try container.decodeIfPresent(String.self, forKey: .branchID)
@@ -460,6 +465,7 @@ public struct OpenAIChatCompletionsRequest: Codable, Sendable {
         try container.encodeIfPresent(temperature, forKey: .temperature)
         try container.encodeIfPresent(topP, forKey: .topP)
         try container.encodeIfPresent(maxTokens, forKey: .maxTokens)
+        try container.encodeIfPresent(resumeRequestID, forKey: .resumeRequestID)
         try encodeStopSequences(into: &container)
         try container.encodeIfPresent(sessionID, forKey: .sessionID)
         try container.encodeIfPresent(branchID, forKey: .branchID)

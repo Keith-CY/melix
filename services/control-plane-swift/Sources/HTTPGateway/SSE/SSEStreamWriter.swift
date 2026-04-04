@@ -1,6 +1,26 @@
 import Foundation
 import MelixWorkerProtocol
 
+private actor DisconnectNotifier {
+    private let callback: (@Sendable () async -> Void)?
+    private var fired = false
+
+    init(callback: (@Sendable () async -> Void)?) {
+        self.callback = callback
+    }
+
+    func fireIfNeeded() async {
+        guard !fired else {
+            return
+        }
+        fired = true
+        guard let callback else {
+            return
+        }
+        await callback()
+    }
+}
+
 public struct SSEStreamWriter: Sendable {
     public enum StreamShape: Sendable {
         case chatCompletions
@@ -18,14 +38,20 @@ public struct SSEStreamWriter: Sendable {
     }
 
     private let now: @Sendable () -> Date
+    private let lifecyclePolicy: ConnectionLifecyclePolicy
     private let keepaliveInterval: TimeInterval?
+    private let metricsStore: MetricsStore?
 
     public init(
         now: @escaping @Sendable () -> Date = Date.init,
-        keepaliveInterval: TimeInterval? = 15
+        keepaliveInterval: TimeInterval? = nil,
+        lifecyclePolicy: ConnectionLifecyclePolicy = ConnectionLifecyclePolicy.fromEnvironment(),
+        metricsStore: MetricsStore? = nil
     ) {
         self.now = now
-        self.keepaliveInterval = keepaliveInterval
+        self.lifecyclePolicy = lifecyclePolicy
+        self.keepaliveInterval = keepaliveInterval ?? lifecyclePolicy.keepaliveInterval
+        self.metricsStore = metricsStore
     }
 
     public func encode(
@@ -38,6 +64,7 @@ public struct SSEStreamWriter: Sendable {
         onDisconnect: (@Sendable () async -> Void)? = nil
     ) -> AsyncThrowingStream<Data, Error> {
         AsyncThrowingStream { continuation in
+            let disconnectNotifier = DisconnectNotifier(callback: onDisconnect)
             let keepaliveTask = keepaliveTask(continuation: continuation)
             let task = Task {
                 do {
@@ -70,11 +97,11 @@ public struct SSEStreamWriter: Sendable {
                 guard case .cancelled = termination else {
                     return
                 }
-                guard let onDisconnect else {
+                guard onDisconnect != nil else {
                     return
                 }
                 Task {
-                    await onDisconnect()
+                    await disconnectNotifier.fireIfNeeded()
                 }
             }
         }
@@ -89,11 +116,20 @@ public struct SSEStreamWriter: Sendable {
 
         let sleepNanoseconds = UInt64(keepaliveInterval * 1_000_000_000)
         return Task {
+            var lastKeepaliveAt = now()
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: sleepNanoseconds)
                 guard !Task.isCancelled else {
                     break
                 }
+                let emittedAt = now()
+                if let metricsStore {
+                    await metricsStore.set(
+                        emittedAt.timeIntervalSince(lastKeepaliveAt) * 1000,
+                        forKey: "disconnect.keepalive_gap_ms"
+                    )
+                }
+                lastKeepaliveAt = emittedAt
                 continuation.yield(keepaliveFrame())
             }
         }
