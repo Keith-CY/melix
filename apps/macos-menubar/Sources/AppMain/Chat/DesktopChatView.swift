@@ -137,76 +137,109 @@ struct DesktopChatSessionWorkspace: View {
                 }
             }
 
-            if viewModel.selectedChatServerSession?.isRunning != true {
-                VStack(alignment: .leading, spacing: 12) {
-                    ContentUnavailableView(
-                        "No Running Server Session",
-                        systemImage: "network.slash",
-                        description: Text("Chat sessions bind to a Server Session. Start one in Server before sending prompts.")
-                    )
-                    Button("Open Server") {
-                        viewModel.selectSurface(.server)
-                    }
-                    .buttonStyle(.borderedProminent)
-                }
-                Spacer()
-            } else {
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 12) {
-                        if viewModel.chatTranscript.isEmpty {
-                            GroupBox {
-                                VStack(alignment: .leading, spacing: 6) {
-                                    Text("No transcript yet")
-                                        .font(.headline)
-                                    Text("This chat session is bound to a running Server Session. Submit a prompt to stream assistant, reasoning, and tool-call state.")
-                                        .foregroundStyle(.secondary)
-                                }
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                            }
-                        } else {
-                            ForEach(viewModel.chatTranscript) { entry in
-                                DesktopChatTranscriptRowView(entry: entry)
-                            }
-                        }
-                    }
-                }
-
-                VStack(alignment: .leading, spacing: 8) {
-                    TextEditor(
-                        text: Binding(
-                            get: { viewModel.chatComposerText },
-                            set: { viewModel.chatComposerText = $0 }
-                        )
-                    )
-                    .font(.body.monospaced())
-                    .frame(minHeight: 120)
-                    .padding(8)
-                    .background(.quaternary.opacity(0.6), in: RoundedRectangle(cornerRadius: 12))
-
+            if let notice = viewModel.selectedChatServerSession?.chatWorkspaceNoticeState {
+                VStack(alignment: .leading, spacing: 10) {
+                    DesktopInlineNoticeCardView(notice: notice)
                     HStack {
-                        Text(viewModel.chatStatusText)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        Spacer()
-                        if !viewModel.lastChatUsageText.isEmpty {
-                            Text(viewModel.lastChatUsageText)
-                                .font(.caption.monospacedDigit())
-                                .foregroundStyle(.secondary)
+                        switch viewModel.selectedChatServerSession?.lifecycle {
+                        case .paused:
+                            Button("Resume Server") {
+                                Task {
+                                    if let serverSessionID = viewModel.selectedChatServerSession?.id {
+                                        await viewModel.resumeServerSession(id: serverSessionID)
+                                    }
+                                }
+                            }
+                            .buttonStyle(.borderedProminent)
+                        case .sleeping:
+                            Button("Wake Now") {
+                                Task {
+                                    if let serverSessionID = viewModel.selectedChatServerSession?.id {
+                                        await viewModel.wakeServerSession(id: serverSessionID)
+                                    }
+                                }
+                            }
+                            .buttonStyle(.bordered)
+                        case .starting, .stopping:
+                            EmptyView()
+                        case .stopped, .draft, .unavailable:
+                            Button("Start Server") {
+                                Task {
+                                    if let serverSessionID = viewModel.selectedChatServerSession?.id {
+                                        await viewModel.startServerSession(id: serverSessionID)
+                                    }
+                                }
+                            }
+                            .buttonStyle(.borderedProminent)
+                        case .error:
+                            EmptyView()
+                        case .running, .none:
+                            EmptyView()
                         }
-                        Button("Clear") {
-                            viewModel.clearChatTranscript()
+
+                        Button("Open Server") {
+                            viewModel.selectSurface(.server)
                         }
                         .buttonStyle(.bordered)
-                        Button("Send") {
-                            Task { await viewModel.submitChatPrompt() }
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .disabled(
-                            viewModel.chatComposerText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                            || viewModel.isChatStreaming
-                            || viewModel.selectedChatServerSession?.isRunning != true
-                        )
                     }
+                }
+            }
+
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 12) {
+                    if viewModel.chatTranscript.isEmpty {
+                        GroupBox {
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text("No transcript yet")
+                                    .font(.headline)
+                                Text("This chat session is bound to the selected Server Session. Submit a prompt to stream assistant, reasoning, and tool-call state.")
+                                    .foregroundStyle(.secondary)
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                    } else {
+                        ForEach(viewModel.chatTranscript) { entry in
+                            DesktopChatTranscriptRowView(entry: entry)
+                        }
+                    }
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
+                TextEditor(
+                    text: Binding(
+                        get: { viewModel.chatComposerText },
+                        set: { viewModel.chatComposerText = $0 }
+                    )
+                )
+                .font(.body.monospaced())
+                .frame(minHeight: 120)
+                .padding(8)
+                .background(.quaternary.opacity(0.6), in: RoundedRectangle(cornerRadius: 12))
+
+                HStack {
+                    Text(viewModel.chatStatusText)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    if !viewModel.lastChatUsageText.isEmpty {
+                        Text(viewModel.lastChatUsageText)
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                    }
+                    Button("Clear") {
+                        viewModel.clearChatTranscript()
+                    }
+                    .buttonStyle(.bordered)
+                    Button("Send") {
+                        Task { await viewModel.submitChatPrompt() }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(
+                        viewModel.chatComposerText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                        || viewModel.isChatStreaming
+                        || viewModel.selectedChatServerSession?.isInteractiveReady != true
+                    )
                 }
             }
         }

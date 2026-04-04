@@ -2,73 +2,69 @@
 
 ## Goal
 
-Close `M10.3` by surfacing the control-plane-owned server lifecycle and power-state truth across the
-desktop shell, chat workspace, and operator controls so loading, paused, sleeping, stopped, and
-failed sessions are obvious and actionable from Window UI.
+Close `M10.4` by adding live integration evidence, reproducible lifecycle metrics, and operator
+runbook guidance for pause, idle-to-sleep, wake, and lifecycle-fault recovery across the Melix
+session-lifecycle surface.
 
 ## Scope
 
-- project runtime-session lifecycle, power-state, wake-reason, and idle-policy metadata into the
-  desktop shell banner model and server workspace summary surfaces
-- add session-scoped operator controls for pause, resume, wake, stop, and idle-policy updates using
-  the new control-plane client methods instead of local UI inference
-- make chat-facing and server-facing surfaces distinguish loading, paused, sleeping, stopped, and
-  failed sessions with deterministic control enablement rules
-- add focused menu bar and control-plane Swift coverage for banner derivation, control gating,
-  reconnect hydration, and typed state transitions
+- add integration coverage for lifecycle mutations, idle-policy-driven sleep, restart recovery, and
+  wake-to-ready flows using the repository-owned session lifecycle paths
+- capture machine-readable lifecycle smoke metrics and reproducible evidence for pause, sleep, wake,
+  and restart timing boundaries
+- document operator diagnosis and recovery steps so the runbook separates reconnect noise from
+  genuine lifecycle faults
 
 ## Measurement Points
 
-- desktop banner and server-workspace state must be fully derivable from `ServerSessionRuntimeState`
-  payloads without ad-hoc local lifecycle heuristics
-- operator control enablement must stay consistent across initial hydration and later
-  `server.state_changed` events for the same server session
-- banner and control changes should emit measurable desktop metrics so later `M10.4` evidence can
-  trace server-session visibility and interaction latency
+- lifecycle smoke evidence must record pause acknowledgement, idle-to-sleep delay, wake-to-ready
+  delay, and restart recovery timing in machine-readable form
+- integration coverage must exercise the same control-plane-owned lifecycle paths surfaced in the
+  Window UI and CLI rather than using private test-only state mutation shortcuts
+- the runbook must point operators to authoritative diagnostics, metrics, and recovery decisions
+  for paused, sleeping, stopped, and failed runtime-session states
 
 ## Phases
 
-1. Desktop state projection
+1. Lifecycle smoke and metrics harness
    - status: pending
    - evidence:
-     - inspect the existing runtime-session projection in `RuntimeViewModel`,
-       `DesktopFoundationState`, and the dashboard shell to locate where server lifecycle state is
-       still summarized only as coarse server status
-     - define the banner and workspace state needed to distinguish loading, paused, sleeping,
-       stopped, and failed sessions from control-plane truth
-2. Operator controls and chat-facing affordances
+     - inspect the existing integration harnesses and session-lifecycle metrics plumbing to locate
+       the narrowest place to add reproducible pause, sleep, wake, and restart evidence
+     - define the smoke payload and output format so the touched scope can report machine-readable
+       lifecycle timings without ad-hoc parsing
+2. Integration coverage and operator runbook
    - status: pending
    - evidence:
-     - wire the new session-scoped lifecycle and idle-policy client methods into the desktop shell
-       and server workspace controls
-     - ensure control enablement and banner copy remain aligned with session lifecycle truth during
-       hydration, reconnect, and explicit operator actions
+     - add integration or smoke coverage for lifecycle mutation, idle-policy sleep, wake, and
+       restart flows against the repository-owned runtime stack
+     - update runbook guidance with diagnosis and recovery steps grounded in authoritative lifecycle
+       metrics and runtime-session states
 3. Verification and milestone bookkeeping
    - status: pending
    - evidence:
-     - run the relevant focused menu bar and control-plane Swift suites plus repository-default
-       verification for the touched scope
-     - record changed-line coverage at or above `95%`, update `progress.md`, and mark `M10.3`
+     - run the touched integration and documentation verification commands plus repository-default
+       verification as needed for the changed scope
+     - record changed-line coverage at or above `95%`, update `progress.md`, and mark `M10.4`
        completed only after evidence is captured
 
 ## Acceptance
 
-- desktop surfaces expose accurate lifecycle banners and server-workspace summaries for all typed
-  runtime-session states
-- operator controls remain valid, disabled, or hidden according to authoritative session lifecycle
-  and idle-policy truth
-- reconnect hydration and follow-up `server.state_changed` events preserve the same banner and
-  control state without local re-interpretation
+- the session-lifecycle milestone has reproducible live-path coverage for pause, sleep, wake, and
+  restart recovery
+- lifecycle metrics are machine-readable, stored with the touched smoke or integration outputs, and
+  suitable for later release-gate consumption
+- runbooks explain how operators should inspect lifecycle faults and choose recovery actions
 
 ## Risks
 
-- re-deriving lifecycle state locally in the desktop shell would drift from the control plane and
-  break later API and evidence slices
-- exposing controls without typed gating could let operators trigger invalid transitions and muddy
-  the `M10.4` evidence path
-- banner logic that only updates on full snapshots could miss reconnect or event-stream transitions
-  and leave the desktop shell stale
+- relying only on unit-level lifecycle coverage would leave `M10` without proof that the integrated
+  runtime stack honors pause, idle sleep, and wake behavior end to end
+- metrics that are not machine-readable would make later release-gate automation and regression
+  tracking unreliable
+- runbook guidance that does not distinguish reconnect churn from genuine lifecycle faults would
+  confuse operators and weaken milestone evidence
 
 ## Outcome
 
-- m10_3_desktop_status_banners_and_operator_surfaces_in_progress
+- m10_4_session_lifecycle_integration_evidence_in_progress

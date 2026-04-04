@@ -30,6 +30,13 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
         let tokenHint: String
     }
 
+    struct RecordedServerIdlePolicyRequest: Equatable, Sendable {
+        let serverSessionID: String
+        let autoSleepEnabled: Bool
+        let lightSleepAfterSeconds: UInt32
+        let deepSleepAfterSeconds: UInt32
+    }
+
     private var streamContinuations: [AsyncStream<Melix_Controlplane_V1_ControlPlaneEvent>.Continuation] = []
     private var nextEventSequence: UInt64 = 1
 
@@ -41,6 +48,7 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
     private(set) var recordedExportOutputDirs: [String] = []
     private(set) var recordedGatewayAccessApplyRequests: [RecordedGatewayAccessApplyRequest] = []
     private(set) var recordedGatewayAccessClearRequests: [String] = []
+    private(set) var recordedServerIdlePolicyRequests: [RecordedServerIdlePolicyRequest] = []
     private(set) var handshakeCount = 0
     private(set) var subscriptionRequests: [UInt64] = []
     private var modelState: Melix_Controlplane_V1_ModelState = .modelDiscovered
@@ -62,6 +70,12 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
     private var cancelError: Error?
     private var applyGatewayAccessError: Error?
     private var clearGatewayAccessError: Error?
+    private var startServerError: Error?
+    private var pauseServerError: Error?
+    private var resumeServerError: Error?
+    private var wakeServerError: Error?
+    private var stopServerError: Error?
+    private var updateServerIdlePolicyError: Error?
     private var snapshotOverride: Melix_Controlplane_V1_ServerSnapshot?
     private var responseFeatures: [String] = ["chat"]
     private var modelSettings = FakeControlPlaneXPCClient.defaultModelSettings()
@@ -176,7 +190,13 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
         imageGenerate: Error? = nil,
         imageEdit: Error? = nil,
         cancel: Error? = nil,
-        applyGatewayAccess: Error? = nil
+        applyGatewayAccess: Error? = nil,
+        startServer: Error? = nil,
+        pauseServer: Error? = nil,
+        resumeServer: Error? = nil,
+        wakeServer: Error? = nil,
+        stopServer: Error? = nil,
+        updateServerIdlePolicy: Error? = nil
     ) {
         handshakeError = handshake
         loadError = load
@@ -195,6 +215,12 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
         imageEditError = imageEdit
         cancelError = cancel
         applyGatewayAccessError = applyGatewayAccess
+        startServerError = startServer
+        pauseServerError = pauseServer
+        resumeServerError = resumeServer
+        wakeServerError = wakeServer
+        stopServerError = stopServer
+        updateServerIdlePolicyError = updateServerIdlePolicy
     }
 
     func configureModelResponseFeatures(_ features: [String]) {
@@ -511,6 +537,91 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
         recordedGatewayAccessClearRequests.append(serverSessionID)
     }
 
+    func startServerSession(serverSessionID: String) async throws -> Melix_Controlplane_V1_ServerSnapshot {
+        recordedActions.append("server.start:\(serverSessionID)")
+        if let startServerError {
+            throw startServerError
+        }
+        return mutateRuntimeSession(serverSessionID: serverSessionID) { runtimeSession in
+            runtimeSession.lifecycleState = .ready
+            runtimeSession.powerState = .active
+            runtimeSession.wakeReason = .initialBoot
+        }
+    }
+
+    func pauseServerSession(serverSessionID: String) async throws -> Melix_Controlplane_V1_ServerSnapshot {
+        recordedActions.append("server.pause:\(serverSessionID)")
+        if let pauseServerError {
+            throw pauseServerError
+        }
+        return mutateRuntimeSession(serverSessionID: serverSessionID) { runtimeSession in
+            runtimeSession.lifecycleState = .paused
+            runtimeSession.powerState = .active
+            runtimeSession.wakeReason = .policyApply
+        }
+    }
+
+    func resumeServerSession(serverSessionID: String) async throws -> Melix_Controlplane_V1_ServerSnapshot {
+        recordedActions.append("server.resume:\(serverSessionID)")
+        if let resumeServerError {
+            throw resumeServerError
+        }
+        return mutateRuntimeSession(serverSessionID: serverSessionID) { runtimeSession in
+            runtimeSession.lifecycleState = .ready
+            runtimeSession.powerState = .active
+            runtimeSession.wakeReason = .operatorResume
+        }
+    }
+
+    func wakeServerSession(serverSessionID: String) async throws -> Melix_Controlplane_V1_ServerSnapshot {
+        recordedActions.append("server.wake:\(serverSessionID)")
+        if let wakeServerError {
+            throw wakeServerError
+        }
+        return mutateRuntimeSession(serverSessionID: serverSessionID) { runtimeSession in
+            runtimeSession.lifecycleState = .ready
+            runtimeSession.powerState = .active
+            runtimeSession.wakeReason = .operatorResume
+        }
+    }
+
+    func stopServerSession(serverSessionID: String) async throws -> Melix_Controlplane_V1_ServerSnapshot {
+        recordedActions.append("server.stop:\(serverSessionID)")
+        if let stopServerError {
+            throw stopServerError
+        }
+        return mutateRuntimeSession(serverSessionID: serverSessionID) { runtimeSession in
+            runtimeSession.lifecycleState = .stopped
+            runtimeSession.powerState = .stopped
+            runtimeSession.wakeReason = .policyApply
+        }
+    }
+
+    func updateServerIdlePolicy(
+        serverSessionID: String,
+        autoSleepEnabled: Bool,
+        lightSleepAfterSeconds: UInt32,
+        deepSleepAfterSeconds: UInt32
+    ) async throws -> Melix_Controlplane_V1_ServerSnapshot {
+        recordedActions.append("server.idle_policy:\(serverSessionID)")
+        if let updateServerIdlePolicyError {
+            throw updateServerIdlePolicyError
+        }
+        recordedServerIdlePolicyRequests.append(
+            RecordedServerIdlePolicyRequest(
+                serverSessionID: serverSessionID,
+                autoSleepEnabled: autoSleepEnabled,
+                lightSleepAfterSeconds: lightSleepAfterSeconds,
+                deepSleepAfterSeconds: deepSleepAfterSeconds
+            )
+        )
+        return mutateRuntimeSession(serverSessionID: serverSessionID) { runtimeSession in
+            runtimeSession.autoSleepEnabled = autoSleepEnabled
+            runtimeSession.lightSleepAfterSeconds = lightSleepAfterSeconds
+            runtimeSession.deepSleepAfterSeconds = deepSleepAfterSeconds
+        }
+    }
+
     func runDoctor() async throws -> String {
         recordedActions.append("doctor")
         if let doctorError {
@@ -765,6 +876,27 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
             "requests.inflight": 1,
         ]
         return metrics
+    }
+
+    private func mutateRuntimeSession(
+        serverSessionID: String,
+        _ update: (inout Melix_Controlplane_V1_ServerSessionRuntimeState) -> Void
+    ) -> Melix_Controlplane_V1_ServerSnapshot {
+        var snapshot = makeSnapshot(state: modelState)
+        let existingIndex = snapshot.runtimeSessions.firstIndex(where: { $0.serverSessionID == serverSessionID })
+        if let existingIndex {
+            update(&snapshot.runtimeSessions[existingIndex])
+        } else {
+            var runtimeSession = Melix_Controlplane_V1_ServerSessionRuntimeState()
+            runtimeSession.serverSessionID = serverSessionID
+            runtimeSession.lifecycleState = .ready
+            runtimeSession.powerState = .active
+            runtimeSession.wakeReason = .initialBoot
+            update(&runtimeSession)
+            snapshot.runtimeSessions.append(runtimeSession)
+        }
+        snapshotOverride = snapshot
+        return snapshot
     }
 
     private static func defaultModelSettings() -> Melix_Controlplane_V1_ModelSettings {

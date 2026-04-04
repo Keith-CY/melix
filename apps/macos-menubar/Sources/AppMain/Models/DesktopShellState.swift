@@ -422,6 +422,7 @@ public struct DesktopChatSessionState: Identifiable, Equatable, Sendable {
 }
 
 public enum DesktopBannerSeverity: Sendable {
+    case info
     case warning
     case critical
 }
@@ -435,5 +436,169 @@ public struct DesktopBannerState: Equatable, Sendable {
         self.title = title
         self.detail = detail
         self.severity = severity
+    }
+}
+
+public extension DesktopServerSessionState {
+    var isInteractiveReady: Bool {
+        lifecycle == .running || lifecycle == .sleeping
+    }
+
+    var retainsGatewayAccessConfiguration: Bool {
+        switch lifecycle {
+        case .starting, .running, .paused, .sleeping:
+            return true
+        default:
+            return false
+        }
+    }
+
+    var canStart: Bool {
+        switch lifecycle {
+        case .draft, .stopped, .error, .unavailable:
+            return true
+        default:
+            return false
+        }
+    }
+
+    var canPause: Bool {
+        lifecycle == .running
+    }
+
+    var canResume: Bool {
+        lifecycle == .paused
+    }
+
+    var canWake: Bool {
+        lifecycle == .sleeping
+    }
+
+    var canStop: Bool {
+        switch lifecycle {
+        case .starting, .running, .paused, .sleeping, .error:
+            return true
+        default:
+            return false
+        }
+    }
+
+    var lifecycleSummaryText: String {
+        "\(lifecycle.rawValue) • \(powerState.rawValue)"
+    }
+
+    var idlePolicySummaryText: String {
+        guard autoSleepEnabled else {
+            return "Auto sleep disabled."
+        }
+
+        let lightSummary = lightSleepAfterSeconds > 0 ? "light after \(lightSleepAfterSeconds)s" : "light sleep threshold unset"
+        let deepSummary = deepSleepAfterSeconds > 0 ? "deep after \(deepSleepAfterSeconds)s" : "deep sleep threshold unset"
+        return "Auto sleep enabled • \(lightSummary) • \(deepSummary)"
+    }
+
+    var runtimeDetailText: String {
+        let idleSummary = idleTimerSeconds > 0 ? "Idle \(idleTimerSeconds)s" : "Idle timer idle"
+        return "\(lifecycleSummaryText) • Wake \(wakeReason.rawValue) • \(idleSummary)"
+    }
+
+    var lifecycleBannerState: DesktopBannerState? {
+        switch lifecycle {
+        case .draft:
+            return nil
+        case .starting:
+            return DesktopBannerState(
+                title: "\(title) Is Starting",
+                detail: "Preparing \(listenerLabel) for \(modelID). Requests stay queued until the session reaches Running.",
+                severity: .info
+            )
+        case .running:
+            return nil
+        case .paused:
+            return DesktopBannerState(
+                title: "\(title) Is Paused",
+                detail: "Resume the session to accept prompts and API requests. \(idlePolicySummaryText)",
+                severity: .warning
+            )
+        case .sleeping:
+            return DesktopBannerState(
+                title: "\(title) Is Sleeping",
+                detail: "\(powerState.rawValue) mode is active. The next request can wake the session automatically, or you can wake it manually now.",
+                severity: .info
+            )
+        case .stopping:
+            return DesktopBannerState(
+                title: "\(title) Is Stopping",
+                detail: "Melix is draining the session and closing \(listenerLabel).",
+                severity: .info
+            )
+        case .stopped:
+            return DesktopBannerState(
+                title: "\(title) Is Stopped",
+                detail: "Start the session to serve \(modelID) at \(listenerLabel).",
+                severity: .warning
+            )
+        case .error:
+            return DesktopBannerState(
+                title: "\(title) Needs Recovery",
+                detail: lastError.isEmpty ? "The session entered an error state." : lastError,
+                severity: .critical
+            )
+        case .unavailable:
+            return DesktopBannerState(
+                title: "\(title) Is Unavailable",
+                detail: "Bind the session to an available text model before serving requests.",
+                severity: .warning
+            )
+        }
+    }
+
+    var chatWorkspaceNoticeState: DesktopBannerState? {
+        switch lifecycle {
+        case .running:
+            return nil
+        case .sleeping:
+            return DesktopBannerState(
+                title: "\(title) Will Wake On Demand",
+                detail: "You can send the next prompt immediately. Melix will wake the session from \(powerState.rawValue.lowercased()) first.",
+                severity: .info
+            )
+        case .paused:
+            return DesktopBannerState(
+                title: "\(title) Is Paused",
+                detail: "Resume the bound server session before sending prompts from this chat.",
+                severity: .warning
+            )
+        case .starting:
+            return DesktopBannerState(
+                title: "\(title) Is Starting",
+                detail: "Chat stays read-only until the server session finishes booting.",
+                severity: .info
+            )
+        case .stopping:
+            return DesktopBannerState(
+                title: "\(title) Is Stopping",
+                detail: "This chat stays read-only while the bound server session drains.",
+                severity: .warning
+            )
+        case .stopped:
+            return DesktopBannerState(
+                title: "\(title) Is Stopped",
+                detail: "Start the bound server session before sending prompts from this chat.",
+                severity: .warning
+            )
+        case .error:
+            return DesktopBannerState(
+                title: "\(title) Needs Recovery",
+                detail: lastError.isEmpty ? "The bound server session failed." : lastError,
+                severity: .critical
+            )
+        case .draft, .unavailable:
+            return DesktopBannerState(
+                title: "No Active Server Session",
+                detail: "Choose a valid server session and start it before sending prompts from this chat.",
+                severity: .warning
+            )
+        }
     }
 }

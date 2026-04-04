@@ -1185,6 +1185,27 @@ public final class RuntimeViewModel {
         }
     }
 
+    public func updateSelectedServerSessionAutoSleepEnabled(_ value: Bool) {
+        updateSelectedServerSession { session in
+            session.autoSleepEnabled = value
+            session.updatedAt = Date()
+        }
+    }
+
+    public func updateSelectedServerSessionLightSleepAfterSeconds(_ value: Int) {
+        updateSelectedServerSession { session in
+            session.lightSleepAfterSeconds = max(0, value)
+            session.updatedAt = Date()
+        }
+    }
+
+    public func updateSelectedServerSessionDeepSleepAfterSeconds(_ value: Int) {
+        updateSelectedServerSession { session in
+            session.deepSleepAfterSeconds = max(0, value)
+            session.updatedAt = Date()
+        }
+    }
+
     @discardableResult
     public func generatePrimaryAPIKeyForSelectedServerSession() async -> String? {
         guard let selectedServerSession else {
@@ -1230,30 +1251,87 @@ public final class RuntimeViewModel {
         guard let serverSession = selectedServerSession else {
             return
         }
-        replaceServerSession(id: serverSession.id) { session in
-            session.lifecycle = .starting
-            session.lastError = ""
-            session.updatedAt = Date()
-        }
-        notifyStateChanged()
-        await loadModel(modelID: serverSession.modelID)
+        await startServerSession(id: serverSession.id)
     }
 
     public func stopSelectedServerSession() async {
         guard let serverSession = selectedServerSession else {
             return
         }
-        replaceServerSession(id: serverSession.id) { session in
-            session.lifecycle = .stopping
-            session.updatedAt = Date()
+        await stopServerSession(id: serverSession.id)
+    }
+
+    public func pauseSelectedServerSession() async {
+        guard let serverSession = selectedServerSession else {
+            return
         }
-        notifyStateChanged()
-        await unloadModel(modelID: serverSession.modelID)
-        replaceServerSession(id: serverSession.id) { session in
-            session.lifecycle = .stopped
-            session.updatedAt = Date()
+        await pauseServerSession(id: serverSession.id)
+    }
+
+    public func resumeSelectedServerSession() async {
+        guard let serverSession = selectedServerSession else {
+            return
         }
-        notifyStateChanged()
+        await resumeServerSession(id: serverSession.id)
+    }
+
+    public func wakeSelectedServerSession() async {
+        guard let serverSession = selectedServerSession else {
+            return
+        }
+        await wakeServerSession(id: serverSession.id)
+    }
+
+    public func applySelectedServerIdlePolicy() async {
+        guard let serverSession = selectedServerSession else {
+            return
+        }
+        await performServerIdlePolicyUpdate(serverSessionID: serverSession.id)
+    }
+
+    public func startServerSession(id serverSessionID: String) async {
+        await performServerLifecycleAction(
+            serverSessionID: serverSessionID,
+            metricName: "menu.server_start_ms"
+        ) { [client] targetServerSessionID in
+            try await client.startServerSession(serverSessionID: targetServerSessionID)
+        }
+    }
+
+    public func pauseServerSession(id serverSessionID: String) async {
+        await performServerLifecycleAction(
+            serverSessionID: serverSessionID,
+            metricName: "menu.server_pause_ms"
+        ) { [client] targetServerSessionID in
+            try await client.pauseServerSession(serverSessionID: targetServerSessionID)
+        }
+    }
+
+    public func resumeServerSession(id serverSessionID: String) async {
+        await performServerLifecycleAction(
+            serverSessionID: serverSessionID,
+            metricName: "menu.server_resume_ms"
+        ) { [client] targetServerSessionID in
+            try await client.resumeServerSession(serverSessionID: targetServerSessionID)
+        }
+    }
+
+    public func wakeServerSession(id serverSessionID: String) async {
+        await performServerLifecycleAction(
+            serverSessionID: serverSessionID,
+            metricName: "menu.server_wake_ms"
+        ) { [client] targetServerSessionID in
+            try await client.wakeServerSession(serverSessionID: targetServerSessionID)
+        }
+    }
+
+    public func stopServerSession(id serverSessionID: String) async {
+        await performServerLifecycleAction(
+            serverSessionID: serverSessionID,
+            metricName: "menu.server_stop_ms"
+        ) { [client] targetServerSessionID in
+            try await client.stopServerSession(serverSessionID: targetServerSessionID)
+        }
     }
 
     public func createChatSession() {
@@ -1399,18 +1477,21 @@ public final class RuntimeViewModel {
                 severity: .critical
             )
         }
-        if serverStateText == "Degraded" || serverStateText == "Draining" || connectionStateText == "Reconnecting" {
-            return DesktopBannerState(
-                title: "Runtime Needs Monitoring",
-                detail: connectionDetailText,
-                severity: .warning
-            )
-        }
         if let failingServer = serverSessions.first(where: { $0.lifecycle == .error }) {
             return DesktopBannerState(
                 title: "\(failingServer.title) Needs Recovery",
                 detail: failingServer.lastError,
                 severity: .critical
+            )
+        }
+        if let selectedServerBanner = selectedServerSession?.lifecycleBannerState {
+            return selectedServerBanner
+        }
+        if serverStateText == "Degraded" || serverStateText == "Draining" || connectionStateText == "Reconnecting" {
+            return DesktopBannerState(
+                title: "Runtime Needs Monitoring",
+                detail: connectionDetailText,
+                severity: .warning
             )
         }
         if let audioSetupAction = audioSetupActions.first {
@@ -1723,9 +1804,9 @@ public final class RuntimeViewModel {
             notifyStateChanged()
             return
         }
-        guard serverSession.isRunning else {
-            chatStatusText = "No Server Session"
-            setLastError("Start a running Server Session before sending chat prompts.")
+        guard serverSession.isInteractiveReady else {
+            chatStatusText = serverSession.lifecycle.rawValue
+            setLastError(chatSubmissionBlockedMessage(for: serverSession))
             selectedSurface = .chat
             notifyStateChanged()
             return
@@ -2865,6 +2946,78 @@ public final class RuntimeViewModel {
         }
     }
 
+    private func performServerLifecycleAction(
+        serverSessionID: String,
+        metricName: String,
+        action: @escaping @Sendable (String) async throws -> Melix_Controlplane_V1_ServerSnapshot
+    ) async {
+        guard !serverSessionID.isEmpty else {
+            return
+        }
+
+        selectedServerSessionID = serverSessionID
+
+        let startedAt = Date()
+        do {
+            let snapshot = try await action(serverSessionID)
+            await metrics.record(
+                name: metricName,
+                valueMs: Date().timeIntervalSince(startedAt) * 1_000
+            )
+            apply(snapshot: snapshot)
+        } catch {
+            replaceServerSession(id: serverSessionID) { session in
+                session.lastError = String(describing: error)
+                session.updatedAt = Date()
+            }
+            recordLocalError(String(describing: error))
+            notifyStateChanged()
+        }
+    }
+
+    private func performServerIdlePolicyUpdate(serverSessionID: String) async {
+        guard let serverSession = serverSession(id: serverSessionID) else {
+            return
+        }
+
+        let startedAt = Date()
+        do {
+            let snapshot = try await client.updateServerIdlePolicy(
+                serverSessionID: serverSession.id,
+                autoSleepEnabled: serverSession.autoSleepEnabled,
+                lightSleepAfterSeconds: UInt32(max(0, serverSession.lightSleepAfterSeconds)),
+                deepSleepAfterSeconds: UInt32(max(0, serverSession.deepSleepAfterSeconds))
+            )
+            await metrics.record(
+                name: "menu.server_idle_policy_ms",
+                valueMs: Date().timeIntervalSince(startedAt) * 1_000
+            )
+            apply(snapshot: snapshot)
+        } catch {
+            recordLocalError(String(describing: error))
+            notifyStateChanged()
+        }
+    }
+
+    private func chatSubmissionBlockedMessage(for serverSession: DesktopServerSessionState) -> String {
+        switch serverSession.lifecycle {
+        case .paused:
+            return "Resume the paused Server Session before sending chat prompts."
+        case .starting:
+            return "Wait for the Server Session to finish starting before sending chat prompts."
+        case .stopping:
+            return "Wait for the Server Session to finish stopping or start it again before sending chat prompts."
+        case .stopped, .draft, .unavailable:
+            return "Start the bound Server Session before sending chat prompts."
+        case .error:
+            return serverSession.lastError.isEmpty
+                ? "Recover the failed Server Session before sending chat prompts."
+                : "Recover the failed Server Session before sending chat prompts. \(serverSession.lastError)"
+        case .running, .sleeping:
+            return ""
+        }
+    }
+
     private func replaceChatSession(
         id: String,
         _ update: (inout DesktopChatSessionState) -> Void
@@ -3094,7 +3247,7 @@ public final class RuntimeViewModel {
             scheduleGatewayAccessClear(serverSessionID: lastAppliedGatewaySessionID)
             return
         }
-        guard selectedServerSession.isRunning else {
+        guard selectedServerSession.retainsGatewayAccessConfiguration else {
             scheduleGatewayAccessClear(serverSessionID: selectedServerSession.id)
             return
         }

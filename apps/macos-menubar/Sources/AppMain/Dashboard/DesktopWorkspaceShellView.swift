@@ -52,7 +52,7 @@ private struct DesktopShellBannerView: View {
 
     var body: some View {
         HStack(alignment: .center, spacing: 12) {
-            Image(systemName: banner.severity == .critical ? "exclamationmark.triangle.fill" : "exclamationmark.circle.fill")
+            Image(systemName: bannerSymbolName)
                 .foregroundStyle(.white)
             VStack(alignment: .leading, spacing: 4) {
                 Text(banner.title)
@@ -66,7 +66,29 @@ private struct DesktopShellBannerView: View {
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 10)
-        .background(banner.severity == .critical ? Color.red : Color.orange)
+        .background(bannerBackgroundColor)
+    }
+
+    private var bannerSymbolName: String {
+        switch banner.severity {
+        case .info:
+            return "moon.stars.fill"
+        case .warning:
+            return "exclamationmark.circle.fill"
+        case .critical:
+            return "exclamationmark.triangle.fill"
+        }
+    }
+
+    private var bannerBackgroundColor: Color {
+        switch banner.severity {
+        case .info:
+            return Color.blue
+        case .warning:
+            return Color.orange
+        case .critical:
+            return Color.red
+        }
     }
 }
 
@@ -113,6 +135,53 @@ private struct DesktopShellHeaderView: View {
                     .buttonStyle(.plain)
                 }
             }
+        }
+    }
+}
+
+struct DesktopInlineNoticeCardView: View {
+    let notice: DesktopBannerState
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: symbolName)
+                .foregroundStyle(accentColor)
+            VStack(alignment: .leading, spacing: 6) {
+                Text(notice.title)
+                    .font(.headline)
+                Text(notice.detail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+        }
+        .padding(14)
+        .background(accentColor.opacity(0.12), in: RoundedRectangle(cornerRadius: 14))
+        .overlay(
+            RoundedRectangle(cornerRadius: 14)
+                .stroke(accentColor.opacity(0.22), lineWidth: 1)
+        )
+    }
+
+    private var accentColor: Color {
+        switch notice.severity {
+        case .info:
+            return .blue
+        case .warning:
+            return .orange
+        case .critical:
+            return .red
+        }
+    }
+
+    private var symbolName: String {
+        switch notice.severity {
+        case .info:
+            return "moon.stars.fill"
+        case .warning:
+            return "pause.circle.fill"
+        case .critical:
+            return "exclamationmark.triangle.fill"
         }
     }
 }
@@ -383,9 +452,9 @@ private struct DesktopServerSessionSidebar: View {
                                         Text(session.title)
                                             .font(.headline)
                                         Spacer()
-                                        Text(session.lifecycle.rawValue)
+                                        Text(session.lifecycleSummaryText)
                                             .font(.caption)
-                                            .foregroundStyle(session.isRunning ? .green : .secondary)
+                                            .foregroundStyle(session.isInteractiveReady ? .green : .secondary)
                                     }
                                     Text("\(session.modelID) • \(session.listenerLabel)")
                                         .font(.caption)
@@ -436,6 +505,10 @@ private struct DesktopServerSessionEditor: View {
                 if let session = viewModel.selectedServerSession {
                     Text("Choose model, configure listener, then start the server session.")
                         .foregroundStyle(.secondary)
+
+                    if let notice = session.lifecycleBannerState {
+                        DesktopInlineNoticeCardView(notice: notice)
+                    }
 
                     GroupBox("Basic Configuration") {
                         VStack(alignment: .leading, spacing: 12) {
@@ -551,17 +624,84 @@ private struct DesktopServerSessionEditor: View {
                         }
                     }
 
-                    HStack {
-                        Button("Start") {
-                            Task { await viewModel.startSelectedServerSession() }
-                        }
-                        .buttonStyle(.borderedProminent)
+                    GroupBox("Lifecycle Controls") {
+                        VStack(alignment: .leading, spacing: 12) {
+                            Text(session.runtimeDetailText)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
 
-                        Button("Stop") {
-                            Task { await viewModel.stopSelectedServerSession() }
+                            HStack {
+                                Button("Start") {
+                                    Task { await viewModel.startSelectedServerSession() }
+                                }
+                                .buttonStyle(.borderedProminent)
+                                .disabled(session.canStart == false)
+
+                                Button("Pause") {
+                                    Task { await viewModel.pauseSelectedServerSession() }
+                                }
+                                .buttonStyle(.bordered)
+                                .disabled(session.canPause == false)
+
+                                Button("Resume") {
+                                    Task { await viewModel.resumeSelectedServerSession() }
+                                }
+                                .buttonStyle(.bordered)
+                                .disabled(session.canResume == false)
+
+                                Button("Wake") {
+                                    Task { await viewModel.wakeSelectedServerSession() }
+                                }
+                                .buttonStyle(.bordered)
+                                .disabled(session.canWake == false)
+
+                                Button("Stop") {
+                                    Task { await viewModel.stopSelectedServerSession() }
+                                }
+                                .buttonStyle(.bordered)
+                                .disabled(session.canStop == false)
+                            }
+
+                            Toggle(
+                                "Auto Sleep",
+                                isOn: Binding(
+                                    get: { viewModel.selectedServerSession?.autoSleepEnabled ?? false },
+                                    set: { viewModel.updateSelectedServerSessionAutoSleepEnabled($0) }
+                                )
+                            )
+
+                            HStack {
+                                TextField(
+                                    "Light sleep after (s)",
+                                    value: Binding(
+                                        get: { viewModel.selectedServerSession?.lightSleepAfterSeconds ?? 0 },
+                                        set: { viewModel.updateSelectedServerSessionLightSleepAfterSeconds($0) }
+                                    ),
+                                    format: .number
+                                )
+                                .textFieldStyle(.roundedBorder)
+
+                                TextField(
+                                    "Deep sleep after (s)",
+                                    value: Binding(
+                                        get: { viewModel.selectedServerSession?.deepSleepAfterSeconds ?? 0 },
+                                        set: { viewModel.updateSelectedServerSessionDeepSleepAfterSeconds($0) }
+                                    ),
+                                    format: .number
+                                )
+                                .textFieldStyle(.roundedBorder)
+
+                                Button("Apply Idle Policy") {
+                                    Task { await viewModel.applySelectedServerIdlePolicy() }
+                                }
+                                .buttonStyle(.bordered)
+                            }
+
+                            Text(session.idlePolicySummaryText)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
                         }
-                        .buttonStyle(.bordered)
-                        .disabled(viewModel.selectedServerSession?.isRunning != true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                     }
                 } else {
                     ContentUnavailableView(
@@ -589,9 +729,12 @@ private struct DesktopServerSessionInspector: View {
             if let session = viewModel.selectedServerSession {
                 GroupBox("Status") {
                     VStack(alignment: .leading, spacing: 6) {
-                        Text(session.lifecycle.rawValue)
+                        Text(session.lifecycleSummaryText)
                             .font(.headline)
                         Text(session.lastKnownModelStateText.isEmpty ? session.modelID : "\(session.modelID) • \(session.lastKnownModelStateText)")
+                            .foregroundStyle(.secondary)
+                        Text(session.runtimeDetailText)
+                            .font(.caption)
                             .foregroundStyle(.secondary)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -611,6 +754,17 @@ private struct DesktopServerSessionInspector: View {
                 }
 
                 DesktopServerGatewayAccessSummaryView(session: session)
+
+                GroupBox("Power Policy") {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(session.idlePolicySummaryText)
+                            .font(.headline)
+                        Text("Wake reason: \(session.wakeReason.rawValue)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
 
                 DesktopBoundAgentIntegrationPanel(viewModel: viewModel)
 

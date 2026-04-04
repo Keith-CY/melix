@@ -51,6 +51,51 @@ struct ControlPlaneXPCClientTests {
         #expect(snapshot.queues.lanes.contains(where: { $0.laneID == "text.decode.interactive" }))
     }
 
+    @Test("local client mutates server lifecycle and idle policy through control-plane execute")
+    func localClientMutatesServerLifecycleAndIdlePolicy() async throws {
+        let service = ControlPlaneService()
+        let client = LocalControlPlaneXPCClient(service: service)
+        let initialSnapshot = try await client.serverSnapshot()
+        let serverSessionID = try #require(initialSnapshot.runtimeSessions.first?.serverSessionID)
+
+        let pausedSnapshot = try await client.pauseServerSession(serverSessionID: serverSessionID)
+        let pausedSession = try #require(
+            pausedSnapshot.runtimeSessions.first(where: { $0.serverSessionID == serverSessionID })
+        )
+        #expect(pausedSession.lifecycleState == .paused)
+
+        let idlePolicySnapshot = try await client.updateServerIdlePolicy(
+            serverSessionID: serverSessionID,
+            autoSleepEnabled: true,
+            lightSleepAfterSeconds: 300,
+            deepSleepAfterSeconds: 900
+        )
+        let idlePolicySession = try #require(
+            idlePolicySnapshot.runtimeSessions.first(where: { $0.serverSessionID == serverSessionID })
+        )
+        #expect(idlePolicySession.autoSleepEnabled)
+        #expect(idlePolicySession.lightSleepAfterSeconds == 300)
+        #expect(idlePolicySession.deepSleepAfterSeconds == 900)
+
+        let resumedSnapshot = try await client.resumeServerSession(serverSessionID: serverSessionID)
+        let resumedSession = try #require(
+            resumedSnapshot.runtimeSessions.first(where: { $0.serverSessionID == serverSessionID })
+        )
+        #expect(resumedSession.lifecycleState == .ready)
+
+        let stoppedSnapshot = try await client.stopServerSession(serverSessionID: serverSessionID)
+        let stoppedSession = try #require(
+            stoppedSnapshot.runtimeSessions.first(where: { $0.serverSessionID == serverSessionID })
+        )
+        #expect(stoppedSession.lifecycleState == .stopped)
+
+        let startedSnapshot = try await client.startServerSession(serverSessionID: serverSessionID)
+        let startedSession = try #require(
+            startedSnapshot.runtimeSessions.first(where: { $0.serverSessionID == serverSessionID })
+        )
+        #expect(startedSession.lifecycleState == .ready)
+    }
+
     @Test("local client bridges subscription streams and unsubscribes on termination")
     func localClientBridgesSubscriptionStreams() async {
         let service = StreamingExecuteControlPlaneService()

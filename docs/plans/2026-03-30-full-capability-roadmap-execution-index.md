@@ -164,6 +164,10 @@ The roadmap extension in `M10-M17` includes milestone-level plans plus decompose
   repository-default verification plus changed-line coverage evidence are recorded in the
   repository.
 - `M10.3` `docs/plans/2026-03-31-m10-3-desktop-status-banners-and-operator-surfaces.md`
+  Status: completed. The native desktop shell now projects control-plane-owned runtime-session
+  lifecycle and idle-policy truth through lifecycle banners, inline chat notices, and
+  session-scoped operator controls, with repository-default Swift verification and changed-line
+  coverage evidence recorded in the repository.
 - `M10.4` `docs/plans/2026-03-31-m10-4-session-lifecycle-integration-evidence.md`
 
 ## M11: Disk Streaming, Memory Budgeting, And Cache Policy

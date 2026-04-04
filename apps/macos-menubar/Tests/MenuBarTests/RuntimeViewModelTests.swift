@@ -531,9 +531,9 @@ struct RuntimeViewModelTests {
         #expect(await dedupeClient.recordedGatewayAccessApplyRequests.count == 1)
     }
 
-    @Test("chat requires a running server session before sending prompts")
+    @Test("chat requires an interactive server session before sending prompts")
     @MainActor
-    func chatRequiresRunningServerSession() async throws {
+    func chatRequiresInteractiveServerSession() async throws {
         let client = FakeControlPlaneXPCClient()
         let viewModel = RuntimeViewModel(client: client)
 
@@ -544,8 +544,68 @@ struct RuntimeViewModelTests {
 
         let actions = await client.recordedActions
         #expect(actions.contains(where: { $0.hasPrefix("chat:") }) == false)
-        #expect(viewModel.chatStatusText == "No Server Session")
-        #expect(viewModel.lastError?.contains("Server Session") == true)
+        #expect(viewModel.chatStatusText == "Stopped")
+        #expect(viewModel.lastError == "Start the bound Server Session before sending chat prompts.")
+    }
+
+    @Test("sleeping chat stays interactive while paused chat is blocked")
+    @MainActor
+    func sleepingChatStaysInteractiveWhilePausedChatIsBlocked() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let sleepingSnapshot = makeSnapshot(
+            serverState: .serverReady,
+            models: [makeModelSummary(state: .modelWarm)],
+            runtimeSessions: [
+                makeRuntimeSession(
+                    lifecycleState: .sleeping,
+                    powerState: .deepSleep,
+                    wakeReason: .requestActivity,
+                    idleTimerSeconds: 240,
+                    autoSleepEnabled: true,
+                    lightSleepAfterSeconds: 300,
+                    deepSleepAfterSeconds: 900
+                )
+            ]
+        )
+        await client.configureSnapshot(sleepingSnapshot)
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+        viewModel.chatComposerText = "wake on demand"
+        await viewModel.submitChatPrompt()
+
+        #expect(await client.recordedActions.contains(where: { $0.hasPrefix("chat:") }))
+        #expect(viewModel.selectedChatServerSession?.isInteractiveReady == true)
+        #expect(viewModel.selectedChatServerSession?.chatWorkspaceNoticeState?.severity == .info)
+
+        let serverSessionID = try #require(viewModel.selectedServerSession?.id)
+        await client.sendServerStateChanged(
+            state: .serverReady,
+            runtimeSessions: [
+                makeRuntimeSession(
+                    serverSessionID: serverSessionID,
+                    lifecycleState: .paused,
+                    powerState: .active,
+                    wakeReason: .policyApply,
+                    idleTimerSeconds: 120,
+                    autoSleepEnabled: true,
+                    lightSleepAfterSeconds: 300,
+                    deepSleepAfterSeconds: 900
+                )
+            ]
+        )
+
+        try await waitForRuntimeViewModelCondition("expected selected chat server session to enter paused state") {
+            viewModel.selectedChatServerSession?.lifecycle == .paused
+        }
+
+        viewModel.chatComposerText = "blocked while paused"
+        let recordedChatCount = await client.recordedActions.filter { $0.hasPrefix("chat:") }.count
+        await viewModel.submitChatPrompt()
+
+        #expect(await client.recordedActions.filter { $0.hasPrefix("chat:") }.count == recordedChatCount)
+        #expect(viewModel.chatStatusText == "Paused")
+        #expect(viewModel.lastError == "Resume the paused Server Session before sending chat prompts.")
     }
 
     @Test("creating a chat session binds it to the selected server session")
@@ -626,13 +686,247 @@ struct RuntimeViewModelTests {
         #expect(configuredServer.servingDefaults.maxConcurrentRequests == 1)
 
         await viewModel.startSelectedServerSession()
-        #expect(await client.recordedActions.contains("load:melix-dev-text"))
+        #expect(await client.recordedActions.contains("server.start:\(createdServer.id)"))
         #expect(viewModel.selectedServerSession?.lifecycle == .running)
 
+        let runningServerID = try #require(viewModel.selectedServerSession?.id)
         await viewModel.stopSelectedServerSession()
-        #expect(await client.recordedActions.contains("unload:melix-dev-text"))
+        #expect(await client.recordedActions.contains("server.stop:\(runningServerID)"))
         #expect(viewModel.selectedServerSession?.lifecycle == .stopped)
         #expect(stateChangeCount > 0)
+    }
+
+    @Test("server lifecycle controls and idle policy updates hydrate the selected session")
+    @MainActor
+    func serverLifecycleControlsAndIdlePolicyUpdatesHydrateSelectedSession() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let metrics = MenuBarMetricsStore()
+        let viewModel = RuntimeViewModel(client: client, metrics: metrics)
+
+        await viewModel.start()
+        let serverSessionID = try #require(viewModel.selectedServerSession?.id)
+
+        await viewModel.pauseSelectedServerSession()
+        #expect(await client.recordedActions.contains("server.pause:\(serverSessionID)"))
+        #expect(viewModel.selectedServerSession?.lifecycle == .paused)
+        #expect(viewModel.selectedServerSession?.wakeReason == .policyApply)
+
+        await viewModel.resumeSelectedServerSession()
+        #expect(await client.recordedActions.contains("server.resume:\(serverSessionID)"))
+        #expect(viewModel.selectedServerSession?.lifecycle == .running)
+        #expect(viewModel.selectedServerSession?.wakeReason == .operatorResume)
+
+        await client.sendServerStateChanged(
+            state: .serverReady,
+            runtimeSessions: [
+                makeRuntimeSession(
+                    serverSessionID: serverSessionID,
+                    lifecycleState: .sleeping,
+                    powerState: .lightSleep,
+                    wakeReason: .requestActivity,
+                    idleTimerSeconds: 180,
+                    autoSleepEnabled: false,
+                    lightSleepAfterSeconds: 0,
+                    deepSleepAfterSeconds: 0
+                )
+            ]
+        )
+        try await waitForRuntimeViewModelCondition("expected server session to enter sleeping state") {
+            viewModel.selectedServerSession?.lifecycle == .sleeping
+        }
+
+        await viewModel.wakeSelectedServerSession()
+        #expect(await client.recordedActions.contains("server.wake:\(serverSessionID)"))
+        #expect(viewModel.selectedServerSession?.lifecycle == .running)
+
+        viewModel.updateSelectedServerSessionAutoSleepEnabled(true)
+        viewModel.updateSelectedServerSessionLightSleepAfterSeconds(300)
+        viewModel.updateSelectedServerSessionDeepSleepAfterSeconds(900)
+        await viewModel.applySelectedServerIdlePolicy()
+
+        let idlePolicyRequest = try #require(await client.recordedServerIdlePolicyRequests.last)
+        #expect(idlePolicyRequest.serverSessionID == serverSessionID)
+        #expect(idlePolicyRequest.autoSleepEnabled)
+        #expect(idlePolicyRequest.lightSleepAfterSeconds == 300)
+        #expect(idlePolicyRequest.deepSleepAfterSeconds == 900)
+        #expect(viewModel.selectedServerSession?.autoSleepEnabled == true)
+        #expect(viewModel.selectedServerSession?.lightSleepAfterSeconds == 300)
+        #expect(viewModel.selectedServerSession?.deepSleepAfterSeconds == 900)
+
+        let metricValues = await metrics.snapshot()
+        #expect(metricValues["menu.server_pause_ms"] != nil)
+        #expect(metricValues["menu.server_resume_ms"] != nil)
+        #expect(metricValues["menu.server_wake_ms"] != nil)
+        #expect(metricValues["menu.server_idle_policy_ms"] != nil)
+    }
+
+    @Test("server lifecycle helper entry points no-op without a selected session or explicit id")
+    @MainActor
+    func serverLifecycleHelperEntryPointsNoOpWithoutSelectedSessionOrExplicitID() async throws {
+        let client = EmptySnapshotControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+        await viewModel.stopSelectedServerSession()
+        await viewModel.pauseSelectedServerSession()
+        await viewModel.resumeSelectedServerSession()
+        await viewModel.wakeSelectedServerSession()
+        await viewModel.applySelectedServerIdlePolicy()
+
+        await viewModel.startServerSession(id: "")
+        await viewModel.stopServerSession(id: "")
+        await viewModel.pauseServerSession(id: "")
+        await viewModel.resumeServerSession(id: "")
+        await viewModel.wakeServerSession(id: "")
+
+        #expect(await client.recordedActions.isEmpty)
+    }
+
+    @Test("server lifecycle and idle policy failures surface local errors")
+    @MainActor
+    func serverLifecycleAndIdlePolicyFailuresSurfaceLocalErrors() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+        await client.configureErrors(pauseServer: MenuBarTestError(description: "pause failed"))
+        await viewModel.pauseSelectedServerSession()
+        #expect(viewModel.lastError?.contains("pause failed") == true)
+
+        await client.configureErrors(
+            pauseServer: nil,
+            resumeServer: MenuBarTestError(description: "resume failed")
+        )
+        await viewModel.resumeSelectedServerSession()
+        #expect(viewModel.lastError?.contains("resume failed") == true)
+
+        let serverSessionID = try #require(viewModel.selectedServerSession?.id)
+        await client.sendServerStateChanged(
+            state: .serverReady,
+            runtimeSessions: [
+                makeRuntimeSession(
+                    serverSessionID: serverSessionID,
+                    lifecycleState: .sleeping,
+                    powerState: .lightSleep,
+                    wakeReason: .requestActivity
+                )
+            ]
+        )
+        try await waitForRuntimeViewModelCondition("expected server session to enter sleeping state before wake failure") {
+            viewModel.selectedServerSession?.lifecycle == .sleeping
+        }
+
+        await client.configureErrors(
+            pauseServer: nil,
+            resumeServer: nil,
+            wakeServer: MenuBarTestError(description: "wake failed")
+        )
+        await viewModel.wakeSelectedServerSession()
+        #expect(viewModel.lastError?.contains("wake failed") == true)
+
+        await client.configureErrors(
+            pauseServer: nil,
+            resumeServer: nil,
+            wakeServer: nil,
+            stopServer: MenuBarTestError(description: "stop failed")
+        )
+        await viewModel.stopSelectedServerSession()
+        #expect(viewModel.lastError?.contains("stop failed") == true)
+
+        await client.configureErrors(
+            pauseServer: nil,
+            resumeServer: nil,
+            wakeServer: nil,
+            stopServer: nil,
+            updateServerIdlePolicy: MenuBarTestError(description: "idle policy failed")
+        )
+        viewModel.updateSelectedServerSessionAutoSleepEnabled(true)
+        viewModel.updateSelectedServerSessionLightSleepAfterSeconds(300)
+        viewModel.updateSelectedServerSessionDeepSleepAfterSeconds(900)
+        await viewModel.applySelectedServerIdlePolicy()
+
+        #expect(viewModel.lastError?.contains("idle policy failed") == true)
+    }
+
+    @Test("chat blocked messages cover starting restored stopped and failed server sessions")
+    @MainActor
+    func chatBlockedMessagesCoverStartingStoppedAndFailedServerSessions() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let startingSnapshot = makeSnapshot(
+            serverState: .serverReady,
+            models: [makeModelSummary(state: .modelWarm)],
+            runtimeSessions: [
+                makeRuntimeSession(
+                    lifecycleState: .loading,
+                    powerState: .active,
+                    wakeReason: .initialBoot
+                )
+            ]
+        )
+        await client.configureSnapshot(startingSnapshot)
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+        viewModel.chatComposerText = "starting blocked"
+        await viewModel.submitChatPrompt()
+        #expect(viewModel.lastError == "Wait for the Server Session to finish starting before sending chat prompts.")
+
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-menubar-stopping-chat-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let melixHome = MelixHome(environment: ["MELIX_HOME": temporaryRoot.path])
+        let operatorSessionStore = OperatorSessionStore(melixHome: melixHome)
+        let stoppingServer = DesktopServerSessionState(
+            id: "server-session-stopping",
+            title: "Stopping Server",
+            modelID: "melix-dev-text",
+            lifecycle: .stopping,
+            powerState: .active
+        )
+        try operatorSessionStore.save(
+            OperatorSessionState(
+                selectedSurface: .chat,
+                selectedServerSessionID: stoppingServer.id,
+                serverSessions: [stoppingServer]
+            )
+        )
+
+        let stoppingClient = FakeControlPlaneXPCClient()
+        let stoppingViewModel = RuntimeViewModel(
+            client: stoppingClient,
+            operatorSessionStore: operatorSessionStore
+        )
+        await stoppingViewModel.start()
+        stoppingViewModel.selectServerSession(id: stoppingServer.id)
+        #expect(stoppingViewModel.selectedServerSession?.lifecycle == .stopped)
+        stoppingViewModel.createChatSession()
+        #expect(stoppingViewModel.selectedChatServerSession?.lifecycle == .stopped)
+        stoppingViewModel.chatComposerText = "stopping blocked"
+        await stoppingViewModel.submitChatPrompt()
+        #expect(stoppingViewModel.lastError == "Start the bound Server Session before sending chat prompts.")
+
+        let failingClient = FakeControlPlaneXPCClient()
+        let failingSnapshot = makeSnapshot(
+            serverState: .serverReady,
+            models: [makeModelSummary(state: .modelWarm)],
+            runtimeSessions: [
+                makeRuntimeSession(
+                    lifecycleState: .error,
+                    powerState: .stopped
+                )
+            ]
+        )
+        await failingClient.configureSnapshot(failingSnapshot)
+        await failingClient.configureErrors(pauseServer: MenuBarTestError(description: "gpu lost"))
+        let failingViewModel = RuntimeViewModel(client: failingClient)
+        await failingViewModel.start()
+        failingViewModel.createChatSession()
+        await failingViewModel.pauseSelectedServerSession()
+        failingViewModel.chatComposerText = "error blocked"
+        await failingViewModel.submitChatPrompt()
+        #expect(failingViewModel.lastError == "Recover the failed Server Session before sending chat prompts. gpu lost")
     }
 
     @Test("agent integration exports mirror the selected server session and record metrics")
@@ -1089,16 +1383,26 @@ struct RuntimeViewModelTests {
         #expect(viewModel.selectedServerSession?.lastKnownModelStateText == "Unavailable")
 
         let failingClient = FakeControlPlaneXPCClient()
-        await failingClient.configureErrors(load: MenuBarTestError(description: "load failed"))
+        let failingSnapshot = makeSnapshot(
+            serverState: .serverReady,
+            models: [makeModelSummary(state: .modelWarm)],
+            runtimeSessions: [
+                makeRuntimeSession(
+                    lifecycleState: .error,
+                    powerState: .stopped
+                )
+            ]
+        )
+        await failingClient.configureSnapshot(failingSnapshot)
+        await failingClient.configureErrors(pauseServer: MenuBarTestError(description: "pause failed"))
         let failingViewModel = RuntimeViewModel(client: failingClient)
         await failingViewModel.start()
-        failingViewModel.createServerSession()
-        await failingViewModel.startSelectedServerSession()
+        await failingViewModel.pauseSelectedServerSession()
 
         let failingBanner = try #require(failingViewModel.desktopBannerState)
         #expect(failingBanner.severity == .critical)
         #expect(failingBanner.title.contains("Needs Recovery"))
-        #expect(failingBanner.detail.contains("load failed"))
+        #expect(failingBanner.detail.contains("pause failed"))
     }
 
     @Test("critical banner surfaces failed runtime state")

@@ -1,5 +1,61 @@
 # Progress Log
 
+## 2026-04-05
+
+- Closed `M10.3` by surfacing control-plane-owned server-session lifecycle and idle-policy truth
+  across the desktop shell, server workspace, and chat-facing operator surfaces:
+  - extended `apps/macos-menubar/Sources/AppMain/Models/DesktopShellState.swift` so server-session
+    hydration now derives lifecycle summaries, runtime detail, idle-policy summaries, lifecycle
+    banners, and chat-facing lifecycle notices directly from typed runtime-session payloads
+  - updated `apps/macos-menubar/Sources/AppMain/Models/RuntimeViewModel.swift` to route pause,
+    resume, wake, stop, and idle-policy actions through the control-plane client while keeping
+    desktop banner state authoritative to live snapshots and streamed lifecycle events instead of
+    optimistic local lifecycle mutations
+  - expanded `apps/macos-menubar/Sources/AppMain/Dashboard/DesktopWorkspaceShellView.swift` and
+    `apps/macos-menubar/Sources/AppMain/Chat/DesktopChatView.swift` so the native Window UI now
+    exposes lifecycle banners, inline notices, runtime detail, idle-policy summaries, and typed
+    lifecycle controls for paused, sleeping, stopped, and failed server sessions
+  - added focused coverage in
+    `apps/macos-menubar/Tests/MenuBarTests/RuntimeViewModelTests.swift`,
+    `apps/macos-menubar/Tests/MenuBarTests/DesktopFoundationViewTests.swift`,
+    `apps/macos-menubar/Tests/MenuBarTests/ControlPlaneXPCClientTests.swift`, and
+    `apps/macos-menubar/Tests/MenuBarTests/DesktopShellStateTests.swift`, plus lifecycle-aware test
+    support wiring in `apps/macos-menubar/Tests/MenuBarTests/TestSupport.swift`
+  - marked `M10.3` completed in the roadmap execution index and moved the active task plan to
+    `M10.4`
+- Verification summary for `M10.3`:
+  - `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/.build/ModuleCache.noindex" swift test --package-path apps/macos-menubar --filter 'RuntimeViewModelTests|DesktopFoundationViewTests|DesktopShellStateTests|ControlPlaneXPCClientTests'`: `199 tests in 4 suites passed after 3.798 seconds`
+  - `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/.build/ModuleCache.noindex" swift test --enable-code-coverage --package-path apps/macos-menubar --filter 'RuntimeViewModelTests|DesktopFoundationViewTests|DesktopShellStateTests|ControlPlaneXPCClientTests'`: `199 tests in 4 suites passed after 3.813 seconds`
+  - `make swift-test`: pass
+  - `git diff --check`: pass
+- Metrics report for `M10.3`:
+  - desktop lifecycle metrics emitted by the touched scope:
+    - `menu.server_start_ms`
+    - `menu.server_pause_ms`
+    - `menu.server_resume_ms`
+    - `menu.server_wake_ms`
+    - `menu.server_stop_ms`
+    - `menu.server_idle_policy_ms`
+  - handwritten menu bar executable scope changed-line coverage:
+    - `apps/macos-menubar/Sources/AppMain/Chat/DesktopChatView.swift`: `75.00%` (`69/92`)
+    - `apps/macos-menubar/Sources/AppMain/Dashboard/DesktopWorkspaceShellView.swift`: `88.68%`
+      (`141/159`)
+    - `apps/macos-menubar/Sources/AppMain/Models/DesktopShellState.swift`: `100.00%`
+      (`150/150`)
+    - `apps/macos-menubar/Sources/AppMain/Models/RuntimeViewModel.swift`: `98.14%`
+      (`158/161`)
+    - `apps/macos-menubar/Tests/MenuBarTests/TestSupport.swift`: `98.98%` (`97/98`)
+    - `apps/macos-menubar/Tests/MenuBarTests/RuntimeViewModelTests.swift`: `100.00%`
+      (`298/298`)
+    - `apps/macos-menubar/Tests/MenuBarTests/DesktopFoundationViewTests.swift`: `97.56%`
+      (`160/164`)
+    - `apps/macos-menubar/Tests/MenuBarTests/ControlPlaneXPCClientTests.swift`: `100.00%`
+      (`43/43`)
+    - `apps/macos-menubar/Tests/MenuBarTests/DesktopShellStateTests.swift`: `100.00%`
+      (`0/0`)
+    - aggregate changed-line coverage for the touched handwritten menu bar scope: `95.79%`
+      (`1116/1165`)
+
 ## 2026-04-04
 
 - Closed `M10.2` by wiring control-plane-owned lifecycle controls and idle-power policy through the

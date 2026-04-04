@@ -240,6 +240,83 @@ struct DesktopFoundationViewTests {
         #expect(selectedExport.target == .openAICompatible)
     }
 
+    @Test("server workspace renders lifecycle controls and idle policy details")
+    @MainActor
+    func serverWorkspaceRendersLifecycleControlsAndIdlePolicyDetails() async throws {
+        let client = FakeControlPlaneXPCClient()
+        var snapshot = Melix_Controlplane_V1_ServerSnapshot()
+        snapshot.serverState = .serverReady
+        snapshot.models = [makeMenuBarModelSummary(modelID: "melix-dev-text", state: .modelWarm)]
+        snapshot.runtimeSessions = [
+            makeDesktopRuntimeSession(
+                lifecycleState: .paused,
+                powerState: .active,
+                wakeReason: .policyApply,
+                idleTimerSeconds: 180,
+                autoSleepEnabled: true,
+                lightSleepAfterSeconds: 300,
+                deepSleepAfterSeconds: 900
+            )
+        ]
+        await client.configureSnapshot(snapshot)
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        viewModel.selectSurface(.server)
+
+        let view = hostView(DesktopWorkspaceShellView(viewModel: viewModel))
+        let values = renderedTextValues(in: view)
+        let notice = try #require(viewModel.selectedServerSession?.lifecycleBannerState)
+        let session = try #require(viewModel.selectedServerSession)
+
+        #expect(view.subviews.isEmpty == false)
+        #expect(values.contains("300"))
+        #expect(values.contains("900"))
+        #expect(session.canPause == false)
+        #expect(session.canResume)
+        #expect(session.canWake == false)
+        #expect(session.canStop)
+        #expect(notice.title.contains("Paused"))
+        #expect(notice.severity == .warning)
+        #expect(viewModel.selectedServerSession?.idlePolicySummaryText == "Auto sleep enabled • light after 300s • deep after 900s")
+    }
+
+    @Test("server workspace renders stopped lifecycle banner and start control")
+    @MainActor
+    func serverWorkspaceRendersStoppedLifecycleBannerAndStartControl() async throws {
+        let client = FakeControlPlaneXPCClient()
+        var snapshot = Melix_Controlplane_V1_ServerSnapshot()
+        snapshot.serverState = .serverReady
+        snapshot.models = [makeMenuBarModelSummary(modelID: "melix-dev-text", state: .modelWarm)]
+        snapshot.runtimeSessions = [
+            makeDesktopRuntimeSession(
+                lifecycleState: .stopped,
+                powerState: .stopped,
+                wakeReason: .policyApply,
+                idleTimerSeconds: 0,
+                autoSleepEnabled: false,
+                lightSleepAfterSeconds: 0,
+                deepSleepAfterSeconds: 0
+            )
+        ]
+        await client.configureSnapshot(snapshot)
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        viewModel.selectSurface(.server)
+
+        let view = hostView(DesktopWorkspaceShellView(viewModel: viewModel))
+        let notice = try #require(viewModel.selectedServerSession?.lifecycleBannerState)
+        let session = try #require(viewModel.selectedServerSession)
+
+        #expect(view.subviews.isEmpty == false)
+        #expect(session.canStart)
+        #expect(session.canPause == false)
+        #expect(session.canResume == false)
+        #expect(session.canWake == false)
+        #expect(session.canStop == false)
+        #expect(notice.title.contains("Stopped"))
+        #expect(notice.detail.contains("serve melix-dev-text"))
+    }
+
     @Test("tools workspace renders lora training controls for local and Hugging Face datasets")
     @MainActor
     func toolsWorkspaceRendersLoRATrainingControls() async throws {
@@ -1297,7 +1374,78 @@ struct DesktopFoundationViewTests {
 
         #expect(view.subviews.isEmpty == false)
         #expect(viewModel.selectedChatServerSession?.isRunning == false)
-        #expect(viewModel.chatStatusText == "No Server Session")
+        #expect(viewModel.chatStatusText == "Stopped")
+    }
+
+    @Test("chat session workspace renders lifecycle notices for paused and sleeping servers")
+    @MainActor
+    func chatSessionWorkspaceRendersLifecycleNoticesForPausedAndSleepingServers() async throws {
+        let client = FakeControlPlaneXPCClient()
+        var pausedSnapshot = Melix_Controlplane_V1_ServerSnapshot()
+        pausedSnapshot.serverState = .serverReady
+        pausedSnapshot.models = [makeMenuBarModelSummary(modelID: "melix-dev-text", state: .modelWarm)]
+        pausedSnapshot.runtimeSessions = [
+            makeDesktopRuntimeSession(
+                lifecycleState: .paused,
+                powerState: .active,
+                wakeReason: .policyApply,
+                idleTimerSeconds: 60,
+                autoSleepEnabled: true,
+                lightSleepAfterSeconds: 300,
+                deepSleepAfterSeconds: 900
+            )
+        ]
+        await client.configureSnapshot(pausedSnapshot)
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+
+        let pausedView = hostView(
+            DesktopChatSessionWorkspace(
+                viewModel: viewModel,
+                showsSidebar: .constant(true),
+                showsInspector: .constant(true)
+            )
+        )
+        let pausedNotice = try #require(viewModel.selectedChatServerSession?.chatWorkspaceNoticeState)
+
+        #expect(pausedView.subviews.isEmpty == false)
+        #expect(pausedNotice.title.contains("Paused"))
+        #expect(pausedNotice.severity == .warning)
+        #expect(viewModel.selectedChatServerSession?.isInteractiveReady == false)
+
+        let serverSessionID = try #require(viewModel.selectedServerSession?.id)
+        await client.sendServerStateChanged(
+            state: .serverReady,
+            runtimeSessions: [
+                makeDesktopRuntimeSession(
+                    serverSessionID: serverSessionID,
+                    lifecycleState: .sleeping,
+                    powerState: .deepSleep,
+                    wakeReason: .requestActivity,
+                    idleTimerSeconds: 240,
+                    autoSleepEnabled: true,
+                    lightSleepAfterSeconds: 300,
+                    deepSleepAfterSeconds: 900
+                )
+            ]
+        )
+        try await waitForDesktopFoundationCondition("expected chat-bound server session to enter sleeping state") {
+            viewModel.selectedChatServerSession?.lifecycle == .sleeping
+        }
+
+        let sleepingView = hostView(
+            DesktopChatSessionWorkspace(
+                viewModel: viewModel,
+                showsSidebar: .constant(true),
+                showsInspector: .constant(true)
+            )
+        )
+        let sleepingNotice = try #require(viewModel.selectedChatServerSession?.chatWorkspaceNoticeState)
+
+        #expect(sleepingView.subviews.isEmpty == false)
+        #expect(sleepingNotice.title.contains("Will Wake On Demand"))
+        #expect(sleepingNotice.severity == .info)
+        #expect(viewModel.selectedChatServerSession?.isInteractiveReady == true)
     }
 
     @Test("image tab renders image jobs and artifact previews")
@@ -1665,6 +1813,46 @@ private func renderedTextValues(in rootView: NSView) -> [String] {
 
     visit(rootView)
     return values
+}
+
+private func waitForDesktopFoundationCondition(
+    _ description: String,
+    timeout: Duration = .seconds(2),
+    pollInterval: Duration = .milliseconds(10),
+    condition: @escaping @MainActor () -> Bool
+) async throws {
+    let deadline = ContinuousClock.now + timeout
+    while ContinuousClock.now < deadline {
+        if await condition() {
+            return
+        }
+        try await Task.sleep(for: pollInterval)
+    }
+
+    throw MenuBarTestError(description: description)
+}
+
+private func makeDesktopRuntimeSession(
+    serverSessionID: String = "server-session-1",
+    lifecycleState: Melix_Controlplane_V1_ServerSessionLifecycleState = .ready,
+    powerState: Melix_Controlplane_V1_ServerSessionPowerState = .active,
+    wakeReason: Melix_Controlplane_V1_ServerWakeReason = .initialBoot,
+    idleTimerSeconds: UInt32 = 0,
+    autoSleepEnabled: Bool = false,
+    lightSleepAfterSeconds: UInt32 = 300,
+    deepSleepAfterSeconds: UInt32 = 1800
+) -> Melix_Controlplane_V1_ServerSessionRuntimeState {
+    var runtimeSession = Melix_Controlplane_V1_ServerSessionRuntimeState()
+    runtimeSession.serverSessionID = serverSessionID
+    runtimeSession.lifecycleState = lifecycleState
+    runtimeSession.powerState = powerState
+    runtimeSession.wakeReason = wakeReason
+    runtimeSession.idleTimerSeconds = idleTimerSeconds
+    runtimeSession.autoSleepEnabled = autoSleepEnabled
+    runtimeSession.lightSleepAfterSeconds = lightSleepAfterSeconds
+    runtimeSession.deepSleepAfterSeconds = deepSleepAfterSeconds
+    runtimeSession.updatedAtUnixMs = 1_717_171_717
+    return runtimeSession
 }
 
 private func makeAudioSetupSnapshot(
