@@ -1,5 +1,31 @@
 # Progress Log
 
+## 2026-04-04
+
+- Closed the live benchmark repair transaction for direct Hugging Face benchmark targets:
+  - fixed `services/mlx-worker-python/worker/control_plane_bridge.py` so the Python maintenance bridge now forwards `export-results` and `submit-results`
+  - added bridge regressions in `services/mlx-worker-python/tests/test_control_plane_bridge_phase5.py` and `services/control-plane-swift/Tests/WorkerClientTests/PythonBridgeWorkerClientTests.swift`
+  - fixed `services/mlx-worker-python/worker/engine/maintenance_core.py` so text-backed Gemma 4 benchmark prompts preserve `PreparedVisionRequest` payloads instead of collapsing them into plain strings
+  - added a worker regression in `services/mlx-worker-python/tests/test_maintenance_service.py` covering `text-generation` benchmark metrics for imported text-backed `gemma4` VLM repos
+  - verified the public `melix` CLI benchmark path for both target repos and copied the final benchmark reports into `/tmp`
+- Verification summary for the live benchmark repair:
+  - `git diff --check`: pass
+  - `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/services/control-plane-swift/.build/ModuleCache.noindex" swift test --package-path services/control-plane-swift --enable-code-coverage --filter PythonBridgeWorkerClientTests`: `44 tests passed`
+  - `PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" uv run --project services/mlx-worker-python coverage run -m pytest services/mlx-worker-python/tests/test_control_plane_bridge_phase5.py services/mlx-worker-python/tests/test_maintenance_service.py -q`: `65 passed in 28.06s`
+  - live proof benchmark for `unsloth/gemma-4-E4B-it-MLX-8bit` via `melix bench run --repo-id ... --suite smoke --context-length 143 --generation-length 8 --batch-size 1 --repeats 1 --cache-profile cold --sample-size 1 --batch-factor 1 --json`:
+    - `bench.smoke.ttft_ms = 15645.22`
+    - `bench.smoke.tokens_per_second = 58.75`
+    - report saved to `/tmp/melix-gemma4-bench-report.md`
+  - live proof benchmark for `Brooooooklyn/Qwen3.5-9B-unsloth-mlx` via the same CLI contract:
+    - `bench.smoke.ttft_ms = 14663.95`
+    - `bench.smoke.tokens_per_second = 47.01`
+    - report saved to `/tmp/melix-qwen35-9b-bench-report.md`
+- Metrics report for the live benchmark repair:
+  - `services/control-plane-swift/Tests/WorkerClientTests/PythonBridgeWorkerClientTests.swift`: changed-line coverage `100.00%` (`37/37`)
+  - `services/mlx-worker-python/worker/control_plane_bridge.py`, `services/mlx-worker-python/worker/engine/maintenance_core.py`, `services/mlx-worker-python/tests/test_control_plane_bridge_phase5.py`, and `services/mlx-worker-python/tests/test_maintenance_service.py`: aggregate changed-line coverage `100.00%` (`67/67`)
+  - aggregate changed-line coverage for the touched executable Swift and Python scope: `100.00%` (`104/104`)
+  - `docs/plans/2026-04-04-live-benchmark-repair.md` is documentation-only and excluded from executable changed-line coverage
+
 ## 2026-04-03
 
 - Started the `bench matrix` transaction on top of the closed canonical `bench` / `eval` expansion.

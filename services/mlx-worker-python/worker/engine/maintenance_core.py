@@ -28,6 +28,7 @@ from worker.model_ops.quantization_profiles import protected_scope_for_request
 from worker.productization.benchmark_queue import BenchmarkQueueRecord, BenchmarkQueueStore
 from worker.productization.benchmark_suites import BenchmarkSuiteCatalog, ResolvedBenchmarkSuite
 from worker.registry import WorkerRegistry
+from worker.runtime.multimodal_preprocessing import PreparedVisionRequest
 
 _CAPABILITY_SUPPORTED_MODALITIES_KEY = "melix.capability.supported_modalities"
 _CAPABILITY_SUPPORTED_TASKS_KEY = "melix.capability.supported_tasks"
@@ -1715,7 +1716,11 @@ class MaintenanceCore:
             loaded_model=loaded_model.runtime_model,
             execution_ext=execution_ext,
         )
-        rendered_prompt = f"{rendered_prompt}\n\n[context_length={context_length};batch_size={batch_size}]"
+        rendered_prompt = self._annotated_text_benchmark_input(
+            rendered_prompt,
+            context_length=context_length,
+            batch_size=batch_size,
+        )
         request_id = self._benchmark_request_id(
             loaded_model=loaded_model,
             suite_id=suite.suite_id,
@@ -1787,6 +1792,26 @@ class MaintenanceCore:
             decode_tokens_per_second=round(generation_tps, 2),
             peak_memory_bytes=round(peak_memory, 2),
         )
+
+    @staticmethod
+    def _annotated_text_benchmark_input(
+        rendered_prompt: str | PreparedVisionRequest,
+        *,
+        context_length: int,
+        batch_size: int,
+    ) -> str | PreparedVisionRequest:
+        benchmark_suffix = f"\n\n[context_length={context_length};batch_size={batch_size}]"
+        if isinstance(rendered_prompt, PreparedVisionRequest):
+            return PreparedVisionRequest(
+                prompt_text=f"{rendered_prompt.prompt_text}{benchmark_suffix}",
+                images=list(rendered_prompt.images),
+                preprocess_latency_ms=rendered_prompt.preprocess_latency_ms,
+                preprocess_input_bytes=rendered_prompt.preprocess_input_bytes,
+                preprocess_peak_memory_bytes=rendered_prompt.preprocess_peak_memory_bytes,
+                prompt_hash_hex=rendered_prompt.prompt_hash_hex,
+                multimodal_hash_hex=rendered_prompt.multimodal_hash_hex,
+            )
+        return f"{rendered_prompt}{benchmark_suffix}"
 
     def _measure_vlm_bench_metrics(
         self,

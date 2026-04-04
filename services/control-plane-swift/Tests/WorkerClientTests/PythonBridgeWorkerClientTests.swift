@@ -508,6 +508,45 @@ struct PythonBridgeWorkerClientTests {
         #expect(matrix.summaryRows[0].ttftMeanMs == 24.45)
     }
 
+    @Test("model-ops bridge methods decode export and submit responses")
+    func modelOpsBridgeMethodsDecodeExportAndSubmitResponses() async throws {
+        var exportRequest = Melix_Worker_V1_ExportResultsRequest()
+        exportRequest.outputDir = "/tmp/model-ops/export"
+
+        var exportResponse = Melix_Worker_V1_ExportResultsResponse()
+        exportResponse.ok = true
+        exportResponse.exportJson = "{\"kind\":\"benchmark\"}"
+        exportResponse.exportPath = "/tmp/model-ops/export.json"
+
+        var submitRequest = Melix_Worker_V1_SubmitResultsRequest()
+        submitRequest.outputDir = "/tmp/model-ops/export"
+        submitRequest.deviceMetadata["chip"] = "M4 Max"
+
+        var submitResponse = Melix_Worker_V1_SubmitResultsResponse()
+        submitResponse.ok = true
+        submitResponse.submissionJson = "{\"uploaded\":true}"
+
+        let runner = ScriptedBridgeRunner()
+        await runner.setUnaryResponse(
+            .exportResults,
+            line: bridgeMessageLine(message: try exportResponse.serializedData())
+        )
+        await runner.setUnaryResponse(
+            .submitResults,
+            line: bridgeMessageLine(message: try submitResponse.serializedData())
+        )
+
+        let client = PythonBridgeWorkerClient(socketPath: "/tmp/melix-test.sock", runner: runner)
+        let exported = try await client.exportResults(request: exportRequest)
+        let submitted = try await client.submitResults(request: submitRequest)
+
+        #expect(exported.ok)
+        #expect(exported.exportPath == "/tmp/model-ops/export.json")
+        #expect(exported.exportJson.contains("benchmark"))
+        #expect(submitted.ok)
+        #expect(submitted.submissionJson.contains("uploaded"))
+    }
+
     @Test("model-ops bridge methods decode hub search and model card responses")
     func modelOpsBridgeMethodsDecodeHubSearchAndModelCardResponses() async throws {
         var searchRequest = Melix_Worker_V1_SearchHubModelsRequest()

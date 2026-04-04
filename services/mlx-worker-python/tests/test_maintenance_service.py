@@ -39,6 +39,7 @@ from worker.model_registry.catalog import WorkerModelCatalog
 from worker.registry import WorkerRegistry
 from worker.engine.maintenance_core import MaintenanceCore
 from worker.runtime.deterministic_backend import DeterministicTextBackend
+from worker.runtime.mlx_vlm_runtime import AutoMLXVLMBackend, MLXVLMRuntime
 from worker.runtime.mlx_text_runtime import MLXTextRuntime, RuntimeTokenEvent
 
 
@@ -418,6 +419,30 @@ def build_service(
         ),
     )
     return service
+
+
+def imported_gemma4_text_backed_model() -> common_pb2.ModelSpec:
+    return common_pb2.ModelSpec(
+        model_id="unsloth/gemma-4-E4B-it-MLX-8bit",
+        model_path="unsloth/gemma-4-E4B-it-MLX-8bit",
+        model_kind="vlm",
+        revision="main",
+        tokenizer_hash="hf.unsloth.gemma-4-E4B-it-MLX-8bit",
+        quant_profile_id="q8",
+        parser_mode="text",
+        reasoning_mode="off",
+        max_context=4096,
+        ext={
+            "melix.vlm.backend_id": "mlx_vlm",
+            "melix.vlm.execution_mode": "text_backed",
+            "vision_family_id": "gemma4-v1",
+            "vision_prompt_profile_id": "gemma4-chatml-v1",
+            "vision_tokenization_mode": "interleaved",
+            "vision_max_images_per_prompt": "8",
+            "vision_supports_tool_calls": "true",
+            "melix.multimodal_adapter_hash": "vision-family-gemma4-v1",
+        },
+    )
 
 
 def test_convert_model_supports_convert_and_quantize_jobs(tmp_path: Path) -> None:
@@ -2402,6 +2427,73 @@ def test_run_bench_persists_completed_queue_state(tmp_path: Path) -> None:
     assert payload["suite_ids"] == ["smoke", "latency"]
     assert payload["started_at_unix_ms"] > 0
     assert payload["completed_at_unix_ms"] > 0
+
+
+def test_bench_events_support_text_generation_metrics_for_text_backed_gemma4_vlm(tmp_path: Path) -> None:
+    def fake_load(model_path: str, revision: str = "main"):
+        _ = model_path
+        _ = revision
+        return SimpleNamespace(config=SimpleNamespace(model_type="gemma4")), SimpleNamespace()
+
+    def fake_apply_chat_template(processor, config, prompt: str, num_images: int = 0, **kwargs):
+        _ = processor
+        _ = config
+        _ = kwargs
+        return f"formatted::{prompt}::images={num_images}"
+
+    def fake_stream_generate(model, processor, prompt: str, image=None, **kwargs):
+        _ = model
+        _ = processor
+        _ = kwargs
+        _ = image
+        assert "[context_length=" in prompt
+        assert ";batch_size=1]" in prompt
+        yield SimpleNamespace(
+            text="gemma",
+            prompt_tokens=16,
+            generation_tokens=1,
+            prompt_tps=42.0,
+            generation_tps=21.0,
+            peak_memory=2048.0,
+        )
+
+    registry = WorkerRegistry(
+        runtime=MLXTextRuntime(backend=DeterministicTextBackend()),
+        mlx_vlm_runtime=MLXVLMRuntime(
+            backend=AutoMLXVLMBackend(
+                load_fn=fake_load,
+                stream_generate_fn=fake_stream_generate,
+                apply_chat_template_fn=fake_apply_chat_template,
+            )
+        ),
+        model_catalog=WorkerModelCatalog(),
+    )
+    service = build_service(tmp_path, registry=registry)
+    loaded = registry.load_model(imported_gemma4_text_backed_model())
+
+    events = list(
+        service._core.bench_events(
+            maintenance_pb2.RunBenchRequest(
+                model_handle=loaded.handle,
+                suites=["smoke"],
+                task_kind="text-generation",
+                source_repo="unsloth/gemma-4-E4B-it-MLX-8bit",
+            )
+        )
+    )
+
+    metric_names = [
+        event.metric.name
+        for event in events
+        if event.HasField("metric")
+    ]
+    assert "bench.smoke.ttft_ms" in metric_names
+    assert "bench.smoke.tokens_per_second" in metric_names
+
+    report_event = next(event for event in events if event.HasField("completed"))
+    report_content = Path(report_event.completed.report_path).read_text(encoding="utf-8")
+    assert "task_kind: text-generation" in report_content
+    assert "source_repo: unsloth/gemma-4-E4B-it-MLX-8bit" in report_content
 
 
 def test_bench_events_vlm_mode_produces_vlm_metrics(tmp_path: Path) -> None:

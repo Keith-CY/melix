@@ -222,6 +222,31 @@ class FakeMaintenanceStub:
         response.card.last_modified = "2025-01-26T19:49:28Z"
         return response
 
+    def ExportResults(self, request):
+        return maintenance_pb2.ExportResultsResponse(
+            ok=True,
+            export_json=json.dumps(
+                {
+                    "output_dir": request.output_dir,
+                    "kind": "benchmark",
+                },
+                sort_keys=True,
+            ),
+            export_path="/tmp/model-ops/export.json",
+        )
+
+    def SubmitResults(self, request):
+        return maintenance_pb2.SubmitResultsResponse(
+            ok=True,
+            submission_json=json.dumps(
+                {
+                    "output_dir": request.output_dir,
+                    "device_metadata": dict(request.device_metadata),
+                },
+                sort_keys=True,
+            ),
+        )
+
 
 def test_bridge_helper_forwards_phase5_unary_and_streaming_commands(monkeypatch, capsys) -> None:
     monkeypatch.setattr(control_plane_bridge.grpc, "insecure_channel", lambda target: FakeChannel())
@@ -465,6 +490,48 @@ def test_bridge_helper_forwards_phase5_unary_and_streaming_commands(monkeypatch,
     assert card_payload.card.repo_id == "mlx-community/Qwen2.5-7B-Instruct-4bit"
     assert card_payload.card.license == "apache-2.0"
     assert card_payload.card.base_models == ["Qwen/Qwen2.5-7B-Instruct"]
+
+    export_request = maintenance_pb2.ExportResultsRequest(output_dir="/tmp/model-ops/export")
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "control_plane_bridge.py",
+            "export-results",
+            "--socket-path",
+            "/tmp/unused.sock",
+            "--request-b64",
+            base64.b64encode(export_request.SerializeToString()).decode("ascii"),
+        ],
+    )
+    control_plane_bridge.main()
+    export_line = json.loads(capsys.readouterr().out.strip())
+    export_payload = maintenance_pb2.ExportResultsResponse.FromString(base64.b64decode(export_line["message_b64"]))
+    assert export_payload.ok is True
+    assert export_payload.export_path == "/tmp/model-ops/export.json"
+    assert json.loads(export_payload.export_json)["output_dir"] == "/tmp/model-ops/export"
+
+    submit_request = maintenance_pb2.SubmitResultsRequest(
+        output_dir="/tmp/model-ops/export",
+        device_metadata={"chip": "M4 Max"},
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "control_plane_bridge.py",
+            "submit-results",
+            "--socket-path",
+            "/tmp/unused.sock",
+            "--request-b64",
+            base64.b64encode(submit_request.SerializeToString()).decode("ascii"),
+        ],
+    )
+    control_plane_bridge.main()
+    submit_line = json.loads(capsys.readouterr().out.strip())
+    submit_payload = maintenance_pb2.SubmitResultsResponse.FromString(base64.b64decode(submit_line["message_b64"]))
+    assert submit_payload.ok is True
+    assert json.loads(submit_payload.submission_json)["device_metadata"] == {"chip": "M4 Max"}
 
 
 def test_bridge_helper_forwards_download_stream_manifest_events(monkeypatch, capsys) -> None:

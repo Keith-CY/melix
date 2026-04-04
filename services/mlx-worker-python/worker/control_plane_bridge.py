@@ -47,6 +47,8 @@ def main() -> None:
             "run-bench",
             "run-bench-matrix",
             "run-evaluation",
+            "export-results",
+            "submit-results",
         ],
     )
     parser.add_argument("--socket-path", required=True)
@@ -150,6 +152,14 @@ def main() -> None:
                 stub = maintenance_pb2_grpc.MaintenanceServiceStub(channel)
                 request = maintenance_pb2.RunEvaluationRequest.FromString(request_bytes)
                 emit_message(stub.RunEvaluation(request).SerializeToString())
+            elif args.command == "export-results":
+                stub = maintenance_pb2_grpc.MaintenanceServiceStub(channel)
+                request = maintenance_pb2.ExportResultsRequest.FromString(request_bytes)
+                emit_message(stub.ExportResults(request).SerializeToString())
+            elif args.command == "submit-results":
+                stub = maintenance_pb2_grpc.MaintenanceServiceStub(channel)
+                request = maintenance_pb2.SubmitResultsRequest.FromString(request_bytes)
+                emit_message(stub.SubmitResults(request).SerializeToString())
             else:
                 stub = inference_pb2_grpc.InferenceServiceStub(channel)
                 request = inference_pb2.AbortRequest.FromString(request_bytes)
