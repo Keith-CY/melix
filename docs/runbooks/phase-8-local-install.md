@@ -36,6 +36,13 @@ This writes:
 - an install manifest under `~/Library/Application Support/Melix/install-manifest.json`
 - an environment export file under `~/Library/Application Support/Melix/melix-product-env.sh`
 
+This install flow maps to the `launch_agents_checkout` packaging target. The generated manifest and
+environment export now carry the shared Melix logical identity plus:
+
+- `packaging_target_id = launch_agents_checkout`
+- `packaging_kind = launch_agents`
+- `distribution_channel = local_checkout`
+
 The generated install manifest is the packaging source of truth for:
 
 - the resolved Melix product version
@@ -46,6 +53,9 @@ The generated install manifest is the packaging source of truth for:
 
 The environment export file now also includes:
 
+- `MELIX_LOGICAL_PRODUCT_ID`
+- `MELIX_PACKAGING_TARGET_ID`
+- `MELIX_PACKAGING_KIND`
 - `MELIX_PRODUCT_VERSION`
 - `MELIX_UPDATE_CHANNEL_PATH`
 
@@ -130,6 +140,15 @@ For deterministic update-check and startup-failure diagnostics without `launchct
 PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" \
 uv run --project services/mlx-worker-python --extra mlx \
 python scripts/m8_startup_failure_smoke.py --json
+```
+
+For deterministic packaging target validation across launch agents, Homebrew, and app-bundle
+outputs, run:
+
+```bash
+PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" \
+uv run --project services/mlx-worker-python --extra mlx \
+python scripts/m8_packaging_target_smoke.py --json
 ```
 
 For deterministic download resume, retry, and stall smoke without network access:

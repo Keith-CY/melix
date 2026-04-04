@@ -72,6 +72,7 @@ def test_main_forwards_service_instance_name_to_layout_builder(
         return {
             "bootstrap_commands": ["launchctl bootstrap gui/501 /tmp/io.melix.team-a.control-plane.plist"],
             "ready_probe_url": "http://127.0.0.1:18443/v1/models",
+            "packaging_target_id": "launch_agents_checkout",
             "service_instance_name": "team-a",
         }
 
@@ -103,5 +104,6 @@ def test_main_forwards_service_instance_name_to_layout_builder(
     assert seen["layout"] is fake_layout
 
     payload = json.loads(capsys.readouterr().out)
+    assert payload["packaging_target_id"] == "launch_agents_checkout"
     assert payload["service_instance_name"] == "team-a"
     assert payload["ready_probe_url"] == "http://127.0.0.1:18443/v1/models"

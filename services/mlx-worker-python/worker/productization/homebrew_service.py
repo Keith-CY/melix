@@ -14,6 +14,7 @@ from worker.productization.install_assets import (
     build_launch_agent_specs,
     build_local_product_layout,
 )
+from worker.productization.packaging_targets import build_packaging_target_metadata
 
 
 DEFAULT_HOMEBREW_SERVICE_INSTANCE_NAME = "homebrew"
@@ -96,14 +97,22 @@ def build_homebrew_service_manifest(
     layout: LocalProductLayout,
     specs: list[LaunchAgentSpec],
 ) -> dict[str, object]:
+    target_metadata = build_packaging_target_metadata(
+        "homebrew_service",
+        product_version=layout.product_version,
+        update_channel_path=layout.update_channel_path,
+        service_instance_name=layout.service_instance_name,
+    )
     return {
-        "service_instance_name": layout.service_instance_name,
+        **target_metadata,
         "repo_root": str(layout.repo_root),
         "bin_dir": str(Path(specs[0].program_arguments[0]).resolve().parent) if specs else "",
         "app_support_dir": str(layout.app_support_dir),
         "runtime_dir": str(layout.runtime_dir),
         "logs_dir": str(layout.logs_dir),
+        "requested_http_port": layout.requested_http_port,
         "http_port": layout.http_port,
+        "http_port_auto_selected": layout.requested_http_port != layout.http_port,
         "ready_probe_url": f"http://127.0.0.1:{layout.http_port}/v1/models",
         "services": [
             {

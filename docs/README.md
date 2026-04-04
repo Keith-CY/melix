@@ -167,6 +167,7 @@ Current runbooks:
 - `runbooks/persistent-sessions.md`
 - `runbooks/rich-output-sanitization.md`
 - `runbooks/model-family-support-matrix.md`
+- `runbooks/platform-packaging-targets.md`
 - `runbooks/phase-1-local-stack.md`
 - `runbooks/phase-2-queue-pressure.md`
 - `runbooks/phase-6-chat-panel.md`

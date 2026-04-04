@@ -13,6 +13,7 @@ from worker.productization.startup_signals import (
     read_product_version,
     resolve_http_port,
 )
+from worker.productization.packaging_targets import build_packaging_target_metadata
 
 
 @dataclass(frozen=True)
@@ -308,12 +309,15 @@ def write_local_product_artifacts(
         plist_paths[spec.label] = str(spec.plist_path)
 
     layout.environment_script_path.write_text(render_environment_script(layout))
+    target_metadata = build_packaging_target_metadata(
+        "launch_agents_checkout",
+        product_version=layout.product_version,
+        update_channel_path=layout.update_channel_path,
+        service_instance_name=layout.service_instance_name,
+    )
     manifest = {
-        "service_instance_name": layout.service_instance_name,
-        "packaging_kind": "launch_agents",
+        **target_metadata,
         "repo_root": str(layout.repo_root),
-        "product_version": layout.product_version,
-        "update_channel_path": str(layout.update_channel_path),
         "app_support_dir": str(layout.app_support_dir),
         "runtime_dir": str(layout.runtime_dir),
         "managed_models_dir": str(layout.managed_models_dir),
@@ -349,7 +353,16 @@ def write_local_product_artifacts(
 
 
 def render_environment_script(layout: LocalProductLayout) -> str:
+    target_metadata = build_packaging_target_metadata(
+        "launch_agents_checkout",
+        product_version=layout.product_version,
+        update_channel_path=layout.update_channel_path,
+        service_instance_name=layout.service_instance_name,
+    )
     exports = {
+        "MELIX_LOGICAL_PRODUCT_ID": str(target_metadata["logical_product_identity"]),
+        "MELIX_PACKAGING_TARGET_ID": str(target_metadata["packaging_target_id"]),
+        "MELIX_PACKAGING_KIND": str(target_metadata["packaging_kind"]),
         "MELIX_PRODUCT_VERSION": str(layout.product_version),
         "MELIX_UPDATE_CHANNEL_PATH": str(layout.update_channel_path),
         "MELIX_APP_SUPPORT_DIR": str(layout.app_support_dir),

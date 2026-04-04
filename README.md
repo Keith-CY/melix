@@ -159,6 +159,33 @@ This flow installs the CLI plus the control-plane and text-worker binaries, then
 three-process Melix bundle through the `homebrew` sidecar instance. Detailed install, upgrade,
 stop, and prune guidance lives in `docs/runbooks/homebrew-install.md`.
 
+## Packaging Targets
+
+Melix now ships a repository-owned packaging target matrix for Apple Silicon delivery paths. The
+current supported targets are:
+
+- `launch_agents_checkout`
+- `homebrew_service`
+- `macos_app_bundle_preview`
+
+Each target keeps the same logical Melix identity while differentiating packaging metadata, runtime
+layout, and update strategy. Build the preview app bundle with:
+
+```bash
+python3 scripts/package_macos_menubar_app.py --output-path /tmp/Melix.app --json
+```
+
+Validate the shared target matrix with:
+
+```bash
+PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" \
+UV_CACHE_DIR="$(pwd)/.uv-cache" \
+uv run --project services/mlx-worker-python --extra mlx \
+python scripts/m8_packaging_target_smoke.py --json
+```
+
+Detailed guidance lives in `docs/runbooks/platform-packaging-targets.md`.
+
 ## LoRA And Benchmark Operator Flows
 
 The same local control-plane truth now powers both the native operator window and the public

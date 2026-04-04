@@ -168,7 +168,9 @@ def test_write_local_product_artifacts_writes_plists_manifest_and_env(tmp_path: 
     assert layout.environment_script_path.read_text().startswith("#!/usr/bin/env bash")
 
     payload = json.loads(layout.install_manifest_path.read_text())
+    assert payload["packaging_target_id"] == "launch_agents_checkout"
     assert payload["packaging_kind"] == "launch_agents"
+    assert payload["logical_product_identity"] == "io.melix"
     assert payload["product_version"] == "0.1.0"
     assert payload["requested_http_port"] == 19434
     assert payload["http_port_auto_selected"] is False
@@ -183,6 +185,8 @@ def test_write_local_product_artifacts_writes_plists_manifest_and_env(tmp_path: 
     assert (launch_agents_dir / "io.melix.swift-text-worker.plist").exists()
     assert (launch_agents_dir / "io.melix.python-worker.plist").exists()
     assert (launch_agents_dir / "io.melix.control-plane.plist").exists()
+    assert 'MELIX_LOGICAL_PRODUCT_ID="io.melix"' in layout.environment_script_path.read_text()
+    assert 'MELIX_PACKAGING_TARGET_ID="launch_agents_checkout"' in layout.environment_script_path.read_text()
     assert f'MELIX_PRODUCT_VERSION="{layout.product_version}"' in layout.environment_script_path.read_text()
     assert f'MELIX_UPDATE_CHANNEL_PATH="{layout.update_channel_path}"' in layout.environment_script_path.read_text()
     assert f'MELIX_PYTHON_WORKER_METRICS_PATH="{layout.python_worker_metrics_path}"' in layout.environment_script_path.read_text()
@@ -208,6 +212,7 @@ def test_write_local_product_artifacts_writes_sidecar_service_instance_into_env(
 
     assert manifest["service_instance_name"] == "team-a"
     payload = json.loads(layout.install_manifest_path.read_text())
+    assert payload["packaging_target_id"] == "launch_agents_checkout"
     assert payload["service_instance_name"] == "team-a"
     env_script = layout.environment_script_path.read_text()
     assert 'export MELIX_SERVICE_INSTANCE_NAME="team-a"' in env_script

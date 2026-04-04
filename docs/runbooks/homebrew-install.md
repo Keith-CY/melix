@@ -19,6 +19,9 @@ Inspect the generated Homebrew service manifest before starting the service:
 melix-homebrew-service manifest --json
 ```
 
+This flow maps to the `homebrew_service` packaging target while preserving the shared logical
+Melix identity used by the launch-agent install and app-bundle flows.
+
 The repository-owned Homebrew service uses the `homebrew` Melix sidecar instance and writes state
 under:
 
@@ -74,4 +77,5 @@ Repository-owned deterministic validation commands:
 ```bash
 python3 scripts/m8_homebrew_formula_smoke.py --json
 python3 scripts/m8_homebrew_service_smoke.py --json
+python3 scripts/m8_packaging_target_smoke.py --json
 ```

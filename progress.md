@@ -2,6 +2,62 @@
 
 ## 2026-04-04
 
+- Closed the `M8.11` platform-packaging and target-differentiation milestone and, with it, the
+  parent `M8` milestone:
+  - added `services/mlx-worker-python/worker/productization/packaging_targets.py` so the
+    repository now owns a stable Apple Silicon packaging target matrix for
+    `launch_agents_checkout`, `homebrew_service`, and `macos_app_bundle_preview`, each preserving
+    the shared logical Melix identity while making `packaging_target_id`, `packaging_kind`,
+    `distribution_channel`, `runtime_layout`, `state_contract`, and `update_strategy` explicit
+  - extended `services/mlx-worker-python/worker/productization/install_assets.py`,
+    `services/mlx-worker-python/worker/productization/homebrew_service.py`, and
+    `services/mlx-worker-python/worker/productization/macos_app_bundle.py` so launch-agent install
+    manifests, Homebrew service manifests, and preview app-bundle outputs now project the shared
+    target metadata, including embedded app-bundle target manifests and version or update
+    environment exports
+  - added repository-owned validation in `scripts/m8_packaging_target_smoke.py`, plus focused
+    regression coverage in `services/mlx-worker-python/tests/test_packaging_targets.py`,
+    `services/mlx-worker-python/tests/test_m8_packaging_target_smoke.py`, and
+    `services/mlx-worker-python/tests/test_package_macos_menubar_app_script.py`
+  - updated `README.md`, `docs/runbooks/platform-packaging-targets.md`,
+    `docs/runbooks/phase-8-local-install.md`, `docs/runbooks/homebrew-install.md`,
+    `infra/packaging/README.md`, `infra/signing/README.md`, `infra/launchd/README.md`,
+    `docs/plans/2026-03-30-m8-11-platform-packaging-and-target-differentiation.md`, the roadmap
+    execution index, and `task_plan.md` so the repository records `M8.11` and the parent `M8`
+    milestone as completed with explicit verification and metrics evidence
+- Verification summary for `M8.11`:
+  - `PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" UV_CACHE_DIR="$(pwd)/.uv-cache" uv run --project services/mlx-worker-python --extra mlx pytest services/mlx-worker-python/tests/test_packaging_targets.py services/mlx-worker-python/tests/test_install_assets.py services/mlx-worker-python/tests/test_install_local_product_script.py services/mlx-worker-python/tests/test_homebrew_distribution.py services/mlx-worker-python/tests/test_homebrew_service_script.py services/mlx-worker-python/tests/test_macos_app_bundle.py services/mlx-worker-python/tests/test_package_macos_menubar_app_script.py services/mlx-worker-python/tests/test_m8_packaging_target_smoke.py -q`: `38 passed in 0.23s`
+  - `PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" UV_CACHE_DIR="$(pwd)/.uv-cache" uv run --project services/mlx-worker-python --extra mlx python scripts/m8_packaging_target_smoke.py --json`: pass
+  - `make py-test`: `455 passed in 34.03s`
+  - `git diff --check`: pass
+- Metrics report for `M8.11`:
+  - deterministic smoke metrics from `scripts/m8_packaging_target_smoke.py --json`:
+    - `packaging_target_profile_count = 3`
+    - `packaging_target_shared_identity_ok = 1`
+    - `packaging_target_distinct_packaging_kind_count = 3`
+    - `packaging_target_launch_agents_profile_ok = 1`
+    - `packaging_target_homebrew_profile_ok = 1`
+    - `packaging_target_app_bundle_profile_ok = 1`
+  - Python executable scope changed-line coverage:
+    - `services/mlx-worker-python/worker/productization/__init__.py`: `100.00%` (`0/0`)
+    - `services/mlx-worker-python/worker/productization/install_assets.py`: `100.00%` (`3/3`)
+    - `services/mlx-worker-python/worker/productization/homebrew_service.py`: `100.00%` (`2/2`)
+    - `services/mlx-worker-python/worker/productization/macos_app_bundle.py`: `100.00%` (`8/8`)
+    - `services/mlx-worker-python/worker/productization/packaging_targets.py`: `100.00%` (`0/0`)
+    - `scripts/package_macos_menubar_app.py`: `100.00%` (`2/2`)
+    - `scripts/m8_packaging_target_smoke.py`: `100.00%` (`0/0`)
+    - `services/mlx-worker-python/tests/test_install_assets.py`: `100.00%` (`5/5`)
+    - `services/mlx-worker-python/tests/test_install_local_product_script.py`: `100.00%` (`1/1`)
+    - `services/mlx-worker-python/tests/test_homebrew_distribution.py`: `100.00%` (`4/4`)
+    - `services/mlx-worker-python/tests/test_macos_app_bundle.py`: `100.00%` (`13/13`)
+    - `services/mlx-worker-python/tests/test_packaging_targets.py`: `100.00%` (`0/0`)
+    - `services/mlx-worker-python/tests/test_package_macos_menubar_app_script.py`: `100.00%` (`0/0`)
+    - `services/mlx-worker-python/tests/test_m8_packaging_target_smoke.py`: `100.00%` (`0/0`)
+    - aggregate Python changed-line coverage: `100.00%` (`38/38`)
+  - documentation and infra metrics: `N/A`
+  - reason: the remaining touched files for this transaction are repository documentation and
+    packaging readmes rather than executable code paths
+
 - Stabilized the warm-followup recovery integration assertion:
   - updated `tests/integration/test_recovery_flows.py` so the live recovery test now treats
     `scheduler.prefix_affinity_hit_rate`, `scheduler.warm_route_preference_rate`, and

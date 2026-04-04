@@ -1,26 +1,31 @@
 # Packaging Structure
 
-This directory reserves the repository-owned location for future Melix packaging assets.
+This directory owns the repository-level packaging contract for Melix Apple Silicon delivery
+targets.
 
-Phase 8 milestone `P8-M4` establishes:
+The current target matrix is:
 
-- local product install and uninstall scripts
-- launchd startup automation assets
-- a reproducible install manifest for local product flows
-- repository-owned update-channel metadata under `update-channels/`
+- `launch_agents_checkout`
+- `homebrew_service`
+- `macos_app_bundle_preview`
 
-The local-product packaging flow now treats the generated install manifest as the authoritative
-operator-visible record for:
+Each target keeps the same logical product identity (`io.melix`) and shared runtime semantics while
+making these target-specific fields explicit in generated metadata:
 
-- selected Melix product version
-- update-channel path
-- requested and selected HTTP ports
-- ready-probe URL
-- control-plane and worker log paths used by startup diagnostics
+- `packaging_target_id`
+- `packaging_kind`
+- `distribution_channel`
+- `runtime_layout`
+- `state_contract`
+- `update_strategy`
 
-Future work can add:
+Current repository-owned assets in this area:
 
+- update-channel metadata under `update-channels/`
+- launch-agent install manifests and environment exports
 - Homebrew formula and service assets under `../homebrew/`
-- signed application bundles
-- installer packaging assets
-- archive composition and notarization helpers
+- macOS app-bundle packaging metadata embedded by `scripts/package_macos_menubar_app.py`
+
+Use `docs/runbooks/platform-packaging-targets.md` for the canonical operator and release-facing
+target matrix, and `scripts/m8_packaging_target_smoke.py --json` to validate the generated target
+metadata across all supported packaging outputs.

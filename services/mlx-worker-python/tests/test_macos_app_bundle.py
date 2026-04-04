@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import plistlib
 from pathlib import Path
 
@@ -40,8 +41,18 @@ def test_render_info_plist_marks_app_as_menu_bar_accessory() -> None:
 
 
 def test_render_portable_environment_script_uses_home_relative_paths() -> None:
-    script = render_portable_environment_script()
+    script = render_portable_environment_script(
+        product_version="0.8.11",
+        update_channel_path="/tmp/stable.json",
+        logical_product_identity="io.melix",
+        packaging_target_id="macos_app_bundle_preview",
+        packaging_kind="app_bundle",
+    )
 
+    assert 'export MELIX_LOGICAL_PRODUCT_ID="io.melix"' in script
+    assert 'export MELIX_PACKAGING_TARGET_ID="macos_app_bundle_preview"' in script
+    assert 'export MELIX_PACKAGING_KIND="app_bundle"' in script
+    assert 'export MELIX_PRODUCT_VERSION="0.8.11"' in script
     assert 'export MELIX_APP_SUPPORT_DIR="$HOME/Library/Application Support/Melix"' in script
     assert 'export MELIX_RUNTIME_DIR="$MELIX_APP_SUPPORT_DIR/runtime"' in script
     assert 'export MELIX_MANAGED_MODEL_ROOT="$MELIX_APP_SUPPORT_DIR/models/default-managed"' in script
@@ -139,11 +150,18 @@ def test_write_unsigned_macos_app_bundle_writes_self_contained_layout(tmp_path: 
     assert Path(manifest["bundled_python_runtime_path"]).exists() is True
     assert Path(manifest["bundled_site_packages_path"]).exists() is True
     assert Path(manifest["bundled_repo_root_path"]).joinpath("services/mlx-worker-python/worker/bootstrap.py").exists() is True
+    assert Path(manifest["packaging_target_manifest_path"]).exists() is True
     launcher = Path(manifest["launcher_path"]).read_text(encoding="utf-8")
     assert "worker.bootstrap" in launcher
     assert "melix-text-worker-swift" in launcher
     plist_payload = plistlib.loads(Path(manifest["plist_path"]).read_bytes())
     assert plist_payload["CFBundleIdentifier"] == "io.melix.menubar.preview"
+    env_script = Path(manifest["embedded_env_script_path"]).read_text(encoding="utf-8")
+    assert 'export MELIX_PACKAGING_TARGET_ID="macos_app_bundle_preview"' in env_script
+    assert 'export MELIX_PRODUCT_VERSION="0.1.0"' in env_script
+    target_payload = json.loads(Path(manifest["packaging_target_manifest_path"]).read_text(encoding="utf-8"))
+    assert target_payload["packaging_target_id"] == "macos_app_bundle_preview"
+    assert target_payload["logical_product_identity"] == "io.melix"
 
 
 def test_archive_macos_app_bundle_creates_zip(tmp_path: Path) -> None:

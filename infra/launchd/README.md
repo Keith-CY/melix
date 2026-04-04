@@ -1,6 +1,7 @@
 # Launchd Assets
 
-This directory reserves the repository-owned location for Melix launchd startup automation.
+This directory owns the repository-facing launchd automation contract for the
+`launch_agents_checkout` packaging target.
 
 Current workflow:
 
@@ -13,3 +14,11 @@ Generated launch agent labels:
 - `io.melix.swift-text-worker`
 - `io.melix.python-worker`
 - `io.melix.control-plane`
+
+Generated install artifacts for this target share the logical product identity `io.melix` and add
+explicit packaging metadata in the install manifest and environment export:
+
+- `packaging_target_id = launch_agents_checkout`
+- `packaging_kind = launch_agents`
+- `distribution_channel = local_checkout`
+- `state_contract = install_manifest_v1`

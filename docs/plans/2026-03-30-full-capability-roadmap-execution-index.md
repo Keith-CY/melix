@@ -101,8 +101,9 @@ The roadmap extension in `M10-M17` includes milestone-level plans plus decompose
 
 ## M8: Model Registry, Hub, Admin, And Platform Productization
 
-- Status: in progress. `M8.1-M8.10` are completed and verified under the repository execution
-  plans; `M8.11` remains the last pending platform-productization slice.
+- Status: completed. `M8.1-M8.11` are completed and verified under the repository execution plans,
+  including the repository-owned Apple Silicon packaging target matrix and target-specific
+  install/update metadata closure in `M8.11`.
 
 - `M8.1` `docs/plans/2026-03-30-m8-1-multi-root-model-registry.md`
 - `M8.2` `docs/plans/2026-03-30-m8-2-provider-org-model-variant-scanning.md`
@@ -125,6 +126,10 @@ The roadmap extension in `M10-M17` includes milestone-level plans plus decompose
   state plus actionable startup guidance, with repository-default verification and changed-line
   coverage evidence recorded in the repository.
 - `M8.11` `docs/plans/2026-03-30-m8-11-platform-packaging-and-target-differentiation.md`
+  Status: completed. Melix now owns a shared packaging target matrix for
+  `launch_agents_checkout`, `homebrew_service`, and `macos_app_bundle_preview`, with target
+  metadata projected into the generated launch-agent install manifest, Homebrew service manifest,
+  and preview app-bundle metadata plus deterministic smoke coverage and updated packaging runbooks.
 
 ## M9: Ecosystem, Agent Integrations, Security, And Stability Completion
 

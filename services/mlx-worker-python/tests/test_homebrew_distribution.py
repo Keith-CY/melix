@@ -84,6 +84,10 @@ def test_build_homebrew_service_specs_use_homebrew_instance_and_installed_binari
         str(repo_root / "services/mlx-worker-python"),
         "python",
     ]
+    assert manifest["packaging_target_id"] == "homebrew_service"
+    assert manifest["logical_product_identity"] == "io.melix"
+    assert manifest["requested_http_port"] == 18443
+    assert manifest["http_port_auto_selected"] is False
     assert manifest["ready_probe_url"] == "http://127.0.0.1:18443/v1/models"
 
 
