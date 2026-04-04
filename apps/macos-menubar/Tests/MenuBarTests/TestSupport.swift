@@ -338,8 +338,12 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
         if let typeOverride = values["type_override"] {
             modelSettings.typeOverride = typeOverride
         }
-        if let ttl = values["ttl_seconds"], let ttlSeconds = UInt32(ttl) {
-            modelSettings.ttlSeconds = ttlSeconds
+        if let ttl = values["ttl_seconds"] {
+            if ttl.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                modelSettings.ttlSeconds = 0
+            } else if let ttlSeconds = UInt32(ttl) {
+                modelSettings.ttlSeconds = ttlSeconds
+            }
         }
         if let pinOnLoad = values["pin_on_load"] {
             modelSettings.pinOnLoad = ["1", "true", "yes", "on"].contains(pinOnLoad.lowercased())
@@ -362,6 +366,15 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
         }
         if let profileID = values["acceleration_profile_id"] {
             modelSettings.accelerationProfileID = profileID
+        }
+        if let adaptiveThinkingMode = values["adaptive_thinking_mode"] {
+            modelSettings.adaptiveThinking.mode = adaptiveThinkingMode
+        }
+        if let budget = values["adaptive_thinking_budget_tokens"] {
+            modelSettings.adaptiveThinking.budgetTokens = UInt32(budget) ?? 0
+        }
+        if let toolParserXMLFallback = values["tool_parser_xml_fallback"] {
+            modelSettings.ext["tool_parser_xml_fallback"] = toolParserXMLFallback
         }
         return makeModelSummary(state: modelState)
     }
@@ -649,6 +662,10 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
 
     func configureSnapshot(_ snapshot: Melix_Controlplane_V1_ServerSnapshot?) {
         snapshotOverride = snapshot
+        if let model = snapshot?.models.first(where: { $0.modelID == "melix-dev-text" }) ?? snapshot?.models.first {
+            modelSettings = model.settings
+            responseFeatures = model.features
+        }
     }
 
     func makeSnapshot(state: Melix_Controlplane_V1_ModelState) -> Melix_Controlplane_V1_ServerSnapshot {

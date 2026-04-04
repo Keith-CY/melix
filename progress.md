@@ -2,6 +2,38 @@
 
 ## 2026-04-04
 
+- Closed the `M8.7` model-settings completion milestone:
+  - extended `apps/macos-menubar/Sources/AppMain/Models/RuntimeViewModel.swift` so the native operator shell now tracks typed drafts for type override, TTL seconds, adaptive thinking mode and budget, parser fallback, and merged effective OCR/parser defaults in the same model-settings flow
+  - updated `services/control-plane-swift/Sources/XPCService/ControlPlaneService.swift` so empty-string TTL and adaptive-thinking budget drafts clear to zero without destructive side effects, while typed adaptive-thinking parsing remains explicit
+  - expanded `apps/macos-menubar/Sources/AppMain/Dashboard/DesktopFoundationView.swift` and `apps/macos-menubar/Sources/AppMain/Dashboard/DesktopWorkspaceShellView.swift` so operators can edit the full per-model settings surface and inspect effective model info through a shared summary surface
+  - added focused regression coverage in `apps/macos-menubar/Tests/MenuBarTests/DesktopFoundationViewTests.swift`, `apps/macos-menubar/Tests/MenuBarTests/RuntimeViewModelTests.swift`, and `services/control-plane-swift/Tests/ControlPlaneTests/ControlPlaneServiceTests.swift`
+  - stabilized `tests/integration/test_recovery_flows.py` so the warm-followup recovery assertion tolerates outer HTTP jitter while the control-plane `session.followup_ttft_delta_ms` metric remains the authoritative proof of warm-route improvement
+  - updated `docs/plans/2026-03-30-m8-7-model-settings-completion.md`, `docs/plans/2026-03-30-full-capability-roadmap-execution-index.md`, and `task_plan.md` so the repository now records `M8.7` as completed instead of leaving the slice pending
+- Verification summary for `M8.7`:
+  - `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/services/control-plane-swift/.build/ModuleCache.noindex" swift test --package-path services/control-plane-swift --filter 'executeMapsAdaptiveThinkingAndParserFallbackModelPolicyValues|executeClearsTTLandAdaptiveThinkingBudgetsWhenDraftsAreEmpty'`: `2 tests passed`
+  - `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/apps/macos-menubar/.build/ModuleCache.noindex" swift test --package-path apps/macos-menubar --filter 'modelsTabFormButtonsDispatchActions|modelInfoSummaryViewRendersTypedSettingsAndMergedDefaults|modelSettingsValidationGuardsInvalidDraftsResetsValuesAndNoOpsWithoutPrimaryModel|modelSettingsDraftsNormalizeUnknownResidencyAccelerationAndAdaptiveDefaults'`: `4 tests passed`
+  - `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/services/control-plane-swift/.build/ModuleCache.noindex" swift test --package-path services/control-plane-swift --enable-code-coverage --filter 'executeMapsAdaptiveThinkingAndParserFallbackModelPolicyValues|executeClearsTTLandAdaptiveThinkingBudgetsWhenDraftsAreEmpty'`: `2 tests passed`
+  - `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/apps/macos-menubar/.build/ModuleCache.noindex" swift test --package-path apps/macos-menubar --enable-code-coverage --filter 'RuntimeViewModelTests|DesktopFoundationViewTests'`: `154 tests in 2 suites passed`
+  - `make proto`: pass
+  - `make py-test`: `423 passed in 34.06s`
+  - `make swift-test`: pass
+  - `make integration-test`: `58 passed in 690.93s (0:11:30)`
+- Metrics report for `M8.7`:
+  - control-plane changed-line coverage:
+    - `services/control-plane-swift/Sources/XPCService/ControlPlaneService.swift`: `100.00%` (`11/11`)
+    - `services/control-plane-swift/Tests/ControlPlaneTests/ControlPlaneServiceTests.swift`: `100.00%` (`38/38`)
+    - aggregate control-plane changed-line coverage: `100.00%` (`49/49`)
+  - menu bar changed-line coverage:
+    - `apps/macos-menubar/Sources/AppMain/Dashboard/DesktopFoundationView.swift`: `92.61%` (`213/230`)
+    - `apps/macos-menubar/Sources/AppMain/Dashboard/DesktopWorkspaceShellView.swift`: `100.00%` (`1/1`)
+    - `apps/macos-menubar/Sources/AppMain/Models/RuntimeViewModel.swift`: `99.51%` (`202/203`)
+    - `apps/macos-menubar/Tests/MenuBarTests/DesktopFoundationViewTests.swift`: `100.00%` (`123/123`)
+    - `apps/macos-menubar/Tests/MenuBarTests/RuntimeViewModelTests.swift`: `100.00%` (`105/105`)
+    - `apps/macos-menubar/Tests/MenuBarTests/TestSupport.swift`: `100.00%` (`19/19`)
+    - aggregate menu bar changed-line coverage: `97.36%` (`663/681`)
+  - integration changed-line coverage:
+    - `tests/integration/test_recovery_flows.py`: `100.00%` (`1/1`)
+
 - Closed the `M8.6` admin-state persistence and offline-assets milestone:
   - extended `apps/macos-menubar/Sources/AppMain/Persistence/OperatorSessionStore.swift` so operator-session payloads now persist `selected_tool_section` and restore safely from legacy payloads that predate that field
   - updated `apps/macos-menubar/Sources/AppMain/Models/RuntimeViewModel.swift` so the menu bar operator shell restores the selected tool section together with the selected surface and server session

@@ -1257,14 +1257,7 @@ struct DesktopDiagnosticsToolSectionView: View {
 
             if let info = viewModel.selectedModelInfo {
                 GroupBox("Model Info") {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("\(info.modelID) • \(info.modelKind)")
-                            .font(.headline)
-                        Text("max context \(info.maxContext)")
-                        Text("parsers: \(info.supportedParsers.joined(separator: ", "))")
-                            .foregroundStyle(.secondary)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    DesktopModelInfoSummaryView(info: info)
                 }
             }
 

@@ -26,13 +26,51 @@ public struct RuntimeModelRow: Identifiable, Equatable, Sendable {
     public let actionTitle: String
     public let maxContext: UInt32
     public let alias: String
+    public let typeOverrideText: String
     public let memoryPolicyText: String
     public let adaptiveThinkingText: String
     public let accelerationModeText: String
     public let accelerationProfileID: String
+    public let toolParserFallbackText: String
     public let residencyText: String
     public let memoryText: String
     public let memoryAlertText: String
+
+    public init(
+        modelID: String,
+        kind: String,
+        state: Melix_Controlplane_V1_ModelState,
+        stateText: String,
+        actionTitle: String,
+        maxContext: UInt32,
+        alias: String,
+        typeOverrideText: String = "",
+        memoryPolicyText: String,
+        adaptiveThinkingText: String,
+        accelerationModeText: String,
+        accelerationProfileID: String,
+        toolParserFallbackText: String = "Off",
+        residencyText: String,
+        memoryText: String,
+        memoryAlertText: String
+    ) {
+        self.modelID = modelID
+        self.kind = kind
+        self.state = state
+        self.stateText = stateText
+        self.actionTitle = actionTitle
+        self.maxContext = maxContext
+        self.alias = alias
+        self.typeOverrideText = typeOverrideText
+        self.memoryPolicyText = memoryPolicyText
+        self.adaptiveThinkingText = adaptiveThinkingText
+        self.accelerationModeText = accelerationModeText
+        self.accelerationProfileID = accelerationProfileID
+        self.toolParserFallbackText = toolParserFallbackText
+        self.residencyText = residencyText
+        self.memoryText = memoryText
+        self.memoryAlertText = memoryAlertText
+    }
 
     public var id: String {
         modelID
@@ -54,9 +92,56 @@ public struct RuntimeModelInfoState: Equatable, Sendable {
     public let maxContext: UInt32
     public let supportedParsers: [String]
     public let supportedModalities: [String]
+    public let aliasText: String
+    public let typeOverrideText: String
+    public let ttlSeconds: UInt32
+    public let pinOnLoad: Bool
+    public let memoryPolicyText: String
+    public let adaptiveThinkingText: String
+    public let accelerationModeText: String
+    public let accelerationProfileID: String
+    public let toolParserFallbackText: String
     public let ocrPromptProfileText: String
     public let ocrSamplingProfileText: String
     public let ocrStopSequencesText: String
+
+    public init(
+        modelID: String,
+        modelKind: String,
+        maxContext: UInt32,
+        supportedParsers: [String],
+        supportedModalities: [String],
+        aliasText: String = "",
+        typeOverrideText: String = "",
+        ttlSeconds: UInt32 = 0,
+        pinOnLoad: Bool = false,
+        memoryPolicyText: String = "Unspecified",
+        adaptiveThinkingText: String = "Off",
+        accelerationModeText: String = "Unspecified",
+        accelerationProfileID: String = "",
+        toolParserFallbackText: String = "Off",
+        ocrPromptProfileText: String = "",
+        ocrSamplingProfileText: String = "",
+        ocrStopSequencesText: String = ""
+    ) {
+        self.modelID = modelID
+        self.modelKind = modelKind
+        self.maxContext = maxContext
+        self.supportedParsers = supportedParsers
+        self.supportedModalities = supportedModalities
+        self.aliasText = aliasText
+        self.typeOverrideText = typeOverrideText
+        self.ttlSeconds = ttlSeconds
+        self.pinOnLoad = pinOnLoad
+        self.memoryPolicyText = memoryPolicyText
+        self.adaptiveThinkingText = adaptiveThinkingText
+        self.accelerationModeText = accelerationModeText
+        self.accelerationProfileID = accelerationProfileID
+        self.toolParserFallbackText = toolParserFallbackText
+        self.ocrPromptProfileText = ocrPromptProfileText
+        self.ocrSamplingProfileText = ocrSamplingProfileText
+        self.ocrStopSequencesText = ocrStopSequencesText
+    }
 }
 
 public struct RuntimeModelOperationState: Equatable, Sendable {
@@ -528,6 +613,16 @@ public final class RuntimeViewModel {
     public var chatComposerText = ""
     public var selectedChatModelID = "melix-dev-text"
     public var selectedLoraModelID = "melix-dev-text"
+    public var modelSettingsAliasDraft = ""
+    public var modelSettingsTypeOverrideDraft = ""
+    public var modelSettingsTTLDraft = ""
+    public var modelSettingsPinOnLoadDraft = false
+    public var modelSettingsMemoryPolicyDraft = "evictable"
+    public var modelSettingsAccelerationModeDraft = "baseline"
+    public var modelSettingsAccelerationProfileIDDraft = ""
+    public var modelSettingsAdaptiveThinkingModeDraft = "off"
+    public var modelSettingsAdaptiveThinkingBudgetDraft = ""
+    public var modelSettingsToolParserXMLFallbackDraft = false
     public var selectedBenchmarkModelID = "melix-dev-text"
     public var selectedBenchmarkPresentationMode: RuntimeBenchmarkPresentationMode = .standard
     public var selectedBenchmarkTargetMode: RuntimeBenchmarkTargetMode = .catalogModel
@@ -618,6 +713,7 @@ public final class RuntimeViewModel {
     private var activeReasoningEntryID: String?
     private var activeToolEntryIDs: [String: String] = [:]
     private var persistedServerSessions: [DesktopServerSessionState] = []
+    private var modelSettingsDraftModelID = ""
     private var operatorStateRestored = false
     private var lastPersistedOperatorSessionState: OperatorSessionState?
     private var gatewayAPIKeyPersistFailures = 0.0
@@ -1230,6 +1326,13 @@ public final class RuntimeViewModel {
 
     public var primaryModel: RuntimeModelRow? {
         models.first { $0.modelID == "melix-dev-text" } ?? models.first
+    }
+
+    private var primaryModelSummary: Melix_Controlplane_V1_ModelSummary? {
+        guard let modelID = primaryModel?.modelID else {
+            return nil
+        }
+        return latestSnapshot.models.first(where: { $0.modelID == modelID })
     }
 
     public var selectedServerSession: DesktopServerSessionState? {
@@ -1878,10 +1981,15 @@ public final class RuntimeViewModel {
     public func updateModelSettings(
         modelID: String,
         alias: String,
+        typeOverride: String = "",
+        ttlSeconds: String = "",
         pinOnLoad: Bool,
         memoryPolicy: String,
         accelerationMode: String,
-        accelerationProfileID: String
+        accelerationProfileID: String,
+        adaptiveThinkingMode: String = "off",
+        adaptiveThinkingBudgetTokens: String = "",
+        toolParserXMLFallback: Bool = false
     ) async {
         let startedAt = Date()
         do {
@@ -1889,10 +1997,15 @@ public final class RuntimeViewModel {
                 modelID: modelID,
                 values: [
                     "alias": alias,
+                    "type_override": typeOverride,
+                    "ttl_seconds": ttlSeconds,
                     "pin_on_load": pinOnLoad ? "true" : "false",
                     "memory_policy": memoryPolicy,
                     "default_acceleration_mode": accelerationMode,
                     "acceleration_profile_id": accelerationProfileID,
+                    "adaptive_thinking_mode": adaptiveThinkingMode,
+                    "adaptive_thinking_budget_tokens": adaptiveThinkingBudgetTokens,
+                    "tool_parser_xml_fallback": toolParserXMLFallback ? "true" : "false",
                 ]
             )
             await metrics.record(
@@ -1900,9 +2013,53 @@ public final class RuntimeViewModel {
                 valueMs: Date().timeIntervalSince(startedAt) * 1_000
             )
             upsert(model: model)
+            synchronizeModelSettingsDrafts(force: true)
         } catch {
             recordLocalError(String(describing: error))
         }
+        notifyStateChanged()
+    }
+
+    public func applyPrimaryModelSettings() async {
+        guard let model = primaryModelSummary else {
+            return
+        }
+
+        guard
+            normalizedOptionalUInt32Draft(
+                modelSettingsTTLDraft,
+                fieldName: "TTL seconds"
+            ) != nil || modelSettingsTTLDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else {
+            return
+        }
+
+        guard
+            normalizedOptionalUInt32Draft(
+                modelSettingsAdaptiveThinkingBudgetDraft,
+                fieldName: "Adaptive thinking budget"
+            ) != nil || modelSettingsAdaptiveThinkingBudgetDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else {
+            return
+        }
+
+        await updateModelSettings(
+            modelID: model.modelID,
+            alias: modelSettingsAliasDraft.trimmingCharacters(in: .whitespacesAndNewlines),
+            typeOverride: modelSettingsTypeOverrideDraft.trimmingCharacters(in: .whitespacesAndNewlines),
+            ttlSeconds: modelSettingsTTLDraft.trimmingCharacters(in: .whitespacesAndNewlines),
+            pinOnLoad: modelSettingsPinOnLoadDraft,
+            memoryPolicy: modelSettingsMemoryPolicyDraft,
+            accelerationMode: modelSettingsAccelerationModeDraft,
+            accelerationProfileID: modelSettingsAccelerationProfileIDDraft.trimmingCharacters(in: .whitespacesAndNewlines),
+            adaptiveThinkingMode: modelSettingsAdaptiveThinkingModeDraft,
+            adaptiveThinkingBudgetTokens: modelSettingsAdaptiveThinkingBudgetDraft.trimmingCharacters(in: .whitespacesAndNewlines),
+            toolParserXMLFallback: modelSettingsToolParserXMLFallbackDraft
+        )
+    }
+
+    public func resetPrimaryModelSettingsDrafts() {
+        synchronizeModelSettingsDrafts(force: true)
         notifyStateChanged()
     }
 
@@ -1935,6 +2092,21 @@ public final class RuntimeViewModel {
                 maxContext: info.maxContext,
                 supportedParsers: info.supportedParsers,
                 supportedModalities: info.supportedModalities,
+                aliasText: snapshotModel?.settings.alias ?? "",
+                typeOverrideText: snapshotModel?.settings.typeOverride ?? "",
+                ttlSeconds: snapshotModel?.settings.ttlSeconds ?? 0,
+                pinOnLoad: snapshotModel?.settings.pinOnLoad ?? false,
+                memoryPolicyText: snapshotModel.map {
+                    runtimeMemoryPolicyText(resolvedResidencyPolicy(for: $0))
+                } ?? "Unspecified",
+                adaptiveThinkingText: snapshotModel.map {
+                    runtimeAdaptiveThinkingText($0.settings.adaptiveThinking)
+                } ?? "Off",
+                accelerationModeText: snapshotModel.map {
+                    runtimeAccelerationModeText($0.settings.defaultAccelerationMode)
+                } ?? "Unspecified",
+                accelerationProfileID: snapshotModel?.settings.accelerationProfileID ?? "",
+                toolParserFallbackText: snapshotModel.map(runtimeToolParserFallbackText) ?? "Off",
                 ocrPromptProfileText: snapshotModel?.settings.ext["ocr_prompt_profile_id"] ?? "",
                 ocrSamplingProfileText: snapshotModel?.settings.ext["ocr_sampling_profile_id"] ?? "",
                 ocrStopSequencesText: snapshotModel?.settings.ext["ocr_stop_sequences"] ?? ""
@@ -2949,6 +3121,7 @@ public final class RuntimeViewModel {
         refreshBenchmarkSelectionState()
         refreshEvaluationSelectionState()
         refreshAgentIntegrationExports()
+        synchronizeModelSettingsDrafts()
         notifyStateChanged()
     }
 
@@ -3398,6 +3571,58 @@ public final class RuntimeViewModel {
         refreshLoraSelectionState()
         refreshEvaluationSelectionState()
         refreshAgentIntegrationExports()
+        synchronizeModelSettingsDrafts()
+    }
+
+    private func synchronizeModelSettingsDrafts(force: Bool = false) {
+        guard let model = primaryModelSummary else {
+            modelSettingsDraftModelID = ""
+            modelSettingsAliasDraft = ""
+            modelSettingsTypeOverrideDraft = ""
+            modelSettingsTTLDraft = ""
+            modelSettingsPinOnLoadDraft = false
+            modelSettingsMemoryPolicyDraft = "evictable"
+            modelSettingsAccelerationModeDraft = "baseline"
+            modelSettingsAccelerationProfileIDDraft = ""
+            modelSettingsAdaptiveThinkingModeDraft = "off"
+            modelSettingsAdaptiveThinkingBudgetDraft = ""
+            modelSettingsToolParserXMLFallbackDraft = false
+            return
+        }
+
+        guard force || modelSettingsDraftModelID != model.modelID else {
+            return
+        }
+
+        modelSettingsDraftModelID = model.modelID
+        modelSettingsAliasDraft = model.settings.alias
+        modelSettingsTypeOverrideDraft = model.settings.typeOverride
+        modelSettingsTTLDraft = model.settings.ttlSeconds > 0 ? String(model.settings.ttlSeconds) : ""
+        modelSettingsPinOnLoadDraft = model.settings.pinOnLoad
+        modelSettingsMemoryPolicyDraft = runtimeMemoryPolicyDraftValue(resolvedResidencyPolicy(for: model))
+        modelSettingsAccelerationModeDraft = runtimeAccelerationModeDraftValue(model.settings.defaultAccelerationMode)
+        modelSettingsAccelerationProfileIDDraft = model.settings.accelerationProfileID
+        modelSettingsAdaptiveThinkingModeDraft = runtimeAdaptiveThinkingDraftValue(model.settings.adaptiveThinking)
+        modelSettingsAdaptiveThinkingBudgetDraft = model.settings.adaptiveThinking.budgetTokens > 0
+            ? String(model.settings.adaptiveThinking.budgetTokens)
+            : ""
+        modelSettingsToolParserXMLFallbackDraft = model.settings.ext["tool_parser_xml_fallback"] == "true"
+    }
+
+    private func normalizedOptionalUInt32Draft(
+        _ rawValue: String,
+        fieldName: String
+    ) -> UInt32? {
+        let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return nil
+        }
+        guard let value = UInt32(trimmed) else {
+            recordLocalError("\(fieldName) must be an unsigned integer.")
+            notifyStateChanged()
+            return nil
+        }
+        return value
     }
 
     private func refreshAgentIntegrationExports() {
@@ -4748,10 +4973,12 @@ func makeRuntimeModelRow(_ model: Melix_Controlplane_V1_ModelSummary) -> Runtime
         actionTitle: runtimeActionTitle(for: model.state),
         maxContext: model.maxContext,
         alias: model.settings.alias,
+        typeOverrideText: model.settings.typeOverride,
         memoryPolicyText: runtimeMemoryPolicyText(model.settings.memoryPolicy),
         adaptiveThinkingText: runtimeAdaptiveThinkingText(model.settings.adaptiveThinking),
         accelerationModeText: runtimeAccelerationModeText(model.settings.defaultAccelerationMode),
         accelerationProfileID: model.settings.accelerationProfileID,
+        toolParserFallbackText: runtimeToolParserFallbackText(model),
         residencyText: runtimeResidencyText(for: model),
         memoryText: runtimeMemoryText(for: model),
         memoryAlertText: runtimeMemoryAlertText(for: model)
@@ -4847,6 +5074,21 @@ private func runtimeMemoryPolicyText(_ policy: Melix_Controlplane_V1_MemoryResid
     }
 }
 
+private func runtimeMemoryPolicyDraftValue(
+    _ policy: Melix_Controlplane_V1_MemoryResidencyPolicy
+) -> String {
+    switch policy {
+    case .memoryResidencyPinned:
+        return "pinned"
+    case .memoryResidencyTtl:
+        return "ttl"
+    case .memoryResidencyEvictable, .unspecified:
+        return "evictable"
+    default:
+        return "evictable"
+    }
+}
+
 private func runtimeAccelerationModeText(_ mode: Melix_Controlplane_V1_AccelerationMode) -> String {
     switch mode {
     case .speculativeDecode:
@@ -4862,6 +5104,36 @@ private func runtimeAccelerationModeText(_ mode: Melix_Controlplane_V1_Accelerat
     default:
         return "Unspecified"
     }
+}
+
+private func runtimeAccelerationModeDraftValue(_ mode: Melix_Controlplane_V1_AccelerationMode) -> String {
+    switch mode {
+    case .speculativeDecode:
+        return "speculative_decode"
+    case .acceleratedPrefill:
+        return "accelerated_prefill"
+    case .activeKvQuantized:
+        return "active_kv_quantized"
+    case .sparsePrefill:
+        return "sparse_prefill"
+    case .baseline, .unspecified:
+        return "baseline"
+    default:
+        return "baseline"
+    }
+}
+
+private func runtimeAdaptiveThinkingDraftValue(
+    _ policy: Melix_Controlplane_V1_AdaptiveThinkingPolicy
+) -> String {
+    let normalizedMode = policy.mode
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+        .lowercased()
+    return normalizedMode.isEmpty ? "off" : normalizedMode
+}
+
+private func runtimeToolParserFallbackText(_ model: Melix_Controlplane_V1_ModelSummary) -> String {
+    model.settings.ext["tool_parser_xml_fallback"] == "true" ? "XML" : "Off"
 }
 
 private func runtimeResidencyText(for model: Melix_Controlplane_V1_ModelSummary) -> String {

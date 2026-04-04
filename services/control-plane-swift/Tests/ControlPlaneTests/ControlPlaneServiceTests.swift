@@ -4209,6 +4209,48 @@ struct ControlPlaneServiceTests {
         #expect(response.model.model.settings.accelerationProfileID == "structured-user")
     }
 
+    @Test("execute maps adaptive thinking and parser fallback model policy values")
+    func executeMapsAdaptiveThinkingAndParserFallbackModelPolicyValues() async throws {
+        let service = ControlPlaneService(modelCatalog: ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels()))
+
+        let response = try await service.execute(
+            makeSetModelPolicyRequest(
+                modelID: "melix-dev-text",
+                values: [
+                    "adaptive_thinking_mode": "adaptive",
+                    "adaptive_thinking_budget_tokens": "192",
+                    "tool_parser_xml_fallback": "true",
+                ]
+            )
+        )
+
+        #expect(response.ok)
+        #expect(response.model.model.settings.adaptiveThinking.mode == "adaptive")
+        #expect(response.model.model.settings.adaptiveThinking.budgetTokens == 192)
+        #expect(response.model.model.settings.ext["tool_parser_xml_fallback"] == "true")
+    }
+
+    @Test("execute clears ttl and adaptive thinking budgets when model policy drafts are empty")
+    func executeClearsTTLandAdaptiveThinkingBudgetsWhenDraftsAreEmpty() async throws {
+        let service = ControlPlaneService(modelCatalog: ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels()))
+
+        let response = try await service.execute(
+            makeSetModelPolicyRequest(
+                modelID: "melix-dev-text",
+                values: [
+                    "ttl_seconds": "",
+                    "adaptive_thinking_mode": "off",
+                    "adaptive_thinking_budget_tokens": "",
+                ]
+            )
+        )
+
+        #expect(response.ok)
+        #expect(response.model.model.settings.ttlSeconds == 0)
+        #expect(response.model.model.settings.adaptiveThinking.mode == "off")
+        #expect(response.model.model.settings.adaptiveThinking.budgetTokens == 0)
+    }
+
     @Test("execute surfaces structured errors for missing or unavailable model tools")
     func executeSurfacesStructuredErrorsForMissingOrUnavailableModelTools() async throws {
         let unavailableService = ControlPlaneService(

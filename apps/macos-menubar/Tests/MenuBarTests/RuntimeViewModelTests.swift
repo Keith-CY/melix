@@ -1922,6 +1922,118 @@ struct RuntimeViewModelTests {
         #expect(await metrics.snapshot()["menu.model_settings_ms"] != nil)
     }
 
+    @Test("model settings drafts apply typed controls and inspect effective defaults")
+    @MainActor
+    func modelSettingsDraftsApplyTypedControlsAndInspectEffectiveDefaults() async throws {
+        let client = FakeControlPlaneXPCClient()
+        var snapshot = Melix_Controlplane_V1_ServerSnapshot()
+        snapshot.serverState = .serverReady
+
+        var model = makeModelSummary(modelID: "melix-dev-text", state: .modelDiscovered)
+        model.settings.ext["ocr_prompt_profile_id"] = "ocr-default-v1"
+        model.settings.ext["ocr_sampling_profile_id"] = "ocr-deterministic"
+        model.settings.ext["ocr_stop_sequences"] = "<ocr:end>"
+        snapshot.models = [model]
+
+        await client.configureSnapshot(snapshot)
+
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+
+        viewModel.modelSettingsAliasDraft = "Melix Text Turbo"
+        viewModel.modelSettingsTypeOverrideDraft = "mlx-text"
+        viewModel.modelSettingsTTLDraft = "600"
+        viewModel.modelSettingsPinOnLoadDraft = true
+        viewModel.modelSettingsMemoryPolicyDraft = "ttl"
+        viewModel.modelSettingsAccelerationModeDraft = "active_kv_quantized"
+        viewModel.modelSettingsAccelerationProfileIDDraft = "kv-q8"
+        viewModel.modelSettingsAdaptiveThinkingModeDraft = "adaptive"
+        viewModel.modelSettingsAdaptiveThinkingBudgetDraft = "192"
+        viewModel.modelSettingsToolParserXMLFallbackDraft = true
+
+        await viewModel.applyPrimaryModelSettings()
+        await viewModel.inspectPrimaryModel()
+
+        #expect(await client.recordedActions.contains("settings:melix-dev-text"))
+        #expect(viewModel.primaryModel?.alias == "Melix Text Turbo")
+        #expect(viewModel.primaryModel?.typeOverrideText == "mlx-text")
+        #expect(viewModel.primaryModel?.adaptiveThinkingText == "Adaptive • 192 tok")
+        #expect(viewModel.primaryModel?.toolParserFallbackText == "XML")
+        #expect(viewModel.selectedModelInfo?.typeOverrideText == "mlx-text")
+        #expect(viewModel.selectedModelInfo?.ttlSeconds == 600)
+        #expect(viewModel.selectedModelInfo?.adaptiveThinkingText == "Adaptive • 192 tok")
+        #expect(viewModel.selectedModelInfo?.toolParserFallbackText == "XML")
+        #expect(viewModel.selectedModelInfo?.ocrSamplingProfileText == "ocr-deterministic")
+    }
+
+    @Test("model settings validation guards invalid drafts resets typed values and no-ops without a primary model")
+    @MainActor
+    func modelSettingsValidationGuardsInvalidDraftsResetsValuesAndNoOpsWithoutPrimaryModel() async throws {
+        let idleClient = FakeControlPlaneXPCClient()
+        let idleViewModel = RuntimeViewModel(client: idleClient)
+        await idleViewModel.applyPrimaryModelSettings()
+        #expect(await idleClient.recordedActions.isEmpty)
+
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+
+        viewModel.modelSettingsAliasDraft = "Draft Alias"
+        viewModel.modelSettingsTTLDraft = "oops"
+        await viewModel.applyPrimaryModelSettings()
+
+        #expect(viewModel.lastError == "TTL seconds must be an unsigned integer.")
+        #expect(await client.recordedActions.isEmpty)
+
+        viewModel.modelSettingsTTLDraft = "120"
+        viewModel.modelSettingsAdaptiveThinkingBudgetDraft = "still-bad"
+        await viewModel.applyPrimaryModelSettings()
+
+        #expect(viewModel.lastError == "Adaptive thinking budget must be an unsigned integer.")
+        #expect(await client.recordedActions.isEmpty)
+
+        viewModel.modelSettingsAliasDraft = "Mutated Alias"
+        viewModel.modelSettingsTypeOverrideDraft = "mlx-mutated"
+        viewModel.resetPrimaryModelSettingsDrafts()
+
+        #expect(viewModel.modelSettingsAliasDraft == viewModel.primaryModel?.alias)
+        #expect(viewModel.modelSettingsTypeOverrideDraft == viewModel.primaryModel?.typeOverrideText)
+    }
+
+    @Test("model settings drafts normalize unknown residency acceleration and adaptive defaults")
+    @MainActor
+    func modelSettingsDraftsNormalizeUnknownResidencyAccelerationAndAdaptiveDefaults() async throws {
+        let client = FakeControlPlaneXPCClient()
+        var snapshot = Melix_Controlplane_V1_ServerSnapshot()
+        snapshot.serverState = .serverReady
+
+        var model = makeModelSummary(modelID: "melix-dev-text", state: .modelWarm)
+        model.settings.memoryPolicy = .UNRECOGNIZED(999)
+        model.settings.defaultAccelerationMode = .UNRECOGNIZED(999)
+        model.settings.adaptiveThinking.mode = ""
+        snapshot.models = [model]
+
+        await client.configureSnapshot(snapshot)
+
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+
+        #expect(viewModel.modelSettingsMemoryPolicyDraft == "evictable")
+        #expect(viewModel.modelSettingsAccelerationModeDraft == "baseline")
+        #expect(viewModel.modelSettingsAdaptiveThinkingModeDraft == "off")
+
+        model.settings.memoryPolicy = .memoryResidencyPinned
+        model.residency.policy = .memoryResidencyPinned
+        model.settings.defaultAccelerationMode = .sparsePrefill
+        snapshot.models = [model]
+        await client.configureSnapshot(snapshot)
+        await viewModel.refreshDesktopFoundation()
+        viewModel.resetPrimaryModelSettingsDrafts()
+
+        #expect(viewModel.modelSettingsMemoryPolicyDraft == "pinned")
+        #expect(viewModel.modelSettingsAccelerationModeDraft == "sparse_prefill")
+    }
+
     @Test("model info ops doctor and bench dispatch through the client and populate tool state")
     @MainActor
     func modelInfoOpsDoctorAndBenchPopulateToolState() async throws {
@@ -4039,10 +4151,12 @@ private func makeRuntimeModelRow(state: Melix_Controlplane_V1_ModelState) -> Run
         actionTitle: "action",
         maxContext: 8192,
         alias: "Melix Dev Text",
+        typeOverrideText: "",
         memoryPolicyText: "Evictable",
         adaptiveThinkingText: "Adaptive • 192 tok",
         accelerationModeText: "Baseline",
         accelerationProfileID: "",
+        toolParserFallbackText: "Off",
         residencyText: "Warm • Evictable",
         memoryText: "No live footprint reported",
         memoryAlertText: ""

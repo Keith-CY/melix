@@ -1921,7 +1921,9 @@ public actor ControlPlaneService {
             case "type_override":
                 settings.typeOverride = value
             case "ttl_seconds":
-                if let ttl = UInt32(value) {
+                if value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    settings.ttlSeconds = 0
+                } else if let ttl = UInt32(value) {
                     settings.ttlSeconds = ttl
                 }
             case "pin_on_load":
@@ -1932,6 +1934,14 @@ public actor ControlPlaneService {
                 settings.defaultAccelerationMode = accelerationMode(for: value)
             case "acceleration_profile_id":
                 settings.accelerationProfileID = value
+            case "adaptive_thinking_mode":
+                settings.adaptiveThinking.mode = value
+            case "adaptive_thinking_budget_tokens":
+                if value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    settings.adaptiveThinking.budgetTokens = 0
+                } else if let budgetTokens = UInt32(value) {
+                    settings.adaptiveThinking.budgetTokens = budgetTokens
+                }
             default:
                 settings.ext[key] = value
             }

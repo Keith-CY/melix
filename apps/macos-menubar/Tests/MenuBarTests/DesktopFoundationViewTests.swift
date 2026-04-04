@@ -109,6 +109,41 @@ struct DesktopFoundationViewTests {
         #expect(actions.contains("load:melix-dev-text"))
     }
 
+    @Test("models tab form buttons dispatch apply reset inspect and load actions")
+    @MainActor
+    func modelsTabFormButtonsDispatchActions() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+
+        viewModel.modelSettingsAliasDraft = "Melix Form Alias"
+        viewModel.modelSettingsTypeOverrideDraft = "mlx-form"
+        viewModel.modelSettingsTTLDraft = "321"
+        viewModel.modelSettingsAdaptiveThinkingModeDraft = "adaptive"
+        viewModel.modelSettingsAdaptiveThinkingBudgetDraft = "64"
+        viewModel.modelSettingsToolParserXMLFallbackDraft = true
+
+        let tab = DesktopModelsTabView(
+            foundation: viewModel.desktopFoundationState,
+            viewModel: viewModel
+        )
+        let model = try #require(viewModel.primaryModel)
+
+        tab.latencyProfileAction(for: model)()
+        tab.applyPrimaryModelSettingsAction()()
+        tab.resetPrimaryModelSettingsAction()()
+        tab.inspectPrimaryModelAction()()
+        tab.toggleModelLoadAction(for: model)()
+
+        try await Task.sleep(for: .milliseconds(50))
+
+        let actions = await client.recordedActions
+        #expect(actions.contains("settings:melix-dev-text"))
+        #expect(actions.contains("info:melix-dev-text"))
+        #expect(actions.contains("load:melix-dev-text"))
+        #expect(viewModel.modelSettingsAliasDraft == viewModel.primaryModel?.alias)
+    }
+
     @Test("agent integration exports panel renders populated and empty states")
     @MainActor
     func agentIntegrationExportsPanelRendersPopulatedAndEmptyStates() async throws {
@@ -399,6 +434,103 @@ struct DesktopFoundationViewTests {
         #expect(viewModel.selectedModelInfo?.ocrPromptProfileText == "ocr-default-v1")
         #expect(viewModel.selectedModelInfo?.ocrSamplingProfileText == "ocr-deterministic")
         #expect(viewModel.selectedModelInfo?.ocrStopSequencesText == "<ocr:end>")
+    }
+
+    @Test("models workspace renders expanded model settings metadata")
+    @MainActor
+    func modelsWorkspaceRendersExpandedModelSettingsMetadata() async throws {
+        let client = FakeControlPlaneXPCClient()
+        var snapshot = Melix_Controlplane_V1_ServerSnapshot()
+        snapshot.serverState = .serverReady
+
+        var model = Melix_Controlplane_V1_ModelSummary()
+        model.modelID = "melix-dev-text"
+        model.kind = "text"
+        model.state = .modelWarm
+        model.features = ["chat", "adaptive_thinking"]
+        model.maxContext = 8192
+        model.settings.alias = "Melix Text Turbo"
+        model.settings.typeOverride = "mlx-text"
+        model.settings.ttlSeconds = 600
+        model.settings.pinOnLoad = true
+        model.settings.memoryPolicy = .memoryResidencyTtl
+        model.settings.defaultAccelerationMode = .activeKvQuantized
+        model.settings.accelerationProfileID = "kv-q8"
+        model.settings.adaptiveThinking.mode = "adaptive"
+        model.settings.adaptiveThinking.budgetTokens = 192
+        model.settings.ext["tool_parser_xml_fallback"] = "true"
+        model.settings.ext["ocr_prompt_profile_id"] = "ocr-default-v1"
+        model.settings.ext["ocr_sampling_profile_id"] = "ocr-deterministic"
+        model.settings.ext["ocr_stop_sequences"] = "<ocr:end>"
+        snapshot.models = [model]
+
+        var info = Melix_Controlplane_V1_ModelInfo()
+        info.ok = true
+        info.modelKind = "text"
+        info.maxContext = 8192
+        info.supportedParsers = ["text", "json"]
+        info.supportedModalities = ["text"]
+
+        await client.configureSnapshot(snapshot)
+        await client.configureModelInfo(info)
+
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        await viewModel.inspectPrimaryModel()
+        viewModel.selectSurface(.tools)
+        viewModel.selectToolSection(.modelsLibrary)
+
+        let view = hostView(DesktopWorkspaceShellView(viewModel: viewModel))
+        let values = renderedTextValues(in: view)
+
+        #expect(view.subviews.isEmpty == false)
+        #expect(values.contains("Melix Text Turbo"))
+        #expect(values.contains("mlx-text"))
+        #expect(values.contains("600"))
+        #expect(values.contains("Active KV Quantized"))
+        #expect(values.contains("Adaptive"))
+        #expect(values.contains("192"))
+        #expect(viewModel.selectedModelInfo?.toolParserFallbackText == "XML")
+        #expect(viewModel.selectedModelInfo?.ocrSamplingProfileText == "ocr-deterministic")
+    }
+
+    @Test("model info summary view renders typed settings and merged defaults")
+    @MainActor
+    func modelInfoSummaryViewRendersTypedSettingsAndMergedDefaults() {
+        let info = RuntimeModelInfoState(
+            modelID: "melix-dev-text",
+            modelKind: "text",
+            maxContext: 8192,
+            supportedParsers: ["text", "json"],
+            supportedModalities: ["text", "image"],
+            aliasText: "Melix Text Turbo",
+            typeOverrideText: "mlx-text",
+            ttlSeconds: 600,
+            pinOnLoad: true,
+            memoryPolicyText: "TTL",
+            adaptiveThinkingText: "Adaptive • 192 tok",
+            accelerationModeText: "Active KV Quantized",
+            accelerationProfileID: "kv-q8",
+            toolParserFallbackText: "XML",
+            ocrPromptProfileText: "ocr-default-v1",
+            ocrSamplingProfileText: "ocr-deterministic",
+            ocrStopSequencesText: "<ocr:end>"
+        )
+
+        let content = desktopModelInfoSummaryContent(info)
+
+        #expect(content.headline == "melix-dev-text • text")
+        #expect(content.maxContext == "max context 8192")
+        #expect(content.detailLines.contains("alias: Melix Text Turbo"))
+        #expect(content.detailLines.contains("type override: mlx-text"))
+        #expect(content.detailLines.contains("memory policy: TTL"))
+        #expect(content.detailLines.contains("adaptive thinking: Adaptive • 192 tok"))
+        #expect(content.detailLines.contains("acceleration: Active KV Quantized • kv-q8"))
+        #expect(content.detailLines.contains("parser fallback: XML"))
+        #expect(content.detailLines.contains("pin on load: yes"))
+        #expect(content.detailLines.contains("ttl seconds: 600"))
+        #expect(content.detailLines.contains("parsers: text, json"))
+        #expect(content.detailLines.contains("modalities: text, image"))
     }
 
     @Test("tools tab buttons dispatch inspect diagnostics bench and model operations")

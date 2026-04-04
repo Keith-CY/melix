@@ -89,41 +89,183 @@ struct DesktopModelsTabView: View {
     let foundation: DesktopFoundationState
     let viewModel: RuntimeViewModel
 
+    private let memoryPolicyOptions = [
+        ("Evictable", "evictable"),
+        ("Pinned", "pinned"),
+        ("TTL", "ttl"),
+    ]
+
+    private let accelerationModeOptions = [
+        ("Baseline", "baseline"),
+        ("Speculative Decode", "speculative_decode"),
+        ("Accelerated Prefill", "accelerated_prefill"),
+        ("Active KV Quantized", "active_kv_quantized"),
+        ("Sparse Prefill", "sparse_prefill"),
+    ]
+
+    private let adaptiveThinkingModeOptions = [
+        ("Off", "off"),
+        ("Adaptive", "adaptive"),
+        ("Enabled", "enabled"),
+    ]
+
     var body: some View {
-        List(foundation.models, id: \.modelID) { model in
-            HStack {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(model.modelID)
-                        .font(.headline)
-                    Text(model.alias.isEmpty ? "\(model.kind) • \(model.stateText) • \(model.maxContext) ctx" : "\(model.alias) • \(model.stateText) • \(model.maxContext) ctx")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Text(model.residencyText)
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                    Text(model.memoryText)
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-                    if !model.memoryAlertText.isEmpty {
-                        Text(model.memoryAlertText)
+        VStack(alignment: .leading, spacing: 16) {
+            List(foundation.models, id: \.modelID) { model in
+                HStack {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(model.modelID)
+                            .font(.headline)
+                        Text(model.alias.isEmpty ? "\(model.kind) • \(model.stateText) • \(model.maxContext) ctx" : "\(model.alias) • \(model.stateText) • \(model.maxContext) ctx")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        if !model.typeOverrideText.isEmpty {
+                            Text("type override: \(model.typeOverrideText)")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                        Text(model.residencyText)
                             .font(.caption2)
-                            .foregroundStyle(.red)
+                            .foregroundStyle(.secondary)
+                        Text(model.memoryText)
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                        if !model.memoryAlertText.isEmpty {
+                            Text(model.memoryAlertText)
+                                .font(.caption2)
+                                .foregroundStyle(.red)
+                        }
+                        if model.adaptiveThinkingText != "Off" || model.toolParserFallbackText != "Off" {
+                            Text("adaptive thinking: \(model.adaptiveThinkingText) • parser fallback: \(model.toolParserFallbackText)")
+                                .font(.caption2)
+                                .foregroundStyle(.tertiary)
+                        }
+                        Text("\(model.memoryPolicyText) • \(model.accelerationModeText) • \(model.accelerationProfileID.isEmpty ? "no-profile" : model.accelerationProfileID)")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
                     }
-                    Text("\(model.memoryPolicyText) • \(model.accelerationModeText) • \(model.accelerationProfileID.isEmpty ? "no-profile" : model.accelerationProfileID)")
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
+                    Spacer()
+                    Button("Latency Profile", action: latencyProfileAction(for: model))
+                    .buttonStyle(.bordered)
+                    Button(model.actionTitle, action: toggleModelLoadAction(for: model))
+                    .buttonStyle(.borderedProminent)
                 }
-                Spacer()
-                Button("Latency Profile") {
-                    Task { await applyLatencyProfile(to: model) }
-                }
-                .buttonStyle(.bordered)
-                Button(model.actionTitle) {
-                    Task { await toggleModelLoad(for: model) }
-                }
-                .buttonStyle(.borderedProminent)
+                .padding(.vertical, 4)
             }
-            .padding(.vertical, 4)
+            .frame(minHeight: 260)
+
+            if let primaryModel = viewModel.primaryModel {
+                GroupBox("Model Settings") {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text(primaryModel.modelID)
+                            .font(.headline)
+                        HStack(spacing: 12) {
+                            TextField(
+                                "Alias",
+                                text: Binding(
+                                    get: { viewModel.modelSettingsAliasDraft },
+                                    set: { viewModel.modelSettingsAliasDraft = $0 }
+                                )
+                            )
+                            TextField(
+                                "Type Override",
+                                text: Binding(
+                                    get: { viewModel.modelSettingsTypeOverrideDraft },
+                                    set: { viewModel.modelSettingsTypeOverrideDraft = $0 }
+                                )
+                            )
+                        }
+                        HStack(spacing: 12) {
+                            TextField(
+                                "TTL Seconds",
+                                text: Binding(
+                                    get: { viewModel.modelSettingsTTLDraft },
+                                    set: { viewModel.modelSettingsTTLDraft = $0 }
+                                )
+                            )
+                            Toggle(
+                                "Pin On Load",
+                                isOn: Binding(
+                                    get: { viewModel.modelSettingsPinOnLoadDraft },
+                                    set: { viewModel.modelSettingsPinOnLoadDraft = $0 }
+                                )
+                            )
+                            .toggleStyle(.checkbox)
+                        }
+                        HStack(spacing: 12) {
+                            Picker(
+                                "Memory Policy",
+                                selection: Binding(
+                                    get: { viewModel.modelSettingsMemoryPolicyDraft },
+                                    set: { viewModel.modelSettingsMemoryPolicyDraft = $0 }
+                                )
+                            ) {
+                                ForEach(memoryPolicyOptions, id: \.1) { option in
+                                    Text(option.0).tag(option.1)
+                                }
+                            }
+                            Picker(
+                                "Acceleration",
+                                selection: Binding(
+                                    get: { viewModel.modelSettingsAccelerationModeDraft },
+                                    set: { viewModel.modelSettingsAccelerationModeDraft = $0 }
+                                )
+                            ) {
+                                ForEach(accelerationModeOptions, id: \.1) { option in
+                                    Text(option.0).tag(option.1)
+                                }
+                            }
+                        }
+                        HStack(spacing: 12) {
+                            TextField(
+                                "Acceleration Profile",
+                                text: Binding(
+                                    get: { viewModel.modelSettingsAccelerationProfileIDDraft },
+                                    set: { viewModel.modelSettingsAccelerationProfileIDDraft = $0 }
+                                )
+                            )
+                            Picker(
+                                "Adaptive Thinking",
+                                selection: Binding(
+                                    get: { viewModel.modelSettingsAdaptiveThinkingModeDraft },
+                                    set: { viewModel.modelSettingsAdaptiveThinkingModeDraft = $0 }
+                                )
+                            ) {
+                                ForEach(adaptiveThinkingModeOptions, id: \.1) { option in
+                                    Text(option.0).tag(option.1)
+                                }
+                            }
+                        }
+                        HStack(spacing: 12) {
+                            TextField(
+                                "Adaptive Budget",
+                                text: Binding(
+                                    get: { viewModel.modelSettingsAdaptiveThinkingBudgetDraft },
+                                    set: { viewModel.modelSettingsAdaptiveThinkingBudgetDraft = $0 }
+                                )
+                            )
+                            Toggle(
+                                "Parser XML Fallback",
+                                isOn: Binding(
+                                    get: { viewModel.modelSettingsToolParserXMLFallbackDraft },
+                                    set: { viewModel.modelSettingsToolParserXMLFallbackDraft = $0 }
+                                )
+                            )
+                            .toggleStyle(.checkbox)
+                        }
+                        HStack {
+                            Button("Apply Settings", action: applyPrimaryModelSettingsAction())
+                            .buttonStyle(.borderedProminent)
+                            Button("Reset Draft", action: resetPrimaryModelSettingsAction())
+                            .buttonStyle(.bordered)
+                            Spacer()
+                            Button("Inspect", action: inspectPrimaryModelAction())
+                            .buttonStyle(.bordered)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
         }
     }
 
@@ -144,6 +286,26 @@ struct DesktopModelsTabView: View {
         } else {
             await viewModel.loadModel(modelID: model.modelID)
         }
+    }
+
+    func latencyProfileAction(for model: RuntimeModelRow) -> () -> Void {
+        { Task { await applyLatencyProfile(to: model) } }
+    }
+
+    func toggleModelLoadAction(for model: RuntimeModelRow) -> () -> Void {
+        { Task { await toggleModelLoad(for: model) } }
+    }
+
+    func applyPrimaryModelSettingsAction() -> () -> Void {
+        { Task { await viewModel.applyPrimaryModelSettings() } }
+    }
+
+    func resetPrimaryModelSettingsAction() -> () -> Void {
+        { viewModel.resetPrimaryModelSettingsDrafts() }
+    }
+
+    func inspectPrimaryModelAction() -> () -> Void {
+        { Task { await viewModel.inspectPrimaryModel() } }
     }
 }
 
@@ -256,28 +418,7 @@ struct DesktopToolsTabView: View {
 
             if let info = viewModel.selectedModelInfo {
                 GroupBox("Model Info") {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("\(info.modelID) • \(info.modelKind)")
-                            .font(.headline)
-                        Text("max context \(info.maxContext)")
-                        Text("parsers: \(info.supportedParsers.joined(separator: ", "))")
-                            .foregroundStyle(.secondary)
-                        Text("modalities: \(info.supportedModalities.joined(separator: ", "))")
-                            .foregroundStyle(.secondary)
-                        if !info.ocrPromptProfileText.isEmpty {
-                            Text("ocr prompt profile: \(info.ocrPromptProfileText)")
-                                .foregroundStyle(.secondary)
-                        }
-                        if !info.ocrSamplingProfileText.isEmpty {
-                            Text("ocr sampling profile: \(info.ocrSamplingProfileText)")
-                                .foregroundStyle(.secondary)
-                        }
-                        if !info.ocrStopSequencesText.isEmpty {
-                            Text("ocr stop sequences: \(info.ocrStopSequencesText)")
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    DesktopModelInfoSummaryView(info: info)
                 }
             }
 
@@ -477,6 +618,66 @@ struct DesktopToolsTabView: View {
     func runBench() async {
         await viewModel.runBench()
     }
+}
+
+struct DesktopModelInfoSummaryView: View {
+    let info: RuntimeModelInfoState
+
+    var body: some View {
+        let content = desktopModelInfoSummaryContent(info)
+        VStack(alignment: .leading, spacing: 6) {
+            Text(content.headline)
+                .font(.headline)
+            Text(content.maxContext)
+            ForEach(Array(content.detailLines.enumerated()), id: \.offset) { _, line in
+                Text(line)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+struct DesktopModelInfoSummaryContent: Equatable {
+    let headline: String
+    let maxContext: String
+    let detailLines: [String]
+}
+
+func desktopModelInfoSummaryContent(
+    _ info: RuntimeModelInfoState
+) -> DesktopModelInfoSummaryContent {
+    var detailLines: [String] = []
+    if !info.aliasText.isEmpty {
+        detailLines.append("alias: \(info.aliasText)")
+    }
+    if !info.typeOverrideText.isEmpty {
+        detailLines.append("type override: \(info.typeOverrideText)")
+    }
+    detailLines.append("memory policy: \(info.memoryPolicyText)")
+    detailLines.append("adaptive thinking: \(info.adaptiveThinkingText)")
+    detailLines.append("acceleration: \(info.accelerationModeText) • \(info.accelerationProfileID.isEmpty ? "no-profile" : info.accelerationProfileID)")
+    detailLines.append("parser fallback: \(info.toolParserFallbackText)")
+    detailLines.append("pin on load: \(info.pinOnLoad ? "yes" : "no")")
+    if info.ttlSeconds > 0 {
+        detailLines.append("ttl seconds: \(info.ttlSeconds)")
+    }
+    detailLines.append("parsers: \(info.supportedParsers.joined(separator: ", "))")
+    detailLines.append("modalities: \(info.supportedModalities.joined(separator: ", "))")
+    if !info.ocrPromptProfileText.isEmpty {
+        detailLines.append("ocr prompt profile: \(info.ocrPromptProfileText)")
+    }
+    if !info.ocrSamplingProfileText.isEmpty {
+        detailLines.append("ocr sampling profile: \(info.ocrSamplingProfileText)")
+    }
+    if !info.ocrStopSequencesText.isEmpty {
+        detailLines.append("ocr stop sequences: \(info.ocrStopSequencesText)")
+    }
+    return DesktopModelInfoSummaryContent(
+        headline: "\(info.modelID) • \(info.modelKind)",
+        maxContext: "max context \(info.maxContext)",
+        detailLines: detailLines
+    )
 }
 
 struct DesktopSettingsTabView: View {

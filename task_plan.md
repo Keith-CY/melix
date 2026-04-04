@@ -2,58 +2,59 @@
 
 ## Goal
 
-Close `M8.6` by persisting admin-surface tool-section navigation in the operator session state,
-adding a repository-owned state-persistence smoke command, and documenting the offline-owned
-desktop admin assets contract.
+Close `M8.7` by completing the operator-visible per-model settings surface so menu bar users can
+inspect and update typed model settings, including type override, TTL, adaptive thinking, fallback
+flags, and merged effective settings.
 
 ## Scope
 
-- persist `selectedToolSection` alongside the existing operator-session state
-- keep persisted-state decoding backward compatible with pre-`selected_tool_section` payloads
-- add a focused menu bar smoke suite that proves persistence, restore, and secure file ownership
-- wrap the Swift smoke in a repository-owned `scripts/m8_admin_state_smoke.py` command
-- document the persistence and offline-assets behavior in `docs/runbooks/`
-- update milestone bookkeeping after verification
+- expand the model-settings edit path beyond alias/pin/memory/acceleration-only controls
+- keep control-plane policy parsing typed for adaptive thinking and existing model settings fields
+- make effective settings visible from menu bar state without inventing a second source of truth
+- preserve OCR and parser-related defaults as read-only effective settings ahead of `M8.8`
+- update milestone bookkeeping only after repository-default verification and changed-line coverage
 
 ## Phases
 
-1. Tool-section persistence behavior
+1. Typed settings contract and control-plane parsing
    - status: completed
    - evidence:
-     - add failing runtime-view-model coverage for persisted and restored tool sections
-     - wire `OperatorSessionState` and `RuntimeViewModel` to save and restore `selectedToolSection`
-     - keep legacy payloads compatible when `selected_tool_section` is absent
-2. Repository-owned smoke and docs
+     - audit `ModelSettings` fields and existing `model.set_policy` mapping
+     - add missing typed parsing for adaptive-thinking controls while preserving existing ext passthrough
+     - add focused control-plane coverage for the new typed settings fields
+2. Menu bar operator surface and effective settings visibility
    - status: completed
    - evidence:
-     - add `OperatorSessionPersistenceSmokeTests`
-     - add `scripts/m8_admin_state_smoke.py`
-     - add Python coverage for the smoke wrapper
-     - add a dedicated runbook for admin-surface persistence and offline assets
+     - extend runtime model row/info state to surface type override, TTL, adaptive thinking, fallback, and effective OCR/parser defaults
+     - add menu bar draft state and apply actions for the expanded model settings form
+     - render the completed settings surface in the desktop workspace without breaking existing model tooling flows
 3. Verification and milestone bookkeeping
    - status: completed
    - evidence:
-     - rerun the relevant Swift, Python, smoke, and repository-default verification commands
-     - record changed-line coverage at or above `95%` for the touched executable scope
-     - update `progress.md`, `docs/plans/2026-03-30-m8-6-tab-persistence-and-offline-admin-assets.md`, and the execution index
+     - run focused red/green tests for control plane and menu bar settings flows
+     - rerun repository-default verification commands for the touched scope
+     - record changed-line coverage at or above `95%` and update `progress.md` plus the execution index
 
 ## Acceptance
 
-- selecting a tool section persists it into the operator-session file and restores it across restart
-- old operator-session payloads without `selected_tool_section` still restore safely
-- a repository-owned smoke command proves persistence, restore, secure permissions, and zero
-  external admin-asset references
-- the M8.6 plan, runbook, and execution index describe the real repository state
+- operators can update alias, type override, TTL, pin-on-load, memory policy, acceleration mode,
+  acceleration profile, adaptive thinking mode, adaptive thinking budget, and parser fallback from
+  the native menu bar workspace
+- the menu bar model info surface shows effective typed settings and merged OCR/parser defaults from
+  control-plane state
+- control-plane parsing remains deterministic and non-destructive for typed settings and ext-backed
+  fallbacks
+- `M8.7` can be closed with repository-default verification and explicit coverage evidence
 
 ## Risks
 
-- changing the operator-session schema can break restore for existing local state if decoding is not
-  backward compatible
-- the Python smoke wrapper can fail inside restricted environments if it relies on SwiftPM sandbox
-  defaults instead of repository-controlled flags
-- documenting offline-owned assets too loosely can create a false claim if remote admin assets are
-  added later without updating the runbook
+- overloading the existing settings action with loosely named string keys can create silent parsing
+  drift between menu bar and control plane if typed keys are not normalized
+- exposing effective settings from the wrong source can make the operator surface diverge from the
+  control-plane snapshot
+- broadening the menu bar model form without tight tests can regress existing latency-profile and
+  model-info flows
 
 ## Outcome
 
-- m8_6_admin_state_persistence_completed
+- m8_7_model_settings_completion_completed
