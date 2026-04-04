@@ -1929,9 +1929,13 @@ struct RuntimeViewModelTests {
         var snapshot = Melix_Controlplane_V1_ServerSnapshot()
         snapshot.serverState = .serverReady
 
-        var model = makeModelSummary(modelID: "melix-dev-text", state: .modelDiscovered)
+        var model = makeModelSummary(modelID: "melix-dev-ocr", state: .modelDiscovered)
+        model.kind = "ocr"
         model.settings.ext["ocr_prompt_profile_id"] = "ocr-default-v1"
-        model.settings.ext["ocr_sampling_profile_id"] = "ocr-deterministic"
+        model.settings.ext["melix.generation_config.source"] = "/tmp/melix-dev-ocr/generation_config.json"
+        model.settings.ext["melix.generation_config.temperature"] = "0.12"
+        model.settings.ext["melix.generation_config.top_p"] = "0.9"
+        model.settings.ext["melix.generation_config.max_tokens"] = "320"
         model.settings.ext["ocr_stop_sequences"] = "<ocr:end>"
         snapshot.models = [model]
 
@@ -1950,11 +1954,15 @@ struct RuntimeViewModelTests {
         viewModel.modelSettingsAdaptiveThinkingModeDraft = "adaptive"
         viewModel.modelSettingsAdaptiveThinkingBudgetDraft = "192"
         viewModel.modelSettingsToolParserXMLFallbackDraft = true
+        viewModel.modelSettingsOCRSamplingProfileDraft = "ocr-operator"
+        viewModel.modelSettingsOCRTemperatureDraft = "0.05"
+        viewModel.modelSettingsOCRTopPDraft = "0.82"
+        viewModel.modelSettingsOCRMaxTokensDraft = "192"
 
         await viewModel.applyPrimaryModelSettings()
         await viewModel.inspectPrimaryModel()
 
-        #expect(await client.recordedActions.contains("settings:melix-dev-text"))
+        #expect(await client.recordedActions.contains("settings:melix-dev-ocr"))
         #expect(viewModel.primaryModel?.alias == "Melix Text Turbo")
         #expect(viewModel.primaryModel?.typeOverrideText == "mlx-text")
         #expect(viewModel.primaryModel?.adaptiveThinkingText == "Adaptive • 192 tok")
@@ -1963,7 +1971,11 @@ struct RuntimeViewModelTests {
         #expect(viewModel.selectedModelInfo?.ttlSeconds == 600)
         #expect(viewModel.selectedModelInfo?.adaptiveThinkingText == "Adaptive • 192 tok")
         #expect(viewModel.selectedModelInfo?.toolParserFallbackText == "XML")
-        #expect(viewModel.selectedModelInfo?.ocrSamplingProfileText == "ocr-deterministic")
+        #expect(viewModel.selectedModelInfo?.ocrSamplingProfileText == "ocr-operator")
+        #expect(viewModel.selectedModelInfo?.ocrTemperatureText == "0.05")
+        #expect(viewModel.selectedModelInfo?.ocrTopPText == "0.82")
+        #expect(viewModel.selectedModelInfo?.ocrMaxTokensText == "192")
+        #expect(viewModel.selectedModelInfo?.generationConfigTemperatureText == "0.12")
     }
 
     @Test("model settings validation guards invalid drafts resets typed values and no-ops without a primary model")

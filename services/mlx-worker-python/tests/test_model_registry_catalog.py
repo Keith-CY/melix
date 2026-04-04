@@ -260,3 +260,116 @@ def test_registry_snapshot_skips_invalid_manifests_and_normalizes_non_mapping_ex
     assert [model.model_id for model in snapshot.models] == ["mlx-community/Valid-Model/4bit"]
     assert dict(snapshot.models[0].ext)["melix.registry_root_id"] == "root-1"
     assert "source_root" not in snapshot.models[0].ext
+
+
+def test_registry_snapshot_imports_generation_config_defaults_and_preserves_manifest_precedence(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "root"
+    variant_dir = root / "mlx-community" / "Vision-OCR" / "8bit"
+    _write_registry_manifest(
+        variant_dir,
+        model_id="mlx-community/Vision-OCR/8bit",
+        model_kind="ocr",
+        ext={
+            "melix.generation_config.temperature": "0.25",
+            "ocr_sampling_profile_id": "ocr-operator",
+        },
+    )
+    (variant_dir / "generation_config.json").write_text(
+        json.dumps(
+            {
+                "temperature": 0.15,
+                "top_p": 0.92,
+                "max_new_tokens": 384,
+                "do_sample": False,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    catalog = WorkerModelCatalog(environment={"MELIX_MODEL_ROOTS": str(root)})
+
+    snapshot = catalog.registry_snapshot()
+    discovered = {model.model_id: model for model in snapshot.models}
+    model = discovered["mlx-community/Vision-OCR/8bit"]
+
+    assert model.ext["melix.generation_config.temperature"] == "0.25"
+    assert model.ext["melix.generation_config.top_p"] == "0.92"
+    assert model.ext["melix.generation_config.max_tokens"] == "384"
+    assert model.ext["melix.generation_config.do_sample"] == "false"
+    assert model.ext["melix.generation_config.source"].endswith("generation_config.json")
+    assert model.ext["ocr_sampling_profile_id"] == "ocr-operator"
+
+
+def test_registry_snapshot_ignores_invalid_generation_config_sidecars(tmp_path: Path) -> None:
+    root = tmp_path / "root"
+    variant_dir = root / "mlx-community" / "Broken-Config" / "q4"
+    _write_registry_manifest(
+        variant_dir,
+        model_id="mlx-community/Broken-Config/q4",
+        ext={"source_root": "valid"},
+    )
+    (variant_dir / "generation_config.json").write_text("{broken\n", encoding="utf-8")
+
+    catalog = WorkerModelCatalog(environment={"MELIX_MODEL_ROOTS": str(root)})
+
+    snapshot = catalog.registry_snapshot()
+    model = snapshot.models[0]
+
+    assert model.model_id == "mlx-community/Broken-Config/q4"
+    assert "melix.generation_config.source" not in model.ext
+
+
+def test_registry_snapshot_ignores_non_mapping_generation_config_sidecars(tmp_path: Path) -> None:
+    root = tmp_path / "root"
+    variant_dir = root / "mlx-community" / "List-Config" / "q4"
+    _write_registry_manifest(
+        variant_dir,
+        model_id="mlx-community/List-Config/q4",
+        ext={"source_root": "valid"},
+    )
+    (variant_dir / "generation_config.json").write_text('["not", "a", "mapping"]\n', encoding="utf-8")
+
+    catalog = WorkerModelCatalog(environment={"MELIX_MODEL_ROOTS": str(root)})
+
+    snapshot = catalog.registry_snapshot()
+    model = snapshot.models[0]
+
+    assert model.model_id == "mlx-community/List-Config/q4"
+    assert "melix.generation_config.source" not in model.ext
+
+
+def test_registry_snapshot_imports_string_generation_config_values_and_skips_blank_entries(tmp_path: Path) -> None:
+    root = tmp_path / "root"
+    variant_dir = root / "mlx-community" / "String-Config" / "q4"
+    _write_registry_manifest(
+        variant_dir,
+        model_id="mlx-community/String-Config/q4",
+        ext={"source_root": "valid"},
+    )
+    (variant_dir / "generation_config.json").write_text(
+        json.dumps(
+            {
+                "temperature": " 0.33 ",
+                "top_p": ["unsupported"],
+                "max_new_tokens": " 512 ",
+                "do_sample": True,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    catalog = WorkerModelCatalog(environment={"MELIX_MODEL_ROOTS": str(root)})
+
+    snapshot = catalog.registry_snapshot()
+    model = snapshot.models[0]
+
+    assert model.model_id == "mlx-community/String-Config/q4"
+    assert model.ext["melix.generation_config.temperature"] == "0.33"
+    assert "melix.generation_config.top_p" not in model.ext
+    assert model.ext["melix.generation_config.max_tokens"] == "512"
+    assert model.ext["melix.generation_config.do_sample"] == "true"
+    assert model.ext["melix.generation_config.source"].endswith("generation_config.json")

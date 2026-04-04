@@ -414,6 +414,13 @@ public enum BootstrapWorkerPreparation {
         "melix.derived_from_model_revision",
         "melix.activation_mode",
     ]
+    private static let generationConfigExtKeys = [
+        "melix.generation_config.source",
+        "melix.generation_config.temperature",
+        "melix.generation_config.top_p",
+        "melix.generation_config.max_tokens",
+        "melix.generation_config.do_sample",
+    ]
 
     public static func modelSpec(for modelID: String) -> Melix_Worker_V1_ModelSpec? {
         switch modelID {
@@ -448,6 +455,8 @@ public enum BootstrapWorkerPreparation {
         let baseSpec: Melix_Worker_V1_ModelSpec
         if let builtIn = modelSpec(for: summary.modelID) {
             baseSpec = builtIn
+        } else if let generic = genericOCRModel(from: summary) {
+            baseSpec = generic
         } else if let generic = genericVLMModel(from: summary) {
             baseSpec = generic
         } else if let generic = genericImageModel(from: summary) {
@@ -481,6 +490,9 @@ public enum BootstrapWorkerPreparation {
             applyExtOverride(for: key, from: summary, to: &spec)
         }
         for key in genericTextExtKeys {
+            applyExtOverride(for: key, from: summary, to: &spec)
+        }
+        for key in generationConfigExtKeys {
             applyExtOverride(for: key, from: summary, to: &spec)
         }
         let overriddenModelPath = summary.settings.ext["melix.model_path"]?
@@ -527,6 +539,31 @@ public enum BootstrapWorkerPreparation {
         model.modelKind = "text"
         model.revision = summary.settings.ext["melix.model_revision"] ?? "derived"
         model.tokenizerHash = summary.settings.ext["melix.tokenizer_hash"] ?? "tok-derived"
+        model.quantProfileID = summary.quantProfileID
+        model.parserMode = summary.settings.ext["melix.parser_mode"] ?? "text"
+        model.reasoningMode = summary.settings.ext["melix.reasoning_mode"] ?? "off"
+        model.maxContext = summary.maxContext
+        model.ext.merge(summary.settings.ext) { _, new in new }
+        return model
+    }
+
+    private static func genericOCRModel(
+        from summary: Melix_Controlplane_V1_ModelSummary
+    ) -> Melix_Worker_V1_ModelSpec? {
+        guard summary.kind == "ocr" else {
+            return nil
+        }
+        let modelPath = summary.settings.ext["melix.model_path"]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !modelPath.isEmpty else {
+            return nil
+        }
+
+        var model = Melix_Worker_V1_ModelSpec()
+        model.modelID = summary.modelID
+        model.modelPath = modelPath
+        model.modelKind = "ocr"
+        model.revision = summary.settings.ext["melix.model_revision"] ?? "imported"
+        model.tokenizerHash = summary.settings.ext["melix.tokenizer_hash"] ?? "tok-ocr-imported"
         model.quantProfileID = summary.quantProfileID
         model.parserMode = summary.settings.ext["melix.parser_mode"] ?? "text"
         model.reasoningMode = summary.settings.ext["melix.reasoning_mode"] ?? "off"

@@ -26,6 +26,11 @@ _AUDIO_LANGUAGES_KEY = "melix.audio.languages"
 _AUDIO_VOICE_MODE_KEY = "melix.audio.voice_mode"
 _AUDIO_OUTPUT_FORMATS_KEY = "melix.audio.output_formats"
 _AUDIO_SUPPORTS_INSTRUCTIONS_KEY = "melix.audio.supports_instructions"
+_GENERATION_CONFIG_SOURCE_KEY = "melix.generation_config.source"
+_GENERATION_CONFIG_TEMPERATURE_KEY = "melix.generation_config.temperature"
+_GENERATION_CONFIG_TOP_P_KEY = "melix.generation_config.top_p"
+_GENERATION_CONFIG_MAX_TOKENS_KEY = "melix.generation_config.max_tokens"
+_GENERATION_CONFIG_DO_SAMPLE_KEY = "melix.generation_config.do_sample"
 
 
 @dataclass(frozen=True)
@@ -47,6 +52,54 @@ class RegistrySnapshot:
 
 def _normalized(value: str | None) -> str:
     return (value or "").strip()
+
+
+def _normalized_generation_config_value(value: object) -> str | None:
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (int, float)):
+        return str(value)
+    if isinstance(value, str):
+        normalized = value.strip()
+        return normalized or None
+    return None
+
+
+def _merge_generation_config_metadata(
+    model_dir: Path,
+    *,
+    ext: dict[str, str],
+) -> None:
+    generation_config_path = model_dir / "generation_config.json"
+    if not generation_config_path.is_file():
+        return
+
+    try:
+        payload = json.loads(generation_config_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return
+
+    if not isinstance(payload, dict):
+        return
+
+    recognized_values = {
+        _GENERATION_CONFIG_TEMPERATURE_KEY: payload.get("temperature"),
+        _GENERATION_CONFIG_TOP_P_KEY: payload.get("top_p"),
+        _GENERATION_CONFIG_MAX_TOKENS_KEY: payload.get("max_new_tokens"),
+        _GENERATION_CONFIG_DO_SAMPLE_KEY: payload.get("do_sample"),
+    }
+    imported_any = False
+    for ext_key, raw_value in recognized_values.items():
+        if _normalized(ext.get(ext_key)):
+            continue
+        normalized_value = _normalized_generation_config_value(raw_value)
+        if normalized_value is None:
+            continue
+        ext[ext_key] = normalized_value
+        imported_any = True
+
+    if imported_any and not _normalized(ext.get(_GENERATION_CONFIG_SOURCE_KEY)):
+        ext[_GENERATION_CONFIG_SOURCE_KEY] = str(generation_config_path)
 
 
 def _path_derived_registry_identity(relative_parts: tuple[str, ...]) -> tuple[str, str, str, str] | None:
@@ -500,6 +553,7 @@ class WorkerModelCatalog:
         parser_mode = _normalized(str(payload.get("parser_mode", "text"))) or "text"
         reasoning_mode = _normalized(str(payload.get("reasoning_mode", "off"))) or "off"
         max_context = int(payload.get("max_context", 8192) or 8192)
+        _merge_generation_config_metadata(manifest_path.parent, ext=normalized_ext)
 
         return model_id, common_pb2.ModelSpec(
             model_id=model_id,

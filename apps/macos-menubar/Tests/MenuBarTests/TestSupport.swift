@@ -376,6 +376,18 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
         if let toolParserXMLFallback = values["tool_parser_xml_fallback"] {
             modelSettings.ext["tool_parser_xml_fallback"] = toolParserXMLFallback
         }
+        if let ocrSamplingProfileID = values["ocr_sampling_profile_id"] {
+            modelSettings.ext["ocr_sampling_profile_id"] = ocrSamplingProfileID
+        }
+        if let ocrDefaultTemperature = values["ocr_default_temperature"] {
+            modelSettings.ext["ocr_default_temperature"] = ocrDefaultTemperature
+        }
+        if let ocrDefaultTopP = values["ocr_default_top_p"] {
+            modelSettings.ext["ocr_default_top_p"] = ocrDefaultTopP
+        }
+        if let ocrDefaultMaxTokens = values["ocr_default_max_tokens"] {
+            modelSettings.ext["ocr_default_max_tokens"] = ocrDefaultMaxTokens
+        }
         return makeModelSummary(state: modelState)
     }
 

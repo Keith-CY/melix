@@ -1519,6 +1519,7 @@ public struct ChatRequestTranslator: Sendable {
         modelToolParser: ToolParserSelection? = nil,
         modelChatTemplatePolicy: ModelChatTemplatePolicy? = nil,
         modelOCRPolicy: OCRExecutionPolicy? = nil,
+        modelSamplingPolicy: ModelSamplingPolicy? = nil,
         mcpToolCatalog: MCPToolCatalog = .empty
     ) throws -> TranslatedChatRequest {
         let requestID = requestIDGenerator()
@@ -1527,6 +1528,7 @@ public struct ChatRequestTranslator: Sendable {
             modelToolParser: modelToolParser,
             modelChatTemplatePolicy: modelChatTemplatePolicy,
             modelOCRPolicy: modelOCRPolicy,
+            modelSamplingPolicy: modelSamplingPolicy,
             mcpToolCatalog: mcpToolCatalog
         )
 

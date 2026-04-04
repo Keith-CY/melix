@@ -950,6 +950,46 @@ struct PythonBridgeWorkerClientTests {
         #expect(spec.ext["ocr_sampling_profile_id"] == "ocr-deterministic")
     }
 
+    @Test("bootstrap worker preparation builds generic OCR specs and carries generation-config metadata")
+    func bootstrapWorkerPreparationBuildsGenericOCRSpecsAndCarriesGenerationConfigMetadata() throws {
+        var summary = Melix_Controlplane_V1_ModelSummary()
+        summary.modelID = "mlx-community/Vision-OCR/8bit"
+        summary.kind = "ocr"
+        summary.maxContext = 4096
+        summary.quantProfileID = "q8"
+        summary.settings.alias = "Vision OCR"
+        summary.settings.ext["melix.model_path"] = "/tmp/registry-root/mlx-community/Vision-OCR/8bit"
+        summary.settings.ext["melix.model_revision"] = "registry"
+        summary.settings.ext["melix.tokenizer_hash"] = "tok-ocr-imported"
+        summary.settings.ext["ocr_prompt_profile_id"] = "ocr-default-v1"
+        summary.settings.ext["melix.generation_config.source"] = "/tmp/registry-root/mlx-community/Vision-OCR/8bit/generation_config.json"
+        summary.settings.ext["melix.generation_config.temperature"] = "0.15"
+        summary.settings.ext["melix.generation_config.top_p"] = "0.92"
+        summary.settings.ext["melix.generation_config.max_tokens"] = "384"
+
+        let spec = try #require(BootstrapWorkerPreparation.modelSpec(for: summary))
+
+        #expect(spec.modelID == "mlx-community/Vision-OCR/8bit")
+        #expect(spec.modelKind == "ocr")
+        #expect(spec.modelPath == "/tmp/registry-root/mlx-community/Vision-OCR/8bit")
+        #expect(spec.ext["melix.generation_config.temperature"] == "0.15")
+        #expect(spec.ext["melix.generation_config.top_p"] == "0.92")
+        #expect(spec.ext["melix.generation_config.max_tokens"] == "384")
+    }
+
+    @Test("bootstrap worker preparation skips generic OCR specs without a concrete model path")
+    func bootstrapWorkerPreparationSkipsGenericOCRSpecsWithoutConcreteModelPath() {
+        var summary = Melix_Controlplane_V1_ModelSummary()
+        summary.modelID = "mlx-community/Vision-OCR/8bit"
+        summary.kind = "ocr"
+        summary.maxContext = 4096
+        summary.quantProfileID = "q8"
+        summary.settings.alias = "Vision OCR"
+        summary.settings.ext["melix.model_revision"] = "registry"
+
+        #expect(BootstrapWorkerPreparation.modelSpec(for: summary) == nil)
+    }
+
     @Test("bootstrap worker preparation lets built-in audio models override model path from summary metadata")
     func bootstrapWorkerPreparationLetsBuiltInAudioModelsOverrideModelPathFromSummaryMetadata() throws {
         var summary = ModelCatalog.mlxWhisperModel()

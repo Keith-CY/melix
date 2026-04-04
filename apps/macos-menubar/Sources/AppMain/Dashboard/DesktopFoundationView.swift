@@ -253,6 +253,40 @@ struct DesktopModelsTabView: View {
                             )
                             .toggleStyle(.checkbox)
                         }
+                        if primaryModel.kind == "ocr" {
+                            HStack(spacing: 12) {
+                                TextField(
+                                    "OCR Sampling Profile",
+                                    text: Binding(
+                                        get: { viewModel.modelSettingsOCRSamplingProfileDraft },
+                                        set: { viewModel.modelSettingsOCRSamplingProfileDraft = $0 }
+                                    )
+                                )
+                                TextField(
+                                    "OCR Temperature",
+                                    text: Binding(
+                                        get: { viewModel.modelSettingsOCRTemperatureDraft },
+                                        set: { viewModel.modelSettingsOCRTemperatureDraft = $0 }
+                                    )
+                                )
+                            }
+                            HStack(spacing: 12) {
+                                TextField(
+                                    "OCR Top P",
+                                    text: Binding(
+                                        get: { viewModel.modelSettingsOCRTopPDraft },
+                                        set: { viewModel.modelSettingsOCRTopPDraft = $0 }
+                                    )
+                                )
+                                TextField(
+                                    "OCR Max Tokens",
+                                    text: Binding(
+                                        get: { viewModel.modelSettingsOCRMaxTokensDraft },
+                                        set: { viewModel.modelSettingsOCRMaxTokensDraft = $0 }
+                                    )
+                                )
+                            }
+                        }
                         HStack {
                             Button("Apply Settings", action: applyPrimaryModelSettingsAction())
                             .buttonStyle(.borderedProminent)
@@ -667,8 +701,28 @@ func desktopModelInfoSummaryContent(
     if !info.ocrPromptProfileText.isEmpty {
         detailLines.append("ocr prompt profile: \(info.ocrPromptProfileText)")
     }
+    if !info.generationConfigSourceText.isEmpty {
+        detailLines.append("generation config: \(info.generationConfigSourceText)")
+    }
+    let generationDefaultParts = [
+        info.generationConfigTemperatureText.isEmpty ? nil : "temp \(info.generationConfigTemperatureText)",
+        info.generationConfigTopPText.isEmpty ? nil : "top-p \(info.generationConfigTopPText)",
+        info.generationConfigMaxTokensText.isEmpty ? nil : "max \(info.generationConfigMaxTokensText)",
+    ].compactMap { $0 }
+    if !generationDefaultParts.isEmpty {
+        detailLines.append("generation defaults: \(generationDefaultParts.joined(separator: " • "))")
+    }
     if !info.ocrSamplingProfileText.isEmpty {
         detailLines.append("ocr sampling profile: \(info.ocrSamplingProfileText)")
+    }
+    let ocrSamplingParts = [
+        info.ocrSamplingProfileText.isEmpty ? nil : info.ocrSamplingProfileText,
+        info.ocrTemperatureText.isEmpty ? nil : "temp \(info.ocrTemperatureText)",
+        info.ocrTopPText.isEmpty ? nil : "top-p \(info.ocrTopPText)",
+        info.ocrMaxTokensText.isEmpty ? nil : "max \(info.ocrMaxTokensText)",
+    ].compactMap { $0 }
+    if !ocrSamplingParts.isEmpty {
+        detailLines.append("ocr sampling defaults: \(ocrSamplingParts.joined(separator: " • "))")
     }
     if !info.ocrStopSequencesText.isEmpty {
         detailLines.append("ocr stop sequences: \(info.ocrStopSequencesText)")

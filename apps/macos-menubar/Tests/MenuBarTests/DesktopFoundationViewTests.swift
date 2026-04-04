@@ -113,6 +113,17 @@ struct DesktopFoundationViewTests {
     @MainActor
     func modelsTabFormButtonsDispatchActions() async throws {
         let client = FakeControlPlaneXPCClient()
+        var snapshot = Melix_Controlplane_V1_ServerSnapshot()
+        snapshot.serverState = .serverReady
+        var snapshotModel = Melix_Controlplane_V1_ModelSummary()
+        snapshotModel.modelID = "melix-dev-ocr"
+        snapshotModel.kind = "ocr"
+        snapshotModel.state = .modelDiscovered
+        snapshotModel.features = ["ocr", "vision"]
+        snapshotModel.maxContext = 4096
+        snapshotModel.settings.alias = "Melix Dev OCR"
+        snapshot.models = [snapshotModel]
+        await client.configureSnapshot(snapshot)
         let viewModel = RuntimeViewModel(client: client)
         await viewModel.start()
 
@@ -122,6 +133,10 @@ struct DesktopFoundationViewTests {
         viewModel.modelSettingsAdaptiveThinkingModeDraft = "adaptive"
         viewModel.modelSettingsAdaptiveThinkingBudgetDraft = "64"
         viewModel.modelSettingsToolParserXMLFallbackDraft = true
+        viewModel.modelSettingsOCRSamplingProfileDraft = "ocr-operator"
+        viewModel.modelSettingsOCRTemperatureDraft = "0.05"
+        viewModel.modelSettingsOCRTopPDraft = "0.82"
+        viewModel.modelSettingsOCRMaxTokensDraft = "192"
 
         let tab = DesktopModelsTabView(
             foundation: viewModel.desktopFoundationState,
@@ -138,10 +153,48 @@ struct DesktopFoundationViewTests {
         try await Task.sleep(for: .milliseconds(50))
 
         let actions = await client.recordedActions
-        #expect(actions.contains("settings:melix-dev-text"))
-        #expect(actions.contains("info:melix-dev-text"))
-        #expect(actions.contains("load:melix-dev-text"))
+        #expect(actions.contains("settings:melix-dev-ocr"))
+        #expect(actions.contains("info:melix-dev-ocr"))
+        #expect(actions.contains("load:melix-dev-ocr"))
         #expect(viewModel.modelSettingsAliasDraft == viewModel.primaryModel?.alias)
+    }
+
+    @Test("models tab renders OCR sampling controls when the primary model is OCR")
+    @MainActor
+    func modelsTabRendersOCRSamplingControlsForOCRModels() async throws {
+        let client = FakeControlPlaneXPCClient()
+        var snapshot = Melix_Controlplane_V1_ServerSnapshot()
+        snapshot.serverState = .serverReady
+        var snapshotModel = Melix_Controlplane_V1_ModelSummary()
+        snapshotModel.modelID = "melix-dev-ocr"
+        snapshotModel.kind = "ocr"
+        snapshotModel.state = .modelDiscovered
+        snapshotModel.features = ["ocr", "vision"]
+        snapshotModel.maxContext = 4096
+        snapshotModel.settings.alias = "Melix Dev OCR"
+        snapshot.models = [snapshotModel]
+        await client.configureSnapshot(snapshot)
+
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        viewModel.modelSettingsOCRSamplingProfileDraft = "ocr-operator"
+        viewModel.modelSettingsOCRTemperatureDraft = "0.05"
+        viewModel.modelSettingsOCRTopPDraft = "0.82"
+        viewModel.modelSettingsOCRMaxTokensDraft = "192"
+
+        let view = hostView(
+            DesktopModelsTabView(
+                foundation: viewModel.desktopFoundationState,
+                viewModel: viewModel
+            )
+        )
+        let values = renderedTextValues(in: view)
+
+        #expect(view.subviews.isEmpty == false)
+        #expect(values.contains("ocr-operator"))
+        #expect(values.contains("0.05"))
+        #expect(values.contains("0.82"))
+        #expect(values.contains("192"))
     }
 
     @Test("agent integration exports panel renders populated and empty states")
@@ -461,6 +514,13 @@ struct DesktopFoundationViewTests {
         model.settings.ext["tool_parser_xml_fallback"] = "true"
         model.settings.ext["ocr_prompt_profile_id"] = "ocr-default-v1"
         model.settings.ext["ocr_sampling_profile_id"] = "ocr-deterministic"
+        model.settings.ext["ocr_default_temperature"] = "0.05"
+        model.settings.ext["ocr_default_top_p"] = "0.82"
+        model.settings.ext["ocr_default_max_tokens"] = "192"
+        model.settings.ext["melix.generation_config.source"] = "/tmp/melix-dev-text/generation_config.json"
+        model.settings.ext["melix.generation_config.temperature"] = "0.12"
+        model.settings.ext["melix.generation_config.top_p"] = "0.9"
+        model.settings.ext["melix.generation_config.max_tokens"] = "320"
         model.settings.ext["ocr_stop_sequences"] = "<ocr:end>"
         snapshot.models = [model]
 
@@ -492,6 +552,8 @@ struct DesktopFoundationViewTests {
         #expect(values.contains("192"))
         #expect(viewModel.selectedModelInfo?.toolParserFallbackText == "XML")
         #expect(viewModel.selectedModelInfo?.ocrSamplingProfileText == "ocr-deterministic")
+        #expect(viewModel.selectedModelInfo?.ocrTemperatureText == "0.05")
+        #expect(viewModel.selectedModelInfo?.generationConfigTemperatureText == "0.12")
     }
 
     @Test("model info summary view renders typed settings and merged defaults")
@@ -514,6 +576,13 @@ struct DesktopFoundationViewTests {
             toolParserFallbackText: "XML",
             ocrPromptProfileText: "ocr-default-v1",
             ocrSamplingProfileText: "ocr-deterministic",
+            ocrTemperatureText: "0.05",
+            ocrTopPText: "0.82",
+            ocrMaxTokensText: "192",
+            generationConfigSourceText: "/tmp/melix-dev-text/generation_config.json",
+            generationConfigTemperatureText: "0.12",
+            generationConfigTopPText: "0.9",
+            generationConfigMaxTokensText: "320",
             ocrStopSequencesText: "<ocr:end>"
         )
 
@@ -531,6 +600,9 @@ struct DesktopFoundationViewTests {
         #expect(content.detailLines.contains("ttl seconds: 600"))
         #expect(content.detailLines.contains("parsers: text, json"))
         #expect(content.detailLines.contains("modalities: text, image"))
+        #expect(content.detailLines.contains("generation config: /tmp/melix-dev-text/generation_config.json"))
+        #expect(content.detailLines.contains("generation defaults: temp 0.12 • top-p 0.9 • max 320"))
+        #expect(content.detailLines.contains("ocr sampling defaults: ocr-deterministic • temp 0.05 • top-p 0.82 • max 192"))
     }
 
     @Test("tools tab buttons dispatch inspect diagnostics bench and model operations")

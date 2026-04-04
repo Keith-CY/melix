@@ -2,6 +2,42 @@
 
 ## 2026-04-04
 
+- Closed the `M8.8` generation-config and OCR sampling controls milestone:
+  - extended `services/mlx-worker-python/worker/model_registry/catalog.py` so registry discovery now imports inspectable `melix.generation_config.*` metadata from `generation_config.json` without overwriting explicit manifest ext values, while malformed and non-mapping sidecars remain safe no-ops
+  - updated `services/control-plane-swift/Sources/Requests/TextRequestShaper.swift`, `services/control-plane-swift/Sources/Requests/ChatRequestTranslator.swift`, `services/control-plane-swift/Sources/XPCService/ControlPlaneService.swift`, `services/control-plane-swift/Sources/HTTPGateway/OpenAI/OpenAIHandler.swift`, and `services/control-plane-swift/Sources/WorkerClient/PythonBridgeWorkerClient.swift` so imported generation-config defaults flow through a shared model-sampling policy and OCR-specific overrides only win when explicitly configured
+  - expanded `apps/macos-menubar/Sources/AppMain/Models/RuntimeViewModel.swift` and `apps/macos-menubar/Sources/AppMain/Dashboard/DesktopFoundationView.swift` so the native operator shell now exposes OCR sampling profile, temperature, top-p, and max-token controls in the shared model-settings form while also surfacing generation-config provenance and effective OCR defaults in the model info summary
+  - added focused regression coverage in `services/mlx-worker-python/tests/test_model_registry_catalog.py`, `services/control-plane-swift/Tests/ControlPlaneTests/TextEndpointContractTests.swift`, `services/control-plane-swift/Tests/WorkerClientTests/PythonBridgeWorkerClientTests.swift`, `apps/macos-menubar/Tests/MenuBarTests/RuntimeViewModelTests.swift`, `apps/macos-menubar/Tests/MenuBarTests/DesktopFoundationViewTests.swift`, and `apps/macos-menubar/Tests/MenuBarTests/TestSupport.swift`
+  - updated `docs/plans/2026-03-30-m8-8-generation-config-and-ocr-sampling-controls.md`, `docs/plans/2026-03-30-full-capability-roadmap-execution-index.md`, and `task_plan.md` so the repository records `M8.8` as completed with explicit verification and coverage evidence instead of leaving the slice pending
+- Verification summary for `M8.8`:
+  - `PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" UV_CACHE_DIR="$(pwd)/.uv-cache" uv run --project services/mlx-worker-python --extra mlx pytest services/mlx-worker-python/tests/test_model_registry_catalog.py -q`: `11 passed in 0.08s`
+  - `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/.build/ModuleCache.noindex" swift test --package-path services/control-plane-swift --filter 'TextEndpointContractTests|PythonBridgeWorkerClientTests'`: pass
+  - `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/.build/ModuleCache.noindex" swift test --package-path apps/macos-menubar --filter 'RuntimeViewModelTests|DesktopFoundationViewTests'`: pass
+  - `make proto`: pass
+  - `make py-test`: `425 passed in 34.13s`
+  - `make swift-test`: pass
+  - `make integration-test`: `58 passed in 692.74s (0:11:32)`
+- Metrics report for `M8.8`:
+  - Python changed-line coverage:
+    - `services/mlx-worker-python/worker/model_registry/catalog.py`: `100.00%` (`37/37`)
+    - `services/mlx-worker-python/tests/test_model_registry_catalog.py`: `100.00%` (`49/49`)
+    - aggregate Python changed-line coverage: `100.00%` (`86/86`)
+  - control-plane changed-line coverage:
+    - `services/control-plane-swift/Sources/HTTPGateway/OpenAI/OpenAIHandler.swift`: `84.62%` (`11/13`)
+    - `services/control-plane-swift/Sources/Requests/ChatRequestTranslator.swift`: `100.00%` (`1/1`)
+    - `services/control-plane-swift/Sources/Requests/TextRequestShaper.swift`: `100.00%` (`34/34`)
+    - `services/control-plane-swift/Sources/WorkerClient/PythonBridgeWorkerClient.swift`: `100.00%` (`27/27`)
+    - `services/control-plane-swift/Sources/XPCService/ControlPlaneService.swift`: `84.62%` (`11/13`)
+    - `services/control-plane-swift/Tests/ControlPlaneTests/TextEndpointContractTests.swift`: `100.00%` (`76/76`)
+    - `services/control-plane-swift/Tests/WorkerClientTests/PythonBridgeWorkerClientTests.swift`: `100.00%` (`36/36`)
+    - aggregate control-plane changed-line coverage: `98.00%` (`196/200`)
+  - menu bar changed-line coverage:
+    - `apps/macos-menubar/Sources/AppMain/Dashboard/DesktopFoundationView.swift`: `100.00%` (`54/54`)
+    - `apps/macos-menubar/Sources/AppMain/Models/RuntimeViewModel.swift`: `95.45%` (`126/132`)
+    - `apps/macos-menubar/Tests/MenuBarTests/DesktopFoundationViewTests.swift`: `100.00%` (`72/72`)
+    - `apps/macos-menubar/Tests/MenuBarTests/RuntimeViewModelTests.swift`: `100.00%` (`16/16`)
+    - `apps/macos-menubar/Tests/MenuBarTests/TestSupport.swift`: `100.00%` (`12/12`)
+    - aggregate menu bar changed-line coverage: `97.90%` (`280/286`)
+
 - Closed the `M8.7` model-settings completion milestone:
   - extended `apps/macos-menubar/Sources/AppMain/Models/RuntimeViewModel.swift` so the native operator shell now tracks typed drafts for type override, TTL seconds, adaptive thinking mode and budget, parser fallback, and merged effective OCR/parser defaults in the same model-settings flow
   - updated `services/control-plane-swift/Sources/XPCService/ControlPlaneService.swift` so empty-string TTL and adaptive-thinking budget drafts clear to zero without destructive side effects, while typed adaptive-thinking parsing remains explicit

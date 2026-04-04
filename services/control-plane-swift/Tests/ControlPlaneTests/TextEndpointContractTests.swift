@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 @testable import MelixControlPlaneCore
+import MelixControlPlaneProtocol
 import MelixWorkerProtocol
 
 struct TextEndpointContractTests {
@@ -731,6 +732,59 @@ struct TextEndpointContractTests {
         #expect(translated.workerRequest.execution.ext["melix.ocr.stop_sequences"] == "BODY")
     }
 
+    @Test("ocr model policies fall back to imported generation-config sampling defaults")
+    func ocrModelPoliciesFallbackToImportedGenerationConfigSamplingDefaults() throws {
+        let decoder = JSONDecoder()
+        let translator = ChatRequestTranslator()
+        var modelSettings = Melix_Controlplane_V1_ModelSettings()
+        modelSettings.ext["ocr_prompt_profile_id"] = "ocr-default-v1"
+        modelSettings.ext["ocr_prompt_template"] = "OCR instruction: {prompt}"
+        modelSettings.ext["ocr_auto_prompt"] = "Extract the text from the image exactly as written."
+        modelSettings.ext["melix.generation_config.temperature"] = "0.15"
+        modelSettings.ext["melix.generation_config.top_p"] = "0.92"
+        modelSettings.ext["melix.generation_config.max_tokens"] = "384"
+
+        let request = try decoder.decode(
+            OpenAIChatCompletionsRequest.self,
+            from: Data(
+                """
+                {
+                  "model": "melix-dev-ocr",
+                  "stream": true,
+                  "messages": [
+                    {
+                      "role": "user",
+                      "content": [
+                        {
+                          "type": "input_image",
+                          "input_image": {
+                            "data": "aGVsbG8=",
+                            "mime_type": "image/png",
+                            "format": "png",
+                            "filename": "fixture.png"
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+                """.utf8
+            )
+        )
+
+        let normalized = try translator.normalizeMultimodalChat(request)
+        let translated = try translator.translate(
+            normalized,
+            modelHandle: "melix-dev-ocr::python",
+            modelOCRPolicy: OCRExecutionPolicy(modelSettings: modelSettings)
+        )
+
+        #expect(translated.workerRequest.sampling.temperature == 0.15)
+        #expect(translated.workerRequest.sampling.topP == 0.92)
+        #expect(translated.workerRequest.sampling.maxOutputTokens == 384)
+        #expect(translated.workerRequest.execution.ext["melix.ocr.sampling_source"] == "model")
+    }
+
     @Test("chat request contracts accept image-only multimodal content")
     func chatRequestContractsDecodeImageOnlyMultimodalContent() throws {
         let decoder = JSONDecoder()
@@ -1138,6 +1192,33 @@ struct TextEndpointContractTests {
         #expect(translated.workerRequest.execution.cacheHints.allowL2)
         #expect(translated.workerRequest.execution.cacheHints.persistL2)
         #expect(translated.workerRequest.execution.cacheHints.preferHotPrefix)
+    }
+
+    @Test("chat translation wrapper falls back to imported generation-config defaults")
+    func chatTranslationWrapperFallsBackToImportedGenerationConfigDefaults() throws {
+        let translator = ChatRequestTranslator(requestIDGenerator: { "req-chat-generation-config" })
+        var modelSettings = Melix_Controlplane_V1_ModelSettings()
+        modelSettings.ext["melix.generation_config.temperature"] = "0.2"
+        modelSettings.ext["melix.generation_config.top_p"] = "0.88"
+        modelSettings.ext["melix.generation_config.max_tokens"] = "512"
+
+        let normalized = try translator.normalize(
+            OpenAIChatCompletionsRequest(
+                model: "melix-dev-text",
+                messages: [.init(role: "user", content: "Hello")],
+                sessionID: "session-wrapper"
+            )
+        )
+        let translated = try translator.translate(
+            normalized,
+            modelHandle: "melix-dev-text::swift",
+            modelSamplingPolicy: ModelSamplingPolicy(modelSettings: modelSettings)
+        )
+
+        #expect(translated.requestID == "req-chat-generation-config")
+        #expect(translated.workerRequest.sampling.temperature == 0.2)
+        #expect(translated.workerRequest.sampling.topP == 0.88)
+        #expect(translated.workerRequest.sampling.maxOutputTokens == 512)
     }
 
     @Test("request contracts decode preset and workflow shaping metadata across endpoint variants")

@@ -20,8 +20,11 @@ public struct OCRExecutionPolicy: Sendable, Equatable {
         let stopSequences = Self.parseList(modelSettings.ext["ocr_stop_sequences"])
         let samplingProfileID = modelSettings.ext["ocr_sampling_profile_id"]?.nilIfEmpty
         let temperature = Self.parseDouble(modelSettings.ext["ocr_default_temperature"])
+            ?? Self.parseDouble(modelSettings.ext["melix.generation_config.temperature"])
         let topP = Self.parseDouble(modelSettings.ext["ocr_default_top_p"])
+            ?? Self.parseDouble(modelSettings.ext["melix.generation_config.top_p"])
         let maxTokens = Self.parseUInt32(modelSettings.ext["ocr_default_max_tokens"])
+            ?? Self.parseUInt32(modelSettings.ext["melix.generation_config.max_tokens"])
 
         guard promptProfileID != nil
             || promptTemplate != nil
@@ -53,6 +56,42 @@ public struct OCRExecutionPolicy: Sendable, Equatable {
             .split(separator: ",")
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
+    }
+
+    private static func parseDouble(_ rawValue: String?) -> Double? {
+        guard let rawValue = rawValue?.nilIfEmpty else {
+            return nil
+        }
+        return Double(rawValue)
+    }
+
+    private static func parseUInt32(_ rawValue: String?) -> UInt32? {
+        guard let rawValue = rawValue?.nilIfEmpty else {
+            return nil
+        }
+        return UInt32(rawValue)
+    }
+}
+
+public struct ModelSamplingPolicy: Sendable, Equatable {
+    public let temperature: Double?
+    public let topP: Double?
+    public let maxTokens: UInt32?
+
+    public init?(
+        modelSettings: Melix_Controlplane_V1_ModelSettings
+    ) {
+        let temperature = Self.parseDouble(modelSettings.ext["melix.generation_config.temperature"])
+        let topP = Self.parseDouble(modelSettings.ext["melix.generation_config.top_p"])
+        let maxTokens = Self.parseUInt32(modelSettings.ext["melix.generation_config.max_tokens"])
+
+        guard temperature != nil || topP != nil || maxTokens != nil else {
+            return nil
+        }
+
+        self.temperature = temperature
+        self.topP = topP
+        self.maxTokens = maxTokens
     }
 
     private static func parseDouble(_ rawValue: String?) -> Double? {
@@ -197,6 +236,7 @@ public struct TextRequestShaper: Sendable {
         modelToolParser: ToolParserSelection? = nil,
         modelChatTemplatePolicy: ModelChatTemplatePolicy? = nil,
         modelOCRPolicy: OCRExecutionPolicy? = nil,
+        modelSamplingPolicy: ModelSamplingPolicy? = nil,
         mcpToolCatalog: MCPToolCatalog = .empty
     ) -> ShapedTextRequest {
         let preset = request.presetID.flatMap { presets[$0] }
@@ -209,18 +249,12 @@ public struct TextRequestShaper: Sendable {
             modelPolicy: modelOCRPolicy
         )
 
-        let temperature = request.temperature
-            ?? preset?.temperature
-            ?? modelOCRPolicy?.temperature
-            ?? 0.7
-        let topP = request.topP
-            ?? preset?.topP
-            ?? modelOCRPolicy?.topP
-            ?? 1.0
-        let maxTokens = request.maxTokens
-            ?? preset?.maxTokens
-            ?? modelOCRPolicy?.maxTokens
-            ?? 256
+        let fallbackTemperature = modelOCRPolicy?.temperature ?? modelSamplingPolicy?.temperature
+        let fallbackTopP = modelOCRPolicy?.topP ?? modelSamplingPolicy?.topP
+        let fallbackMaxTokens = modelOCRPolicy?.maxTokens ?? modelSamplingPolicy?.maxTokens
+        let temperature = request.temperature ?? preset?.temperature ?? fallbackTemperature ?? 0.7
+        let topP = request.topP ?? preset?.topP ?? fallbackTopP ?? 1.0
+        let maxTokens = request.maxTokens ?? preset?.maxTokens ?? fallbackMaxTokens ?? 256
         let saveBoundarySnapshot = request.saveBoundarySnapshot
             ?? preset?.saveBoundarySnapshot
             ?? workflow.saveBoundarySnapshot

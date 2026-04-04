@@ -103,6 +103,13 @@ public struct RuntimeModelInfoState: Equatable, Sendable {
     public let toolParserFallbackText: String
     public let ocrPromptProfileText: String
     public let ocrSamplingProfileText: String
+    public let ocrTemperatureText: String
+    public let ocrTopPText: String
+    public let ocrMaxTokensText: String
+    public let generationConfigSourceText: String
+    public let generationConfigTemperatureText: String
+    public let generationConfigTopPText: String
+    public let generationConfigMaxTokensText: String
     public let ocrStopSequencesText: String
 
     public init(
@@ -122,6 +129,13 @@ public struct RuntimeModelInfoState: Equatable, Sendable {
         toolParserFallbackText: String = "Off",
         ocrPromptProfileText: String = "",
         ocrSamplingProfileText: String = "",
+        ocrTemperatureText: String = "",
+        ocrTopPText: String = "",
+        ocrMaxTokensText: String = "",
+        generationConfigSourceText: String = "",
+        generationConfigTemperatureText: String = "",
+        generationConfigTopPText: String = "",
+        generationConfigMaxTokensText: String = "",
         ocrStopSequencesText: String = ""
     ) {
         self.modelID = modelID
@@ -140,6 +154,13 @@ public struct RuntimeModelInfoState: Equatable, Sendable {
         self.toolParserFallbackText = toolParserFallbackText
         self.ocrPromptProfileText = ocrPromptProfileText
         self.ocrSamplingProfileText = ocrSamplingProfileText
+        self.ocrTemperatureText = ocrTemperatureText
+        self.ocrTopPText = ocrTopPText
+        self.ocrMaxTokensText = ocrMaxTokensText
+        self.generationConfigSourceText = generationConfigSourceText
+        self.generationConfigTemperatureText = generationConfigTemperatureText
+        self.generationConfigTopPText = generationConfigTopPText
+        self.generationConfigMaxTokensText = generationConfigMaxTokensText
         self.ocrStopSequencesText = ocrStopSequencesText
     }
 }
@@ -623,6 +644,10 @@ public final class RuntimeViewModel {
     public var modelSettingsAdaptiveThinkingModeDraft = "off"
     public var modelSettingsAdaptiveThinkingBudgetDraft = ""
     public var modelSettingsToolParserXMLFallbackDraft = false
+    public var modelSettingsOCRSamplingProfileDraft = ""
+    public var modelSettingsOCRTemperatureDraft = ""
+    public var modelSettingsOCRTopPDraft = ""
+    public var modelSettingsOCRMaxTokensDraft = ""
     public var selectedBenchmarkModelID = "melix-dev-text"
     public var selectedBenchmarkPresentationMode: RuntimeBenchmarkPresentationMode = .standard
     public var selectedBenchmarkTargetMode: RuntimeBenchmarkTargetMode = .catalogModel
@@ -1989,24 +2014,36 @@ public final class RuntimeViewModel {
         accelerationProfileID: String,
         adaptiveThinkingMode: String = "off",
         adaptiveThinkingBudgetTokens: String = "",
-        toolParserXMLFallback: Bool = false
+        toolParserXMLFallback: Bool = false,
+        ocrSamplingProfileID: String = "",
+        ocrDefaultTemperature: String = "",
+        ocrDefaultTopP: String = "",
+        ocrDefaultMaxTokens: String = "",
+        includeOCRSettings: Bool = false
     ) async {
         let startedAt = Date()
         do {
+            var values = [
+                "alias": alias,
+                "type_override": typeOverride,
+                "ttl_seconds": ttlSeconds,
+                "pin_on_load": pinOnLoad ? "true" : "false",
+                "memory_policy": memoryPolicy,
+                "default_acceleration_mode": accelerationMode,
+                "acceleration_profile_id": accelerationProfileID,
+                "adaptive_thinking_mode": adaptiveThinkingMode,
+                "adaptive_thinking_budget_tokens": adaptiveThinkingBudgetTokens,
+                "tool_parser_xml_fallback": toolParserXMLFallback ? "true" : "false",
+            ]
+            if includeOCRSettings {
+                values["ocr_sampling_profile_id"] = ocrSamplingProfileID
+                values["ocr_default_temperature"] = ocrDefaultTemperature
+                values["ocr_default_top_p"] = ocrDefaultTopP
+                values["ocr_default_max_tokens"] = ocrDefaultMaxTokens
+            }
             let model = try await client.updateModelSettings(
                 modelID: modelID,
-                values: [
-                    "alias": alias,
-                    "type_override": typeOverride,
-                    "ttl_seconds": ttlSeconds,
-                    "pin_on_load": pinOnLoad ? "true" : "false",
-                    "memory_policy": memoryPolicy,
-                    "default_acceleration_mode": accelerationMode,
-                    "acceleration_profile_id": accelerationProfileID,
-                    "adaptive_thinking_mode": adaptiveThinkingMode,
-                    "adaptive_thinking_budget_tokens": adaptiveThinkingBudgetTokens,
-                    "tool_parser_xml_fallback": toolParserXMLFallback ? "true" : "false",
-                ]
+                values: values
             )
             await metrics.record(
                 name: "menu.model_settings_ms",
@@ -2043,6 +2080,33 @@ public final class RuntimeViewModel {
             return
         }
 
+        guard
+            normalizedOptionalDoubleDraft(
+                modelSettingsOCRTemperatureDraft,
+                fieldName: "OCR temperature"
+            ) != nil || modelSettingsOCRTemperatureDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else {
+            return
+        }
+
+        guard
+            normalizedOptionalDoubleDraft(
+                modelSettingsOCRTopPDraft,
+                fieldName: "OCR top-p"
+            ) != nil || modelSettingsOCRTopPDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else {
+            return
+        }
+
+        guard
+            normalizedOptionalUInt32Draft(
+                modelSettingsOCRMaxTokensDraft,
+                fieldName: "OCR max tokens"
+            ) != nil || modelSettingsOCRMaxTokensDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else {
+            return
+        }
+
         await updateModelSettings(
             modelID: model.modelID,
             alias: modelSettingsAliasDraft.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -2054,7 +2118,12 @@ public final class RuntimeViewModel {
             accelerationProfileID: modelSettingsAccelerationProfileIDDraft.trimmingCharacters(in: .whitespacesAndNewlines),
             adaptiveThinkingMode: modelSettingsAdaptiveThinkingModeDraft,
             adaptiveThinkingBudgetTokens: modelSettingsAdaptiveThinkingBudgetDraft.trimmingCharacters(in: .whitespacesAndNewlines),
-            toolParserXMLFallback: modelSettingsToolParserXMLFallbackDraft
+            toolParserXMLFallback: modelSettingsToolParserXMLFallbackDraft,
+            ocrSamplingProfileID: modelSettingsOCRSamplingProfileDraft.trimmingCharacters(in: .whitespacesAndNewlines),
+            ocrDefaultTemperature: modelSettingsOCRTemperatureDraft.trimmingCharacters(in: .whitespacesAndNewlines),
+            ocrDefaultTopP: modelSettingsOCRTopPDraft.trimmingCharacters(in: .whitespacesAndNewlines),
+            ocrDefaultMaxTokens: modelSettingsOCRMaxTokensDraft.trimmingCharacters(in: .whitespacesAndNewlines),
+            includeOCRSettings: model.kind == "ocr"
         )
     }
 
@@ -2086,6 +2155,10 @@ public final class RuntimeViewModel {
                 name: "menu.model_info_ms",
                 valueMs: Date().timeIntervalSince(startedAt) * 1_000
             )
+            let generationConfigSourceText = snapshotModel?.settings.ext["melix.generation_config.source"] ?? ""
+            let generationConfigTemperatureText = snapshotModel?.settings.ext["melix.generation_config.temperature"] ?? ""
+            let generationConfigTopPText = snapshotModel?.settings.ext["melix.generation_config.top_p"] ?? ""
+            let generationConfigMaxTokensText = snapshotModel?.settings.ext["melix.generation_config.max_tokens"] ?? ""
             selectedModelInfo = RuntimeModelInfoState(
                 modelID: modelID,
                 modelKind: info.modelKind,
@@ -2108,7 +2181,36 @@ public final class RuntimeViewModel {
                 accelerationProfileID: snapshotModel?.settings.accelerationProfileID ?? "",
                 toolParserFallbackText: snapshotModel.map(runtimeToolParserFallbackText) ?? "Off",
                 ocrPromptProfileText: snapshotModel?.settings.ext["ocr_prompt_profile_id"] ?? "",
-                ocrSamplingProfileText: snapshotModel?.settings.ext["ocr_sampling_profile_id"] ?? "",
+                ocrSamplingProfileText: snapshotModel.map {
+                    runtimeEffectiveOCRSamplingProfileText(
+                        for: $0,
+                        generationConfigAvailable: !generationConfigTemperatureText.isEmpty
+                            || !generationConfigTopPText.isEmpty
+                            || !generationConfigMaxTokensText.isEmpty
+                    )
+                } ?? "",
+                ocrTemperatureText: snapshotModel.map {
+                    runtimeEffectiveOCRSamplingValue(
+                        explicitValue: $0.settings.ext["ocr_default_temperature"] ?? "",
+                        generationConfigValue: generationConfigTemperatureText
+                    )
+                } ?? "",
+                ocrTopPText: snapshotModel.map {
+                    runtimeEffectiveOCRSamplingValue(
+                        explicitValue: $0.settings.ext["ocr_default_top_p"] ?? "",
+                        generationConfigValue: generationConfigTopPText
+                    )
+                } ?? "",
+                ocrMaxTokensText: snapshotModel.map {
+                    runtimeEffectiveOCRSamplingValue(
+                        explicitValue: $0.settings.ext["ocr_default_max_tokens"] ?? "",
+                        generationConfigValue: generationConfigMaxTokensText
+                    )
+                } ?? "",
+                generationConfigSourceText: generationConfigSourceText,
+                generationConfigTemperatureText: generationConfigTemperatureText,
+                generationConfigTopPText: generationConfigTopPText,
+                generationConfigMaxTokensText: generationConfigMaxTokensText,
                 ocrStopSequencesText: snapshotModel?.settings.ext["ocr_stop_sequences"] ?? ""
             )
         } catch {
@@ -3587,6 +3689,10 @@ public final class RuntimeViewModel {
             modelSettingsAdaptiveThinkingModeDraft = "off"
             modelSettingsAdaptiveThinkingBudgetDraft = ""
             modelSettingsToolParserXMLFallbackDraft = false
+            modelSettingsOCRSamplingProfileDraft = ""
+            modelSettingsOCRTemperatureDraft = ""
+            modelSettingsOCRTopPDraft = ""
+            modelSettingsOCRMaxTokensDraft = ""
             return
         }
 
@@ -3607,6 +3713,10 @@ public final class RuntimeViewModel {
             ? String(model.settings.adaptiveThinking.budgetTokens)
             : ""
         modelSettingsToolParserXMLFallbackDraft = model.settings.ext["tool_parser_xml_fallback"] == "true"
+        modelSettingsOCRSamplingProfileDraft = model.settings.ext["ocr_sampling_profile_id"] ?? ""
+        modelSettingsOCRTemperatureDraft = model.settings.ext["ocr_default_temperature"] ?? ""
+        modelSettingsOCRTopPDraft = model.settings.ext["ocr_default_top_p"] ?? ""
+        modelSettingsOCRMaxTokensDraft = model.settings.ext["ocr_default_max_tokens"] ?? ""
     }
 
     private func normalizedOptionalUInt32Draft(
@@ -3619,6 +3729,22 @@ public final class RuntimeViewModel {
         }
         guard let value = UInt32(trimmed) else {
             recordLocalError("\(fieldName) must be an unsigned integer.")
+            notifyStateChanged()
+            return nil
+        }
+        return value
+    }
+
+    private func normalizedOptionalDoubleDraft(
+        _ rawValue: String,
+        fieldName: String
+    ) -> Double? {
+        let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return nil
+        }
+        guard let value = Double(trimmed) else {
+            recordLocalError("\(fieldName) must be numeric.")
             notifyStateChanged()
             return nil
         }
@@ -5134,6 +5260,29 @@ private func runtimeAdaptiveThinkingDraftValue(
 
 private func runtimeToolParserFallbackText(_ model: Melix_Controlplane_V1_ModelSummary) -> String {
     model.settings.ext["tool_parser_xml_fallback"] == "true" ? "XML" : "Off"
+}
+
+private func runtimeEffectiveOCRSamplingProfileText(
+    for model: Melix_Controlplane_V1_ModelSummary,
+    generationConfigAvailable: Bool
+) -> String {
+    let explicitValue = model.settings.ext["ocr_sampling_profile_id"]?
+        .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    if !explicitValue.isEmpty {
+        return explicitValue
+    }
+    return generationConfigAvailable && model.kind == "ocr" ? "generation-config" : ""
+}
+
+private func runtimeEffectiveOCRSamplingValue(
+    explicitValue: String,
+    generationConfigValue: String
+) -> String {
+    let normalizedExplicit = explicitValue.trimmingCharacters(in: .whitespacesAndNewlines)
+    if !normalizedExplicit.isEmpty {
+        return normalizedExplicit
+    }
+    return generationConfigValue.trimmingCharacters(in: .whitespacesAndNewlines)
 }
 
 private func runtimeResidencyText(for model: Melix_Controlplane_V1_ModelSummary) -> String {

@@ -1276,18 +1276,24 @@ public struct OpenAIHandler: Sendable {
         } catch {
             throw HTTPRequestHandlingError.workerUnavailable
         }
-        let modelToolParser: ToolParserSelection? = if let model = await modelCatalog.model(id: normalized.model) {
-            ToolParserSelection(modelSettings: model.settings)
+        let resolvedModel = await modelCatalog.model(id: normalized.model)
+        let modelToolParser: ToolParserSelection? = if let resolvedModel {
+            ToolParserSelection(modelSettings: resolvedModel.settings)
         } else {
             nil
         }
-        let modelChatTemplatePolicy: ModelChatTemplatePolicy? = if let model = await modelCatalog.model(id: normalized.model) {
-            try ModelChatTemplatePolicy(modelSettings: model.settings)
+        let modelChatTemplatePolicy: ModelChatTemplatePolicy? = if let resolvedModel {
+            try ModelChatTemplatePolicy(modelSettings: resolvedModel.settings)
         } else {
             nil
         }
-        let modelOCRPolicy: OCRExecutionPolicy? = if let model = await modelCatalog.model(id: normalized.model) {
-            OCRExecutionPolicy(modelSettings: model.settings)
+        let modelOCRPolicy: OCRExecutionPolicy? = if let resolvedModel {
+            OCRExecutionPolicy(modelSettings: resolvedModel.settings)
+        } else {
+            nil
+        }
+        let modelSamplingPolicy: ModelSamplingPolicy? = if let resolvedModel {
+            ModelSamplingPolicy(modelSettings: resolvedModel.settings)
         } else {
             nil
         }
@@ -1298,6 +1304,7 @@ public struct OpenAIHandler: Sendable {
             modelToolParser: modelToolParser,
             modelChatTemplatePolicy: modelChatTemplatePolicy,
             modelOCRPolicy: modelOCRPolicy,
+            modelSamplingPolicy: modelSamplingPolicy,
             mcpToolCatalog: mcpToolCatalog
         )
         await recordShapingMetrics(for: translated, startedAt: shapingStartedAt)
