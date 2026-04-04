@@ -2,6 +2,17 @@
 
 ## 2026-04-04
 
+- Closed the `M8.5` admin-surface expansion milestone:
+  - verified that the native operator shell already exposes the planned runtime, models, downloads, training, diagnostics, logs, settings, chat, image, server, and API surfaces from control-plane-backed menu bar state
+  - confirmed the existing menu bar package coverage already exercises the expanded admin shell, including LoRA tooling, benchmark and evaluation diagnostics, matrix benchmark views, direct Hugging Face benchmark targeting, and agent integration export presentation
+  - updated `docs/plans/2026-03-30-m8-5-admin-surface-expansion.md` and `docs/plans/2026-03-30-full-capability-roadmap-execution-index.md` so the repository now records `M8.5` as completed instead of leaving the slice implicitly pending
+- Verification summary for `M8.5`:
+  - `make swift-test`: pass
+  - `make integration-test`: `58 passed in 700.76s (0:11:40)`
+- Metrics report for `M8.5`:
+  - changed-line coverage for the touched executable scope: `N/A`
+  - reason: this close-out transaction updates milestone bookkeeping only; the executable admin-surface coverage remains recorded in the repository test suite and was revalidated through the default Swift and integration commands above
+
 - Closed the `M9.8` ecosystem-and-security release-gates transaction:
   - extended `services/mlx-worker-python/worker/productization/release_gates.py` so the Phase 8 release gate now collects repository-owned M9 evidence for MCP auto-injection, agent export, shared access, persistent sessions, rich-output sanitization, connection lifecycle, and closure audit
   - versioned the checked-in `m9` gate thresholds in `infra/release/phase8-release-gate-policy.json`, including machine-readable `release_gate.m9_required_probe_count`, `release_gate.m9_missing_probe_count`, and `release_gate.m9_failed_threshold_count`

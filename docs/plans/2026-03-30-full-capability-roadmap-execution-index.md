@@ -101,13 +101,14 @@ The roadmap extension in `M10-M17` includes milestone-level plans plus decompose
 
 ## M8: Model Registry, Hub, Admin, And Platform Productization
 
-- Status: in progress. `M8.1-M8.4` backend foundations are completed and verified under `docs/plans/2026-04-01-m8-1-m8-4-backend-foundations.md`; `M8.5-M8.11` remain pending productization slices.
+- Status: in progress. `M8.1-M8.5` are completed and verified under the repository execution plans; `M8.6-M8.11` remain pending productization slices.
 
 - `M8.1` `docs/plans/2026-03-30-m8-1-multi-root-model-registry.md`
 - `M8.2` `docs/plans/2026-03-30-m8-2-provider-org-model-variant-scanning.md`
 - `M8.3` `docs/plans/2026-03-30-m8-3-huggingface-search-pagination-and-cards.md`
 - `M8.4` `docs/plans/2026-03-30-m8-4-resumable-downloads-retries-and-mirrors.md`
 - `M8.5` `docs/plans/2026-03-30-m8-5-admin-surface-expansion.md`
+  Status: completed. The native operator shell now covers the runtime, models, downloads, training, diagnostics, logs, settings, chat, image, server, and API workflows through control-plane-backed menu bar surfaces, and repository-default Swift plus integration verification have been rerun to close the slice.
 - `M8.6` `docs/plans/2026-03-30-m8-6-tab-persistence-and-offline-admin-assets.md`
 - `M8.7` `docs/plans/2026-03-30-m8-7-model-settings-completion.md`
 - `M8.8` `docs/plans/2026-03-30-m8-8-generation-config-and-ocr-sampling-controls.md`

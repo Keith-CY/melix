@@ -1,5 +1,11 @@
 # M8.5 Admin Surface Expansion
 
+## Status
+
+Completed. The native operator shell now exposes the planned runtime, model, chat, benchmark,
+tooling, agent-integration, logs, and settings workflows through one control-plane-backed desktop
+surface, and the menu bar package carries repository-owned coverage for the expanded shell.
+
 ## Goal
 
 Expand the operator-facing admin surface to cover runtime, models, chat, benchmark, tooling, and logs in one coherent product shell.
@@ -24,6 +30,11 @@ Expand the operator-facing admin surface to cover runtime, models, chat, benchma
 - avoid adding product views that have no backend truth
 
 ## Verification
+
+- `make swift-test`
+- `make integration-test`
+
+Final close-out verification:
 
 - `make swift-test`
 - `make integration-test`
