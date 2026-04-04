@@ -2,48 +2,40 @@
 
 ## Goal
 
-Close `docs/plans/2026-04-04-live-benchmark-repair.md` so direct Hugging Face benchmark targets execute end to end through the public `melix` CLI and save operator-readable reports into `/tmp`.
+Close the M8.1-M8.4 backend-foundations transaction by rerunning repository-default verification and backfilling roadmap status records so the next milestone slice starts from an accurate repository baseline.
 
 ## Scope
 
-- restore any missing Python maintenance bridge commands required by the current control-plane worker client
-- repair the direct Hugging Face benchmark path for imported text-backed `gemma4` VLM repos
-- verify the public `melix bench run --repo-id ...` flow for both target repositories
-- capture focused changed-line coverage and repository progress evidence before commit
+- rerun the repository-default verification commands for the accumulated M8.1-M8.4 backend scope
+- update the M8.1-M8.4 implementation plan with the final verification outcome
+- update the roadmap execution index and progress log to reflect that M8.1-M8.4 are complete while M8 remains in progress
 
 ## Phases
 
-1. Slice 1: restore Python maintenance bridge command coverage
+1. Verification rerun
    - status: completed
    - evidence:
-     - `services/mlx-worker-python/worker/control_plane_bridge.py` now forwards `export-results` and `submit-results`
-     - `services/mlx-worker-python/tests/test_control_plane_bridge_phase5.py` covers both unary bridge commands
-     - `services/control-plane-swift/Tests/WorkerClientTests/PythonBridgeWorkerClientTests.swift` decodes the corresponding bridge responses
-2. Slice 2: repair the direct Hugging Face benchmark execution path
+     - `make proto`: pass
+     - `make py-test`: `403 passed in 34.05s`
+     - `make swift-test`: pass
+     - `make integration-test`: `54 passed in 622.59s (0:10:22)`
+2. Milestone record backfill
    - status: completed
    - evidence:
-     - `services/mlx-worker-python/worker/engine/maintenance_core.py` preserves `PreparedVisionRequest` values when annotating text benchmark prompts
-     - `services/mlx-worker-python/tests/test_maintenance_service.py` covers imported text-backed `gemma4` benchmark execution
-3. Slice 3: verification, live proofs, and operator evidence
-   - status: completed
-   - evidence:
-     - focused Swift and Python verification passed
-     - changed-line coverage for the touched executable scope is `100.00%`
-     - fresh reports exist at `/tmp/melix-gemma4-bench-report.md` and `/tmp/melix-qwen35-9b-bench-report.md`
+     - `docs/plans/2026-04-01-m8-1-m8-4-backend-foundations.md` now records the final verification outcome
+     - `docs/plans/2026-03-30-full-capability-roadmap-execution-index.md` now states that `M8.1-M8.4` are complete backend foundations
+     - `progress.md` records the close-out evidence
 
 ## Acceptance
 
-- `melix bench run --repo-id unsloth/gemma-4-E4B-it-MLX-8bit ...` succeeds
-- `melix bench run --repo-id Brooooooklyn/Qwen3.5-9B-unsloth-mlx ...` succeeds
-- both final report files are copied into `/tmp`
-- changed-line coverage for the touched executable scope remains at or above `95%` before commit
+- repository-default verification passes for the current M8.1-M8.4 backend state
+- the M8.1-M8.4 implementation plan records the real close-out evidence
+- the roadmap execution index reflects that `M8.1-M8.4` are complete while later M8 slices remain pending
 
 ## Risks
 
-- direct Hugging Face benchmark imports can fail at the bridge layer even when the worker runtime succeeds, so the public CLI path must be verified explicitly
-- text-backed multimodal repos can regress if benchmark prompt shaping strips image-aware request metadata
+- milestone records can drift from reality if verification is not rerun after later repository transactions
 
 ## Outcome
 
-- all slices are complete
-- the live benchmark repair transaction is ready to commit
+- the M8.1-M8.4 backend-foundations transaction is ready for a docs-only close-out commit

@@ -26,6 +26,19 @@
   - aggregate changed-line coverage for the touched executable Swift and Python scope: `100.00%` (`104/104`)
   - `docs/plans/2026-04-04-live-benchmark-repair.md` is documentation-only and excluded from executable changed-line coverage
 
+- Closed the M8.1-M8.4 backend-foundations verification and milestone backfill:
+  - reran the repository-default verification commands after the accumulated M8.1-M8.4 backend work and confirmed the slice now closes without the earlier Swift blocker
+  - updated `docs/plans/2026-04-01-m8-1-m8-4-backend-foundations.md` so the final verification and handoff checklist reflects the real repository state
+  - updated `docs/plans/2026-03-30-full-capability-roadmap-execution-index.md` so `M8` now explicitly records `M8.1-M8.4` as completed backend foundations while keeping `M8.5-M8.11` pending
+- Verification summary for the M8.1-M8.4 close-out:
+  - `make proto`: pass
+  - `make py-test`: `403 passed in 34.05s`
+  - `make swift-test`: pass
+  - `make integration-test`: `54 passed in 622.59s (0:10:22)`
+- Metrics report for the M8.1-M8.4 close-out:
+  - changed-line coverage for the touched executable scope: `N/A`
+  - reason: this close-out transaction updates repository planning and progress records only; the executable changed-line coverage for Tasks 1-4 remains recorded inside `docs/plans/2026-04-01-m8-1-m8-4-backend-foundations.md`
+
 ## 2026-04-03
 
 - Started the `bench matrix` transaction on top of the closed canonical `bench` / `eval` expansion.
