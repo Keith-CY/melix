@@ -20,6 +20,7 @@ from worker.productization.acceptance_metrics import (
     build_phase8_metrics_report,
     collect_operator_action_evidence,
 )
+from worker.productization.closure_audit import build_closure_audit
 from worker.productization.release_gates import (
     build_release_gate_report,
     load_release_gate_policy,
@@ -47,12 +48,14 @@ def main() -> int:
         recovery=recovery,
         runtime_core=runtime_core,
     )
+    closure_audit = build_closure_audit(repo_root).to_dict()
     operator = collect_operator_action_evidence(repo_root / ".runtime" / "phase8-metrics")
     report = build_phase8_metrics_report(
         cold_boot=cold_boot,
         operator=operator,
         release_gate_report=release_gate_report,
         runtime_core=runtime_core,
+        closure_audit=closure_audit,
         policy=policy,
     )
 

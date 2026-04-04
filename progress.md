@@ -2,6 +2,37 @@
 
 ## 2026-04-04
 
+- Closed the `M9.7` security-and-stability closure-audit transaction:
+  - added a typed repository-owned closure-audit model in `services/mlx-worker-python/worker/productization/closure_audit.py` that classifies blockers, accepted risks, evidence gaps, and deferred work from execution-index status, release-gate assets, required M9 runbooks, and required probe vocabulary
+  - added repository-owned audit entrypoints and docs in `scripts/m9_closure_audit.py`, `docs/runbooks/security-and-stability-closure.md`, and `docs/decisions/2026-04-02-m9-security-stability-closure-audit.md`
+  - extended `services/mlx-worker-python/worker/productization/acceptance_metrics.py` so phase metrics can surface `closure_audit.*` counters, and wired the live metrics script path in `scripts/phase8_metrics_report.py`
+  - added focused Python evidence in `services/mlx-worker-python/tests/test_closure_audit.py` and extended `services/mlx-worker-python/tests/test_acceptance_metrics.py`
+- Verification summary for `M9.7`:
+  - `PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" UV_CACHE_DIR="$(pwd)/.uv-cache" uv run --project services/mlx-worker-python pytest services/mlx-worker-python/tests/test_closure_audit.py services/mlx-worker-python/tests/test_acceptance_metrics.py -q`: `16 passed in 0.10s`
+  - `PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" UV_CACHE_DIR="$(pwd)/.uv-cache" uv run --project services/mlx-worker-python python scripts/m9_closure_audit.py --repo-root "$(pwd)" --json`: pass
+  - `PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" UV_CACHE_DIR="$(pwd)/.uv-cache" uv run --project services/mlx-worker-python python scripts/phase8_metrics_report.py --repo-root "$(pwd)" --json > /tmp/m9_7_phase8_metrics_output.json`: pass
+  - `git diff --check`: pass
+- Metrics report for `M9.7`:
+  - repository-owned closure-audit metrics from `scripts/m9_closure_audit.py --repo-root "$(pwd)" --json` recorded:
+    - `closure_audit.blocker_count = 0`
+    - `closure_audit.accepted_risk_count = 1`
+    - `closure_audit.evidence_gap_count = 0`
+    - `closure_audit.deferred_work_count = 1`
+  - `scripts/phase8_metrics_report.py --json` now surfaces:
+    - `closure_audit.blocker_count = 0`
+    - `closure_audit.accepted_risk_count = 1`
+    - `closure_audit.evidence_gap_count = 0`
+    - `closure_audit.deferred_work_count = 1`
+    - `top_unresolved_findings = ["M9.8 release-gate wiring remains deferred until ecosystem evidence is consumed by the release gate."]`
+  - Python executable scope changed-line coverage:
+    - `services/mlx-worker-python/worker/productization/closure_audit.py`
+    - `services/mlx-worker-python/worker/productization/acceptance_metrics.py`
+    - `services/mlx-worker-python/tests/test_closure_audit.py`
+    - `services/mlx-worker-python/tests/test_acceptance_metrics.py`
+    - `scripts/m9_closure_audit.py`
+    - `scripts/phase8_metrics_report.py`
+    - changed-line coverage `98.35%` (`238/242`)
+
 - Closed the `M9.6` connection-lifecycle hardening transaction:
   - added a repository-owned `ConnectionLifecyclePolicy` in `services/control-plane-swift/Sources/HTTPGateway/SSE/ConnectionLifecyclePolicy.swift` and wired it through `SSEStreamWriter`, `RequestCoordinator`, `ControlPlaneChatExecution`, `ControlPlaneService`, and the HTTP chat handler so keepalive cadence, disconnect grace, retry policy, and resume buffering now share one typed contract
   - hardened resumable chat execution tracking so transient HTTP disconnects open a bounded resume window, successful resume preserves request identity, terminal expiry rejects stale resume attempts with `request_not_resumable`, and the race between disconnect expiry and stale resume is closed by making terminal-ineligible requests explicit in the coordinator

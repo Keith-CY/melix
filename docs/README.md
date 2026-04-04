@@ -151,15 +151,19 @@ Recent decision records:
 
 - `decisions/2026-03-27-swift-text-runtime.md`
 - `decisions/2026-03-28-product-scope-and-runtime-priorities.md`
+- `decisions/2026-04-02-m9-security-stability-closure-audit.md`
 
 Current runbooks:
 
 - `runbooks/connection-lifecycle.md`
+- `runbooks/security-and-stability-closure.md`
 - `runbooks/m7-benchmark-and-evaluation-foundation.md`
 - `runbooks/m6-acceleration-benchmarks.md`
 - `runbooks/external-agent-integrations.md`
 - `runbooks/service-first-reuse.md`
 - `runbooks/shared-access.md`
+- `runbooks/persistent-sessions.md`
+- `runbooks/rich-output-sanitization.md`
 - `runbooks/model-family-support-matrix.md`
 - `runbooks/phase-1-local-stack.md`
 - `runbooks/phase-2-queue-pressure.md`

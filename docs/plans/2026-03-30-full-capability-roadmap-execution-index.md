@@ -130,7 +130,7 @@ The roadmap extension in `M10-M17` includes milestone-level plans plus decompose
 - `M9.6` `docs/plans/2026-03-30-m9-6-connection-lifecycle-hardening.md`
   Status: completed. Lifecycle policy loading, bounded disconnect grace, resumable chat streaming, repository-owned smoke and integration evidence, runbook guidance, and changed-line coverage evidence are recorded in the repository.
 - `M9.7` `docs/plans/2026-03-30-m9-7-security-and-stability-closure-audit.md`
-  Status: pending. First executable slice is the typed closure-audit schema and repository-owned JSON emitter.
+  Status: completed. Typed closure-audit findings, repository-owned JSON emission, runbook and decision guidance, phase-metrics exposure, and changed-line coverage evidence are recorded in the repository.
 - `M9.8` `docs/plans/2026-03-30-m9-8-ecosystem-and-security-release-gates.md`
   Status: pending. First executable slice is wiring M9 evidence collectors into the existing phase-8 gate and metrics pipeline after M9.4-M9.7 evidence exists.
 

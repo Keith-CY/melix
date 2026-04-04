@@ -640,3 +640,109 @@ def test_build_phase8_metrics_report_accepts_cold_boot_metric_parameter() -> Non
     )
 
     assert report["metrics"]["desktop.cold_boot_to_ready_ms"] == 700.0
+
+
+def test_build_phase8_metrics_report_surfaces_closure_audit_counts() -> None:
+    policy = load_release_gate_policy()
+
+    report = build_phase8_metrics_report(
+        cold_boot={"cold_boot_to_ready_ms": 700.0, "http_ready_ms": 700.0},
+        operator={
+            "operator_action_latency_ms": 1.0,
+            "registry_job_count": 2,
+            "registry_adapter_count": 1,
+        },
+        release_gate_report={
+            "install": {
+                "checks": {
+                    "manifest_exists": True,
+                    "environment_script_exists": True,
+                    "all_plists_exist": True,
+                }
+            },
+            "benchmarks": {
+                "report_exists": True,
+                "metrics": {
+                    "bench.smoke.ttft_ms": 24.45,
+                    "bench.smoke.tokens_per_second": 47.08,
+                    "bench.latency.p95_ms": 44.72,
+                },
+            },
+            "training": {
+                "training_duration_ms": 1420.0,
+                "adapter_publish_ms": 118.0,
+            },
+            "recovery": {
+                "restart_recovery_ms": 600.0,
+                "restart_recovery_success_rate": 100.0,
+            },
+            "audio": {
+                "checks": {
+                    "slim_requires_runtime_pack_download": True,
+                    "full_runtime_pack_preinstalled": True,
+                    "slim_runtime_pack_metadata_exists": True,
+                    "full_runtime_pack_metadata_exists": True,
+                    "slim_managed_model_metadata_exists": True,
+                    "full_managed_model_metadata_exists": True,
+                },
+                "metrics": {
+                    "slim.audio_runtime_pack_install_ms": 12.3,
+                    "slim.audio_model_download_ms": 18.4,
+                    "slim.audio_first_use_blocked_runtime_pack_count": 1.0,
+                    "slim.audio_first_use_blocked_model_count": 1.0,
+                    "slim.audio_runtime_pack_recovery_success_rate": 100.0,
+                    "full.audio_runtime_pack_install_ms": 0.0,
+                    "full.audio_model_download_ms": 17.2,
+                    "full.audio_first_use_blocked_runtime_pack_count": 0.0,
+                    "full.audio_first_use_blocked_model_count": 1.0,
+                    "full.audio_runtime_pack_recovery_success_rate": 100.0,
+                },
+            },
+            "runtime_core": {
+                "multi_model_ready_count": 3.0,
+                "multi_model_request_success_rate": 100.0,
+                "prefill_memory_guard_rejection_count": 1.0,
+                "prefill_memory_guard_success_rate": 100.0,
+            },
+            "passed": True,
+            "failures": [],
+        },
+        runtime_core={
+            "multi_model_ready_count": 3.0,
+            "multi_model_request_success_rate": 100.0,
+            "prefill_memory_guard_rejection_count": 1.0,
+            "prefill_memory_guard_success_rate": 100.0,
+        },
+        closure_audit={
+            "metrics": {
+                "closure_audit.blocker_count": 0.0,
+                "closure_audit.accepted_risk_count": 1.0,
+                "closure_audit.evidence_gap_count": 2.0,
+                "closure_audit.deferred_work_count": 1.0,
+            },
+            "summary": {
+                "top_unresolved_findings": [
+                    "Missing required M9 metric probes: disconnect.keepalive_gap_ms",
+                    "M9.8 release-gate wiring remains deferred until ecosystem evidence is consumed by the release gate.",
+                ]
+            },
+            "findings": [
+                {
+                    "finding_id": "scope-only",
+                    "severity": "accepted_risk",
+                    "summary": "Repository-owned scope only.",
+                }
+            ],
+        },
+        policy=policy,
+    )
+
+    metrics = report["metrics"]
+    assert metrics["closure_audit.blocker_count"] == 0.0
+    assert metrics["closure_audit.accepted_risk_count"] == 1.0
+    assert metrics["closure_audit.evidence_gap_count"] == 2.0
+    assert metrics["closure_audit.deferred_work_count"] == 1.0
+    assert report["closure_audit"]["summary"]["top_unresolved_findings"] == [
+        "Missing required M9 metric probes: disconnect.keepalive_gap_ms",
+        "M9.8 release-gate wiring remains deferred until ecosystem evidence is consumed by the release gate.",
+    ]

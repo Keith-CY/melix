@@ -115,6 +115,7 @@ def build_phase8_metrics_report(
     operator: dict[str, Any],
     release_gate_report: dict[str, Any],
     runtime_core: dict[str, Any] | None = None,
+    closure_audit: dict[str, Any] | None = None,
     policy: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     active_policy = policy or load_release_gate_policy()
@@ -128,6 +129,8 @@ def build_phase8_metrics_report(
     )
     audio = dict(release_gate_report.get("audio", {}))
     audio_metrics = dict(audio.get("metrics", {}))
+    closure_audit_evidence = dict(closure_audit or {})
+    closure_audit_metrics = dict(closure_audit_evidence.get("metrics", {}))
 
     metrics = {
         "desktop.cold_boot_to_ready_ms": round(
@@ -306,6 +309,22 @@ def build_phase8_metrics_report(
             float(cache_recovery_metrics.get("bench.recovery.partial_restore_ratio_pct", 0.0)),
             2,
         ),
+        "closure_audit.blocker_count": round(
+            float(closure_audit_metrics.get("closure_audit.blocker_count", 0.0)),
+            2,
+        ),
+        "closure_audit.accepted_risk_count": round(
+            float(closure_audit_metrics.get("closure_audit.accepted_risk_count", 0.0)),
+            2,
+        ),
+        "closure_audit.evidence_gap_count": round(
+            float(closure_audit_metrics.get("closure_audit.evidence_gap_count", 0.0)),
+            2,
+        ),
+        "closure_audit.deferred_work_count": round(
+            float(closure_audit_metrics.get("closure_audit.deferred_work_count", 0.0)),
+            2,
+        ),
     }
 
     return {
@@ -317,6 +336,7 @@ def build_phase8_metrics_report(
         "runtime_core": runtime_core_evidence,
         "audio": audio,
         "operator": operator,
+        "closure_audit": closure_audit_evidence,
         "release_gate": release_gate_report,
     }
 
