@@ -1261,6 +1261,48 @@ struct RuntimeViewModelTests {
         #expect(viewModel.lastError?.contains("handshake failed") == true)
     }
 
+    @Test("start uses packaged startup diagnostics and refreshes update status when available")
+    @MainActor
+    func startUsesPackagedStartupDiagnostics() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureErrors(handshake: MenuBarTestError(description: "handshake failed"))
+        let metrics = MenuBarMetricsStore()
+        let viewModel = RuntimeViewModel(
+            client: client,
+            metrics: metrics,
+            productInstallStateProvider: StubProductInstallStateProvider(
+                updateStatusResponse: ProductUpdateStatus(
+                    summary: "Update available: 0.2.0",
+                    detail: "Current 0.1.0 on stable",
+                    isAvailable: true,
+                    checkSucceeded: true
+                ),
+                startupDiagnosticResponse: ProductStartupFailureDiagnostic(
+                    classification: "host_port_conflict",
+                    userMessage: "Startup failed: port 11434 is already in use. Check /tmp/control-plane.stderr.log and restart Melix.",
+                    detail: "Ready probe: http://127.0.0.1:11434/v1/models"
+                )
+            )
+        )
+
+        await viewModel.start()
+        let foundationSettings = viewModel.desktopFoundationState.settings
+        let hasUpdateRow = foundationSettings.contains { row in
+            row.id == "product-update" && row.value == "Update available: 0.2.0"
+        }
+        let hasUpdateDetailRow = foundationSettings.contains { row in
+            row.id == "product-update-detail" && row.value == "Current 0.1.0 on stable"
+        }
+
+        #expect(viewModel.productUpdateSummary == "Update available: 0.2.0")
+        #expect(viewModel.productUpdateDetail == "Current 0.1.0 on stable")
+        #expect(viewModel.lastError == "Startup failed: port 11434 is already in use. Check /tmp/control-plane.stderr.log and restart Melix.")
+        #expect(hasUpdateRow)
+        #expect(hasUpdateDetailRow)
+        #expect(await metrics.snapshot()["update.check_success_rate"] == 100)
+        #expect(await metrics.snapshot()["startup.failure_classification_count"] == 1)
+    }
+
     @Test("load and unload surface client failures in app state")
     @MainActor
     func loadAndUnloadFailuresSurfaceErrors() async throws {

@@ -1607,6 +1607,8 @@ struct DesktopFoundationViewTests {
             serverVersion: "0.1.0",
             daemonInstanceID: "daemon-empty",
             features: ["xpc", "models"],
+            productUpdateSummary: nil,
+            productUpdateDetail: nil,
             lastError: nil,
             recentEvents: []
         )

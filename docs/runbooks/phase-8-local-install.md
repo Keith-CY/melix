@@ -20,11 +20,45 @@ Generate the local product assets:
 python3 scripts/install_local_product.py --json
 ```
 
+When the default local HTTP port might already be occupied, ask the installer to keep the requested
+port as intent while selecting the next available port in the generated manifest:
+
+```bash
+python3 scripts/install_local_product.py \
+  --http-port 11434 \
+  --prefer-available-http-port \
+  --json
+```
+
 This writes:
 
 - user launch agents under `~/Library/LaunchAgents`
 - an install manifest under `~/Library/Application Support/Melix/install-manifest.json`
 - an environment export file under `~/Library/Application Support/Melix/melix-product-env.sh`
+
+The generated install manifest is the packaging source of truth for:
+
+- the resolved Melix product version
+- the repository-owned update-channel path
+- the requested and selected HTTP port
+- the ready probe URL used by startup verification
+- the stdout and stderr log locations for the control plane, Swift text worker, and Python worker
+
+The environment export file now also includes:
+
+- `MELIX_PRODUCT_VERSION`
+- `MELIX_UPDATE_CHANNEL_PATH`
+
+By default the installer resolves the version from the repository Python package metadata and points
+the update feed to `infra/packaging/update-channels/stable.json`. Override either value explicitly
+when packaging or testing alternate release metadata:
+
+```bash
+python3 scripts/install_local_product.py \
+  --product-version 0.2.0 \
+  --update-channel-path /absolute/path/to/channel.json \
+  --json
+```
 
 ## Registry Layout
 
@@ -90,6 +124,14 @@ For deterministic install smoke without `launchctl`, validate asset generation o
 python3 scripts/phase8_install_smoke.py --json
 ```
 
+For deterministic update-check and startup-failure diagnostics without `launchctl`, run:
+
+```bash
+PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" \
+uv run --project services/mlx-worker-python --extra mlx \
+python scripts/m8_startup_failure_smoke.py --json
+```
+
 For deterministic download resume, retry, and stall smoke without network access:
 
 ```bash
@@ -115,3 +157,27 @@ To also prune the generated runtime and log directories:
 ```bash
 python3 scripts/uninstall_local_product.py --prune
 ```
+
+## Update And Startup Diagnostics
+
+Packaged Melix installs now use a repository-owned update feed at
+`infra/packaging/update-channels/stable.json`. The native operator shell reads the install manifest,
+compares the installed version against the configured channel, and surfaces one of these states:
+
+- `Update available: <version>`
+- `Update: up to date`
+- `Update: check failed`
+
+When startup fails before the ready probe returns, the menu bar operator shell loads the same
+install manifest and derives an actionable diagnostic from the recorded log paths. The current
+classifications are:
+
+- `host_port_conflict`
+- `control_plane_crash`
+- `worker_crash`
+- `startup_hang`
+
+For `host_port_conflict`, Melix points operators at the conflicting HTTP port, the authoritative
+ready probe URL, and the control-plane stderr log. For crash and hang cases, the operator shell
+surfaces the most relevant recorded log path and last-line excerpt without introducing a second
+startup state store outside the install manifest contract.

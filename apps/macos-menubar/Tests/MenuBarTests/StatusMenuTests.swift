@@ -48,6 +48,32 @@ struct StatusMenuTests {
         #expect(content.items.contains(.error("Startup failed: menu handshake failed. Open Melix Console for details.")))
     }
 
+    @Test("install includes packaged update status when available")
+    @MainActor
+    func installRendersPackagedUpdateState() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(
+            client: client,
+            productInstallStateProvider: StubProductInstallStateProvider(
+                updateStatusResponse: ProductUpdateStatus(
+                    summary: "Update available: 0.2.0",
+                    detail: "Current 0.1.0 on stable",
+                    isAvailable: true,
+                    checkSucceeded: true
+                ),
+                startupDiagnosticResponse: nil
+            )
+        )
+        let renderer = RecordingStatusMenuRenderer()
+        let menu = StatusMenu(viewModel: viewModel, renderer: renderer)
+
+        await viewModel.start()
+        menu.install()
+
+        let content = try #require(renderer.lastContent)
+        #expect(content.items.contains(.info("Update available: 0.2.0")))
+    }
+
     @Test("perform routes primary model actions to the view model")
     @MainActor
     func performRoutesPrimaryModelActions() async throws {

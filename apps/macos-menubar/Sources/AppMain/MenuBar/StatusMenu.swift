@@ -111,6 +111,9 @@ public final class StatusMenu: NSObject {
         var items: [StatusMenuContentItem] = [
             .info("Server: \(viewModel.serverStateText)")
         ]
+        if let productUpdateSummary = viewModel.productUpdateSummary, productUpdateSummary.isEmpty == false {
+            items.append(.info(productUpdateSummary))
+        }
 
         if let model = viewModel.primaryModel {
             items.append(.info("\(model.modelID): \(model.stateText)"))

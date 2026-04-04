@@ -2,66 +2,74 @@
 
 ## Goal
 
-Close `M8.9` by adding a repository-owned Homebrew distribution path with service management that
-reuses Melix local-product launch semantics instead of introducing a second packaging truth.
+Close `M8.10` by adding repository-owned update checks, install-manifest startup diagnostics, and
+operator-visible startup failure handling for packaged Melix installs without introducing a second
+runtime-control truth outside the existing local-product layout.
 
 ## Scope
 
-- define a checked-in Homebrew formula under `infra/homebrew/Formula/`
-- add a Homebrew service wrapper that supervises the Melix three-process bundle
-- provide repository-owned smoke commands for formula validation and service lifecycle behavior
-- document install, upgrade, stop, and prune flows for the Homebrew path
-- update milestone bookkeeping only after verification and changed-line coverage are recorded
+- extend packaged install metadata with product version, update-channel, log-path, and host-port
+  diagnostics fields
+- add deterministic update-check and startup-failure classification helpers plus a repository-owned
+  smoke command
+- enrich menu bar startup failure messaging and desktop/status surfaces with packaged product
+  signals
+- update runbooks and milestone bookkeeping only after verification and changed-line coverage are
+  recorded
 
 ## Phases
 
-1. Homebrew distribution contract
+1. Install-manifest and update-feed foundations
    - status: completed
    - evidence:
-     - add a checked-in formula that installs from the repository checkout
-     - keep formula metadata aligned with the repository version and service wrapper contract
-     - document the repository-owned Homebrew asset location under `infra/homebrew/`
-2. Service wrapper and supervision path
+     - extend `install_assets.py` with versioned manifest metadata and optional available-port
+       selection
+     - add a repository-owned update-channel file and deterministic version-comparison helpers
+     - keep the packaged-install manifest authoritative for ready probe, log locations, and update
+       inputs
+2. Startup failure diagnostics and smoke coverage
    - status: completed
    - evidence:
-     - build Homebrew service specs from the existing product layout and launch-agent semantics
-     - supervise the control plane, Swift text worker, and Python worker through one Homebrew
-       service entrypoint
-     - expose a machine-readable manifest mode for inspection and smoke validation
-3. Smoke coverage and operator docs
+     - add deterministic startup-failure classification helpers for host-port conflict, crash, and
+       hang cases
+     - add a repository-owned smoke command that exercises update detection plus startup-failure
+       classification
+     - cover the touched Python scope with focused tests
+3. Menu bar projection and operator messaging
    - status: completed
    - evidence:
-     - add deterministic formula and service smoke commands
-     - add focused Python tests for Homebrew formula rendering and service supervision helpers
-     - update README, `docs/README.md`, and a dedicated runbook for install and service lifecycle
+     - add a packaged-product signal provider for update status and startup diagnostics
+     - project the resulting status into the startup error copy plus the existing menu/desktop
+       surfaces without introducing banner-dismissal policy yet
+     - cover the touched Swift scope with focused tests
 4. Verification and milestone bookkeeping
    - status: completed
    - evidence:
-     - rerun focused Python tests plus Homebrew smoke commands
-     - rerun repository-default verification commands required for the touched scope
-     - record changed-line coverage at or above `95%` and update `progress.md` plus the execution
-       index
+     - rerun focused Python and Swift verification for the touched scope
+     - rerun repository-default verification commands required by the touched code paths
+     - record changed-line coverage at or above `95%`, update `progress.md`, and mark `M8.10`
+       completed in the execution index
 
 ## Acceptance
 
-- Melix has a checked-in Homebrew formula that installs from the repository checkout and exposes a
-  service entrypoint
-- the Homebrew service wrapper supervises the same three Melix runtime processes using the
-  repository-owned local-product layout semantics
-- repository-owned smoke commands validate both the formula contract and the deterministic service
-  lifecycle path
-- install, upgrade, stop, and prune behavior are documented and reproducible
-- `M8.9` can be closed with explicit verification and changed-line coverage evidence
+- packaged Melix installs can detect update availability from a repository-owned update feed
+- install-manifest metadata supports actionable startup failure diagnostics, including host-port
+  conflicts, crash clues, and hang fallback
+- the native menu bar operator shell surfaces packaged-product update state and richer startup
+  failure guidance without relying on heuristic banners
+- a deterministic startup-failure smoke command and focused tests cover the touched productization
+  and menu bar paths
+- `M8.10` can be closed with explicit verification and changed-line coverage evidence
 
 ## Risks
 
-- formula install logic can silently drift from the checked-in repository layout if the wrapper and
-  formula derive repo paths independently
-- a Homebrew service wrapper that invents its own runtime roots would fragment packaging truth away
-  from the product-owned layout contract
-- smoke coverage that validates only formula text without exercising service supervision would miss
-  lifecycle regressions
+- update checks that bypass the install manifest would create packaging truth that the operator UI
+  cannot explain or reproduce
+- startup diagnostics that only mirror the original handshake error would fail to give actionable
+  host-port and log guidance for packaged installs
+- premature banner work would overlap with `M15.2` and blur the boundary between state foundations
+  and later runtime-signal presentation policy
 
 ## Outcome
 
-- m8_9_homebrew_formula_and_services_completed
+- m8_10_auto_update_and_startup_failure_handling_completed

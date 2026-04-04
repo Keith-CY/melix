@@ -119,6 +119,8 @@ public struct DesktopFoundationState: Equatable, Sendable {
         serverVersion: String,
         daemonInstanceID: String,
         features: [String],
+        productUpdateSummary: String?,
+        productUpdateDetail: String?,
         lastError: String?,
         recentEvents: [DesktopLogEntry]
     ) -> DesktopFoundationState {
@@ -238,7 +240,7 @@ public struct DesktopFoundationState: Equatable, Sendable {
                 )
             }
 
-        let settings = [
+        var settings = [
             DesktopKeyValueRow(id: "protocol", key: "Protocol", value: protocolVersion),
             DesktopKeyValueRow(id: "server-version", key: "Server Version", value: serverVersion),
             DesktopKeyValueRow(id: "daemon-id", key: "Daemon Instance", value: daemonInstanceID.isEmpty ? "unknown" : daemonInstanceID),
@@ -248,6 +250,16 @@ public struct DesktopFoundationState: Equatable, Sendable {
             DesktopKeyValueRow(id: "socket", key: "Control Plane", value: "local XPC"),
             DesktopKeyValueRow(id: "api-surface", key: "API Surface", value: "text phase-4 foundation"),
         ]
+        if let productUpdateSummary, productUpdateSummary.isEmpty == false {
+            settings.append(
+                DesktopKeyValueRow(id: "product-update", key: "Update", value: productUpdateSummary)
+            )
+            if let productUpdateDetail, productUpdateDetail.isEmpty == false {
+                settings.append(
+                    DesktopKeyValueRow(id: "product-update-detail", key: "Update Detail", value: productUpdateDetail)
+                )
+            }
+        }
 
         let benchMetrics = snapshot.metrics.values
             .sorted { $0.key < $1.key }

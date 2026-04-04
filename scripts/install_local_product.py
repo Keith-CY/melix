@@ -21,6 +21,9 @@ def main() -> int:
     parser.add_argument("--launch-agents-dir", default="")
     parser.add_argument("--http-port", type=int, default=11434)
     parser.add_argument("--service-instance-name", default="")
+    parser.add_argument("--prefer-available-http-port", action="store_true")
+    parser.add_argument("--product-version", default="")
+    parser.add_argument("--update-channel-path", default="")
     parser.add_argument("--swift-backend-mode", default="deterministic")
     parser.add_argument("--python-backend-mode", default="deterministic")
     parser.add_argument("--dev-text-model-path", default="")
@@ -33,6 +36,9 @@ def main() -> int:
         launch_agents_dir=args.launch_agents_dir or None,
         http_port=args.http_port,
         service_instance_name=args.service_instance_name,
+        prefer_available_http_port=args.prefer_available_http_port,
+        product_version=args.product_version,
+        update_channel_path=args.update_channel_path or None,
     )
     manifest = write_local_product_artifacts(
         layout,

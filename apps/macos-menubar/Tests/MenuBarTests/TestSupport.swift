@@ -1249,3 +1249,16 @@ func makeBenchmarkExportBundleJSONWithoutResults() -> String {
     }
     """
 }
+
+struct StubProductInstallStateProvider: ProductInstallStateProviding {
+    var updateStatusResponse: ProductUpdateStatus?
+    var startupDiagnosticResponse: ProductStartupFailureDiagnostic?
+
+    func updateStatus() -> ProductUpdateStatus? {
+        updateStatusResponse
+    }
+
+    func startupFailureDiagnostic(for error: any Error) -> ProductStartupFailureDiagnostic? {
+        startupDiagnosticResponse
+    }
+}

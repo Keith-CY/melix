@@ -2,6 +2,72 @@
 
 ## 2026-04-04
 
+- Closed the `M8.10` auto-update and startup-failure handling milestone:
+  - extended `services/mlx-worker-python/worker/productization/install_assets.py`,
+    `services/mlx-worker-python/worker/productization/startup_signals.py`, and
+    `scripts/install_local_product.py` so packaged Melix installs now emit versioned install
+    manifests, repository-owned update-channel metadata, requested versus selected HTTP-port
+    evidence, authoritative log paths, and deterministic startup-failure classification helpers
+  - added repository-owned update metadata in `infra/packaging/update-channels/stable.json` plus a
+    deterministic smoke command in `scripts/m8_startup_failure_smoke.py`, with focused regression
+    coverage in `services/mlx-worker-python/tests/test_install_assets.py`,
+    `services/mlx-worker-python/tests/test_install_local_product_script.py`,
+    `services/mlx-worker-python/tests/test_startup_signals.py`, and
+    `services/mlx-worker-python/tests/test_m8_startup_failure_smoke.py`
+  - added `apps/macos-menubar/Sources/AppMain/Persistence/ProductInstallState.swift` and wired the
+    provider through `RuntimeViewModel`, `DesktopFoundationState`, and `StatusMenu` so the native
+    operator shell now surfaces packaged update state and actionable host-port, crash, and hang
+    diagnostics sourced from the install manifest
+  - expanded focused menu-bar coverage in
+    `apps/macos-menubar/Tests/MenuBarTests/ProductInstallStateTests.swift`,
+    `apps/macos-menubar/Tests/MenuBarTests/RuntimeViewModelTests.swift`,
+    `apps/macos-menubar/Tests/MenuBarTests/StatusMenuTests.swift`, and
+    `apps/macos-menubar/Tests/MenuBarTests/AppMainBootstrapTests.swift`, including environment
+    override, version-normalization, control-plane crash, worker crash, and startup-hang branches
+  - updated `README.md`, `docs/runbooks/phase-8-local-install.md`, `infra/packaging/README.md`,
+    `docs/plans/2026-03-30-m8-10-auto-update-and-startup-failure-handling.md`, the roadmap
+    execution index, and `task_plan.md` so the repository records `M8.10` as completed with
+    explicit verification and changed-line coverage evidence
+- Verification summary for `M8.10`:
+  - `PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" UV_CACHE_DIR="$(pwd)/.uv-cache" uv run --project services/mlx-worker-python --extra mlx pytest services/mlx-worker-python/tests/test_install_assets.py services/mlx-worker-python/tests/test_install_local_product_script.py services/mlx-worker-python/tests/test_startup_signals.py services/mlx-worker-python/tests/test_m8_startup_failure_smoke.py -q`: `16 passed in 0.08s`
+  - `PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" UV_CACHE_DIR="$(pwd)/.uv-cache" uv run --project services/mlx-worker-python --extra mlx python scripts/m8_startup_failure_smoke.py --json`: pass
+  - `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/.build/ModuleCache.noindex" swift test --package-path apps/macos-menubar --filter ProductInstallStateTests`: `10 tests in 1 suite passed`
+  - `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/.build/ModuleCache.noindex" swift test --package-path apps/macos-menubar --enable-code-coverage --filter 'AppMainBootstrapTests|ProductInstallStateTests|RuntimeViewModelTests|StatusMenuTests|DesktopFoundationViewTests'`: `193 tests in 5 suites passed after 3.525 seconds`
+  - `make py-test`: `449 passed in 34.13s`
+  - `make swift-test`: pass
+  - verification note: the focused and repository-default Swift runs still emit the pre-existing
+    `warning: input verification failed` linker notes for cached object files plus the existing
+    `RequestCoordinator.swift` `no 'async' operations occur within 'await' expression` warnings,
+    but the authoritative commands above completed successfully
+- Metrics report for `M8.10`:
+  - Python executable scope changed-line coverage:
+    - `scripts/install_local_product.py`: `100.00%` (`3/3`)
+    - `scripts/m8_startup_failure_smoke.py`: `95.65%` (`44/46`)
+    - `services/mlx-worker-python/worker/productization/install_assets.py`: `100.00%` (`12/12`)
+    - `services/mlx-worker-python/worker/productization/startup_signals.py`: `92.31%` (`120/130`)
+    - `services/mlx-worker-python/tests/test_install_assets.py`: `100.00%` (`26/26`)
+    - `services/mlx-worker-python/tests/test_install_local_product_script.py`: `100.00%` (`6/6`)
+    - `services/mlx-worker-python/tests/test_startup_signals.py`: `100.00%` (`47/47`)
+    - `services/mlx-worker-python/tests/test_m8_startup_failure_smoke.py`: `100.00%` (`22/22`)
+    - aggregate Python changed-line coverage: `95.89%` (`280/292`)
+  - menu bar executable scope changed-line coverage:
+    - `apps/macos-menubar/Sources/AppMain/Dashboard/DesktopFoundationState.swift`: `100.00%`
+      (`11/11`)
+    - `apps/macos-menubar/Sources/AppMain/MenuBar/StatusMenu.swift`: `100.00%` (`3/3`)
+    - `apps/macos-menubar/Sources/AppMain/Models/RuntimeViewModel.swift`: `100.00%` (`24/24`)
+    - `apps/macos-menubar/Sources/AppMain/Persistence/ProductInstallState.swift`: `99.04%`
+      (`207/209`)
+    - `apps/macos-menubar/Tests/MenuBarTests/AppMainBootstrapTests.swift`: `100.00%` (`3/3`)
+    - `apps/macos-menubar/Tests/MenuBarTests/DesktopFoundationViewTests.swift`: `100.00%` (`2/2`)
+    - `apps/macos-menubar/Tests/MenuBarTests/ProductInstallStateTests.swift`: `100.00%`
+      (`246/246`)
+    - `apps/macos-menubar/Tests/MenuBarTests/RuntimeViewModelTests.swift`: `100.00%` (`39/39`)
+    - `apps/macos-menubar/Tests/MenuBarTests/StatusMenuTests.swift`: `100.00%` (`23/23`)
+    - `apps/macos-menubar/Tests/MenuBarTests/TestSupport.swift`: `100.00%` (`6/6`)
+    - aggregate menu bar changed-line coverage: `99.65%` (`564/566`)
+  - aggregate changed-line coverage for the touched executable scope in `M8.10`: `98.39%`
+    (`844/858`)
+
 - Closed the `M8.9` Homebrew formula and services milestone:
   - added repository-owned Homebrew packaging assets in `infra/homebrew/Formula/melix.rb` and `infra/homebrew/README.md`, including a formula that installs from the checked-out repository root, builds the Melix CLI plus the control-plane and Swift text-worker binaries, and exposes a `melix-homebrew-service` wrapper for `brew services`
   - added `services/mlx-worker-python/worker/productization/homebrew_formula.py`, `services/mlx-worker-python/worker/productization/homebrew_service.py`, and `scripts/melix_homebrew_service.py` so Homebrew service startup reuses Melix local-product layout semantics while supervising the control plane, Swift text worker, and Python worker from one repository-owned entrypoint

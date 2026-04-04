@@ -60,7 +60,9 @@ struct AppMainBootstrapTests {
             bootstrapFactory: { bootstrap },
             retain: { retainedBootstrap = $0 }
         )
-        try await Task.sleep(for: .milliseconds(20))
+        try await waitForBootstrapCondition("expected launcher handshake to complete") {
+            await client.handshakeCount == 1
+        }
 
         #expect(app.didSetAccessoryActivationPolicy)
         #expect(app.didRun)

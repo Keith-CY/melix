@@ -29,6 +29,9 @@ def test_build_local_product_layout_uses_library_conventions(tmp_path: Path) -> 
     assert layout.python_socket_path == layout.runtime_dir / "python-worker.sock"
     assert layout.swift_text_worker_socket_path == layout.runtime_dir / "swift-text-worker.sock"
     assert layout.python_worker_metrics_path == layout.runtime_dir / "python-worker-metrics.json"
+    assert layout.update_channel_path == repo_root / "infra/packaging/update-channels/stable.json"
+    assert layout.product_version == "0.1.0"
+    assert layout.requested_http_port == 18443
     assert layout.http_port == 18443
 
 
@@ -165,7 +168,14 @@ def test_write_local_product_artifacts_writes_plists_manifest_and_env(tmp_path: 
     assert layout.environment_script_path.read_text().startswith("#!/usr/bin/env bash")
 
     payload = json.loads(layout.install_manifest_path.read_text())
+    assert payload["packaging_kind"] == "launch_agents"
+    assert payload["product_version"] == "0.1.0"
+    assert payload["requested_http_port"] == 19434
+    assert payload["http_port_auto_selected"] is False
     assert payload["ready_probe_url"] == "http://127.0.0.1:19434/v1/models"
+    assert payload["update_channel_path"] == str(repo_root / "infra/packaging/update-channels/stable.json")
+    assert payload["control_plane_stderr_path"] == str(layout.control_plane_stderr_path)
+    assert payload["python_worker_stderr_path"] == str(layout.python_worker_stderr_path)
     assert len(payload["bootstrap_commands"]) == 3
     assert payload["managed_models_dir"] == str(layout.managed_models_dir)
     assert payload["audio_runtime_packs_dir"] == str(layout.audio_runtime_packs_dir)
@@ -173,6 +183,8 @@ def test_write_local_product_artifacts_writes_plists_manifest_and_env(tmp_path: 
     assert (launch_agents_dir / "io.melix.swift-text-worker.plist").exists()
     assert (launch_agents_dir / "io.melix.python-worker.plist").exists()
     assert (launch_agents_dir / "io.melix.control-plane.plist").exists()
+    assert f'MELIX_PRODUCT_VERSION="{layout.product_version}"' in layout.environment_script_path.read_text()
+    assert f'MELIX_UPDATE_CHANNEL_PATH="{layout.update_channel_path}"' in layout.environment_script_path.read_text()
     assert f'MELIX_PYTHON_WORKER_METRICS_PATH="{layout.python_worker_metrics_path}"' in layout.environment_script_path.read_text()
     assert f'MELIX_MANAGED_MODEL_ROOT="{layout.managed_models_dir}"' in layout.environment_script_path.read_text()
     assert f'MELIX_AUDIO_RUNTIME_PACK_ROOT="{layout.audio_runtime_packs_dir}"' in layout.environment_script_path.read_text()
@@ -201,3 +213,27 @@ def test_write_local_product_artifacts_writes_sidecar_service_instance_into_env(
     assert 'export MELIX_SERVICE_INSTANCE_NAME="team-a"' in env_script
     assert f'export MELIX_MODEL_OPS_JOBS_ROOT="{layout.model_ops_jobs_root}"' in env_script
     assert f'export MELIX_EVALUATION_JOBS_ROOT="{layout.evaluation_jobs_root}"' in env_script
+
+
+def test_build_local_product_layout_can_auto_select_an_available_http_port(tmp_path: Path) -> None:
+    import socket
+
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    home_dir = tmp_path / "home"
+    home_dir.mkdir()
+
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
+        listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        listener.bind(("127.0.0.1", 0))
+        occupied_port = int(listener.getsockname()[1])
+        listener.listen(1)
+        layout = build_local_product_layout(
+            repo_root=repo_root,
+            home_dir=home_dir,
+            http_port=occupied_port,
+            prefer_available_http_port=True,
+        )
+
+    assert layout.requested_http_port == occupied_port
+    assert layout.http_port != occupied_port

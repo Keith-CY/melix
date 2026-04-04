@@ -595,6 +595,8 @@ public final class RuntimeViewModel {
     public private(set) var serverSessions: [DesktopServerSessionState] = []
     public private(set) var chatSessions: [DesktopChatSessionState] = []
     public private(set) var lastError: String?
+    public private(set) var productUpdateSummary: String?
+    public private(set) var productUpdateDetail: String?
     public private(set) var protocolVersion = "melix.controlplane.v1"
     public private(set) var serverVersion = "0.1.0"
     public private(set) var daemonInstanceID = ""
@@ -728,6 +730,7 @@ public final class RuntimeViewModel {
     private let metrics: MenuBarMetricsStore
     private let operatorSessionStore: any OperatorSessionStoring
     private let serverSessionAPIKeyStore: any ServerSessionAPIKeyStoring
+    private let productInstallStateProvider: any ProductInstallStateProviding
     private var subscriptionTask: Task<Void, Never>?
     private var lastSeenSeq: UInt64 = 0
     private var latestSnapshot = Melix_Controlplane_V1_ServerSnapshot()
@@ -929,12 +932,14 @@ public final class RuntimeViewModel {
         client: any ControlPlaneXPCClient,
         metrics: MenuBarMetricsStore = MenuBarMetricsStore(),
         operatorSessionStore: any OperatorSessionStoring = NullOperatorSessionStore(),
-        serverSessionAPIKeyStore: any ServerSessionAPIKeyStoring = NullServerSessionAPIKeyStore()
+        serverSessionAPIKeyStore: any ServerSessionAPIKeyStoring = NullServerSessionAPIKeyStore(),
+        productInstallStateProvider: any ProductInstallStateProviding = FilesystemProductInstallStateProvider()
     ) {
         self.client = client
         self.metrics = metrics
         self.operatorSessionStore = operatorSessionStore
         self.serverSessionAPIKeyStore = serverSessionAPIKeyStore
+        self.productInstallStateProvider = productInstallStateProvider
     }
 
     deinit {
@@ -1498,6 +1503,8 @@ public final class RuntimeViewModel {
             serverVersion: serverVersion,
             daemonInstanceID: daemonInstanceID,
             features: features,
+            productUpdateSummary: productUpdateSummary,
+            productUpdateDetail: productUpdateDetail,
             lastError: lastError,
             recentEvents: recentEvents
         )
@@ -1619,6 +1626,7 @@ public final class RuntimeViewModel {
         let restoreStartedAt = Date()
         restoreOperatorSessionState()
         operatorStateRestored = true
+        await refreshProductSignals()
         await metrics.record(
             name: "operator.session_restore_ms",
             valueMs: Date().timeIntervalSince(restoreStartedAt) * 1_000
@@ -1651,7 +1659,13 @@ public final class RuntimeViewModel {
             await startSubscription(lastSeenSeq: lastSeenSeq, isReconnect: false)
         } catch {
             await transitionConnectionState(to: "Degraded", detail: "Handshake failed")
-            setLastError(startupFailureMessage(error))
+            if let diagnostic = productInstallStateProvider.startupFailureDiagnostic(for: error) {
+                setLastError(diagnostic.userMessage)
+                await metrics.record(name: "startup.failure_classification_count", valueMs: 1)
+            } else {
+                setLastError(startupFailureMessage(error))
+                await metrics.record(name: "startup.failure_classification_count", valueMs: 0)
+            }
             statusTitle = "Melix Error"
             notifyStateChanged()
         }
@@ -2436,6 +2450,20 @@ public final class RuntimeViewModel {
 
     private func startupFailureMessage(_ error: Error) -> String {
         "Startup failed: \(error). Open Melix Console for details."
+    }
+
+    private func refreshProductSignals() async {
+        guard let updateStatus = productInstallStateProvider.updateStatus() else {
+            productUpdateSummary = nil
+            productUpdateDetail = nil
+            return
+        }
+        productUpdateSummary = updateStatus.summary
+        productUpdateDetail = updateStatus.detail
+        await metrics.record(
+            name: "update.check_success_rate",
+            valueMs: updateStatus.checkSucceeded ? 100 : 0
+        )
     }
 
     public func runDoctor() async {

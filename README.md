@@ -93,6 +93,16 @@ environment export file:
 python3 scripts/install_local_product.py --json
 ```
 
+When you need the installer to avoid an occupied default port while preserving the requested port
+as packaging intent:
+
+```bash
+python3 scripts/install_local_product.py \
+  --http-port 11434 \
+  --prefer-available-http-port \
+  --json
+```
+
 Validate the generated install assets without running `launchctl`:
 
 ```bash
@@ -104,6 +114,20 @@ The installer writes:
 - launch agents under `~/Library/LaunchAgents`
 - an install manifest under `~/Library/Application Support/Melix/install-manifest.json`
 - an environment export file under `~/Library/Application Support/Melix/melix-product-env.sh`
+
+The install manifest now records product version, update-channel path, requested and selected HTTP
+ports, ready-probe URL, and worker or control-plane log locations. The environment export file also
+surfaces `MELIX_PRODUCT_VERSION` and `MELIX_UPDATE_CHANNEL_PATH`.
+
+Run the deterministic packaged-startup smoke to verify update detection and startup-failure
+classification without bootstrapping launch agents:
+
+```bash
+PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" \
+UV_CACHE_DIR="$(pwd)/.uv-cache" \
+uv run --project services/mlx-worker-python --extra mlx \
+python scripts/m8_startup_failure_smoke.py --json
+```
 
 The full operator flow, including bootstrap and uninstall commands, is documented in
 `docs/runbooks/phase-8-local-install.md`.
