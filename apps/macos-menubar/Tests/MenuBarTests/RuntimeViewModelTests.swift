@@ -91,6 +91,83 @@ struct RuntimeViewModelTests {
         #expect(viewModel.selectedServerSession?.id == restoredServerSession.id)
     }
 
+    @Test("persists selected tool section and restores it across restart")
+    @MainActor
+    func persistsSelectedToolSectionAndRestoresAcrossRestart() async throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-menubar-tool-section-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let melixHome = MelixHome(environment: ["MELIX_HOME": temporaryRoot.path])
+        let operatorSessionStore = OperatorSessionStore(melixHome: melixHome)
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(client: client, operatorSessionStore: operatorSessionStore)
+
+        await viewModel.start()
+        viewModel.selectToolSection(.diagnostics)
+
+        let persistedData = try Data(contentsOf: melixHome.operatorSessionFileURL)
+        let persistedPayload = try #require(
+            JSONSerialization.jsonObject(with: persistedData) as? [String: Any]
+        )
+        #expect(persistedPayload["selected_surface"] as? String == DesktopSurface.tools.rawValue)
+        #expect(persistedPayload["selected_tool_section"] as? String == DesktopToolSection.diagnostics.rawValue)
+
+        let restoredViewModel = RuntimeViewModel(
+            client: FakeControlPlaneXPCClient(),
+            operatorSessionStore: operatorSessionStore
+        )
+        await restoredViewModel.start()
+
+        #expect(restoredViewModel.selectedSurface == .tools)
+        #expect(restoredViewModel.selectedToolSection == .diagnostics)
+    }
+
+    @Test("restores models library tool section when persisted state predates selected tool sections")
+    @MainActor
+    func restoresDefaultToolSectionForLegacyOperatorSessionState() async throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-menubar-tool-section-legacy-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let melixHome = MelixHome(environment: ["MELIX_HOME": temporaryRoot.path])
+        let operatorSessionStore = OperatorSessionStore(melixHome: melixHome)
+        let restoredServerSession = DesktopServerSessionState(
+            id: "server-session-restored",
+            title: "Restored Server",
+            modelID: "melix-dev-text",
+            lifecycle: .running
+        )
+
+        try operatorSessionStore.save(
+            OperatorSessionState(
+                selectedSurface: .tools,
+                selectedServerSessionID: restoredServerSession.id,
+                serverSessions: [restoredServerSession]
+            )
+        )
+
+        let legacyData = try Data(contentsOf: melixHome.operatorSessionFileURL)
+        let legacyPayload = try #require(
+            JSONSerialization.jsonObject(with: legacyData) as? [String: Any]
+        )
+        var mutatedPayload = legacyPayload
+        mutatedPayload.removeValue(forKey: "selected_tool_section")
+        let mutatedData = try JSONSerialization.data(withJSONObject: mutatedPayload, options: [.sortedKeys])
+        try mutatedData.write(to: melixHome.operatorSessionFileURL, options: [.atomic])
+
+        let restoredViewModel = RuntimeViewModel(
+            client: FakeControlPlaneXPCClient(),
+            operatorSessionStore: operatorSessionStore
+        )
+        await restoredViewModel.start()
+
+        #expect(restoredViewModel.selectedSurface == .tools)
+        #expect(restoredViewModel.selectedToolSection == .modelsLibrary)
+    }
+
     @Test("generatesPrimaryAPIKeyForSelectedServerSession and forces api key auth mode")
     @MainActor
     func generatesPrimaryAPIKeyForSelectedServerSessionAndForcesAPIKeyAuthMode() async throws {

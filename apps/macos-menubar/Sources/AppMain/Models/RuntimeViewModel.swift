@@ -2729,6 +2729,7 @@ public final class RuntimeViewModel {
                 return
             }
             selectedSurface = restoredState.selectedSurface
+            selectedToolSection = restoredState.selectedToolSection
             selectedServerSessionID = restoredState.selectedServerSessionID
             if restoredState.serverSessions.isEmpty == false {
                 persistedServerSessions = restoredState.serverSessions
@@ -2743,6 +2744,7 @@ public final class RuntimeViewModel {
     private func currentOperatorSessionState() -> OperatorSessionState {
         OperatorSessionState(
             selectedSurface: selectedSurface,
+            selectedToolSection: selectedToolSection,
             selectedServerSessionID: selectedServerSessionID,
             serverSessions: persistedServerSessions
         )

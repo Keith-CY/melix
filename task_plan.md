@@ -2,51 +2,58 @@
 
 ## Goal
 
-Land the first executable `M9.8` slice by wiring repository-owned M9 ecosystem and security evidence into the existing Phase 8 release gate and phase metrics pipeline.
+Close `M8.6` by persisting admin-surface tool-section navigation in the operator session state,
+adding a repository-owned state-persistence smoke command, and documenting the offline-owned
+desktop admin assets contract.
 
 ## Scope
 
-- add deterministic M9 evidence collectors for MCP tooling, agent export, shared access, persistent sessions, rich-output sanitization, connection lifecycle, and closure audit
-- extend release-gate evaluation and policy handling so missing or regressed M9 evidence becomes machine-readable failure state
-- surface `release_gate.m9_required_probe_count`, `release_gate.m9_missing_probe_count`, and `release_gate.m9_failed_threshold_count` through the phase metrics report
-- add a repository-owned `m9_release_gate_smoke.py` command plus tests for passing and failing gate states
-- update the release-gate and product-acceptance runbooks to describe the new M9 signals
+- persist `selectedToolSection` alongside the existing operator-session state
+- keep persisted-state decoding backward compatible with pre-`selected_tool_section` payloads
+- add a focused menu bar smoke suite that proves persistence, restore, and secure file ownership
+- wrap the Swift smoke in a repository-owned `scripts/m8_admin_state_smoke.py` command
+- document the persistence and offline-assets behavior in `docs/runbooks/`
+- update milestone bookkeeping after verification
 
 ## Phases
 
-1. Failing tests and deterministic evidence collectors
+1. Tool-section persistence behavior
    - status: completed
    - evidence:
-     - active plan: `docs/plans/2026-03-30-m9-8-ecosystem-and-security-release-gates.md`
-     - targets: `release_gates.py`, `test_release_gates.py`, `test_phase8_release_gate.py`, `test_phase8_runtime_probes.py`, and `test_acceptance_metrics.py`
-     - TDD order: add failing tests for missing M9 evidence, failed thresholds, and phase-metrics exposure before wiring the collectors
-2. M9 gate smoke and runbook closure
+     - add failing runtime-view-model coverage for persisted and restored tool sections
+     - wire `OperatorSessionState` and `RuntimeViewModel` to save and restore `selectedToolSection`
+     - keep legacy payloads compatible when `selected_tool_section` is absent
+2. Repository-owned smoke and docs
    - status: completed
    - evidence:
-     - add `scripts/m9_release_gate_smoke.py`
-     - add `services/mlx-worker-python/tests/test_m9_release_gate_smoke.py`
-     - update `docs/runbooks/phase-8-release-gates.md`
-     - update `docs/runbooks/phase-8-product-acceptance.md`
+     - add `OperatorSessionPersistenceSmokeTests`
+     - add `scripts/m8_admin_state_smoke.py`
+     - add Python coverage for the smoke wrapper
+     - add a dedicated runbook for admin-surface persistence and offline assets
 3. Verification and milestone bookkeeping
    - status: completed
    - evidence:
-     - targeted pytest and smoke verification for the M9.8 slice
-     - changed-line coverage for the touched Python scope at or above `95%`
-     - metrics and roadmap status recorded in `progress.md` and the execution index
+     - rerun the relevant Swift, Python, smoke, and repository-default verification commands
+     - record changed-line coverage at or above `95%` for the touched executable scope
+     - update `progress.md`, `docs/plans/2026-03-30-m8-6-tab-persistence-and-offline-admin-assets.md`, and the execution index
 
 ## Acceptance
 
-- the release gate emits a machine-readable `m9` evidence section with stable collector payloads and summary counts
-- missing required M9 probes or failed M9 thresholds fail the release gate closed
-- phase metrics surface the three `release_gate.m9_*` counts without creating a second unrelated gate system
-- a repository-owned smoke command can demonstrate both passing and failing M9 gate states deterministically
+- selecting a tool section persists it into the operator-session file and restores it across restart
+- old operator-session payloads without `selected_tool_section` still restore safely
+- a repository-owned smoke command proves persistence, restore, secure permissions, and zero
+  external admin-asset references
+- the M8.6 plan, runbook, and execution index describe the real repository state
 
 ## Risks
 
-- overloading the existing phase-8 gate with M9-only semantics can make the gate harder to reason about if the new summary fields are not clearly separated
-- adding a second layer of synthetic evidence instead of reusing existing smoke contracts could duplicate source-of-truth definitions
-- wiring closure audit into the gate too aggressively can turn deferred work into a false blocker
+- changing the operator-session schema can break restore for existing local state if decoding is not
+  backward compatible
+- the Python smoke wrapper can fail inside restricted environments if it relies on SwiftPM sandbox
+  defaults instead of repository-controlled flags
+- documenting offline-owned assets too loosely can create a false claim if remote admin assets are
+  added later without updating the runbook
 
 ## Outcome
 
-- m9_release_gate_slice_completed
+- m8_6_admin_state_persistence_completed

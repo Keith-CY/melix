@@ -3,17 +3,20 @@ import Foundation
 public struct OperatorSessionState: Codable, Equatable, Sendable {
     public var schemaVersion: Int
     public var selectedSurface: DesktopSurface
+    public var selectedToolSection: DesktopToolSection
     public var selectedServerSessionID: String
     public var serverSessions: [DesktopServerSessionState]
 
     public init(
         schemaVersion: Int = 1,
         selectedSurface: DesktopSurface,
+        selectedToolSection: DesktopToolSection = .modelsLibrary,
         selectedServerSessionID: String,
         serverSessions: [DesktopServerSessionState]
     ) {
         self.schemaVersion = schemaVersion
         self.selectedSurface = selectedSurface
+        self.selectedToolSection = selectedToolSection
         self.selectedServerSessionID = selectedServerSessionID
         self.serverSessions = serverSessions
     }
@@ -21,8 +24,21 @@ public struct OperatorSessionState: Codable, Equatable, Sendable {
     enum CodingKeys: String, CodingKey {
         case schemaVersion = "schema_version"
         case selectedSurface = "selected_surface"
+        case selectedToolSection = "selected_tool_section"
         case selectedServerSessionID = "selected_server_session_id"
         case serverSessions = "server_sessions"
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        schemaVersion = try container.decodeIfPresent(Int.self, forKey: .schemaVersion) ?? 1
+        selectedSurface = try container.decode(DesktopSurface.self, forKey: .selectedSurface)
+        selectedToolSection = try container.decodeIfPresent(
+            DesktopToolSection.self,
+            forKey: .selectedToolSection
+        ) ?? .modelsLibrary
+        selectedServerSessionID = try container.decode(String.self, forKey: .selectedServerSessionID)
+        serverSessions = try container.decode([DesktopServerSessionState].self, forKey: .serverSessions)
     }
 }
 

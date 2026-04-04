@@ -156,6 +156,7 @@ Recent decision records:
 Current runbooks:
 
 - `runbooks/connection-lifecycle.md`
+- `runbooks/admin-surface-persistence.md`
 - `runbooks/security-and-stability-closure.md`
 - `runbooks/m7-benchmark-and-evaluation-foundation.md`
 - `runbooks/m6-acceleration-benchmarks.md`

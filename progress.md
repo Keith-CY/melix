@@ -2,6 +2,41 @@
 
 ## 2026-04-04
 
+- Closed the `M8.6` admin-state persistence and offline-assets milestone:
+  - extended `apps/macos-menubar/Sources/AppMain/Persistence/OperatorSessionStore.swift` so operator-session payloads now persist `selected_tool_section` and restore safely from legacy payloads that predate that field
+  - updated `apps/macos-menubar/Sources/AppMain/Models/RuntimeViewModel.swift` so the menu bar operator shell restores the selected tool section together with the selected surface and server session
+  - added focused regression coverage in `apps/macos-menubar/Tests/MenuBarTests/RuntimeViewModelTests.swift` and a repository-owned smoke suite in `apps/macos-menubar/Tests/MenuBarTests/OperatorSessionPersistenceSmokeTests.swift`
+  - added `scripts/m8_admin_state_smoke.py` plus Python wrapper coverage in `services/mlx-worker-python/tests/test_m8_admin_state_smoke.py` so the touched scope has a stable repository-owned smoke command rather than an ad hoc local script
+  - documented the persistence and offline-assets contract in `docs/runbooks/admin-surface-persistence.md`, updated `docs/README.md`, and marked `M8.6` completed in the execution index
+- Verification summary for `M8.6`:
+  - `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/apps/macos-menubar/.build/ModuleCache.noindex" swift test --package-path apps/macos-menubar --filter 'persistsSelectedToolSectionAndRestoresAcrossRestart|restoresDefaultToolSectionForLegacyOperatorSessionState'`: `2 tests passed`
+  - `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/apps/macos-menubar/.build/ModuleCache.noindex" swift test --package-path apps/macos-menubar --filter OperatorSessionPersistenceSmokeTests`: pass
+  - `python3 scripts/m8_admin_state_smoke.py --json`: pass
+  - `make proto`: pass
+  - `make py-test`: `423 passed in 34.01s`
+  - `make swift-test`: pass
+  - `make integration-test`: `58 passed in 691.30s (0:11:31)`
+- Metrics report for `M8.6`:
+  - smoke metrics from `python3 scripts/m8_admin_state_smoke.py --json`:
+    - `operator.session_restore_ms = 0.4190206527709961`
+    - `operator.session_persist_write_ms = 2.0880699157714844`
+    - `operator.session_tool_section_persisted = 1`
+    - `operator.session_tool_section_restored = 1`
+    - `operator.session_root_permissions_ok = 1`
+    - `operator.session_state_directory_permissions_ok = 1`
+    - `operator.session_file_permissions_ok = 1`
+    - `operator.offline_asset_external_reference_count = 0`
+  - Swift executable scope changed-line coverage:
+    - `apps/macos-menubar/Sources/AppMain/Models/RuntimeViewModel.swift`: `100.00%` (`2/2`)
+    - `apps/macos-menubar/Sources/AppMain/Persistence/OperatorSessionStore.swift`: `100.00%` (`11/11`)
+    - `apps/macos-menubar/Tests/MenuBarTests/RuntimeViewModelTests.swift`: `100.00%` (`69/69`)
+    - `apps/macos-menubar/Tests/MenuBarTests/OperatorSessionPersistenceSmokeTests.swift`: `97.14%` (`68/70`)
+    - aggregate Swift changed-line coverage: `98.68%` (`150/152`)
+  - Python executable scope changed-line coverage:
+    - `scripts/m8_admin_state_smoke.py`: `97.14%` (`34/35`)
+    - `services/mlx-worker-python/tests/test_m8_admin_state_smoke.py`: `98.28%` (`57/58`)
+    - aggregate Python changed-line coverage: `97.85%` (`91/93`)
+
 - Closed the `M8.5` admin-surface expansion milestone:
   - verified that the native operator shell already exposes the planned runtime, models, downloads, training, diagnostics, logs, settings, chat, image, server, and API surfaces from control-plane-backed menu bar state
   - confirmed the existing menu bar package coverage already exercises the expanded admin shell, including LoRA tooling, benchmark and evaluation diagnostics, matrix benchmark views, direct Hugging Face benchmark targeting, and agent integration export presentation
