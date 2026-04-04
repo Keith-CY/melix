@@ -129,6 +129,8 @@ def build_phase8_metrics_report(
     )
     audio = dict(release_gate_report.get("audio", {}))
     audio_metrics = dict(audio.get("metrics", {}))
+    m9 = dict(release_gate_report.get("m9", {}))
+    m9_summary = dict(m9.get("summary", {}))
     closure_audit_evidence = dict(closure_audit or {})
     closure_audit_metrics = dict(closure_audit_evidence.get("metrics", {}))
 
@@ -309,6 +311,18 @@ def build_phase8_metrics_report(
             float(cache_recovery_metrics.get("bench.recovery.partial_restore_ratio_pct", 0.0)),
             2,
         ),
+        "release_gate.m9_required_probe_count": round(
+            float(m9_summary.get("required_probe_count", 0.0)),
+            2,
+        ),
+        "release_gate.m9_missing_probe_count": round(
+            float(m9_summary.get("missing_probe_count", 0.0)),
+            2,
+        ),
+        "release_gate.m9_failed_threshold_count": round(
+            float(m9_summary.get("failed_threshold_count", 0.0)),
+            2,
+        ),
         "closure_audit.blocker_count": round(
             float(closure_audit_metrics.get("closure_audit.blocker_count", 0.0)),
             2,
@@ -336,6 +350,7 @@ def build_phase8_metrics_report(
         "runtime_core": runtime_core_evidence,
         "audio": audio,
         "operator": operator,
+        "m9": m9,
         "closure_audit": closure_audit_evidence,
         "release_gate": release_gate_report,
     }
@@ -377,6 +392,7 @@ def compute_release_smoke_pass_rate(report: dict[str, Any], policy: dict[str, An
         _recovery_sane(report.get("recovery", {}), policy),
         _audio_sane(report.get("audio", {}), policy),
         _runtime_core_sane(report.get("runtime_core", {}), policy),
+        _m9_sane(report.get("m9", {}), policy),
     ]
     passed = sum(1 for section in sections if section)
     return round((passed / len(sections)) * 100.0, 2)
@@ -488,3 +504,12 @@ def _runtime_core_sane(runtime_core: dict[str, Any], policy: dict[str, Any]) -> 
     if not isinstance(runtime_core, dict):
         return False
     return not _evaluate_section_metrics(runtime_core, policy.get("runtime_core", {}))
+
+
+def _m9_sane(m9: dict[str, Any], policy: dict[str, Any]) -> bool:
+    if not isinstance(m9, dict):
+        return False
+    from worker.productization.release_gates import evaluate_m9_release_evidence
+
+    failures, _ = evaluate_m9_release_evidence(m9, policy.get("m9", {}))
+    return not failures

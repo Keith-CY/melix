@@ -132,7 +132,7 @@ The roadmap extension in `M10-M17` includes milestone-level plans plus decompose
 - `M9.7` `docs/plans/2026-03-30-m9-7-security-and-stability-closure-audit.md`
   Status: completed. Typed closure-audit findings, repository-owned JSON emission, runbook and decision guidance, phase-metrics exposure, and changed-line coverage evidence are recorded in the repository.
 - `M9.8` `docs/plans/2026-03-30-m9-8-ecosystem-and-security-release-gates.md`
-  Status: pending. First executable slice is wiring M9 evidence collectors into the existing phase-8 gate and metrics pipeline after M9.4-M9.7 evidence exists.
+  Status: completed. The Phase 8 gate now consumes repository-owned M9 evidence, exposes `release_gate.m9_*` counters through the metrics pipeline, ships a deterministic `m9_release_gate_smoke.py` fixture command, and records changed-line coverage evidence for the touched Python scope.
 
 ## M10: Session Lifecycle And Power Management
 

@@ -208,6 +208,91 @@
       "min": 0.5
     }
   },
+  "m9": {
+    "agent_export": {
+      "integration.export_generation_ms": {
+        "min": 0.0
+      },
+      "integration.export_target_count": {
+        "min": 5.0
+      },
+      "integration.setup_success_rate": {
+        "min": 1.0
+      }
+    },
+    "closure_audit": {
+      "closure_audit.blocker_count": {
+        "max": 0.0
+      },
+      "closure_audit.evidence_gap_count": {
+        "max": 0.0
+      }
+    },
+    "connection_lifecycle": {
+      "disconnect.keepalive_gap_ms": {
+        "min": 0.0
+      },
+      "disconnect.recovery_latency_ms": {
+        "min": 0.0
+      },
+      "disconnect.resume_success_rate": {
+        "min": 100.0
+      },
+      "disconnect.terminal_failure_count": {
+        "min": 1.0
+      }
+    },
+    "mcp": {
+      "mcp.configured_tool_count": {
+        "min": 2.0
+      },
+      "mcp.tool_injection_count": {
+        "min": 1.0
+      },
+      "mcp.tool_injection_success_rate": {
+        "min": 1.0
+      }
+    },
+    "persistent_session": {
+      "persistent_session.active_session_count": {
+        "max": 0.0
+      },
+      "persistent_session.expired_session_count": {
+        "max": 0.0
+      },
+      "persistent_session.remembered_session_count": {
+        "max": 0.0
+      },
+      "persistent_session.sign_out_latency_ms": {
+        "max": 1000.0
+      }
+    },
+    "sanitization": {
+      "sanitized_output.blocked_html_fragment_count": {
+        "min": 1.0
+      },
+      "sanitized_output.enforcement_count": {
+        "min": 1.0
+      },
+      "sanitized_output.unsafe_uri_rejection_count": {
+        "min": 1.0
+      }
+    },
+    "shared_access": {
+      "gateway.accepted_api_key_count": {
+        "min": 2.0
+      },
+      "gateway.auth_validation_failures": {
+        "min": 1.0
+      },
+      "shared_access.accepted_client_count": {
+        "min": 2.0
+      },
+      "shared_access.rejected_request_count": {
+        "min": 1.0
+      }
+    }
+  },
   "training": {
     "adapter_publish_ms": {
       "max": 150.0

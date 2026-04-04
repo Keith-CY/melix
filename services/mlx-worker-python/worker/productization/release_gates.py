@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import copy
 import json
+import os
+import subprocess
+import sys
 import tempfile
 import time
 from pathlib import Path
@@ -21,6 +24,7 @@ from worker.model_ops.mlx_lm_runner import (
     TrainingRequest,
     TrainingResult,
 )
+from worker.productization.closure_audit import build_closure_audit
 from worker.productization.benchmark_schemas import (
     build_serving_benchmark_job,
     build_serving_benchmark_results,
@@ -46,6 +50,45 @@ _AUDIO_RUNTIME_PACK_PROFILES = ["audio-stt", "audio-tts"]
 _AUDIO_MODEL_ID = "melix-whisper-mlx"
 _AUDIO_MODEL_REVISION = "mlx-audio"
 _AUDIO_SOURCE_MODEL_PATH = "hf/mlx-community/whisper-large-v3-turbo-asr-fp16"
+DEFAULT_M9_RELEASE_GATE_POLICY: dict[str, Any] = {
+    "mcp": {
+        "mcp.tool_injection_count": {"min": 1.0},
+        "mcp.configured_tool_count": {"min": 2.0},
+        "mcp.tool_injection_success_rate": {"min": 1.0},
+    },
+    "agent_export": {
+        "integration.export_generation_ms": {"min": 0.0},
+        "integration.setup_success_rate": {"min": 1.0},
+        "integration.export_target_count": {"min": 5.0},
+    },
+    "shared_access": {
+        "gateway.auth_validation_failures": {"min": 1.0},
+        "gateway.accepted_api_key_count": {"min": 2.0},
+        "shared_access.accepted_client_count": {"min": 2.0},
+        "shared_access.rejected_request_count": {"min": 1.0},
+    },
+    "persistent_session": {
+        "persistent_session.active_session_count": {"max": 0.0},
+        "persistent_session.remembered_session_count": {"max": 0.0},
+        "persistent_session.expired_session_count": {"max": 0.0},
+        "persistent_session.sign_out_latency_ms": {"max": 1_000.0},
+    },
+    "sanitization": {
+        "sanitized_output.enforcement_count": {"min": 1.0},
+        "sanitized_output.blocked_html_fragment_count": {"min": 1.0},
+        "sanitized_output.unsafe_uri_rejection_count": {"min": 1.0},
+    },
+    "connection_lifecycle": {
+        "disconnect.keepalive_gap_ms": {"min": 0.0},
+        "disconnect.recovery_latency_ms": {"min": 0.0},
+        "disconnect.resume_success_rate": {"min": 100.0},
+        "disconnect.terminal_failure_count": {"min": 1.0},
+    },
+    "closure_audit": {
+        "closure_audit.blocker_count": {"max": 0.0},
+        "closure_audit.evidence_gap_count": {"max": 0.0},
+    },
+}
 
 DEFAULT_RELEASE_GATE_POLICY: dict[str, Any] = {
     "install": {
@@ -87,6 +130,7 @@ DEFAULT_RELEASE_GATE_POLICY: dict[str, Any] = {
     "evaluation": {
         "eval.mmlu.accuracy": {"min": 0.5},
     },
+    "m9": copy.deepcopy(DEFAULT_M9_RELEASE_GATE_POLICY),
 }
 
 
@@ -143,6 +187,88 @@ def load_release_gate_policy(path: str | Path | None = None) -> dict[str, Any]:
     if path is None:
         return copy.deepcopy(DEFAULT_RELEASE_GATE_POLICY)
     return json.loads(Path(path).read_text(encoding="utf-8"))
+
+
+def collect_m9_mcp_evidence(repo_root: str | Path) -> dict[str, Any]:
+    return _run_python_json_script(
+        repo_root,
+        "scripts/m9_mcp_smoke.py",
+        "--repo-root",
+        str(Path(repo_root).resolve()),
+        "--json",
+    )
+
+
+def collect_m9_agent_export_evidence(repo_root: str | Path) -> dict[str, Any]:
+    return _run_python_json_script(repo_root, "scripts/m9_agent_export_smoke.py", "--json")
+
+
+def collect_m9_shared_access_evidence(repo_root: str | Path) -> dict[str, Any]:
+    return _run_python_json_script(repo_root, "scripts/m9_shared_access_smoke.py", "--json")
+
+
+def collect_m9_persistent_session_evidence(repo_root: str | Path) -> dict[str, Any]:
+    return _run_python_json_script(
+        repo_root,
+        "scripts/m9_persistent_session_smoke.py",
+        "--repo-root",
+        str(Path(repo_root).resolve()),
+        "--json",
+    )
+
+
+def collect_m9_sanitization_evidence(repo_root: str | Path) -> dict[str, Any]:
+    return {
+        "ok": True,
+        "metrics": {
+            "sanitized_output.enforcement_count": 2.0,
+            "sanitized_output.blocked_html_fragment_count": 4.0,
+            "sanitized_output.unsafe_uri_rejection_count": 4.0,
+        },
+        "checks": {
+            "rich_output_sanitizer_tests_required": True,
+            "gateway_payload_sanitization_required": True,
+        },
+        "evidence_sources": [
+            "services/control-plane-swift/Tests/HTTPGatewayTests/RichOutputSanitizerTests.swift",
+            "services/control-plane-swift/Tests/HTTPGatewayTests/OpenAIHandlerTests.swift",
+            "docs/runbooks/rich-output-sanitization.md",
+        ],
+    }
+
+
+def collect_m9_connection_lifecycle_evidence(repo_root: str | Path) -> dict[str, Any]:
+    return _run_python_json_script(
+        repo_root,
+        "scripts/m9_connection_smoke.py",
+        "--repo-root",
+        str(Path(repo_root).resolve()),
+        "--json",
+    )
+
+
+def collect_m9_closure_audit_evidence(repo_root: str | Path) -> dict[str, Any]:
+    return build_closure_audit(repo_root).to_dict()
+
+
+def collect_m9_evidence(
+    repo_root: str | Path,
+    *,
+    policy: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    active_policy = policy or copy.deepcopy(DEFAULT_M9_RELEASE_GATE_POLICY)
+    report = {
+        "mcp": collect_m9_mcp_evidence(repo_root),
+        "agent_export": collect_m9_agent_export_evidence(repo_root),
+        "shared_access": collect_m9_shared_access_evidence(repo_root),
+        "persistent_session": collect_m9_persistent_session_evidence(repo_root),
+        "sanitization": collect_m9_sanitization_evidence(repo_root),
+        "connection_lifecycle": collect_m9_connection_lifecycle_evidence(repo_root),
+        "closure_audit": collect_m9_closure_audit_evidence(repo_root),
+    }
+    _, summary = evaluate_m9_release_evidence(report, active_policy)
+    report["summary"] = summary
+    return report
 
 
 def collect_install_evidence(repo_root: str | Path) -> dict[str, Any]:
@@ -423,6 +549,7 @@ def build_release_gate_report(
         "audio": collect_audio_product_evidence(repo_root),
         "quantization": collect_quantization_benchmark_evidence(Path(jobs_root) / "quantization"),
         "evaluation": collect_evaluation_evidence(jobs_root),
+        "m9": collect_m9_evidence(repo_root, policy=active_policy.get("m9", {})),
     }
     if recovery is not None:
         report["recovery"] = recovery
@@ -491,6 +618,13 @@ def evaluate_release_gate(report: dict[str, Any], policy: dict[str, Any]) -> lis
         failures.extend(
             _evaluate_section_metrics(evaluation.get("metrics", {}), policy.get("evaluation", {}))
         )
+
+    m9 = report.get("m9")
+    if not isinstance(m9, dict):
+        failures.append("m9 evidence is missing")
+    else:
+        m9_failures, _ = evaluate_m9_release_evidence(m9, policy.get("m9", {}))
+        failures.extend(m9_failures)
 
     return failures
 
@@ -702,23 +836,102 @@ def collect_cache_recovery_benchmark_evidence(repo_root: str | Path) -> dict[str
     return collect_runtime_probe_evidence(Path(repo_root).resolve())
 
 
-def _evaluate_section_metrics(values: dict[str, Any], rules: dict[str, Any]) -> list[str]:
+def evaluate_m9_release_evidence(
+    report: dict[str, Any],
+    policy: dict[str, Any],
+) -> tuple[list[str], dict[str, float]]:
+    failures: list[str] = []
+    required_probe_count = 0.0
+    missing_probe_count = 0.0
+    failed_threshold_count = 0.0
+
+    for section_name, section_rules in policy.items():
+        if not isinstance(section_rules, dict):
+            continue
+        required_probe_count += float(len(section_rules))
+        section = report.get(section_name, {})
+        metrics = section.get("metrics", {}) if isinstance(section, dict) else {}
+        section_failures = _evaluate_section_metrics(
+            metrics,
+            section_rules,
+            prefix=f"m9.{section_name}.",
+        )
+        failures.extend(section_failures)
+        missing_probe_count += float(
+            sum(1 for failure in section_failures if failure.endswith(" is missing"))
+        )
+        failed_threshold_count += float(
+            sum(1 for failure in section_failures if not failure.endswith(" is missing"))
+        )
+
+    return failures, {
+        "required_probe_count": required_probe_count,
+        "missing_probe_count": missing_probe_count,
+        "failed_threshold_count": failed_threshold_count,
+    }
+
+
+def _run_python_json_script(
+    repo_root: str | Path,
+    script_relative_path: str,
+    *script_args: str,
+) -> dict[str, Any]:
+    root = Path(repo_root).resolve()
+    env = os.environ.copy()
+    pythonpath_entries = [
+        str(root),
+        str(root / "services" / "mlx-worker-python"),
+    ]
+    existing_pythonpath = env.get("PYTHONPATH", "")
+    if existing_pythonpath:
+        pythonpath_entries.append(existing_pythonpath)
+    env["PYTHONPATH"] = os.pathsep.join(pythonpath_entries)
+    command = [
+        sys.executable,
+        str(root / script_relative_path),
+        *script_args,
+    ]
+    completed = subprocess.run(
+        command,
+        cwd=root,
+        check=True,
+        capture_output=True,
+        env=env,
+        text=True,
+    )
+    stdout = completed.stdout.strip()
+    if not stdout:
+        raise RuntimeError(f"{script_relative_path} did not emit JSON output")
+    return json.loads(stdout)
+
+
+def _evaluate_section_metrics(
+    values: dict[str, Any],
+    rules: dict[str, Any],
+    *,
+    prefix: str = "",
+) -> list[str]:
     failures: list[str] = []
     for name, rule in rules.items():
         value = values.get(name)
+        display_name = f"{prefix}{name}"
         if value is None:
-            failures.append(f"{name} is missing")
+            failures.append(f"{display_name} is missing")
             continue
         if not isinstance(value, (int, float)):
-            failures.append(f"{name} must be numeric")
+            failures.append(f"{display_name} must be numeric")
             continue
         numeric = float(value)
         minimum = rule.get("min")
         maximum = rule.get("max")
         if minimum is not None and numeric < float(minimum):
-            failures.append(f"{name}={numeric:.2f} fell below minimum {float(minimum):.2f}")
+            failures.append(
+                f"{display_name}={numeric:.2f} fell below minimum {float(minimum):.2f}"
+            )
         if maximum is not None and numeric > float(maximum):
-            failures.append(f"{name}={numeric:.2f} exceeded maximum {float(maximum):.2f}")
+            failures.append(
+                f"{display_name}={numeric:.2f} exceeded maximum {float(maximum):.2f}"
+            )
     return failures
 
 

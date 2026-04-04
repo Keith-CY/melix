@@ -16,6 +16,68 @@ from worker.productization.acceptance_metrics import (
 from worker.productization.release_gates import load_release_gate_policy
 
 
+def _passing_m9_report() -> dict[str, object]:
+    return {
+        "mcp": {
+            "metrics": {
+                "mcp.tool_injection_count": 1.0,
+                "mcp.configured_tool_count": 2.0,
+                "mcp.tool_injection_success_rate": 1.0,
+            }
+        },
+        "agent_export": {
+            "metrics": {
+                "integration.export_generation_ms": 125.0,
+                "integration.setup_success_rate": 1.0,
+                "integration.export_target_count": 5.0,
+            }
+        },
+        "shared_access": {
+            "metrics": {
+                "gateway.auth_validation_failures": 2.0,
+                "gateway.accepted_api_key_count": 2.0,
+                "shared_access.accepted_client_count": 2.0,
+                "shared_access.rejected_request_count": 1.0,
+            }
+        },
+        "persistent_session": {
+            "metrics": {
+                "persistent_session.active_session_count": 0.0,
+                "persistent_session.remembered_session_count": 0.0,
+                "persistent_session.expired_session_count": 0.0,
+                "persistent_session.restore_success_rate": 100.0,
+                "persistent_session.sign_out_latency_ms": 128.0,
+            }
+        },
+        "sanitization": {
+            "metrics": {
+                "sanitized_output.enforcement_count": 2.0,
+                "sanitized_output.blocked_html_fragment_count": 4.0,
+                "sanitized_output.unsafe_uri_rejection_count": 4.0,
+            }
+        },
+        "connection_lifecycle": {
+            "metrics": {
+                "disconnect.keepalive_gap_ms": 8.0,
+                "disconnect.recovery_latency_ms": 12.0,
+                "disconnect.resume_success_rate": 100.0,
+                "disconnect.terminal_failure_count": 1.0,
+            }
+        },
+        "closure_audit": {
+            "metrics": {
+                "closure_audit.blocker_count": 0.0,
+                "closure_audit.evidence_gap_count": 0.0,
+            }
+        },
+        "summary": {
+            "required_probe_count": 23.0,
+            "missing_probe_count": 0.0,
+            "failed_threshold_count": 0.0,
+        }
+    }
+
+
 def test_collect_operator_action_evidence_reports_registry_counts(tmp_path: Path) -> None:
     evidence = collect_operator_action_evidence(tmp_path / "jobs")
 
@@ -265,12 +327,13 @@ def test_compute_release_smoke_pass_rate_uses_all_gate_sections() -> None:
             "prefill_memory_guard_rejection_count": 1.0,
             "prefill_memory_guard_success_rate": 100.0,
         },
+        "m9": _passing_m9_report(),
     }
 
     assert compute_release_smoke_pass_rate(report, policy) == 100.0
 
     report["recovery"]["restart_recovery_success_rate"] = 0.0
-    assert compute_release_smoke_pass_rate(report, policy) == 83.33
+    assert compute_release_smoke_pass_rate(report, policy) == 85.71
 
 
 def test_compute_release_smoke_pass_rate_fails_non_dict_runtime_core() -> None:
@@ -322,9 +385,70 @@ def test_compute_release_smoke_pass_rate_fails_non_dict_runtime_core() -> None:
             },
         },
         "runtime_core": "invalid",
+        "m9": _passing_m9_report(),
     }
 
-    assert compute_release_smoke_pass_rate(report, policy) == 83.33
+    assert compute_release_smoke_pass_rate(report, policy) == 85.71
+
+
+def test_compute_release_smoke_pass_rate_fails_non_dict_m9() -> None:
+    policy = load_release_gate_policy()
+    report = {
+        "install": {
+            "checks": {
+                "manifest_exists": True,
+                "environment_script_exists": True,
+                "all_plists_exist": True,
+            }
+        },
+        "benchmarks": {
+            "report_exists": True,
+            "metrics": {
+                "bench.smoke.ttft_ms": 24.45,
+                "bench.smoke.tokens_per_second": 47.08,
+                "bench.latency.p95_ms": 44.72,
+            },
+        },
+        "training": {
+            "training_duration_ms": 1420.0,
+            "adapter_publish_ms": 118.0,
+        },
+        "recovery": {
+            "restart_recovery_ms": 13550.49,
+            "restart_recovery_success_rate": 100.0,
+        },
+        "audio": {
+            "checks": {
+                "slim_requires_runtime_pack_download": True,
+                "full_runtime_pack_preinstalled": True,
+                "slim_runtime_pack_metadata_exists": True,
+                "full_runtime_pack_metadata_exists": True,
+                "slim_managed_model_metadata_exists": True,
+                "full_managed_model_metadata_exists": True,
+            },
+            "metrics": {
+                "slim.audio_runtime_pack_install_ms": 10.0,
+                "slim.audio_model_download_ms": 15.0,
+                "slim.audio_first_use_blocked_runtime_pack_count": 1.0,
+                "slim.audio_first_use_blocked_model_count": 1.0,
+                "slim.audio_runtime_pack_recovery_success_rate": 100.0,
+                "full.audio_runtime_pack_install_ms": 0.0,
+                "full.audio_model_download_ms": 15.0,
+                "full.audio_first_use_blocked_runtime_pack_count": 0.0,
+                "full.audio_first_use_blocked_model_count": 1.0,
+                "full.audio_runtime_pack_recovery_success_rate": 100.0,
+            },
+        },
+        "runtime_core": {
+            "multi_model_ready_count": 3.0,
+            "multi_model_request_success_rate": 100.0,
+            "prefill_memory_guard_rejection_count": 1.0,
+            "prefill_memory_guard_success_rate": 100.0,
+        },
+        "m9": "invalid",
+    }
+
+    assert compute_release_smoke_pass_rate(report, policy) == 85.71
 
 
 def test_build_phase8_metrics_report_includes_required_probe_names() -> None:
@@ -415,6 +539,7 @@ def test_build_phase8_metrics_report_includes_required_probe_names() -> None:
                 "prefill_memory_guard_rejection_count": 1.0,
                 "prefill_memory_guard_success_rate": 100.0,
             },
+            "m9": _passing_m9_report(),
             "passed": True,
             "failures": [],
         },
@@ -746,3 +871,90 @@ def test_build_phase8_metrics_report_surfaces_closure_audit_counts() -> None:
         "Missing required M9 metric probes: disconnect.keepalive_gap_ms",
         "M9.8 release-gate wiring remains deferred until ecosystem evidence is consumed by the release gate.",
     ]
+
+
+def test_build_phase8_metrics_report_surfaces_m9_release_gate_counts() -> None:
+    policy = load_release_gate_policy()
+
+    report = build_phase8_metrics_report(
+        cold_boot={"cold_boot_to_ready_ms": 700.0, "http_ready_ms": 700.0},
+        operator={
+            "operator_action_latency_ms": 1.0,
+            "registry_job_count": 2,
+            "registry_adapter_count": 1,
+        },
+        release_gate_report={
+            "install": {
+                "checks": {
+                    "manifest_exists": True,
+                    "environment_script_exists": True,
+                    "all_plists_exist": True,
+                }
+            },
+            "benchmarks": {
+                "report_exists": True,
+                "metrics": {
+                    "bench.smoke.ttft_ms": 24.45,
+                    "bench.smoke.tokens_per_second": 47.08,
+                    "bench.latency.p95_ms": 44.72,
+                },
+            },
+            "training": {
+                "training_duration_ms": 1420.0,
+                "adapter_publish_ms": 118.0,
+            },
+            "recovery": {
+                "restart_recovery_ms": 600.0,
+                "restart_recovery_success_rate": 100.0,
+            },
+            "audio": {
+                "checks": {
+                    "slim_requires_runtime_pack_download": True,
+                    "full_runtime_pack_preinstalled": True,
+                    "slim_runtime_pack_metadata_exists": True,
+                    "full_runtime_pack_metadata_exists": True,
+                    "slim_managed_model_metadata_exists": True,
+                    "full_managed_model_metadata_exists": True,
+                },
+                "metrics": {
+                    "slim.audio_runtime_pack_install_ms": 12.3,
+                    "slim.audio_model_download_ms": 18.4,
+                    "slim.audio_first_use_blocked_runtime_pack_count": 1.0,
+                    "slim.audio_first_use_blocked_model_count": 1.0,
+                    "slim.audio_runtime_pack_recovery_success_rate": 100.0,
+                    "full.audio_runtime_pack_install_ms": 0.0,
+                    "full.audio_model_download_ms": 17.2,
+                    "full.audio_first_use_blocked_runtime_pack_count": 0.0,
+                    "full.audio_first_use_blocked_model_count": 1.0,
+                    "full.audio_runtime_pack_recovery_success_rate": 100.0,
+                },
+            },
+            "runtime_core": {
+                "multi_model_ready_count": 3.0,
+                "multi_model_request_success_rate": 100.0,
+                "prefill_memory_guard_rejection_count": 1.0,
+                "prefill_memory_guard_success_rate": 100.0,
+            },
+            "m9": {
+                "summary": {
+                    "required_probe_count": 23.0,
+                    "missing_probe_count": 0.0,
+                    "failed_threshold_count": 0.0,
+                }
+            },
+            "passed": True,
+            "failures": [],
+        },
+        runtime_core={
+            "multi_model_ready_count": 3.0,
+            "multi_model_request_success_rate": 100.0,
+            "prefill_memory_guard_rejection_count": 1.0,
+            "prefill_memory_guard_success_rate": 100.0,
+        },
+        policy=policy,
+    )
+
+    metrics = report["metrics"]
+    assert metrics["release_gate.m9_required_probe_count"] == 23.0
+    assert metrics["release_gate.m9_missing_probe_count"] == 0.0
+    assert metrics["release_gate.m9_failed_threshold_count"] == 0.0

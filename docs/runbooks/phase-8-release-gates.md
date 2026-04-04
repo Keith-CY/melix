@@ -28,6 +28,7 @@ The release gate checks:
 - cache recovery benchmark evidence
 - restart recovery
 - training sanity
+- M9 ecosystem and security evidence
 
 The command exits non-zero when:
 
@@ -64,6 +65,38 @@ Update the policy in the same change as any intentional benchmark or release-thr
 
 The checked-in policy now includes an `evaluation` section for deterministic suite metrics such as
 `eval.mmlu.accuracy`. Treat benchmark and evaluation regressions as first-class release inputs.
+
+The checked-in policy also includes an `m9` section for repository-owned ecosystem and security
+signals. The current required M9 probes include:
+
+- MCP auto-injection metrics
+- agent export smoke metrics
+- shared-access gateway metrics
+- persistent-session recovery metrics
+- sanitization enforcement metrics
+- connection-lifecycle recovery metrics
+- closure-audit blocker and evidence-gap metrics
+
+The Phase 8 gate fails closed when:
+
+- any required `m9` probe is missing
+- any checked-in `m9` threshold regresses
+- the closure audit reports blockers or evidence gaps
+
+Interpret the top-level M9 counters as:
+
+- `release_gate.m9_required_probe_count`: number of policy-backed M9 probes that must be present
+- `release_gate.m9_missing_probe_count`: required M9 probes that were not emitted by the evidence collectors
+- `release_gate.m9_failed_threshold_count`: required M9 probes that emitted data but violated the checked-in policy
+
+To exercise the deterministic M9-only release-gate fixtures without running the full Phase 8 gate:
+
+```bash
+PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" \
+uv run --project services/mlx-worker-python python scripts/m9_release_gate_smoke.py --repo-root "$(pwd)" --json
+```
+
+Use `--fixture-mode failing` to prove the gate fails closed on missing or regressed M9 evidence.
 
 ## CI Workflow
 

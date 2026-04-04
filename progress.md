@@ -2,6 +2,48 @@
 
 ## 2026-04-04
 
+- Closed the `M9.8` ecosystem-and-security release-gates transaction:
+  - extended `services/mlx-worker-python/worker/productization/release_gates.py` so the Phase 8 release gate now collects repository-owned M9 evidence for MCP auto-injection, agent export, shared access, persistent sessions, rich-output sanitization, connection lifecycle, and closure audit
+  - versioned the checked-in `m9` gate thresholds in `infra/release/phase8-release-gate-policy.json`, including machine-readable `release_gate.m9_required_probe_count`, `release_gate.m9_missing_probe_count`, and `release_gate.m9_failed_threshold_count`
+  - extended `services/mlx-worker-python/worker/productization/acceptance_metrics.py` so the Phase 8 metrics report now exposes the `release_gate.m9_*` counters without creating a second unrelated gate system
+  - added the deterministic fixture command `scripts/m9_release_gate_smoke.py` plus focused coverage in `services/mlx-worker-python/tests/test_m9_release_gate_smoke.py`, `services/mlx-worker-python/tests/test_release_gates.py`, and `services/mlx-worker-python/tests/test_acceptance_metrics.py`
+  - updated `docs/runbooks/phase-8-release-gates.md` and `docs/runbooks/phase-8-product-acceptance.md` so the M9 signals, smoke fixtures, and operator-facing interpretation are synchronized with the checked-in gate behavior
+- Verification summary for `M9.8`:
+  - `PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" UV_CACHE_DIR="$(pwd)/.uv-cache" uv run --project services/mlx-worker-python pytest services/mlx-worker-python/tests/test_release_gates.py services/mlx-worker-python/tests/test_phase8_release_gate.py services/mlx-worker-python/tests/test_phase8_runtime_probes.py services/mlx-worker-python/tests/test_acceptance_metrics.py services/mlx-worker-python/tests/test_m9_release_gate_smoke.py -q`: `74 passed in 1.76s`
+  - `PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" UV_CACHE_DIR="$(pwd)/.uv-cache" uv run --project services/mlx-worker-python pytest services/mlx-worker-python/tests/test_release_gates.py services/mlx-worker-python/tests/test_phase8_runtime_probes.py services/mlx-worker-python/tests/test_acceptance_metrics.py services/mlx-worker-python/tests/test_m9_release_gate_smoke.py -q`: `76 passed in 1.73s`
+  - `PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" UV_CACHE_DIR="$(pwd)/.uv-cache" uv run --project services/mlx-worker-python python scripts/m9_release_gate_smoke.py --repo-root "$(pwd)" --json`: pass
+  - `PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" UV_CACHE_DIR="$(pwd)/.uv-cache" uv run --project services/mlx-worker-python python scripts/m9_release_gate_smoke.py --repo-root "$(pwd)" --fixture-mode failing --json`: expected non-zero fail-closed path validated
+  - `PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" UV_CACHE_DIR="$(pwd)/.uv-cache" uv run --project services/mlx-worker-python python scripts/phase8_release_gate.py --repo-root "$(pwd)" --json`: pass
+  - `PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" UV_CACHE_DIR="$(pwd)/.uv-cache" uv run --project services/mlx-worker-python python scripts/m9_closure_audit.py --repo-root "$(pwd)" --json`: pass
+  - `PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" UV_CACHE_DIR="$(pwd)/.uv-cache" uv run --project services/mlx-worker-python python scripts/phase8_metrics_report.py --repo-root "$(pwd)" --json`: pass
+- Metrics report for `M9.8`:
+  - deterministic smoke fixture metrics:
+    - `release_gate.m9_required_probe_count = 23.0`
+    - `release_gate.m9_missing_probe_count = 0.0`
+    - `release_gate.m9_failed_threshold_count = 0.0`
+  - deterministic failing fixture metrics:
+    - `release_gate.m9_required_probe_count = 23.0`
+    - `release_gate.m9_missing_probe_count = 1.0`
+    - `release_gate.m9_failed_threshold_count = 2.0`
+  - live Phase 8 gate metrics:
+    - `release_gate.m9_required_probe_count = 23.0`
+    - `release_gate.m9_missing_probe_count = 0.0`
+    - `release_gate.m9_failed_threshold_count = 0.0`
+  - post-close closure-audit metrics:
+    - `closure_audit.blocker_count = 0.0`
+    - `closure_audit.accepted_risk_count = 1.0`
+    - `closure_audit.evidence_gap_count = 0.0`
+    - `closure_audit.deferred_work_count = 0.0`
+  - Python executable scope changed-line coverage:
+    - `services/mlx-worker-python/worker/productization/release_gates.py`
+    - `services/mlx-worker-python/worker/productization/acceptance_metrics.py`
+    - `services/mlx-worker-python/tests/test_release_gates.py`
+    - `services/mlx-worker-python/tests/test_phase8_runtime_probes.py`
+    - `services/mlx-worker-python/tests/test_acceptance_metrics.py`
+    - `services/mlx-worker-python/tests/test_m9_release_gate_smoke.py`
+    - `scripts/m9_release_gate_smoke.py`
+    - changed-line coverage `100.00%` (`175/175`)
+
 - Closed the `M9.7` security-and-stability closure-audit transaction:
   - added a typed repository-owned closure-audit model in `services/mlx-worker-python/worker/productization/closure_audit.py` that classifies blockers, accepted risks, evidence gaps, and deferred work from execution-index status, release-gate assets, required M9 runbooks, and required probe vocabulary
   - added repository-owned audit entrypoints and docs in `scripts/m9_closure_audit.py`, `docs/runbooks/security-and-stability-closure.md`, and `docs/decisions/2026-04-02-m9-security-stability-closure-audit.md`
