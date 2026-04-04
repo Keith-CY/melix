@@ -2947,7 +2947,12 @@ public final class RuntimeViewModel {
         }
 
         if persistedServerSessions.isEmpty, let firstTextModel = textModels.first {
-            let seeded = makeServerSession(for: firstTextModel, title: "Primary Server", port: 8080)
+            let seeded = makeServerSession(
+                for: firstTextModel,
+                title: "Primary Server",
+                port: 8080,
+                serverSessionID: latestSnapshot.runtimeSessions.first?.serverSessionID ?? "server-session-1"
+            )
             persistedServerSessions = [seeded]
             selectedServerSessionID = seeded.id
         }
@@ -2959,23 +2964,31 @@ public final class RuntimeViewModel {
 
         serverSessions = persistedServerSessions.enumerated().map { offset, session in
             var updated = session
+            let runtimeSession = runtimeSession(for: session.id, fallbackIndex: offset)
             if let model = models.first(where: { $0.modelID == session.modelID }) {
                 updated.lastKnownModelStateText = model.stateText
-                switch session.lifecycle {
-                case .draft, .running, .stopped, .error, .unavailable:
-                    updated.lifecycle = session.lifecycle
-                case .starting:
-                    updated.lifecycle = model.isLoaded ? .running : .starting
-                case .stopping:
-                    updated.lifecycle = model.isLoaded ? .stopping : .stopped
+                if runtimeSession == nil {
+                    switch session.lifecycle {
+                    case .draft, .running, .paused, .sleeping, .stopped, .error, .unavailable:
+                        updated.lifecycle = session.lifecycle
+                    case .starting:
+                        updated.lifecycle = model.isLoaded ? .running : .starting
+                    case .stopping:
+                        updated.lifecycle = model.isLoaded ? .stopping : .stopped
+                    }
                 }
             } else if let fallbackModel = textModels.first {
                 updated.modelID = fallbackModel.modelID
                 updated.lastKnownModelStateText = fallbackModel.stateText
-                updated.lifecycle = session.lifecycle == .stopped ? .stopped : .running
+                if runtimeSession == nil {
+                    updated.lifecycle = session.lifecycle == .stopped ? .stopped : .running
+                }
             } else {
                 updated.lifecycle = .unavailable
                 updated.lastKnownModelStateText = "Unavailable"
+            }
+            if let runtimeSession {
+                applyRuntimeSessionProjection(to: &updated, runtimeSession: runtimeSession)
             }
             if updated.title.isEmpty {
                 updated.title = offset == 0 ? "Primary Server" : "Server \(offset + 1)"
@@ -2994,10 +3007,11 @@ public final class RuntimeViewModel {
     private func makeServerSession(
         for model: RuntimeModelRow,
         title: String,
-        port: Int
+        port: Int,
+        serverSessionID: String = "server-session-\(UUID().uuidString)"
     ) -> DesktopServerSessionState {
         var session = DesktopServerSessionState(
-            id: "server-session-\(UUID().uuidString)",
+            id: serverSessionID,
             title: title,
             modelID: model.modelID,
             port: port,
@@ -3190,8 +3204,10 @@ public final class RuntimeViewModel {
         switch event.payload {
         case .serverState(let serverStateChanged):
             latestSnapshot.serverState = serverStateChanged.state
+            latestSnapshot.runtimeSessions = serverStateChanged.runtimeSessions
             serverStateText = Self.serverStateText(serverStateChanged.state)
             statusTitle = "Melix \(serverStateText)"
+            syncServerSessionsWithModels()
         case .modelState(let stateChanged):
             var model = existingModelSummary(for: stateChanged.modelID)
             model.modelID = stateChanged.modelID
@@ -3896,6 +3912,32 @@ public final class RuntimeViewModel {
         }
     }
 
+    private func runtimeSession(
+        for serverSessionID: String,
+        fallbackIndex: Int
+    ) -> Melix_Controlplane_V1_ServerSessionRuntimeState? {
+        if let exactMatch = latestSnapshot.runtimeSessions.first(where: { $0.serverSessionID == serverSessionID }) {
+            return exactMatch
+        }
+        if latestSnapshot.runtimeSessions.count == 1, fallbackIndex == 0 {
+            return latestSnapshot.runtimeSessions.first
+        }
+        return nil
+    }
+
+    private func applyRuntimeSessionProjection(
+        to session: inout DesktopServerSessionState,
+        runtimeSession: Melix_Controlplane_V1_ServerSessionRuntimeState
+    ) {
+        session.lifecycle = Self.serverSessionLifecycle(runtimeSession.lifecycleState)
+        session.powerState = Self.serverSessionPowerState(runtimeSession.powerState)
+        session.wakeReason = Self.serverWakeReason(runtimeSession.wakeReason)
+        session.idleTimerSeconds = Int(runtimeSession.idleTimerSeconds)
+        session.autoSleepEnabled = runtimeSession.autoSleepEnabled
+        session.lightSleepAfterSeconds = Int(runtimeSession.lightSleepAfterSeconds)
+        session.deepSleepAfterSeconds = Int(runtimeSession.deepSleepAfterSeconds)
+    }
+
     private func existingModelSummary(for modelID: String) -> Melix_Controlplane_V1_ModelSummary {
         if let model = latestSnapshot.models.first(where: { $0.modelID == modelID }) {
             return model
@@ -4396,6 +4438,9 @@ public final class RuntimeViewModel {
     private static func eventMessage(for event: Melix_Controlplane_V1_ControlPlaneEvent) -> String {
         switch event.payload {
         case .serverState(let serverStateChanged):
+            if let runtimeSession = serverStateChanged.runtimeSessions.first {
+                return "Server is now \(serverStateText(serverStateChanged.state)) • \(serverSessionLifecycle(runtimeSession.lifecycleState).rawValue) • \(serverSessionPowerState(runtimeSession.powerState).rawValue)"
+            }
             return "Server is now \(serverStateText(serverStateChanged.state))"
         case .modelState(let modelStateChanged):
             return "\(modelStateChanged.modelID) -> \(modelStateText(modelStateChanged.state))"
@@ -4415,6 +4460,63 @@ public final class RuntimeViewModel {
             return "Heartbeat"
         default:
             return event.eventType
+        }
+    }
+
+    private static func serverSessionLifecycle(
+        _ state: Melix_Controlplane_V1_ServerSessionLifecycleState
+    ) -> DesktopServerSessionLifecycle {
+        switch state {
+        case .loading:
+            return .starting
+        case .ready:
+            return .running
+        case .paused:
+            return .paused
+        case .sleeping:
+            return .sleeping
+        case .stopped:
+            return .stopped
+        case .error:
+            return .error
+        default:
+            return .unavailable
+        }
+    }
+
+    private static func serverSessionPowerState(
+        _ state: Melix_Controlplane_V1_ServerSessionPowerState
+    ) -> DesktopServerPowerState {
+        switch state {
+        case .active:
+            return .active
+        case .lightSleep:
+            return .lightSleep
+        case .deepSleep:
+            return .deepSleep
+        case .stopped:
+            return .stopped
+        default:
+            return .unavailable
+        }
+    }
+
+    private static func serverWakeReason(
+        _ reason: Melix_Controlplane_V1_ServerWakeReason
+    ) -> DesktopServerWakeReason {
+        switch reason {
+        case .initialBoot:
+            return .initialBoot
+        case .operatorResume:
+            return .operatorResume
+        case .requestActivity:
+            return .requestActivity
+        case .toolActivity:
+            return .toolActivity
+        case .policyApply:
+            return .policyApply
+        default:
+            return .unspecified
         }
     }
 

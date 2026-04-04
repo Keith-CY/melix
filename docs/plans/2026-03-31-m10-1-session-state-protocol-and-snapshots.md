@@ -1,5 +1,7 @@
 # M10.1 Session State Protocol And Snapshots
 
+Status: completed.
+
 ## Goal
 
 Define the protocol, snapshot, and event-model changes needed for explicit session lifecycle and power-state behavior.
@@ -26,9 +28,23 @@ Define the protocol, snapshot, and event-model changes needed for explicit sessi
 ## Verification
 
 - `make proto`
+- `swift test --package-path services/control-plane-swift --filter ControlPlaneServiceTests`
+- `swift test --package-path apps/macos-menubar --filter RuntimeViewModelTests`
+- `swift test --package-path services/control-plane-swift --enable-code-coverage`
 - `make swift-test`
+- focused Swift changed-line coverage for the touched handwritten executable scope is `100.00%`
+  (`425/425`)
 
 ## Acceptance
 
 - Session-state protocol changes are typed, explicit, and test-covered.
 - Snapshot and event consumers can represent the new lifecycle states without placeholders.
+
+## Outcome
+
+- `ServerSessionRuntimeState` is now a dedicated control-plane protocol type for lifecycle,
+  power-state, wake-reason, and idle-policy metadata, separate from the existing Phase 3
+  branch/session graph contract.
+- control-plane snapshots and `server.state_changed` events now project typed
+  `runtime_sessions`, and the native menu bar client consumes that payload directly instead of
+  inferring paused-versus-sleeping state locally.

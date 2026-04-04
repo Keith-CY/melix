@@ -138,6 +138,7 @@ public actor ControlPlaneService {
     private let schedulerReadModel: SchedulerReadModel
     private let cacheMetadataStore: CacheMetadataStore
     private let sessionGraphStore: SessionGraphStore
+    private let serverSessionRuntimeStore: ServerSessionRuntimeStore
     private let imageJobReadModel: ImageJobReadModel
     private let imageJobAdmissionController: any ImageJobAdmissionControlling
     private let workerRegistry: WorkerRegistry?
@@ -159,6 +160,7 @@ public actor ControlPlaneService {
         schedulerReadModel: SchedulerReadModel? = nil,
         cacheMetadataStore: CacheMetadataStore = CacheMetadataStore(),
         sessionGraphStore: SessionGraphStore = SessionGraphStore(),
+        serverSessionRuntimeStore: ServerSessionRuntimeStore = ServerSessionRuntimeStore(),
         imageJobReadModel: ImageJobReadModel? = nil,
         imageJobAdmissionController: (any ImageJobAdmissionControlling)? = nil,
         workerRegistry: WorkerRegistry? = nil,
@@ -194,6 +196,7 @@ public actor ControlPlaneService {
         self.enginePool = enginePool
         self.cacheMetadataStore = cacheMetadataStore
         self.sessionGraphStore = sessionGraphStore
+        self.serverSessionRuntimeStore = serverSessionRuntimeStore
         self.imageJobReadModel = resolvedImageJobReadModel
         self.imageJobAdmissionController = resolvedImageJobAdmissionController
         self.workerRegistry = workerRegistry
@@ -229,6 +232,7 @@ public actor ControlPlaneService {
             "metrics",
             "cache-metadata",
             "session-graph",
+            "server-session-runtime",
             "image-jobs",
             "audio-assets",
         ]
@@ -1230,6 +1234,7 @@ public actor ControlPlaneService {
         let queues = await schedulerReadModel.snapshot()
         let cache = await cacheMetadataStore.cacheSummary()
         let sessions = await sessionGraphStore.sessionSummaries()
+        let runtimeSessions = await serverSessionRuntimeStore.snapshot()
         let imageJobs = await imageJobReadModel.snapshot()
         let gatewayAccessSummary = await gatewayAccessPolicyStore.summary()
         return snapshotBuilder.build(
@@ -1238,6 +1243,7 @@ public actor ControlPlaneService {
             queues: queues,
             cache: cache,
             sessions: sessions,
+            runtimeSessions: runtimeSessions,
             imageJobs: imageJobs,
             mcpTools: mcpToolCatalog.summary(),
             gatewayAccess: gatewayAccessSummary
@@ -1279,9 +1285,15 @@ public actor ControlPlaneService {
             Date().timeIntervalSince(startedAt) * 1000,
             forKey: "gateway.api_key_apply_ms"
         )
+        _ = await serverSessionRuntimeStore.noteGatewayAccessApplied(serverSessionID: command.serverSessionID)
 
         var reply = Melix_Controlplane_V1_ServerReply()
         reply.snapshot = await buildSnapshot()
+        await publishServerStateChanged(
+            reply.snapshot.serverState,
+            runtimeSessions: reply.snapshot.runtimeSessions,
+            source: "server_runtime"
+        )
         return okResponse(for: request, server: reply)
     }
 
@@ -2934,6 +2946,20 @@ public actor ControlPlaneService {
         event.source = "session_graph"
         event.sessionState = Melix_Controlplane_V1_SessionStateChanged()
         event.sessionState.state = session
+        await eventHub.publish(event)
+    }
+
+    private func publishServerStateChanged(
+        _ state: Melix_Controlplane_V1_ServerState,
+        runtimeSessions: [Melix_Controlplane_V1_ServerSessionRuntimeState],
+        source: String
+    ) async {
+        var event = Melix_Controlplane_V1_ControlPlaneEvent()
+        event.eventType = "server.state_changed"
+        event.source = source
+        event.serverState = Melix_Controlplane_V1_ServerStateChanged()
+        event.serverState.state = state
+        event.serverState.runtimeSessions = runtimeSessions
         await eventHub.publish(event)
     }
 

@@ -77,10 +77,29 @@ public enum DesktopServerSessionLifecycle: String, Codable, Sendable {
     case draft = "Draft"
     case starting = "Starting"
     case running = "Running"
+    case paused = "Paused"
+    case sleeping = "Sleeping"
     case stopping = "Stopping"
     case stopped = "Stopped"
     case error = "Error"
     case unavailable = "Unavailable"
+}
+
+public enum DesktopServerPowerState: String, Codable, Sendable {
+    case active = "Active"
+    case lightSleep = "Light Sleep"
+    case deepSleep = "Deep Sleep"
+    case stopped = "Stopped"
+    case unavailable = "Unavailable"
+}
+
+public enum DesktopServerWakeReason: String, Codable, Sendable {
+    case unspecified = "Unspecified"
+    case initialBoot = "Initial Boot"
+    case operatorResume = "Operator Resume"
+    case requestActivity = "Request Activity"
+    case toolActivity = "Tool Activity"
+    case policyApply = "Policy Apply"
 }
 
 public struct DesktopServerServingDefaultsState: Codable, Equatable, Sendable {
@@ -117,6 +136,12 @@ public struct DesktopServerSessionState: Codable, Identifiable, Equatable, Senda
     public var timeoutSeconds: Int
     public var servingDefaults: DesktopServerServingDefaultsState
     public var lifecycle: DesktopServerSessionLifecycle
+    public var powerState: DesktopServerPowerState
+    public var wakeReason: DesktopServerWakeReason
+    public var idleTimerSeconds: Int
+    public var autoSleepEnabled: Bool
+    public var lightSleepAfterSeconds: Int
+    public var deepSleepAfterSeconds: Int
     public var lastError: String
     public var lastKnownModelStateText: String
     public var activeAuthSessionCount: Int
@@ -142,6 +167,12 @@ public struct DesktopServerSessionState: Codable, Identifiable, Equatable, Senda
         timeoutSeconds: Int = 120,
         servingDefaults: DesktopServerServingDefaultsState = DesktopServerServingDefaultsState(),
         lifecycle: DesktopServerSessionLifecycle = .draft,
+        powerState: DesktopServerPowerState = .unavailable,
+        wakeReason: DesktopServerWakeReason = .unspecified,
+        idleTimerSeconds: Int = 0,
+        autoSleepEnabled: Bool = false,
+        lightSleepAfterSeconds: Int = 0,
+        deepSleepAfterSeconds: Int = 0,
         lastError: String = "",
         lastKnownModelStateText: String = "",
         activeAuthSessionCount: Int = 0,
@@ -166,6 +197,12 @@ public struct DesktopServerSessionState: Codable, Identifiable, Equatable, Senda
         self.timeoutSeconds = timeoutSeconds
         self.servingDefaults = servingDefaults
         self.lifecycle = lifecycle
+        self.powerState = powerState
+        self.wakeReason = wakeReason
+        self.idleTimerSeconds = idleTimerSeconds
+        self.autoSleepEnabled = autoSleepEnabled
+        self.lightSleepAfterSeconds = lightSleepAfterSeconds
+        self.deepSleepAfterSeconds = deepSleepAfterSeconds
         self.lastError = lastError
         self.lastKnownModelStateText = lastKnownModelStateText
         self.activeAuthSessionCount = activeAuthSessionCount
@@ -249,6 +286,12 @@ public struct DesktopServerSessionState: Codable, Identifiable, Equatable, Senda
         case timeoutSeconds = "timeout_seconds"
         case servingDefaults = "serving_defaults"
         case lifecycle
+        case powerState = "power_state"
+        case wakeReason = "wake_reason"
+        case idleTimerSeconds = "idle_timer_seconds"
+        case autoSleepEnabled = "auto_sleep_enabled"
+        case lightSleepAfterSeconds = "light_sleep_after_seconds"
+        case deepSleepAfterSeconds = "deep_sleep_after_seconds"
         case lastError = "last_error"
         case lastKnownModelStateText = "last_known_model_state_text"
         case activeAuthSessionCount = "active_auth_session_count"
@@ -277,6 +320,12 @@ public struct DesktopServerSessionState: Codable, Identifiable, Equatable, Senda
         servingDefaults = try container.decodeIfPresent(DesktopServerServingDefaultsState.self, forKey: .servingDefaults)
             ?? DesktopServerServingDefaultsState()
         lifecycle = try container.decodeIfPresent(DesktopServerSessionLifecycle.self, forKey: .lifecycle) ?? .draft
+        powerState = try container.decodeIfPresent(DesktopServerPowerState.self, forKey: .powerState) ?? .unavailable
+        wakeReason = try container.decodeIfPresent(DesktopServerWakeReason.self, forKey: .wakeReason) ?? .unspecified
+        idleTimerSeconds = try container.decodeIfPresent(Int.self, forKey: .idleTimerSeconds) ?? 0
+        autoSleepEnabled = try container.decodeIfPresent(Bool.self, forKey: .autoSleepEnabled) ?? false
+        lightSleepAfterSeconds = try container.decodeIfPresent(Int.self, forKey: .lightSleepAfterSeconds) ?? 0
+        deepSleepAfterSeconds = try container.decodeIfPresent(Int.self, forKey: .deepSleepAfterSeconds) ?? 0
         lastError = try container.decodeIfPresent(String.self, forKey: .lastError) ?? ""
         lastKnownModelStateText = try container.decodeIfPresent(String.self, forKey: .lastKnownModelStateText) ?? ""
         activeAuthSessionCount = try container.decodeIfPresent(Int.self, forKey: .activeAuthSessionCount) ?? 0
@@ -304,6 +353,12 @@ public struct DesktopServerSessionState: Codable, Identifiable, Equatable, Senda
         try container.encode(timeoutSeconds, forKey: .timeoutSeconds)
         try container.encode(servingDefaults, forKey: .servingDefaults)
         try container.encode(lifecycle, forKey: .lifecycle)
+        try container.encode(powerState, forKey: .powerState)
+        try container.encode(wakeReason, forKey: .wakeReason)
+        try container.encode(idleTimerSeconds, forKey: .idleTimerSeconds)
+        try container.encode(autoSleepEnabled, forKey: .autoSleepEnabled)
+        try container.encode(lightSleepAfterSeconds, forKey: .lightSleepAfterSeconds)
+        try container.encode(deepSleepAfterSeconds, forKey: .deepSleepAfterSeconds)
         try container.encode(lastError, forKey: .lastError)
         try container.encode(lastKnownModelStateText, forKey: .lastKnownModelStateText)
         try container.encode(activeAuthSessionCount, forKey: .activeAuthSessionCount)

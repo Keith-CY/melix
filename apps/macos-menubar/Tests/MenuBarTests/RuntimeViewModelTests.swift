@@ -1851,6 +1851,200 @@ struct RuntimeViewModelTests {
         #expect(hasCachePressureMetric)
     }
 
+    @Test("snapshot runtime sessions project typed lifecycle and power metadata into server sessions")
+    @MainActor
+    func snapshotRuntimeSessionsProjectTypedLifecycleAndPowerMetadataIntoServerSessions() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let snapshot = makeSnapshot(
+            serverState: .serverReady,
+            models: [makeModelSummary(state: .modelWarm)],
+            runtimeSessions: [
+                makeRuntimeSession(
+                    lifecycleState: .sleeping,
+                    powerState: .deepSleep,
+                    wakeReason: .requestActivity,
+                    idleTimerSeconds: 120,
+                    autoSleepEnabled: true,
+                    lightSleepAfterSeconds: 300,
+                    deepSleepAfterSeconds: 900
+                )
+            ]
+        )
+        await client.configureSnapshot(snapshot)
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+
+        let session = try #require(viewModel.serverSessions.first)
+        #expect(session.id == "server-session-1")
+        #expect(session.lifecycle == .sleeping)
+        #expect(session.powerState == .deepSleep)
+        #expect(session.wakeReason == .requestActivity)
+        #expect(session.idleTimerSeconds == 120)
+        #expect(session.autoSleepEnabled)
+        #expect(session.lightSleepAfterSeconds == 300)
+        #expect(session.deepSleepAfterSeconds == 900)
+    }
+
+    @Test("server state changed events update runtime session lifecycle metadata")
+    @MainActor
+    func serverStateChangedEventsUpdateRuntimeSessionLifecycleMetadata() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+        let serverSessionID = viewModel.serverSessions.first?.id ?? "server-session-1"
+        await client.sendServerStateChanged(
+            state: .serverReady,
+            runtimeSessions: [
+                makeRuntimeSession(
+                    serverSessionID: serverSessionID,
+                    lifecycleState: .paused,
+                    powerState: .active,
+                    wakeReason: .policyApply,
+                    idleTimerSeconds: 42,
+                    autoSleepEnabled: true,
+                    lightSleepAfterSeconds: 300,
+                    deepSleepAfterSeconds: 1200
+                )
+            ]
+        )
+
+        try await waitForRuntimeViewModelCondition("server runtime session event should project paused state") {
+            viewModel.serverSessions.first?.lifecycle == .paused
+                && viewModel.serverSessions.first?.wakeReason == .policyApply
+        }
+
+        let session = try #require(viewModel.serverSessions.first)
+        let foundation = viewModel.desktopFoundationState
+        #expect(session.lifecycle == .paused)
+        #expect(session.powerState == .active)
+        #expect(session.wakeReason == .policyApply)
+        #expect(session.idleTimerSeconds == 42)
+        #expect(session.autoSleepEnabled)
+        #expect(session.deepSleepAfterSeconds == 1200)
+        #expect(foundation.logs.contains(where: { $0.message.contains("Paused") && $0.message.contains("Active") }))
+    }
+
+    @Test("runtime session fallback and enum mapping cover loading stopped error and unknown states")
+    @MainActor
+    func runtimeSessionFallbackAndEnumMappingCoverLoadingStoppedErrorAndUnknownStates() async throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-menubar-runtime-session-fallback-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let melixHome = MelixHome(environment: ["MELIX_HOME": temporaryRoot.path])
+        let operatorSessionStore = OperatorSessionStore(melixHome: melixHome)
+        let restoredServerSession = DesktopServerSessionState(
+            id: "server-session-restored",
+            title: "Restored Server",
+            modelID: "melix-dev-text",
+            lifecycle: .running
+        )
+        try operatorSessionStore.save(
+            OperatorSessionState(
+                selectedSurface: .server,
+                selectedServerSessionID: restoredServerSession.id,
+                serverSessions: [restoredServerSession]
+            )
+        )
+
+        let client = FakeControlPlaneXPCClient()
+        let snapshot = makeSnapshot(
+            serverState: .serverReady,
+            models: [makeModelSummary(state: .modelWarm)],
+            runtimeSessions: [
+                makeRuntimeSession(
+                    serverSessionID: "detached-runtime-session",
+                    lifecycleState: .loading,
+                    powerState: .lightSleep,
+                    wakeReason: .operatorResume
+                )
+            ]
+        )
+        await client.configureSnapshot(snapshot)
+        let viewModel = RuntimeViewModel(client: client, operatorSessionStore: operatorSessionStore)
+
+        await viewModel.start()
+
+        let sessionID = try #require(viewModel.serverSessions.first?.id)
+        let hydrated = try #require(viewModel.serverSessions.first)
+        #expect(hydrated.lifecycle == .starting)
+        #expect(hydrated.powerState == .lightSleep)
+        #expect(hydrated.wakeReason == .operatorResume)
+
+        await client.sendServerStateChanged(
+            state: .serverReady,
+            runtimeSessions: [
+                makeRuntimeSession(
+                    serverSessionID: sessionID,
+                    lifecycleState: .stopped,
+                    powerState: .stopped,
+                    wakeReason: .toolActivity
+                )
+            ]
+        )
+
+        try await waitForRuntimeViewModelCondition("runtime session should project stopped/tool activity state") {
+            viewModel.serverSessions.first?.lifecycle == .stopped
+                && viewModel.serverSessions.first?.powerState == .stopped
+                && viewModel.serverSessions.first?.wakeReason == .toolActivity
+        }
+
+        await client.sendServerStateChanged(
+            state: .serverReady,
+            runtimeSessions: [
+                makeRuntimeSession(
+                    serverSessionID: sessionID,
+                    lifecycleState: .error,
+                    powerState: .UNRECOGNIZED(777),
+                    wakeReason: .initialBoot
+                )
+            ]
+        )
+
+        try await waitForRuntimeViewModelCondition("runtime session should project error and unavailable power state") {
+            viewModel.serverSessions.first?.lifecycle == .error
+                && viewModel.serverSessions.first?.powerState == .unavailable
+                && viewModel.serverSessions.first?.wakeReason == .initialBoot
+        }
+
+        await client.sendServerStateChanged(
+            state: .serverReady,
+            runtimeSessions: [
+                makeRuntimeSession(
+                    serverSessionID: sessionID,
+                    lifecycleState: .ready,
+                    powerState: .active,
+                    wakeReason: .UNRECOGNIZED(888)
+                )
+            ]
+        )
+
+        try await waitForRuntimeViewModelCondition("runtime session should project ready state and unknown wake reason fallback") {
+            viewModel.serverSessions.first?.lifecycle == .running
+                && viewModel.serverSessions.first?.powerState == .active
+                && viewModel.serverSessions.first?.wakeReason == .unspecified
+        }
+
+        await client.sendServerStateChanged(
+            state: .serverReady,
+            runtimeSessions: [
+                makeRuntimeSession(
+                    serverSessionID: sessionID,
+                    lifecycleState: .UNRECOGNIZED(999),
+                    powerState: .active,
+                    wakeReason: .initialBoot
+                )
+            ]
+        )
+
+        try await waitForRuntimeViewModelCondition("runtime session should fall back to unavailable lifecycle for unknown values") {
+            viewModel.serverSessions.first?.lifecycle == .unavailable
+        }
+    }
+
     @Test("request progress events map all operator-facing phase labels")
     @MainActor
     func requestProgressEventsMapAllOperatorFacingPhaseLabels() async throws {
@@ -4113,15 +4307,40 @@ private struct ThrowingServerSessionAPIKeyStore: ServerSessionAPIKeyStoring {
 private func makeSnapshot(
     serverState: Melix_Controlplane_V1_ServerState,
     models: [Melix_Controlplane_V1_ModelSummary],
+    runtimeSessions: [Melix_Controlplane_V1_ServerSessionRuntimeState] = [],
     gatewayAccess: Melix_Controlplane_V1_GatewayAccessSummary? = nil
 ) -> Melix_Controlplane_V1_ServerSnapshot {
     var snapshot = Melix_Controlplane_V1_ServerSnapshot()
     snapshot.serverState = serverState
     snapshot.models = models
+    snapshot.runtimeSessions = runtimeSessions
     if let gatewayAccess {
         snapshot.gatewayAccess = gatewayAccess
     }
     return snapshot
+}
+
+private func makeRuntimeSession(
+    serverSessionID: String = "server-session-1",
+    lifecycleState: Melix_Controlplane_V1_ServerSessionLifecycleState = .ready,
+    powerState: Melix_Controlplane_V1_ServerSessionPowerState = .active,
+    wakeReason: Melix_Controlplane_V1_ServerWakeReason = .initialBoot,
+    idleTimerSeconds: UInt32 = 0,
+    autoSleepEnabled: Bool = false,
+    lightSleepAfterSeconds: UInt32 = 300,
+    deepSleepAfterSeconds: UInt32 = 1800
+) -> Melix_Controlplane_V1_ServerSessionRuntimeState {
+    var runtimeSession = Melix_Controlplane_V1_ServerSessionRuntimeState()
+    runtimeSession.serverSessionID = serverSessionID
+    runtimeSession.lifecycleState = lifecycleState
+    runtimeSession.powerState = powerState
+    runtimeSession.wakeReason = wakeReason
+    runtimeSession.idleTimerSeconds = idleTimerSeconds
+    runtimeSession.autoSleepEnabled = autoSleepEnabled
+    runtimeSession.lightSleepAfterSeconds = lightSleepAfterSeconds
+    runtimeSession.deepSleepAfterSeconds = deepSleepAfterSeconds
+    runtimeSession.updatedAtUnixMs = 1_717_171_717
+    return runtimeSession
 }
 
 private func makeGatewayAccessSummary(

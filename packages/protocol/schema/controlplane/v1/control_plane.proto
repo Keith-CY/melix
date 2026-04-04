@@ -819,6 +819,7 @@ message ServerSnapshot {
   repeated ImageJobSummary image_jobs = 10;
   MCPToolCatalogSummary mcp_tools = 11;
   GatewayAccessSummary gateway_access = 12;
+  repeated ServerSessionRuntimeState runtime_sessions = 13;
 }
 
 message WorkerSummary {
@@ -1048,6 +1049,45 @@ message SessionSummary {
   string latest_snapshot_id = 5;
 }
 
+enum ServerSessionLifecycleState {
+  SERVER_SESSION_LIFECYCLE_STATE_UNSPECIFIED = 0;
+  SERVER_SESSION_LIFECYCLE_STATE_LOADING = 1;
+  SERVER_SESSION_LIFECYCLE_STATE_READY = 2;
+  SERVER_SESSION_LIFECYCLE_STATE_PAUSED = 3;
+  SERVER_SESSION_LIFECYCLE_STATE_SLEEPING = 4;
+  SERVER_SESSION_LIFECYCLE_STATE_STOPPED = 5;
+  SERVER_SESSION_LIFECYCLE_STATE_ERROR = 6;
+}
+
+enum ServerSessionPowerState {
+  SERVER_SESSION_POWER_STATE_UNSPECIFIED = 0;
+  SERVER_SESSION_POWER_STATE_ACTIVE = 1;
+  SERVER_SESSION_POWER_STATE_LIGHT_SLEEP = 2;
+  SERVER_SESSION_POWER_STATE_DEEP_SLEEP = 3;
+  SERVER_SESSION_POWER_STATE_STOPPED = 4;
+}
+
+enum ServerWakeReason {
+  SERVER_WAKE_REASON_UNSPECIFIED = 0;
+  SERVER_WAKE_REASON_INITIAL_BOOT = 1;
+  SERVER_WAKE_REASON_OPERATOR_RESUME = 2;
+  SERVER_WAKE_REASON_REQUEST_ACTIVITY = 3;
+  SERVER_WAKE_REASON_TOOL_ACTIVITY = 4;
+  SERVER_WAKE_REASON_POLICY_APPLY = 5;
+}
+
+message ServerSessionRuntimeState {
+  string server_session_id = 1;
+  ServerSessionLifecycleState lifecycle_state = 2;
+  ServerSessionPowerState power_state = 3;
+  ServerWakeReason wake_reason = 4;
+  uint32 idle_timer_seconds = 5;
+  bool auto_sleep_enabled = 6;
+  uint32 light_sleep_after_seconds = 7;
+  uint32 deep_sleep_after_seconds = 8;
+  int64 updated_at_unix_ms = 9;
+}
+
 message SessionState {
   string session_id = 1;
   repeated BranchState branches = 2;
@@ -1099,6 +1139,7 @@ message PresetSummary {
 
 message ServerStateChanged {
   ServerState state = 1;
+  repeated ServerSessionRuntimeState runtime_sessions = 2;
 }
 
 message WorkerStateChanged {

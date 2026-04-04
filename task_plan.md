@@ -2,70 +2,66 @@
 
 ## Goal
 
-Close `M8.11` by defining a repository-owned packaging target matrix for Apple Silicon delivery
-variants so Melix can differentiate `launch_agents`, `homebrew`, and `.app bundle` outputs without
-splitting product identity, runtime semantics, or install and update evidence.
+Start `M10.1` by introducing an explicit server-session runtime lifecycle and power-state snapshot
+model so Melix can project typed `paused` versus `sleeping`, wake-reason, idle-timer, and
+auto-sleep metadata without overloading the existing Phase 3 branch/session graph semantics.
 
 ## Scope
 
-- add a shared packaging-target profile layer for the supported local product delivery targets
-- project stable target metadata into the `launch_agents`, `homebrew`, and macOS app-bundle
-  packaging outputs
-- add a deterministic smoke command plus focused regression coverage for the touched Python
-  packaging paths
-- update packaging, signing, launchd, and runbook documentation before marking `M8.11` and `M8`
-  completed
+- extend the control-plane protocol with a dedicated server-session runtime snapshot type
+- project the new runtime-session state through control-plane snapshots and `server.state_changed`
+  events
+- wire the typed runtime-session payload into the native menu bar client state without adding the
+  later `M10.2` control commands or `M10.3` banner policy
+- add focused Swift coverage for proto decode, snapshot/event projection, and menu bar consumption
 
 ## Phases
 
-1. Packaging target profile truth
+1. Protocol boundary and task split
    - status: completed
    - evidence:
-     - add a shared productization helper that defines the supported Melix packaging targets and
-       their stable metadata
-     - keep one logical Melix identity while making packaging kind, runtime layout, and update
-       strategy explicit
-2. Target projection into packaging outputs
+     - keep Phase 3 `SessionState` and `snapshot.sessions` reserved for branch/session graph state
+     - add a separate server-runtime session type for lifecycle and power metadata
+     - avoid implementing `pause`, `resume`, `stop`, or `wake` controls in this slice
+2. Snapshot and event projection
    - status: completed
    - evidence:
-     - enrich the launch-agent install manifest and environment script with packaging target
-       metadata
-     - enrich the Homebrew service manifest with the same target metadata
-     - enrich the macOS app-bundle output with an embedded target manifest and version or update
-       environment exports
-3. Smoke coverage and focused tests
+     - extend the snapshot builder and control-plane event payloads with typed runtime-session
+       fields
+     - keep existing `server_state` backward-compatible while adding richer runtime metadata
+3. Menu bar state and focused tests
    - status: completed
    - evidence:
-     - add a deterministic repository-owned smoke command that validates the shared packaging
-       target matrix across all supported outputs
-     - add or expand focused Python tests for the new helper and the touched packaging paths
+     - consume the new runtime-session payload in `RuntimeViewModel` and related UI state models
+     - add focused control-plane and menu bar tests for snapshot/event decoding and lifecycle-state
+       projection
 4. Verification and milestone bookkeeping
    - status: completed
    - evidence:
-     - rerun focused verification plus repository-default Python verification
-     - record changed-line coverage at or above `95%`, update `progress.md`, and mark `M8.11`
-       completed in the roadmap execution index
+     - run `make proto`, focused Swift suites, and `make swift-test`
+     - record changed-line coverage at or above `95%`, update `progress.md`, and mark `M10.1`
+       completed only after evidence is recorded
 
 ## Acceptance
 
-- Melix has a repository-owned packaging target matrix for the supported Apple Silicon delivery
-  variants
-- `launch_agents`, `homebrew`, and `.app bundle` outputs all expose the same logical product
-  identity while retaining explicit target metadata
-- install and update evidence remains compatible across the supported targets
-- a deterministic smoke command and focused tests cover the touched packaging target paths
-- `M8.11` and the parent `M8` milestone can be closed with explicit verification and changed-line
-  coverage evidence
+- protocol changes introduce a typed server-session runtime lifecycle model without mutating the
+  existing branch/session graph contract
+- control-plane snapshots and `server.state_changed` events expose explicit lifecycle and power
+  metadata that clients can consume without local inference
+- the native menu bar client can decode and store the new runtime-session payload without banner or
+  control-policy placeholders
+- focused Swift verification and changed-line coverage evidence cover the touched protocol,
+  snapshot, and UI-consumption paths
 
 ## Risks
 
-- target differentiation that only exists in docs would drift from the generated manifests and
-  break operator or release guidance
-- packaging-specific identifiers that diverge from the shared logical product identity would
-  fragment install and update reasoning across delivery targets
-- extending the packaging outputs without a shared metadata helper would create three incompatible
-  state descriptions for the same local Melix product
+- reusing the existing Phase 3 `SessionState` for power lifecycle would corrupt branch recovery and
+  cache/session semantics that already depend on that contract
+- adding real pause/resume/stop controls in this slice would bleed into `M10.2` and destabilize
+  the first typed protocol step
+- teaching the menu bar to infer lifecycle locally instead of consuming the new runtime-session
+  payload would reintroduce exactly the ambiguity `M10.1` is meant to remove
 
 ## Outcome
 
-- m8_11_platform_packaging_target_differentiation_completed
+- m10_1_server_session_runtime_snapshot_foundation_completed

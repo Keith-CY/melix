@@ -574,11 +574,15 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
         emit(event)
     }
 
-    func sendServerStateChanged(state: Melix_Controlplane_V1_ServerState) {
+    func sendServerStateChanged(
+        state: Melix_Controlplane_V1_ServerState,
+        runtimeSessions: [Melix_Controlplane_V1_ServerSessionRuntimeState] = []
+    ) {
         var event = Melix_Controlplane_V1_ControlPlaneEvent()
         event.eventType = "server.state_changed"
         event.serverState = Melix_Controlplane_V1_ServerStateChanged()
         event.serverState.state = state
+        event.serverState.runtimeSessions = runtimeSessions
         emit(event)
     }
 

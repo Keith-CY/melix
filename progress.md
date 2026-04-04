@@ -2,6 +2,53 @@
 
 ## 2026-04-04
 
+- Closed `M10.1` by introducing a dedicated server-session runtime lifecycle snapshot contract:
+  - extended `packages/protocol/schema/controlplane/v1/control_plane.proto` with typed
+    `ServerSessionLifecycleState`, `ServerSessionPowerState`, `ServerWakeReason`, and
+    `ServerSessionRuntimeState` messages, then regenerated the repository-owned protocol outputs
+  - added `services/control-plane-swift/Sources/Snapshots/ServerSessionRuntimeStore.swift` plus
+    `ServerSnapshotBuilder` and `ControlPlaneService` wiring so control-plane snapshots and
+    `server.state_changed` events now project typed `runtime_sessions` without overloading the
+    existing Phase 3 branch/session graph semantics
+  - updated the native menu bar state model and `RuntimeViewModel` so operator-facing server
+    sessions now consume typed lifecycle, power-state, wake-reason, and idle-policy metadata from
+    the control-plane payload instead of inferring paused-versus-sleeping locally
+  - added focused control-plane and menu bar regression coverage for snapshot decoding, event
+    projection, runtime-session fallback, and enum mapping branches, then marked `M10.1`
+    completed in the roadmap execution index and active task plan
+- Verification summary for `M10.1`:
+  - `make proto`: pass
+  - `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/services/control-plane-swift/.build/ModuleCache.noindex" swift test --package-path services/control-plane-swift --filter ControlPlaneServiceTests`: `127 tests passed`
+  - `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/apps/macos-menubar/.build/ModuleCache.noindex" swift test --package-path apps/macos-menubar --filter RuntimeViewModelTests`: `110 tests passed`, then `111 tests passed` after the final fallback-coverage test was added
+  - `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/services/control-plane-swift/.build/ModuleCache.noindex" swift test --package-path services/control-plane-swift --enable-code-coverage`: `537 tests passed`
+  - `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/apps/macos-menubar/.build/ModuleCache.noindex" swift test --package-path apps/macos-menubar --enable-code-coverage --filter RuntimeViewModelTests`: `111 tests passed`
+  - `make swift-test`: pass
+  - `git diff --check`: pass
+- Metrics report for `M10.1`:
+  - control-plane handwritten executable scope changed-line coverage:
+    - `services/control-plane-swift/Sources/Snapshots/ServerSnapshotBuilder.swift`: `100.00%`
+      (`1/1`)
+    - `services/control-plane-swift/Sources/Snapshots/ServerSessionRuntimeStore.swift`: `100.00%`
+      (`39/39`)
+    - `services/control-plane-swift/Sources/XPCService/ControlPlaneService.swift`: `100.00%`
+      (`19/19`)
+    - `services/control-plane-swift/Tests/ControlPlaneTests/ControlPlaneServiceTests.swift`:
+      `100.00%` (`32/32`)
+    - `services/control-plane-swift/Tests/ControlPlaneTests/SnapshotStoreTests.swift`: `100.00%`
+      (`21/21`)
+    - aggregate control-plane changed-line coverage: `100.00%` (`112/112`)
+  - menu bar handwritten executable scope changed-line coverage:
+    - `apps/macos-menubar/Sources/AppMain/Models/DesktopShellState.swift`: `100.00%` (`18/18`)
+    - `apps/macos-menubar/Sources/AppMain/Models/RuntimeViewModel.swift`: `100.00%` (`94/94`)
+    - `apps/macos-menubar/Tests/MenuBarTests/TestSupport.swift`: `100.00%` (`2/2`)
+    - `apps/macos-menubar/Tests/MenuBarTests/RuntimeViewModelTests.swift`: `100.00%` (`199/199`)
+    - aggregate menu bar changed-line coverage: `100.00%` (`313/313`)
+  - aggregate changed-line coverage for the touched handwritten Swift scope in `M10.1`:
+    `100.00%` (`425/425`)
+  - protocol schemas, generated protobuf outputs, `packages/protocol/descriptors/melix.pb`, and
+    task-planning documents are excluded from executable changed-line coverage because they are
+    generated or repository-ownership artifacts rather than handwritten runtime logic
+
 - Closed the `M8.11` platform-packaging and target-differentiation milestone and, with it, the
   parent `M8` milestone:
   - added `services/mlx-worker-python/worker/productization/packaging_targets.py` so the

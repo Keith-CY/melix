@@ -88,6 +88,29 @@ struct SnapshotStoreTests {
         #expect(snapshot.recentRestorePlans.last?.planID == "existing-8")
     }
 
+    @Test("server session runtime store preserves seeded runtime sessions")
+    func serverSessionRuntimeStorePreservesSeededRuntimeSessions() async {
+        var seeded = ServerSessionRuntimeStore.defaultRuntimeSession(
+            serverSessionID: "server-session-seeded",
+            updatedAtUnixMS: 9_000
+        )
+        seeded.lifecycleState = .paused
+        seeded.powerState = .lightSleep
+
+        let store = ServerSessionRuntimeStore(
+            runtimeSessions: [seeded],
+            nowUnixMS: { 10_000 }
+        )
+
+        let snapshot = await store.snapshot()
+
+        #expect(snapshot.count == 1)
+        #expect(snapshot.first?.serverSessionID == "server-session-seeded")
+        #expect(snapshot.first?.lifecycleState == .paused)
+        #expect(snapshot.first?.powerState == .lightSleep)
+        #expect(snapshot.first?.updatedAtUnixMs == 9_000)
+    }
+
     @Test("session graph store exposes sorted summaries and session state")
     func sessionGraphStoreExposesSortedSummaries() async {
         let store = SessionGraphStore(sessions: [makeSessionState(id: "session-b"), makeSessionState(id: "session-a")])

@@ -153,6 +153,10 @@ The roadmap extension in `M10-M17` includes milestone-level plans plus decompose
 ## M10: Session Lifecycle And Power Management
 
 - `M10.1` `docs/plans/2026-03-31-m10-1-session-state-protocol-and-snapshots.md`
+  Status: completed. The control-plane protocol now exposes dedicated server-session runtime
+  lifecycle and power-state snapshots, `server.state_changed` carries typed runtime-session
+  payloads, the native menu bar client consumes the new payload directly, and repository-default
+  Swift verification plus changed-line coverage evidence are recorded in the repository.
 - `M10.2` `docs/plans/2026-03-31-m10-2-power-policy-and-lifecycle-controls.md`
 - `M10.3` `docs/plans/2026-03-31-m10-3-desktop-status-banners-and-operator-surfaces.md`
 - `M10.4` `docs/plans/2026-03-31-m10-4-session-lifecycle-integration-evidence.md`

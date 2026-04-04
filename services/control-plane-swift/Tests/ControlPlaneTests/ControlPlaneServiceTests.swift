@@ -23,8 +23,11 @@ struct ControlPlaneServiceTests {
         #expect(!response.serverVersion.isEmpty)
         #expect(!response.daemonInstanceID.isEmpty)
         #expect(response.snapshot.serverState == .serverReady)
+        #expect(response.snapshot.runtimeSessions.first?.serverSessionID == "server-session-1")
+        #expect(response.snapshot.runtimeSessions.first?.lifecycleState == .ready)
         #expect(response.features.contains("cache-metadata"))
         #expect(response.features.contains("session-graph"))
+        #expect(response.features.contains("server-session-runtime"))
         #expect(response.features.contains("image-jobs"))
     }
 
@@ -279,6 +282,37 @@ struct ControlPlaneServiceTests {
         #expect(response.requestID == request.requestID)
         #expect(response.commandType == request.commandType)
         #expect(response.server.snapshot.serverState == .serverReady)
+        #expect(response.server.snapshot.runtimeSessions.first?.serverSessionID == "server-session-1")
+        #expect(response.server.snapshot.runtimeSessions.first?.powerState == .active)
+    }
+
+    @Test("applying gateway access publishes server runtime session metadata")
+    func applyingGatewayAccessPublishesServerRuntimeSessionMetadata() async throws {
+        let service = ControlPlaneService()
+        let subscription = await service.subscribe()
+
+        var request = Melix_Controlplane_V1_ControlPlaneRequest()
+        request.requestID = "apply-gateway-access-runtime"
+        request.commandType = "server.apply_gateway_access"
+        request.targetID = "server-session-1"
+        request.server = Melix_Controlplane_V1_ServerCommand()
+        request.server.applyGatewayAccess = Melix_Controlplane_V1_ApplyGatewayAccess()
+        request.server.applyGatewayAccess.serverSessionID = "server-session-1"
+        request.server.applyGatewayAccess.mode = .none
+        request.server.applyGatewayAccess.sharedAccessEnabled = false
+
+        let response = try await service.execute(request)
+
+        var iterator = subscription.stream.makeAsyncIterator()
+        let event = await iterator.next()
+        await service.unsubscribe(subscription.subscriptionID)
+
+        #expect(response.ok)
+        #expect(event?.eventType == "server.state_changed")
+        #expect(event?.source == "server_runtime")
+        #expect(event?.serverState.runtimeSessions.first?.serverSessionID == "server-session-1")
+        #expect(event?.serverState.runtimeSessions.first?.wakeReason == .policyApply)
+        #expect(event?.serverState.runtimeSessions.first?.lifecycleState == .ready)
     }
 
     @Test("execute handles model.list")
