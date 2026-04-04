@@ -26,20 +26,20 @@ without silent fallback.
 ## Phases
 
 1. Protocol and settings contract
-   - status: pending
+   - status: completed
    - evidence:
      - update the control-plane schema and generated outputs so disk-streaming mode is explicit in
        runtime settings and session projection payloads
      - define the exact worker-facing flag mapping and validation rules before broad implementation
 2. Control-plane and runtime propagation
-   - status: pending
+   - status: completed
    - evidence:
      - thread the new mode through control-plane state, CLI or operator mutations, and worker
        request shaping
      - ensure unsupported runtimes surface typed failures rather than silently downgrading to
        resident mode
 3. Verification and milestone bookkeeping
-   - status: pending
+   - status: completed
    - evidence:
      - run `make proto`, `make swift-test`, and `make py-test` or narrower authoritative commands
        as required by the touched scope
@@ -64,4 +64,4 @@ without silent fallback.
 
 ## Outcome
 
-- m11_1_disk_streaming_mode_and_runtime_flags_in_progress
+- m11_1_disk_streaming_mode_and_runtime_flags_completed

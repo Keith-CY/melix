@@ -2123,6 +2123,8 @@ public actor ControlPlaneService {
                 settings.pinOnLoad = parseBool(value)
             case "memory_policy":
                 settings.memoryPolicy = memoryPolicy(for: value)
+            case "disk_streaming_mode":
+                settings.diskStreamingMode = diskStreamingMode(for: value)
             case "default_acceleration_mode":
                 settings.defaultAccelerationMode = accelerationMode(for: value)
             case "acceleration_profile_id":
@@ -2721,6 +2723,32 @@ public actor ControlPlaneService {
         }
     }
 
+    private func diskStreamingMode(for rawValue: String) -> Melix_Controlplane_V1_DiskStreamingMode {
+        switch rawValue.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "prefer_disk", "prefer-disk", "prefer":
+            return .diskStreamingPreferDisk
+        case "require_disk", "require-disk", "require":
+            return .diskStreamingRequireDisk
+        default:
+            return .diskStreamingDisabled
+        }
+    }
+
+    private func controlPlaneDiskStreamingMode(
+        for mode: Melix_Worker_V1_DiskStreamingMode
+    ) -> Melix_Controlplane_V1_DiskStreamingMode {
+        switch mode {
+        case .diskStreamingDisabled:
+            return .diskStreamingDisabled
+        case .diskStreamingPreferDisk:
+            return .diskStreamingPreferDisk
+        case .diskStreamingRequireDisk:
+            return .diskStreamingRequireDisk
+        default:
+            return .diskStreamingDisabled
+        }
+    }
+
     private func accelerationMode(for rawValue: String) -> Melix_Controlplane_V1_AccelerationMode {
         switch rawValue.lowercased() {
         case "speculative_decode":
@@ -2939,9 +2967,32 @@ public actor ControlPlaneService {
         let preparedModelSpec = await modelCatalog.model(id: modelID).flatMap(BootstrapWorkerPreparation.modelSpec(for:))
         let hydratedPreparedModelSpec = hydratedModel(await modelCatalog.model(id: modelID))
             .flatMap(BootstrapWorkerPreparation.modelSpec(for:))
+        let fallbackPreparedModelSpec = hydratedPreparedModelSpec ?? preparedModelSpec
+        let requestedDiskStreamingMode = fallbackPreparedModelSpec.map {
+            controlPlaneDiskStreamingMode(for: $0.settings.diskStreamingMode)
+        } ?? .diskStreamingDisabled
         guard let workerRegistry,
               let modelSpec = hydratedPreparedModelSpec ?? preparedModelSpec,
               let workerClient = await workerRegistry.client(forModelID: modelID) else {
+            if requestedDiskStreamingMode == .diskStreamingPreferDisk
+                || requestedDiskStreamingMode == .diskStreamingRequireDisk {
+                _ = await serverSessionRuntimeStore.noteDiskStreamingSelection(
+                    requestedMode: requestedDiskStreamingMode,
+                    effectiveMode: .diskStreamingDisabled
+                )
+                let failedModel = await modelCatalog.recordLoadFailed(
+                    id: modelID,
+                    reason: "\(reason)_disk_streaming_unsupported"
+                ) ?? Melix_Controlplane_V1_ModelSummary()
+                var error = Melix_Controlplane_V1_ErrorStatus()
+                error.code = "disk_streaming_unsupported"
+                error.message = "The selected runtime does not support disk-streaming mode."
+                error.details = [
+                    "model_id": modelID,
+                    "requested_mode": requestedDiskStreamingMode.rawValue.description,
+                ]
+                return ModelLoadOutcome(model: hydrate(failedModel), error: error)
+            }
             let model = await modelCatalog.recordLoadSucceeded(
                 id: modelID,
                 dispatchHandle: "\(modelID)::local",
@@ -2955,18 +3006,29 @@ public actor ControlPlaneService {
         workerRequest.memoryBudgetBytes = 0
         workerRequest.pinOnLoad = false
         workerRequest.warmupAfterLoad = false
+        workerRequest.diskStreamingMode = modelSpec.settings.diskStreamingMode
 
         do {
             let response = try await workerClient.loadModel(request: workerRequest)
             guard response.ok, !response.modelHandle.isEmpty else {
                 let explicitError = response.error.code.isEmpty ? nil : makeErrorStatus(from: response.error)
                 let failureReason = explicitError.map { "\(reason)_\(sanitizeTransitionReasonComponent($0.code))" } ?? "\(reason)_failed"
+                _ = await serverSessionRuntimeStore.noteDiskStreamingSelection(
+                    requestedMode: requestedDiskStreamingMode,
+                    effectiveMode: .diskStreamingDisabled
+                )
                 let model = await modelCatalog.recordLoadFailed(
                     id: modelID,
                     reason: failureReason
                 ) ?? Melix_Controlplane_V1_ModelSummary()
                 return ModelLoadOutcome(model: hydrate(model), error: explicitError)
             }
+            _ = await serverSessionRuntimeStore.noteDiskStreamingSelection(
+                requestedMode: requestedDiskStreamingMode,
+                effectiveMode: response.hasResidency
+                    ? controlPlaneDiskStreamingMode(for: response.residency.effectiveDiskStreamingMode)
+                    : .diskStreamingDisabled
+            )
             let model = await modelCatalog.recordLoadSucceeded(
                 id: modelID,
                 dispatchHandle: response.modelHandle,
@@ -2976,6 +3038,10 @@ public actor ControlPlaneService {
             ) ?? Melix_Controlplane_V1_ModelSummary()
             return ModelLoadOutcome(model: hydrate(model), error: nil)
         } catch {
+            _ = await serverSessionRuntimeStore.noteDiskStreamingSelection(
+                requestedMode: requestedDiskStreamingMode,
+                effectiveMode: .diskStreamingDisabled
+            )
             let model = await modelCatalog.recordLoadFailed(
                 id: modelID,
                 reason: "\(reason)_failed"

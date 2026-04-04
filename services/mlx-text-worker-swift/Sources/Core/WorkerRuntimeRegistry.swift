@@ -6,6 +6,7 @@ struct LoadedModelRecord: @unchecked Sendable {
     let spec: Melix_Worker_V1_ModelSpec
     let runtimeModel: LoadedTextModel
     let estimatedResidentBytes: UInt64
+    let residency: Melix_Worker_V1_ResidencyInfo
 }
 
 struct StoredPrefillContext: @unchecked Sendable {
@@ -100,6 +101,7 @@ actor WorkerRuntimeRegistry {
         var execution = Melix_Worker_V1_ExecutionCapabilities()
         execution.supportsContinuousBatching = true
         execution.supportsSpeculativeDecoding = supportsSpeculativeDecoding()
+        execution.supportsDiskStreaming = false
         capabilities.execution = execution
 
         var ext = Melix_Worker_V1_Capability()
@@ -127,11 +129,24 @@ actor WorkerRuntimeRegistry {
 
     func loadModel(
         _ requested: Melix_Worker_V1_ModelSpec,
-        memoryBudgetBytes: UInt64 = 0
+        memoryBudgetBytes: UInt64 = 0,
+        pinOnLoad: Bool = false,
+        diskStreamingMode: Melix_Worker_V1_DiskStreamingMode = .unspecified
     ) async throws -> LoadedModelRecord {
         let resolved = modelCatalog.get(requested.modelID).map { catalogModel in
             mergeModelSpec(requested, fallback: catalogModel)
         } ?? requested
+        let requestedDiskStreamingMode = effectiveDiskStreamingMode(
+            for: resolved,
+            requestMode: diskStreamingMode
+        )
+        if requestedDiskStreamingMode == .diskStreamingPreferDisk
+            || requestedDiskStreamingMode == .diskStreamingRequireDisk {
+            throw WorkerRuntimeRegistryError.diskStreamingUnsupported(
+                requestedMode: requestedDiskStreamingMode,
+                modelID: resolved.modelID
+            )
+        }
 
         let loaded = try await runtime.loadModel(spec: resolved)
         let existingResidentBytes = loadedModels.values.reduce(0) { $0 + $1.estimatedResidentBytes }
@@ -168,7 +183,12 @@ actor WorkerRuntimeRegistry {
             handle: handle,
             spec: resolved,
             runtimeModel: loaded.model,
-            estimatedResidentBytes: loaded.estimatedResidentBytes
+            estimatedResidentBytes: loaded.estimatedResidentBytes,
+            residency: loadedResidency(
+                for: resolved,
+                pinOnLoad: pinOnLoad,
+                effectiveDiskStreamingMode: requestedDiskStreamingMode
+            )
         )
         loadedModels[handle] = record
         return record
@@ -200,6 +220,52 @@ actor WorkerRuntimeRegistry {
 
     func listLoadedModels() -> [String] {
         loadedModels.keys.sorted()
+    }
+
+    private func loadedResidency(
+        for model: Melix_Worker_V1_ModelSpec,
+        pinOnLoad: Bool,
+        effectiveDiskStreamingMode: Melix_Worker_V1_DiskStreamingMode
+    ) -> Melix_Worker_V1_ResidencyInfo {
+        var residency = Melix_Worker_V1_ResidencyInfo()
+        let effectivePinned = pinOnLoad || model.settings.pinOnLoad
+        residency.state = effectivePinned ? .pinned : .warm
+        residency.policy = effectiveResidencyPolicy(for: model, pinOnLoad: pinOnLoad)
+        residency.pinRequested = effectivePinned
+        residency.pinned = effectivePinned
+        residency.ttlSeconds = model.settings.ttlSeconds
+        residency.transitionReason = "load_model"
+        residency.effectiveDiskStreamingMode = effectiveDiskStreamingMode
+        return residency
+    }
+
+    private func effectiveResidencyPolicy(
+        for model: Melix_Worker_V1_ModelSpec,
+        pinOnLoad: Bool
+    ) -> Melix_Worker_V1_MemoryResidencyPolicy {
+        if pinOnLoad || model.settings.pinOnLoad {
+            return .memoryResidencyPinned
+        }
+        if model.settings.memoryPolicy != .unspecified {
+            return model.settings.memoryPolicy
+        }
+        if model.settings.ttlSeconds > 0 {
+            return .memoryResidencyTtl
+        }
+        return .memoryResidencyEvictable
+    }
+
+    private func effectiveDiskStreamingMode(
+        for model: Melix_Worker_V1_ModelSpec,
+        requestMode: Melix_Worker_V1_DiskStreamingMode
+    ) -> Melix_Worker_V1_DiskStreamingMode {
+        if requestMode != .unspecified {
+            return requestMode
+        }
+        if model.settings.diskStreamingMode != .unspecified {
+            return model.settings.diskStreamingMode
+        }
+        return .diskStreamingDisabled
     }
 
     func loadedModelCount() -> Int {
@@ -793,6 +859,10 @@ enum WorkerRuntimeRegistryError: Error, LocalizedError, Equatable {
     case snapshotModelNotLoaded
     case snapshotScopeMismatch
     case contextLimitExceeded(maxContext: UInt32, promptTokens: Int)
+    case diskStreamingUnsupported(
+        requestedMode: Melix_Worker_V1_DiskStreamingMode,
+        modelID: String
+    )
     case memoryBudgetExceeded(
         budgetBytes: UInt64,
         headroomBytes: UInt64,
@@ -825,6 +895,8 @@ enum WorkerRuntimeRegistryError: Error, LocalizedError, Equatable {
             return "The model required for this snapshot is not currently loaded."
         case .snapshotScopeMismatch:
             return "The loaded model configuration is incompatible with this snapshot."
+        case .diskStreamingUnsupported:
+            return "The selected runtime does not support disk-streaming mode."
         case .memoryBudgetExceeded:
             return "Projected resident memory would exceed the process budget."
         case .contextLimitExceeded:
@@ -851,6 +923,11 @@ enum WorkerRuntimeRegistryError: Error, LocalizedError, Equatable {
 
     var explicitPrefillErrorDetails: [String: String] {
         switch self {
+        case let .diskStreamingUnsupported(requestedMode, modelID):
+            return [
+                "requested_mode": requestedMode.rawValue.description,
+                "model_id": modelID,
+            ]
         case let .contextLimitExceeded(maxContext, promptTokens):
             return [
                 "max_context": String(maxContext),
@@ -889,6 +966,8 @@ enum WorkerRuntimeRegistryError: Error, LocalizedError, Equatable {
             return "not_found"
         case .snapshotModelNotLoaded, .snapshotScopeMismatch:
             return "failed_precondition"
+        case .diskStreamingUnsupported:
+            return "failed_precondition"
         case .memoryBudgetExceeded, .prefillMemoryGuardExceeded, .quadraticPrefillGuardExceeded:
             return "resource_exhausted"
         case .contextLimitExceeded:
@@ -904,6 +983,11 @@ enum WorkerRuntimeRegistryError: Error, LocalizedError, Equatable {
              (.snapshotModelNotLoaded, .snapshotModelNotLoaded),
              (.snapshotScopeMismatch, .snapshotScopeMismatch):
             return true
+        case let (
+            .diskStreamingUnsupported(requestedMode: lhsMode, modelID: lhsModelID),
+            .diskStreamingUnsupported(requestedMode: rhsMode, modelID: rhsModelID)
+        ):
+            return lhsMode == rhsMode && lhsModelID == rhsModelID
         case let (
             .contextLimitExceeded(maxContext: lhsMaxContext, promptTokens: lhsPromptTokens),
             .contextLimitExceeded(maxContext: rhsMaxContext, promptTokens: rhsPromptTokens)

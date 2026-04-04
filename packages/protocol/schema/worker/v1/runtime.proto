@@ -32,6 +32,7 @@ message LoadModelRequest {
   uint64 memory_budget_bytes = 2;
   bool pin_on_load = 3;
   bool warmup_after_load = 4;
+  DiskStreamingMode disk_streaming_mode = 5;
 }
 
 message LoadModelResponse {

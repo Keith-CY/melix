@@ -1893,6 +1893,36 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(loadedModelCount, 0)
     }
 
+    func testRuntimeLifecycleRejectsUnsupportedDiskStreamingMode() async throws {
+        let services = makeServices(
+            environment: [:],
+            backend: FakeRuntimeBackend(),
+            residentMemorySamples: [1_000, 5_096]
+        )
+
+        let loadResponse = try await withTestServerContextRPCCancellationHandle { handle in
+            var request = Melix_Worker_V1_LoadModelRequest()
+            request.model.modelID = "melix-dev-text"
+            request.diskStreamingMode = .diskStreamingRequireDisk
+            return try await services.runtime.loadModel(
+                request: request,
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_RuntimeService.Method.LoadModel.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
+        XCTAssertFalse(loadResponse.ok)
+        XCTAssertEqual(loadResponse.error.code, "disk_streaming_unsupported")
+        XCTAssertEqual(loadResponse.error.details["model_id"], "melix-dev-text")
+        XCTAssertEqual(loadResponse.error.details["requested_mode"], "3")
+        let loadedModelCount = await services.registry.loadedModelCount()
+        XCTAssertEqual(loadedModelCount, 0)
+    }
+
     func testRuntimeLifecycleRejectsModelLoadsThatExceedExplicitRequestBudget() async throws {
         let services = makeServices(
             environment: [
@@ -1974,6 +2004,32 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(loadedModelCount, 1)
     }
 
+    func testRuntimeRegistryDerivesResidencyPoliciesAndExplicitDiskStreamingDefaults() async throws {
+        let registry = WorkerRuntimeRegistry(
+            configuration: WorkerConfiguration(),
+            modelCatalog: WorkerModelCatalog(environment: [:]),
+            runtime: TextRuntime(backend: FakeRuntimeBackend())
+        )
+
+        var pinnedSpec = makeModelSpec(modelID: "pinned-model")
+        pinnedSpec.settings.pinOnLoad = true
+        let pinnedLoaded = try await registry.loadModel(pinnedSpec)
+
+        var policySpec = makeModelSpec(modelID: "policy-model")
+        policySpec.settings.memoryPolicy = .memoryResidencyPinned
+        let policyLoaded = try await registry.loadModel(policySpec)
+
+        var ttlAndDiskSpec = makeModelSpec(modelID: "ttl-disk-model")
+        ttlAndDiskSpec.settings.ttlSeconds = 60
+        ttlAndDiskSpec.settings.diskStreamingMode = .diskStreamingDisabled
+        let ttlAndDiskLoaded = try await registry.loadModel(ttlAndDiskSpec)
+
+        XCTAssertEqual(pinnedLoaded.residency.policy, .memoryResidencyPinned)
+        XCTAssertEqual(policyLoaded.residency.policy, .memoryResidencyPinned)
+        XCTAssertEqual(ttlAndDiskLoaded.residency.policy, .memoryResidencyTtl)
+        XCTAssertEqual(ttlAndDiskLoaded.residency.effectiveDiskStreamingMode, .diskStreamingDisabled)
+    }
+
     func testWorkerRuntimeRegistryErrorSupportsMemoryBudgetDescriptionsAndEquality() {
         let budgetError = WorkerRuntimeRegistryError.memoryBudgetExceeded(
             budgetBytes: 4_500,
@@ -2001,6 +2057,31 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(budgetError, sameBudgetError)
         XCTAssertNotEqual(budgetError, differentBudgetError)
         XCTAssertNotEqual(budgetError, .unknownModelHandle)
+    }
+
+    func testWorkerRuntimeRegistryErrorSupportsDiskStreamingMappingsAndEquality() {
+        let diskStreamingError = WorkerRuntimeRegistryError.diskStreamingUnsupported(
+            requestedMode: .diskStreamingRequireDisk,
+            modelID: "melix-dev-text"
+        )
+        let sameDiskStreamingError = WorkerRuntimeRegistryError.diskStreamingUnsupported(
+            requestedMode: .diskStreamingRequireDisk,
+            modelID: "melix-dev-text"
+        )
+        let differentDiskStreamingError = WorkerRuntimeRegistryError.diskStreamingUnsupported(
+            requestedMode: .diskStreamingPreferDisk,
+            modelID: "melix-dev-text"
+        )
+
+        XCTAssertEqual(
+            diskStreamingError.errorDescription,
+            "The selected runtime does not support disk-streaming mode."
+        )
+        XCTAssertEqual(diskStreamingError.explicitPrefillErrorDetails["requested_mode"], "3")
+        XCTAssertEqual(diskStreamingError.explicitPrefillErrorDetails["model_id"], "melix-dev-text")
+        XCTAssertEqual(diskStreamingError.saveRestoreErrorCode, "failed_precondition")
+        XCTAssertEqual(diskStreamingError, sameDiskStreamingError)
+        XCTAssertNotEqual(diskStreamingError, differentDiskStreamingError)
     }
 
     func testWorkerRuntimeRegistryErrorExposesPrefillGuardMetadataAndMappings() {

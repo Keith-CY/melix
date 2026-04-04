@@ -265,6 +265,7 @@ def test_registry_capabilities_and_request_lifecycle() -> None:
     assert capabilities.cache.supports_prefix_cache is True
     assert capabilities.cache.kv_quant_profiles == ["q4"]
     assert capabilities.execution.supports_continuous_batching is False
+    assert capabilities.execution.supports_disk_streaming is False
 
     state = registry.start_request("req-1")
     assert registry.get_request("req-1") is state

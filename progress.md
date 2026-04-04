@@ -2,6 +2,56 @@
 
 ## 2026-04-05
 
+- Closed `M11.1` by making disk-streaming mode a typed, operator-visible runtime setting across
+  the repository-owned control-plane, worker, and desktop-shell surfaces:
+  - extended the authoritative control-plane and worker protobuf schemas with
+    `DiskStreamingMode`, typed runtime settings, runtime-session fields, worker capabilities, and
+    load-request flags, then regenerated the versioned Swift, Python, and descriptor outputs
+  - updated the Swift control plane, Python bridge, on-demand loader, runtime-session store, and
+    model catalog so requested disk-streaming mode now flows through model policy application,
+    worker-backed load requests, runtime-session snapshots, and residency summaries, while
+    unsupported workerless or worker-backed paths fail explicitly with typed
+    `disk_streaming_unsupported` errors instead of silently downgrading
+  - updated the Python worker registry and gRPC server plus the Swift text worker runtime registry
+    and services so both worker stacks expose `supports_disk_streaming = false`, reject
+    `prefer_disk` and `require_disk` loads deterministically, and report effective
+    disk-streaming-mode metadata in residency payloads
+  - expanded the native operator shell and runtime view model so model settings now expose a typed
+    disk-streaming picker, model rows and summaries show the selected mode, and server-session
+    detail renders requested versus effective disk-streaming state alongside the existing lifecycle
+    and residency metadata
+  - added focused regression coverage across Python worker tests, Swift text worker tests,
+    control-plane tests, and menu bar tests, including error mapping, residency projection,
+    bridge-mode mapping, raw policy normalization, operator draft synchronization, and the desktop
+    disk-streaming picker options
+  - marked `M11.1` completed in the roadmap execution index; the active task plan can now advance
+    to `M11.2`
+- Verification summary for `M11.1`:
+  - `make proto`: pass
+  - `PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" UV_CACHE_DIR="$(pwd)/.uv-cache" uv run --project services/mlx-worker-python pytest services/mlx-worker-python/tests/test_runtime_service.py services/mlx-worker-python/tests/test_runtime_edges.py -q`: `31 passed in 0.20s`
+  - `make py-test`: `456 passed in 34.49s`
+  - `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/.build/ModuleCache.noindex" swift test --package-path services/mlx-text-worker-swift --scratch-path /tmp/m11_1_text_cov --enable-code-coverage --filter WorkerScaffoldTests`: `133 tests in 1 suite passed after 1.391 seconds`
+  - `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/.build/ModuleCache.noindex" swift test --package-path services/control-plane-swift --scratch-path /tmp/m11_1_cp_cov --enable-code-coverage --filter 'ControlPlaneServiceTests|OnDemandModelLoaderTests|ModelCatalogTests|PythonBridgeWorkerClientTests'`: pass
+  - `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/.build/ModuleCache.noindex" swift test --package-path apps/macos-menubar --scratch-path /tmp/m11_1_menu_cov --enable-code-coverage --filter 'RuntimeViewModelTests|DesktopFoundationViewTests|DesktopShellStateTests'`: `173 tests in 3 suites passed after 3.453 seconds`
+  - `make swift-test`: pass
+  - `make integration-test`: `60 passed in 734.45s (0:12:14)`
+  - `git diff --check`: pass
+- Metrics report for `M11.1`:
+  - typed disk-streaming control-plane or operator counters in the touched scope:
+    - `control_plane.server_runtime_session_count`
+    - `menu.model_settings_ms`
+    - `menu.server_snapshot_ms`
+  - changed-line coverage for the touched executable scope:
+    - Python worker runtime scope: `96.97%` (`32/33`)
+    - Swift text worker scope: `100.00%` (`164/164`)
+    - Swift control-plane scope: `99.67%` (`305/306`)
+    - Swift menu bar scope: `96.53%` (`139/144`)
+    - aggregate changed-line coverage across the touched handwritten executable scope: `98.92%`
+      (`640/647`)
+  - protocol schemas, generated protobuf outputs, `packages/protocol/descriptors/melix.pb`, and
+    task-planning documents are excluded from executable changed-line coverage because they are
+    generated or repository-ownership artifacts rather than handwritten runtime logic
+
 - Closed `M10.4` and, with it, the parent `M10` lifecycle milestone by adding repository-owned
   live-path lifecycle smoke evidence and operator recovery guidance:
   - added `Sources/MelixCLICore/LocalRuntimeFactory.swift`,

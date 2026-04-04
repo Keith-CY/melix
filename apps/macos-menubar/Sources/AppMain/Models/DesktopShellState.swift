@@ -142,6 +142,8 @@ public struct DesktopServerSessionState: Codable, Identifiable, Equatable, Senda
     public var autoSleepEnabled: Bool
     public var lightSleepAfterSeconds: Int
     public var deepSleepAfterSeconds: Int
+    public var requestedDiskStreamingModeText: String?
+    public var effectiveDiskStreamingModeText: String?
     public var lastError: String
     public var lastKnownModelStateText: String
     public var activeAuthSessionCount: Int
@@ -173,6 +175,8 @@ public struct DesktopServerSessionState: Codable, Identifiable, Equatable, Senda
         autoSleepEnabled: Bool = false,
         lightSleepAfterSeconds: Int = 0,
         deepSleepAfterSeconds: Int = 0,
+        requestedDiskStreamingModeText: String? = nil,
+        effectiveDiskStreamingModeText: String? = nil,
         lastError: String = "",
         lastKnownModelStateText: String = "",
         activeAuthSessionCount: Int = 0,
@@ -203,6 +207,8 @@ public struct DesktopServerSessionState: Codable, Identifiable, Equatable, Senda
         self.autoSleepEnabled = autoSleepEnabled
         self.lightSleepAfterSeconds = lightSleepAfterSeconds
         self.deepSleepAfterSeconds = deepSleepAfterSeconds
+        self.requestedDiskStreamingModeText = requestedDiskStreamingModeText
+        self.effectiveDiskStreamingModeText = effectiveDiskStreamingModeText
         self.lastError = lastError
         self.lastKnownModelStateText = lastKnownModelStateText
         self.activeAuthSessionCount = activeAuthSessionCount
@@ -499,7 +505,16 @@ public extension DesktopServerSessionState {
 
     var runtimeDetailText: String {
         let idleSummary = idleTimerSeconds > 0 ? "Idle \(idleTimerSeconds)s" : "Idle timer idle"
-        return "\(lifecycleSummaryText) • Wake \(wakeReason.rawValue) • \(idleSummary)"
+        var parts = [
+            lifecycleSummaryText,
+            "Wake \(wakeReason.rawValue)",
+            idleSummary,
+        ]
+        if let requestedDiskStreamingModeText, !requestedDiskStreamingModeText.isEmpty,
+           let effectiveDiskStreamingModeText, !effectiveDiskStreamingModeText.isEmpty {
+            parts.append("Disk \(requestedDiskStreamingModeText) -> \(effectiveDiskStreamingModeText)")
+        }
+        return parts.joined(separator: " • ")
     }
 
     var lifecycleBannerState: DesktopBannerState? {

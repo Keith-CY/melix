@@ -70,6 +70,7 @@ enum OnDemandModelLoader {
         request.memoryBudgetBytes = memoryBudgetBytes
         request.pinOnLoad = false
         request.warmupAfterLoad = false
+        request.diskStreamingMode = modelSpec.settings.diskStreamingMode
 
         let startedAt = Date()
         let response: Melix_Worker_V1_LoadModelResponse

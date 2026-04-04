@@ -381,6 +381,13 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
             default: .memoryResidencyEvictable
             }
         }
+        if let diskStreamingMode = values["disk_streaming_mode"] {
+            modelSettings.diskStreamingMode = switch diskStreamingMode.lowercased() {
+            case "prefer_disk": .diskStreamingPreferDisk
+            case "require_disk": .diskStreamingRequireDisk
+            default: .diskStreamingDisabled
+            }
+        }
         if let accelerationMode = values["default_acceleration_mode"] {
             modelSettings.defaultAccelerationMode = switch accelerationMode.lowercased() {
             case "speculative_decode": .speculativeDecode

@@ -28,6 +28,7 @@ public struct RuntimeModelRow: Identifiable, Equatable, Sendable {
     public let alias: String
     public let typeOverrideText: String
     public let memoryPolicyText: String
+    public let diskStreamingModeText: String
     public let adaptiveThinkingText: String
     public let accelerationModeText: String
     public let accelerationProfileID: String
@@ -46,6 +47,7 @@ public struct RuntimeModelRow: Identifiable, Equatable, Sendable {
         alias: String,
         typeOverrideText: String = "",
         memoryPolicyText: String,
+        diskStreamingModeText: String,
         adaptiveThinkingText: String,
         accelerationModeText: String,
         accelerationProfileID: String,
@@ -63,6 +65,7 @@ public struct RuntimeModelRow: Identifiable, Equatable, Sendable {
         self.alias = alias
         self.typeOverrideText = typeOverrideText
         self.memoryPolicyText = memoryPolicyText
+        self.diskStreamingModeText = diskStreamingModeText
         self.adaptiveThinkingText = adaptiveThinkingText
         self.accelerationModeText = accelerationModeText
         self.accelerationProfileID = accelerationProfileID
@@ -97,6 +100,7 @@ public struct RuntimeModelInfoState: Equatable, Sendable {
     public let ttlSeconds: UInt32
     public let pinOnLoad: Bool
     public let memoryPolicyText: String
+    public let diskStreamingModeText: String
     public let adaptiveThinkingText: String
     public let accelerationModeText: String
     public let accelerationProfileID: String
@@ -123,6 +127,7 @@ public struct RuntimeModelInfoState: Equatable, Sendable {
         ttlSeconds: UInt32 = 0,
         pinOnLoad: Bool = false,
         memoryPolicyText: String = "Unspecified",
+        diskStreamingModeText: String = "Disabled",
         adaptiveThinkingText: String = "Off",
         accelerationModeText: String = "Unspecified",
         accelerationProfileID: String = "",
@@ -148,6 +153,7 @@ public struct RuntimeModelInfoState: Equatable, Sendable {
         self.ttlSeconds = ttlSeconds
         self.pinOnLoad = pinOnLoad
         self.memoryPolicyText = memoryPolicyText
+        self.diskStreamingModeText = diskStreamingModeText
         self.adaptiveThinkingText = adaptiveThinkingText
         self.accelerationModeText = accelerationModeText
         self.accelerationProfileID = accelerationProfileID
@@ -641,6 +647,7 @@ public final class RuntimeViewModel {
     public var modelSettingsTTLDraft = ""
     public var modelSettingsPinOnLoadDraft = false
     public var modelSettingsMemoryPolicyDraft = "evictable"
+    public var modelSettingsDiskStreamingModeDraft = "disabled"
     public var modelSettingsAccelerationModeDraft = "baseline"
     public var modelSettingsAccelerationProfileIDDraft = ""
     public var modelSettingsAdaptiveThinkingModeDraft = "off"
@@ -2105,6 +2112,7 @@ public final class RuntimeViewModel {
         ttlSeconds: String = "",
         pinOnLoad: Bool,
         memoryPolicy: String,
+        diskStreamingMode: String,
         accelerationMode: String,
         accelerationProfileID: String,
         adaptiveThinkingMode: String = "off",
@@ -2124,6 +2132,7 @@ public final class RuntimeViewModel {
                 "ttl_seconds": ttlSeconds,
                 "pin_on_load": pinOnLoad ? "true" : "false",
                 "memory_policy": memoryPolicy,
+                "disk_streaming_mode": diskStreamingMode,
                 "default_acceleration_mode": accelerationMode,
                 "acceleration_profile_id": accelerationProfileID,
                 "adaptive_thinking_mode": adaptiveThinkingMode,
@@ -2209,6 +2218,7 @@ public final class RuntimeViewModel {
             ttlSeconds: modelSettingsTTLDraft.trimmingCharacters(in: .whitespacesAndNewlines),
             pinOnLoad: modelSettingsPinOnLoadDraft,
             memoryPolicy: modelSettingsMemoryPolicyDraft,
+            diskStreamingMode: modelSettingsDiskStreamingModeDraft,
             accelerationMode: modelSettingsAccelerationModeDraft,
             accelerationProfileID: modelSettingsAccelerationProfileIDDraft.trimmingCharacters(in: .whitespacesAndNewlines),
             adaptiveThinkingMode: modelSettingsAdaptiveThinkingModeDraft,
@@ -2236,6 +2246,7 @@ public final class RuntimeViewModel {
             alias: model.alias.isEmpty ? "Melix Text Turbo" : model.alias,
             pinOnLoad: true,
             memoryPolicy: "pinned",
+            diskStreamingMode: "disabled",
             accelerationMode: "speculative_decode",
             accelerationProfileID: "draft-q4"
         )
@@ -2267,6 +2278,9 @@ public final class RuntimeViewModel {
                 memoryPolicyText: snapshotModel.map {
                     runtimeMemoryPolicyText(resolvedResidencyPolicy(for: $0))
                 } ?? "Unspecified",
+                diskStreamingModeText: snapshotModel.map {
+                    runtimeDiskStreamingModeText($0.settings.diskStreamingMode)
+                } ?? "Disabled",
                 adaptiveThinkingText: snapshotModel.map {
                     runtimeAdaptiveThinkingText($0.settings.adaptiveThinking)
                 } ?? "Off",
@@ -3881,6 +3895,7 @@ public final class RuntimeViewModel {
             modelSettingsTTLDraft = ""
             modelSettingsPinOnLoadDraft = false
             modelSettingsMemoryPolicyDraft = "evictable"
+            modelSettingsDiskStreamingModeDraft = "disabled"
             modelSettingsAccelerationModeDraft = "baseline"
             modelSettingsAccelerationProfileIDDraft = ""
             modelSettingsAdaptiveThinkingModeDraft = "off"
@@ -3903,6 +3918,7 @@ public final class RuntimeViewModel {
         modelSettingsTTLDraft = model.settings.ttlSeconds > 0 ? String(model.settings.ttlSeconds) : ""
         modelSettingsPinOnLoadDraft = model.settings.pinOnLoad
         modelSettingsMemoryPolicyDraft = runtimeMemoryPolicyDraftValue(resolvedResidencyPolicy(for: model))
+        modelSettingsDiskStreamingModeDraft = runtimeDiskStreamingModeDraftValue(model.settings.diskStreamingMode)
         modelSettingsAccelerationModeDraft = runtimeAccelerationModeDraftValue(model.settings.defaultAccelerationMode)
         modelSettingsAccelerationProfileIDDraft = model.settings.accelerationProfileID
         modelSettingsAdaptiveThinkingModeDraft = runtimeAdaptiveThinkingDraftValue(model.settings.adaptiveThinking)
@@ -4089,6 +4105,8 @@ public final class RuntimeViewModel {
         session.autoSleepEnabled = runtimeSession.autoSleepEnabled
         session.lightSleepAfterSeconds = Int(runtimeSession.lightSleepAfterSeconds)
         session.deepSleepAfterSeconds = Int(runtimeSession.deepSleepAfterSeconds)
+        session.requestedDiskStreamingModeText = runtimeDiskStreamingModeText(runtimeSession.requestedDiskStreamingMode)
+        session.effectiveDiskStreamingModeText = runtimeDiskStreamingModeText(runtimeSession.effectiveDiskStreamingMode)
     }
 
     private func existingModelSummary(for modelID: String) -> Melix_Controlplane_V1_ModelSummary {
@@ -5384,6 +5402,7 @@ func makeRuntimeModelRow(_ model: Melix_Controlplane_V1_ModelSummary) -> Runtime
         alias: model.settings.alias,
         typeOverrideText: model.settings.typeOverride,
         memoryPolicyText: runtimeMemoryPolicyText(model.settings.memoryPolicy),
+        diskStreamingModeText: runtimeDiskStreamingModeText(model.settings.diskStreamingMode),
         adaptiveThinkingText: runtimeAdaptiveThinkingText(model.settings.adaptiveThinking),
         accelerationModeText: runtimeAccelerationModeText(model.settings.defaultAccelerationMode),
         accelerationProfileID: model.settings.accelerationProfileID,
@@ -5532,6 +5551,32 @@ private func runtimeAccelerationModeDraftValue(_ mode: Melix_Controlplane_V1_Acc
     }
 }
 
+private func runtimeDiskStreamingModeText(_ mode: Melix_Controlplane_V1_DiskStreamingMode) -> String {
+    switch mode {
+    case .diskStreamingPreferDisk:
+        return "Prefer Disk"
+    case .diskStreamingRequireDisk:
+        return "Require Disk"
+    case .diskStreamingDisabled, .unspecified:
+        return "Disabled"
+    default:
+        return "Disabled"
+    }
+}
+
+private func runtimeDiskStreamingModeDraftValue(_ mode: Melix_Controlplane_V1_DiskStreamingMode) -> String {
+    switch mode {
+    case .diskStreamingPreferDisk:
+        return "prefer_disk"
+    case .diskStreamingRequireDisk:
+        return "require_disk"
+    case .diskStreamingDisabled, .unspecified:
+        return "disabled"
+    default:
+        return "disabled"
+    }
+}
+
 private func runtimeAdaptiveThinkingDraftValue(
     _ policy: Melix_Controlplane_V1_AdaptiveThinkingPolicy
 ) -> String {
@@ -5574,10 +5619,12 @@ private func runtimeResidencyText(for model: Melix_Controlplane_V1_ModelSummary)
     let pinRequested = resolvedPinRequested(for: model)
     let pinned = resolvedPinned(for: model)
     let ttlSeconds = resolvedTTLSeconds(for: model)
+    let effectiveDiskStreamingMode = resolvedEffectiveDiskStreamingMode(for: model)
 
     var parts = [
         runtimeResidencyStateText(residencyState),
         runtimeMemoryPolicyText(policy),
+        runtimeDiskStreamingModeText(effectiveDiskStreamingMode),
     ]
     if pinRequested && !pinned {
         parts.append("Pin requested")
@@ -5664,6 +5711,20 @@ private func resolvedPinned(for model: Melix_Controlplane_V1_ModelSummary) -> Bo
 
 private func resolvedTTLSeconds(for model: Melix_Controlplane_V1_ModelSummary) -> UInt32 {
     max(model.residency.ttlSeconds, model.settings.ttlSeconds)
+}
+
+private func resolvedEffectiveDiskStreamingMode(
+    for model: Melix_Controlplane_V1_ModelSummary
+) -> Melix_Controlplane_V1_DiskStreamingMode {
+    if model.residency.effectiveDiskStreamingMode != .unspecified {
+        return model.residency.effectiveDiskStreamingMode
+    }
+    switch model.state {
+    case .modelWarm, .modelPinned:
+        return model.settings.diskStreamingMode == .unspecified ? .diskStreamingDisabled : model.settings.diskStreamingMode
+    default:
+        return .diskStreamingDisabled
+    }
 }
 
 private func runtimeResidencyStateText(_ state: Melix_Controlplane_V1_ResidencyState) -> String {

@@ -98,6 +98,7 @@ struct OnDemandModelLoaderTests {
         #expect(model.residency.transitionReason == "lazy_text_load")
         #expect(loadRequest.memoryBudgetBytes == 65_536)
         #expect(loadRequest.pinOnLoad == false)
+        #expect(loadRequest.diskStreamingMode == .diskStreamingDisabled)
         #expect(metrics.values["control_plane.text_first_load_estimated_resident_bytes"] == 4_096)
         #expect(metrics.values["control_plane.text_first_load_resident_bytes"] == 8_192)
     }
@@ -218,6 +219,37 @@ struct OnDemandModelLoaderTests {
         let model = try #require(await catalog.model(id: "melix-dev-text"))
         #expect(model.state == .modelFailed)
         #expect(model.residency.transitionReason == "lazy_text_load_memory_budget_exceeded")
+    }
+
+    @Test("failed lazy loads forward disk-streaming mode and preserve explicit worker rejection codes")
+    func failedLazyLoadsForwardDiskStreamingModeAndPreserveExplicitWorkerRejectionCodes() async throws {
+        var model = ModelCatalog.devTextModel()
+        model.settings.diskStreamingMode = .diskStreamingPreferDisk
+        let catalog = ModelCatalog(seedModels: [model])
+        let workerClient = LoaderTestingWorkerClient()
+        await workerClient.setLoadResponse(
+            ok: false,
+            handle: "",
+            estimatedResidentBytes: 0,
+            errorCode: "disk_streaming_unsupported",
+            errorMessage: "The selected runtime does not support disk-streaming mode."
+        )
+        let registry = WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog)
+
+        await #expect(throws: OnDemandModelLoadError.workerUnavailable) {
+            try await OnDemandModelLoader.ensureTextModelReady(
+                modelID: "melix-dev-text",
+                modelCatalog: catalog,
+                workerRegistry: registry,
+                metricsStore: MetricsStore()
+            )
+        }
+
+        let loadRequest = try #require(await workerClient.lastLoadModelRequest)
+        let failedModel = try #require(await catalog.model(id: "melix-dev-text"))
+        #expect(loadRequest.diskStreamingMode == .diskStreamingPreferDisk)
+        #expect(failedModel.state == .modelFailed)
+        #expect(failedModel.residency.transitionReason == "lazy_text_load_disk_streaming_unsupported")
     }
 
     @Test("failed lazy loads sanitize non-identifier worker error codes in transition reasons")

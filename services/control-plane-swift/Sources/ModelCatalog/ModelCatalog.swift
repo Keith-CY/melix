@@ -123,6 +123,11 @@ public actor ModelCatalog {
             )
         )
         model = synchronized(model)
+        if let workerResidency {
+            model.residency.effectiveDiskStreamingMode = Self.controlPlaneDiskStreamingMode(
+                for: workerResidency.effectiveDiskStreamingMode
+            )
+        }
         models[id] = model
 
         if loadedState == .modelWarm || loadedState == .modelPinned {
@@ -1097,6 +1102,9 @@ public actor ModelCatalog {
         if !source.settings.adaptiveThinking.mode.isEmpty || source.settings.adaptiveThinking.budgetTokens > 0 {
             merged.settings.adaptiveThinking = source.settings.adaptiveThinking
         }
+        if source.settings.diskStreamingMode != .unspecified {
+            merged.settings.diskStreamingMode = source.settings.diskStreamingMode
+        }
         merged.settings.ext.merge(source.settings.ext) { _, new in new }
         return merged
     }
@@ -1131,7 +1139,41 @@ public actor ModelCatalog {
         residency.pinned = model.state == .modelPinned || model.pinned
         residency.ttlSeconds = model.settings.ttlSeconds
         residency.transitionReason = transitionReason
+        residency.effectiveDiskStreamingMode = effectiveDiskStreamingMode(for: model)
         return residency
+    }
+
+    private static func effectiveDiskStreamingMode(
+        for model: Melix_Controlplane_V1_ModelSummary
+    ) -> Melix_Controlplane_V1_DiskStreamingMode {
+        switch model.state {
+        case .modelWarm, .modelPinned:
+            switch model.settings.diskStreamingMode {
+            case .diskStreamingPreferDisk:
+                return .diskStreamingPreferDisk
+            case .diskStreamingRequireDisk:
+                return .diskStreamingRequireDisk
+            default:
+                return .diskStreamingDisabled
+            }
+        default:
+            return .diskStreamingDisabled
+        }
+    }
+
+    private static func controlPlaneDiskStreamingMode(
+        for mode: Melix_Worker_V1_DiskStreamingMode
+    ) -> Melix_Controlplane_V1_DiskStreamingMode {
+        switch mode {
+        case .diskStreamingDisabled:
+            return .diskStreamingDisabled
+        case .diskStreamingPreferDisk:
+            return .diskStreamingPreferDisk
+        case .diskStreamingRequireDisk:
+            return .diskStreamingRequireDisk
+        default:
+            return .diskStreamingDisabled
+        }
     }
 
     private static func effectivePolicy(

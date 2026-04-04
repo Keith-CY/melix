@@ -52,6 +52,26 @@ class MemoryBudgetExceeded(Exception):
         }
 
 
+@dataclass
+class DiskStreamingUnsupported(Exception):
+    model_id: str
+    requested_mode: int
+
+    def __str__(self) -> str:
+        return "The selected runtime does not support disk-streaming mode."
+
+    @property
+    def details(self) -> dict[str, str]:
+        return {
+            "model_id": self.model_id,
+            "requested_mode": {
+                common_pb2.DISK_STREAMING_DISABLED: "DISK_STREAMING_DISABLED",
+                common_pb2.DISK_STREAMING_PREFER_DISK: "DISK_STREAMING_PREFER_DISK",
+                common_pb2.DISK_STREAMING_REQUIRE_DISK: "DISK_STREAMING_REQUIRE_DISK",
+            }.get(self.requested_mode, "DISK_STREAMING_MODE_UNSPECIFIED"),
+        }
+
+
 class WorkerRegistry:
     def __init__(
         self,
@@ -127,6 +147,7 @@ class WorkerRegistry:
             execution=common_pb2.ExecutionCapabilities(
                 supports_continuous_batching=False,
                 supports_speculative_decoding=False,
+                supports_disk_streaming=False,
             ),
             parsing=common_pb2.ParserCapabilities(
                 supports_tool_call_auto_parsing=False,
@@ -146,8 +167,21 @@ class WorkerRegistry:
         model_spec: common_pb2.ModelSpec,
         pin_on_load: bool = False,
         memory_budget_bytes: int = 0,
+        disk_streaming_mode: int = common_pb2.DISK_STREAMING_MODE_UNSPECIFIED,
     ) -> LoadedModel:
         resolved = self.model_catalog.get(model_spec.model_id) or model_spec
+        requested_disk_streaming_mode = self._effective_disk_streaming_mode_request(
+            resolved,
+            request_mode=disk_streaming_mode,
+        )
+        if requested_disk_streaming_mode in {
+            common_pb2.DISK_STREAMING_PREFER_DISK,
+            common_pb2.DISK_STREAMING_REQUIRE_DISK,
+        }:
+            raise DiskStreamingUnsupported(
+                model_id=resolved.model_id,
+                requested_mode=requested_disk_streaming_mode,
+            )
         runtime_kind, runtime = self._runtime_for_model(resolved)
         estimated = runtime.estimate_resident_bytes(resolved)
         with self._lock:
@@ -174,7 +208,11 @@ class WorkerRegistry:
             )
 
         runtime_model = runtime.load_model(resolved)
-        residency = self._loaded_residency(resolved, pin_on_load=pin_on_load)
+        residency = self._loaded_residency(
+            resolved,
+            pin_on_load=pin_on_load,
+            effective_disk_streaming_mode=requested_disk_streaming_mode,
+        )
 
         with self._lock:
             handle = f"{resolved.model_id}::{self._next_model_handle}"
@@ -473,6 +511,7 @@ class WorkerRegistry:
         model_spec: common_pb2.ModelSpec,
         *,
         pin_on_load: bool,
+        effective_disk_streaming_mode: int,
     ) -> common_pb2.ResidencyInfo:
         policy = self._effective_residency_policy(model_spec, pin_on_load=pin_on_load)
         residency = common_pb2.ResidencyInfo()
@@ -486,6 +525,7 @@ class WorkerRegistry:
         residency.pinned = residency.state == common_pb2.RESIDENCY_STATE_PINNED
         residency.ttl_seconds = model_spec.settings.ttl_seconds
         residency.transition_reason = "load_model"
+        residency.effective_disk_streaming_mode = effective_disk_streaming_mode
         return residency
 
     def _effective_residency_policy(
@@ -502,3 +542,15 @@ class WorkerRegistry:
         if settings.ttl_seconds > 0:
             return common_pb2.MEMORY_RESIDENCY_TTL
         return common_pb2.MEMORY_RESIDENCY_EVICTABLE
+
+    def _effective_disk_streaming_mode_request(
+        self,
+        model_spec: common_pb2.ModelSpec,
+        *,
+        request_mode: int,
+    ) -> int:
+        if request_mode != common_pb2.DISK_STREAMING_MODE_UNSPECIFIED:
+            return request_mode
+        if model_spec.settings.disk_streaming_mode != common_pb2.DISK_STREAMING_MODE_UNSPECIFIED:
+            return model_spec.settings.disk_streaming_mode
+        return common_pb2.DISK_STREAMING_DISABLED

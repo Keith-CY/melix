@@ -207,6 +207,48 @@ public enum Melix_Worker_V1_MemoryResidencyPolicy: SwiftProtobuf.Enum, Swift.Cas
 
 }
 
+public enum Melix_Worker_V1_DiskStreamingMode: SwiftProtobuf.Enum, Swift.CaseIterable {
+  public typealias RawValue = Int
+  case unspecified // = 0
+  case diskStreamingDisabled // = 1
+  case diskStreamingPreferDisk // = 2
+  case diskStreamingRequireDisk // = 3
+  case UNRECOGNIZED(Int)
+
+  public init() {
+    self = .unspecified
+  }
+
+  public init?(rawValue: Int) {
+    switch rawValue {
+    case 0: self = .unspecified
+    case 1: self = .diskStreamingDisabled
+    case 2: self = .diskStreamingPreferDisk
+    case 3: self = .diskStreamingRequireDisk
+    default: self = .UNRECOGNIZED(rawValue)
+    }
+  }
+
+  public var rawValue: Int {
+    switch self {
+    case .unspecified: return 0
+    case .diskStreamingDisabled: return 1
+    case .diskStreamingPreferDisk: return 2
+    case .diskStreamingRequireDisk: return 3
+    case .UNRECOGNIZED(let i): return i
+    }
+  }
+
+  // The compiler won't synthesize support with the UNRECOGNIZED case.
+  public static let allCases: [Melix_Worker_V1_DiskStreamingMode] = [
+    .unspecified,
+    .diskStreamingDisabled,
+    .diskStreamingPreferDisk,
+    .diskStreamingRequireDisk,
+  ]
+
+}
+
 public enum Melix_Worker_V1_ResidencyState: SwiftProtobuf.Enum, Swift.CaseIterable {
   public typealias RawValue = Int
   case unspecified // = 0
@@ -762,6 +804,8 @@ public struct Melix_Worker_V1_ResidencyInfo: Sendable {
 
   public var transitionReason: String = String()
 
+  public var effectiveDiskStreamingMode: Melix_Worker_V1_DiskStreamingMode = .unspecified
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -852,6 +896,8 @@ public struct Melix_Worker_V1_ExecutionCapabilities: Sendable {
   public var supportsContinuousBatching: Bool = false
 
   public var supportsSpeculativeDecoding: Bool = false
+
+  public var supportsDiskStreaming: Bool = false
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -1408,6 +1454,8 @@ public struct Melix_Worker_V1_ModelSettings: Sendable {
 
   public var ext: Dictionary<String,String> = [:]
 
+  public var diskStreamingMode: Melix_Worker_V1_DiskStreamingMode = .unspecified
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -1596,6 +1644,10 @@ extension Melix_Worker_V1_WorkerRouteClass: SwiftProtobuf._ProtoNameProviding {
 
 extension Melix_Worker_V1_MemoryResidencyPolicy: SwiftProtobuf._ProtoNameProviding {
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0MEMORY_RESIDENCY_POLICY_UNSPECIFIED\0\u{1}MEMORY_RESIDENCY_EVICTABLE\0\u{1}MEMORY_RESIDENCY_PINNED\0\u{1}MEMORY_RESIDENCY_TTL\0")
+}
+
+extension Melix_Worker_V1_DiskStreamingMode: SwiftProtobuf._ProtoNameProviding {
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0DISK_STREAMING_MODE_UNSPECIFIED\0\u{1}DISK_STREAMING_DISABLED\0\u{1}DISK_STREAMING_PREFER_DISK\0\u{1}DISK_STREAMING_REQUIRE_DISK\0")
 }
 
 extension Melix_Worker_V1_ResidencyState: SwiftProtobuf._ProtoNameProviding {
@@ -1842,7 +1894,7 @@ extension Melix_Worker_V1_ModelSpec: SwiftProtobuf.Message, SwiftProtobuf._Messa
 
 extension Melix_Worker_V1_ResidencyInfo: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ResidencyInfo"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}state\0\u{1}policy\0\u{3}pin_requested\0\u{1}pinned\0\u{3}ttl_seconds\0\u{3}transition_reason\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}state\0\u{1}policy\0\u{3}pin_requested\0\u{1}pinned\0\u{3}ttl_seconds\0\u{3}transition_reason\0\u{3}effective_disk_streaming_mode\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -1856,6 +1908,7 @@ extension Melix_Worker_V1_ResidencyInfo: SwiftProtobuf.Message, SwiftProtobuf._M
       case 4: try { try decoder.decodeSingularBoolField(value: &self.pinned) }()
       case 5: try { try decoder.decodeSingularUInt32Field(value: &self.ttlSeconds) }()
       case 6: try { try decoder.decodeSingularStringField(value: &self.transitionReason) }()
+      case 7: try { try decoder.decodeSingularEnumField(value: &self.effectiveDiskStreamingMode) }()
       default: break
       }
     }
@@ -1880,6 +1933,9 @@ extension Melix_Worker_V1_ResidencyInfo: SwiftProtobuf.Message, SwiftProtobuf._M
     if !self.transitionReason.isEmpty {
       try visitor.visitSingularStringField(value: self.transitionReason, fieldNumber: 6)
     }
+    if self.effectiveDiskStreamingMode != .unspecified {
+      try visitor.visitSingularEnumField(value: self.effectiveDiskStreamingMode, fieldNumber: 7)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -1890,6 +1946,7 @@ extension Melix_Worker_V1_ResidencyInfo: SwiftProtobuf.Message, SwiftProtobuf._M
     if lhs.pinned != rhs.pinned {return false}
     if lhs.ttlSeconds != rhs.ttlSeconds {return false}
     if lhs.transitionReason != rhs.transitionReason {return false}
+    if lhs.effectiveDiskStreamingMode != rhs.effectiveDiskStreamingMode {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -2055,7 +2112,7 @@ extension Melix_Worker_V1_CacheCapabilities: SwiftProtobuf.Message, SwiftProtobu
 
 extension Melix_Worker_V1_ExecutionCapabilities: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ExecutionCapabilities"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}supports_continuous_batching\0\u{3}supports_speculative_decoding\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}supports_continuous_batching\0\u{3}supports_speculative_decoding\0\u{3}supports_disk_streaming\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -2065,6 +2122,7 @@ extension Melix_Worker_V1_ExecutionCapabilities: SwiftProtobuf.Message, SwiftPro
       switch fieldNumber {
       case 1: try { try decoder.decodeSingularBoolField(value: &self.supportsContinuousBatching) }()
       case 2: try { try decoder.decodeSingularBoolField(value: &self.supportsSpeculativeDecoding) }()
+      case 3: try { try decoder.decodeSingularBoolField(value: &self.supportsDiskStreaming) }()
       default: break
       }
     }
@@ -2077,12 +2135,16 @@ extension Melix_Worker_V1_ExecutionCapabilities: SwiftProtobuf.Message, SwiftPro
     if self.supportsSpeculativeDecoding != false {
       try visitor.visitSingularBoolField(value: self.supportsSpeculativeDecoding, fieldNumber: 2)
     }
+    if self.supportsDiskStreaming != false {
+      try visitor.visitSingularBoolField(value: self.supportsDiskStreaming, fieldNumber: 3)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: Melix_Worker_V1_ExecutionCapabilities, rhs: Melix_Worker_V1_ExecutionCapabilities) -> Bool {
     if lhs.supportsContinuousBatching != rhs.supportsContinuousBatching {return false}
     if lhs.supportsSpeculativeDecoding != rhs.supportsSpeculativeDecoding {return false}
+    if lhs.supportsDiskStreaming != rhs.supportsDiskStreaming {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -3261,7 +3323,7 @@ extension Melix_Worker_V1_AccelerationPolicy: SwiftProtobuf.Message, SwiftProtob
 
 extension Melix_Worker_V1_ModelSettings: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ModelSettings"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}alias\0\u{3}type_override\0\u{3}ttl_seconds\0\u{3}pin_on_load\0\u{3}memory_policy\0\u{3}default_acceleration\0\u{1}ext\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}alias\0\u{3}type_override\0\u{3}ttl_seconds\0\u{3}pin_on_load\0\u{3}memory_policy\0\u{3}default_acceleration\0\u{1}ext\0\u{3}disk_streaming_mode\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -3276,6 +3338,7 @@ extension Melix_Worker_V1_ModelSettings: SwiftProtobuf.Message, SwiftProtobuf._M
       case 5: try { try decoder.decodeSingularEnumField(value: &self.memoryPolicy) }()
       case 6: try { try decoder.decodeSingularMessageField(value: &self._defaultAcceleration) }()
       case 7: try { try decoder.decodeMapField(fieldType: SwiftProtobuf._ProtobufMap<SwiftProtobuf.ProtobufString,SwiftProtobuf.ProtobufString>.self, value: &self.ext) }()
+      case 8: try { try decoder.decodeSingularEnumField(value: &self.diskStreamingMode) }()
       default: break
       }
     }
@@ -3307,6 +3370,9 @@ extension Melix_Worker_V1_ModelSettings: SwiftProtobuf.Message, SwiftProtobuf._M
     if !self.ext.isEmpty {
       try visitor.visitMapField(fieldType: SwiftProtobuf._ProtobufMap<SwiftProtobuf.ProtobufString,SwiftProtobuf.ProtobufString>.self, value: self.ext, fieldNumber: 7)
     }
+    if self.diskStreamingMode != .unspecified {
+      try visitor.visitSingularEnumField(value: self.diskStreamingMode, fieldNumber: 8)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -3318,6 +3384,7 @@ extension Melix_Worker_V1_ModelSettings: SwiftProtobuf.Message, SwiftProtobuf._M
     if lhs.memoryPolicy != rhs.memoryPolicy {return false}
     if lhs._defaultAcceleration != rhs._defaultAcceleration {return false}
     if lhs.ext != rhs.ext {return false}
+    if lhs.diskStreamingMode != rhs.diskStreamingMode {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

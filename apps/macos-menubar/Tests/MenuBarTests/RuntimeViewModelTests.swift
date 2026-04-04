@@ -3815,10 +3815,12 @@ struct RuntimeViewModelTests {
             alias: "Melix Warm Cache",
             pinOnLoad: false,
             memoryPolicy: "ttl",
+            diskStreamingMode: "prefer_disk",
             accelerationMode: "accelerated_prefill",
             accelerationProfileID: "prefill-hot"
         )
         #expect(viewModel.primaryModel?.memoryPolicyText == "TTL")
+        #expect(viewModel.primaryModel?.diskStreamingModeText == "Prefer Disk")
         #expect(viewModel.primaryModel?.accelerationModeText == "Accelerated Prefill")
 
         await viewModel.updateModelSettings(
@@ -3826,12 +3828,52 @@ struct RuntimeViewModelTests {
             alias: "Melix Quantized",
             pinOnLoad: false,
             memoryPolicy: "evictable",
+            diskStreamingMode: "disabled",
             accelerationMode: "active_kv_quantized",
             accelerationProfileID: "kv-q8"
         )
         #expect(viewModel.primaryModel?.memoryPolicyText == "Evictable")
+        #expect(viewModel.primaryModel?.diskStreamingModeText == "Disabled")
         #expect(viewModel.primaryModel?.accelerationModeText == "Active KV Quantized")
         #expect(viewModel.primaryModel?.accelerationProfileID == "kv-q8")
+    }
+
+    @Test("model settings drafts map require and unknown disk streaming modes")
+    @MainActor
+    func modelSettingsDraftsMapRequireAndUnknownDiskStreamingModes() async throws {
+        let requireClient = FakeControlPlaneXPCClient()
+        var requireSnapshot = Melix_Controlplane_V1_ServerSnapshot()
+        requireSnapshot.serverState = .serverReady
+        var requireModel = makeModelSummary(
+            modelID: "melix-dev-text",
+            state: Melix_Controlplane_V1_ModelState.modelWarm
+        )
+        requireModel.settings.diskStreamingMode = Melix_Controlplane_V1_DiskStreamingMode.diskStreamingRequireDisk
+        requireSnapshot.models = [requireModel]
+        await requireClient.configureSnapshot(requireSnapshot)
+
+        let requireViewModel = RuntimeViewModel(client: requireClient)
+        await requireViewModel.start()
+
+        #expect(requireViewModel.primaryModel?.diskStreamingModeText == "Require Disk")
+        #expect(requireViewModel.modelSettingsDiskStreamingModeDraft == "require_disk")
+
+        let unknownClient = FakeControlPlaneXPCClient()
+        var unknownSnapshot = Melix_Controlplane_V1_ServerSnapshot()
+        unknownSnapshot.serverState = .serverReady
+        var unknownModel = makeModelSummary(
+            modelID: "melix-dev-text",
+            state: Melix_Controlplane_V1_ModelState.modelWarm
+        )
+        unknownModel.settings.diskStreamingMode = Melix_Controlplane_V1_DiskStreamingMode.UNRECOGNIZED(-1)
+        unknownSnapshot.models = [unknownModel]
+        await unknownClient.configureSnapshot(unknownSnapshot)
+
+        let unknownViewModel = RuntimeViewModel(client: unknownClient)
+        await unknownViewModel.start()
+
+        #expect(unknownViewModel.primaryModel?.diskStreamingModeText == "Disabled")
+        #expect(unknownViewModel.modelSettingsDiskStreamingModeDraft == "disabled")
     }
 
     @Test("chat prompt streams assistant reasoning and tool deltas into the transcript")
@@ -4730,6 +4772,7 @@ private func makeRuntimeModelRow(state: Melix_Controlplane_V1_ModelState) -> Run
         alias: "Melix Dev Text",
         typeOverrideText: "",
         memoryPolicyText: "Evictable",
+        diskStreamingModeText: "Disabled",
         adaptiveThinkingText: "Adaptive • 192 tok",
         accelerationModeText: "Baseline",
         accelerationProfileID: "",

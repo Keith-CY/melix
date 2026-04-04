@@ -81,6 +81,8 @@ public struct Melix_Worker_V1_LoadModelRequest: Sendable {
 
   public var warmupAfterLoad: Bool = false
 
+  public var diskStreamingMode: Melix_Worker_V1_DiskStreamingMode = .unspecified
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -616,7 +618,7 @@ extension Melix_Worker_V1_HandshakeResponse: SwiftProtobuf.Message, SwiftProtobu
 
 extension Melix_Worker_V1_LoadModelRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".LoadModelRequest"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}model\0\u{3}memory_budget_bytes\0\u{3}pin_on_load\0\u{3}warmup_after_load\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}model\0\u{3}memory_budget_bytes\0\u{3}pin_on_load\0\u{3}warmup_after_load\0\u{3}disk_streaming_mode\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -628,6 +630,7 @@ extension Melix_Worker_V1_LoadModelRequest: SwiftProtobuf.Message, SwiftProtobuf
       case 2: try { try decoder.decodeSingularUInt64Field(value: &self.memoryBudgetBytes) }()
       case 3: try { try decoder.decodeSingularBoolField(value: &self.pinOnLoad) }()
       case 4: try { try decoder.decodeSingularBoolField(value: &self.warmupAfterLoad) }()
+      case 5: try { try decoder.decodeSingularEnumField(value: &self.diskStreamingMode) }()
       default: break
       }
     }
@@ -650,6 +653,9 @@ extension Melix_Worker_V1_LoadModelRequest: SwiftProtobuf.Message, SwiftProtobuf
     if self.warmupAfterLoad != false {
       try visitor.visitSingularBoolField(value: self.warmupAfterLoad, fieldNumber: 4)
     }
+    if self.diskStreamingMode != .unspecified {
+      try visitor.visitSingularEnumField(value: self.diskStreamingMode, fieldNumber: 5)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -658,6 +664,7 @@ extension Melix_Worker_V1_LoadModelRequest: SwiftProtobuf.Message, SwiftProtobuf
     if lhs.memoryBudgetBytes != rhs.memoryBudgetBytes {return false}
     if lhs.pinOnLoad != rhs.pinOnLoad {return false}
     if lhs.warmupAfterLoad != rhs.warmupAfterLoad {return false}
+    if lhs.diskStreamingMode != rhs.diskStreamingMode {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

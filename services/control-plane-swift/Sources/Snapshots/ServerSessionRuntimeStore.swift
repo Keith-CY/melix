@@ -129,6 +129,19 @@ public actor ServerSessionRuntimeStore {
         }
     }
 
+    @discardableResult
+    public func noteDiskStreamingSelection(
+        serverSessionID: String = defaultServerSessionID,
+        requestedMode: Melix_Controlplane_V1_DiskStreamingMode,
+        effectiveMode: Melix_Controlplane_V1_DiskStreamingMode
+    ) -> [Melix_Controlplane_V1_ServerSessionRuntimeState] {
+        mutate(serverSessionID: serverSessionID) { session, now in
+            session.requestedDiskStreamingMode = requestedMode
+            session.effectiveDiskStreamingMode = effectiveMode
+            session.updatedAtUnixMs = now
+        }
+    }
+
     public static func defaultRuntimeSession(
         serverSessionID: String = defaultServerSessionID,
         updatedAtUnixMS: Int64
@@ -142,6 +155,8 @@ public actor ServerSessionRuntimeStore {
         session.autoSleepEnabled = false
         session.lightSleepAfterSeconds = 300
         session.deepSleepAfterSeconds = 1800
+        session.requestedDiskStreamingMode = .diskStreamingDisabled
+        session.effectiveDiskStreamingMode = .diskStreamingDisabled
         session.updatedAtUnixMs = updatedAtUnixMS
         return session
     }

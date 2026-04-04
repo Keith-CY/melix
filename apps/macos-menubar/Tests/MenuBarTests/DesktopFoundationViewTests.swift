@@ -56,6 +56,24 @@ struct DesktopFoundationViewTests {
         #expect(view.subviews.isEmpty == false)
     }
 
+    @Test("models tab exposes explicit disk streaming picker options")
+    @MainActor
+    func modelsTabExposesExplicitDiskStreamingPickerOptions() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+
+        let tab = DesktopModelsTabView(
+            foundation: viewModel.desktopFoundationState,
+            viewModel: viewModel
+        )
+        let mirror = Mirror(reflecting: tab)
+        let options = try #require(mirror.descendant("diskStreamingModeOptions") as? [(String, String)])
+
+        #expect(options.map(\.0) == ["Disabled", "Prefer Disk", "Require Disk"])
+        #expect(options.map(\.1) == ["disabled", "prefer_disk", "require_disk"])
+    }
+
     @Test("models tab renders residency memory alerts when a model is guard-blocked")
     @MainActor
     func modelsTabRendersResidencyMemoryAlerts() async throws {
@@ -647,6 +665,7 @@ struct DesktopFoundationViewTests {
             ttlSeconds: 600,
             pinOnLoad: true,
             memoryPolicyText: "TTL",
+            diskStreamingModeText: "Prefer Disk",
             adaptiveThinkingText: "Adaptive • 192 tok",
             accelerationModeText: "Active KV Quantized",
             accelerationProfileID: "kv-q8",

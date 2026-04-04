@@ -39,6 +39,7 @@ def test_handshake_reports_protocol_and_capabilities() -> None:
     assert response.protocol_version == "melix.worker.v1"
     assert response.runtime_version == "fake-mlx"
     assert response.capabilities.cache.supports_prefix_cache is True
+    assert response.capabilities.execution.supports_disk_streaming is False
 
 
 def test_load_model_returns_handle_and_lists_model() -> None:
@@ -80,6 +81,7 @@ def test_load_model_returns_residency_contract_and_loaded_model_summaries() -> N
     assert response.residency.pin_requested is True
     assert response.residency.pinned is True
     assert response.residency.policy == common_pb2.MEMORY_RESIDENCY_PINNED
+    assert response.residency.effective_disk_streaming_mode == common_pb2.DISK_STREAMING_DISABLED
 
     listed = service.ListLoadedModels(
         runtime_pb2.ListLoadedModelsRequest(),
@@ -92,6 +94,23 @@ def test_load_model_returns_residency_contract_and_loaded_model_summaries() -> N
     assert listed.loaded_models[0].model.model_id == "melix-dev-text"
     assert listed.loaded_models[0].residency.state == common_pb2.RESIDENCY_STATE_PINNED
     assert listed.loaded_models[0].residency.pinned is True
+
+
+def test_load_model_rejects_unsupported_disk_streaming_mode() -> None:
+    service = build_runtime_service()
+
+    response = service.LoadModel(
+        runtime_pb2.LoadModelRequest(
+            model=WorkerModelCatalog.dev_text_model(),
+            disk_streaming_mode=common_pb2.DISK_STREAMING_REQUIRE_DISK,
+        ),
+        context=None,
+    )
+
+    assert response.ok is False
+    assert response.error.code == "disk_streaming_unsupported"
+    assert response.error.details["model_id"] == "melix-dev-text"
+    assert response.error.details["requested_mode"] == "DISK_STREAMING_REQUIRE_DISK"
 
 
 def test_load_model_supports_embedding_models() -> None:

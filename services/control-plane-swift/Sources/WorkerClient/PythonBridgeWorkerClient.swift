@@ -519,6 +519,7 @@ public enum BootstrapWorkerPreparation {
         if summary.settings.adaptiveThinking.budgetTokens > 0 {
             spec.ext["melix.adaptive_thinking.budget_tokens"] = String(summary.settings.adaptiveThinking.budgetTokens)
         }
+        applySettingsOverride(from: summary, to: &spec)
         return spec
     }
 
@@ -637,6 +638,49 @@ public enum BootstrapWorkerPreparation {
         }
     }
 
+    private static func applySettingsOverride(
+        from summary: Melix_Controlplane_V1_ModelSummary,
+        to spec: inout Melix_Worker_V1_ModelSpec
+    ) {
+        spec.settings.alias = summary.settings.alias
+        spec.settings.typeOverride = summary.settings.typeOverride
+        spec.settings.ttlSeconds = summary.settings.ttlSeconds
+        spec.settings.pinOnLoad = summary.settings.pinOnLoad
+        spec.settings.memoryPolicy = workerMemoryPolicy(for: summary.settings.memoryPolicy)
+        spec.settings.diskStreamingMode = workerDiskStreamingMode(for: summary.settings.diskStreamingMode)
+        spec.settings.ext.merge(summary.settings.ext) { _, new in new }
+    }
+
+    private static func workerMemoryPolicy(
+        for policy: Melix_Controlplane_V1_MemoryResidencyPolicy
+    ) -> Melix_Worker_V1_MemoryResidencyPolicy {
+        switch policy {
+        case .memoryResidencyPinned:
+            return .memoryResidencyPinned
+        case .memoryResidencyTtl:
+            return .memoryResidencyTtl
+        case .memoryResidencyEvictable:
+            return .memoryResidencyEvictable
+        default:
+            return .unspecified
+        }
+    }
+
+    private static func workerDiskStreamingMode(
+        for mode: Melix_Controlplane_V1_DiskStreamingMode
+    ) -> Melix_Worker_V1_DiskStreamingMode {
+        switch mode {
+        case .diskStreamingDisabled:
+            return .diskStreamingDisabled
+        case .diskStreamingPreferDisk:
+            return .diskStreamingPreferDisk
+        case .diskStreamingRequireDisk:
+            return .diskStreamingRequireDisk
+        default:
+            return .diskStreamingDisabled
+        }
+    }
+
     public static func preloadDevTextModel(
         workerClient: any WorkerRoutingClient,
         modelCatalog: ModelCatalog,
@@ -746,6 +790,7 @@ public enum BootstrapWorkerPreparation {
         request.memoryBudgetBytes = memoryBudgetBytes
         request.pinOnLoad = true
         request.warmupAfterLoad = false
+        request.diskStreamingMode = model.settings.diskStreamingMode
 
         let response = try await workerClient.loadModel(request: request)
         guard response.ok, !response.modelHandle.isEmpty else {

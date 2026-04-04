@@ -179,7 +179,15 @@ The roadmap extension in `M10-M17` includes milestone-level plans plus decompose
 
 ## M11: Disk Streaming, Memory Budgeting, And Cache Policy
 
+- Status: in progress. `M11.1` is completed with typed disk-streaming settings, worker-facing
+  runtime flags, explicit unsupported-runtime failures, and operator-visible session or residency
+  state. `M11.2-M11.4` remain open.
+
 - `M11.1` `docs/plans/2026-03-31-m11-1-disk-streaming-mode-and-runtime-flags.md`
+  Status: completed. Disk-streaming mode is now part of the repository-owned control-plane and
+  worker protocol, unsupported runtime paths fail with typed `disk_streaming_unsupported` errors,
+  runtime-session and residency snapshots project requested versus effective disk-streaming mode,
+  and the native operator shell exposes the mode through typed settings and server-session detail.
 - `M11.2` `docs/plans/2026-03-31-m11-2-memory-budget-admission-and-safety-guards.md`
 - `M11.3` `docs/plans/2026-03-31-m11-3-streaming-cache-compatibility-and-settings-surface.md`
 - `M11.4` `docs/plans/2026-03-31-m11-4-large-model-streaming-benchmarks-and-runbooks.md`

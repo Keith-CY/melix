@@ -377,6 +377,48 @@ public enum Melix_Controlplane_V1_MemoryResidencyPolicy: SwiftProtobuf.Enum, Swi
 
 }
 
+public enum Melix_Controlplane_V1_DiskStreamingMode: SwiftProtobuf.Enum, Swift.CaseIterable {
+  public typealias RawValue = Int
+  case unspecified // = 0
+  case diskStreamingDisabled // = 1
+  case diskStreamingPreferDisk // = 2
+  case diskStreamingRequireDisk // = 3
+  case UNRECOGNIZED(Int)
+
+  public init() {
+    self = .unspecified
+  }
+
+  public init?(rawValue: Int) {
+    switch rawValue {
+    case 0: self = .unspecified
+    case 1: self = .diskStreamingDisabled
+    case 2: self = .diskStreamingPreferDisk
+    case 3: self = .diskStreamingRequireDisk
+    default: self = .UNRECOGNIZED(rawValue)
+    }
+  }
+
+  public var rawValue: Int {
+    switch self {
+    case .unspecified: return 0
+    case .diskStreamingDisabled: return 1
+    case .diskStreamingPreferDisk: return 2
+    case .diskStreamingRequireDisk: return 3
+    case .UNRECOGNIZED(let i): return i
+    }
+  }
+
+  // The compiler won't synthesize support with the UNRECOGNIZED case.
+  public static let allCases: [Melix_Controlplane_V1_DiskStreamingMode] = [
+    .unspecified,
+    .diskStreamingDisabled,
+    .diskStreamingPreferDisk,
+    .diskStreamingRequireDisk,
+  ]
+
+}
+
 public enum Melix_Controlplane_V1_ResidencyState: SwiftProtobuf.Enum, Swift.CaseIterable {
   public typealias RawValue = Int
   case unspecified // = 0
@@ -3510,6 +3552,8 @@ public struct Melix_Controlplane_V1_ModelSettings: Sendable {
   /// Clears the value of `adaptiveThinking`. Subsequent reads from it will return its default value.
   public mutating func clearAdaptiveThinking() {self._adaptiveThinking = nil}
 
+  public var diskStreamingMode: Melix_Controlplane_V1_DiskStreamingMode = .unspecified
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -3547,6 +3591,8 @@ public struct Melix_Controlplane_V1_ResidencySummary: Sendable {
   public var ttlSeconds: UInt32 = 0
 
   public var transitionReason: String = String()
+
+  public var effectiveDiskStreamingMode: Melix_Controlplane_V1_DiskStreamingMode = .unspecified
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -4660,6 +4706,10 @@ public struct Melix_Controlplane_V1_ServerSessionRuntimeState: Sendable {
 
   public var updatedAtUnixMs: Int64 = 0
 
+  public var requestedDiskStreamingMode: Melix_Controlplane_V1_DiskStreamingMode = .unspecified
+
+  public var effectiveDiskStreamingMode: Melix_Controlplane_V1_DiskStreamingMode = .unspecified
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -5146,6 +5196,10 @@ extension Melix_Controlplane_V1_WorkerRouteClass: SwiftProtobuf._ProtoNameProvid
 
 extension Melix_Controlplane_V1_MemoryResidencyPolicy: SwiftProtobuf._ProtoNameProviding {
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0MEMORY_RESIDENCY_POLICY_UNSPECIFIED\0\u{1}MEMORY_RESIDENCY_EVICTABLE\0\u{1}MEMORY_RESIDENCY_PINNED\0\u{1}MEMORY_RESIDENCY_TTL\0")
+}
+
+extension Melix_Controlplane_V1_DiskStreamingMode: SwiftProtobuf._ProtoNameProviding {
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0DISK_STREAMING_MODE_UNSPECIFIED\0\u{1}DISK_STREAMING_DISABLED\0\u{1}DISK_STREAMING_PREFER_DISK\0\u{1}DISK_STREAMING_REQUIRE_DISK\0")
 }
 
 extension Melix_Controlplane_V1_ResidencyState: SwiftProtobuf._ProtoNameProviding {
@@ -10256,7 +10310,7 @@ extension Melix_Controlplane_V1_ImportPreset: SwiftProtobuf.Message, SwiftProtob
 
 extension Melix_Controlplane_V1_ModelSettings: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ModelSettings"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}alias\0\u{3}type_override\0\u{3}ttl_seconds\0\u{3}pin_on_load\0\u{3}memory_policy\0\u{3}default_acceleration_mode\0\u{3}acceleration_profile_id\0\u{1}ext\0\u{3}adaptive_thinking\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}alias\0\u{3}type_override\0\u{3}ttl_seconds\0\u{3}pin_on_load\0\u{3}memory_policy\0\u{3}default_acceleration_mode\0\u{3}acceleration_profile_id\0\u{1}ext\0\u{3}adaptive_thinking\0\u{3}disk_streaming_mode\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -10273,6 +10327,7 @@ extension Melix_Controlplane_V1_ModelSettings: SwiftProtobuf.Message, SwiftProto
       case 7: try { try decoder.decodeSingularStringField(value: &self.accelerationProfileID) }()
       case 8: try { try decoder.decodeMapField(fieldType: SwiftProtobuf._ProtobufMap<SwiftProtobuf.ProtobufString,SwiftProtobuf.ProtobufString>.self, value: &self.ext) }()
       case 9: try { try decoder.decodeSingularMessageField(value: &self._adaptiveThinking) }()
+      case 10: try { try decoder.decodeSingularEnumField(value: &self.diskStreamingMode) }()
       default: break
       }
     }
@@ -10310,6 +10365,9 @@ extension Melix_Controlplane_V1_ModelSettings: SwiftProtobuf.Message, SwiftProto
     try { if let v = self._adaptiveThinking {
       try visitor.visitSingularMessageField(value: v, fieldNumber: 9)
     } }()
+    if self.diskStreamingMode != .unspecified {
+      try visitor.visitSingularEnumField(value: self.diskStreamingMode, fieldNumber: 10)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -10323,6 +10381,7 @@ extension Melix_Controlplane_V1_ModelSettings: SwiftProtobuf.Message, SwiftProto
     if lhs.accelerationProfileID != rhs.accelerationProfileID {return false}
     if lhs.ext != rhs.ext {return false}
     if lhs._adaptiveThinking != rhs._adaptiveThinking {return false}
+    if lhs.diskStreamingMode != rhs.diskStreamingMode {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -10365,7 +10424,7 @@ extension Melix_Controlplane_V1_AdaptiveThinkingPolicy: SwiftProtobuf.Message, S
 
 extension Melix_Controlplane_V1_ResidencySummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ResidencySummary"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}state\0\u{1}policy\0\u{3}pin_requested\0\u{1}pinned\0\u{3}ttl_seconds\0\u{3}transition_reason\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}state\0\u{1}policy\0\u{3}pin_requested\0\u{1}pinned\0\u{3}ttl_seconds\0\u{3}transition_reason\0\u{3}effective_disk_streaming_mode\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -10379,6 +10438,7 @@ extension Melix_Controlplane_V1_ResidencySummary: SwiftProtobuf.Message, SwiftPr
       case 4: try { try decoder.decodeSingularBoolField(value: &self.pinned) }()
       case 5: try { try decoder.decodeSingularUInt32Field(value: &self.ttlSeconds) }()
       case 6: try { try decoder.decodeSingularStringField(value: &self.transitionReason) }()
+      case 7: try { try decoder.decodeSingularEnumField(value: &self.effectiveDiskStreamingMode) }()
       default: break
       }
     }
@@ -10403,6 +10463,9 @@ extension Melix_Controlplane_V1_ResidencySummary: SwiftProtobuf.Message, SwiftPr
     if !self.transitionReason.isEmpty {
       try visitor.visitSingularStringField(value: self.transitionReason, fieldNumber: 6)
     }
+    if self.effectiveDiskStreamingMode != .unspecified {
+      try visitor.visitSingularEnumField(value: self.effectiveDiskStreamingMode, fieldNumber: 7)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -10413,6 +10476,7 @@ extension Melix_Controlplane_V1_ResidencySummary: SwiftProtobuf.Message, SwiftPr
     if lhs.pinned != rhs.pinned {return false}
     if lhs.ttlSeconds != rhs.ttlSeconds {return false}
     if lhs.transitionReason != rhs.transitionReason {return false}
+    if lhs.effectiveDiskStreamingMode != rhs.effectiveDiskStreamingMode {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -12710,7 +12774,7 @@ extension Melix_Controlplane_V1_SessionSummary: SwiftProtobuf.Message, SwiftProt
 
 extension Melix_Controlplane_V1_ServerSessionRuntimeState: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ServerSessionRuntimeState"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}server_session_id\0\u{3}lifecycle_state\0\u{3}power_state\0\u{3}wake_reason\0\u{3}idle_timer_seconds\0\u{3}auto_sleep_enabled\0\u{3}light_sleep_after_seconds\0\u{3}deep_sleep_after_seconds\0\u{3}updated_at_unix_ms\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}server_session_id\0\u{3}lifecycle_state\0\u{3}power_state\0\u{3}wake_reason\0\u{3}idle_timer_seconds\0\u{3}auto_sleep_enabled\0\u{3}light_sleep_after_seconds\0\u{3}deep_sleep_after_seconds\0\u{3}updated_at_unix_ms\0\u{3}requested_disk_streaming_mode\0\u{3}effective_disk_streaming_mode\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -12727,6 +12791,8 @@ extension Melix_Controlplane_V1_ServerSessionRuntimeState: SwiftProtobuf.Message
       case 7: try { try decoder.decodeSingularUInt32Field(value: &self.lightSleepAfterSeconds) }()
       case 8: try { try decoder.decodeSingularUInt32Field(value: &self.deepSleepAfterSeconds) }()
       case 9: try { try decoder.decodeSingularInt64Field(value: &self.updatedAtUnixMs) }()
+      case 10: try { try decoder.decodeSingularEnumField(value: &self.requestedDiskStreamingMode) }()
+      case 11: try { try decoder.decodeSingularEnumField(value: &self.effectiveDiskStreamingMode) }()
       default: break
       }
     }
@@ -12760,6 +12826,12 @@ extension Melix_Controlplane_V1_ServerSessionRuntimeState: SwiftProtobuf.Message
     if self.updatedAtUnixMs != 0 {
       try visitor.visitSingularInt64Field(value: self.updatedAtUnixMs, fieldNumber: 9)
     }
+    if self.requestedDiskStreamingMode != .unspecified {
+      try visitor.visitSingularEnumField(value: self.requestedDiskStreamingMode, fieldNumber: 10)
+    }
+    if self.effectiveDiskStreamingMode != .unspecified {
+      try visitor.visitSingularEnumField(value: self.effectiveDiskStreamingMode, fieldNumber: 11)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -12773,6 +12845,8 @@ extension Melix_Controlplane_V1_ServerSessionRuntimeState: SwiftProtobuf.Message
     if lhs.lightSleepAfterSeconds != rhs.lightSleepAfterSeconds {return false}
     if lhs.deepSleepAfterSeconds != rhs.deepSleepAfterSeconds {return false}
     if lhs.updatedAtUnixMs != rhs.updatedAtUnixMs {return false}
+    if lhs.requestedDiskStreamingMode != rhs.requestedDiskStreamingMode {return false}
+    if lhs.effectiveDiskStreamingMode != rhs.effectiveDiskStreamingMode {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

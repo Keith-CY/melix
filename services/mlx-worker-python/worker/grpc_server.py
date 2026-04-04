@@ -33,7 +33,7 @@ from worker.engine.rerank_core import RerankCore
 from worker.engine.speech_core import SpeechCore
 from worker.engine.transcription_core import TranscriptionCore
 from worker.model_ops.hub_catalog import HubCatalog
-from worker.registry import MemoryBudgetExceeded, WorkerRegistry
+from worker.registry import DiskStreamingUnsupported, MemoryBudgetExceeded, WorkerRegistry
 from worker.runtime.audio_runtime_protocols import AudioBackendUnavailableError
 from worker.runtime.deterministic_embedding_runtime import DeterministicEmbeddingRuntime
 from worker.runtime.deterministic_backend import DeterministicTextBackend
@@ -109,12 +109,22 @@ class WorkerRuntimeService(runtime_pb2_grpc.RuntimeServiceServicer):
                 request.model,
                 pin_on_load=request.pin_on_load,
                 memory_budget_bytes=request.memory_budget_bytes,
+                disk_streaming_mode=request.disk_streaming_mode,
             )
         except MemoryBudgetExceeded as exc:
             return runtime_pb2.LoadModelResponse(
                 ok=False,
                 error=common_pb2.ErrorStatus(
                     code="memory_budget_exceeded",
+                    message=str(exc),
+                    details=exc.details,
+                ),
+            )
+        except DiskStreamingUnsupported as exc:
+            return runtime_pb2.LoadModelResponse(
+                ok=False,
+                error=common_pb2.ErrorStatus(
+                    code="disk_streaming_unsupported",
                     message=str(exc),
                     details=exc.details,
                 ),

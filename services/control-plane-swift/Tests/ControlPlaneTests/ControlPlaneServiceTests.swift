@@ -834,6 +834,30 @@ struct ControlPlaneServiceTests {
         #expect(await catalog.dispatchHandle(for: "melix-dev-text") == "melix-dev-text::local")
     }
 
+    @Test("execute workerless model.load rejects unsupported disk streaming modes")
+    func executeWorkerlessModelLoadRejectsUnsupportedDiskStreamingModes() async throws {
+        var model = ModelCatalog.devTextModel()
+        model.settings.diskStreamingMode = .diskStreamingRequireDisk
+        let catalog = ModelCatalog(seedModels: [model])
+        let runtimeStore = ServerSessionRuntimeStore()
+        let service = ControlPlaneService(
+            modelCatalog: catalog,
+            serverSessionRuntimeStore: runtimeStore
+        )
+
+        let response = try await service.execute(makeLoadModelRequest(modelID: "melix-dev-text"))
+        let failedModel = try #require(await catalog.model(id: "melix-dev-text"))
+        let runtimeSessions = await runtimeStore.snapshot()
+
+        #expect(!response.ok)
+        #expect(response.error.code == "disk_streaming_unsupported")
+        #expect(failedModel.state == .modelFailed)
+        #expect(failedModel.residency.transitionReason == "operator_load_disk_streaming_unsupported")
+        #expect(runtimeSessions.first?.requestedDiskStreamingMode == .diskStreamingRequireDisk)
+        #expect(runtimeSessions.first?.effectiveDiskStreamingMode == .diskStreamingDisabled)
+        #expect(await catalog.dispatchHandle(for: "melix-dev-text") == nil)
+    }
+
     @Test("execute handles model.unload on the local fast path")
     func executeHandlesLocalModelUnload() async throws {
         let service = ControlPlaneService()
@@ -1090,6 +1114,44 @@ struct ControlPlaneServiceTests {
         #expect(events.map(\.modelState.state) == [.modelLoading, .modelFailed])
         #expect(model.state == .modelFailed)
         #expect(model.residency.transitionReason == "operator_load_memory_budget_exceeded")
+    }
+
+    @Test("execute surfaces explicit disk-streaming rejections from worker-backed model.load")
+    func executeSurfacesExplicitDiskStreamingRejectionsFromWorkerBackedModelLoad() async throws {
+        var model = ModelCatalog.devTextModel()
+        model.settings.diskStreamingMode = .diskStreamingPreferDisk
+        let catalog = ModelCatalog(seedModels: [model])
+        let runtimeStore = ServerSessionRuntimeStore()
+        let workerClient = ModelLifecycleWorkerClient()
+        var loadResponse = Melix_Worker_V1_LoadModelResponse()
+        loadResponse.ok = false
+        loadResponse.error.code = "disk_streaming_unsupported"
+        loadResponse.error.message = "The selected runtime does not support disk-streaming mode."
+        loadResponse.error.details = [
+            "model_id": "melix-dev-text",
+            "requested_mode": "disk_streaming_prefer_disk",
+        ]
+        await workerClient.setLoadResponse(loadResponse)
+
+        let registry = WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog)
+        let service = ControlPlaneService(
+            modelCatalog: catalog,
+            serverSessionRuntimeStore: runtimeStore,
+            workerRegistry: registry
+        )
+
+        let response = try await service.execute(makeLoadModelRequest(modelID: "melix-dev-text"))
+        let failedModel = try #require(await catalog.model(id: "melix-dev-text"))
+        let loadRequest = try #require(await workerClient.loadRequests.first)
+        let runtimeSessions = await runtimeStore.snapshot()
+
+        #expect(!response.ok)
+        #expect(response.error.code == "disk_streaming_unsupported")
+        #expect(loadRequest.diskStreamingMode == .diskStreamingPreferDisk)
+        #expect(failedModel.state == .modelFailed)
+        #expect(failedModel.residency.transitionReason == "operator_load_disk_streaming_unsupported")
+        #expect(runtimeSessions.first?.requestedDiskStreamingMode == .diskStreamingPreferDisk)
+        #expect(runtimeSessions.first?.effectiveDiskStreamingMode == .diskStreamingDisabled)
     }
 
     @Test("execute sanitizes explicit worker error codes before recording failure transitions")
@@ -1402,6 +1464,7 @@ struct ControlPlaneServiceTests {
                     "alias": "Melix Text Turbo",
                     "pin_on_load": "true",
                     "memory_policy": "pinned",
+                    "disk_streaming_mode": "prefer_disk",
                     "default_acceleration_mode": "speculative_decode",
                     "acceleration_profile_id": "draft-q4",
                 ]
@@ -1413,8 +1476,32 @@ struct ControlPlaneServiceTests {
         #expect(response.model.model.settings.alias == "Melix Text Turbo")
         #expect(response.model.model.settings.pinOnLoad)
         #expect(response.model.model.settings.memoryPolicy == .memoryResidencyPinned)
+        #expect(response.model.model.settings.diskStreamingMode == .diskStreamingPreferDisk)
         #expect(response.model.model.settings.defaultAccelerationMode == .speculativeDecode)
         #expect(response.model.model.settings.accelerationProfileID == "draft-q4")
+    }
+
+    @Test("execute normalizes require and fallback disk-streaming policy strings")
+    func executeNormalizesRequireAndFallbackDiskStreamingPolicyStrings() async throws {
+        let service = ControlPlaneService(modelCatalog: ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels()))
+
+        let requireResponse = try await service.execute(
+            makeSetModelPolicyRequest(
+                modelID: "melix-dev-text",
+                values: ["disk_streaming_mode": "require-disk"]
+            )
+        )
+        let fallbackResponse = try await service.execute(
+            makeSetModelPolicyRequest(
+                modelID: "melix-dev-text",
+                values: ["disk_streaming_mode": "not-a-real-mode"]
+            )
+        )
+
+        #expect(requireResponse.ok)
+        #expect(requireResponse.model.model.settings.diskStreamingMode == .diskStreamingRequireDisk)
+        #expect(fallbackResponse.ok)
+        #expect(fallbackResponse.model.model.settings.diskStreamingMode == .diskStreamingDisabled)
     }
 
     @Test("execute handles model.get_info through the model-operations worker")

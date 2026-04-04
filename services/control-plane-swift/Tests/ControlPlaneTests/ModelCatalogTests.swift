@@ -319,6 +319,31 @@ struct ModelCatalogTests {
         #expect(await catalog.dispatchHandle(for: initial.modelID) == "registry::existing")
     }
 
+    @Test("syncRegistryModels merges disk streaming settings into warm discovered entries")
+    func syncRegistryModelsMergesDiskStreamingSettingsIntoWarmDiscoveredEntries() async throws {
+        let catalog = ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels())
+
+        var initial = Melix_Controlplane_V1_ModelSummary()
+        initial.modelID = "mlx-community/Qwen2.5-7B-Instruct/4bit"
+        initial.kind = "text"
+        initial.state = .modelDiscovered
+        initial.capabilityClass = .modelCapabilityText
+        initial.routeClass = .workerRouteSwiftText
+
+        await catalog.syncRegistryModels([initial], reason: "worker_registry_sync")
+        _ = await catalog.loadModel(id: initial.modelID, dispatchHandle: "registry::existing")
+
+        var refreshed = initial
+        refreshed.settings.diskStreamingMode = .diskStreamingRequireDisk
+
+        await catalog.syncRegistryModels([refreshed], reason: "worker_registry_sync")
+
+        let merged = try #require(await catalog.model(id: initial.modelID))
+        #expect(merged.state == .modelWarm)
+        #expect(merged.settings.diskStreamingMode == .diskStreamingRequireDisk)
+        #expect(merged.residency.effectiveDiskStreamingMode == .diskStreamingRequireDisk)
+    }
+
     @Test("syncRegistryModels preserves structured registry identity metadata from worker snapshots")
     func syncRegistryModelsPreservesStructuredRegistryIdentityMetadataFromWorkerSnapshots() async throws {
         let catalog = ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels())
@@ -484,6 +509,30 @@ struct ModelCatalogTests {
             #expect(loaded.state == expectedState)
             #expect(await catalog.dispatchHandle(for: "melix-dev-text") == (keepsHandle ? "melix-dev-text::swift" : nil))
             #expect(await catalog.storedDispatchHandle(for: "melix-dev-text") == (keepsHandle ? "melix-dev-text::swift" : nil))
+        }
+    }
+
+    @Test("worker residency disk streaming modes map into control-plane residency summaries")
+    func workerResidencyDiskStreamingModesMapIntoControlPlaneResidencySummaries() async throws {
+        let cases: [(Melix_Worker_V1_DiskStreamingMode, Melix_Controlplane_V1_DiskStreamingMode)] = [
+            (.diskStreamingDisabled, .diskStreamingDisabled),
+            (.diskStreamingPreferDisk, .diskStreamingPreferDisk),
+            (.diskStreamingRequireDisk, .diskStreamingRequireDisk),
+        ]
+
+        for (workerMode, expectedMode) in cases {
+            let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel()])
+            var workerResidency = Melix_Worker_V1_ResidencyInfo()
+            workerResidency.state = .warm
+            workerResidency.effectiveDiskStreamingMode = workerMode
+
+            let loaded = try #require(await catalog.recordLoadSucceeded(
+                id: "melix-dev-text",
+                dispatchHandle: "melix-dev-text::swift",
+                workerResidency: workerResidency
+            ))
+
+            #expect(loaded.residency.effectiveDiskStreamingMode == expectedMode)
         }
     }
 

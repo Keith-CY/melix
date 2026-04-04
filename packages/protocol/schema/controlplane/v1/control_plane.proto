@@ -641,6 +641,13 @@ enum MemoryResidencyPolicy {
   MEMORY_RESIDENCY_TTL = 3;
 }
 
+enum DiskStreamingMode {
+  DISK_STREAMING_MODE_UNSPECIFIED = 0;
+  DISK_STREAMING_DISABLED = 1;
+  DISK_STREAMING_PREFER_DISK = 2;
+  DISK_STREAMING_REQUIRE_DISK = 3;
+}
+
 enum ResidencyState {
   RESIDENCY_STATE_UNSPECIFIED = 0;
   RESIDENCY_STATE_DISCOVERED = 1;
@@ -693,6 +700,7 @@ message ModelSettings {
   string acceleration_profile_id = 7;
   map<string, string> ext = 8;
   AdaptiveThinkingPolicy adaptive_thinking = 9;
+  DiskStreamingMode disk_streaming_mode = 10;
 }
 
 message AdaptiveThinkingPolicy {
@@ -707,6 +715,7 @@ message ResidencySummary {
   bool pinned = 4;
   uint32 ttl_seconds = 5;
   string transition_reason = 6;
+  DiskStreamingMode effective_disk_streaming_mode = 7;
 }
 
 enum EventTopic {
@@ -1111,6 +1120,8 @@ message ServerSessionRuntimeState {
   uint32 light_sleep_after_seconds = 7;
   uint32 deep_sleep_after_seconds = 8;
   int64 updated_at_unix_ms = 9;
+  DiskStreamingMode requested_disk_streaming_mode = 10;
+  DiskStreamingMode effective_disk_streaming_mode = 11;
 }
 
 message SessionState {

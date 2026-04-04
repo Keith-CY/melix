@@ -95,6 +95,12 @@ struct DesktopModelsTabView: View {
         ("TTL", "ttl"),
     ]
 
+    private let diskStreamingModeOptions = [
+        ("Disabled", "disabled"),
+        ("Prefer Disk", "prefer_disk"),
+        ("Require Disk", "require_disk"),
+    ]
+
     private let accelerationModeOptions = [
         ("Baseline", "baseline"),
         ("Speculative Decode", "speculative_decode"),
@@ -140,7 +146,7 @@ struct DesktopModelsTabView: View {
                                 .font(.caption2)
                                 .foregroundStyle(.tertiary)
                         }
-                        Text("\(model.memoryPolicyText) • \(model.accelerationModeText) • \(model.accelerationProfileID.isEmpty ? "no-profile" : model.accelerationProfileID)")
+                        Text("\(model.memoryPolicyText) • \(model.diskStreamingModeText) • \(model.accelerationModeText) • \(model.accelerationProfileID.isEmpty ? "no-profile" : model.accelerationProfileID)")
                             .font(.caption2)
                             .foregroundStyle(.tertiary)
                     }
@@ -212,6 +218,17 @@ struct DesktopModelsTabView: View {
                                 )
                             ) {
                                 ForEach(accelerationModeOptions, id: \.1) { option in
+                                    Text(option.0).tag(option.1)
+                                }
+                            }
+                            Picker(
+                                "Disk Streaming",
+                                selection: Binding(
+                                    get: { viewModel.modelSettingsDiskStreamingModeDraft },
+                                    set: { viewModel.modelSettingsDiskStreamingModeDraft = $0 }
+                                )
+                            ) {
+                                ForEach(diskStreamingModeOptions, id: \.1) { option in
                                     Text(option.0).tag(option.1)
                                 }
                             }
@@ -309,6 +326,7 @@ struct DesktopModelsTabView: View {
             alias: model.alias.isEmpty ? "Melix Text Turbo" : model.alias,
             pinOnLoad: true,
             memoryPolicy: "pinned",
+            diskStreamingMode: "disabled",
             accelerationMode: "speculative_decode",
             accelerationProfileID: "draft-q4"
         )
@@ -689,6 +707,7 @@ func desktopModelInfoSummaryContent(
         detailLines.append("type override: \(info.typeOverrideText)")
     }
     detailLines.append("memory policy: \(info.memoryPolicyText)")
+    detailLines.append("disk streaming: \(info.diskStreamingModeText)")
     detailLines.append("adaptive thinking: \(info.adaptiveThinkingText)")
     detailLines.append("acceleration: \(info.accelerationModeText) • \(info.accelerationProfileID.isEmpty ? "no-profile" : info.accelerationProfileID)")
     detailLines.append("parser fallback: \(info.toolParserFallbackText)")

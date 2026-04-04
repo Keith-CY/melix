@@ -913,6 +913,23 @@ struct PythonBridgeWorkerClientTests {
         #expect(spec.ext["melix.adaptive_thinking.budget_tokens"] == "192")
     }
 
+    @Test("bootstrap worker preparation maps residency and disk streaming settings into worker specs")
+    func bootstrapWorkerPreparationMapsResidencyAndDiskStreamingSettingsIntoWorkerSpecs() throws {
+        var pinnedSummary = ModelCatalog.devTextModel()
+        pinnedSummary.settings.memoryPolicy = .memoryResidencyPinned
+        pinnedSummary.settings.diskStreamingMode = .diskStreamingDisabled
+
+        let pinnedSpec = try #require(BootstrapWorkerPreparation.modelSpec(for: pinnedSummary))
+        #expect(pinnedSpec.settings.memoryPolicy == .memoryResidencyPinned)
+        #expect(pinnedSpec.settings.diskStreamingMode == .diskStreamingDisabled)
+
+        var ttlSummary = ModelCatalog.devTextModel()
+        ttlSummary.settings.memoryPolicy = .memoryResidencyTtl
+
+        let ttlSpec = try #require(BootstrapWorkerPreparation.modelSpec(for: ttlSummary))
+        #expect(ttlSpec.settings.memoryPolicy == .memoryResidencyTtl)
+    }
+
     @Test("bootstrap worker preparation builds generic text specs for activated derived models")
     func bootstrapWorkerPreparationBuildsGenericTextSpecsForActivatedDerivedModels() throws {
         var summary = ModelCatalog.devTextModel()
