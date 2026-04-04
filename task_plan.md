@@ -2,69 +2,66 @@
 
 ## Goal
 
-Close `M10.4` by adding live integration evidence, reproducible lifecycle metrics, and operator
-runbook guidance for pause, idle-to-sleep, wake, and lifecycle-fault recovery across the Melix
-session-lifecycle surface.
+Close `M11.1` by adding an explicit disk-streaming runtime mode, typed session-facing flags, and
+operator-visible state so Melix can distinguish memory-resident versus disk-streamed execution
+without silent fallback.
 
 ## Scope
 
-- add integration coverage for lifecycle mutations, idle-policy-driven sleep, restart recovery, and
-  wake-to-ready flows using the repository-owned session lifecycle paths
-- capture machine-readable lifecycle smoke metrics and reproducible evidence for pause, sleep, wake,
-  and restart timing boundaries
-- document operator diagnosis and recovery steps so the runbook separates reconnect noise from
-  genuine lifecycle faults
+- extend the authoritative control-plane contract with disk-streaming mode semantics and typed
+  runtime flags
+- carry the mode through control-plane session state, CLI surfaces, and worker-facing runtime
+  settings
+- fail unsupported runtime paths explicitly instead of silently ignoring disk-streaming requests
 
 ## Measurement Points
 
-- lifecycle smoke evidence must record pause acknowledgement, idle-to-sleep delay, wake-to-ready
-  delay, and restart recovery timing in machine-readable form
-- integration coverage must exercise the same control-plane-owned lifecycle paths surfaced in the
-  Window UI and CLI rather than using private test-only state mutation shortcuts
-- the runbook must point operators to authoritative diagnostics, metrics, and recovery decisions
-  for paused, sleeping, stopped, and failed runtime-session states
+- disk-streaming intent must be represented in typed protocol state rather than inferred from free
+  form metadata
+- control-plane snapshots and operator surfaces must show whether a session is using resident or
+  disk-streaming mode
+- runtime adapters must reject unsupported disk-streaming requests with deterministic typed errors
+  so operators can diagnose why a session did not enter the requested mode
 
 ## Phases
 
-1. Lifecycle smoke and metrics harness
+1. Protocol and settings contract
    - status: pending
    - evidence:
-     - inspect the existing integration harnesses and session-lifecycle metrics plumbing to locate
-       the narrowest place to add reproducible pause, sleep, wake, and restart evidence
-     - define the smoke payload and output format so the touched scope can report machine-readable
-       lifecycle timings without ad-hoc parsing
-2. Integration coverage and operator runbook
+     - update the control-plane schema and generated outputs so disk-streaming mode is explicit in
+       runtime settings and session projection payloads
+     - define the exact worker-facing flag mapping and validation rules before broad implementation
+2. Control-plane and runtime propagation
    - status: pending
    - evidence:
-     - add integration or smoke coverage for lifecycle mutation, idle-policy sleep, wake, and
-       restart flows against the repository-owned runtime stack
-     - update runbook guidance with diagnosis and recovery steps grounded in authoritative lifecycle
-       metrics and runtime-session states
+     - thread the new mode through control-plane state, CLI or operator mutations, and worker
+       request shaping
+     - ensure unsupported runtimes surface typed failures rather than silently downgrading to
+       resident mode
 3. Verification and milestone bookkeeping
    - status: pending
    - evidence:
-     - run the touched integration and documentation verification commands plus repository-default
-       verification as needed for the changed scope
-     - record changed-line coverage at or above `95%`, update `progress.md`, and mark `M10.4`
-       completed only after evidence is captured
+     - run `make proto`, `make swift-test`, and `make py-test` or narrower authoritative commands
+       as required by the touched scope
+     - record changed-line coverage at or above `95%`, update `progress.md`, and mark `M11.1`
+       completed only after protocol, runtime, and operator evidence are captured
 
 ## Acceptance
 
-- the session-lifecycle milestone has reproducible live-path coverage for pause, sleep, wake, and
-  restart recovery
-- lifecycle metrics are machine-readable, stored with the touched smoke or integration outputs, and
-  suitable for later release-gate consumption
-- runbooks explain how operators should inspect lifecycle faults and choose recovery actions
+- disk-streaming mode is represented consistently across protocol, control plane, and runtime
+  settings
+- operator-facing snapshots and CLI output make the selected mode visible without ad-hoc decoding
+- unsupported runtime paths fail explicitly with typed disk-streaming validation errors
 
 ## Risks
 
-- relying only on unit-level lifecycle coverage would leave `M10` without proof that the integrated
-  runtime stack honors pause, idle sleep, and wake behavior end to end
-- metrics that are not machine-readable would make later release-gate automation and regression
-  tracking unreliable
-- runbook guidance that does not distinguish reconnect churn from genuine lifecycle faults would
-  confuse operators and weaken milestone evidence
+- untyped disk-streaming flags would let different layers disagree about the effective execution
+  mode and make future budgeting or cache-policy work harder to reason about
+- silently ignoring unsupported disk-streaming requests would create false operator confidence and
+  invalidate any later memory-budgeting evidence
+- projecting mode only inside worker internals would leave the control plane and desktop shell
+  unable to explain why a session is resident versus streamed
 
 ## Outcome
 
-- m10_4_session_lifecycle_integration_evidence_in_progress
+- m11_1_disk_streaming_mode_and_runtime_flags_in_progress

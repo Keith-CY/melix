@@ -10,6 +10,7 @@ let package = Package(
     products: [
         .library(name: "MelixWorkspace", targets: ["MelixWorkspace"]),
         .executable(name: "melix", targets: ["MelixCLI"]),
+        .executable(name: "melix-session-lifecycle-smoke", targets: ["MelixSessionLifecycleSmoke"]),
     ],
     dependencies: [
         .package(path: "services/control-plane-swift"),
@@ -32,6 +33,11 @@ let package = Package(
             name: "MelixCLI",
             dependencies: ["MelixCLICore"],
             path: "Sources/MelixCLI"
+        ),
+        .executableTarget(
+            name: "MelixSessionLifecycleSmoke",
+            dependencies: ["MelixCLICore"],
+            path: "Sources/MelixSessionLifecycleSmoke"
         ),
         .testTarget(
             name: "MelixCLITests",

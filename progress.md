@@ -2,6 +2,53 @@
 
 ## 2026-04-05
 
+- Closed `M10.4` and, with it, the parent `M10` lifecycle milestone by adding repository-owned
+  live-path lifecycle smoke evidence and operator recovery guidance:
+  - added `Sources/MelixCLICore/LocalRuntimeFactory.swift`,
+    `SessionLifecycleSmokeRunner.swift`, and `SessionLifecycleSmokeCommand.swift`, plus the
+    executable target `Sources/MelixSessionLifecycleSmoke/main.swift`, so the repository now owns a
+    single-process lifecycle smoke harness that preserves one `ControlPlaneService` instance while
+    exercising pause, idle sleep, request-activity wake, and stop-start recovery against real
+    worker sockets
+  - added focused Swift coverage in
+    `tests/MelixCLITests/SessionLifecycleSmokeRunnerTests.swift` for lifecycle smoke reporting,
+    timeout handling, command rendering, injected-client execution, stop-conflict retry, fallback
+    assistant handling, command parsing failures, and the default `MelixCLIRunner` local-runtime
+    path
+  - added `tests/integration/test_session_lifecycle_integration.py`, which starts real worker
+    processes, shuts down the auxiliary HTTP control plane, runs `melix-session-lifecycle-smoke`
+    against the live worker sockets, and asserts machine-readable pause, sleep, wake, and restart
+    evidence
+  - added `docs/runbooks/session-lifecycle.md` and updated the documentation maps so operators now
+    have explicit diagnosis and recovery guidance for paused, sleeping, stopped, and failed server
+    sessions, including how to separate lifecycle faults from connection churn
+  - marked `M10.4` and the parent `M10` milestone completed in the roadmap execution index and
+    moved the active task plan to `M11.1`
+- Verification summary for `M10.4`:
+  - `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/.build/ModuleCache.noindex" swift test --filter SessionLifecycleSmokeRunnerTests`: `14 tests in 1 suite passed after 3.005 seconds`
+  - `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/.build/ModuleCache.noindex" swift test --enable-code-coverage --filter SessionLifecycleSmokeRunnerTests`: `14 tests in 1 suite passed after 3.002 seconds`
+  - `PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" UV_CACHE_DIR="$(pwd)/.uv-cache" uv run --project services/mlx-worker-python pytest tests/integration/test_session_lifecycle_integration.py -q`: `1 passed in 93.36s`
+  - `PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" COVERAGE_FILE=/tmp/m10_4_python.coverage UV_CACHE_DIR="$(pwd)/.uv-cache" uv run --project services/mlx-worker-python coverage run --include='tests/integration/test_session_lifecycle_integration.py' -m pytest tests/integration/test_session_lifecycle_integration.py -q`: `1 passed in 40.92s`
+  - `make swift-test`: pass
+  - `make integration-test`: `60 passed in 738.98s (0:12:18)`
+  - `git diff --check`: pass
+- Metrics report for `M10.4`:
+  - lifecycle smoke metrics now emitted by the repository-owned smoke harness:
+    - `lifecycle.pause_ack_ms`
+    - `lifecycle.idle_to_light_sleep_ms`
+    - `lifecycle.wake_to_ready_ms`
+    - `lifecycle.restart_recovery_ms`
+  - control-plane lifecycle timings recorded during the smoke path:
+    - `control_plane.server_start_ms`
+    - `control_plane.server_pause_ms`
+    - `control_plane.server_resume_ms`
+    - `control_plane.server_wake_ms`
+    - `control_plane.server_stop_ms`
+    - `control_plane.server_idle_policy_ms`
+  - changed-line coverage for the touched executable scope:
+    - Swift CLI and smoke harness: `98.30%` (`752/765`)
+    - Python integration coverage: `100.00%` (`46/46`)
+
 - Closed `M10.3` by surfacing control-plane-owned server-session lifecycle and idle-policy truth
   across the desktop shell, server workspace, and chat-facing operator surfaces:
   - extended `apps/macos-menubar/Sources/AppMain/Models/DesktopShellState.swift` so server-session

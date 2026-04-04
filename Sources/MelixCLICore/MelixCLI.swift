@@ -877,7 +877,7 @@ public actor MelixCLIRunner {
         if let client {
             self.client = client
         } else {
-            let resolvedServiceBuilder = serviceBuilder ?? MelixCLILocalRuntime.makeService
+            let resolvedServiceBuilder = serviceBuilder ?? MelixLocalRuntimeFactory.makeService
             self.client = LocalControlPlaneXPCClient(service: resolvedServiceBuilder(environment))
         }
     }
@@ -1609,48 +1609,4 @@ private struct EvalExportResponse: Encodable {
     let jobID: String
     let outputPath: String
     let rowCount: Int
-}
-
-private enum MelixCLILocalRuntime {
-    static func makeService(environment: [String: String]) -> any ControlPlaneExecuting {
-        let modelCatalog = ModelCatalog(seedModels: ModelCatalog.phaseSevenContractSeedModels())
-        let metricsStore = MetricsStore(exportPath: environment["MELIX_CONTROL_PLANE_METRICS_PATH"])
-        let mcpToolCatalog = MCPToolCatalog.load(environment: environment)
-        let gatewayAccessPolicyStore = GatewayAccessPolicyStore(GatewayAccessPolicy.load(environment: environment))
-
-        let swiftTextWorkerClient = SwiftTextWorkerClient(
-            socketPath: environment["MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH"] ?? "/var/run/melix/swift-text-worker.sock"
-        )
-        let pythonCompatibilityClient = PythonBridgeWorkerClient(
-            socketPath: environment["MELIX_WORKER_SOCKET_PATH"] ?? "/tmp/melix-worker.sock",
-            repoRoot: repoRoot(environment: environment),
-            processEnvironment: environment
-        )
-        let workerRegistry = WorkerRegistry(
-            defaultTextClient: swiftTextWorkerClient,
-            pythonCompatibilityClient: pythonCompatibilityClient,
-            modelCatalog: modelCatalog
-        )
-
-        return ControlPlaneService(
-            modelCatalog: modelCatalog,
-            metricsStore: metricsStore,
-            workerRegistry: workerRegistry,
-            mcpToolCatalog: mcpToolCatalog,
-            gatewayAccessPolicyStore: gatewayAccessPolicyStore
-        )
-    }
-
-    private static func repoRoot(environment: [String: String]) -> String {
-        if let repoRoot = environment["MELIX_REPO_ROOT"]?.trimmingCharacters(in: .whitespacesAndNewlines),
-           !repoRoot.isEmpty {
-            return repoRoot
-        }
-
-        return URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .path
-    }
 }

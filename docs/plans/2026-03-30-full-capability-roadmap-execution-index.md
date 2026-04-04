@@ -152,6 +152,10 @@ The roadmap extension in `M10-M17` includes milestone-level plans plus decompose
 
 ## M10: Session Lifecycle And Power Management
 
+- Status: completed. The repository now owns typed runtime-session lifecycle and idle-policy
+  protocol state, control-plane lifecycle mutation surfaces, desktop operator banners and controls,
+  plus live lifecycle smoke evidence and recovery runbook guidance.
+
 - `M10.1` `docs/plans/2026-03-31-m10-1-session-state-protocol-and-snapshots.md`
   Status: completed. The control-plane protocol now exposes dedicated server-session runtime
   lifecycle and power-state snapshots, `server.state_changed` carries typed runtime-session
@@ -169,6 +173,9 @@ The roadmap extension in `M10-M17` includes milestone-level plans plus decompose
   session-scoped operator controls, with repository-default Swift verification and changed-line
   coverage evidence recorded in the repository.
 - `M10.4` `docs/plans/2026-03-31-m10-4-session-lifecycle-integration-evidence.md`
+  Status: completed. Melix now ships a repository-owned `melix-session-lifecycle-smoke`
+  executable, live integration coverage against real worker processes, machine-readable lifecycle
+  metrics, and an operator runbook for pause, idle sleep, wake, and restart recovery.
 
 ## M11: Disk Streaming, Memory Budgeting, And Cache Policy
 
