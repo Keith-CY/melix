@@ -10,6 +10,7 @@ Phase 8 milestone `P8-M4` establishes:
 
 Future work can add:
 
+- Homebrew formula and service assets under `../homebrew/`
 - signed application bundles
 - installer packaging assets
 - archive composition and notarization helpers

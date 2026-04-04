@@ -121,6 +121,20 @@ python3 scripts/install_local_product.py \
 This creates isolated launch agents, runtime roots, managed model roots, and tooling jobs
 roots for that consumer.
 
+## Homebrew Install
+
+Install Melix from the checked-out repository with the repository-owned Homebrew formula:
+
+```bash
+brew install --formula ./infra/homebrew/Formula/melix.rb
+melix-homebrew-service manifest --json
+brew services start melix
+```
+
+This flow installs the CLI plus the control-plane and text-worker binaries, then supervises the
+three-process Melix bundle through the `homebrew` sidecar instance. Detailed install, upgrade,
+stop, and prune guidance lives in `docs/runbooks/homebrew-install.md`.
+
 ## LoRA And Benchmark Operator Flows
 
 The same local control-plane truth now powers both the native operator window and the public

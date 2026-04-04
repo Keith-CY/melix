@@ -101,7 +101,7 @@ The roadmap extension in `M10-M17` includes milestone-level plans plus decompose
 
 ## M8: Model Registry, Hub, Admin, And Platform Productization
 
-- Status: in progress. `M8.1-M8.8` are completed and verified under the repository execution plans; `M8.9-M8.11` remain pending productization slices.
+- Status: in progress. `M8.1-M8.9` are completed and verified under the repository execution plans; `M8.10-M8.11` remain pending productization slices.
 
 - `M8.1` `docs/plans/2026-03-30-m8-1-multi-root-model-registry.md`
 - `M8.2` `docs/plans/2026-03-30-m8-2-provider-org-model-variant-scanning.md`
@@ -116,6 +116,7 @@ The roadmap extension in `M10-M17` includes milestone-level plans plus decompose
 - `M8.8` `docs/plans/2026-03-30-m8-8-generation-config-and-ocr-sampling-controls.md`
   Status: completed. Registry-discovered models now import `generation_config.json` defaults into inspectable metadata, request shaping consumes those defaults through a shared sampling policy with OCR-specific fallback precedence, and the native operator shell exposes OCR sampling controls plus generation-config provenance with repository-default verification and changed-line coverage evidence.
 - `M8.9` `docs/plans/2026-03-30-m8-9-homebrew-formula-and-services.md`
+  Status: completed. The repository now owns a Homebrew formula, a directly supervised `brew services` wrapper for the three-process Melix runtime bundle, deterministic formula/service smoke commands, and a dedicated runbook for install, upgrade, stop, and prune workflows.
 - `M8.10` `docs/plans/2026-03-30-m8-10-auto-update-and-startup-failure-handling.md`
 - `M8.11` `docs/plans/2026-03-30-m8-11-platform-packaging-and-target-differentiation.md`
 

@@ -2,6 +2,32 @@
 
 ## 2026-04-04
 
+- Closed the `M8.9` Homebrew formula and services milestone:
+  - added repository-owned Homebrew packaging assets in `infra/homebrew/Formula/melix.rb` and `infra/homebrew/README.md`, including a formula that installs from the checked-out repository root, builds the Melix CLI plus the control-plane and Swift text-worker binaries, and exposes a `melix-homebrew-service` wrapper for `brew services`
+  - added `services/mlx-worker-python/worker/productization/homebrew_formula.py`, `services/mlx-worker-python/worker/productization/homebrew_service.py`, and `scripts/melix_homebrew_service.py` so Homebrew service startup reuses Melix local-product layout semantics while supervising the control plane, Swift text worker, and Python worker from one repository-owned entrypoint
+  - added deterministic packaging smoke commands in `scripts/m8_homebrew_formula_smoke.py` and `scripts/m8_homebrew_service_smoke.py`, plus focused regression coverage in `services/mlx-worker-python/tests/test_homebrew_distribution.py` and `services/mlx-worker-python/tests/test_homebrew_service_script.py`, including failure, shutdown-timeout, signal-stop, and environment-root branches
+  - documented Homebrew install, upgrade, stop, and prune behavior in `docs/runbooks/homebrew-install.md` and surfaced the path from `README.md`, `docs/README.md`, and `infra/packaging/README.md`
+  - updated `docs/plans/2026-03-30-m8-9-homebrew-formula-and-services.md`, `docs/plans/2026-03-30-full-capability-roadmap-execution-index.md`, and `task_plan.md` so the repository records `M8.9` as completed with explicit verification and metrics evidence
+- Verification summary for `M8.9`:
+  - `PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" UV_CACHE_DIR="$(pwd)/.uv-cache" uv run --project services/mlx-worker-python --extra mlx pytest services/mlx-worker-python/tests/test_homebrew_distribution.py services/mlx-worker-python/tests/test_homebrew_service_script.py -q`: `14 passed in 0.17s`
+  - `PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" UV_CACHE_DIR="$(pwd)/.uv-cache" uv run --project services/mlx-worker-python --extra mlx python scripts/m8_homebrew_formula_smoke.py --json`: pass
+  - `PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" UV_CACHE_DIR="$(pwd)/.uv-cache" uv run --project services/mlx-worker-python --extra mlx python scripts/m8_homebrew_service_smoke.py --json`: pass
+  - `PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" UV_CACHE_DIR="$(pwd)/.uv-cache" uv run --project services/mlx-worker-python --extra mlx python scripts/melix_homebrew_service.py manifest --json`: pass
+  - `ruby -c infra/homebrew/Formula/melix.rb`: `Syntax OK`
+  - `make py-test`: `441 passed in 30.17s`
+  - `git diff --check`: pass
+- Metrics report for `M8.9`:
+  - Python executable scope changed-line coverage:
+    - `services/mlx-worker-python/worker/productization/homebrew_formula.py`: `100.00%` (`16/16`)
+    - `services/mlx-worker-python/worker/productization/homebrew_service.py`: `100.00%` (`98/98`)
+    - `services/mlx-worker-python/tests/test_homebrew_distribution.py`: `100.00%` (`161/161`)
+    - `services/mlx-worker-python/tests/test_homebrew_service_script.py`: `100.00%` (`72/72`)
+    - `scripts/m8_homebrew_formula_smoke.py`: `100.00%` (`27/27`)
+    - `scripts/m8_homebrew_service_smoke.py`: `100.00%` (`42/42`)
+    - `scripts/melix_homebrew_service.py`: `100.00%` (`37/37`)
+    - aggregate Python changed-line coverage: `100.00%` (`453/453`)
+  - Ruby Homebrew formula scope changed-line coverage: `N/A` because the repository does not yet provide a changed-line coverage tool for Ruby formula files
+
 - Closed the `M8.8` generation-config and OCR sampling controls milestone:
   - extended `services/mlx-worker-python/worker/model_registry/catalog.py` so registry discovery now imports inspectable `melix.generation_config.*` metadata from `generation_config.json` without overwriting explicit manifest ext values, while malformed and non-mapping sidecars remain safe no-ops
   - updated `services/control-plane-swift/Sources/Requests/TextRequestShaper.swift`, `services/control-plane-swift/Sources/Requests/ChatRequestTranslator.swift`, `services/control-plane-swift/Sources/XPCService/ControlPlaneService.swift`, `services/control-plane-swift/Sources/HTTPGateway/OpenAI/OpenAIHandler.swift`, and `services/control-plane-swift/Sources/WorkerClient/PythonBridgeWorkerClient.swift` so imported generation-config defaults flow through a shared model-sampling policy and OCR-specific overrides only win when explicitly configured

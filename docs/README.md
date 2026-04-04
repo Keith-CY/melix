@@ -160,6 +160,7 @@ Current runbooks:
 - `runbooks/security-and-stability-closure.md`
 - `runbooks/m7-benchmark-and-evaluation-foundation.md`
 - `runbooks/m6-acceleration-benchmarks.md`
+- `runbooks/homebrew-install.md`
 - `runbooks/external-agent-integrations.md`
 - `runbooks/service-first-reuse.md`
 - `runbooks/shared-access.md`

@@ -2,74 +2,66 @@
 
 ## Goal
 
-Close `M8.8` by importing `generation_config.json` defaults into the discovered-model metadata path
-and exposing OCR-specific sampling controls through the native operator shell without creating a
-second settings source of truth.
+Close `M8.9` by adding a repository-owned Homebrew distribution path with service management that
+reuses Melix local-product launch semantics instead of introducing a second packaging truth.
 
 ## Scope
 
-- load `generation_config.json` defaults non-destructively during worker registry discovery
-- preserve explicit manifest and operator override precedence over imported defaults
-- surface imported generation-config values as inspectable metadata in control-plane model state
-- let operators edit OCR sampling profile, temperature, top-p, and max-token overrides from the
-  existing model-settings workflow
-- apply imported or overridden defaults during request shaping for text and OCR requests
-- update milestone bookkeeping only after repository-default verification and changed-line coverage
+- define a checked-in Homebrew formula under `infra/homebrew/Formula/`
+- add a Homebrew service wrapper that supervises the Melix three-process bundle
+- provide repository-owned smoke commands for formula validation and service lifecycle behavior
+- document install, upgrade, stop, and prune flows for the Homebrew path
+- update milestone bookkeeping only after verification and changed-line coverage are recorded
 
 ## Phases
 
-1. Worker metadata import and precedence contract
+1. Homebrew distribution contract
    - status: completed
    - evidence:
-     - add registry-scan support for `generation_config.json`
-     - import inspectable generation-config keys into model ext without overwriting explicit
-       manifest values
-     - cover local registry discovery precedence in Python tests
-2. Control-plane sampling resolution
+     - add a checked-in formula that installs from the repository checkout
+     - keep formula metadata aligned with the repository version and service wrapper contract
+     - document the repository-owned Homebrew asset location under `infra/homebrew/`
+2. Service wrapper and supervision path
    - status: completed
    - evidence:
-     - introduce a model-sampling policy for imported generation-config defaults
-     - let OCR policies fall back to generation-config defaults when OCR-specific overrides are not
-       set
-     - add focused control-plane coverage for text and OCR request shaping precedence
-3. Menu bar OCR sampling controls and info surface
+     - build Homebrew service specs from the existing product layout and launch-agent semantics
+     - supervise the control plane, Swift text worker, and Python worker through one Homebrew
+       service entrypoint
+     - expose a machine-readable manifest mode for inspection and smoke validation
+3. Smoke coverage and operator docs
    - status: completed
    - evidence:
-     - extend runtime model state with imported generation-config and effective OCR sampling fields
-     - add native model-settings controls for OCR sampling profile, temperature, top-p, and max
-       tokens
-     - preserve inspect-only presentation for imported defaults while edits continue to flow
-       through `model.set_policy`
+     - add deterministic formula and service smoke commands
+     - add focused Python tests for Homebrew formula rendering and service supervision helpers
+     - update README, `docs/README.md`, and a dedicated runbook for install and service lifecycle
 4. Verification and milestone bookkeeping
    - status: completed
    - evidence:
-     - rerun focused Python, Swift, and menu bar tests for the touched paths
-     - rerun repository-default verification commands for the touched scope
+     - rerun focused Python tests plus Homebrew smoke commands
+     - rerun repository-default verification commands required for the touched scope
      - record changed-line coverage at or above `95%` and update `progress.md` plus the execution
        index
 
 ## Acceptance
 
-- registry-discovered models import `generation_config.json` defaults into inspectable metadata when
-  the file exists
-- explicit manifest ext values and operator overrides continue to win over imported defaults
-- text request shaping can consume imported generation-config defaults when the request and preset
-  do not specify sampling values
-- OCR request shaping uses OCR-specific overrides when present and otherwise falls back to imported
-  generation-config defaults
-- operators can edit OCR sampling controls from the native menu bar workspace and inspect effective
-  generation-config/OCR defaults from control-plane state
-- `M8.8` can be closed with repository-default verification and explicit coverage evidence
+- Melix has a checked-in Homebrew formula that installs from the repository checkout and exposes a
+  service entrypoint
+- the Homebrew service wrapper supervises the same three Melix runtime processes using the
+  repository-owned local-product layout semantics
+- repository-owned smoke commands validate both the formula contract and the deterministic service
+  lifecycle path
+- install, upgrade, stop, and prune behavior are documented and reproducible
+- `M8.9` can be closed with explicit verification and changed-line coverage evidence
 
 ## Risks
 
-- collapsing imported defaults and operator overrides into the same ext keys would make clears
-  destructive and erase provenance
-- request-shaping precedence can silently drift if text and OCR paths resolve defaults through
-  different key hierarchies
-- menu bar drafts can accidentally persist imported defaults as explicit overrides if the form is
-  hydrated from effective values instead of explicit settings values
+- formula install logic can silently drift from the checked-in repository layout if the wrapper and
+  formula derive repo paths independently
+- a Homebrew service wrapper that invents its own runtime roots would fragment packaging truth away
+  from the product-owned layout contract
+- smoke coverage that validates only formula text without exercising service supervision would miss
+  lifecycle regressions
 
 ## Outcome
 
-- m8_8_generation_config_and_ocr_sampling_controls_completed
+- m8_9_homebrew_formula_and_services_completed
