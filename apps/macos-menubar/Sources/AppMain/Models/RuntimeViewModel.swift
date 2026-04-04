@@ -94,6 +94,10 @@ public struct RuntimeAudioSetupActionState: Identifiable, Equatable, Sendable {
 
 public struct RuntimeDoctorReportState: Equatable, Sendable {
     public let markdown: String
+
+    public init(markdown: String) {
+        self.markdown = RichOutputSanitizer.sanitized(markdown)
+    }
 }
 
 public enum RuntimeBenchmarkTargetMode: String, CaseIterable, Identifiable, Sendable {
@@ -207,9 +211,10 @@ public struct RuntimeBenchMetricState: Identifiable, Equatable, Sendable {
     public let value: String
 
     public init(name: String, value: String) {
-        self.id = name
-        self.name = name
-        self.value = value
+        let sanitizedName = RichOutputSanitizer.sanitized(name)
+        self.id = sanitizedName
+        self.name = sanitizedName
+        self.value = RichOutputSanitizer.sanitized(value)
     }
 }
 
@@ -217,6 +222,12 @@ public struct RuntimeBenchReportState: Equatable, Sendable {
     public let reportPath: String
     public let markdown: String
     public let metrics: [RuntimeBenchMetricState]
+
+    public init(reportPath: String, markdown: String, metrics: [RuntimeBenchMetricState]) {
+        self.reportPath = reportPath
+        self.markdown = RichOutputSanitizer.sanitized(markdown)
+        self.metrics = metrics
+    }
 }
 
 public struct RuntimeBenchmarkSuiteOptionState: Identifiable, Equatable, Sendable {
@@ -390,6 +401,28 @@ public struct RuntimeEvaluationSamplePreviewState: Identifiable, Equatable, Send
     public let correctText: String
     public let parseStatus: String
     public let timeText: String
+
+    public init(
+        id: String,
+        sampleID: String,
+        question: String,
+        expected: String,
+        predicted: String,
+        rawResponse: String,
+        correctText: String,
+        parseStatus: String,
+        timeText: String
+    ) {
+        self.id = id
+        self.sampleID = RichOutputSanitizer.sanitized(sampleID)
+        self.question = RichOutputSanitizer.sanitized(question)
+        self.expected = RichOutputSanitizer.sanitized(expected)
+        self.predicted = RichOutputSanitizer.sanitized(predicted)
+        self.rawResponse = RichOutputSanitizer.sanitized(rawResponse)
+        self.correctText = RichOutputSanitizer.sanitized(correctText)
+        self.parseStatus = RichOutputSanitizer.sanitized(parseStatus)
+        self.timeText = RichOutputSanitizer.sanitized(timeText)
+    }
 }
 
 public struct RuntimeEvaluationExportState: Equatable, Sendable {
@@ -1099,7 +1132,7 @@ public final class RuntimeViewModel {
 
     public func createChatSession() {
         guard let serverSession = selectedServerSession ?? serverSessions.first else {
-            lastError = "Create a Server Session before opening chat."
+            setLastError("Create a Server Session before opening chat.")
             chatStatusText = "No Server Session"
             selectedSurface = .server
             notifyStateChanged()
@@ -1161,14 +1194,14 @@ public final class RuntimeViewModel {
         let exportURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("\(sanitizedName)-export.md")
         let lines = session.transcript.map { entry in
-            "## \(entry.title)\n\n\(entry.body)\n"
+            "## \(sanitizedRichText(entry.title))\n\n\(sanitizedRichText(entry.body))\n"
         }
         let payload = """
-        # \(session.title)
+        # \(sanitizedRichText(session.title))
 
         - Server Session: \(session.serverSessionID)
-        - Branch: \(session.branchTitle)
-        - Status: \(session.statusText)
+        - Branch: \(sanitizedRichText(session.branchTitle))
+        - Status: \(sanitizedRichText(session.statusText))
 
         \(lines.joined(separator: "\n"))
         """
@@ -1490,7 +1523,7 @@ public final class RuntimeViewModel {
             await startSubscription(lastSeenSeq: lastSeenSeq, isReconnect: false)
         } catch {
             await transitionConnectionState(to: "Degraded", detail: "Handshake failed")
-            lastError = startupFailureMessage(error)
+            setLastError(startupFailureMessage(error))
             statusTitle = "Melix Error"
             notifyStateChanged()
         }
@@ -1543,14 +1576,14 @@ public final class RuntimeViewModel {
 
         guard let serverSession = selectedChatServerSession else {
             chatStatusText = "No Server Session"
-            lastError = "Create and start a Server Session before sending chat prompts."
+            setLastError("Create and start a Server Session before sending chat prompts.")
             selectedSurface = .server
             notifyStateChanged()
             return
         }
         guard serverSession.isRunning else {
             chatStatusText = "No Server Session"
-            lastError = "Start a running Server Session before sending chat prompts."
+            setLastError("Start a running Server Session before sending chat prompts.")
             selectedSurface = .chat
             notifyStateChanged()
             return
@@ -1634,7 +1667,7 @@ public final class RuntimeViewModel {
                 case .failed(let code, let message):
                     chatStatusText = code.isEmpty ? "Failed" : "Failed • \(code)"
                     let failureMessage = message.isEmpty ? "Chat request failed." : message
-                    lastError = failureMessage
+                    setLastError(failureMessage)
                     appendChatEntry(
                         id: "error-\(UUID().uuidString)",
                         kind: .error,
@@ -1663,7 +1696,7 @@ public final class RuntimeViewModel {
             )
             commitAssistantMessageIfNeeded()
         } catch {
-            lastError = String(describing: error)
+            setLastError(String(describing: error))
             chatStatusText = "Failed"
             appendChatEntry(
                 id: "error-\(UUID().uuidString)",
@@ -2684,7 +2717,7 @@ public final class RuntimeViewModel {
             }
             var updated = session
             updated.lifecycle = lifecycle
-            updated.lastError = error
+            updated.lastError = sanitizedRichText(error)
             updated.updatedAt = Date()
             return updated
         }
@@ -2878,7 +2911,7 @@ public final class RuntimeViewModel {
             latestSnapshot.resources = resourcePressure.resources
         case .log(let logEvent):
             if logEvent.level.lowercased() == "error" {
-                lastError = logEvent.message
+                setLastError(logEvent.message)
             }
         case .imageJob(let imageJobChanged):
             upsert(imageJob: imageJobChanged.job)
@@ -3516,9 +3549,10 @@ public final class RuntimeViewModel {
     }
 
     private func recordLocalError(_ message: String) {
-        lastError = message
+        let sanitizedMessage = sanitizedRichText(message)
+        lastError = sanitizedMessage
         recentEvents.insert(
-            DesktopLogEntry(kind: "error", message: message, detail: "local", level: "error"),
+            DesktopLogEntry(kind: "error", message: sanitizedMessage, detail: "local", level: "error"),
             at: 0
         )
         trimRecentEvents()
@@ -3533,6 +3567,14 @@ public final class RuntimeViewModel {
         )
         recentEvents.insert(entry, at: 0)
         trimRecentEvents()
+    }
+
+    private func setLastError(_ message: String) {
+        lastError = sanitizedRichText(message)
+    }
+
+    private func sanitizedRichText(_ text: String) -> String {
+        RichOutputSanitizer.sanitized(text)
     }
 
     private func resolvedChatModelID() -> String {

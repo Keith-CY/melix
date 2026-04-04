@@ -2,6 +2,191 @@ import Foundation
 import MelixControlPlaneProtocol
 import MelixWorkerProtocol
 
+public struct RichOutputSanitizationResult: Equatable, Sendable {
+    public let text: String
+    public let didSanitize: Bool
+    public let blockedHTMLFragmentCount: Int
+    public let unsafeURIRejectionCount: Int
+
+    public init(
+        text: String,
+        didSanitize: Bool,
+        blockedHTMLFragmentCount: Int,
+        unsafeURIRejectionCount: Int
+    ) {
+        self.text = text
+        self.didSanitize = didSanitize
+        self.blockedHTMLFragmentCount = blockedHTMLFragmentCount
+        self.unsafeURIRejectionCount = unsafeURIRejectionCount
+    }
+}
+
+public enum RichOutputSanitizer {
+    public static func sanitized(_ text: String) -> String {
+        sanitize(text).text
+    }
+
+    public static func sanitize(_ text: String) -> RichOutputSanitizationResult {
+        guard text.isEmpty == false else {
+            return RichOutputSanitizationResult(
+                text: text,
+                didSanitize: false,
+                blockedHTMLFragmentCount: 0,
+                unsafeURIRejectionCount: 0
+            )
+        }
+
+        var output = ""
+        var blockedHTMLFragmentCount = 0
+        var unsafeURIRejectionCount = 0
+        var cursor = text.startIndex
+
+        while let fenceStart = text[cursor...].range(of: "```") {
+            let plainSegment = String(text[cursor..<fenceStart.lowerBound])
+            let sanitizedSegment = sanitizePlainSegment(plainSegment)
+            output += sanitizedSegment.text
+            blockedHTMLFragmentCount += sanitizedSegment.blockedHTMLFragmentCount
+            unsafeURIRejectionCount += sanitizedSegment.unsafeURIRejectionCount
+
+            if let fenceEnd = text[fenceStart.upperBound...].range(of: "```") {
+                output += String(text[fenceStart.lowerBound..<fenceEnd.upperBound])
+                cursor = fenceEnd.upperBound
+            } else {
+                output += String(text[fenceStart.lowerBound...])
+                cursor = text.endIndex
+                break
+            }
+        }
+
+        if cursor < text.endIndex {
+            let trailingSegment = sanitizePlainSegment(String(text[cursor...]))
+            output += trailingSegment.text
+            blockedHTMLFragmentCount += trailingSegment.blockedHTMLFragmentCount
+            unsafeURIRejectionCount += trailingSegment.unsafeURIRejectionCount
+        }
+
+        return RichOutputSanitizationResult(
+            text: output,
+            didSanitize: output != text,
+            blockedHTMLFragmentCount: blockedHTMLFragmentCount,
+            unsafeURIRejectionCount: unsafeURIRejectionCount
+        )
+    }
+
+    private static func sanitizePlainSegment(_ text: String) -> RichOutputSanitizationResult {
+        guard text.isEmpty == false else {
+            return RichOutputSanitizationResult(
+                text: text,
+                didSanitize: false,
+                blockedHTMLFragmentCount: 0,
+                unsafeURIRejectionCount: 0
+            )
+        }
+
+        var sanitized = text
+        var blockedHTMLFragmentCount = 0
+        var unsafeURIRejectionCount = 0
+
+        for regex in activeFragmentRegexes {
+            let matches = regex.matches(
+                in: sanitized,
+                options: [],
+                range: NSRange(location: 0, length: NSString(string: sanitized).length)
+            )
+            blockedHTMLFragmentCount += matches.count
+            sanitized = regex.stringByReplacingMatches(
+                in: sanitized,
+                options: [],
+                range: NSRange(location: 0, length: NSString(string: sanitized).length),
+                withTemplate: ""
+            )
+        }
+
+        let markdownLinkMatches = unsafeMarkdownLinkRegex.matches(
+            in: sanitized,
+            options: [],
+            range: NSRange(location: 0, length: NSString(string: sanitized).length)
+        )
+        if markdownLinkMatches.isEmpty == false {
+            let mutable = NSMutableString(string: sanitized)
+            for match in markdownLinkMatches.reversed() {
+                guard match.numberOfRanges >= 3 else {
+                    continue
+                }
+                let label = mutable.substring(with: match.range(at: 1))
+                let rawTarget = mutable.substring(with: match.range(at: 2))
+                if isUnsafeLinkTarget(rawTarget) {
+                    mutable.replaceCharacters(in: match.range, with: label)
+                    unsafeURIRejectionCount += 1
+                }
+            }
+            sanitized = String(mutable)
+        }
+
+        let rawUnsafeMatches = rawUnsafeURIRegex.matches(
+            in: sanitized,
+            options: [],
+            range: NSRange(location: 0, length: NSString(string: sanitized).length)
+        )
+        if rawUnsafeMatches.isEmpty == false {
+            unsafeURIRejectionCount += rawUnsafeMatches.count
+            sanitized = rawUnsafeURIRegex.stringByReplacingMatches(
+                in: sanitized,
+                options: [],
+                range: NSRange(location: 0, length: NSString(string: sanitized).length),
+                withTemplate: "[unsafe link removed]"
+            )
+        }
+
+        let genericMatches = genericHTMLTagRegex.matches(
+            in: sanitized,
+            options: [],
+            range: NSRange(location: 0, length: NSString(string: sanitized).length)
+        )
+        blockedHTMLFragmentCount += genericMatches.count
+        sanitized = genericHTMLTagRegex.stringByReplacingMatches(
+            in: sanitized,
+            options: [],
+            range: NSRange(location: 0, length: NSString(string: sanitized).length),
+            withTemplate: ""
+        )
+
+        return RichOutputSanitizationResult(
+            text: sanitized,
+            didSanitize: sanitized != text,
+            blockedHTMLFragmentCount: blockedHTMLFragmentCount,
+            unsafeURIRejectionCount: unsafeURIRejectionCount
+        )
+    }
+
+    private static func isUnsafeLinkTarget(_ rawTarget: String) -> Bool {
+        let candidate = rawTarget
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .split(separator: " ", maxSplits: 1, omittingEmptySubsequences: true)
+            .first
+            .map(String.init) ?? rawTarget
+        let normalized = candidate
+            .trimmingCharacters(in: CharacterSet(charactersIn: "<>\"'"))
+            .lowercased()
+        return unsafeSchemes.contains { normalized.hasPrefix($0) }
+    }
+
+    private static let unsafeSchemes = ["javascript:", "data:", "vbscript:", "file:"]
+
+    private static let activeFragmentRegexes = [
+        regex(#"(?is)<!--.*?-->"#),
+        regex(#"(?is)<(script|style|iframe|object|embed|svg|math)\b[^>]*>.*?</\1\s*>"#),
+    ]
+
+    private static let genericHTMLTagRegex = regex(#"(?is)</?[A-Za-z][A-Za-z0-9:-]*(?:\s[^<>]*?)?/?>"#)
+    private static let unsafeMarkdownLinkRegex = regex(#"\[([^\]]+)\]\(((?:[^()]|\([^)]*\))+)\)"#)
+    private static let rawUnsafeURIRegex = regex(#"(?i)\b(?:javascript|data|vbscript|file):[^\s)\]]+"#)
+
+    private static func regex(_ pattern: String) -> NSRegularExpression {
+        try! NSRegularExpression(pattern: pattern, options: [])
+    }
+}
+
 public enum HTTPMethod: String, Sendable {
     case get = "GET"
     case post = "POST"
@@ -242,12 +427,7 @@ public struct OpenAIHandler: Sendable {
         }
 
         let response = OpenAIModelsResponse(object: "list", data: models)
-        let data = try encoder.encode(response)
-        return HTTPResponse(
-            statusCode: 200,
-            headers: ["content-type": "application/json"],
-            body: .data(data)
-        )
+        return try encodedJSONResponse(response)
     }
 
     private func handleHealth() async throws -> HTTPResponse {
@@ -266,12 +446,7 @@ public struct OpenAIHandler: Sendable {
             Date().timeIntervalSince(startedAt) * 1000,
             forKey: "operator.health_latency_ms"
         )
-        let data = try encoder.encode(response)
-        return HTTPResponse(
-            statusCode: 200,
-            headers: ["content-type": "application/json"],
-            body: .data(data)
-        )
+        return try encodedJSONResponse(response)
     }
 
     private func handleCacheStats() async throws -> HTTPResponse {
@@ -297,12 +472,7 @@ public struct OpenAIHandler: Sendable {
             Date().timeIntervalSince(startedAt) * 1000,
             forKey: "operator.cache_stats_latency_ms"
         )
-        let data = try encoder.encode(response)
-        return HTTPResponse(
-            statusCode: 200,
-            headers: ["content-type": "application/json"],
-            body: .data(data)
-        )
+        return try encodedJSONResponse(response)
     }
 
     private func handleCreateAuthSession(
@@ -336,12 +506,7 @@ public struct OpenAIHandler: Sendable {
                 token: issued.token
             )
         )
-        let data = try encoder.encode(response)
-        return HTTPResponse(
-            statusCode: 200,
-            headers: ["content-type": "application/json"],
-            body: .data(data)
-        )
+        return try encodedJSONResponse(response)
     }
 
     private func handleCurrentAuthSession(
@@ -354,12 +519,7 @@ public struct OpenAIHandler: Sendable {
             session: OpenAIAuthSessionPayload(metadata: metadata),
             resume: nil
         )
-        let data = try encoder.encode(response)
-        return HTTPResponse(
-            statusCode: 200,
-            headers: ["content-type": "application/json"],
-            body: .data(data)
-        )
+        return try encodedJSONResponse(response)
     }
 
     private func handleDeleteAuthSession(
@@ -377,12 +537,7 @@ public struct OpenAIHandler: Sendable {
                 session: OpenAIAuthSessionPayload(metadata: metadata),
                 resume: nil
             )
-            let data = try encoder.encode(response)
-            return HTTPResponse(
-                statusCode: 200,
-                headers: ["content-type": "application/json"],
-                body: .data(data)
-            )
+            return try encodedJSONResponse(response)
         case .failure(let failure):
             return await authSessionFailureResponse(for: failure)
         }
@@ -550,12 +705,7 @@ public struct OpenAIHandler: Sendable {
                     totalTokens: estimatedTokenCount(for: inputs)
                 )
             )
-            let data = try encoder.encode(payload)
-            return HTTPResponse(
-                statusCode: 200,
-                headers: ["content-type": "application/json"],
-                body: .data(data)
-            )
+            return try encodedJSONResponse(payload)
         } catch {
             return workerUnavailableResponse()
         }
@@ -602,12 +752,7 @@ public struct OpenAIHandler: Sendable {
                 model: rerankRequest.model,
                 topK: Int(rerankRequest.topK)
             )
-            let data = try encoder.encode(payload)
-            return HTTPResponse(
-                statusCode: 200,
-                headers: ["content-type": "application/json"],
-                body: .data(data)
-            )
+            return try encodedJSONResponse(payload)
         } catch {
             return workerUnavailableResponse()
         }
@@ -694,12 +839,7 @@ public struct OpenAIHandler: Sendable {
                 language: response.language,
                 durationSeconds: response.durationSeconds
             )
-            let data = try encoder.encode(payload)
-            return HTTPResponse(
-                statusCode: 200,
-                headers: ["content-type": "application/json"],
-                body: .data(data)
-            )
+            return try encodedJSONResponse(payload)
         } catch {
             await finishMultimodalRequest(
                 requestID: workerRequest.id.requestID,
@@ -905,12 +1045,7 @@ public struct OpenAIHandler: Sendable {
                 },
                 job: OpenAIImageJobPayload(job: controlPlaneImageJob(from: response.job, modelID: imageRequest.model))
             )
-            let data = try encoder.encode(payload)
-            return HTTPResponse(
-                statusCode: 200,
-                headers: ["content-type": "application/json"],
-                body: .data(data)
-            )
+            return try encodedJSONResponse(payload)
         } catch {
             await imageJobReadModel?.recordFailed(
                 jobID: jobID,
@@ -1061,12 +1196,7 @@ public struct OpenAIHandler: Sendable {
                 },
                 job: OpenAIImageJobPayload(job: controlPlaneImageJob(from: response.job, modelID: imageRequest.model))
             )
-            let data = try encoder.encode(payload)
-            return HTTPResponse(
-                statusCode: 200,
-                headers: ["content-type": "application/json"],
-                body: .data(data)
-            )
+            return try encodedJSONResponse(payload)
         } catch {
             await imageJobReadModel?.recordFailed(
                 jobID: jobID,
@@ -1213,13 +1343,61 @@ public struct OpenAIHandler: Sendable {
         )
     }
 
-    private func jsonResponse(statusCode: Int, payload: [String: Any]) -> HTTPResponse {
-        let data = (try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])) ?? Data("{}".utf8)
+    private func encodedJSONResponse<T: Encodable>(_ payload: T, statusCode: Int = 200) throws -> HTTPResponse {
+        let encoded = try encoder.encode(payload)
+        let jsonObject = try JSONSerialization.jsonObject(with: encoded)
+        let sanitizedPayload = Self.sanitizeJSONValue(jsonObject)
+        let data: Data
+        if sanitizedPayload.metrics.isEmpty {
+            data = encoded
+        } else {
+            recordSanitizedOutputMetrics(sanitizedPayload.metrics)
+            data = try JSONSerialization.data(withJSONObject: sanitizedPayload.value, options: [.sortedKeys])
+        }
         return HTTPResponse(
             statusCode: statusCode,
             headers: ["content-type": "application/json"],
             body: .data(data)
         )
+    }
+
+    private func jsonResponse(statusCode: Int, payload: [String: Any]) -> HTTPResponse {
+        let sanitizedPayload = Self.sanitizeJSONValue(payload)
+        recordSanitizedOutputMetrics(sanitizedPayload.metrics)
+        let data = (try? JSONSerialization.data(withJSONObject: sanitizedPayload.value, options: [.sortedKeys]))
+            ?? Data("{}".utf8)
+        return HTTPResponse(
+            statusCode: statusCode,
+            headers: ["content-type": "application/json"],
+            body: .data(data)
+        )
+    }
+
+    private func recordSanitizedOutputMetrics(_ metrics: SanitizedOutputMetrics) {
+        guard metrics.isEmpty == false else {
+            return
+        }
+        let metricsStore = self.metricsStore
+        Task {
+            if metrics.enforcementCount > 0 {
+                await metricsStore.increment(
+                    "sanitized_output.enforcement_count",
+                    by: Double(metrics.enforcementCount)
+                )
+            }
+            if metrics.blockedHTMLFragmentCount > 0 {
+                await metricsStore.increment(
+                    "sanitized_output.blocked_html_fragment_count",
+                    by: Double(metrics.blockedHTMLFragmentCount)
+                )
+            }
+            if metrics.unsafeURIRejectionCount > 0 {
+                await metricsStore.increment(
+                    "sanitized_output.unsafe_uri_rejection_count",
+                    by: Double(metrics.unsafeURIRejectionCount)
+                )
+            }
+        }
     }
 
     private func httpErrorResponse(for error: HTTPRequestHandlingError) -> HTTPResponse {
@@ -1426,6 +1604,41 @@ public struct OpenAIHandler: Sendable {
             ]
         }
         return jsonResponse(statusCode: 401, payload: payload)
+    }
+
+    private static func sanitizeJSONValue(_ value: Any) -> SanitizedJSONValue {
+        switch value {
+        case let string as String:
+            let result = RichOutputSanitizer.sanitize(string)
+            return SanitizedJSONValue(
+                value: result.text,
+                metrics: SanitizedOutputMetrics(
+                    enforcementCount: result.didSanitize ? 1 : 0,
+                    blockedHTMLFragmentCount: result.blockedHTMLFragmentCount,
+                    unsafeURIRejectionCount: result.unsafeURIRejectionCount
+                )
+            )
+        case let dictionary as [String: Any]:
+            var sanitizedDictionary: [String: Any] = [:]
+            var metrics = SanitizedOutputMetrics()
+            for (key, nestedValue) in dictionary {
+                let sanitizedValue = sanitizeJSONValue(nestedValue)
+                sanitizedDictionary[key] = sanitizedValue.value
+                metrics.formUnion(sanitizedValue.metrics)
+            }
+            return SanitizedJSONValue(value: sanitizedDictionary, metrics: metrics)
+        case let array as [Any]:
+            var sanitizedArray: [Any] = []
+            var metrics = SanitizedOutputMetrics()
+            for nestedValue in array {
+                let sanitizedValue = sanitizeJSONValue(nestedValue)
+                sanitizedArray.append(sanitizedValue.value)
+                metrics.formUnion(sanitizedValue.metrics)
+            }
+            return SanitizedJSONValue(value: sanitizedArray, metrics: metrics)
+        default:
+            return SanitizedJSONValue(value: value, metrics: SanitizedOutputMetrics())
+        }
     }
 
     private func imageArtifactRef(
@@ -1746,6 +1959,27 @@ public struct OpenAIHandler: Sendable {
             return ["wav", "mp3"]
         }
         return []
+    }
+}
+
+private struct SanitizedJSONValue {
+    let value: Any
+    let metrics: SanitizedOutputMetrics
+}
+
+private struct SanitizedOutputMetrics {
+    var enforcementCount = 0
+    var blockedHTMLFragmentCount = 0
+    var unsafeURIRejectionCount = 0
+
+    var isEmpty: Bool {
+        enforcementCount == 0 && blockedHTMLFragmentCount == 0 && unsafeURIRejectionCount == 0
+    }
+
+    mutating func formUnion(_ other: SanitizedOutputMetrics) {
+        enforcementCount += other.enforcementCount
+        blockedHTMLFragmentCount += other.blockedHTMLFragmentCount
+        unsafeURIRejectionCount += other.unsafeURIRejectionCount
     }
 }
 

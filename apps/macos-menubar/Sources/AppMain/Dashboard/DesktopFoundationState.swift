@@ -1,4 +1,5 @@
 import Foundation
+import MelixControlPlaneCore
 import MelixControlPlaneProtocol
 
 public struct DesktopDashboardCard: Identifiable, Equatable, Sendable {
@@ -60,10 +61,12 @@ public struct DesktopLogEntry: Identifiable, Equatable, Sendable {
     public let level: String
 
     public init(kind: String, message: String, detail: String, level: String) {
-        self.id = "\(kind)-\(message)-\(detail)-\(level)"
+        let sanitizedMessage = RichOutputSanitizer.sanitized(message)
+        let sanitizedDetail = RichOutputSanitizer.sanitized(detail)
+        self.id = "\(kind)-\(sanitizedMessage)-\(sanitizedDetail)-\(level)"
         self.kind = kind
-        self.message = message
-        self.detail = detail
+        self.message = sanitizedMessage
+        self.detail = sanitizedDetail
         self.level = level
     }
 }

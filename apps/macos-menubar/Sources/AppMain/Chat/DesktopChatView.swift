@@ -1,4 +1,5 @@
 import SwiftUI
+import MelixControlPlaneCore
 
 struct DesktopChatTabView: View {
     let viewModel: RuntimeViewModel
@@ -283,18 +284,21 @@ private struct DesktopChatTranscriptRowView: View {
     let entry: DesktopChatTranscriptEntry
 
     var body: some View {
+        let sanitizedTitle = RichOutputSanitizer.sanitized(entry.title)
+        let sanitizedDetail = RichOutputSanitizer.sanitized(entry.detail)
+        let sanitizedBody = RichOutputSanitizer.sanitized(entry.body)
         VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Text(entry.title)
+                Text(sanitizedTitle)
                     .font(.headline)
                 Spacer()
-                if !entry.detail.isEmpty {
-                    Text(entry.detail)
+                if !sanitizedDetail.isEmpty {
+                    Text(sanitizedDetail)
                         .font(.caption.monospaced())
                         .foregroundStyle(.secondary)
                 }
             }
-            Text(entry.body.isEmpty ? "…" : entry.body)
+            Text(sanitizedBody.isEmpty ? "…" : sanitizedBody)
                 .font(entry.kind == .tool ? .caption.monospaced() : .body)
                 .textSelection(.enabled)
         }

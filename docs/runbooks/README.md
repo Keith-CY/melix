@@ -18,6 +18,7 @@ Current runbooks:
 - `m6-acceleration-benchmarks.md`
 - `model-family-support-matrix.md`
 - `persistent-sessions.md`
+- `rich-output-sanitization.md`
 - `service-first-reuse.md`
 - `phase-1-local-stack.md`
 - `phase-2-queue-pressure.md`

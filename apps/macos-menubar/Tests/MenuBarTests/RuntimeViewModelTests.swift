@@ -913,6 +913,40 @@ struct RuntimeViewModelTests {
         #expect(viewModel.selectedChatSession?.id == originalSession.id)
     }
 
+    @Test("chat export sanitizes transcript markdown without mutating stored transcript state")
+    @MainActor
+    func chatExportSanitizesTranscriptMarkdownWithoutMutatingStoredTranscriptState() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(client: client)
+        await client.configureChatEvents([
+            .queued(lane: "text.decode.interactive", queuePosition: 0, backpressure: 0),
+            .admitted(lane: "text.decode.interactive", workerID: "swift-text-worker", queueDelayMs: 0.5),
+            .tokenDelta("<b>assistant</b> [click](javascript:alert(1))"),
+            .completed(
+                finishReason: "stop",
+                assistantText: "<b>assistant</b> [click](javascript:alert(1))",
+                reasoningText: ""
+            ),
+        ])
+
+        await viewModel.start()
+        viewModel.chatComposerText = "<i>Export me</i> file:///tmp/melix"
+        await viewModel.submitChatPrompt()
+
+        let assistantEntry = try #require(viewModel.chatTranscript.first(where: { $0.kind == .assistant }))
+        #expect(assistantEntry.body.contains("<b>assistant</b>"))
+        let exportPath = try #require(viewModel.exportSelectedChatSession())
+        let exported = try String(contentsOfFile: exportPath, encoding: .utf8)
+
+        #expect(exported.contains("<b>") == false)
+        #expect(exported.contains("<i>") == false)
+        #expect(exported.contains("javascript:") == false)
+        #expect(exported.contains("file:///tmp/melix") == false)
+        #expect(exported.contains("assistant click"))
+        #expect(exported.contains("[unsafe link removed]"))
+        #expect(viewModel.selectedChatSession?.transcript.contains(where: { $0.body.contains("<b>assistant</b>") }) == true)
+    }
+
     @Test("guarded server and chat actions no-op safely before hydration")
     @MainActor
     func guardedServerAndChatActionsNoOpSafelyBeforeHydration() async throws {
@@ -2006,6 +2040,58 @@ struct RuntimeViewModelTests {
         #expect(viewModel.benchmarkHistory.count == 3)
         #expect(viewModel.benchmarkMetricCards.count == 3)
         #expect(await metrics.snapshot()["menu.ops_bench_ms"] != nil)
+    }
+
+    @Test("rich output state sanitization covers doctor bench evaluation previews and local errors")
+    @MainActor
+    func richOutputStateSanitizationCoversDoctorBenchEvaluationPreviewsAndLocalErrors() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(client: client)
+        await client.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [makeModelSummary(modelID: "melix-dev-text", state: .modelWarm)]
+            )
+        )
+        await client.configureDoctorResponse("# <b>Doctor</b> [open](file:///tmp/melix)")
+        await client.configureBenchResponse(
+            ControlPlaneBenchResult(
+                reportPath: "/tmp/melix/bench/runs/bench-sanitize/bench-report.md",
+                reportMarkdown: "# <b>Bench</b> [click](javascript:alert(1))",
+                metrics: ["<b>bench.smoke.ttft_ms</b>": 21.10]
+            )
+        )
+        let maliciousExportBundle = makeBenchmarkExportBundleJSON()
+            .replacingOccurrences(
+                of: "What is 2 + 2?",
+                with: "<b>What is 2 + 2?</b> [click](javascript:alert(1))"
+            )
+            .replacingOccurrences(of: "\"Lyon\"", with: "\"<script>alert(1)</script>Lyon\"")
+        await client.configureExportResult(
+            ControlPlaneExportResult(exportBundleJSON: maliciousExportBundle)
+        )
+
+        await viewModel.start()
+        await viewModel.runDoctor()
+        await viewModel.runBench()
+        await viewModel.runEvaluation()
+
+        #expect(viewModel.lastDoctorReport?.markdown == "# Doctor open")
+        #expect(viewModel.lastBenchReport?.markdown == "# Bench click")
+        #expect(viewModel.lastBenchReport?.metrics.first?.name == "bench.smoke.ttft_ms")
+        let firstPreview = try #require(viewModel.evaluationSamplePreview.first)
+        #expect(firstPreview.question.contains("<b>") == false)
+        #expect(firstPreview.question.contains("javascript:") == false)
+        #expect(firstPreview.question == "What is 2 + 2? click")
+        let secondPreview = try #require(viewModel.evaluationSamplePreview.last)
+        #expect(secondPreview.predicted == "Lyon")
+        #expect(secondPreview.rawResponse == "Lyon")
+
+        await client.configureErrors(bench: MenuBarTestError(description: "<b>boom</b> [click](javascript:alert(1))"))
+        await viewModel.runBench()
+
+        #expect(viewModel.lastError == "boom click")
+        #expect(viewModel.desktopFoundationState.logs.contains(where: { $0.message == "boom click" }))
     }
 
     @Test("benchmark selection state falls back and benchmark guard rails surface local errors")

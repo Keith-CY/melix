@@ -126,7 +126,7 @@ The roadmap extension in `M10-M17` includes milestone-level plans plus decompose
 - `M9.4` `docs/plans/2026-03-30-m9-4-persistent-sessions-and-remember-me.md`
   Status: completed. Persistent auth-session storage, bootstrap restore, structured remember-me gateway routes, operator projection, runbook guidance, smoke coverage, and changed-line coverage evidence are recorded in the repository.
 - `M9.5` `docs/plans/2026-03-30-m9-5-rich-output-sanitization.md`
-  Status: pending. First executable slice is shared sanitizer rules plus gateway-side enforcement tests.
+  Status: completed. Shared sanitizer rules, gateway and operator enforcement coverage, runbook guidance, metrics assertions, and changed-line coverage evidence are recorded in the repository.
 - `M9.6` `docs/plans/2026-03-30-m9-6-connection-lifecycle-hardening.md`
   Status: pending. First executable slice is the lifecycle policy object plus keepalive and disconnect-path tests.
 - `M9.7` `docs/plans/2026-03-30-m9-7-security-and-stability-closure-audit.md`

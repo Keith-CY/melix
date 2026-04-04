@@ -2,6 +2,26 @@
 
 ## 2026-04-04
 
+- Closed the `M9.5` rich-output sanitization transaction:
+  - added repository-owned rich-output sanitizer coverage in `services/control-plane-swift/Sources/HTTPGateway/OpenAI/OpenAIHandler.swift`, including fenced-code preservation, HTML-fragment stripping, unsafe URI rejection, and recursive JSON string sanitization for both handwritten and typed gateway responses
+  - added gateway contract tests in `services/control-plane-swift/Tests/HTTPGatewayTests/RichOutputSanitizerTests.swift` and `services/control-plane-swift/Tests/HTTPGatewayTests/OpenAIHandlerTests.swift`, including metrics assertions for sanitized auth-session payloads
+  - projected the same sanitization contract into operator-facing menu bar surfaces by sanitizing doctor and benchmark markdown, evaluation previews, desktop logs, exported chat transcripts, and local error strings without mutating stored assistant transcript state
+  - added `docs/runbooks/rich-output-sanitization.md` and registered it from `docs/runbooks/README.md`
+- Verification summary for `M9.5`:
+  - `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/.build/ModuleCache.noindex" swift test --package-path services/control-plane-swift --filter 'RichOutputSanitizerTests|OpenAIHandlerTests'`: `103 tests in 2 suites passed`
+  - `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/.build/ModuleCache.noindex" swift test --package-path services/control-plane-swift --enable-code-coverage --filter 'RichOutputSanitizerTests|OpenAIHandlerTests'`: `103 tests in 2 suites passed`
+  - `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/.build/ModuleCache.noindex" swift test --package-path apps/macos-menubar --scratch-path "$(pwd)/.build/menubar-scratch" --filter 'RuntimeViewModelTests|DesktopFoundationViewTests'`: `146 tests in 2 suites passed`
+  - `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/.build/ModuleCache.noindex" swift test --package-path apps/macos-menubar --enable-code-coverage --scratch-path "$(pwd)/.build/menubar-coverage" --filter 'RuntimeViewModelTests|DesktopFoundationViewTests'`: `146 tests in 2 suites passed`
+  - verification note: both Swift coverage builds emitted a pre-existing `warning: input verification failed` linker note while processing object files, but the authoritative test results above completed successfully and produced usable `profdata`
+- Metrics report for `M9.5`:
+  - deterministic gateway sanitization fixture from `gateway auth session responses sanitize rich output in encoded and manual json payloads` recorded:
+    - `sanitized_output.enforcement_count = 2`
+    - `sanitized_output.blocked_html_fragment_count = 4`
+    - `sanitized_output.unsafe_uri_rejection_count = 4`
+  - `services/control-plane-swift/Sources/HTTPGateway/OpenAI/OpenAIHandler.swift`, `services/control-plane-swift/Tests/HTTPGatewayTests/OpenAIHandlerTests.swift`, and `services/control-plane-swift/Tests/HTTPGatewayTests/RichOutputSanitizerTests.swift`: changed-line coverage `95.71%` (`290/303`)
+  - `apps/macos-menubar/Sources/AppMain/Chat/DesktopChatView.swift`, `apps/macos-menubar/Sources/AppMain/Dashboard/DesktopFoundationState.swift`, `apps/macos-menubar/Sources/AppMain/Models/RuntimeViewModel.swift`, and `apps/macos-menubar/Tests/MenuBarTests/RuntimeViewModelTests.swift`: changed-line coverage `100.00%` (`136/136`)
+  - aggregate changed-line coverage for the touched executable scope in `M9.5`: `97.04%` (`426/439`)
+
 - Closed the `M9.4` persistent-session foundation transaction:
   - added `services/control-plane-swift/Sources/HTTPGateway/OpenAI/PersistentAuthSessionStore.swift` to persist hashed remember-me gateway sessions under `MELIX_HOME/state/persistent-auth-sessions.json` or `~/.melix/state/persistent-auth-sessions.json`
   - restored remembered sessions during bootstrap, reconciled them against live gateway policy updates, initialized `persistent_session.*` metrics, and extended the control-plane HTTP parser to accept `DELETE` for sign-out

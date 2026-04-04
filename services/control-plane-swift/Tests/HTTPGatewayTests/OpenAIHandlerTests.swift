@@ -387,6 +387,82 @@ struct OpenAIHandlerTests {
         #expect(await metricsStore.value(forKey: "persistent_session.active_session_count") == 0)
     }
 
+    @Test("gateway auth session responses sanitize rich output in encoded and manual json payloads")
+    func gatewayAuthSessionResponsesSanitizeRichOutputAcrossResponsePaths() async throws {
+        let metricsStore = MetricsStore()
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-gateway-auth-sanitize-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let maliciousKeyID = "<b>codex</b> [click](javascript:alert(1)) file:///tmp/melix"
+        let handler = OpenAIHandler(
+            modelCatalog: ModelCatalog(seedModels: [warmModel()]),
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: ScriptedWorkerClient(events: [])),
+                abortRegistry: AbortRegistry()
+            ),
+            metricsStore: metricsStore,
+            gatewayAccessPolicy: GatewayAccessPolicy(
+                mode: .apiKeys,
+                sharedAccessEnabled: true,
+                keys: [
+                    .init(keyID: maliciousKeyID, label: "Codex", tokenHint: "codex", token: "sk-codex"),
+                ]
+            ),
+            persistentAuthSessionStore: PersistentAuthSessionStore(
+                storeURL: temporaryRoot.appendingPathComponent("persistent-auth-sessions.json"),
+                metricsStore: metricsStore,
+                retentionTTLSeconds: 3600,
+                nowUnixMs: { 1_000 }
+            )
+        )
+
+        let createResponse = try await handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/melix/auth/session",
+                headers: [
+                    "content-type": "application/json",
+                    "x-api-key": "sk-codex",
+                ],
+                body: try #require("{\"remember_me\":true}".data(using: .utf8))
+            )
+        )
+        let createPayload = try await jsonPayload(from: createResponse.body)
+        let createSession = try #require(createPayload["session"] as? [String: Any])
+        let sessionToken = try #require((createPayload["resume"] as? [String: Any])?["token"] as? String)
+
+        let signOutResponse = try await handler.handle(
+            HTTPRequest(
+                method: .delete,
+                path: "/v1/melix/auth/session",
+                headers: ["X-Melix-Session": sessionToken],
+                body: Data()
+            )
+        )
+        #expect(signOutResponse.statusCode == 200)
+
+        let rejectedResponse = try await handler.handle(
+            HTTPRequest(
+                method: .get,
+                path: "/v1/models",
+                headers: ["X-Melix-Session": sessionToken],
+                body: Data()
+            )
+        )
+        let rejectedPayload = try await jsonPayload(from: rejectedResponse.body)
+        let rejectedError = try #require(rejectedPayload["error"] as? [String: Any])
+        let rejectedSessionState = try #require(rejectedError["session_state"] as? [String: Any])
+        try await Task.sleep(for: .milliseconds(20))
+
+        #expect(createSession["key_id"] as? String == "codex click [unsafe link removed]")
+        #expect(rejectedSessionState["key_id"] as? String == "codex click [unsafe link removed]")
+        #expect(await metricsStore.value(forKey: "sanitized_output.enforcement_count") >= 2)
+        #expect(await metricsStore.value(forKey: "sanitized_output.blocked_html_fragment_count") >= 2)
+        #expect(await metricsStore.value(forKey: "sanitized_output.unsafe_uri_rejection_count") >= 2)
+    }
+
     @Test("gateway auth session routes reject missing unsupported and unavailable session flows")
     func gatewayAuthSessionRoutesRejectMissingUnsupportedAndUnavailableSessionFlows() async throws {
         let metricsStore = MetricsStore()
