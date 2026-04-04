@@ -286,6 +286,296 @@ struct ControlPlaneServiceTests {
         #expect(response.server.snapshot.runtimeSessions.first?.powerState == .active)
     }
 
+    @Test("execute handles server lifecycle controls and derives server state")
+    func executeHandlesServerLifecycleControlsAndDerivesServerState() async throws {
+        let service = ControlPlaneService()
+
+        let pauseResponse = try await service.execute(makeServerPauseRequest())
+        let wakeResponse = try await service.execute(makeServerWakeRequest())
+        let resumeResponse = try await service.execute(makeServerResumeRequest())
+        let stopResponse = try await service.execute(makeServerStopRequest())
+        let startResponse = try await service.execute(makeServerStartRequest())
+        let restartResponse = try await service.execute(makeServerRestartRequest())
+
+        #expect(pauseResponse.ok)
+        #expect(pauseResponse.server.snapshot.serverState == .serverDegraded)
+        #expect(pauseResponse.server.snapshot.runtimeSessions.first?.lifecycleState == .paused)
+
+        #expect(wakeResponse.ok)
+        #expect(wakeResponse.server.snapshot.serverState == .serverReady)
+        #expect(wakeResponse.server.snapshot.runtimeSessions.first?.lifecycleState == .ready)
+        #expect(wakeResponse.server.snapshot.runtimeSessions.first?.wakeReason == .operatorResume)
+
+        #expect(resumeResponse.ok)
+        #expect(resumeResponse.server.snapshot.serverState == .serverReady)
+        #expect(resumeResponse.server.snapshot.runtimeSessions.first?.lifecycleState == .ready)
+        #expect(resumeResponse.server.snapshot.runtimeSessions.first?.wakeReason == .operatorResume)
+
+        #expect(stopResponse.ok)
+        #expect(stopResponse.server.snapshot.serverState == .serverStopped)
+        #expect(stopResponse.server.snapshot.runtimeSessions.first?.lifecycleState == .stopped)
+        #expect(stopResponse.server.snapshot.runtimeSessions.first?.powerState == .stopped)
+
+        #expect(startResponse.ok)
+        #expect(startResponse.server.snapshot.serverState == .serverReady)
+        #expect(startResponse.server.snapshot.runtimeSessions.first?.lifecycleState == .ready)
+        #expect(startResponse.server.snapshot.runtimeSessions.first?.wakeReason == .operatorResume)
+
+        #expect(restartResponse.ok)
+        #expect(restartResponse.server.snapshot.serverState == .serverReady)
+        #expect(restartResponse.server.snapshot.runtimeSessions.first?.lifecycleState == .ready)
+        #expect(restartResponse.server.snapshot.runtimeSessions.first?.wakeReason == .operatorResume)
+    }
+
+    @Test("execute handles server idle policy updates")
+    func executeHandlesServerIdlePolicyUpdates() async throws {
+        let service = ControlPlaneService()
+
+        let response = try await service.execute(
+            makeServerSetIdlePolicyRequest(
+                autoSleepEnabled: true,
+                lightSleepAfterSeconds: 60,
+                deepSleepAfterSeconds: 600
+            )
+        )
+
+        #expect(response.ok)
+        #expect(response.server.snapshot.serverState == .serverReady)
+        #expect(response.server.snapshot.runtimeSessions.first?.autoSleepEnabled == true)
+        #expect(response.server.snapshot.runtimeSessions.first?.lightSleepAfterSeconds == 60)
+        #expect(response.server.snapshot.runtimeSessions.first?.deepSleepAfterSeconds == 600)
+    }
+
+    @Test("execute rejects invalid server idle policy thresholds")
+    func executeRejectsInvalidServerIdlePolicyThresholds() async throws {
+        let service = ControlPlaneService()
+
+        let response = try await service.execute(
+            makeServerSetIdlePolicyRequest(
+                autoSleepEnabled: true,
+                lightSleepAfterSeconds: 600,
+                deepSleepAfterSeconds: 60
+            )
+        )
+
+        #expect(!response.ok)
+        #expect(response.error.code == "invalid_argument")
+        #expect(response.error.message == "deep_sleep_after_seconds must be greater than or equal to light_sleep_after_seconds.")
+    }
+
+    @Test("server lifecycle requests reject mismatched target and payload session ids")
+    func serverLifecycleRequestsRejectMismatchedTargetAndPayloadSessionIDs() async throws {
+        let service = ControlPlaneService()
+        var request = makeServerPauseRequest(serverSessionID: "server-session-1")
+        request.targetID = "server-session-2"
+
+        let response = try await service.execute(request)
+
+        #expect(!response.ok)
+        #expect(response.error.code == "invalid_argument")
+        #expect(response.error.message == "Target server session does not match the command payload.")
+    }
+
+    @Test("serving activity blocks paused sessions and wakes sleeping sessions")
+    func servingActivityBlocksPausedSessionsAndWakesSleepingSessions() async throws {
+        var pausedSession = ServerSessionRuntimeStore.defaultRuntimeSession(updatedAtUnixMS: 1_000)
+        pausedSession.lifecycleState = .paused
+        let pausedService = ControlPlaneService(
+            serverSessionRuntimeStore: ServerSessionRuntimeStore(runtimeSessions: [pausedSession], nowUnixMS: { 2_000 })
+        )
+
+        let pausedResponse = try await pausedService.execute(
+            makeImageGenerateRequest(
+                modelID: "melix-dev-image",
+                prompt: "bench",
+                size: "1024x1024",
+                n: 1
+            )
+        )
+
+        #expect(!pausedResponse.ok)
+        #expect(pausedResponse.error.code == "server_paused")
+
+        var sleepingSession = ServerSessionRuntimeStore.defaultRuntimeSession(updatedAtUnixMS: 1_000)
+        sleepingSession.lifecycleState = .sleeping
+        sleepingSession.powerState = .deepSleep
+        let sleepingStore = ServerSessionRuntimeStore(runtimeSessions: [sleepingSession], nowUnixMS: { 3_000 })
+        let sleepingService = ControlPlaneService(serverSessionRuntimeStore: sleepingStore)
+
+        let wakingResponse = try await sleepingService.execute(
+            makeImageGenerateRequest(
+                requestID: "req-image-generate-wake",
+                modelID: "melix-dev-image",
+                prompt: "bench",
+                size: "1024x1024",
+                n: 1
+            )
+        )
+        let snapshotAfterWake = try await sleepingService.execute(makeServerSnapshotRequest())
+
+        #expect(!wakingResponse.ok)
+        #expect(wakingResponse.error.code == "not_ready")
+        #expect(snapshotAfterWake.server.snapshot.serverState == .serverReady)
+        #expect(snapshotAfterWake.server.snapshot.runtimeSessions.first?.lifecycleState == .ready)
+        #expect(snapshotAfterWake.server.snapshot.runtimeSessions.first?.powerState == .active)
+        #expect(snapshotAfterWake.server.snapshot.runtimeSessions.first?.wakeReason == .requestActivity)
+    }
+
+    @Test("startChat blocks paused sessions and wakes sleeping sessions before dispatch")
+    func startChatBlocksPausedSessionsAndWakesSleepingSessionsBeforeDispatch() async throws {
+        var pausedSession = ServerSessionRuntimeStore.defaultRuntimeSession(updatedAtUnixMS: 1_000)
+        pausedSession.lifecycleState = .paused
+        let pausedService = ControlPlaneService(
+            serverSessionRuntimeStore: ServerSessionRuntimeStore(runtimeSessions: [pausedSession], nowUnixMS: { 2_000 })
+        )
+
+        await #expect(throws: ControlPlaneChatExecutionError.unavailable) {
+            try await pausedService.startChat(
+                ControlPlaneChatRequest(
+                    modelID: "melix-dev-text",
+                    messages: [.init(role: "user", content: "hello")]
+                )
+            )
+        }
+
+        var sleepingSession = ServerSessionRuntimeStore.defaultRuntimeSession(updatedAtUnixMS: 1_000)
+        sleepingSession.lifecycleState = .sleeping
+        sleepingSession.powerState = .deepSleep
+        let sleepingStore = ServerSessionRuntimeStore(runtimeSessions: [sleepingSession], nowUnixMS: { 3_000 })
+        let modelCatalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel()])
+        _ = await modelCatalog.loadModel(id: "melix-dev-text", dispatchHandle: "melix-dev-text::local")
+        let textClient = ScriptedChatWorkerClient(events: [
+            makeQueuedExecuteEvent(requestID: "chat-server-wake"),
+            makeCompletedExecuteEvent(
+                requestID: "chat-server-wake",
+                finishReason: "stop",
+                assistant: "awake",
+                reasoning: ""
+            ),
+        ])
+        let sleepingService = ControlPlaneService(
+            modelCatalog: modelCatalog,
+            serverSessionRuntimeStore: sleepingStore,
+            workerRegistry: WorkerRegistry(defaultTextClient: textClient, modelCatalog: modelCatalog),
+            chatTranslator: ChatRequestTranslator(requestIDGenerator: { "chat-server-wake" })
+        )
+
+        let execution = try await sleepingService.startChat(
+            ControlPlaneChatRequest(
+                modelID: "melix-dev-text",
+                messages: [.init(role: "user", content: "wake the server")]
+            )
+        )
+        _ = try await Array(execution.stream)
+        let snapshotAfterWake = try await sleepingService.execute(makeServerSnapshotRequest())
+
+        #expect(snapshotAfterWake.server.snapshot.serverState == .serverReady)
+        #expect(snapshotAfterWake.server.snapshot.runtimeSessions.first?.lifecycleState == .ready)
+        #expect(snapshotAfterWake.server.snapshot.runtimeSessions.first?.powerState == .active)
+        #expect(snapshotAfterWake.server.snapshot.runtimeSessions.first?.wakeReason == .requestActivity)
+    }
+
+    @Test("server pause and stop require quiescence while requests are active")
+    func serverPauseAndStopRequireQuiescenceWhileRequestsAreActive() async throws {
+        let schedulerReadModel = SchedulerReadModel()
+        _ = await schedulerReadModel.recordAdmitted(
+            requestID: "req-inflight",
+            laneHint: "text.decode.interactive",
+            priority: 100,
+            workerID: "swift-text-worker",
+            admissionLatencyMs: 1
+        )
+        let service = ControlPlaneService(schedulerReadModel: schedulerReadModel)
+
+        let pauseResponse = try await service.execute(makeServerPauseRequest())
+        let stopResponse = try await service.execute(makeServerStopRequest())
+
+        #expect(!pauseResponse.ok)
+        #expect(pauseResponse.error.code == "conflict")
+        #expect(!stopResponse.ok)
+        #expect(stopResponse.error.code == "conflict")
+    }
+
+    @Test("image edit serving respects paused sleeping stopped and failed server sessions")
+    func imageEditServingRespectsPausedSleepingStoppedAndFailedServerSessions() async throws {
+        var pausedSession = ServerSessionRuntimeStore.defaultRuntimeSession(updatedAtUnixMS: 1_000)
+        pausedSession.lifecycleState = .paused
+        let pausedService = ControlPlaneService(
+            serverSessionRuntimeStore: ServerSessionRuntimeStore(runtimeSessions: [pausedSession], nowUnixMS: { 2_000 })
+        )
+        let pausedResponse = try await pausedService.execute(
+            makeImageEditRequest(
+                requestID: "req-image-edit-paused",
+                modelID: "melix-dev-image",
+                prompt: "pause",
+                imageURI: "file:///tmp/source.png",
+                maskURI: "",
+                strength: 0.5
+            )
+        )
+
+        var sleepingSession = ServerSessionRuntimeStore.defaultRuntimeSession(updatedAtUnixMS: 1_000)
+        sleepingSession.lifecycleState = .sleeping
+        sleepingSession.powerState = .deepSleep
+        let sleepingStore = ServerSessionRuntimeStore(runtimeSessions: [sleepingSession], nowUnixMS: { 3_000 })
+        let sleepingService = ControlPlaneService(serverSessionRuntimeStore: sleepingStore)
+        let wakingResponse = try await sleepingService.execute(
+            makeImageEditRequest(
+                requestID: "req-image-edit-wake",
+                modelID: "melix-dev-image",
+                prompt: "wake",
+                imageURI: "file:///tmp/source.png",
+                maskURI: "",
+                strength: 0.5
+            )
+        )
+        let wakingSnapshot = try await sleepingService.execute(makeServerSnapshotRequest())
+
+        var stoppedSession = ServerSessionRuntimeStore.defaultRuntimeSession(updatedAtUnixMS: 1_000)
+        stoppedSession.lifecycleState = .stopped
+        stoppedSession.powerState = .stopped
+        let stoppedService = ControlPlaneService(
+            serverSessionRuntimeStore: ServerSessionRuntimeStore(runtimeSessions: [stoppedSession], nowUnixMS: { 4_000 })
+        )
+        let stoppedResponse = try await stoppedService.execute(
+            makeImageEditRequest(
+                requestID: "req-image-edit-stopped",
+                modelID: "melix-dev-image",
+                prompt: "stop",
+                imageURI: "file:///tmp/source.png",
+                maskURI: "",
+                strength: 0.5
+            )
+        )
+
+        var failedSession = ServerSessionRuntimeStore.defaultRuntimeSession(updatedAtUnixMS: 1_000)
+        failedSession.lifecycleState = .error
+        let failedService = ControlPlaneService(
+            serverSessionRuntimeStore: ServerSessionRuntimeStore(runtimeSessions: [failedSession], nowUnixMS: { 5_000 })
+        )
+        let failedResponse = try await failedService.execute(
+            makeImageEditRequest(
+                requestID: "req-image-edit-failed",
+                modelID: "melix-dev-image",
+                prompt: "failed",
+                imageURI: "file:///tmp/source.png",
+                maskURI: "",
+                strength: 0.5
+            )
+        )
+
+        #expect(!pausedResponse.ok)
+        #expect(pausedResponse.error.code == "server_paused")
+        #expect(!wakingResponse.ok)
+        #expect(wakingResponse.error.code == "not_ready")
+        #expect(wakingSnapshot.server.snapshot.runtimeSessions.first?.lifecycleState == .ready)
+        #expect(wakingSnapshot.server.snapshot.runtimeSessions.first?.powerState == .active)
+        #expect(!stoppedResponse.ok)
+        #expect(stoppedResponse.error.code == "server_stopped")
+        #expect(!failedResponse.ok)
+        #expect(failedResponse.error.code == "server_failed")
+    }
+
     @Test("applying gateway access publishes server runtime session metadata")
     func applyingGatewayAccessPublishesServerRuntimeSessionMetadata() async throws {
         let service = ControlPlaneService()
@@ -2628,6 +2918,7 @@ struct ControlPlaneServiceTests {
             private(set) var lastBenchRequest: Melix_Controlplane_V1_RunBench?
             private(set) var lastBenchMatrixRequest: Melix_Controlplane_V1_RunBenchMatrix?
             private(set) var lastEvaluationRequest: Melix_Controlplane_V1_RunEvaluation?
+            private(set) var lastServerRequest: Melix_Controlplane_V1_ControlPlaneRequest?
 
             func handshake(_ request: Melix_Controlplane_V1_HandshakeRequest) async throws -> Melix_Controlplane_V1_HandshakeResponse {
                 _ = request
@@ -2665,6 +2956,16 @@ struct ControlPlaneServiceTests {
                 response.commandType = request.commandType
                 response.ok = true
                 switch request.command {
+                case .server:
+                    lastServerRequest = request
+                    response.server.snapshot = Melix_Controlplane_V1_ServerSnapshot()
+                    response.server.snapshot.serverState = .serverReady
+                    var runtime = Melix_Controlplane_V1_ServerSessionRuntimeState()
+                    runtime.serverSessionID = request.targetID.isEmpty ? ServerSessionRuntimeStore.defaultServerSessionID : request.targetID
+                    runtime.lifecycleState = .ready
+                    runtime.powerState = .active
+                    runtime.wakeReason = .operatorResume
+                    response.server.snapshot.runtimeSessions = [runtime]
                 case .ops(let command):
                     switch command.kind {
                     case .runBench(let bench):
@@ -2791,6 +3092,158 @@ struct ControlPlaneServiceTests {
         #expect(evaluationRequest.seed == 7)
         #expect(evaluationRequest.scoringMode == "multiple_choice_accuracy")
         #expect(evaluationRequest.codeExecPolicy == "sandboxed")
+
+        _ = try await client.startServerSession(serverSessionID: "server-session-2")
+        var serverRequest = try #require(await service.lastServerRequest)
+        #expect(serverRequest.commandType == "server.start")
+        #expect(serverRequest.targetID == "server-session-2")
+        #expect(serverRequest.server.start.serverSessionID == "server-session-2")
+
+        _ = try await client.pauseServerSession(serverSessionID: "server-session-2")
+        serverRequest = try #require(await service.lastServerRequest)
+        #expect(serverRequest.commandType == "server.pause")
+        #expect(serverRequest.server.pause.serverSessionID == "server-session-2")
+
+        _ = try await client.resumeServerSession(serverSessionID: "server-session-2")
+        serverRequest = try #require(await service.lastServerRequest)
+        #expect(serverRequest.commandType == "server.resume")
+        #expect(serverRequest.server.resume.serverSessionID == "server-session-2")
+
+        _ = try await client.wakeServerSession(serverSessionID: "server-session-2")
+        serverRequest = try #require(await service.lastServerRequest)
+        #expect(serverRequest.commandType == "server.wake")
+        #expect(serverRequest.server.wake.serverSessionID == "server-session-2")
+
+        _ = try await client.stopServerSession(serverSessionID: "server-session-2")
+        serverRequest = try #require(await service.lastServerRequest)
+        #expect(serverRequest.commandType == "server.stop")
+        #expect(serverRequest.server.stop.serverSessionID == "server-session-2")
+
+        _ = try await client.updateServerIdlePolicy(
+            serverSessionID: "server-session-2",
+            autoSleepEnabled: true,
+            lightSleepAfterSeconds: 60,
+            deepSleepAfterSeconds: 600
+        )
+        serverRequest = try #require(await service.lastServerRequest)
+        #expect(serverRequest.commandType == "server.set_idle_policy")
+        #expect(serverRequest.server.setIdlePolicy.serverSessionID == "server-session-2")
+        #expect(serverRequest.server.setIdlePolicy.autoSleepEnabled == true)
+        #expect(serverRequest.server.setIdlePolicy.lightSleepAfterSeconds == 60)
+        #expect(serverRequest.server.setIdlePolicy.deepSleepAfterSeconds == 600)
+    }
+
+    @Test("control-plane xpc client server lifecycle defaults surface unimplemented errors")
+    func controlPlaneXPCClientServerLifecycleDefaultsSurfaceUnimplementedErrors() async throws {
+        actor FallbackClient: ControlPlaneXPCClient {
+            func handshake() async throws -> Melix_Controlplane_V1_HandshakeResponse { .init() }
+            func subscribe(lastSeenSeq: UInt64) async -> AsyncStream<Melix_Controlplane_V1_ControlPlaneEvent> {
+                _ = lastSeenSeq
+                return AsyncStream { continuation in
+                    continuation.finish()
+                }
+            }
+            func serverSnapshot() async throws -> Melix_Controlplane_V1_ServerSnapshot { .init() }
+            func loadModel(modelID: String) async throws -> Melix_Controlplane_V1_ModelSummary { .init() }
+            func unloadModel(modelID: String) async throws -> Melix_Controlplane_V1_ModelSummary { .init() }
+            func updateModelSettings(modelID: String, values: [String: String]) async throws -> Melix_Controlplane_V1_ModelSummary { .init() }
+            func modelInfo(modelID: String) async throws -> Melix_Controlplane_V1_ModelInfo { .init() }
+            func startChat(_ request: ControlPlaneChatRequest) async throws -> ControlPlaneChatExecution {
+                _ = request
+                return ControlPlaneChatExecution(
+                    requestID: "chat",
+                    modelID: "melix-dev-text",
+                    stream: AsyncThrowingStream { continuation in continuation.finish() }
+                )
+            }
+            func runModelOperation(modelID: String, operation: String, outputDir: String, quantProfileID: String, weightQuant: String, kvQuant: String, ext: [String: String]) async throws -> Melix_Controlplane_V1_ModelOperationResult { .init() }
+            func generateImage(_ request: ControlPlaneImageGenerationRequest) async throws -> Melix_Controlplane_V1_ImageJobSummary { .init() }
+            func editImage(_ request: ControlPlaneImageEditRequest) async throws -> Melix_Controlplane_V1_ImageJobSummary { .init() }
+            func runDoctor() async throws -> String { "" }
+            func runBench(_ request: ControlPlaneBenchRequest) async throws -> ControlPlaneBenchResult {
+                _ = request
+                return ControlPlaneBenchResult(reportPath: "", reportMarkdown: "", metrics: [:])
+            }
+            func runBenchMatrix(_ request: ControlPlaneBenchMatrixRequest) async throws -> ControlPlaneBenchMatrixResult {
+                _ = request
+                return ControlPlaneBenchMatrixResult(
+                    job: .init(),
+                    summaryRows: []
+                )
+            }
+            func runEvaluation(_ request: ControlPlaneEvaluationRequest) async throws -> ControlPlaneEvaluationResult {
+                _ = request
+                return ControlPlaneEvaluationResult(job: .init(), results: [])
+            }
+            func exportResults(outputDir: String) async throws -> ControlPlaneExportResult {
+                _ = outputDir
+                return ControlPlaneExportResult(exportBundleJSON: "{}")
+            }
+            func cancelRequest(requestID: String) async throws -> Bool {
+                _ = requestID
+                return false
+            }
+            func applyServerSessionGatewayAccess(
+                serverSessionID: String,
+                primaryKey: String,
+                keyID: String,
+                label: String,
+                tokenHint: String
+            ) async throws {
+                _ = serverSessionID
+                _ = primaryKey
+                _ = keyID
+                _ = label
+                _ = tokenHint
+            }
+            func clearServerSessionGatewayAccess(serverSessionID: String) async throws {
+                _ = serverSessionID
+            }
+        }
+
+        let client = FallbackClient()
+
+        await #expect(throws: ControlPlaneXPCClientError.requestFailed(
+            code: "unimplemented",
+            message: "Server start is not implemented for this control-plane client."
+        )) {
+            _ = try await client.startServerSession(serverSessionID: "server-session-1")
+        }
+        await #expect(throws: ControlPlaneXPCClientError.requestFailed(
+            code: "unimplemented",
+            message: "Server pause is not implemented for this control-plane client."
+        )) {
+            _ = try await client.pauseServerSession(serverSessionID: "server-session-1")
+        }
+        await #expect(throws: ControlPlaneXPCClientError.requestFailed(
+            code: "unimplemented",
+            message: "Server resume is not implemented for this control-plane client."
+        )) {
+            _ = try await client.resumeServerSession(serverSessionID: "server-session-1")
+        }
+        await #expect(throws: ControlPlaneXPCClientError.requestFailed(
+            code: "unimplemented",
+            message: "Server wake is not implemented for this control-plane client."
+        )) {
+            _ = try await client.wakeServerSession(serverSessionID: "server-session-1")
+        }
+        await #expect(throws: ControlPlaneXPCClientError.requestFailed(
+            code: "unimplemented",
+            message: "Server stop is not implemented for this control-plane client."
+        )) {
+            _ = try await client.stopServerSession(serverSessionID: "server-session-1")
+        }
+        await #expect(throws: ControlPlaneXPCClientError.requestFailed(
+            code: "unimplemented",
+            message: "Server idle-policy updates are not implemented for this control-plane client."
+        )) {
+            _ = try await client.updateServerIdlePolicy(
+                serverSessionID: "server-session-1",
+                autoSleepEnabled: true,
+                lightSleepAfterSeconds: 60,
+                deepSleepAfterSeconds: 600
+            )
+        }
     }
 
     @Test("execute rejects canonical bench request validation failures")
@@ -4659,16 +5112,13 @@ struct ControlPlaneServiceTests {
         #expect(response.error.code == "unimplemented")
     }
 
-    @Test("execute returns unimplemented for unsupported server, model, and ops variants")
+    @Test("execute returns unimplemented for unsupported model and ops variants")
     func executeReturnsUnimplementedForUnsupportedVariants() async throws {
         let service = ControlPlaneService()
 
-        let serverResponse = try await service.execute(makeServerShutdownRequest())
         let modelResponse = try await service.execute(makeModelPinRequest())
         let opsResponse = try await service.execute(makeOpsTraceRequest())
 
-        #expect(!serverResponse.ok)
-        #expect(serverResponse.error.code == "unimplemented")
         #expect(!modelResponse.ok)
         #expect(modelResponse.error.code == "unimplemented")
         #expect(!opsResponse.ok)
@@ -4693,6 +5143,103 @@ struct ControlPlaneServiceTests {
         request.commandType = "server.get_snapshot"
         request.server = Melix_Controlplane_V1_ServerCommand()
         request.server.getSnapshot = Melix_Controlplane_V1_GetServerSnapshot()
+        return request
+    }
+
+    private func makeServerStartRequest(
+        serverSessionID: String = ServerSessionRuntimeStore.defaultServerSessionID
+    ) -> Melix_Controlplane_V1_ControlPlaneRequest {
+        var request = Melix_Controlplane_V1_ControlPlaneRequest()
+        request.requestID = "req-server-start-\(serverSessionID)"
+        request.commandType = "server.start"
+        request.targetID = serverSessionID
+        request.server = Melix_Controlplane_V1_ServerCommand()
+        request.server.start = Melix_Controlplane_V1_StartServer()
+        request.server.start.serverSessionID = serverSessionID
+        return request
+    }
+
+    private func makeServerPauseRequest(
+        serverSessionID: String = ServerSessionRuntimeStore.defaultServerSessionID
+    ) -> Melix_Controlplane_V1_ControlPlaneRequest {
+        var request = Melix_Controlplane_V1_ControlPlaneRequest()
+        request.requestID = "req-server-pause-\(serverSessionID)"
+        request.commandType = "server.pause"
+        request.targetID = serverSessionID
+        request.server = Melix_Controlplane_V1_ServerCommand()
+        request.server.pause = Melix_Controlplane_V1_PauseServer()
+        request.server.pause.serverSessionID = serverSessionID
+        return request
+    }
+
+    private func makeServerResumeRequest(
+        serverSessionID: String = ServerSessionRuntimeStore.defaultServerSessionID
+    ) -> Melix_Controlplane_V1_ControlPlaneRequest {
+        var request = Melix_Controlplane_V1_ControlPlaneRequest()
+        request.requestID = "req-server-resume-\(serverSessionID)"
+        request.commandType = "server.resume"
+        request.targetID = serverSessionID
+        request.server = Melix_Controlplane_V1_ServerCommand()
+        request.server.resume = Melix_Controlplane_V1_ResumeServer()
+        request.server.resume.serverSessionID = serverSessionID
+        return request
+    }
+
+    private func makeServerWakeRequest(
+        serverSessionID: String = ServerSessionRuntimeStore.defaultServerSessionID
+    ) -> Melix_Controlplane_V1_ControlPlaneRequest {
+        var request = Melix_Controlplane_V1_ControlPlaneRequest()
+        request.requestID = "req-server-wake-\(serverSessionID)"
+        request.commandType = "server.wake"
+        request.targetID = serverSessionID
+        request.server = Melix_Controlplane_V1_ServerCommand()
+        request.server.wake = Melix_Controlplane_V1_WakeServer()
+        request.server.wake.serverSessionID = serverSessionID
+        return request
+    }
+
+    private func makeServerStopRequest(
+        serverSessionID: String = ServerSessionRuntimeStore.defaultServerSessionID
+    ) -> Melix_Controlplane_V1_ControlPlaneRequest {
+        var request = Melix_Controlplane_V1_ControlPlaneRequest()
+        request.requestID = "req-server-stop-\(serverSessionID)"
+        request.commandType = "server.stop"
+        request.targetID = serverSessionID
+        request.server = Melix_Controlplane_V1_ServerCommand()
+        request.server.stop = Melix_Controlplane_V1_StopServer()
+        request.server.stop.serverSessionID = serverSessionID
+        return request
+    }
+
+    private func makeServerRestartRequest(
+        serverSessionID: String = ServerSessionRuntimeStore.defaultServerSessionID
+    ) -> Melix_Controlplane_V1_ControlPlaneRequest {
+        var request = Melix_Controlplane_V1_ControlPlaneRequest()
+        request.requestID = "req-server-restart-\(serverSessionID)"
+        request.commandType = "server.restart"
+        request.targetID = serverSessionID
+        request.server = Melix_Controlplane_V1_ServerCommand()
+        request.server.restart = Melix_Controlplane_V1_RestartServer()
+        request.server.restart.serverSessionID = serverSessionID
+        return request
+    }
+
+    private func makeServerSetIdlePolicyRequest(
+        serverSessionID: String = ServerSessionRuntimeStore.defaultServerSessionID,
+        autoSleepEnabled: Bool,
+        lightSleepAfterSeconds: UInt32,
+        deepSleepAfterSeconds: UInt32
+    ) -> Melix_Controlplane_V1_ControlPlaneRequest {
+        var request = Melix_Controlplane_V1_ControlPlaneRequest()
+        request.requestID = "req-server-idle-policy-\(serverSessionID)"
+        request.commandType = "server.set_idle_policy"
+        request.targetID = serverSessionID
+        request.server = Melix_Controlplane_V1_ServerCommand()
+        request.server.setIdlePolicy = Melix_Controlplane_V1_SetServerIdlePolicy()
+        request.server.setIdlePolicy.serverSessionID = serverSessionID
+        request.server.setIdlePolicy.autoSleepEnabled = autoSleepEnabled
+        request.server.setIdlePolicy.lightSleepAfterSeconds = lightSleepAfterSeconds
+        request.server.setIdlePolicy.deepSleepAfterSeconds = deepSleepAfterSeconds
         return request
     }
 
@@ -5132,15 +5679,6 @@ struct ControlPlaneServiceTests {
         request.commandType = "preset.list"
         request.preset = Melix_Controlplane_V1_PresetCommand()
         request.preset.list = Melix_Controlplane_V1_ListPresets()
-        return request
-    }
-
-    private func makeServerShutdownRequest() -> Melix_Controlplane_V1_ControlPlaneRequest {
-        var request = Melix_Controlplane_V1_ControlPlaneRequest()
-        request.requestID = "req-server-stop"
-        request.commandType = "server.stop"
-        request.server = Melix_Controlplane_V1_ServerCommand()
-        request.server.stop = Melix_Controlplane_V1_StopServer()
         return request
     }
 

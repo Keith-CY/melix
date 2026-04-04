@@ -99,6 +99,10 @@ message ServerCommand {
     GetServerSnapshot get_snapshot = 4;
     SetGlobalPolicy set_policy = 5;
     ApplyGatewayAccess apply_gateway_access = 6;
+    PauseServer pause = 7;
+    ResumeServer resume = 8;
+    WakeServer wake = 9;
+    SetServerIdlePolicy set_idle_policy = 10;
   }
 }
 
@@ -215,12 +219,33 @@ message ImageReply {
   ImageJobSummary job = 1;
 }
 
-message StartServer {}
-message StopServer {}
-message RestartServer {}
+message StartServer {
+  string server_session_id = 1;
+}
+message StopServer {
+  string server_session_id = 1;
+}
+message RestartServer {
+  string server_session_id = 1;
+}
+message PauseServer {
+  string server_session_id = 1;
+}
+message ResumeServer {
+  string server_session_id = 1;
+}
+message WakeServer {
+  string server_session_id = 1;
+}
 message GetServerSnapshot {}
 message SetGlobalPolicy {
   map<string, string> values = 1;
+}
+message SetServerIdlePolicy {
+  string server_session_id = 1;
+  bool auto_sleep_enabled = 2;
+  uint32 light_sleep_after_seconds = 3;
+  uint32 deep_sleep_after_seconds = 4;
 }
 message GatewayAccessKeyRecord {
   string key_id = 1;

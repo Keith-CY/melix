@@ -233,7 +233,61 @@ public struct EvalExportOptions: Equatable, Sendable {
     }
 }
 
+public struct ServerSnapshotOptions: Equatable, Sendable {
+    public let json: Bool
+
+    public init(json: Bool = false) {
+        self.json = json
+    }
+}
+
+public struct ServerControlOptions: Equatable, Sendable {
+    public let serverSessionID: String
+    public let json: Bool
+
+    public init(
+        serverSessionID: String = ServerSessionRuntimeStore.defaultServerSessionID,
+        json: Bool = false
+    ) {
+        self.serverSessionID = serverSessionID.isEmpty
+            ? ServerSessionRuntimeStore.defaultServerSessionID
+            : serverSessionID
+        self.json = json
+    }
+}
+
+public struct ServerIdlePolicyOptions: Equatable, Sendable {
+    public let serverSessionID: String
+    public let autoSleepEnabled: Bool
+    public let lightSleepAfterSeconds: UInt32
+    public let deepSleepAfterSeconds: UInt32
+    public let json: Bool
+
+    public init(
+        serverSessionID: String = ServerSessionRuntimeStore.defaultServerSessionID,
+        autoSleepEnabled: Bool,
+        lightSleepAfterSeconds: UInt32,
+        deepSleepAfterSeconds: UInt32,
+        json: Bool = false
+    ) {
+        self.serverSessionID = serverSessionID.isEmpty
+            ? ServerSessionRuntimeStore.defaultServerSessionID
+            : serverSessionID
+        self.autoSleepEnabled = autoSleepEnabled
+        self.lightSleepAfterSeconds = lightSleepAfterSeconds
+        self.deepSleepAfterSeconds = deepSleepAfterSeconds
+        self.json = json
+    }
+}
+
 public enum MelixCLICommand: Equatable, Sendable {
+    case serverSnapshot(ServerSnapshotOptions)
+    case serverStart(ServerControlOptions)
+    case serverPause(ServerControlOptions)
+    case serverResume(ServerControlOptions)
+    case serverWake(ServerControlOptions)
+    case serverStop(ServerControlOptions)
+    case serverSetIdlePolicy(ServerIdlePolicyOptions)
     case loraList(LoraListOptions)
     case loraTrain(LoraTrainOptions)
     case loraActivate(LoraActivateOptions)
@@ -278,6 +332,8 @@ public enum MelixCLIParser {
         }
         let tail = Array(arguments.dropFirst())
         switch group {
+        case "server":
+            return try parseServer(tail)
         case "lora":
             return try parseLora(tail)
         case "bench":
@@ -291,6 +347,13 @@ public enum MelixCLIParser {
 
     public static let usageText = """
     Usage:
+      melix server snapshot [--json]
+      melix server start [--server-session-id ID] [--json]
+      melix server pause [--server-session-id ID] [--json]
+      melix server resume [--server-session-id ID] [--json]
+      melix server wake [--server-session-id ID] [--json]
+      melix server stop [--server-session-id ID] [--json]
+      melix server set-idle-policy [--server-session-id ID] --auto-sleep (true|false) --light-sleep-after N --deep-sleep-after N [--json]
       melix lora list [--model-id MODEL_ID] [--json]
       melix lora train --model-id MODEL_ID (--dataset-uri PATH | --hf-dataset-path REPO) --adapter-name NAME [--target-repo REPO] [--rank N] [--alpha N] [--dropout N] [--target-modules CSV] [--num-layers N] [--batch-size N] [--epochs N] [--learning-rate N] [--max-seq-length N] [--hf-dataset-name NAME] [--hf-dataset-revision REV] [--hf-train-split SPLIT] [--hf-valid-split SPLIT] [--text-feature NAME] [--prompt-feature NAME] [--completion-feature NAME] [--chat-feature NAME] [--derived-model-alias NAME] [--response-only] [--mask-prompt] [--gradient-checkpointing] [--json]
       melix lora activate --model-id MODEL_ID --adapter-path PATH [--alias NAME] [--json]
@@ -307,6 +370,59 @@ public enum MelixCLIParser {
       melix eval export-samples-csv --job-id JOB_ID --output PATH [--json]
       melix eval export-samples-jsonl --job-id JOB_ID --output PATH [--json]
     """
+
+    private static func parseServer(_ arguments: [String]) throws -> MelixCLICommand {
+        guard let action = arguments.first else {
+            throw MelixCLIError.usage(usageText)
+        }
+        let values = try ArgumentCursor(arguments: Array(arguments.dropFirst())).parse()
+        let serverSessionID = values.single["--server-session-id"] ?? ServerSessionRuntimeStore.defaultServerSessionID
+        let json = values.flags.contains("--json")
+        switch action {
+        case "snapshot":
+            return .serverSnapshot(.init(json: json))
+        case "start":
+            return .serverStart(.init(serverSessionID: serverSessionID, json: json))
+        case "pause":
+            return .serverPause(.init(serverSessionID: serverSessionID, json: json))
+        case "resume":
+            return .serverResume(.init(serverSessionID: serverSessionID, json: json))
+        case "wake":
+            return .serverWake(.init(serverSessionID: serverSessionID, json: json))
+        case "stop":
+            return .serverStop(.init(serverSessionID: serverSessionID, json: json))
+        case "set-idle-policy":
+            guard let autoSleepValue = values.single["--auto-sleep"] else {
+                throw MelixCLIError.missingRequired("--auto-sleep is required for melix server set-idle-policy.")
+            }
+            guard let autoSleepEnabled = parseBooleanValue(autoSleepValue, option: "--auto-sleep") else {
+                throw MelixCLIError.usage("Invalid value for --auto-sleep. Expected true or false.")
+            }
+            guard let lightSleepAfterSeconds = try parseUInt32Value(
+                values.single["--light-sleep-after"],
+                option: "--light-sleep-after"
+            ) else {
+                throw MelixCLIError.missingRequired("--light-sleep-after is required for melix server set-idle-policy.")
+            }
+            guard let deepSleepAfterSeconds = try parseUInt32Value(
+                values.single["--deep-sleep-after"],
+                option: "--deep-sleep-after"
+            ) else {
+                throw MelixCLIError.missingRequired("--deep-sleep-after is required for melix server set-idle-policy.")
+            }
+            return .serverSetIdlePolicy(
+                .init(
+                    serverSessionID: serverSessionID,
+                    autoSleepEnabled: autoSleepEnabled,
+                    lightSleepAfterSeconds: lightSleepAfterSeconds,
+                    deepSleepAfterSeconds: deepSleepAfterSeconds,
+                    json: json
+                )
+            )
+        default:
+            throw MelixCLIError.usage(usageText)
+        }
+    }
 
     private static func parseLora(_ arguments: [String]) throws -> MelixCLICommand {
         guard let action = arguments.first else {
@@ -674,6 +790,24 @@ public enum MelixCLIParser {
         return parsed
     }
 
+    private static func parseBooleanValue(
+        _ value: String?,
+        option: String
+    ) -> Bool? {
+        guard let value else {
+            return nil
+        }
+        switch value.lowercased() {
+        case "true":
+            return true
+        case "false":
+            return false
+        default:
+            _ = option
+            return nil
+        }
+    }
+
     private static func parseUInt32List(
         _ values: [String],
         option: String
@@ -750,6 +884,32 @@ public actor MelixCLIRunner {
 
     public func run(_ command: MelixCLICommand) async throws -> String {
         switch command {
+        case .serverSnapshot(let options):
+            let snapshot = try await client.serverSnapshot()
+            return try renderServerSnapshot(snapshot, json: options.json)
+        case .serverStart(let options):
+            let snapshot = try await client.startServerSession(serverSessionID: options.serverSessionID)
+            return try renderServerSnapshot(snapshot, json: options.json)
+        case .serverPause(let options):
+            let snapshot = try await client.pauseServerSession(serverSessionID: options.serverSessionID)
+            return try renderServerSnapshot(snapshot, json: options.json)
+        case .serverResume(let options):
+            let snapshot = try await client.resumeServerSession(serverSessionID: options.serverSessionID)
+            return try renderServerSnapshot(snapshot, json: options.json)
+        case .serverWake(let options):
+            let snapshot = try await client.wakeServerSession(serverSessionID: options.serverSessionID)
+            return try renderServerSnapshot(snapshot, json: options.json)
+        case .serverStop(let options):
+            let snapshot = try await client.stopServerSession(serverSessionID: options.serverSessionID)
+            return try renderServerSnapshot(snapshot, json: options.json)
+        case .serverSetIdlePolicy(let options):
+            let snapshot = try await client.updateServerIdlePolicy(
+                serverSessionID: options.serverSessionID,
+                autoSleepEnabled: options.autoSleepEnabled,
+                lightSleepAfterSeconds: options.lightSleepAfterSeconds,
+                deepSleepAfterSeconds: options.deepSleepAfterSeconds
+            )
+            return try renderServerSnapshot(snapshot, json: options.json)
         case .loraList(let options):
             let modelID = try await resolveModelID(preferred: options.modelID)
             let result = try await client.runModelOperation(
@@ -1050,6 +1210,39 @@ public actor MelixCLIRunner {
         return outputURL.path + "\n"
     }
 
+    private func renderServerSnapshot(
+        _ snapshot: Melix_Controlplane_V1_ServerSnapshot,
+        json: Bool
+    ) throws -> String {
+        if json {
+            return try prettyJSON(makeServerSnapshotPayload(snapshot))
+        }
+        return renderServerSnapshotText(snapshot)
+    }
+
+    private func renderServerSnapshotText(_ snapshot: Melix_Controlplane_V1_ServerSnapshot) -> String {
+        guard snapshot.runtimeSessions.isEmpty == false else {
+            return "server_state=\(serverStateLabel(snapshot.serverState))\nNo runtime sessions found.\n"
+        }
+        let lines = snapshot.runtimeSessions.map { session in
+            [
+                serverStateLabel(snapshot.serverState),
+                session.serverSessionID,
+                lifecycleStateLabel(session.lifecycleState),
+                powerStateLabel(session.powerState),
+                wakeReasonLabel(session.wakeReason),
+                session.autoSleepEnabled ? "true" : "false",
+                String(session.lightSleepAfterSeconds),
+                String(session.deepSleepAfterSeconds),
+                String(session.idleTimerSeconds),
+                String(session.updatedAtUnixMs),
+            ].joined(separator: "\t")
+        }
+        return ([
+            "server_state\tserver_session_id\tlifecycle_state\tpower_state\twake_reason\tauto_sleep_enabled\tlight_sleep_after_seconds\tdeep_sleep_after_seconds\tidle_timer_seconds\tupdated_at_unix_ms",
+        ] + lines).joined(separator: "\n") + "\n"
+    }
+
     private func renderBenchmarkHistory(_ entries: [ControlPlaneBenchmarkHistoryEntry]) -> String {
         guard entries.isEmpty == false else {
             return "No benchmark runs found.\n"
@@ -1284,6 +1477,103 @@ public actor MelixCLIRunner {
             return "duration_seconds=\(durationSeconds)"
         }
         return "-"
+    }
+
+    private func makeServerSnapshotPayload(
+        _ snapshot: Melix_Controlplane_V1_ServerSnapshot
+    ) -> [String: Any] {
+        [
+            "server_state": serverStateLabel(snapshot.serverState),
+            "runtime_sessions": snapshot.runtimeSessions.map { session in
+                [
+                    "server_session_id": session.serverSessionID,
+                    "lifecycle_state": lifecycleStateLabel(session.lifecycleState),
+                    "power_state": powerStateLabel(session.powerState),
+                    "wake_reason": wakeReasonLabel(session.wakeReason),
+                    "idle_timer_seconds": Int(session.idleTimerSeconds),
+                    "auto_sleep_enabled": session.autoSleepEnabled,
+                    "light_sleep_after_seconds": Int(session.lightSleepAfterSeconds),
+                    "deep_sleep_after_seconds": Int(session.deepSleepAfterSeconds),
+                    "updated_at_unix_ms": session.updatedAtUnixMs,
+                ]
+            },
+        ]
+    }
+
+    private func serverStateLabel(_ value: Melix_Controlplane_V1_ServerState) -> String {
+        switch value {
+        case .serverReady:
+            return "server_ready"
+        case .serverBooting:
+            return "server_booting"
+        case .serverDegraded:
+            return "server_degraded"
+        case .serverDraining:
+            return "server_draining"
+        case .serverStopped:
+            return "server_stopped"
+        case .serverFailed:
+            return "server_failed"
+        default:
+            return "server_state_unspecified"
+        }
+    }
+
+    private func lifecycleStateLabel(
+        _ value: Melix_Controlplane_V1_ServerSessionLifecycleState
+    ) -> String {
+        switch value {
+        case .ready:
+            return "ready"
+        case .paused:
+            return "paused"
+        case .sleeping:
+            return "sleeping"
+        case .stopped:
+            return "stopped"
+        case .loading:
+            return "loading"
+        case .error:
+            return "error"
+        default:
+            return "lifecycle_unspecified"
+        }
+    }
+
+    private func powerStateLabel(
+        _ value: Melix_Controlplane_V1_ServerSessionPowerState
+    ) -> String {
+        switch value {
+        case .active:
+            return "active"
+        case .lightSleep:
+            return "light_sleep"
+        case .deepSleep:
+            return "deep_sleep"
+        case .stopped:
+            return "stopped"
+        default:
+            return "power_unspecified"
+        }
+    }
+
+    private func wakeReasonLabel(
+        _ value: Melix_Controlplane_V1_ServerWakeReason
+    ) -> String {
+        switch value {
+        case .initialBoot:
+            return "initial_boot"
+        case .requestActivity:
+            return "request_activity"
+        case .operatorResume:
+            return "operator_resume"
+        case .toolActivity:
+            return "tool_activity"
+        case .policyApply:
+            return "policy_apply"
+        default:
+            return "wake_unspecified"
+        }
     }
 
     private func prettyJSON(_ payload: [String: Any]) throws -> String {

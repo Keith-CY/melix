@@ -127,6 +127,16 @@ private enum BenchmarkTaskKind: String {
     }
 }
 
+private enum ServingSessionPreparation {
+    case ready(publishStateChanged: Bool)
+    case blocked(code: String, message: String)
+}
+
+private enum ValidatedServerSessionTarget {
+    case success(String)
+    case failure(Melix_Controlplane_V1_ControlPlaneResponse)
+}
+
 public actor ControlPlaneService {
     public let serverVersion: String
     private let daemonInstanceID: String
@@ -281,6 +291,15 @@ public actor ControlPlaneService {
             throw ControlPlaneChatExecutionError.unavailable
         }
 
+        switch await prepareDefaultServerSessionForServingActivity() {
+        case .blocked:
+            throw ControlPlaneChatExecutionError.unavailable
+        case .ready(let publishStateChanged):
+            if publishStateChanged {
+                await publishCurrentServerState(source: "server_runtime")
+            }
+        }
+
         if let resumeRequestID = request.resumeRequestID?.trimmingCharacters(in: .whitespacesAndNewlines),
            !resumeRequestID.isEmpty {
             let execution: CoordinatedChatExecution
@@ -393,12 +412,26 @@ public actor ControlPlaneService {
         command: Melix_Controlplane_V1_ServerCommand
     ) async -> Melix_Controlplane_V1_ControlPlaneResponse {
         switch command.kind {
+        case .start(let start):
+            return await handleStartServer(request: request, command: start)
+        case .stop(let stop):
+            return await handleStopServer(request: request, command: stop)
+        case .restart(let restart):
+            return await handleRestartServer(request: request, command: restart)
         case .getSnapshot:
             var reply = Melix_Controlplane_V1_ServerReply()
             reply.snapshot = await buildSnapshot()
             return okResponse(for: request, server: reply)
         case .applyGatewayAccess(let apply):
             return await handleApplyGatewayAccess(request: request, command: apply)
+        case .pause(let pause):
+            return await handlePauseServer(request: request, command: pause)
+        case .resume(let resume):
+            return await handleResumeServer(request: request, command: resume)
+        case .wake(let wake):
+            return await handleWakeServer(request: request, command: wake)
+        case .setIdlePolicy(let policy):
+            return await handleSetServerIdlePolicy(request: request, command: policy)
         default:
             return errorResponse(
                 for: request,
@@ -1234,7 +1267,9 @@ public actor ControlPlaneService {
         let queues = await schedulerReadModel.snapshot()
         let cache = await cacheMetadataStore.cacheSummary()
         let sessions = await sessionGraphStore.sessionSummaries()
-        let runtimeSessions = await serverSessionRuntimeStore.snapshot()
+        let runtimeSessions = await serverSessionRuntimeStore.snapshot(
+            hasActiveRequests: await schedulerReadModel.hasActiveRequests()
+        )
         let imageJobs = await imageJobReadModel.snapshot()
         let gatewayAccessSummary = await gatewayAccessPolicyStore.summary()
         return snapshotBuilder.build(
@@ -1297,6 +1332,129 @@ public actor ControlPlaneService {
         return okResponse(for: request, server: reply)
     }
 
+    private func handleStartServer(
+        request: Melix_Controlplane_V1_ControlPlaneRequest,
+        command: Melix_Controlplane_V1_StartServer
+    ) async -> Melix_Controlplane_V1_ControlPlaneResponse {
+        await handleServerLifecycleMutation(
+            request: request,
+            requestedServerSessionID: command.serverSessionID,
+            metricKey: "control_plane.server_start_ms",
+            countKey: "control_plane.server_start_count",
+            actionDescription: "start"
+        ) { serverSessionID in
+            await serverSessionRuntimeStore.startServerSession(serverSessionID: serverSessionID)
+        }
+    }
+
+    private func handlePauseServer(
+        request: Melix_Controlplane_V1_ControlPlaneRequest,
+        command: Melix_Controlplane_V1_PauseServer
+    ) async -> Melix_Controlplane_V1_ControlPlaneResponse {
+        await handleServerLifecycleMutation(
+            request: request,
+            requestedServerSessionID: command.serverSessionID,
+            metricKey: "control_plane.server_pause_ms",
+            countKey: "control_plane.server_pause_count",
+            actionDescription: "pause",
+            requiresQuiescence: true
+        ) { serverSessionID in
+            await serverSessionRuntimeStore.pauseServerSession(serverSessionID: serverSessionID)
+        }
+    }
+
+    private func handleResumeServer(
+        request: Melix_Controlplane_V1_ControlPlaneRequest,
+        command: Melix_Controlplane_V1_ResumeServer
+    ) async -> Melix_Controlplane_V1_ControlPlaneResponse {
+        await handleServerLifecycleMutation(
+            request: request,
+            requestedServerSessionID: command.serverSessionID,
+            metricKey: "control_plane.server_resume_ms",
+            countKey: "control_plane.server_resume_count",
+            actionDescription: "resume"
+        ) { serverSessionID in
+            await serverSessionRuntimeStore.resumeServerSession(serverSessionID: serverSessionID)
+        }
+    }
+
+    private func handleWakeServer(
+        request: Melix_Controlplane_V1_ControlPlaneRequest,
+        command: Melix_Controlplane_V1_WakeServer
+    ) async -> Melix_Controlplane_V1_ControlPlaneResponse {
+        await handleServerLifecycleMutation(
+            request: request,
+            requestedServerSessionID: command.serverSessionID,
+            metricKey: "control_plane.server_wake_ms",
+            countKey: "control_plane.server_wake_count",
+            actionDescription: "wake"
+        ) { serverSessionID in
+            await serverSessionRuntimeStore.wakeServerSession(serverSessionID: serverSessionID)
+        }
+    }
+
+    private func handleStopServer(
+        request: Melix_Controlplane_V1_ControlPlaneRequest,
+        command: Melix_Controlplane_V1_StopServer
+    ) async -> Melix_Controlplane_V1_ControlPlaneResponse {
+        await handleServerLifecycleMutation(
+            request: request,
+            requestedServerSessionID: command.serverSessionID,
+            metricKey: "control_plane.server_stop_ms",
+            countKey: "control_plane.server_stop_count",
+            actionDescription: "stop",
+            requiresQuiescence: true
+        ) { serverSessionID in
+            await serverSessionRuntimeStore.stopServerSession(serverSessionID: serverSessionID)
+        }
+    }
+
+    private func handleRestartServer(
+        request: Melix_Controlplane_V1_ControlPlaneRequest,
+        command: Melix_Controlplane_V1_RestartServer
+    ) async -> Melix_Controlplane_V1_ControlPlaneResponse {
+        await handleServerLifecycleMutation(
+            request: request,
+            requestedServerSessionID: command.serverSessionID,
+            metricKey: "control_plane.server_restart_ms",
+            countKey: "control_plane.server_restart_count",
+            actionDescription: "restart",
+            requiresQuiescence: true
+        ) { serverSessionID in
+            _ = await serverSessionRuntimeStore.stopServerSession(serverSessionID: serverSessionID)
+            return await serverSessionRuntimeStore.startServerSession(serverSessionID: serverSessionID)
+        }
+    }
+
+    private func handleSetServerIdlePolicy(
+        request: Melix_Controlplane_V1_ControlPlaneRequest,
+        command: Melix_Controlplane_V1_SetServerIdlePolicy
+    ) async -> Melix_Controlplane_V1_ControlPlaneResponse {
+        if command.deepSleepAfterSeconds > 0,
+           command.lightSleepAfterSeconds > 0,
+           command.deepSleepAfterSeconds < command.lightSleepAfterSeconds {
+            return errorResponse(
+                for: request,
+                code: "invalid_argument",
+                message: "deep_sleep_after_seconds must be greater than or equal to light_sleep_after_seconds."
+            )
+        }
+        return await handleServerLifecycleMutation(
+            request: request,
+            requestedServerSessionID: command.serverSessionID,
+            metricKey: "control_plane.server_idle_policy_ms",
+            countKey: "control_plane.server_idle_policy_count",
+            actionDescription: "update idle policy"
+        ) { serverSessionID in
+            await serverSessionRuntimeStore.updateIdlePolicy(
+                serverSessionID: serverSessionID,
+                autoSleepEnabled: command.autoSleepEnabled,
+                lightSleepAfterSeconds: command.lightSleepAfterSeconds,
+                deepSleepAfterSeconds: command.deepSleepAfterSeconds
+            )
+        }
+    }
+
     private func appliedPolicyServerSessionID(
         policy: GatewayAccessPolicy,
         command: Melix_Controlplane_V1_ApplyGatewayAccess
@@ -1309,6 +1467,14 @@ public actor ControlPlaneService {
         command: Melix_Controlplane_V1_GenerateImage
     ) async -> Melix_Controlplane_V1_ControlPlaneResponse {
         let startedAt = Date()
+        switch await prepareDefaultServerSessionForServingActivity() {
+        case .blocked(let code, let message):
+            return errorResponse(for: request, code: code, message: message)
+        case .ready(let publishStateChanged):
+            if publishStateChanged {
+                await publishCurrentServerState(source: "server_runtime")
+            }
+        }
         guard let modelHandle = await modelCatalog.dispatchHandle(for: command.modelID) else {
             return errorResponse(for: request, code: "not_ready", message: "Image model is not loaded.")
         }
@@ -1430,6 +1596,14 @@ public actor ControlPlaneService {
             return errorResponse(for: request, code: "invalid_argument", message: "Image edit source is required.")
         }
         let startedAt = Date()
+        switch await prepareDefaultServerSessionForServingActivity() {
+        case .blocked(let code, let message):
+            return errorResponse(for: request, code: code, message: message)
+        case .ready(let publishStateChanged):
+            if publishStateChanged {
+                await publishCurrentServerState(source: "server_runtime")
+            }
+        }
         guard let modelHandle = await modelCatalog.dispatchHandle(for: command.modelID) else {
             return errorResponse(for: request, code: "not_ready", message: "Image model is not loaded.")
         }
@@ -2938,6 +3112,123 @@ public actor ControlPlaneService {
         default:
             return "control_plane.model_eviction_other_count"
         }
+    }
+
+    private func prepareDefaultServerSessionForServingActivity() async -> ServingSessionPreparation {
+        let runtimeSessions = await serverSessionRuntimeStore.snapshot(
+            hasActiveRequests: await schedulerReadModel.hasActiveRequests()
+        )
+        let defaultSession = runtimeSessions.first(where: {
+            $0.serverSessionID == ServerSessionRuntimeStore.defaultServerSessionID
+        }) ?? runtimeSessions.first ?? ServerSessionRuntimeStore.defaultRuntimeSession(updatedAtUnixMS: 0)
+
+        switch defaultSession.lifecycleState {
+        case .paused:
+            return .blocked(
+                code: "server_paused",
+                message: "The selected server session is paused. Resume it before serving requests."
+            )
+        case .stopped:
+            return .blocked(
+                code: "server_stopped",
+                message: "The selected server session is stopped. Start it before serving requests."
+            )
+        case .error:
+            return .blocked(
+                code: "server_failed",
+                message: "The selected server session is in a failed state."
+            )
+        case .sleeping:
+            _ = await serverSessionRuntimeStore.noteRequestActivity(
+                serverSessionID: defaultSession.serverSessionID,
+                wakeReason: .requestActivity
+            )
+            return .ready(publishStateChanged: true)
+        default:
+            _ = await serverSessionRuntimeStore.noteRequestActivity(
+                serverSessionID: defaultSession.serverSessionID,
+                wakeReason: .requestActivity
+            )
+            return .ready(publishStateChanged: false)
+        }
+    }
+
+    private func publishCurrentServerState(source: String) async {
+        let snapshot = await buildSnapshot()
+        await publishServerStateChanged(
+            snapshot.serverState,
+            runtimeSessions: snapshot.runtimeSessions,
+            source: source
+        )
+    }
+
+    private func handleServerLifecycleMutation(
+        request: Melix_Controlplane_V1_ControlPlaneRequest,
+        requestedServerSessionID: String,
+        metricKey: String,
+        countKey: String,
+        actionDescription: String,
+        requiresQuiescence: Bool = false,
+        source: String = "server_runtime",
+        mutate: (String) async -> [Melix_Controlplane_V1_ServerSessionRuntimeState]
+    ) async -> Melix_Controlplane_V1_ControlPlaneResponse {
+        let startedAt = Date()
+        let resolvedServerSessionID: String
+        switch validatedServerSessionID(
+            request: request,
+            requestedServerSessionID: requestedServerSessionID
+        ) {
+        case .success(let serverSessionID):
+            resolvedServerSessionID = serverSessionID
+        case .failure(let response):
+            return response
+        }
+
+        if requiresQuiescence, await schedulerReadModel.hasActiveRequests() {
+            return errorResponse(
+                for: request,
+                code: "conflict",
+                message: "Cannot \(actionDescription) the server session while requests are active."
+            )
+        }
+
+        _ = await mutate(resolvedServerSessionID)
+        await metricsStore.increment(countKey)
+        await metricsStore.set(
+            Date().timeIntervalSince(startedAt) * 1000,
+            forKey: metricKey
+        )
+
+        var reply = Melix_Controlplane_V1_ServerReply()
+        reply.snapshot = await buildSnapshot()
+        await publishServerStateChanged(
+            reply.snapshot.serverState,
+            runtimeSessions: reply.snapshot.runtimeSessions,
+            source: source
+        )
+        return okResponse(for: request, server: reply)
+    }
+
+    private func validatedServerSessionID(
+        request: Melix_Controlplane_V1_ControlPlaneRequest,
+        requestedServerSessionID: String
+    ) -> ValidatedServerSessionTarget {
+        let targetID = request.targetID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let payloadID = requestedServerSessionID.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !targetID.isEmpty, !payloadID.isEmpty, targetID != payloadID {
+            return .failure(
+                errorResponse(
+                    for: request,
+                    code: "invalid_argument",
+                    message: "Target server session does not match the command payload."
+                )
+            )
+        }
+        let resolvedServerSessionID = payloadID.isEmpty ? targetID : payloadID
+        let normalizedServerSessionID = resolvedServerSessionID.isEmpty
+            ? ServerSessionRuntimeStore.defaultServerSessionID
+            : resolvedServerSessionID
+        return .success(normalizedServerSessionID)
     }
 
     private func publishSessionStateChanged(_ session: Melix_Controlplane_V1_SessionState) async {

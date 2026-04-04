@@ -1576,6 +1576,38 @@ public struct Melix_Controlplane_V1_ServerCommand: Sendable {
     set {kind = .applyGatewayAccess(newValue)}
   }
 
+  public var pause: Melix_Controlplane_V1_PauseServer {
+    get {
+      if case .pause(let v)? = kind {return v}
+      return Melix_Controlplane_V1_PauseServer()
+    }
+    set {kind = .pause(newValue)}
+  }
+
+  public var resume: Melix_Controlplane_V1_ResumeServer {
+    get {
+      if case .resume(let v)? = kind {return v}
+      return Melix_Controlplane_V1_ResumeServer()
+    }
+    set {kind = .resume(newValue)}
+  }
+
+  public var wake: Melix_Controlplane_V1_WakeServer {
+    get {
+      if case .wake(let v)? = kind {return v}
+      return Melix_Controlplane_V1_WakeServer()
+    }
+    set {kind = .wake(newValue)}
+  }
+
+  public var setIdlePolicy: Melix_Controlplane_V1_SetServerIdlePolicy {
+    get {
+      if case .setIdlePolicy(let v)? = kind {return v}
+      return Melix_Controlplane_V1_SetServerIdlePolicy()
+    }
+    set {kind = .setIdlePolicy(newValue)}
+  }
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public enum OneOf_Kind: Equatable, Sendable {
@@ -1585,6 +1617,10 @@ public struct Melix_Controlplane_V1_ServerCommand: Sendable {
     case getSnapshot(Melix_Controlplane_V1_GetServerSnapshot)
     case setPolicy(Melix_Controlplane_V1_SetGlobalPolicy)
     case applyGatewayAccess(Melix_Controlplane_V1_ApplyGatewayAccess)
+    case pause(Melix_Controlplane_V1_PauseServer)
+    case resume(Melix_Controlplane_V1_ResumeServer)
+    case wake(Melix_Controlplane_V1_WakeServer)
+    case setIdlePolicy(Melix_Controlplane_V1_SetServerIdlePolicy)
 
   }
 
@@ -2293,6 +2329,8 @@ public struct Melix_Controlplane_V1_StartServer: Sendable {
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
+  public var serverSessionID: String = String()
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -2303,6 +2341,8 @@ public struct Melix_Controlplane_V1_StopServer: Sendable {
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
+  public var serverSessionID: String = String()
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -2312,6 +2352,44 @@ public struct Melix_Controlplane_V1_RestartServer: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
+
+  public var serverSessionID: String = String()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public struct Melix_Controlplane_V1_PauseServer: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var serverSessionID: String = String()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public struct Melix_Controlplane_V1_ResumeServer: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var serverSessionID: String = String()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public struct Melix_Controlplane_V1_WakeServer: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var serverSessionID: String = String()
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -2334,6 +2412,24 @@ public struct Melix_Controlplane_V1_SetGlobalPolicy: Sendable {
   // methods supported on all messages.
 
   public var values: Dictionary<String,String> = [:]
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public struct Melix_Controlplane_V1_SetServerIdlePolicy: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var serverSessionID: String = String()
+
+  public var autoSleepEnabled: Bool = false
+
+  public var lightSleepAfterSeconds: UInt32 = 0
+
+  public var deepSleepAfterSeconds: UInt32 = 0
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -6048,7 +6144,7 @@ extension Melix_Controlplane_V1_ControlPlaneEvent: SwiftProtobuf.Message, SwiftP
 
 extension Melix_Controlplane_V1_ServerCommand: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ServerCommand"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}start\0\u{1}stop\0\u{1}restart\0\u{3}get_snapshot\0\u{3}set_policy\0\u{3}apply_gateway_access\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}start\0\u{1}stop\0\u{1}restart\0\u{3}get_snapshot\0\u{3}set_policy\0\u{3}apply_gateway_access\0\u{1}pause\0\u{1}resume\0\u{1}wake\0\u{3}set_idle_policy\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -6134,6 +6230,58 @@ extension Melix_Controlplane_V1_ServerCommand: SwiftProtobuf.Message, SwiftProto
           self.kind = .applyGatewayAccess(v)
         }
       }()
+      case 7: try {
+        var v: Melix_Controlplane_V1_PauseServer?
+        var hadOneofValue = false
+        if let current = self.kind {
+          hadOneofValue = true
+          if case .pause(let m) = current {v = m}
+        }
+        try decoder.decodeSingularMessageField(value: &v)
+        if let v = v {
+          if hadOneofValue {try decoder.handleConflictingOneOf()}
+          self.kind = .pause(v)
+        }
+      }()
+      case 8: try {
+        var v: Melix_Controlplane_V1_ResumeServer?
+        var hadOneofValue = false
+        if let current = self.kind {
+          hadOneofValue = true
+          if case .resume(let m) = current {v = m}
+        }
+        try decoder.decodeSingularMessageField(value: &v)
+        if let v = v {
+          if hadOneofValue {try decoder.handleConflictingOneOf()}
+          self.kind = .resume(v)
+        }
+      }()
+      case 9: try {
+        var v: Melix_Controlplane_V1_WakeServer?
+        var hadOneofValue = false
+        if let current = self.kind {
+          hadOneofValue = true
+          if case .wake(let m) = current {v = m}
+        }
+        try decoder.decodeSingularMessageField(value: &v)
+        if let v = v {
+          if hadOneofValue {try decoder.handleConflictingOneOf()}
+          self.kind = .wake(v)
+        }
+      }()
+      case 10: try {
+        var v: Melix_Controlplane_V1_SetServerIdlePolicy?
+        var hadOneofValue = false
+        if let current = self.kind {
+          hadOneofValue = true
+          if case .setIdlePolicy(let m) = current {v = m}
+        }
+        try decoder.decodeSingularMessageField(value: &v)
+        if let v = v {
+          if hadOneofValue {try decoder.handleConflictingOneOf()}
+          self.kind = .setIdlePolicy(v)
+        }
+      }()
       default: break
       }
     }
@@ -6168,6 +6316,22 @@ extension Melix_Controlplane_V1_ServerCommand: SwiftProtobuf.Message, SwiftProto
     case .applyGatewayAccess?: try {
       guard case .applyGatewayAccess(let v)? = self.kind else { preconditionFailure() }
       try visitor.visitSingularMessageField(value: v, fieldNumber: 6)
+    }()
+    case .pause?: try {
+      guard case .pause(let v)? = self.kind else { preconditionFailure() }
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 7)
+    }()
+    case .resume?: try {
+      guard case .resume(let v)? = self.kind else { preconditionFailure() }
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 8)
+    }()
+    case .wake?: try {
+      guard case .wake(let v)? = self.kind else { preconditionFailure() }
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 9)
+    }()
+    case .setIdlePolicy?: try {
+      guard case .setIdlePolicy(let v)? = self.kind else { preconditionFailure() }
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 10)
     }()
     case nil: break
     }
@@ -7418,18 +7582,29 @@ extension Melix_Controlplane_V1_ImageReply: SwiftProtobuf.Message, SwiftProtobuf
 
 extension Melix_Controlplane_V1_StartServer: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".StartServer"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap()
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}server_session_id\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
-    // Load everything into unknown fields
-    while try decoder.nextFieldNumber() != nil {}
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.serverSessionID) }()
+      default: break
+      }
+    }
   }
 
   public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.serverSessionID.isEmpty {
+      try visitor.visitSingularStringField(value: self.serverSessionID, fieldNumber: 1)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: Melix_Controlplane_V1_StartServer, rhs: Melix_Controlplane_V1_StartServer) -> Bool {
+    if lhs.serverSessionID != rhs.serverSessionID {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -7437,18 +7612,29 @@ extension Melix_Controlplane_V1_StartServer: SwiftProtobuf.Message, SwiftProtobu
 
 extension Melix_Controlplane_V1_StopServer: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".StopServer"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap()
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}server_session_id\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
-    // Load everything into unknown fields
-    while try decoder.nextFieldNumber() != nil {}
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.serverSessionID) }()
+      default: break
+      }
+    }
   }
 
   public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.serverSessionID.isEmpty {
+      try visitor.visitSingularStringField(value: self.serverSessionID, fieldNumber: 1)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: Melix_Controlplane_V1_StopServer, rhs: Melix_Controlplane_V1_StopServer) -> Bool {
+    if lhs.serverSessionID != rhs.serverSessionID {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -7456,18 +7642,119 @@ extension Melix_Controlplane_V1_StopServer: SwiftProtobuf.Message, SwiftProtobuf
 
 extension Melix_Controlplane_V1_RestartServer: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".RestartServer"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap()
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}server_session_id\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
-    // Load everything into unknown fields
-    while try decoder.nextFieldNumber() != nil {}
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.serverSessionID) }()
+      default: break
+      }
+    }
   }
 
   public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.serverSessionID.isEmpty {
+      try visitor.visitSingularStringField(value: self.serverSessionID, fieldNumber: 1)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: Melix_Controlplane_V1_RestartServer, rhs: Melix_Controlplane_V1_RestartServer) -> Bool {
+    if lhs.serverSessionID != rhs.serverSessionID {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+extension Melix_Controlplane_V1_PauseServer: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".PauseServer"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}server_session_id\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.serverSessionID) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.serverSessionID.isEmpty {
+      try visitor.visitSingularStringField(value: self.serverSessionID, fieldNumber: 1)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Melix_Controlplane_V1_PauseServer, rhs: Melix_Controlplane_V1_PauseServer) -> Bool {
+    if lhs.serverSessionID != rhs.serverSessionID {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+extension Melix_Controlplane_V1_ResumeServer: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".ResumeServer"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}server_session_id\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.serverSessionID) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.serverSessionID.isEmpty {
+      try visitor.visitSingularStringField(value: self.serverSessionID, fieldNumber: 1)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Melix_Controlplane_V1_ResumeServer, rhs: Melix_Controlplane_V1_ResumeServer) -> Bool {
+    if lhs.serverSessionID != rhs.serverSessionID {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+extension Melix_Controlplane_V1_WakeServer: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".WakeServer"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}server_session_id\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.serverSessionID) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.serverSessionID.isEmpty {
+      try visitor.visitSingularStringField(value: self.serverSessionID, fieldNumber: 1)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Melix_Controlplane_V1_WakeServer, rhs: Melix_Controlplane_V1_WakeServer) -> Bool {
+    if lhs.serverSessionID != rhs.serverSessionID {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -7517,6 +7804,51 @@ extension Melix_Controlplane_V1_SetGlobalPolicy: SwiftProtobuf.Message, SwiftPro
 
   public static func ==(lhs: Melix_Controlplane_V1_SetGlobalPolicy, rhs: Melix_Controlplane_V1_SetGlobalPolicy) -> Bool {
     if lhs.values != rhs.values {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+extension Melix_Controlplane_V1_SetServerIdlePolicy: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".SetServerIdlePolicy"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}server_session_id\0\u{3}auto_sleep_enabled\0\u{3}light_sleep_after_seconds\0\u{3}deep_sleep_after_seconds\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.serverSessionID) }()
+      case 2: try { try decoder.decodeSingularBoolField(value: &self.autoSleepEnabled) }()
+      case 3: try { try decoder.decodeSingularUInt32Field(value: &self.lightSleepAfterSeconds) }()
+      case 4: try { try decoder.decodeSingularUInt32Field(value: &self.deepSleepAfterSeconds) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.serverSessionID.isEmpty {
+      try visitor.visitSingularStringField(value: self.serverSessionID, fieldNumber: 1)
+    }
+    if self.autoSleepEnabled != false {
+      try visitor.visitSingularBoolField(value: self.autoSleepEnabled, fieldNumber: 2)
+    }
+    if self.lightSleepAfterSeconds != 0 {
+      try visitor.visitSingularUInt32Field(value: self.lightSleepAfterSeconds, fieldNumber: 3)
+    }
+    if self.deepSleepAfterSeconds != 0 {
+      try visitor.visitSingularUInt32Field(value: self.deepSleepAfterSeconds, fieldNumber: 4)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Melix_Controlplane_V1_SetServerIdlePolicy, rhs: Melix_Controlplane_V1_SetServerIdlePolicy) -> Bool {
+    if lhs.serverSessionID != rhs.serverSessionID {return false}
+    if lhs.autoSleepEnabled != rhs.autoSleepEnabled {return false}
+    if lhs.lightSleepAfterSeconds != rhs.lightSleepAfterSeconds {return false}
+    if lhs.deepSleepAfterSeconds != rhs.deepSleepAfterSeconds {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

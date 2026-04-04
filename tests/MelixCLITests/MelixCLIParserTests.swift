@@ -1,9 +1,130 @@
 import Testing
 
 @testable import MelixCLICore
+import MelixControlPlaneCore
 
 @Suite("Melix CLI Parser")
 struct MelixCLIParserTests {
+    @Test("parses server snapshot and pause commands")
+    func parsesServerSnapshotAndPauseCommands() throws {
+        let snapshotCommand = try MelixCLIParser.parse([
+            "server",
+            "snapshot",
+            "--json",
+        ])
+        let pauseCommand = try MelixCLIParser.parse([
+            "server",
+            "pause",
+        ])
+
+        guard case .serverSnapshot(let snapshotOptions) = snapshotCommand else {
+            Issue.record("Expected serverSnapshot command")
+            return
+        }
+        guard case .serverPause(let pauseOptions) = pauseCommand else {
+            Issue.record("Expected serverPause command")
+            return
+        }
+
+        #expect(snapshotOptions.json)
+        #expect(pauseOptions.serverSessionID == ServerSessionRuntimeStore.defaultServerSessionID)
+        #expect(!pauseOptions.json)
+    }
+
+    @Test("parses server start resume wake and stop commands")
+    func parsesServerLifecycleCommands() throws {
+        let startCommand = try MelixCLIParser.parse([
+            "server",
+            "start",
+            "--server-session-id", "server-session-2",
+            "--json",
+        ])
+        let resumeCommand = try MelixCLIParser.parse([
+            "server",
+            "resume",
+            "--server-session-id", "server-session-3",
+        ])
+        let wakeCommand = try MelixCLIParser.parse([
+            "server",
+            "wake",
+            "--server-session-id", "server-session-4",
+        ])
+        let stopCommand = try MelixCLIParser.parse([
+            "server",
+            "stop",
+            "--server-session-id", "server-session-5",
+        ])
+
+        guard case .serverStart(let startOptions) = startCommand else {
+            Issue.record("Expected serverStart command")
+            return
+        }
+        guard case .serverResume(let resumeOptions) = resumeCommand else {
+            Issue.record("Expected serverResume command")
+            return
+        }
+        guard case .serverWake(let wakeOptions) = wakeCommand else {
+            Issue.record("Expected serverWake command")
+            return
+        }
+        guard case .serverStop(let stopOptions) = stopCommand else {
+            Issue.record("Expected serverStop command")
+            return
+        }
+
+        #expect(startOptions.serverSessionID == "server-session-2")
+        #expect(startOptions.json)
+        #expect(resumeOptions.serverSessionID == "server-session-3")
+        #expect(!resumeOptions.json)
+        #expect(wakeOptions.serverSessionID == "server-session-4")
+        #expect(stopOptions.serverSessionID == "server-session-5")
+    }
+
+    @Test("parses server idle-policy command with explicit thresholds")
+    func parsesServerIdlePolicyCommand() throws {
+        let command = try MelixCLIParser.parse([
+            "server",
+            "set-idle-policy",
+            "--server-session-id", "server-session-2",
+            "--auto-sleep", "true",
+            "--light-sleep-after", "60",
+            "--deep-sleep-after", "600",
+            "--json",
+        ])
+
+        guard case .serverSetIdlePolicy(let options) = command else {
+            Issue.record("Expected serverSetIdlePolicy command")
+            return
+        }
+
+        #expect(options.serverSessionID == "server-session-2")
+        #expect(options.autoSleepEnabled)
+        #expect(options.lightSleepAfterSeconds == 60)
+        #expect(options.deepSleepAfterSeconds == 600)
+        #expect(options.json)
+    }
+
+    @Test("parses server idle-policy command with auto-sleep disabled")
+    func parsesServerIdlePolicyCommandWithFalseFlag() throws {
+        let command = try MelixCLIParser.parse([
+            "server",
+            "set-idle-policy",
+            "--auto-sleep", "false",
+            "--light-sleep-after", "30",
+            "--deep-sleep-after", "300",
+        ])
+
+        guard case .serverSetIdlePolicy(let options) = command else {
+            Issue.record("Expected serverSetIdlePolicy command")
+            return
+        }
+
+        #expect(options.serverSessionID == ServerSessionRuntimeStore.defaultServerSessionID)
+        #expect(options.autoSleepEnabled == false)
+        #expect(options.lightSleepAfterSeconds == 30)
+        #expect(options.deepSleepAfterSeconds == 300)
+    }
+
     @Test("parses lora list with an explicit model id")
     func parsesLoraListCommand() throws {
         let command = try MelixCLIParser.parse([
@@ -721,6 +842,24 @@ struct MelixCLIParserTests {
 
     @Test("surfaces malformed option errors")
     func surfacesMalformedOptionErrors() throws {
+        try assertError(for: ["server"], equals: .usage(MelixCLIParser.usageText))
+        try assertError(for: ["server", "hibernate"], equals: .usage(MelixCLIParser.usageText))
+        try assertError(
+            for: ["server", "set-idle-policy", "--light-sleep-after", "60", "--deep-sleep-after", "600"],
+            equals: .missingRequired("--auto-sleep is required for melix server set-idle-policy.")
+        )
+        try assertError(
+            for: ["server", "set-idle-policy", "--auto-sleep", "maybe", "--light-sleep-after", "60", "--deep-sleep-after", "600"],
+            equals: .usage("Invalid value for --auto-sleep. Expected true or false.")
+        )
+        try assertError(
+            for: ["server", "set-idle-policy", "--auto-sleep", "true", "--deep-sleep-after", "600"],
+            equals: .missingRequired("--light-sleep-after is required for melix server set-idle-policy.")
+        )
+        try assertError(
+            for: ["server", "set-idle-policy", "--auto-sleep", "true", "--light-sleep-after", "60"],
+            equals: .missingRequired("--deep-sleep-after is required for melix server set-idle-policy.")
+        )
         try assertError(for: ["bench", "run", "oops"], equals: .usage(MelixCLIParser.usageText))
         try assertError(for: ["bench", "run", "--model-id"], equals: .missingValue("--model-id"))
         try assertError(for: ["eval", "run", "--repo-id"], equals: .missingValue("--repo-id"))

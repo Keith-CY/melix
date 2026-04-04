@@ -158,6 +158,11 @@ The roadmap extension in `M10-M17` includes milestone-level plans plus decompose
   payloads, the native menu bar client consumes the new payload directly, and repository-default
   Swift verification plus changed-line coverage evidence are recorded in the repository.
 - `M10.2` `docs/plans/2026-03-31-m10-2-power-policy-and-lifecycle-controls.md`
+  Status: completed. The control plane now exposes typed lifecycle and idle-policy mutations for
+  server sessions, authoritative runtime-session idle transitions and aggregate server-state
+  derivation are test-covered, the `melix` CLI can operate the lifecycle surface directly, and
+  repository-default verification plus changed-line coverage evidence are recorded in the
+  repository.
 - `M10.3` `docs/plans/2026-03-31-m10-3-desktop-status-banners-and-operator-surfaces.md`
 - `M10.4` `docs/plans/2026-03-31-m10-4-session-lifecycle-integration-evidence.md`
 

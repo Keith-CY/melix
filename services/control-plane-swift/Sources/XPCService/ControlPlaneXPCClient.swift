@@ -261,6 +261,17 @@ public protocol ControlPlaneXPCClient: Sendable {
     func subscribe(lastSeenSeq: UInt64) async -> AsyncStream<Melix_Controlplane_V1_ControlPlaneEvent>
     func startChat(_ request: ControlPlaneChatRequest) async throws -> ControlPlaneChatExecution
     func serverSnapshot() async throws -> Melix_Controlplane_V1_ServerSnapshot
+    func startServerSession(serverSessionID: String) async throws -> Melix_Controlplane_V1_ServerSnapshot
+    func pauseServerSession(serverSessionID: String) async throws -> Melix_Controlplane_V1_ServerSnapshot
+    func resumeServerSession(serverSessionID: String) async throws -> Melix_Controlplane_V1_ServerSnapshot
+    func wakeServerSession(serverSessionID: String) async throws -> Melix_Controlplane_V1_ServerSnapshot
+    func stopServerSession(serverSessionID: String) async throws -> Melix_Controlplane_V1_ServerSnapshot
+    func updateServerIdlePolicy(
+        serverSessionID: String,
+        autoSleepEnabled: Bool,
+        lightSleepAfterSeconds: UInt32,
+        deepSleepAfterSeconds: UInt32
+    ) async throws -> Melix_Controlplane_V1_ServerSnapshot
     func loadModel(modelID: String) async throws -> Melix_Controlplane_V1_ModelSummary
     func unloadModel(modelID: String) async throws -> Melix_Controlplane_V1_ModelSummary
     func updateModelSettings(
@@ -300,6 +311,62 @@ public protocol ControlPlaneXPCClient: Sendable {
 }
 
 public extension ControlPlaneXPCClient {
+    func startServerSession(serverSessionID: String) async throws -> Melix_Controlplane_V1_ServerSnapshot {
+        _ = serverSessionID
+        throw ControlPlaneXPCClientError.requestFailed(
+            code: "unimplemented",
+            message: "Server start is not implemented for this control-plane client."
+        )
+    }
+
+    func pauseServerSession(serverSessionID: String) async throws -> Melix_Controlplane_V1_ServerSnapshot {
+        _ = serverSessionID
+        throw ControlPlaneXPCClientError.requestFailed(
+            code: "unimplemented",
+            message: "Server pause is not implemented for this control-plane client."
+        )
+    }
+
+    func resumeServerSession(serverSessionID: String) async throws -> Melix_Controlplane_V1_ServerSnapshot {
+        _ = serverSessionID
+        throw ControlPlaneXPCClientError.requestFailed(
+            code: "unimplemented",
+            message: "Server resume is not implemented for this control-plane client."
+        )
+    }
+
+    func wakeServerSession(serverSessionID: String) async throws -> Melix_Controlplane_V1_ServerSnapshot {
+        _ = serverSessionID
+        throw ControlPlaneXPCClientError.requestFailed(
+            code: "unimplemented",
+            message: "Server wake is not implemented for this control-plane client."
+        )
+    }
+
+    func stopServerSession(serverSessionID: String) async throws -> Melix_Controlplane_V1_ServerSnapshot {
+        _ = serverSessionID
+        throw ControlPlaneXPCClientError.requestFailed(
+            code: "unimplemented",
+            message: "Server stop is not implemented for this control-plane client."
+        )
+    }
+
+    func updateServerIdlePolicy(
+        serverSessionID: String,
+        autoSleepEnabled: Bool,
+        lightSleepAfterSeconds: UInt32,
+        deepSleepAfterSeconds: UInt32
+    ) async throws -> Melix_Controlplane_V1_ServerSnapshot {
+        _ = serverSessionID
+        _ = autoSleepEnabled
+        _ = lightSleepAfterSeconds
+        _ = deepSleepAfterSeconds
+        throw ControlPlaneXPCClientError.requestFailed(
+            code: "unimplemented",
+            message: "Server idle-policy updates are not implemented for this control-plane client."
+        )
+    }
+
     func generateImage(
         _ request: ControlPlaneImageGenerationRequest
     ) async throws -> Melix_Controlplane_V1_ImageJobSummary {
@@ -466,6 +533,54 @@ public actor LocalControlPlaneXPCClient: ControlPlaneXPCClient {
         }
     }
 
+    public func startServerSession(serverSessionID: String) async throws -> Melix_Controlplane_V1_ServerSnapshot {
+        try await execute(makeStartServerRequest(serverSessionID: serverSessionID)) { response in
+            response.server.snapshot
+        }
+    }
+
+    public func pauseServerSession(serverSessionID: String) async throws -> Melix_Controlplane_V1_ServerSnapshot {
+        try await execute(makePauseServerRequest(serverSessionID: serverSessionID)) { response in
+            response.server.snapshot
+        }
+    }
+
+    public func resumeServerSession(serverSessionID: String) async throws -> Melix_Controlplane_V1_ServerSnapshot {
+        try await execute(makeResumeServerRequest(serverSessionID: serverSessionID)) { response in
+            response.server.snapshot
+        }
+    }
+
+    public func wakeServerSession(serverSessionID: String) async throws -> Melix_Controlplane_V1_ServerSnapshot {
+        try await execute(makeWakeServerRequest(serverSessionID: serverSessionID)) { response in
+            response.server.snapshot
+        }
+    }
+
+    public func stopServerSession(serverSessionID: String) async throws -> Melix_Controlplane_V1_ServerSnapshot {
+        try await execute(makeStopServerRequest(serverSessionID: serverSessionID)) { response in
+            response.server.snapshot
+        }
+    }
+
+    public func updateServerIdlePolicy(
+        serverSessionID: String,
+        autoSleepEnabled: Bool,
+        lightSleepAfterSeconds: UInt32,
+        deepSleepAfterSeconds: UInt32
+    ) async throws -> Melix_Controlplane_V1_ServerSnapshot {
+        try await execute(
+            makeSetServerIdlePolicyRequest(
+                serverSessionID: serverSessionID,
+                autoSleepEnabled: autoSleepEnabled,
+                lightSleepAfterSeconds: lightSleepAfterSeconds,
+                deepSleepAfterSeconds: deepSleepAfterSeconds
+            )
+        ) { response in
+            response.server.snapshot
+        }
+    }
+
     public func unloadModel(modelID: String) async throws -> Melix_Controlplane_V1_ModelSummary {
         try await execute(makeUnloadRequest(modelID: modelID)) { response in
             response.model.model
@@ -627,6 +742,80 @@ public actor LocalControlPlaneXPCClient: ControlPlaneXPCClient {
         request.commandType = "server.get_snapshot"
         request.server = Melix_Controlplane_V1_ServerCommand()
         request.server.getSnapshot = Melix_Controlplane_V1_GetServerSnapshot()
+        return request
+    }
+
+    private func makeStartServerRequest(serverSessionID: String) -> Melix_Controlplane_V1_ControlPlaneRequest {
+        var request = Melix_Controlplane_V1_ControlPlaneRequest()
+        request.requestID = "menubar-server-start-\(serverSessionID)"
+        request.commandType = "server.start"
+        request.targetID = serverSessionID
+        request.server = Melix_Controlplane_V1_ServerCommand()
+        request.server.start = Melix_Controlplane_V1_StartServer()
+        request.server.start.serverSessionID = serverSessionID
+        return request
+    }
+
+    private func makePauseServerRequest(serverSessionID: String) -> Melix_Controlplane_V1_ControlPlaneRequest {
+        var request = Melix_Controlplane_V1_ControlPlaneRequest()
+        request.requestID = "menubar-server-pause-\(serverSessionID)"
+        request.commandType = "server.pause"
+        request.targetID = serverSessionID
+        request.server = Melix_Controlplane_V1_ServerCommand()
+        request.server.pause = Melix_Controlplane_V1_PauseServer()
+        request.server.pause.serverSessionID = serverSessionID
+        return request
+    }
+
+    private func makeResumeServerRequest(serverSessionID: String) -> Melix_Controlplane_V1_ControlPlaneRequest {
+        var request = Melix_Controlplane_V1_ControlPlaneRequest()
+        request.requestID = "menubar-server-resume-\(serverSessionID)"
+        request.commandType = "server.resume"
+        request.targetID = serverSessionID
+        request.server = Melix_Controlplane_V1_ServerCommand()
+        request.server.resume = Melix_Controlplane_V1_ResumeServer()
+        request.server.resume.serverSessionID = serverSessionID
+        return request
+    }
+
+    private func makeWakeServerRequest(serverSessionID: String) -> Melix_Controlplane_V1_ControlPlaneRequest {
+        var request = Melix_Controlplane_V1_ControlPlaneRequest()
+        request.requestID = "menubar-server-wake-\(serverSessionID)"
+        request.commandType = "server.wake"
+        request.targetID = serverSessionID
+        request.server = Melix_Controlplane_V1_ServerCommand()
+        request.server.wake = Melix_Controlplane_V1_WakeServer()
+        request.server.wake.serverSessionID = serverSessionID
+        return request
+    }
+
+    private func makeStopServerRequest(serverSessionID: String) -> Melix_Controlplane_V1_ControlPlaneRequest {
+        var request = Melix_Controlplane_V1_ControlPlaneRequest()
+        request.requestID = "menubar-server-stop-\(serverSessionID)"
+        request.commandType = "server.stop"
+        request.targetID = serverSessionID
+        request.server = Melix_Controlplane_V1_ServerCommand()
+        request.server.stop = Melix_Controlplane_V1_StopServer()
+        request.server.stop.serverSessionID = serverSessionID
+        return request
+    }
+
+    private func makeSetServerIdlePolicyRequest(
+        serverSessionID: String,
+        autoSleepEnabled: Bool,
+        lightSleepAfterSeconds: UInt32,
+        deepSleepAfterSeconds: UInt32
+    ) -> Melix_Controlplane_V1_ControlPlaneRequest {
+        var request = Melix_Controlplane_V1_ControlPlaneRequest()
+        request.requestID = "menubar-server-idle-policy-\(serverSessionID)"
+        request.commandType = "server.set_idle_policy"
+        request.targetID = serverSessionID
+        request.server = Melix_Controlplane_V1_ServerCommand()
+        request.server.setIdlePolicy = Melix_Controlplane_V1_SetServerIdlePolicy()
+        request.server.setIdlePolicy.serverSessionID = serverSessionID
+        request.server.setIdlePolicy.autoSleepEnabled = autoSleepEnabled
+        request.server.setIdlePolicy.lightSleepAfterSeconds = lightSleepAfterSeconds
+        request.server.setIdlePolicy.deepSleepAfterSeconds = deepSleepAfterSeconds
         return request
     }
 

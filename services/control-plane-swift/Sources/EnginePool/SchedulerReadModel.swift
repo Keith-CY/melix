@@ -544,6 +544,10 @@ public actor SchedulerReadModel {
         activeMultimodalRequestCount(excluding: requestID) > 0
     }
 
+    public func hasActiveRequests() -> Bool {
+        totalActiveRequests > 0
+    }
+
     private var totalQueuedRequests: UInt32 {
         laneStats.values.reduce(0) { $0 + $1.queuedRequests }
     }

@@ -15,7 +15,7 @@ public struct ServerSnapshotBuilder {
         gatewayAccess: Melix_Controlplane_V1_GatewayAccessSummary? = nil
     ) -> Melix_Controlplane_V1_ServerSnapshot {
         var snapshot = Melix_Controlplane_V1_ServerSnapshot()
-        snapshot.serverState = .serverReady
+        snapshot.serverState = serverState(for: runtimeSessions)
         snapshot.models = models
         snapshot.queues = queues ?? emptyQueueSummary()
         snapshot.cache = cache ?? CacheMetadataStore.emptySummary()
@@ -54,5 +54,26 @@ public struct ServerSnapshotBuilder {
         lane.laneID = id
         lane.laneClass = laneClass
         return lane
+    }
+
+    private func serverState(
+        for runtimeSessions: [Melix_Controlplane_V1_ServerSessionRuntimeState]
+    ) -> Melix_Controlplane_V1_ServerState {
+        guard !runtimeSessions.isEmpty else {
+            return .serverReady
+        }
+        if runtimeSessions.contains(where: { $0.lifecycleState == .error }) {
+            return .serverFailed
+        }
+        if runtimeSessions.contains(where: { $0.lifecycleState == .loading }) {
+            return .serverBooting
+        }
+        if runtimeSessions.allSatisfy({ $0.lifecycleState == .stopped }) {
+            return .serverStopped
+        }
+        if runtimeSessions.contains(where: { $0.lifecycleState == .paused || $0.lifecycleState == .sleeping }) {
+            return .serverDegraded
+        }
+        return .serverReady
     }
 }

@@ -111,6 +111,209 @@ struct SnapshotStoreTests {
         #expect(snapshot.first?.updatedAtUnixMs == 9_000)
     }
 
+    @Test("server session runtime store applies idle sleep thresholds when auto sleep is enabled")
+    func serverSessionRuntimeStoreAppliesIdleSleepThresholds() async {
+        final class Clock: @unchecked Sendable {
+            var now: Int64
+            init(now: Int64) { self.now = now }
+        }
+
+        let lightSleepClock = Clock(now: 0)
+        let store = ServerSessionRuntimeStore(nowUnixMS: { lightSleepClock.now })
+
+        _ = await store.updateIdlePolicy(
+            serverSessionID: ServerSessionRuntimeStore.defaultServerSessionID,
+            autoSleepEnabled: true,
+            lightSleepAfterSeconds: 2,
+            deepSleepAfterSeconds: 5
+        )
+        lightSleepClock.now = 3_000
+
+        let lightSleepSnapshot = await store.snapshot()
+        #expect(lightSleepSnapshot.first?.lifecycleState == .sleeping)
+        #expect(lightSleepSnapshot.first?.powerState == .lightSleep)
+        #expect(lightSleepSnapshot.first?.idleTimerSeconds == 3)
+
+        let deepSleepClock = Clock(now: 0)
+        let storeForDeepSleep = ServerSessionRuntimeStore(nowUnixMS: { deepSleepClock.now })
+        _ = await storeForDeepSleep.updateIdlePolicy(
+            serverSessionID: ServerSessionRuntimeStore.defaultServerSessionID,
+            autoSleepEnabled: true,
+            lightSleepAfterSeconds: 2,
+            deepSleepAfterSeconds: 5
+        )
+        deepSleepClock.now = 20_000
+        let deepSleepSnapshot = await storeForDeepSleep.snapshot()
+        #expect(deepSleepSnapshot.first?.lifecycleState == .sleeping)
+        #expect(deepSleepSnapshot.first?.powerState == .deepSleep)
+    }
+
+    @Test("server session runtime store wakes sleeping sessions on request activity")
+    func serverSessionRuntimeStoreWakesSleepingSessionsOnRequestActivity() async {
+        var sleeping = ServerSessionRuntimeStore.defaultRuntimeSession(
+            updatedAtUnixMS: 1_000
+        )
+        sleeping.lifecycleState = .sleeping
+        sleeping.powerState = .deepSleep
+        let store = ServerSessionRuntimeStore(runtimeSessions: [sleeping], nowUnixMS: { 2_000 })
+
+        _ = await store.noteRequestActivity()
+        let snapshot = await store.snapshot()
+
+        #expect(snapshot.first?.lifecycleState == .ready)
+        #expect(snapshot.first?.powerState == .active)
+        #expect(snapshot.first?.wakeReason == .requestActivity)
+        #expect(snapshot.first?.idleTimerSeconds == 0)
+    }
+
+    @Test("server session runtime store preserves stopped sessions while active requests inhibit idle timers")
+    func serverSessionRuntimeStorePreservesStoppedSessionsWhileRequestsAreActive() async {
+        let store = ServerSessionRuntimeStore(nowUnixMS: { 8_000 })
+
+        _ = await store.stopServerSession(serverSessionID: ServerSessionRuntimeStore.defaultServerSessionID)
+        _ = await store.noteRequestActivity()
+        let stoppedSnapshot = await store.snapshot()
+        #expect(stoppedSnapshot.first?.lifecycleState == .stopped)
+        #expect(stoppedSnapshot.first?.powerState == .stopped)
+
+        final class Clock: @unchecked Sendable {
+            var now: Int64
+            init(now: Int64) { self.now = now }
+        }
+        let activeClock = Clock(now: 0)
+        let storeWithInFlightWork = ServerSessionRuntimeStore(nowUnixMS: { activeClock.now })
+        _ = await storeWithInFlightWork.updateIdlePolicy(
+            serverSessionID: ServerSessionRuntimeStore.defaultServerSessionID,
+            autoSleepEnabled: true,
+            lightSleepAfterSeconds: 1,
+            deepSleepAfterSeconds: 2
+        )
+        activeClock.now = 12_000
+        let activeSnapshot = await storeWithInFlightWork.snapshot(hasActiveRequests: true)
+        #expect(activeSnapshot.first?.idleTimerSeconds == 0)
+        #expect(activeSnapshot.first?.lifecycleState == .ready)
+        #expect(activeSnapshot.first?.powerState == .active)
+    }
+
+    @Test("server session runtime store creates missing sessions and resets idle inhibition on the next snapshot")
+    func serverSessionRuntimeStoreCreatesMissingSessionsAndResetsIdleInhibition() async {
+        final class Clock: @unchecked Sendable {
+            var now: Int64
+            init(now: Int64) { self.now = now }
+        }
+
+        let clock = Clock(now: 0)
+        let store = ServerSessionRuntimeStore(nowUnixMS: { clock.now })
+
+        _ = await store.updateIdlePolicy(
+            serverSessionID: "server-session-2",
+            autoSleepEnabled: true,
+            lightSleepAfterSeconds: 2,
+            deepSleepAfterSeconds: 5
+        )
+        let seededSnapshot = await store.snapshot()
+        #expect(seededSnapshot.contains(where: { $0.serverSessionID == "server-session-2" }))
+
+        clock.now = 12_000
+        let inhibitedSnapshot = await store.snapshot(hasActiveRequests: true)
+        guard let inhibitedSession = inhibitedSnapshot.first(where: { $0.serverSessionID == "server-session-2" }) else {
+            Issue.record("Expected inhibited session to exist")
+            return
+        }
+        #expect(inhibitedSession.idleTimerSeconds == 0)
+
+        let resumedSnapshot = await store.snapshot()
+        guard let resumedSession = resumedSnapshot.first(where: { $0.serverSessionID == "server-session-2" }) else {
+            Issue.record("Expected resumed session to exist")
+            return
+        }
+        #expect(resumedSession.idleTimerSeconds == 0)
+        #expect(resumedSession.lifecycleState == .ready)
+    }
+
+    @Test("server session runtime store skips auto-sleep transitions for paused stopped and failed sessions")
+    func serverSessionRuntimeStoreSkipsAutoSleepForPausedStoppedAndFailedSessions() async {
+        var paused = ServerSessionRuntimeStore.defaultRuntimeSession(
+            serverSessionID: "server-session-paused",
+            updatedAtUnixMS: 0
+        )
+        paused.autoSleepEnabled = true
+        paused.lightSleepAfterSeconds = 1
+        paused.deepSleepAfterSeconds = 2
+        paused.lifecycleState = .paused
+
+        var stopped = ServerSessionRuntimeStore.defaultRuntimeSession(
+            serverSessionID: "server-session-stopped",
+            updatedAtUnixMS: 0
+        )
+        stopped.autoSleepEnabled = true
+        stopped.lightSleepAfterSeconds = 1
+        stopped.deepSleepAfterSeconds = 2
+        stopped.lifecycleState = .stopped
+        stopped.powerState = .stopped
+
+        var failed = ServerSessionRuntimeStore.defaultRuntimeSession(
+            serverSessionID: "server-session-failed",
+            updatedAtUnixMS: 0
+        )
+        failed.autoSleepEnabled = true
+        failed.lightSleepAfterSeconds = 1
+        failed.deepSleepAfterSeconds = 2
+        failed.lifecycleState = .error
+
+        let store = ServerSessionRuntimeStore(
+            runtimeSessions: [paused, stopped, failed],
+            nowUnixMS: { 10_000 }
+        )
+
+        let snapshot = await store.snapshot()
+        guard let pausedSnapshot = snapshot.first(where: { $0.serverSessionID == "server-session-paused" }),
+              let stoppedSnapshot = snapshot.first(where: { $0.serverSessionID == "server-session-stopped" }),
+              let failedSnapshot = snapshot.first(where: { $0.serverSessionID == "server-session-failed" }) else {
+            Issue.record("Expected paused, stopped, and failed sessions to exist")
+            return
+        }
+
+        #expect(pausedSnapshot.lifecycleState == .paused)
+        #expect(pausedSnapshot.powerState == .active)
+        #expect(stoppedSnapshot.lifecycleState == .stopped)
+        #expect(stoppedSnapshot.powerState == .stopped)
+        #expect(failedSnapshot.lifecycleState == .error)
+        #expect(failedSnapshot.powerState == .active)
+    }
+
+    @Test("server snapshot builder derives failed booting and stopped server states from runtime sessions")
+    func serverSnapshotBuilderDerivesRuntimeServerStates() {
+        var failedSession = ServerSessionRuntimeStore.defaultRuntimeSession(updatedAtUnixMS: 1_000)
+        failedSession.lifecycleState = .error
+        var loadingSession = ServerSessionRuntimeStore.defaultRuntimeSession(updatedAtUnixMS: 1_000)
+        loadingSession.lifecycleState = .loading
+        var stoppedSession = ServerSessionRuntimeStore.defaultRuntimeSession(updatedAtUnixMS: 1_000)
+        stoppedSession.lifecycleState = .stopped
+        stoppedSession.powerState = .stopped
+
+        let builder = ServerSnapshotBuilder()
+        let failedSnapshot = builder.build(
+            models: [],
+            metrics: Melix_Controlplane_V1_MetricsSummary(),
+            runtimeSessions: [failedSession]
+        )
+        let loadingSnapshot = builder.build(
+            models: [],
+            metrics: Melix_Controlplane_V1_MetricsSummary(),
+            runtimeSessions: [loadingSession]
+        )
+        let stoppedSnapshot = builder.build(
+            models: [],
+            metrics: Melix_Controlplane_V1_MetricsSummary(),
+            runtimeSessions: [stoppedSession]
+        )
+
+        #expect(failedSnapshot.serverState == .serverFailed)
+        #expect(loadingSnapshot.serverState == .serverBooting)
+        #expect(stoppedSnapshot.serverState == .serverStopped)
+    }
+
     @Test("session graph store exposes sorted summaries and session state")
     func sessionGraphStoreExposesSortedSummaries() async {
         let store = SessionGraphStore(sessions: [makeSessionState(id: "session-b"), makeSessionState(id: "session-a")])

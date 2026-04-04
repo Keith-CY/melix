@@ -2,6 +2,72 @@
 
 ## 2026-04-04
 
+- Closed `M10.2` by wiring control-plane-owned lifecycle controls and idle-power policy through the
+  server-session surface:
+  - extended `packages/protocol/schema/controlplane/v1/control_plane.proto` with explicit
+    `pause`, `resume`, `wake`, and `set_idle_policy` server commands, added session-scoped payloads
+    for `start` and `stop`, and regenerated the repository-owned Swift, Python, and descriptor
+    outputs
+  - expanded `services/control-plane-swift/Sources/Snapshots/ServerSessionRuntimeStore.swift`,
+    `ServerSnapshotBuilder.swift`, and `SchedulerReadModel.swift` so runtime sessions now advance
+    through typed lifecycle transitions, request-activity wake reasons, idle inhibition, and
+    auto-sleep thresholds while the aggregate server-state read model derives from runtime-session
+    truth
+  - updated `services/control-plane-swift/Sources/XPCService/ControlPlaneService.swift` and
+    `ControlPlaneXPCClient.swift` so lifecycle mutations, idle-policy validation, server snapshot
+    projection, and serving-time pause or sleep safety all live behind the authoritative
+    control-plane interface instead of menu-bar-local heuristics
+  - extended `Sources/MelixCLICore/MelixCLI.swift` so `melix server snapshot|start|pause|resume|wake|stop|set-idle-policy`
+    now speak the same session-scoped control-plane contract and render typed runtime-session
+    metadata for operators
+  - added focused regression coverage in `tests/MelixCLITests/MelixCLIParserTests.swift`,
+    `tests/MelixCLITests/MelixCLIRunnerTests.swift`,
+    `services/control-plane-swift/Tests/ControlPlaneTests/SnapshotStoreTests.swift`, and
+    `services/control-plane-swift/Tests/ControlPlaneTests/ControlPlaneServiceTests.swift`, then
+    marked `M10.2` completed in the roadmap execution index and moved the active task plan to
+    `M10.3`
+- Verification summary for `M10.2`:
+  - `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/.build/ModuleCache.noindex" swift test --filter MelixCLITests`: `64 tests in 2 suites passed`
+  - `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/.build/ModuleCache.noindex" swift test --package-path services/control-plane-swift --filter ControlPlaneTests`: `298 tests in 18 suites passed`
+  - `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/.build/ModuleCache.noindex" swift test --enable-code-coverage --filter MelixCLITests`: pass
+  - `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/.build/ModuleCache.noindex" swift test --package-path services/control-plane-swift --enable-code-coverage --filter ControlPlaneTests`: pass
+  - `make proto`: pass
+  - `make py-test`: `455 passed in 34.36s`
+  - `make swift-test`: pass
+  - `make integration-test`: `59 passed in 692.68s (0:11:32)`
+  - `git diff --check`: pass
+  - repository-default verification note: the full Swift run still emits the pre-existing linker
+    `warning: input verification failed` notes for cached object files plus the existing
+    `RequestCoordinator.swift` `no 'async' operations occur within 'await' expression` warnings,
+    but the authoritative commands above completed successfully
+- Metrics report for `M10.2`:
+  - CLI executable scope changed-line coverage:
+    - `Sources/MelixCLICore/MelixCLI.swift`: `99.11%` (`222/224`)
+    - `tests/MelixCLITests/MelixCLIParserTests.swift`: `87.69%` (`114/130`)
+    - `tests/MelixCLITests/MelixCLIRunnerTests.swift`: `100.00%` (`222/222`)
+    - aggregate CLI changed-line coverage: `96.88%` (`558/576`)
+  - control-plane executable scope changed-line coverage:
+    - `services/control-plane-swift/Sources/EnginePool/SchedulerReadModel.swift`: `100.00%`
+      (`3/3`)
+    - `services/control-plane-swift/Sources/Snapshots/ServerSessionRuntimeStore.swift`:
+      `100.00%` (`164/164`)
+    - `services/control-plane-swift/Sources/Snapshots/ServerSnapshotBuilder.swift`: `100.00%`
+      (`19/19`)
+    - `services/control-plane-swift/Sources/XPCService/ControlPlaneService.swift`: `99.58%`
+      (`237/238`)
+    - `services/control-plane-swift/Sources/XPCService/ControlPlaneXPCClient.swift`: `100.00%`
+      (`145/145`)
+    - `services/control-plane-swift/Tests/ControlPlaneTests/ControlPlaneServiceTests.swift`:
+      `92.52%` (`470/508`)
+    - `services/control-plane-swift/Tests/ControlPlaneTests/SnapshotStoreTests.swift`: `96.86%`
+      (`185/191`)
+    - aggregate control-plane changed-line coverage: `96.45%` (`1223/1268`)
+  - aggregate changed-line coverage for the touched handwritten Swift scope in `M10.2`:
+    `96.58%` (`1781/1844`)
+  - protocol schemas, generated protobuf outputs, `packages/protocol/descriptors/melix.pb`, and
+    task-planning documents are excluded from executable changed-line coverage because they are
+    generated or repository-ownership artifacts rather than handwritten runtime logic
+
 - Closed `M10.1` by introducing a dedicated server-session runtime lifecycle snapshot contract:
   - extended `packages/protocol/schema/controlplane/v1/control_plane.proto` with typed
     `ServerSessionLifecycleState`, `ServerSessionPowerState`, `ServerWakeReason`, and
