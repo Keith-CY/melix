@@ -156,6 +156,122 @@ struct DesktopFoundationViewTests {
         #expect(view.subviews.isEmpty == false)
     }
 
+    @Test("settings tab renders typed tooling settings rows")
+    @MainActor
+    func settingsTabRendersTypedToolingSettingsRows() async throws {
+        var snapshot = Melix_Controlplane_V1_ServerSnapshot()
+        snapshot.serverState = .serverReady
+        snapshot.models = [ModelCatalog.devTextModel(), ModelCatalog.devEmbeddingModel()]
+        snapshot.toolingSettings.embedding.modelID = "melix-dev-embed"
+        snapshot.toolingSettings.embedding.backendID = "bert-v1"
+        snapshot.toolingSettings.embedding.familyID = "bert"
+        snapshot.toolingSettings.embedding.modelState = .modelWarm
+        snapshot.toolingSettings.embedding.loaded = true
+        snapshot.toolingSettings.embedding.preloaded = true
+        snapshot.toolingSettings.builtinToolParserModes = ["text", "json", "qwen"]
+        snapshot.toolingSettings.mcpDefaultParserMode = "json"
+        snapshot.toolingSettings.mcpConfigPath = "/tmp/mcp-tools.json"
+        snapshot.toolingSettings.mcpEnabledSourceCount = 1
+        snapshot.toolingSettings.mcpResolvedToolCount = 2
+        var gatewayConfigPath = Melix_Controlplane_V1_ToolingConfigPathSummary()
+        gatewayConfigPath.pathID = "gateway_config_store_path"
+        gatewayConfigPath.path = "/tmp/gateway-config.json"
+        var servingDefaultsPath = Melix_Controlplane_V1_ToolingConfigPathSummary()
+        servingDefaultsPath.pathID = "gateway_serving_defaults_store_path"
+        servingDefaultsPath.path = "/tmp/gateway-serving-defaults.json"
+        snapshot.toolingSettings.configPaths = [gatewayConfigPath, servingDefaultsPath]
+        snapshot.toolingSettings.additionalArguments = ["--config", "/tmp/melix.json"]
+
+        let foundation = DesktopFoundationState.build(
+            statusTitle: "Melix Ready",
+            serverStateText: "Ready",
+            connectionStateText: "Connected",
+            connectionDetailText: "Snapshot hydrated",
+            snapshot: snapshot,
+            protocolVersion: "melix.controlplane.v1",
+            serverVersion: "0.1.0",
+            daemonInstanceID: "daemon-settings",
+            features: ["xpc", "mcp-tools"],
+            productUpdateSummary: nil,
+            productUpdateDetail: nil,
+            lastError: nil,
+            recentEvents: []
+        )
+        let view = hostView(DesktopSettingsTabView(foundation: foundation))
+
+        #expect(view.subviews.isEmpty == false)
+        #expect(foundation.settings.contains { $0.key == "Embedding Model" && $0.value == "melix-dev-embed" })
+        #expect(foundation.settings.contains { $0.key == "MCP Config" && $0.value == "/tmp/mcp-tools.json" })
+        #expect(foundation.settings.contains { $0.key == "Gateway Config Store" && $0.value == "/tmp/gateway-config.json" })
+        #expect(foundation.settings.contains { $0.key == "Built-in Tool Parsers" && $0.value == "text, json, qwen" })
+        #expect(foundation.settings.contains { $0.key == "Boot Arguments" && $0.value == "--config /tmp/melix.json" })
+    }
+
+    @Test("settings tab normalizes tooling state labels across model states and config paths")
+    @MainActor
+    func settingsTabNormalizesToolingStateLabelsAcrossModelStatesAndConfigPaths() async throws {
+        let expectedStateDetails: [(Melix_Controlplane_V1_ModelState, String)] = [
+            (.modelDiscovered, "Discovered"),
+            (.modelWarm, "Warm"),
+            (.modelPinned, "Pinned"),
+            (.modelLoading, "Loading"),
+            (.modelEvicting, "Evicting"),
+            (.modelUnloaded, "Unloaded"),
+            (.modelFailed, "Failed"),
+            (.UNRECOGNIZED(-1), "Unknown"),
+        ]
+
+        for (state, expectedPrefix) in expectedStateDetails {
+            var snapshot = Melix_Controlplane_V1_ServerSnapshot()
+            snapshot.serverState = .serverReady
+            snapshot.models = [ModelCatalog.devEmbeddingModel()]
+            snapshot.toolingSettings.embedding.modelID = "melix-dev-embed"
+            snapshot.toolingSettings.embedding.modelState = state
+            snapshot.toolingSettings.embedding.preloaded = false
+            var metricsPath = Melix_Controlplane_V1_ToolingConfigPathSummary()
+            metricsPath.pathID = "control_plane_metrics_path"
+            metricsPath.path = "/tmp/control-plane-metrics.prom"
+            var customPath = Melix_Controlplane_V1_ToolingConfigPathSummary()
+            customPath.pathID = "custom_runtime_path"
+            customPath.path = "/tmp/runtime"
+            snapshot.toolingSettings.configPaths = [metricsPath, customPath]
+
+            let foundation = DesktopFoundationState.build(
+                statusTitle: "Melix Ready",
+                serverStateText: "Ready",
+                connectionStateText: "Connected",
+                connectionDetailText: "Snapshot hydrated",
+                snapshot: snapshot,
+                protocolVersion: "melix.controlplane.v1",
+                serverVersion: "0.1.0",
+                daemonInstanceID: "daemon-settings-variants",
+                features: ["xpc"],
+                productUpdateSummary: nil,
+                productUpdateDetail: nil,
+                lastError: nil,
+                recentEvents: []
+            )
+
+            #expect(
+                foundation.settings.contains {
+                    $0.key == "Embedding Preload"
+                        && $0.value.hasPrefix(expectedPrefix + " • not preloaded")
+                }
+            )
+            #expect(
+                foundation.settings.contains {
+                    $0.key == "Control Plane Metrics"
+                        && $0.value == "/tmp/control-plane-metrics.prom"
+                }
+            )
+            #expect(
+                foundation.settings.contains {
+                    $0.key == "custom runtime path" && $0.value == "/tmp/runtime"
+                }
+            )
+        }
+    }
+
     @Test("models tab renders model actions and settings")
     @MainActor
     func modelsTabRendersModelActionsAndSettings() async throws {

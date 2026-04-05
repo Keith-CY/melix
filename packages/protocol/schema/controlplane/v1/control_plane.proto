@@ -878,6 +878,33 @@ message MCPToolCatalogSummary {
   repeated MCPToolSourceSummary sources = 5;
 }
 
+message EmbeddingToolingSummary {
+  string model_id = 1;
+  string backend_id = 2;
+  string family_id = 3;
+  WorkerRouteClass route_class = 4;
+  ModelState model_state = 5;
+  bool loaded = 6;
+  bool preloaded = 7;
+  bool pinned = 8;
+}
+
+message ToolingConfigPathSummary {
+  string path_id = 1;
+  string path = 2;
+}
+
+message ToolingSettingsSummary {
+  EmbeddingToolingSummary embedding = 1;
+  repeated string builtin_tool_parser_modes = 2;
+  string mcp_default_parser_mode = 3;
+  string mcp_config_path = 4;
+  uint32 mcp_enabled_source_count = 5;
+  uint32 mcp_resolved_tool_count = 6;
+  repeated ToolingConfigPathSummary config_paths = 7;
+  repeated string additional_arguments = 8;
+}
+
 enum GatewayAccessMode {
   GATEWAY_ACCESS_MODE_UNSPECIFIED = 0;
   GATEWAY_ACCESS_MODE_NONE = 1;
@@ -992,6 +1019,7 @@ message ServerSnapshot {
   repeated ServerSessionRuntimeState runtime_sessions = 13;
   GatewayConfigSummary gateway_config = 14;
   ServingDefaultsSummary serving_defaults = 15;
+  ToolingSettingsSummary tooling_settings = 16;
 }
 
 message WorkerSummary {

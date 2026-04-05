@@ -23,10 +23,36 @@ Expose embedding-model selection, tool-parser settings, MCP configuration, confi
 - MCP and parser settings should remain configuration-driven, not hardcoded in UI.
 - Embedding selection must align with capability-aware model discovery.
 
+## Executable Slices
+
+### Slice 1: Typed Tooling Settings Summary
+
+- add a typed `tooling_settings` summary to `ServerSnapshot`
+- expose the active embedding model, backend family, and preload state
+- expose built-in tool-parser modes, effective MCP summary, inspectable config paths, and boot
+  additional arguments
+- hydrate the desktop Tools > Settings surface from the typed summary
+
+Status: completed on 2026-04-06.
+
 ## Verification
 
-- `make swift-test`
-- tooling-settings smoke command for the touched scope
+- `make proto`
+- `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/.build/ModuleCache.noindex" swift test --package-path services/control-plane-swift --enable-code-coverage --filter 'ControlPlaneServiceTests'`
+- `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/.build/ModuleCache.noindex" swift test --package-path apps/macos-menubar --enable-code-coverage --filter 'DesktopFoundationViewTests'`
+- `python3 scripts/swift_changed_line_coverage.py --binary services/control-plane-swift/.build/arm64-apple-macosx/debug/MelixControlPlanePackageTests.xctest/Contents/MacOS/MelixControlPlanePackageTests --profdata services/control-plane-swift/.build/arm64-apple-macosx/debug/codecov/default.profdata services/control-plane-swift/Sources/HTTPGateway/OpenAI/GatewayConfigStore.swift services/control-plane-swift/Sources/HTTPGateway/OpenAI/GatewayServingDefaultsStore.swift services/control-plane-swift/Sources/Requests/ToolParserRegistry.swift services/control-plane-swift/Sources/Snapshots/ServerSnapshotBuilder.swift services/control-plane-swift/Sources/XPCService/ControlPlaneService.swift services/control-plane-swift/Sources/XPCService/ToolingSettingsSnapshotSource.swift services/control-plane-swift/Tests/ControlPlaneTests/ControlPlaneServiceTests.swift`
+- `python3 scripts/swift_changed_line_coverage.py --binary apps/macos-menubar/.build/arm64-apple-macosx/debug/MelixMacOSMenubarPackageTests.xctest/Contents/MacOS/MelixMacOSMenubarPackageTests --profdata apps/macos-menubar/.build/arm64-apple-macosx/debug/codecov/default.profdata apps/macos-menubar/Sources/AppMain/Dashboard/DesktopFoundationState.swift apps/macos-menubar/Tests/MenuBarTests/DesktopFoundationViewTests.swift`
+- `git diff --check`
+
+Results:
+
+- focused control-plane coverage suite: `159 tests in 1 suite passed`
+- focused Window UI coverage suite: `64 tests in 1 suite passed`
+- Swift control-plane changed-line coverage: `100.00%` (`83/83`)
+- Swift menu-bar changed-line coverage: `100.00%` (`226/226`)
+- aggregate touched-scope changed-line coverage: `100.00%` (`309/309`)
+- `make swift-test` still fails outside the touched scope because
+  `services/mlx-text-worker-swift` exits with signal `11` in `WorkerScaffoldTests`
 
 ## Acceptance
 

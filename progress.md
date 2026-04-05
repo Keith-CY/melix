@@ -2,6 +2,47 @@
 
 ## 2026-04-06
 
+- Closed the first executable `M13.3` slice by projecting tooling, embedding, and config-file
+  state through one reconnect-stable control-plane snapshot summary and hydrating the existing
+  Window UI settings surface from that typed truth:
+  - extended `ServerSnapshot` with `tooling_settings`, plus typed embedding and config-path
+    summaries, then regenerated the Swift, Python, and descriptor protocol artifacts
+  - added `ToolingSettingsSnapshotSource` so the Swift control plane now projects the active
+    embedding model choice, preload state, built-in tool-parser modes, MCP summary, inspectable
+    config paths, and boot additional arguments from repository-owned sources instead of UI-local
+    reconstruction
+  - exposed store-backed config paths and supported parser modes through the control-plane core
+    actors that already own those values, preserving a single orchestration truth
+  - updated `DesktopFoundationState` so the existing Tools > Settings surface renders the typed
+    tooling snapshot, including embedding preload detail, MCP config, config-path rows, and boot
+    arguments, without relying on hardcoded operator knowledge
+- Verification summary for the first executable `M13.3` slice:
+  - `make proto`: pass
+  - `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/.build/ModuleCache.noindex" swift test --package-path services/control-plane-swift --enable-code-coverage --filter 'ControlPlaneServiceTests'`: `159 tests in 1 suite passed`
+  - `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/.build/ModuleCache.noindex" swift test --package-path apps/macos-menubar --enable-code-coverage --filter 'DesktopFoundationViewTests'`: `64 tests in 1 suite passed`
+  - `python3 scripts/swift_changed_line_coverage.py --binary services/control-plane-swift/.build/arm64-apple-macosx/debug/MelixControlPlanePackageTests.xctest/Contents/MacOS/MelixControlPlanePackageTests --profdata services/control-plane-swift/.build/arm64-apple-macosx/debug/codecov/default.profdata services/control-plane-swift/Sources/HTTPGateway/OpenAI/GatewayConfigStore.swift services/control-plane-swift/Sources/HTTPGateway/OpenAI/GatewayServingDefaultsStore.swift services/control-plane-swift/Sources/Requests/ToolParserRegistry.swift services/control-plane-swift/Sources/Snapshots/ServerSnapshotBuilder.swift services/control-plane-swift/Sources/XPCService/ControlPlaneService.swift services/control-plane-swift/Sources/XPCService/ToolingSettingsSnapshotSource.swift services/control-plane-swift/Tests/ControlPlaneTests/ControlPlaneServiceTests.swift`: `100.00%` (`83/83`)
+  - `python3 scripts/swift_changed_line_coverage.py --binary apps/macos-menubar/.build/arm64-apple-macosx/debug/MelixMacOSMenubarPackageTests.xctest/Contents/MacOS/MelixMacOSMenubarPackageTests --profdata apps/macos-menubar/.build/arm64-apple-macosx/debug/codecov/default.profdata apps/macos-menubar/Sources/AppMain/Dashboard/DesktopFoundationState.swift apps/macos-menubar/Tests/MenuBarTests/DesktopFoundationViewTests.swift`: `100.00%` (`226/226`)
+  - `git diff --check`: pass
+  - `make swift-test`: failed outside the touched scope when `services/mlx-text-worker-swift`
+    exited with unexpected signal `11` during `WorkerScaffoldTests`; the touched control-plane and
+    menu-bar packages passed under the focused verification commands above
+- Metrics report for the first executable `M13.3` slice:
+  - `N/A` for new runtime timing or persistence metrics because this slice adds read-only snapshot
+    projection and UI hydration, not new measured mutation paths
+  - typed tooling-state evidence exercised by the touched scope:
+    - reconnect-stable `ServerSnapshot.tooling_settings` population after handshake
+    - active embedding model projection with model state, preload detail, backend, and family
+    - repository-owned built-in parser modes and MCP summary surfaced without UI-local discovery
+    - inspectable gateway-config, serving-defaults, and control-plane metrics paths plus boot
+      additional arguments
+  - changed-line coverage for the touched handwritten executable scope:
+    - Swift control-plane scope: `100.00%` (`83/83`)
+    - Swift menu-bar scope: `100.00%` (`226/226`)
+    - aggregate touched-scope coverage: `100.00%` (`309/309`)
+  - generated protobuf outputs and `packages/protocol/descriptors/melix.pb` are excluded from
+    executable changed-line coverage because they are regenerated interface artifacts rather than
+    handwritten runtime logic
+
 - Closed the third executable `M13.2` slice by making speculative-decoding defaults typed,
   persistent, and control-plane-validated across the protocol, request shaping, model-resolution,
   the Window UI, and the integration stack:

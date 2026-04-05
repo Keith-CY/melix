@@ -2,87 +2,74 @@
 
 ## Goal
 
-Close the third executable `M13.2` slice by turning speculative-decoding defaults into typed,
-persistent, control-plane-validated serving-default truth and by restoring isolated integration
-startup state for the gateway-defaults stack.
+Close the first executable `M13.3` slice by turning embedding, tool-parser, MCP, config-path,
+and launch-arguments state into one typed, reconnect-stable control-plane snapshot summary that the
+desktop settings surface can render without source-level discovery.
 
 ## Scope
 
-- extend the gateway serving-defaults contract with speculative-decoding controls
-- persist operator defaults for speculative acceleration mode, `draft_model_id`, and
-  `num_draft_tokens` beside the existing generation and batching defaults
-- project requested and effective speculative defaults through `ServerSnapshot`
-- route text request shaping and coordinator-side acceleration resolution through gateway-owned
-  speculative defaults while preserving model-level precedence
-- migrate the Window UI server workspace so speculative defaults hydrate from control-plane truth
-  rather than session-local draft state
-- fail explicitly when speculative defaults target unsupported served models or unsupported worker
-  backends
+- add a typed `tooling_settings` snapshot summary under `ServerSnapshot`
+- project the active embedding-model choice and preload state from capability-aware model discovery
+- expose built-in tool-parser modes and effective MCP configuration through the same summary
+- expose inspectable config paths and boot additional arguments from control-plane truth
+- render the tooling summary in the Window UI settings surface instead of relying on hardcoded
+  operator knowledge
 
 ## Measurement Points
 
-- speculative defaults must be typed, persistent, and inspectable through
-  `ServerSnapshot.serving_defaults`
-- request translation must carry gateway-owned speculative defaults into execution metadata without
-  bypassing model-level acceleration merges
-- `RequestCoordinator` must resolve effective acceleration mode, draft model id, and
-  `num_draft_tokens` from gateway defaults plus model settings instead of depending on model-only
-  defaults
-- invalid speculative defaults must fail explicitly before persistence when the served model or
-  active backend cannot support the requested speculative mode
-- changed-line coverage for the touched Swift scope must remain at or above `95%`
+- `ServerSnapshot.tooling_settings` must remain populated after handshake and snapshot refresh
+- embedding settings must identify the active embedding model, backend family, and whether it is
+  preloaded
+- tool-parser settings must come from repository-owned registry truth, not UI-local enumerations
+- config-path and launch-argument state must remain inspectable after restart and reconnect
+- changed-line coverage for the touched handwritten executable scope must remain at or above `95%`
 
 ## Phases
 
-1. Planning and contract refinement
+1. Planning and snapshot contract
    - status: completed
    - evidence:
-     - confirmed `M13.2` Slice 2 should use the existing serving-defaults truth path instead of
-       inventing a second gateway settings surface
-     - identified the handwritten drift: `GatewayServingDefaultsStore` and the Window UI only
-       expose generation defaults, while `RequestCoordinator` still hard-codes
-       `continuousBatchTargetSize = 2` and does not consume gateway admission metadata
-     - selected the executable slice around `concurrent_processing_enabled`,
-       `max_concurrent_requests` as the operator-visible max concurrent sequence cap, plus
-       `prefill_batch_size` and `completion_batch_size`
-2. Typed speculative defaults
+     - confirmed `M13.3` can start with a read-only settings-truth slice instead of coupling
+       visibility to new persistence or mutation semantics
+     - identified the current gap: MCP summary exists in `ServerSnapshot`, but embedding, built-in
+       parser modes, config paths, and additional arguments do not appear as one coherent operator
+       surface
+     - selected a bounded implementation: add `tooling_settings` to the control-plane protocol and
+       hydrate the existing Tools > Settings workspace from that summary
+2. Typed tooling summary and desktop hydration
    - status: completed
    - evidence:
-     - extended `ApplyServingDefaults`, `ServingDefaultsSessionSummary`, and `AccelerationPolicy`
-       with typed speculative-decoding fields for `acceleration_mode`, `draft_model_id`, and
-       `num_draft_tokens`, then regenerated the Swift, Python, and descriptor artifacts
-     - persisted speculative gateway defaults in `GatewayServingDefaultsStore`, validated them in
-       `ControlPlaneService`, merged them in `RequestCoordinator`, and projected requested versus
-       effective speculative state through the desktop shell
-     - routed speculative defaults through `TextRequestShaper`, `ChatRequestTranslator`, and the
-       shared XPC client so Window UI apply actions no longer depend on session-local draft state
+     - `ServerSnapshot` now carries typed tooling state for embedding, built-in parsers, MCP,
+       config paths, and boot arguments
+     - control-plane snapshot projection uses repository-owned registry, MCP, and store-path truth
+       instead of UI-local reconstruction
+     - the existing Tools > Settings surface renders the typed tooling summary, including
+       embedding preload detail and config-path rows
 3. Verification and milestone bookkeeping
    - status: completed
    - evidence:
-     - reran `make proto`, `make py-test`, focused coverage-enabled Swift suites, and
-       `make integration-test`
-     - isolated integration stack persistence roots in `tests/integration/helpers.py` so
-       gateway-config and serving-default overrides no longer leak from prior local runs
-     - prepared roadmap, plan, and progress updates marking `M13.2` complete with explicit
-       coverage and verification evidence
+     - `make proto` passed after schema regeneration
+     - focused control-plane and menu-bar coverage runs passed, with changed-line coverage at
+       `100.00%` (`309/309`) across the touched handwritten executable scope
+     - `git diff --check` passed, while `make swift-test` still reports the pre-existing
+       `services/mlx-text-worker-swift` `WorkerScaffoldTests` signal-11 failure outside the
+       touched scope
 
 ## Acceptance
 
-- gateway speculative defaults are operator-visible, persistent, and backed by control-plane truth
-- effective speculative state remains consistent across request translation, coordinator-side model
-  merges, and desktop surfaces
-- gateway defaults can request speculative decode with explicit draft-model and draft-token policy,
-  and unsupported targets fail before persistence rather than surfacing as silent no-ops
+- tooling, embedding, and config-file state are visible from one settings surface
+- the settings surface survives restart and reconnect because it hydrates from snapshot truth
+- operators can inspect embedding preload state, built-in parser modes, MCP config, config paths,
+  and boot arguments without reading source files
 
 ## Risks
 
-- speculative defaults could remain display-only if request translation only stores UI state and
-  never feeds coordinator-visible acceleration metadata
-- model-level acceleration defaults could override gateway speculative defaults incorrectly unless
-  precedence is centralized in `RequestCoordinator`
-- speculative defaults might accept unsupported served models unless validation checks both the
-  served model route and the active Swift text backend capability before persistence
+- the desktop settings tab could become a second source of truth if it reconstructs parser modes or
+  embedding state locally instead of consuming a typed snapshot summary
+- config-path visibility could drift if store-backed paths remain private to persistence actors
+- launch arguments could become uninspectable in packaged flows unless they are captured at
+  bootstrap and projected through the control plane
 
 ## Outcome
 
-- m13_2_speculative_defaults_completed
+- m13_3_tooling_settings_slice_1_completed

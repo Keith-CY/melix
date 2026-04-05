@@ -245,6 +245,10 @@ public actor GatewayServingDefaultsStore {
         )
     }
 
+    public func storePath() -> String {
+        storeURL.path
+    }
+
     func apply(
         command: Melix_Controlplane_V1_ApplyServingDefaults
     ) throws {

@@ -260,6 +260,76 @@ public struct DesktopFoundationState: Equatable, Sendable {
                 )
             }
         }
+        settings.append(
+            DesktopKeyValueRow(
+                id: "embedding-model",
+                key: "Embedding Model",
+                value: snapshot.toolingSettings.embedding.modelID.isEmpty
+                    ? "not configured"
+                    : snapshot.toolingSettings.embedding.modelID
+            )
+        )
+        if snapshot.toolingSettings.embedding.modelID.isEmpty == false {
+            settings.append(
+                DesktopKeyValueRow(
+                    id: "embedding-preload",
+                    key: "Embedding Preload",
+                    value: embeddingToolingDetail(snapshot.toolingSettings.embedding)
+                )
+            )
+        }
+        settings.append(
+            DesktopKeyValueRow(
+                id: "tool-parser-modes",
+                key: "Built-in Tool Parsers",
+                value: snapshot.toolingSettings.builtinToolParserModes.isEmpty
+                    ? "none"
+                    : snapshot.toolingSettings.builtinToolParserModes.joined(separator: ", ")
+            )
+        )
+        settings.append(
+            DesktopKeyValueRow(
+                id: "mcp-default-parser",
+                key: "MCP Default Parser",
+                value: snapshot.toolingSettings.mcpDefaultParserMode.isEmpty
+                    ? "not configured"
+                    : snapshot.toolingSettings.mcpDefaultParserMode
+            )
+        )
+        settings.append(
+            DesktopKeyValueRow(
+                id: "mcp-config-path",
+                key: "MCP Config",
+                value: snapshot.toolingSettings.mcpConfigPath.isEmpty
+                    ? "not configured"
+                    : snapshot.toolingSettings.mcpConfigPath
+            )
+        )
+        settings.append(
+            DesktopKeyValueRow(
+                id: "mcp-summary",
+                key: "MCP Summary",
+                value: "\(snapshot.toolingSettings.mcpEnabledSourceCount) enabled sources • \(snapshot.toolingSettings.mcpResolvedToolCount) tools"
+            )
+        )
+        for configPath in snapshot.toolingSettings.configPaths {
+            settings.append(
+                DesktopKeyValueRow(
+                    id: "config-path-\(configPath.pathID)",
+                    key: toolingConfigPathLabel(configPath.pathID),
+                    value: configPath.path
+                )
+            )
+        }
+        settings.append(
+            DesktopKeyValueRow(
+                id: "boot-arguments",
+                key: "Boot Arguments",
+                value: snapshot.toolingSettings.additionalArguments.isEmpty
+                    ? "none"
+                    : snapshot.toolingSettings.additionalArguments.joined(separator: " ")
+            )
+        )
 
         let benchMetrics = snapshot.metrics.values
             .sorted { $0.key < $1.key }
@@ -334,6 +404,59 @@ private func formatTransitionReason(_ reason: String) -> String {
         return "Unknown"
     }
     return String(first).uppercased() + separatorNormalized.dropFirst()
+}
+
+private func embeddingToolingDetail(
+    _ summary: Melix_Controlplane_V1_EmbeddingToolingSummary
+) -> String {
+    var parts: [String] = []
+    parts.append(modelStateText(summary.modelState))
+    parts.append(summary.preloaded ? "preloaded" : "not preloaded")
+    if !summary.familyID.isEmpty || !summary.backendID.isEmpty {
+        let identity = [summary.familyID, summary.backendID]
+            .filter { !$0.isEmpty }
+            .joined(separator: " / ")
+        if !identity.isEmpty {
+            parts.append(identity)
+        }
+    }
+    return parts.joined(separator: " • ")
+}
+
+private func modelStateText(
+    _ state: Melix_Controlplane_V1_ModelState
+) -> String {
+    switch state {
+    case .modelDiscovered:
+        return "Discovered"
+    case .modelWarm:
+        return "Warm"
+    case .modelPinned:
+        return "Pinned"
+    case .modelLoading:
+        return "Loading"
+    case .modelEvicting:
+        return "Evicting"
+    case .modelUnloaded:
+        return "Unloaded"
+    case .modelFailed:
+        return "Failed"
+    default:
+        return "Unknown"
+    }
+}
+
+private func toolingConfigPathLabel(_ pathID: String) -> String {
+    switch pathID {
+    case "gateway_config_store_path":
+        return "Gateway Config Store"
+    case "gateway_serving_defaults_store_path":
+        return "Serving Defaults Store"
+    case "control_plane_metrics_path":
+        return "Control Plane Metrics"
+    default:
+        return pathID.replacingOccurrences(of: "_", with: " ")
+    }
 }
 
 enum APIReferenceCatalog {

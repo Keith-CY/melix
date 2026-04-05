@@ -4246,6 +4246,81 @@ public struct Melix_Controlplane_V1_MCPToolCatalogSummary: Sendable {
   public init() {}
 }
 
+public struct Melix_Controlplane_V1_EmbeddingToolingSummary: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var modelID: String = String()
+
+  public var backendID: String = String()
+
+  public var familyID: String = String()
+
+  public var routeClass: Melix_Controlplane_V1_WorkerRouteClass = .unspecified
+
+  public var modelState: Melix_Controlplane_V1_ModelState = .unspecified
+
+  public var loaded: Bool = false
+
+  public var preloaded: Bool = false
+
+  public var pinned: Bool = false
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public struct Melix_Controlplane_V1_ToolingConfigPathSummary: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var pathID: String = String()
+
+  public var path: String = String()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public struct Melix_Controlplane_V1_ToolingSettingsSummary: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var embedding: Melix_Controlplane_V1_EmbeddingToolingSummary {
+    get {_embedding ?? Melix_Controlplane_V1_EmbeddingToolingSummary()}
+    set {_embedding = newValue}
+  }
+  /// Returns true if `embedding` has been explicitly set.
+  public var hasEmbedding: Bool {self._embedding != nil}
+  /// Clears the value of `embedding`. Subsequent reads from it will return its default value.
+  public mutating func clearEmbedding() {self._embedding = nil}
+
+  public var builtinToolParserModes: [String] = []
+
+  public var mcpDefaultParserMode: String = String()
+
+  public var mcpConfigPath: String = String()
+
+  public var mcpEnabledSourceCount: UInt32 = 0
+
+  public var mcpResolvedToolCount: UInt32 = 0
+
+  public var configPaths: [Melix_Controlplane_V1_ToolingConfigPathSummary] = []
+
+  public var additionalArguments: [String] = []
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+
+  fileprivate var _embedding: Melix_Controlplane_V1_EmbeddingToolingSummary? = nil
+}
+
 public struct Melix_Controlplane_V1_GatewayAccessKeySummary: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
@@ -4600,6 +4675,15 @@ public struct Melix_Controlplane_V1_ServerSnapshot: @unchecked Sendable {
   public var hasServingDefaults: Bool {_storage._servingDefaults != nil}
   /// Clears the value of `servingDefaults`. Subsequent reads from it will return its default value.
   public mutating func clearServingDefaults() {_uniqueStorage()._servingDefaults = nil}
+
+  public var toolingSettings: Melix_Controlplane_V1_ToolingSettingsSummary {
+    get {_storage._toolingSettings ?? Melix_Controlplane_V1_ToolingSettingsSummary()}
+    set {_uniqueStorage()._toolingSettings = newValue}
+  }
+  /// Returns true if `toolingSettings` has been explicitly set.
+  public var hasToolingSettings: Bool {_storage._toolingSettings != nil}
+  /// Clears the value of `toolingSettings`. Subsequent reads from it will return its default value.
+  public mutating func clearToolingSettings() {_uniqueStorage()._toolingSettings = nil}
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -12231,6 +12315,175 @@ extension Melix_Controlplane_V1_MCPToolCatalogSummary: SwiftProtobuf.Message, Sw
   }
 }
 
+extension Melix_Controlplane_V1_EmbeddingToolingSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".EmbeddingToolingSummary"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}model_id\0\u{3}backend_id\0\u{3}family_id\0\u{3}route_class\0\u{3}model_state\0\u{1}loaded\0\u{1}preloaded\0\u{1}pinned\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.modelID) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.backendID) }()
+      case 3: try { try decoder.decodeSingularStringField(value: &self.familyID) }()
+      case 4: try { try decoder.decodeSingularEnumField(value: &self.routeClass) }()
+      case 5: try { try decoder.decodeSingularEnumField(value: &self.modelState) }()
+      case 6: try { try decoder.decodeSingularBoolField(value: &self.loaded) }()
+      case 7: try { try decoder.decodeSingularBoolField(value: &self.preloaded) }()
+      case 8: try { try decoder.decodeSingularBoolField(value: &self.pinned) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.modelID.isEmpty {
+      try visitor.visitSingularStringField(value: self.modelID, fieldNumber: 1)
+    }
+    if !self.backendID.isEmpty {
+      try visitor.visitSingularStringField(value: self.backendID, fieldNumber: 2)
+    }
+    if !self.familyID.isEmpty {
+      try visitor.visitSingularStringField(value: self.familyID, fieldNumber: 3)
+    }
+    if self.routeClass != .unspecified {
+      try visitor.visitSingularEnumField(value: self.routeClass, fieldNumber: 4)
+    }
+    if self.modelState != .unspecified {
+      try visitor.visitSingularEnumField(value: self.modelState, fieldNumber: 5)
+    }
+    if self.loaded != false {
+      try visitor.visitSingularBoolField(value: self.loaded, fieldNumber: 6)
+    }
+    if self.preloaded != false {
+      try visitor.visitSingularBoolField(value: self.preloaded, fieldNumber: 7)
+    }
+    if self.pinned != false {
+      try visitor.visitSingularBoolField(value: self.pinned, fieldNumber: 8)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Melix_Controlplane_V1_EmbeddingToolingSummary, rhs: Melix_Controlplane_V1_EmbeddingToolingSummary) -> Bool {
+    if lhs.modelID != rhs.modelID {return false}
+    if lhs.backendID != rhs.backendID {return false}
+    if lhs.familyID != rhs.familyID {return false}
+    if lhs.routeClass != rhs.routeClass {return false}
+    if lhs.modelState != rhs.modelState {return false}
+    if lhs.loaded != rhs.loaded {return false}
+    if lhs.preloaded != rhs.preloaded {return false}
+    if lhs.pinned != rhs.pinned {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+extension Melix_Controlplane_V1_ToolingConfigPathSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".ToolingConfigPathSummary"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}path_id\0\u{1}path\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.pathID) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.path) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.pathID.isEmpty {
+      try visitor.visitSingularStringField(value: self.pathID, fieldNumber: 1)
+    }
+    if !self.path.isEmpty {
+      try visitor.visitSingularStringField(value: self.path, fieldNumber: 2)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Melix_Controlplane_V1_ToolingConfigPathSummary, rhs: Melix_Controlplane_V1_ToolingConfigPathSummary) -> Bool {
+    if lhs.pathID != rhs.pathID {return false}
+    if lhs.path != rhs.path {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+extension Melix_Controlplane_V1_ToolingSettingsSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".ToolingSettingsSummary"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}embedding\0\u{3}builtin_tool_parser_modes\0\u{3}mcp_default_parser_mode\0\u{3}mcp_config_path\0\u{3}mcp_enabled_source_count\0\u{3}mcp_resolved_tool_count\0\u{3}config_paths\0\u{3}additional_arguments\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularMessageField(value: &self._embedding) }()
+      case 2: try { try decoder.decodeRepeatedStringField(value: &self.builtinToolParserModes) }()
+      case 3: try { try decoder.decodeSingularStringField(value: &self.mcpDefaultParserMode) }()
+      case 4: try { try decoder.decodeSingularStringField(value: &self.mcpConfigPath) }()
+      case 5: try { try decoder.decodeSingularUInt32Field(value: &self.mcpEnabledSourceCount) }()
+      case 6: try { try decoder.decodeSingularUInt32Field(value: &self.mcpResolvedToolCount) }()
+      case 7: try { try decoder.decodeRepeatedMessageField(value: &self.configPaths) }()
+      case 8: try { try decoder.decodeRepeatedStringField(value: &self.additionalArguments) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    // The use of inline closures is to circumvent an issue where the compiler
+    // allocates stack space for every if/case branch local when no optimizations
+    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+    // https://github.com/apple/swift-protobuf/issues/1182
+    try { if let v = self._embedding {
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 1)
+    } }()
+    if !self.builtinToolParserModes.isEmpty {
+      try visitor.visitRepeatedStringField(value: self.builtinToolParserModes, fieldNumber: 2)
+    }
+    if !self.mcpDefaultParserMode.isEmpty {
+      try visitor.visitSingularStringField(value: self.mcpDefaultParserMode, fieldNumber: 3)
+    }
+    if !self.mcpConfigPath.isEmpty {
+      try visitor.visitSingularStringField(value: self.mcpConfigPath, fieldNumber: 4)
+    }
+    if self.mcpEnabledSourceCount != 0 {
+      try visitor.visitSingularUInt32Field(value: self.mcpEnabledSourceCount, fieldNumber: 5)
+    }
+    if self.mcpResolvedToolCount != 0 {
+      try visitor.visitSingularUInt32Field(value: self.mcpResolvedToolCount, fieldNumber: 6)
+    }
+    if !self.configPaths.isEmpty {
+      try visitor.visitRepeatedMessageField(value: self.configPaths, fieldNumber: 7)
+    }
+    if !self.additionalArguments.isEmpty {
+      try visitor.visitRepeatedStringField(value: self.additionalArguments, fieldNumber: 8)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Melix_Controlplane_V1_ToolingSettingsSummary, rhs: Melix_Controlplane_V1_ToolingSettingsSummary) -> Bool {
+    if lhs._embedding != rhs._embedding {return false}
+    if lhs.builtinToolParserModes != rhs.builtinToolParserModes {return false}
+    if lhs.mcpDefaultParserMode != rhs.mcpDefaultParserMode {return false}
+    if lhs.mcpConfigPath != rhs.mcpConfigPath {return false}
+    if lhs.mcpEnabledSourceCount != rhs.mcpEnabledSourceCount {return false}
+    if lhs.mcpResolvedToolCount != rhs.mcpResolvedToolCount {return false}
+    if lhs.configPaths != rhs.configPaths {return false}
+    if lhs.additionalArguments != rhs.additionalArguments {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
 extension Melix_Controlplane_V1_GatewayAccessKeySummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".GatewayAccessKeySummary"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}key_id\0\u{1}label\0\u{3}token_hint\0")
@@ -12721,7 +12974,7 @@ extension Melix_Controlplane_V1_ServingDefaultsSummary: SwiftProtobuf.Message, S
 
 extension Melix_Controlplane_V1_ServerSnapshot: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ServerSnapshot"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}server_state\0\u{1}workers\0\u{1}models\0\u{1}queues\0\u{1}cache\0\u{1}resources\0\u{1}metrics\0\u{1}sessions\0\u{3}recent_errors\0\u{3}image_jobs\0\u{3}mcp_tools\0\u{3}gateway_access\0\u{3}runtime_sessions\0\u{3}gateway_config\0\u{3}serving_defaults\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}server_state\0\u{1}workers\0\u{1}models\0\u{1}queues\0\u{1}cache\0\u{1}resources\0\u{1}metrics\0\u{1}sessions\0\u{3}recent_errors\0\u{3}image_jobs\0\u{3}mcp_tools\0\u{3}gateway_access\0\u{3}runtime_sessions\0\u{3}gateway_config\0\u{3}serving_defaults\0\u{3}tooling_settings\0")
 
   fileprivate class _StorageClass {
     var _serverState: Melix_Controlplane_V1_ServerState = .unspecified
@@ -12739,6 +12992,7 @@ extension Melix_Controlplane_V1_ServerSnapshot: SwiftProtobuf.Message, SwiftProt
     var _runtimeSessions: [Melix_Controlplane_V1_ServerSessionRuntimeState] = []
     var _gatewayConfig: Melix_Controlplane_V1_GatewayConfigSummary? = nil
     var _servingDefaults: Melix_Controlplane_V1_ServingDefaultsSummary? = nil
+    var _toolingSettings: Melix_Controlplane_V1_ToolingSettingsSummary? = nil
 
       // This property is used as the initial default value for new instances of the type.
       // The type itself is protecting the reference to its storage via CoW semantics.
@@ -12764,6 +13018,7 @@ extension Melix_Controlplane_V1_ServerSnapshot: SwiftProtobuf.Message, SwiftProt
       _runtimeSessions = source._runtimeSessions
       _gatewayConfig = source._gatewayConfig
       _servingDefaults = source._servingDefaults
+      _toolingSettings = source._toolingSettings
     }
   }
 
@@ -12797,6 +13052,7 @@ extension Melix_Controlplane_V1_ServerSnapshot: SwiftProtobuf.Message, SwiftProt
         case 13: try { try decoder.decodeRepeatedMessageField(value: &_storage._runtimeSessions) }()
         case 14: try { try decoder.decodeSingularMessageField(value: &_storage._gatewayConfig) }()
         case 15: try { try decoder.decodeSingularMessageField(value: &_storage._servingDefaults) }()
+        case 16: try { try decoder.decodeSingularMessageField(value: &_storage._toolingSettings) }()
         default: break
         }
       }
@@ -12854,6 +13110,9 @@ extension Melix_Controlplane_V1_ServerSnapshot: SwiftProtobuf.Message, SwiftProt
       try { if let v = _storage._servingDefaults {
         try visitor.visitSingularMessageField(value: v, fieldNumber: 15)
       } }()
+      try { if let v = _storage._toolingSettings {
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 16)
+      } }()
     }
     try unknownFields.traverse(visitor: &visitor)
   }
@@ -12878,6 +13137,7 @@ extension Melix_Controlplane_V1_ServerSnapshot: SwiftProtobuf.Message, SwiftProt
         if _storage._runtimeSessions != rhs_storage._runtimeSessions {return false}
         if _storage._gatewayConfig != rhs_storage._gatewayConfig {return false}
         if _storage._servingDefaults != rhs_storage._servingDefaults {return false}
+        if _storage._toolingSettings != rhs_storage._toolingSettings {return false}
         return true
       }
       if !storagesAreEqual {return false}

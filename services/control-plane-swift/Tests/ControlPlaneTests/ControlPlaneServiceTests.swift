@@ -71,6 +71,67 @@ struct ControlPlaneServiceTests {
         #expect(response.snapshot.mcpTools.sources[1].namespaces == ["tools.fs.read", "tools.fs.write"])
     }
 
+    @Test("handshake exposes typed tooling settings state")
+    func handshakeExposesTypedToolingSettingsState() async throws {
+        let tempDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: tempDirectory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDirectory) }
+
+        let gatewayConfigStore = GatewayConfigStore(
+            storeURL: tempDirectory.appendingPathComponent("gateway-config.json"),
+            defaults: [:]
+        )
+        let servingDefaultsStore = GatewayServingDefaultsStore(
+            storeURL: tempDirectory.appendingPathComponent("gateway-serving-defaults.json"),
+            defaults: [:]
+        )
+        let service = ControlPlaneService(
+            modelCatalog: ModelCatalog(seedModels: ModelCatalog.phaseSevenContractSeedModels()),
+            mcpToolCatalog: MCPToolCatalog(
+                configPath: "/tmp/mcp-tools.json",
+                defaultParserMode: .json,
+                sources: [
+                    .init(sourceID: "filesystem", enabled: true, namespaces: ["tools.fs.read"])
+                ]
+            ),
+            gatewayConfigStore: gatewayConfigStore,
+            gatewayServingDefaultsStore: servingDefaultsStore,
+            environment: [
+                "MELIX_CONTROL_PLANE_METRICS_PATH": "/tmp/control-plane-metrics.json"
+            ],
+            launchArguments: [
+                "melix-control-plane",
+                "--config",
+                "/tmp/melix.json",
+                "--verbose",
+            ]
+        )
+
+        var request = Melix_Controlplane_V1_HandshakeRequest()
+        request.protocolVersion = "melix.controlplane.v1"
+        request.appVersion = "0.1.0"
+        request.bundleID = "com.melix.app"
+        request.clientInstanceID = "ui-tooling"
+
+        let response = try await service.handshake(request)
+
+        #expect(response.snapshot.toolingSettings.embedding.modelID == "melix-dev-embed")
+        #expect(response.snapshot.toolingSettings.embedding.loaded == false)
+        #expect(response.snapshot.toolingSettings.embedding.preloaded == false)
+        #expect(response.snapshot.toolingSettings.builtinToolParserModes.contains("json"))
+        #expect(response.snapshot.toolingSettings.builtinToolParserModes.contains("qwen"))
+        #expect(response.snapshot.toolingSettings.mcpDefaultParserMode == "json")
+        #expect(response.snapshot.toolingSettings.mcpConfigPath == "/tmp/mcp-tools.json")
+        #expect(response.snapshot.toolingSettings.additionalArguments == ["--config", "/tmp/melix.json", "--verbose"])
+        let configPaths = Dictionary(
+            uniqueKeysWithValues: response.snapshot.toolingSettings.configPaths.map { ($0.pathID, $0.path) }
+        )
+        #expect(configPaths["gateway_config_store_path"] == tempDirectory.appendingPathComponent("gateway-config.json").path)
+        #expect(configPaths["gateway_serving_defaults_store_path"] == tempDirectory.appendingPathComponent("gateway-serving-defaults.json").path)
+        #expect(configPaths["control_plane_metrics_path"] == "/tmp/control-plane-metrics.json")
+    }
+
     @Test("gateway access policy normalizes shared-access configuration and rejects invalid keys")
     func gatewayAccessPolicyNormalizesSharedAccessConfigurationAndRejectsInvalidKeys() {
         let leakedToken = "sk-operator-b"

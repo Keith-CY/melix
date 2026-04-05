@@ -162,6 +162,7 @@ public actor ControlPlaneService {
     private let gatewayRuntimeBinding: GatewayRuntimeBinding
     private let persistentAuthSessionStore: PersistentAuthSessionStore?
     private let gatewaySupportsSpeculativeDefaults: Bool
+    private let toolingSettingsSnapshotSource: ToolingSettingsSnapshotSource
 
     public init(
         serverVersion: String = "0.1.0",
@@ -189,6 +190,7 @@ public actor ControlPlaneService {
         gatewayAccessPolicyStore: GatewayAccessPolicyStore? = nil,
         persistentAuthSessionStore: PersistentAuthSessionStore? = nil,
         environment: [String: String] = ProcessInfo.processInfo.environment,
+        launchArguments: [String] = CommandLine.arguments,
         gatewaySupportsSpeculativeDefaults: Bool? = nil
     ) {
         let resolvedSchedulerReadModel = schedulerReadModel ?? SchedulerReadModel(
@@ -241,6 +243,10 @@ public actor ControlPlaneService {
         self.persistentAuthSessionStore = persistentAuthSessionStore
         self.gatewaySupportsSpeculativeDefaults = gatewaySupportsSpeculativeDefaults
             ?? Self.resolveGatewaySpeculativeDefaultsSupport(environment: environment)
+        self.toolingSettingsSnapshotSource = ToolingSettingsSnapshotSource(
+            environment: environment,
+            launchArguments: launchArguments
+        )
     }
 
     public func handshake(
@@ -1347,6 +1353,12 @@ public actor ControlPlaneService {
         let cache = await cacheMetadataStore.cacheSummary()
         let sessions = await sessionGraphStore.sessionSummaries()
         let imageJobs = await imageJobReadModel.snapshot()
+        let toolingSettingsSummary = toolingSettingsSnapshotSource.summary(
+            models: models,
+            mcpToolCatalog: mcpToolCatalog,
+            gatewayConfigStorePath: await gatewayConfigStore.storePath(),
+            gatewayServingDefaultsStorePath: await gatewayServingDefaultsStore.storePath()
+        )
         return snapshotBuilder.build(
             models: models,
             metrics: metrics,
@@ -1358,7 +1370,8 @@ public actor ControlPlaneService {
             mcpTools: mcpToolCatalog.summary(),
             gatewayAccess: gatewayAccessSummary,
             gatewayConfig: gatewayConfigSummary,
-            servingDefaults: servingDefaultsSummary
+            servingDefaults: servingDefaultsSummary,
+            toolingSettings: toolingSettingsSummary
         )
     }
 

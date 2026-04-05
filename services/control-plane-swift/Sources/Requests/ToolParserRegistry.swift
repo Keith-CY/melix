@@ -170,6 +170,10 @@ public struct ToolParserRegistry: Sendable {
 
     public init() {}
 
+    public func supportedModes() -> [ToolParserMode] {
+        descriptors.map(\.mode)
+    }
+
     func mode(for rawMode: String) -> ToolParserMode? {
         let normalized = rawMode.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         return descriptors.first(where: { $0.aliases.contains(normalized) })?.mode

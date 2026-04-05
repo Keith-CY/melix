@@ -150,6 +150,10 @@ public actor GatewayConfigStore {
         )
     }
 
+    public func storePath() -> String {
+        storeURL.path
+    }
+
     func apply(
         command: Melix_Controlplane_V1_ApplyGatewayConfig
     ) throws {
