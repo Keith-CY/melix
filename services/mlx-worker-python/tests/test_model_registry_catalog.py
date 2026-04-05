@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -29,6 +30,11 @@ def _write_registry_manifest(
     if manifest_fields:
         payload.update(manifest_fields)
     (variant_dir / "manifest.json").write_text(json.dumps(payload) + "\n", encoding="utf-8")
+
+
+def _expected_root_id(root: Path) -> str:
+    digest = hashlib.sha1(os.fspath(root.resolve()).encode("utf-8")).hexdigest()[:12]
+    return f"root-{digest}"
 
 
 def test_registry_snapshot_collects_models_from_ordered_roots_and_keeps_first_duplicate(tmp_path: Path) -> None:
@@ -64,12 +70,14 @@ def test_registry_snapshot_collects_models_from_ordered_roots_and_keeps_first_du
 
     snapshot = catalog.registry_snapshot()
 
-    assert [root.root_id for root in snapshot.roots] == ["root-1", "root-2"]
+    assert [root.root_id for root in snapshot.roots] == [_expected_root_id(root_a), _expected_root_id(root_b)]
+    assert [root.root_order for root in snapshot.roots] == [1, 2]
     discovered = {model.model_id: model for model in snapshot.models}
     assert duplicate_id in discovered
     assert discovered[duplicate_id].max_context == 16384
     assert discovered[duplicate_id].ext["source_root"] == "a"
-    assert discovered[duplicate_id].ext["melix.registry_root_id"] == "root-1"
+    assert discovered[duplicate_id].ext["melix.registry_root_id"] == _expected_root_id(root_a)
+    assert discovered[duplicate_id].ext["melix.registry_root_order"] == "1"
     assert discovered[duplicate_id].ext["melix.model_path"].endswith("root-a/mlx-community/Qwen2.5-7B-Instruct/4bit")
     assert "mlx-community/Qwen2.5-14B-Instruct/8bit" in discovered
     assert catalog.get(duplicate_id) == discovered[duplicate_id]
@@ -94,10 +102,12 @@ def test_registry_snapshot_reports_invalid_roots_without_poisoning_valid_discove
     snapshot = catalog.registry_snapshot()
 
     assert len(snapshot.roots) == 2
-    assert snapshot.roots[0].root_id == "root-1"
+    assert snapshot.roots[0].root_id == _expected_root_id(root_missing)
+    assert snapshot.roots[0].root_order == 1
     assert snapshot.roots[0].accessible is False
     assert snapshot.roots[0].error_code == "not_found"
-    assert snapshot.roots[1].root_id == "root-2"
+    assert snapshot.roots[1].root_id == _expected_root_id(root_valid)
+    assert snapshot.roots[1].root_order == 2
     assert snapshot.roots[1].accessible is True
     assert [model.model_id for model in snapshot.models] == ["mlx-community/Phi-4-mini/4bit"]
 
@@ -148,12 +158,49 @@ def test_registry_snapshot_rescan_refreshes_discovery_and_deduplicates_empty_roo
 
     assert [root.root_path for root in initial_snapshot.roots] == [str(root_a), str(root_b)]
     assert [root.root_path for root in refreshed_snapshot.roots] == [str(root_a), str(root_b)]
+    assert [root.root_id for root in initial_snapshot.roots] == [root.root_id for root in refreshed_snapshot.roots]
     assert [model.model_id for model in initial_snapshot.models] == ["mlx-community/Qwen2.5-7B-Instruct/4bit"]
     assert [model.model_id for model in refreshed_snapshot.models] == [
         "mlx-community/Qwen2.5-14B-Instruct/8bit",
         "mlx-community/Qwen2.5-7B-Instruct/4bit",
     ]
     assert catalog.get("mlx-community/Qwen2.5-14B-Instruct/8bit") is not None
+
+
+def test_registry_snapshot_explicit_root_override_reorders_precedence_without_changing_root_identity(
+    tmp_path: Path,
+) -> None:
+    root_a = tmp_path / "root-a"
+    root_b = tmp_path / "root-b"
+    duplicate_id = "mlx-community/Qwen2.5-7B-Instruct/4bit"
+
+    _write_registry_manifest(
+        root_a / "mlx-community" / "Qwen2.5-7B-Instruct" / "4bit",
+        model_id=duplicate_id,
+        max_context=16384,
+        ext={"source_root": "a"},
+    )
+    _write_registry_manifest(
+        root_b / "mlx-community" / "Qwen2.5-7B-Instruct" / "4bit",
+        model_id=duplicate_id,
+        max_context=4096,
+        ext={"source_root": "b"},
+    )
+
+    catalog = WorkerModelCatalog(environment={"MELIX_MODEL_ROOTS": str(root_a)})
+
+    initial_snapshot = catalog.registry_snapshot()
+    reordered_snapshot = catalog.registry_snapshot(
+        rescan=True,
+        registry_roots=[os.fspath(root_b), os.fspath(root_a)],
+    )
+    discovered = {model.model_id: model for model in reordered_snapshot.models}
+
+    assert [root.root_id for root in reordered_snapshot.roots] == [_expected_root_id(root_b), _expected_root_id(root_a)]
+    assert discovered[duplicate_id].ext["source_root"] == "b"
+    assert discovered[duplicate_id].ext["melix.registry_root_id"] == _expected_root_id(root_b)
+    assert discovered[duplicate_id].ext["melix.registry_root_order"] == "1"
+    assert initial_snapshot.roots[0].root_id == _expected_root_id(root_a)
 
 
 def test_registry_snapshot_derives_structured_identity_from_paths_and_sidecar_overrides(tmp_path: Path) -> None:
@@ -258,7 +305,7 @@ def test_registry_snapshot_skips_invalid_manifests_and_normalizes_non_mapping_ex
     snapshot = catalog.registry_snapshot()
 
     assert [model.model_id for model in snapshot.models] == ["mlx-community/Valid-Model/4bit"]
-    assert dict(snapshot.models[0].ext)["melix.registry_root_id"] == "root-1"
+    assert dict(snapshot.models[0].ext)["melix.registry_root_id"] == _expected_root_id(root)
     assert "source_root" not in snapshot.models[0].ext
 
 

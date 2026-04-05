@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 import json
+import os
 from pathlib import Path
 import threading
 import time
@@ -1037,13 +1039,16 @@ def test_registry_snapshot_includes_discovered_model_registry_payload(tmp_path: 
         event.manifest for event in snapshot_events if event.HasField("manifest")
     )
     payload = json.loads(snapshot_manifest.manifest_json)
+    expected_root_id = f"root-{hashlib.sha1(os.fspath(registry_root.resolve()).encode('utf-8')).hexdigest()[:12]}"
 
     assert payload["operation"] == "registry_snapshot"
-    assert payload["model_registry"]["roots"][0]["root_id"] == "root-1"
+    assert payload["model_registry"]["roots"][0]["root_id"] == expected_root_id
+    assert payload["model_registry"]["roots"][0]["root_order"] == 1
     assert payload["model_registry"]["roots"][0]["accessible"] is True
     discovered_ids = [model["model_id"] for model in payload["model_registry"]["models"]]
     assert discovered_ids == ["mlx-community/Qwen2.5-7B-Instruct/4bit"]
-    assert payload["model_registry"]["models"][0]["ext"]["melix.registry_root_id"] == "root-1"
+    assert payload["model_registry"]["models"][0]["ext"]["melix.registry_root_id"] == expected_root_id
+    assert payload["model_registry"]["models"][0]["ext"]["melix.registry_root_order"] == "1"
 
 
 def test_registry_snapshot_includes_structured_identity_fields_for_discovered_models(tmp_path: Path) -> None:
@@ -1088,6 +1093,53 @@ def test_registry_snapshot_includes_structured_identity_fields_for_discovered_mo
     assert identity["melix.registry_model_name"] == "Qwen2.5-7B-Instruct"
     assert identity["melix.registry_variant_id"] == "q4f16"
     assert identity["melix.registry_relative_path"] == "huggingface/mlx-community/Qwen2.5-7B-Instruct/4bit"
+
+
+def test_registry_snapshot_respects_explicit_root_override_and_rescan_flag(tmp_path: Path) -> None:
+    root_a = tmp_path / "root-a"
+    root_b = tmp_path / "root-b"
+    duplicate_id = "mlx-community/Qwen2.5-7B-Instruct/4bit"
+    _write_registry_manifest(
+        root_a / "mlx-community" / "Qwen2.5-7B-Instruct" / "4bit",
+        model_id=duplicate_id,
+        ext={"source_root": "a"},
+    )
+    _write_registry_manifest(
+        root_b / "mlx-community" / "Qwen2.5-7B-Instruct" / "4bit",
+        model_id=duplicate_id,
+        ext={"source_root": "b"},
+    )
+
+    registry = WorkerRegistry(model_catalog=WorkerModelCatalog(environment={"MELIX_MODEL_ROOTS": str(root_a)}))
+    service = WorkerMaintenanceService(registry, jobs_root=tmp_path / "model-ops")
+
+    override_json = json.dumps([os.fspath(root_b), os.fspath(root_a)])
+    snapshot_events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "snapshot"),
+                generate_manifest=True,
+                ext={
+                    "operation": "registry_snapshot",
+                    "melix.registry_roots_json": override_json,
+                    "melix.registry_rescan": "true",
+                },
+            ),
+            context=None,
+        )
+    )
+    snapshot_manifest = next(
+        event.manifest for event in snapshot_events if event.HasField("manifest")
+    )
+    payload = json.loads(snapshot_manifest.manifest_json)
+    expected_b_root_id = f"root-{hashlib.sha1(os.fspath(root_b.resolve()).encode('utf-8')).hexdigest()[:12]}"
+    expected_a_root_id = f"root-{hashlib.sha1(os.fspath(root_a.resolve()).encode('utf-8')).hexdigest()[:12]}"
+
+    assert [root["root_id"] for root in payload["model_registry"]["roots"]] == [expected_b_root_id, expected_a_root_id]
+    assert payload["model_registry"]["models"][0]["ext"]["source_root"] == "b"
+    assert payload["model_registry"]["models"][0]["ext"]["melix.registry_root_id"] == expected_b_root_id
+    assert payload["model_registry"]["models"][0]["ext"]["melix.registry_root_order"] == "1"
 
 
 def test_job_registry_snapshot_handles_invalid_manifests_and_non_numeric_ids() -> None:

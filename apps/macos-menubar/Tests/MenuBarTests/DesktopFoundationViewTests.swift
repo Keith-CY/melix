@@ -145,6 +145,99 @@ struct DesktopFoundationViewTests {
         #expect(actions.contains("load:melix-dev-text"))
     }
 
+    @Test("models tab renders registry root management without crashing")
+    @MainActor
+    func modelsTabRendersRegistryRootManagement() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureModelOperation(
+            makeNamedModelOperationResult(
+                operation: "registry_snapshot",
+                outputPath: "/tmp/melix-model-ops-registry/registry_snapshot.json",
+                manifestJSON: makeModelOpsRegistrySnapshotManifestJSON(
+                    roots: [
+                        MenuBarRegistryRootFixture(
+                            id: "root-a",
+                            path: "/tmp/root-a",
+                            order: 1,
+                            discoveredModelIDs: ["registry-model-a"]
+                        ),
+                    ]
+                )
+            ),
+            forNamedOperation: "registry_snapshot"
+        )
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        await viewModel.refreshModelOpsProductState()
+
+        let view = hostView(
+            DesktopModelsTabView(
+                foundation: viewModel.desktopFoundationState,
+                viewModel: viewModel
+            )
+        )
+
+        #expect(view.subviews.isEmpty == false)
+        #expect(viewModel.registryRoots.first?.rootPath == "/tmp/root-a")
+        #expect(viewModel.registryRootSummaryText.contains("environment roots"))
+    }
+
+    @Test("models tab registry root actions dispatch add move remove and rescan requests")
+    @MainActor
+    func modelsTabRegistryRootActionsDispatchAddMoveRemoveAndRescanRequests() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureModelOperation(
+            makeNamedModelOperationResult(
+                operation: "registry_snapshot",
+                outputPath: "/tmp/melix-model-ops-registry/registry_snapshot.json",
+                manifestJSON: makeModelOpsRegistrySnapshotManifestJSON(
+                    roots: [
+                        MenuBarRegistryRootFixture(id: "root-a", path: "/tmp/root-a", order: 1),
+                        MenuBarRegistryRootFixture(id: "root-b", path: "/tmp/root-b", order: 2),
+                    ]
+                )
+            ),
+            forNamedOperation: "registry_snapshot"
+        )
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        await viewModel.refreshModelOpsProductState()
+        viewModel.registryRootPathDraft = "/tmp/root-c"
+
+        let tab = DesktopModelsTabView(
+            foundation: viewModel.desktopFoundationState,
+            viewModel: viewModel
+        )
+        await tab.addRegistryRoot()
+        await tab.moveRegistryRootUp(RuntimeRegistryRootState(
+            id: "root-b",
+            rootPath: "/tmp/root-b",
+            rootOrder: 2,
+            accessible: true,
+            errorCode: "",
+            errorMessage: "",
+            discoveredModelIDs: []
+        ))
+        await tab.removeRegistryRoot(RuntimeRegistryRootState(
+            id: "root-a",
+            rootPath: "/tmp/root-a",
+            rootOrder: 1,
+            accessible: true,
+            errorCode: "",
+            errorMessage: "",
+            discoveredModelIDs: []
+        ))
+        await tab.rescanRegistryRoots()
+
+        let requests = await client.recordedModelOperationRequests.filter { $0.operation == "registry_snapshot" }
+        #expect(requests.count == 5)
+        #expect(requests[1].ext["melix.registry_roots_json"] == #"["/tmp/root-a","/tmp/root-b","/tmp/root-c"]"#)
+        #expect(requests[2].ext["melix.registry_roots_json"] == #"["/tmp/root-b","/tmp/root-a","/tmp/root-c"]"#)
+        #expect(requests[3].ext["melix.registry_roots_json"] == #"["/tmp/root-b","/tmp/root-c"]"#)
+        #expect(requests[4].ext["melix.registry_roots_json"] == #"["/tmp/root-b","/tmp/root-c"]"#)
+        #expect(requests[4].ext["melix.registry_rescan"] == "true")
+    }
+
     @Test("models tab form buttons dispatch apply reset inspect and load actions")
     @MainActor
     func modelsTabFormButtonsDispatchActions() async throws {

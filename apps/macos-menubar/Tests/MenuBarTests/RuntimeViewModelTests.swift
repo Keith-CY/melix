@@ -3868,6 +3868,264 @@ struct RuntimeViewModelTests {
         #expect(viewModel.lastError?.contains("operation failed") == true)
     }
 
+    @Test("registry root add refresh forwards explicit overrides and parses root snapshot state")
+    @MainActor
+    func registryRootAddRefreshForwardsExplicitOverridesAndParsesRootSnapshotState() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let metrics = MenuBarMetricsStore()
+        let viewModel = RuntimeViewModel(client: client, metrics: metrics)
+        await client.configureModelOperation(
+            makeNamedModelOperationResult(
+                operation: "registry_snapshot",
+                outputPath: "/tmp/melix-model-ops-registry/registry_snapshot.json",
+                manifestJSON: makeModelOpsRegistrySnapshotManifestJSON(
+                    roots: [
+                        MenuBarRegistryRootFixture(
+                            id: "root-a",
+                            path: "/tmp/root-a",
+                            order: 1,
+                            discoveredModelIDs: ["registry-model-a"]
+                        ),
+                    ]
+                )
+            ),
+            forNamedOperation: "registry_snapshot"
+        )
+
+        await viewModel.start()
+        viewModel.registryRootPathDraft = "/tmp/root-a"
+        await viewModel.addRegistryRoot()
+
+        let request = try #require(await client.recordedModelOperationRequests.last)
+        let root = try #require(viewModel.registryRoots.first)
+
+        #expect(request.ext["melix.registry_roots_json"] == #"["/tmp/root-a"]"#)
+        #expect(request.ext["melix.registry_rescan"] == "true")
+        #expect(viewModel.registryHasConfiguredRootOverride)
+        #expect(viewModel.registryConfiguredRootPaths == ["/tmp/root-a"])
+        #expect(viewModel.registryScannedAtText != "Never")
+        #expect(root.rootPath == "/tmp/root-a")
+        #expect(root.statusText == "Accessible")
+        #expect(root.detailText == "1 model")
+        #expect(await metrics.snapshot()["menu.model_ops_refresh_ms"] != nil)
+    }
+
+    @Test("registry root reorder remove and rescan reuse configured root overrides")
+    @MainActor
+    func registryRootReorderRemoveAndRescanReuseConfiguredRootOverrides() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(client: client)
+        await client.configureModelOperation(
+            makeNamedModelOperationResult(
+                operation: "registry_snapshot",
+                outputPath: "/tmp/melix-model-ops-registry/registry_snapshot.json",
+                manifestJSON: makeModelOpsRegistrySnapshotManifestJSON(
+                    roots: [
+                        MenuBarRegistryRootFixture(id: "root-a", path: "/tmp/root-a", order: 1),
+                        MenuBarRegistryRootFixture(id: "root-b", path: "/tmp/root-b", order: 2),
+                    ]
+                )
+            ),
+            forNamedOperation: "registry_snapshot"
+        )
+
+        await viewModel.start()
+        await viewModel.refreshModelOpsProductState()
+        await viewModel.moveRegistryRootDown(rootID: "root-a")
+        await viewModel.removeRegistryRoot(rootID: "root-b")
+        await viewModel.rescanRegistryRoots()
+
+        let requests = await client.recordedModelOperationRequests.filter { $0.operation == "registry_snapshot" }
+        #expect(requests.count == 4)
+        let refreshRequest = requests[0]
+        let moveRequest = requests[1]
+        let removeRequest = requests[2]
+        let rescanRequest = requests[3]
+
+        #expect(refreshRequest.ext["melix.registry_roots_json"] == nil)
+        #expect(moveRequest.ext["melix.registry_roots_json"] == #"["/tmp/root-b","/tmp/root-a"]"#)
+        #expect(moveRequest.ext["melix.registry_rescan"] == "true")
+        #expect(removeRequest.ext["melix.registry_roots_json"] == #"["/tmp/root-a"]"#)
+        #expect(removeRequest.ext["melix.registry_rescan"] == "true")
+        #expect(rescanRequest.ext["melix.registry_roots_json"] == #"["/tmp/root-a"]"#)
+        #expect(rescanRequest.ext["melix.registry_rescan"] == "true")
+        #expect(viewModel.registryHasConfiguredRootOverride)
+        #expect(viewModel.registryConfiguredRootPaths == ["/tmp/root-a"])
+    }
+
+    @Test("registry root state formats unavailable status and detail text")
+    @MainActor
+    func registryRootStateFormatsUnavailableStatusAndDetailText() {
+        let inaccessibleWithoutCode = RuntimeRegistryRootState(
+            id: "root-none",
+            rootPath: "/tmp/root-none",
+            rootOrder: 1,
+            accessible: false,
+            errorCode: "",
+            errorMessage: "",
+            discoveredModelIDs: []
+        )
+        let inaccessibleWithCode = RuntimeRegistryRootState(
+            id: "root-denied",
+            rootPath: "/tmp/root-denied",
+            rootOrder: 2,
+            accessible: false,
+            errorCode: "permission_denied",
+            errorMessage: "Sandbox denied access",
+            discoveredModelIDs: ["model-a", "model-b"]
+        )
+
+        #expect(inaccessibleWithoutCode.statusText == "Unavailable")
+        #expect(inaccessibleWithoutCode.detailText == "0 models")
+        #expect(inaccessibleWithCode.statusText == "Permission denied")
+        #expect(inaccessibleWithCode.detailText == "2 models • Sandbox denied access")
+    }
+
+    @Test("registry root summaries cover configured overrides and empty override state")
+    @MainActor
+    func registryRootSummariesCoverConfiguredOverridesAndEmptyOverrideState() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureModelOperation(
+            makeNamedModelOperationResult(
+                operation: "registry_snapshot",
+                outputPath: "/tmp/melix-model-ops-registry/registry_snapshot.json",
+                manifestJSON: makeModelOpsRegistrySnapshotManifestJSON(
+                    roots: [
+                        MenuBarRegistryRootFixture(id: "root-a", path: "/tmp/root-a", order: 1),
+                    ]
+                )
+            ),
+            forNamedOperation: "registry_snapshot"
+        )
+
+        let addViewModel = RuntimeViewModel(client: client)
+        await addViewModel.start()
+        await addViewModel.refreshModelOpsProductState()
+        addViewModel.registryRootPathDraft = "/tmp/root-b"
+        await addViewModel.addRegistryRoot()
+        #expect(addViewModel.registryRootSummaryText == "Control-plane override active • 2 roots configured")
+        #expect(addViewModel.canAddRegistryRoot == false)
+
+        let removeViewModel = RuntimeViewModel(client: client)
+        await removeViewModel.start()
+        await removeViewModel.refreshModelOpsProductState()
+        await removeViewModel.removeRegistryRoot(rootID: "root-a")
+        #expect(removeViewModel.registryRootSummaryText == "Control-plane override active • no roots configured")
+    }
+
+    @Test("registry root guard rails no-op for missing models invalid drafts duplicate roots and invalid moves")
+    @MainActor
+    func registryRootGuardRailsNoOpForMissingModelsInvalidDraftsDuplicateRootsAndInvalidMoves() async throws {
+        let imageOnlyClient = FakeControlPlaneXPCClient()
+        var imageOnlySnapshot = Melix_Controlplane_V1_ServerSnapshot()
+        imageOnlySnapshot.serverState = .serverReady
+        imageOnlySnapshot.models = [makeMenuBarImageModelSummary()]
+        await imageOnlyClient.configureSnapshot(imageOnlySnapshot)
+        let imageOnlyViewModel = RuntimeViewModel(client: imageOnlyClient)
+        await imageOnlyViewModel.start()
+        imageOnlyViewModel.registryRootPathDraft = "/tmp/no-text-root"
+        await imageOnlyViewModel.rescanRegistryRoots()
+        await imageOnlyViewModel.addRegistryRoot()
+        await imageOnlyViewModel.removeRegistryRoot(rootID: "missing-root")
+        await imageOnlyViewModel.moveRegistryRootUp(rootID: "missing-root")
+        #expect(await imageOnlyClient.recordedModelOperationRequests.isEmpty)
+
+        let client = FakeControlPlaneXPCClient()
+        await client.configureModelOperation(
+            makeNamedModelOperationResult(
+                operation: "registry_snapshot",
+                outputPath: "/tmp/melix-model-ops-registry/registry_snapshot.json",
+                manifestJSON: makeModelOpsRegistrySnapshotManifestJSON(
+                    roots: [
+                        MenuBarRegistryRootFixture(id: "root-a", path: "/tmp/root-a", order: 1),
+                    ]
+                )
+            ),
+            forNamedOperation: "registry_snapshot"
+        )
+
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        await viewModel.refreshModelOpsProductState()
+
+        let initialRequestCount = await client.recordedModelOperationRequests.count
+        viewModel.registryRootPathDraft = "   "
+        await viewModel.addRegistryRoot()
+        viewModel.registryRootPathDraft = "/tmp/root-a"
+        await viewModel.addRegistryRoot()
+        await viewModel.removeRegistryRoot(rootID: "missing-root")
+        await viewModel.moveRegistryRootDown(rootID: "root-a")
+        await viewModel.moveRegistryRootUp(rootID: "missing-root")
+
+        let finalRequestCount = await client.recordedModelOperationRequests.count
+        #expect(initialRequestCount == 1)
+        #expect(finalRequestCount == 1)
+        #expect(viewModel.registryRootPathDraft.isEmpty)
+    }
+
+    @Test("registry snapshot parsing sorts same-order roots and drops invalid rows")
+    @MainActor
+    func registrySnapshotParsingSortsSameOrderRootsAndDropsInvalidRows() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureModelOperation(
+            makeNamedModelOperationResult(
+                operation: "registry_snapshot",
+                outputPath: "/tmp/melix-model-ops-registry/registry_snapshot.json",
+                manifestJSON: #"""
+                {
+                  "operation": "registry_snapshot",
+                  "jobs": [],
+                  "adapters": [],
+                  "derived_models": [],
+                  "model_registry": {
+                    "scanned_at_unix_ms": "1712300000000",
+                    "roots": [
+                      {
+                        "root_path": "/tmp/invalid-root",
+                        "root_order": "9",
+                        "accessible": "yes",
+                        "error_code": "",
+                        "error_message": "",
+                        "discovered_model_ids": []
+                      },
+                      {
+                        "root_id": "root-b",
+                        "root_path": "/tmp/root-b",
+                        "root_order": "7",
+                        "accessible": "yes",
+                        "error_code": "permission_denied",
+                        "error_message": "needs entitlement",
+                        "discovered_model_ids": ["model-b", ""]
+                      },
+                      {
+                        "root_id": "root-a",
+                        "root_path": "/tmp/root-a",
+                        "root_order": "7",
+                        "accessible": false,
+                        "error_code": "",
+                        "error_message": "",
+                        "discovered_model_ids": ["model-a"]
+                      }
+                    ],
+                    "models": []
+                  }
+                }
+                """#
+            ),
+            forNamedOperation: "registry_snapshot"
+        )
+
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        await viewModel.refreshModelOpsProductState()
+
+        #expect(viewModel.registryRoots.map(\.rootPath) == ["/tmp/root-a", "/tmp/root-b"])
+        #expect(viewModel.registryRoots.count == 2)
+        #expect(viewModel.registryRoots[0].statusText == "Unavailable")
+        #expect(viewModel.registryRoots[1].detailText == "1 model • needs entitlement")
+        #expect(viewModel.registryScannedAtText != "Never")
+    }
+
     @Test("quantize action stores typed quantization summary")
     @MainActor
     func quantizeActionStoresTypedQuantizationSummary() async throws {

@@ -407,6 +407,53 @@ struct ModelCatalogTests {
         #expect(synced.settings.ext["melix.registry_relative_path"] == "huggingface/mlx-community/Qwen2.5-7B-Instruct/4bit")
     }
 
+    @Test("registry snapshot state preserves explicit root overrides and sorts roots by order")
+    func registrySnapshotStatePreservesExplicitRootOverridesAndSortsRootsByOrder() async throws {
+        let catalog = ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels())
+
+        await catalog.recordRegistrySnapshot(
+            roots: [
+                .init(
+                    rootID: "root-b",
+                    rootPath: "/tmp/root-b",
+                    rootOrder: 2,
+                    accessible: true,
+                    discoveredModelIDs: ["model-b"]
+                ),
+                .init(
+                    rootID: "root-a",
+                    rootPath: "/tmp/root-a",
+                    rootOrder: 1,
+                    accessible: false,
+                    errorCode: "not_found",
+                    errorMessage: "missing",
+                    discoveredModelIDs: []
+                ),
+            ],
+            scannedAtUnixMs: 1_712_000_000_000,
+            configuredRootPaths: ["/tmp/root-b", "/tmp/root-a"]
+        )
+
+        let state = await catalog.registrySnapshotState()
+
+        #expect(state.hasConfiguredRootOverride)
+        #expect(state.configuredRootPaths == ["/tmp/root-b", "/tmp/root-a"])
+        #expect(state.roots.map(\.rootID) == ["root-a", "root-b"])
+        #expect(state.roots.map(\.rootOrder) == [1, 2])
+        #expect(state.scannedAtUnixMs == 1_712_000_000_000)
+    }
+
+    @Test("configured registry root override distinguishes explicit empty roots from no override")
+    func configuredRegistryRootOverrideDistinguishesExplicitEmptyRootsFromNoOverride() async throws {
+        let catalog = ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels())
+
+        #expect(await catalog.configuredRegistryRootOverride() == nil)
+        await catalog.updateConfiguredRegistryRoots([])
+        #expect(await catalog.configuredRegistryRootOverride() == [])
+        await catalog.updateConfiguredRegistryRoots(nil)
+        #expect(await catalog.configuredRegistryRootOverride() == nil)
+    }
+
     @Test("residency summary follows seed defaults and load-unload transitions")
     func residencySummaryFollowsSeedDefaultsAndLoadUnloadTransitions() async throws {
         let catalog = ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels())

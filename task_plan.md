@@ -24,18 +24,18 @@ control-plane-owned, and deterministic across worker scans, catalog sync, and Wi
 ## Phases
 
 1. Root identity, control-plane sync, and worker scan contract
-   - status: in_progress
+   - status: completed
    - evidence:
      - define the root identity scheme, rescan contract, and first-root-wins precedence rules
      - route configured registry roots through the control plane into worker-backed
        `registry_snapshot` execution without requiring environment rewrites
 2. Window UI root management and observability
-   - status: pending
+   - status: completed
    - evidence:
      - add operator controls for root add, remove, reorder, and rescan
      - surface ordered root rows, accessibility, and discovered model counts in the tools surface
 3. Verification and milestone bookkeeping
-   - status: pending
+   - status: completed
    - evidence:
      - run the authoritative Swift and Python verification commands for the touched scope
      - record changed-line coverage at or above `95%`, update `progress.md`, and close `M12.1`
@@ -57,4 +57,4 @@ control-plane-owned, and deterministic across worker scans, catalog sync, and Wi
 
 ## Outcome
 
-- m12_1_multi_root_registry_management_in_progress
+- m12_1_multi_root_registry_management_completed

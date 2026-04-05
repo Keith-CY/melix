@@ -4,6 +4,7 @@ import hashlib
 import json
 from dataclasses import dataclass
 import math
+import os
 from pathlib import Path
 from threading import Event
 import time
@@ -82,6 +83,29 @@ def _default_capability_lists(model_kind: str) -> tuple[list[str], list[str]]:
     if model_kind == "image":
         return ["text", "image"], ["image_generate", "image_edit"]
     return ["text"], ["generate"]
+
+
+def _registry_rescan_enabled(ext: dict[str, str]) -> bool:
+    return ext.get("melix.registry_rescan", "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _registry_roots_override(ext: dict[str, str]) -> list[str] | None:
+    raw_json = ext.get("melix.registry_roots_json", "").strip()
+    if raw_json:
+        try:
+            payload = json.loads(raw_json)
+        except json.JSONDecodeError:
+            payload = None
+        if isinstance(payload, list):
+            roots = [str(item).strip() for item in payload if str(item).strip()]
+            return roots
+
+    raw_legacy = ext.get("melix.registry_roots", "").strip()
+    if raw_legacy:
+        roots = [part.strip() for part in raw_legacy.split(os.pathsep) if part.strip()]
+        return roots
+
+    return None
 
 
 class MaintenanceCore:
@@ -398,6 +422,8 @@ class MaintenanceCore:
 
             artifact_path = self._artifact_path(operation, output_dir)
             if operation == "registry_snapshot":
+                registry_roots = _registry_roots_override(request.ext)
+                registry_rescan = _registry_rescan_enabled(request.ext)
                 manifest_payload = self._job_registry.snapshot(exclude_job_ids={job.job_id})
                 manifest_payload.update(
                     {
@@ -405,7 +431,10 @@ class MaintenanceCore:
                         "operation": operation,
                         "source_model": request.source_model,
                         "output_dir": str(output_dir),
-                        "model_registry": self._registry.model_catalog.registry_snapshot_payload(),
+                        "model_registry": self._registry.model_catalog.registry_snapshot_payload(
+                            rescan=registry_rescan,
+                            registry_roots=registry_roots,
+                        ),
                     }
                 )
             else:

@@ -55,11 +55,59 @@ public actor ModelCatalog {
         }
     }
 
+    public struct RegistryRootState: Equatable, Sendable {
+        public let rootID: String
+        public let rootPath: String
+        public let rootOrder: Int
+        public let accessible: Bool
+        public let errorCode: String
+        public let errorMessage: String
+        public let discoveredModelIDs: [String]
+
+        public init(
+            rootID: String,
+            rootPath: String,
+            rootOrder: Int,
+            accessible: Bool,
+            errorCode: String = "",
+            errorMessage: String = "",
+            discoveredModelIDs: [String] = []
+        ) {
+            self.rootID = rootID
+            self.rootPath = rootPath
+            self.rootOrder = rootOrder
+            self.accessible = accessible
+            self.errorCode = errorCode
+            self.errorMessage = errorMessage
+            self.discoveredModelIDs = discoveredModelIDs
+        }
+    }
+
+    public struct RegistryState: Equatable, Sendable {
+        public let hasConfiguredRootOverride: Bool
+        public let configuredRootPaths: [String]
+        public let roots: [RegistryRootState]
+        public let scannedAtUnixMs: Int64
+
+        public init(
+            hasConfiguredRootOverride: Bool = false,
+            configuredRootPaths: [String] = [],
+            roots: [RegistryRootState] = [],
+            scannedAtUnixMs: Int64 = 0
+        ) {
+            self.hasConfiguredRootOverride = hasConfiguredRootOverride
+            self.configuredRootPaths = configuredRootPaths
+            self.roots = roots
+            self.scannedAtUnixMs = scannedAtUnixMs
+        }
+    }
+
     private var models: [String: Melix_Controlplane_V1_ModelSummary]
     private var dispatchHandles: [String: String]
     private var residencyLedger: [String: ResidencyLedger]
     private let seedModelIDs: Set<String>
     private var registryModelIDs: Set<String>
+    private var registryState: RegistryState
     private var nextAccessOrdinal: UInt64
     private let nowUnixMs: @Sendable () -> Int64
 
@@ -96,6 +144,7 @@ public actor ModelCatalog {
         self.residencyLedger = ledger
         self.seedModelIDs = Set(normalizedSeedModels.map(\.modelID))
         self.registryModelIDs = []
+        self.registryState = RegistryState()
         self.nextAccessOrdinal = accessOrdinal
         self.nowUnixMs = nowUnixMs
     }
@@ -309,6 +358,42 @@ public actor ModelCatalog {
         }
 
         registryModelIDs = discoveredIDs
+    }
+
+    public func configuredRegistryRootOverride() -> [String]? {
+        registryState.hasConfiguredRootOverride ? registryState.configuredRootPaths : nil
+    }
+
+    public func updateConfiguredRegistryRoots(_ roots: [String]?) {
+        registryState = RegistryState(
+            hasConfiguredRootOverride: roots != nil,
+            configuredRootPaths: Self.normalizedRegistryRootPaths(roots ?? []),
+            roots: registryState.roots,
+            scannedAtUnixMs: registryState.scannedAtUnixMs
+        )
+    }
+
+    public func recordRegistrySnapshot(
+        roots: [RegistryRootState],
+        scannedAtUnixMs: Int64,
+        configuredRootPaths: [String]? = nil
+    ) {
+        let normalizedConfiguredRoots = configuredRootPaths.map(Self.normalizedRegistryRootPaths) ?? registryState.configuredRootPaths
+        registryState = RegistryState(
+            hasConfiguredRootOverride: configuredRootPaths != nil ? true : registryState.hasConfiguredRootOverride,
+            configuredRootPaths: normalizedConfiguredRoots,
+            roots: roots.sorted { lhs, rhs in
+                if lhs.rootOrder == rhs.rootOrder {
+                    return lhs.rootPath < rhs.rootPath
+                }
+                return lhs.rootOrder < rhs.rootOrder
+            },
+            scannedAtUnixMs: scannedAtUnixMs
+        )
+    }
+
+    public func registrySnapshotState() -> RegistryState {
+        registryState
     }
 
     @discardableResult
@@ -995,6 +1080,23 @@ public actor ModelCatalog {
             return value
         }
         return nil
+    }
+
+    private static func normalizedRegistryRootPaths(_ roots: [String]) -> [String] {
+        var normalized: [String] = []
+        var seen: Set<String> = []
+        for root in roots {
+            let trimmed = root.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard trimmed.isEmpty == false else {
+                continue
+            }
+            let standardized = URL(fileURLWithPath: trimmed).standardizedFileURL.path
+            guard seen.insert(standardized).inserted else {
+                continue
+            }
+            normalized.append(standardized)
+        }
+        return normalized
     }
 
     private static func inferEmbeddingIdentity(from modelPath: String) -> (

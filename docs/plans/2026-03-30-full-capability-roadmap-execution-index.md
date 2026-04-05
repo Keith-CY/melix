@@ -213,6 +213,10 @@ The roadmap extension in `M10-M17` includes milestone-level plans plus decompose
 ## M12: Model Registry, Family Coverage, And Model Tools
 
 - `M12.1` `docs/plans/2026-03-31-m12-1-multi-root-registry-management-and-rescan.md`
+  Status: completed. Multi-root registry configuration is now control-plane-owned, worker-backed,
+  and operator-visible across stable root identity, ordered rescans, explicit empty-root
+  overrides, and Window UI root-management actions, with focused verification and changed-line
+  coverage evidence recorded in the repository.
 - `M12.2` `docs/plans/2026-03-31-m12-2-text-and-moe-family-adapters.md`
 - `M12.3` `docs/plans/2026-03-31-m12-3-image-family-dispatch-and-picker-completion.md`
 - `M12.4` `docs/plans/2026-03-31-m12-4-model-inspect-health-and-conversion-tools.md`

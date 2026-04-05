@@ -1493,6 +1493,73 @@ func makeBenchmarkExportBundleJSONWithoutResults() -> String {
     """
 }
 
+struct MenuBarRegistryRootFixture: Sendable {
+    let id: String
+    let path: String
+    let order: Int
+    let accessible: Bool
+    let errorCode: String
+    let errorMessage: String
+    let discoveredModelIDs: [String]
+
+    init(
+        id: String,
+        path: String,
+        order: Int,
+        accessible: Bool = true,
+        errorCode: String = "",
+        errorMessage: String = "",
+        discoveredModelIDs: [String] = []
+    ) {
+        self.id = id
+        self.path = path
+        self.order = order
+        self.accessible = accessible
+        self.errorCode = errorCode
+        self.errorMessage = errorMessage
+        self.discoveredModelIDs = discoveredModelIDs
+    }
+}
+
+func makeModelOpsRegistrySnapshotManifestJSON(
+    roots: [MenuBarRegistryRootFixture],
+    scannedAtUnixMS: Int64 = 1_712_300_000_000
+) -> String {
+    let rootsJSON = roots.map { root in
+        let discoveredModelsJSON = root.discoveredModelIDs
+            .map { "\"\($0)\"" }
+            .joined(separator: ", ")
+        return """
+        {
+          "root_id": "\(root.id)",
+          "root_path": "\(root.path)",
+          "root_order": \(root.order),
+          "accessible": \(root.accessible ? "true" : "false"),
+          "error_code": "\(root.errorCode)",
+          "error_message": "\(root.errorMessage)",
+          "discovered_model_ids": [\(discoveredModelsJSON)]
+        }
+        """
+    }
+    .joined(separator: ",\n")
+
+    return """
+    {
+      "operation": "registry_snapshot",
+      "jobs": [],
+      "adapters": [],
+      "derived_models": [],
+      "model_registry": {
+        "scanned_at_unix_ms": \(scannedAtUnixMS),
+        "roots": [
+          \(rootsJSON)
+        ],
+        "models": []
+      }
+    }
+    """
+}
+
 struct StubProductInstallStateProvider: ProductInstallStateProviding {
     var updateStatusResponse: ProductUpdateStatus?
     var startupDiagnosticResponse: ProductStartupFailureDiagnostic?

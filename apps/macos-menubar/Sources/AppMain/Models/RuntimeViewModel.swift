@@ -353,6 +353,39 @@ public struct RuntimeTrainingHistoryEntryState: Identifiable, Equatable, Sendabl
     public let targetRepo: String
 }
 
+public struct RuntimeRegistryRootState: Identifiable, Equatable, Sendable {
+    public let id: String
+    public let rootPath: String
+    public let rootOrder: Int
+    public let accessible: Bool
+    public let errorCode: String
+    public let errorMessage: String
+    public let discoveredModelIDs: [String]
+
+    public var statusText: String {
+        if accessible {
+            return "Accessible"
+        }
+        if errorCode.isEmpty {
+            return "Unavailable"
+        }
+        let normalized = errorCode.replacingOccurrences(of: "_", with: " ")
+        guard let first = normalized.first else {
+            return "Unavailable"
+        }
+        return String(first).uppercased() + normalized.dropFirst()
+    }
+
+    public var detailText: String {
+        let discoveredCount = discoveredModelIDs.count
+        let discoveredSummary = discoveredCount == 1 ? "1 model" : "\(discoveredCount) models"
+        if errorMessage.isEmpty {
+            return discoveredSummary
+        }
+        return "\(discoveredSummary) • \(errorMessage)"
+    }
+}
+
 public struct RuntimeBenchMetricState: Identifiable, Equatable, Sendable {
     public let id: String
     public let name: String
@@ -664,6 +697,10 @@ public final class RuntimeViewModel {
     public private(set) var lastEvaluationExport: RuntimeEvaluationExportState?
     public private(set) var adapterPackages: [RuntimeAdapterPackageState] = []
     public private(set) var trainingHistory: [RuntimeTrainingHistoryEntryState] = []
+    public private(set) var registryRoots: [RuntimeRegistryRootState] = []
+    public private(set) var registryConfiguredRootPaths: [String] = []
+    public private(set) var registryHasConfiguredRootOverride = false
+    public private(set) var registryScannedAtText = "Never"
     public private(set) var chatTranscript: [DesktopChatTranscriptEntry] = []
     public private(set) var chatCapabilities: [DesktopChatCapabilityRow] = []
     public private(set) var agentIntegrationExports: [AgentIntegrationExport] = []
@@ -764,6 +801,7 @@ public final class RuntimeViewModel {
     public var loraGradientCheckpointing = false
     public var loraDerivedModelAlias = ""
     public var selectedAdapterPackageID = ""
+    public var registryRootPathDraft = ""
     public var imagePromptText = ""
     public var imageEditSourceURL = ""
     public var imageEditMaskURL = ""
@@ -1610,6 +1648,23 @@ public final class RuntimeViewModel {
             return adapterPackages.first
         }
         return adapterPackages.first(where: { $0.id == selectedAdapterPackageID }) ?? adapterPackages.first
+    }
+
+    public var registryRootSummaryText: String {
+        if registryHasConfiguredRootOverride {
+            let count = registryConfiguredRootPaths.count
+            return count == 0
+                ? "Control-plane override active • no roots configured"
+                : "Control-plane override active • \(count) roots configured"
+        }
+        if registryRoots.isEmpty {
+            return "Using environment roots • no snapshot loaded yet"
+        }
+        return "Using environment roots • \(registryRoots.count) roots observed"
+    }
+
+    public var canAddRegistryRoot: Bool {
+        Self.normalizedRegistryRootPath(registryRootPathDraft) != nil
     }
 
     public var imageModels: [RuntimeModelRow] {
@@ -2629,7 +2684,76 @@ public final class RuntimeViewModel {
         guard !modelID.isEmpty else {
             return
         }
-        await refreshModelOpsProductState(modelID: modelID, notify: true)
+        await refreshModelOpsProductState(
+            modelID: modelID,
+            notify: true,
+            rescan: false,
+            registryRootsOverride: nil,
+            refreshFoundationAfterSuccess: false
+        )
+    }
+
+    public func rescanRegistryRoots() async {
+        let modelID = resolvedLoraModelID()
+        guard !modelID.isEmpty else {
+            return
+        }
+        await refreshModelOpsProductState(
+            modelID: modelID,
+            notify: true,
+            rescan: true,
+            registryRootsOverride: nil,
+            refreshFoundationAfterSuccess: true
+        )
+    }
+
+    public func addRegistryRoot() async {
+        let modelID = resolvedLoraModelID()
+        guard !modelID.isEmpty, let normalizedRoot = Self.normalizedRegistryRootPath(registryRootPathDraft) else {
+            return
+        }
+
+        var updatedRoots = editableRegistryRootPaths()
+        guard updatedRoots.contains(normalizedRoot) == false else {
+            registryRootPathDraft = ""
+            notifyStateChanged()
+            return
+        }
+        updatedRoots.append(normalizedRoot)
+        await refreshModelOpsProductState(
+            modelID: modelID,
+            notify: true,
+            rescan: true,
+            registryRootsOverride: updatedRoots,
+            refreshFoundationAfterSuccess: true
+        )
+        registryRootPathDraft = ""
+        notifyStateChanged()
+    }
+
+    public func removeRegistryRoot(rootID: String) async {
+        let modelID = resolvedLoraModelID()
+        guard !modelID.isEmpty, let index = editableRegistryRootIndex(for: rootID) else {
+            return
+        }
+
+        var updatedRoots = editableRegistryRootPaths()
+        updatedRoots.remove(at: index)
+        await refreshModelOpsProductState(
+            modelID: modelID,
+            notify: true,
+            rescan: true,
+            registryRootsOverride: updatedRoots,
+            refreshFoundationAfterSuccess: true
+        )
+    }
+
+    public func moveRegistryRootUp(rootID: String) async {
+        await moveRegistryRoot(rootID: rootID, offset: -1)
+    }
+
+    public func moveRegistryRootDown(rootID: String) async {
+        await moveRegistryRoot(rootID: rootID, offset: 1)
     }
 
     public func publishLatestAdapter() async {
@@ -3036,8 +3160,33 @@ public final class RuntimeViewModel {
     }
 
     private func refreshModelOpsProductState(modelID: String, notify: Bool) async {
+        await refreshModelOpsProductState(
+            modelID: modelID,
+            notify: notify,
+            rescan: false,
+            registryRootsOverride: nil,
+            refreshFoundationAfterSuccess: false
+        )
+    }
+
+    private func refreshModelOpsProductState(
+        modelID: String,
+        notify: Bool,
+        rescan: Bool,
+        registryRootsOverride: [String]?,
+        refreshFoundationAfterSuccess: Bool
+    ) async {
         let startedAt = Date()
         do {
+            var ext: [String: String] = [:]
+            let requestedRegistryRoots = resolvedRegistryRootOverride(registryRootsOverride)
+            if let requestedRegistryRoots,
+               let encodedRoots = Self.encodedRegistryRoots(requestedRegistryRoots) {
+                ext["melix.registry_roots_json"] = encodedRoots
+            }
+            if rescan {
+                ext["melix.registry_rescan"] = "true"
+            }
             let result = try await client.runModelOperation(
                 modelID: modelID,
                 operation: "registry_snapshot",
@@ -3045,13 +3194,20 @@ public final class RuntimeViewModel {
                 quantProfileID: "",
                 weightQuant: "",
                 kvQuant: "",
-                ext: [:]
+                ext: ext
             )
             await metrics.record(
                 name: "menu.model_ops_refresh_ms",
                 valueMs: Date().timeIntervalSince(startedAt) * 1_000
             )
             applyModelOpsSnapshot(manifestJSON: result.manifestJson)
+            if let requestedRegistryRoots {
+                registryHasConfiguredRootOverride = true
+                registryConfiguredRootPaths = requestedRegistryRoots
+            }
+            if refreshFoundationAfterSuccess {
+                await refreshDesktopFoundation()
+            }
         } catch {
             recordLocalError(String(describing: error))
         }
@@ -3075,6 +3231,24 @@ public final class RuntimeViewModel {
         trainingHistory = jobs
             .filter { Self.stringValue("operation", from: $0) == "train_lora" }
             .map(Self.makeTrainingHistoryEntryState)
+        if let registryPayload = payload["model_registry"] as? [String: Any] {
+            let roots = (registryPayload["roots"] as? [[String: Any]] ?? [])
+                .compactMap(Self.makeRegistryRootState)
+                .sorted { lhs, rhs in
+                    if lhs.rootOrder == rhs.rootOrder {
+                        return lhs.rootPath < rhs.rootPath
+                    }
+                    return lhs.rootOrder < rhs.rootOrder
+                }
+            registryRoots = roots
+            if registryHasConfiguredRootOverride == false {
+                registryConfiguredRootPaths = roots.map(\.rootPath)
+            }
+            let scannedAtUnixMS = Self.int64Value("scanned_at_unix_ms", from: registryPayload)
+            registryScannedAtText = scannedAtUnixMS > 0
+                ? Self.benchmarkTimestampLabel(scannedAtUnixMS)
+                : "Unknown"
+        }
         refreshLoraSelectionState()
     }
 
@@ -4391,6 +4565,52 @@ public final class RuntimeViewModel {
         return selectedImageModelID
     }
 
+    private func moveRegistryRoot(rootID: String, offset: Int) async {
+        let modelID = resolvedLoraModelID()
+        guard !modelID.isEmpty, let index = editableRegistryRootIndex(for: rootID) else {
+            return
+        }
+        let destination = index + offset
+        guard destination >= 0, destination < editableRegistryRootPaths().count else {
+            return
+        }
+
+        var updatedRoots = editableRegistryRootPaths()
+        let root = updatedRoots.remove(at: index)
+        updatedRoots.insert(root, at: destination)
+        await refreshModelOpsProductState(
+            modelID: modelID,
+            notify: true,
+            rescan: true,
+            registryRootsOverride: updatedRoots,
+            refreshFoundationAfterSuccess: true
+        )
+    }
+
+    private func editableRegistryRootPaths() -> [String] {
+        if registryHasConfiguredRootOverride {
+            return registryConfiguredRootPaths
+        }
+        return registryRoots.map(\.rootPath)
+    }
+
+    private func editableRegistryRootIndex(for rootID: String) -> Int? {
+        guard let root = registryRoots.first(where: { $0.id == rootID }) else {
+            return nil
+        }
+        return editableRegistryRootPaths().firstIndex(of: root.rootPath)
+    }
+
+    private func resolvedRegistryRootOverride(_ registryRootsOverride: [String]?) -> [String]? {
+        if let registryRootsOverride {
+            return Self.normalizedRegistryRootPaths(registryRootsOverride)
+        }
+        if registryHasConfiguredRootOverride {
+            return registryConfiguredRootPaths
+        }
+        return nil
+    }
+
     private func refreshImageState(preferredJobID: String? = nil) {
         if models.contains(where: { $0.modelID == selectedImageModelID && Self.isImageModelKind($0.kind) }) == false,
            let imageModel = models.first(where: { Self.isImageModelKind($0.kind) }) {
@@ -5014,6 +5234,28 @@ public final class RuntimeViewModel {
         )
     }
 
+    private static func makeRegistryRootState(from payload: [String: Any]) -> RuntimeRegistryRootState? {
+        let rootID = stringValue("root_id", from: payload)
+        let rootPath = stringValue("root_path", from: payload)
+        guard rootID.isEmpty == false, rootPath.isEmpty == false else {
+            return nil
+        }
+        let discoveredModelIDs = (payload["discovered_model_ids"] as? [Any] ?? [])
+            .compactMap { element in
+                let value = String(describing: element).trimmingCharacters(in: .whitespacesAndNewlines)
+                return value.isEmpty ? nil : value
+            }
+        return RuntimeRegistryRootState(
+            id: rootID,
+            rootPath: rootPath,
+            rootOrder: intValue("root_order", from: payload),
+            accessible: boolValue("accessible", from: payload),
+            errorCode: stringValue("error_code", from: payload),
+            errorMessage: stringValue("error_message", from: payload),
+            discoveredModelIDs: discoveredModelIDs
+        )
+    }
+
     private static func makeBenchmarkHistoryEntryState(
         from entry: ControlPlaneBenchmarkHistoryEntry
     ) -> RuntimeBenchmarkHistoryEntryState {
@@ -5268,6 +5510,35 @@ public final class RuntimeViewModel {
         payload[key] as? String ?? ""
     }
 
+    private static func intValue(_ key: String, from payload: [String: Any]) -> Int {
+        if let value = payload[key] as? Int {
+            return value
+        }
+        if let number = payload[key] as? NSNumber {
+            return number.intValue
+        }
+        if let value = payload[key] as? String {
+            return Int(value) ?? 0
+        }
+        return 0
+    }
+
+    private static func int64Value(_ key: String, from payload: [String: Any]) -> Int64 {
+        if let value = payload[key] as? Int64 {
+            return value
+        }
+        if let value = payload[key] as? Int {
+            return Int64(value)
+        }
+        if let number = payload[key] as? NSNumber {
+            return number.int64Value
+        }
+        if let value = payload[key] as? String {
+            return Int64(value) ?? 0
+        }
+        return 0
+    }
+
     private static func doubleValue(_ key: String, from payload: [String: Any]) -> Double {
         if let value = payload[key] as? Double {
             return value
@@ -5289,6 +5560,39 @@ public final class RuntimeViewModel {
             return ["1", "true", "yes", "on"].contains(value.lowercased())
         }
         return false
+    }
+
+    private static func encodedRegistryRoots(_ roots: [String]) -> String? {
+        guard let data = try? JSONSerialization.data(
+            withJSONObject: roots,
+            options: [.sortedKeys, .withoutEscapingSlashes]
+        ) else {
+            return nil
+        }
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    private static func normalizedRegistryRootPaths(_ roots: [String]) -> [String] {
+        var normalizedRoots: [String] = []
+        var seen: Set<String> = []
+        for root in roots {
+            guard let normalized = normalizedRegistryRootPath(root), seen.contains(normalized) == false else {
+                continue
+            }
+            seen.insert(normalized)
+            normalizedRoots.append(normalized)
+        }
+        return normalizedRoots
+    }
+
+    private static func normalizedRegistryRootPath(_ rawPath: String) -> String? {
+        let trimmed = rawPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.isEmpty == false else {
+            return nil
+        }
+        let expanded = (trimmed as NSString).expandingTildeInPath
+        let standardized = URL(fileURLWithPath: expanded).standardizedFileURL.path
+        return standardized.isEmpty ? nil : standardized
     }
 
     private static func humanizeStatus(_ status: String) -> String {

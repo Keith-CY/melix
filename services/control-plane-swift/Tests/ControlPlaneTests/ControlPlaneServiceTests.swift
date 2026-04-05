@@ -808,6 +808,126 @@ struct ControlPlaneServiceTests {
         #expect(speech.settings.ext["melix.model_path"] == "/tmp/registry-root/mlx-community/Speech/1")
     }
 
+    @Test("registry snapshot operations persist configured roots and reuse them for subsequent model.list syncs")
+    func registrySnapshotOperationsPersistConfiguredRootsAndReuseThemForSubsequentModelListSyncs() async throws {
+        let modelOpsClient = ScriptedModelOperationsWorkerClient()
+        let manifestJSON = try makeRegistrySnapshotManifestJSON()
+        await modelOpsClient.setConvertEvents([
+            {
+                var event = Melix_Worker_V1_ConvertModelEvent()
+                event.manifest = Melix_Worker_V1_ConvertManifest()
+                event.manifest.manifestJson = manifestJSON
+                return event
+            }(),
+        ])
+
+        let catalog = ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels())
+        let service = ControlPlaneService(
+            modelCatalog: catalog,
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                modelOperationsClient: modelOpsClient,
+                modelCatalog: catalog
+            )
+        )
+        let overrideJSON = #"["/tmp/root-b","/tmp/root-a"]"#
+
+        let operationResponse = try await service.execute(
+            makeRunModelOperationRequest(
+                modelID: "melix-dev-text",
+                operation: "registry_snapshot",
+                outputDir: "",
+                ext: [
+                    "melix.registry_roots_json": overrideJSON,
+                    "melix.registry_rescan": "true",
+                ]
+            )
+        )
+        let operationRequest = try #require(await modelOpsClient.lastConvertRequest)
+        let operationState = await catalog.registrySnapshotState()
+
+        #expect(operationResponse.ok)
+        #expect(operationRequest.ext["melix.registry_roots_json"] == overrideJSON)
+        #expect(operationRequest.ext["melix.registry_rescan"] == "true")
+        #expect(operationState.hasConfiguredRootOverride)
+        #expect(operationState.configuredRootPaths == ["/tmp/root-b", "/tmp/root-a"])
+        #expect(operationState.roots.first?.rootID == "root-1")
+
+        await modelOpsClient.setConvertEvents([
+            {
+                var event = Melix_Worker_V1_ConvertModelEvent()
+                event.manifest = Melix_Worker_V1_ConvertManifest()
+                event.manifest.manifestJson = manifestJSON
+                return event
+            }(),
+        ])
+
+        let listResponse = try await service.execute(makeListModelsRequest())
+        let listRequest = try #require(await modelOpsClient.lastConvertRequest)
+
+        #expect(listResponse.ok)
+        #expect(listRequest.ext["melix.registry_roots_json"] == overrideJSON)
+        #expect((listRequest.ext["melix.registry_rescan"] ?? "").isEmpty)
+    }
+
+    @Test("model.list preserves an explicit empty registry-root override instead of falling back to environment roots")
+    func modelListPreservesExplicitEmptyRegistryRootOverrideInsteadOfFallingBackToEnvironmentRoots() async throws {
+        let modelOpsClient = ScriptedModelOperationsWorkerClient()
+        await modelOpsClient.setConvertEvents([])
+        let catalog = ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels())
+        await catalog.updateConfiguredRegistryRoots([])
+        let service = ControlPlaneService(
+            modelCatalog: catalog,
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                modelOperationsClient: modelOpsClient,
+                modelCatalog: catalog
+            )
+        )
+
+        _ = try await service.execute(makeListModelsRequest())
+        let request = try #require(await modelOpsClient.lastConvertRequest)
+
+        #expect(request.ext["melix.registry_roots_json"] == "[]")
+    }
+
+    @Test("registry snapshot operations reuse stored configured roots when the request omits an explicit override")
+    func registrySnapshotOperationsReuseStoredConfiguredRootsWhenOverrideIsOmitted() async throws {
+        let modelOpsClient = ScriptedModelOperationsWorkerClient()
+        let manifestJSON = try makeRegistrySnapshotManifestJSON()
+        await modelOpsClient.setConvertEvents([
+            {
+                var event = Melix_Worker_V1_ConvertModelEvent()
+                event.manifest = Melix_Worker_V1_ConvertManifest()
+                event.manifest.manifestJson = manifestJSON
+                return event
+            }(),
+        ])
+        let catalog = ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels())
+        await catalog.updateConfiguredRegistryRoots(["/tmp/root-b", "/tmp/root-a"])
+        let service = ControlPlaneService(
+            modelCatalog: catalog,
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                modelOperationsClient: modelOpsClient,
+                modelCatalog: catalog
+            )
+        )
+
+        let response = try await service.execute(
+            makeRunModelOperationRequest(
+                modelID: "melix-dev-text",
+                operation: "registry_snapshot",
+                outputDir: "",
+                ext: [:]
+            )
+        )
+        let request = try #require(await modelOpsClient.lastConvertRequest)
+
+        #expect(response.ok)
+        #expect(request.ext["melix.registry_roots_json"] == #"["/tmp/root-b","/tmp/root-a"]"#)
+    }
+
     @Test("execute handles model.load on the local fast path")
     func executeHandlesLocalModelLoad() async throws {
         let service = ControlPlaneService()

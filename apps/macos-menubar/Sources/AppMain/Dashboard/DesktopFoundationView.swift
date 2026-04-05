@@ -176,6 +176,8 @@ struct DesktopModelsTabView: View {
             }
             .frame(minHeight: 260)
 
+            DesktopRegistryRootsSectionView(viewModel: viewModel)
+
             if let primaryModel = viewModel.primaryModel {
                 GroupBox("Model Settings") {
                     VStack(alignment: .leading, spacing: 12) {
@@ -431,6 +433,133 @@ struct DesktopModelsTabView: View {
 
     func inspectPrimaryModelAction() -> () -> Void {
         { Task { await viewModel.inspectPrimaryModel() } }
+    }
+
+    func addRegistryRoot() async {
+        await viewModel.addRegistryRoot()
+    }
+
+    func removeRegistryRoot(_ root: RuntimeRegistryRootState) async {
+        await viewModel.removeRegistryRoot(rootID: root.id)
+    }
+
+    func moveRegistryRootUp(_ root: RuntimeRegistryRootState) async {
+        await viewModel.moveRegistryRootUp(rootID: root.id)
+    }
+
+    func moveRegistryRootDown(_ root: RuntimeRegistryRootState) async {
+        await viewModel.moveRegistryRootDown(rootID: root.id)
+    }
+
+    func rescanRegistryRoots() async {
+        await viewModel.rescanRegistryRoots()
+    }
+}
+
+private struct DesktopRegistryRootsSectionView: View {
+    let viewModel: RuntimeViewModel
+
+    var body: some View {
+        GroupBox("Registry Roots") {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(alignment: .firstTextBaseline) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(viewModel.registryRootSummaryText)
+                            .font(.headline)
+                        Text("Last scanned: \(viewModel.registryScannedAtText)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Button("Rescan") {
+                        Task { await viewModel.rescanRegistryRoots() }
+                    }
+                    .buttonStyle(.bordered)
+                }
+
+                HStack(spacing: 12) {
+                    TextField(
+                        "Add Registry Root",
+                        text: Binding(
+                            get: { viewModel.registryRootPathDraft },
+                            set: { viewModel.registryRootPathDraft = $0 }
+                        )
+                    )
+                    Button("Add Root") {
+                        Task { await viewModel.addRegistryRoot() }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(viewModel.canAddRegistryRoot == false)
+                }
+
+                DesktopRegistryRootsListView(viewModel: viewModel)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+}
+
+private struct DesktopRegistryRootsListView: View {
+    let viewModel: RuntimeViewModel
+
+    var body: some View {
+        let registryRoots: [RuntimeRegistryRootState] = viewModel.registryRoots
+
+        if registryRoots.isEmpty {
+            Text(
+                viewModel.registryHasConfiguredRootOverride
+                ? "No registry roots are configured yet."
+                : "No registry snapshot has been loaded yet."
+            )
+            .foregroundStyle(.secondary)
+        } else {
+            VStack(alignment: .leading, spacing: 0) {
+                ForEach(Array(registryRoots.enumerated()), id: \.element.id) { index, root in
+                    DesktopRegistryRootRowView(
+                        root: root,
+                        isFirst: index == 0,
+                        isLast: index == registryRoots.count - 1,
+                        moveUp: { Task { await viewModel.moveRegistryRootUp(rootID: root.id) } },
+                        moveDown: { Task { await viewModel.moveRegistryRootDown(rootID: root.id) } },
+                        remove: { Task { await viewModel.removeRegistryRoot(rootID: root.id) } }
+                    )
+                }
+            }
+        }
+    }
+}
+
+private struct DesktopRegistryRootRowView: View {
+    let root: RuntimeRegistryRootState
+    let isFirst: Bool
+    let isLast: Bool
+    let moveUp: () -> Void
+    let moveDown: () -> Void
+    let remove: () -> Void
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(root.rootPath)
+                    .font(.headline)
+                Text("#\(root.rootOrder) • \(root.statusText)")
+                    .font(.caption)
+                    .foregroundStyle(root.accessible ? Color.secondary : Color.orange)
+                Text(root.detailText)
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+            Spacer()
+            Button("Up", action: moveUp)
+                .buttonStyle(.bordered)
+                .disabled(isFirst)
+            Button("Down", action: moveDown)
+                .buttonStyle(.bordered)
+                .disabled(isLast)
+            Button("Remove", action: remove)
+                .buttonStyle(.bordered)
+        }
+        .padding(.vertical, 2)
     }
 }
 

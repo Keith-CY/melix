@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
 import json
 import os
 from pathlib import Path
 import time
+from typing import Iterable
 
 from packages.protocol.python.worker.v1 import common_pb2
 
@@ -37,6 +39,7 @@ _GENERATION_CONFIG_DO_SAMPLE_KEY = "melix.generation_config.do_sample"
 class RegistryRootSnapshot:
     root_id: str
     root_path: str
+    root_order: int
     accessible: bool
     error_code: str = ""
     error_message: str = ""
@@ -390,7 +393,10 @@ class WorkerModelCatalog:
             if model is not None:
                 self._seed_models[model.model_id] = model
         self._models = dict(self._seed_models)
-        self._last_registry_snapshot = self._refresh_registry_snapshot()
+        self._registry_snapshot_cache: dict[tuple[str, ...], RegistrySnapshot] = {}
+        self._active_registry_roots = tuple(self._configured_registry_roots())
+        self._last_registry_snapshot = self._refresh_registry_snapshot(self._active_registry_roots)
+        self._registry_snapshot_cache[self._active_registry_roots] = self._last_registry_snapshot
 
     def get(self, model_id: str) -> common_pb2.ModelSpec | None:
         return self._models.get(model_id)
@@ -398,19 +404,37 @@ class WorkerModelCatalog:
     def all_models(self) -> list[common_pb2.ModelSpec]:
         return [self._models[model_id] for model_id in sorted(self._models)]
 
-    def registry_snapshot(self, *, rescan: bool = False) -> RegistrySnapshot:
-        if rescan:
-            self._last_registry_snapshot = self._refresh_registry_snapshot()
-        return self._last_registry_snapshot
+    def registry_snapshot(
+        self,
+        *,
+        rescan: bool = False,
+        registry_roots: Iterable[str] | None = None,
+    ) -> RegistrySnapshot:
+        roots_key = tuple(self._configured_registry_roots() if registry_roots is None else self._normalized_registry_roots(registry_roots))
+        if rescan or roots_key not in self._registry_snapshot_cache:
+            self._registry_snapshot_cache[roots_key] = self._refresh_registry_snapshot(roots_key)
+        snapshot = self._registry_snapshot_cache[roots_key]
+        self._active_registry_roots = roots_key
+        self._last_registry_snapshot = snapshot
+        self._models = dict(self._seed_models)
+        for model in snapshot.models:
+            self._models.setdefault(model.model_id, model)
+        return snapshot
 
-    def registry_snapshot_payload(self, *, rescan: bool = False) -> dict[str, object]:
-        snapshot = self.registry_snapshot(rescan=rescan)
+    def registry_snapshot_payload(
+        self,
+        *,
+        rescan: bool = False,
+        registry_roots: Iterable[str] | None = None,
+    ) -> dict[str, object]:
+        snapshot = self.registry_snapshot(rescan=rescan, registry_roots=registry_roots)
         return {
             "scanned_at_unix_ms": snapshot.scanned_at_unix_ms,
             "roots": [
                 {
                     "root_id": root.root_id,
                     "root_path": root.root_path,
+                    "root_order": root.root_order,
                     "accessible": root.accessible,
                     "error_code": root.error_code,
                     "error_message": root.error_message,
@@ -435,29 +459,30 @@ class WorkerModelCatalog:
             ],
         }
 
-    def _refresh_registry_snapshot(self) -> RegistrySnapshot:
-        roots, discovered_models = self._scan_registry_roots()
-        self._models = dict(self._seed_models)
-        for model_id, model in discovered_models.items():
-            self._models.setdefault(model_id, model)
+    def _refresh_registry_snapshot(self, registry_roots: tuple[str, ...]) -> RegistrySnapshot:
+        roots, discovered_models = self._scan_registry_roots(registry_roots)
         return RegistrySnapshot(
             roots=tuple(roots),
             models=tuple(discovered_models[model_id] for model_id in sorted(discovered_models)),
             scanned_at_unix_ms=int(time.time() * 1000),
         )
 
-    def _scan_registry_roots(self) -> tuple[list[RegistryRootSnapshot], dict[str, common_pb2.ModelSpec]]:
+    def _scan_registry_roots(
+        self,
+        registry_roots: tuple[str, ...],
+    ) -> tuple[list[RegistryRootSnapshot], dict[str, common_pb2.ModelSpec]]:
         roots: list[RegistryRootSnapshot] = []
         discovered_models: dict[str, common_pb2.ModelSpec] = {}
 
-        for index, root_path in enumerate(self._configured_registry_roots(), start=1):
-            root_id = f"root-{index}"
+        for index, root_path in enumerate(registry_roots, start=1):
+            root_id = _stable_registry_root_id(root_path)
             root = Path(root_path)
             if not root.is_dir():
                 roots.append(
                     RegistryRootSnapshot(
                         root_id=root_id,
                         root_path=str(root),
+                        root_order=index,
                         accessible=False,
                         error_code="not_found",
                         error_message="Registry root does not exist.",
@@ -481,6 +506,7 @@ class WorkerModelCatalog:
                     continue
                 model.ext["melix.registry_root_id"] = root_id
                 model.ext["melix.registry_root_path"] = str(root)
+                model.ext["melix.registry_root_order"] = str(index)
                 model.ext["melix.registry_relative_path"] = os.fspath(relative_path)
                 model.ext["melix.model_path"] = str(manifest_path.parent)
                 discovered_models[model_id] = model
@@ -490,6 +516,7 @@ class WorkerModelCatalog:
                 RegistryRootSnapshot(
                     root_id=root_id,
                     root_path=str(root),
+                    root_order=index,
                     accessible=True,
                     discovered_model_ids=tuple(accepted_model_ids),
                 )
@@ -502,14 +529,20 @@ class WorkerModelCatalog:
         if not raw.strip():
             return []
 
+        return self._normalized_registry_roots(raw.split(os.pathsep))
+
+    def _normalized_registry_roots(self, raw_roots: Iterable[str]) -> list[str]:
         roots: list[str] = []
         seen: set[str] = set()
-        for part in raw.split(os.pathsep):
+        for part in raw_roots:
             normalized = part.strip()
-            if not normalized or normalized in seen:
+            if not normalized:
                 continue
-            seen.add(normalized)
-            roots.append(normalized)
+            canonical = _canonical_registry_root_path(normalized)
+            if canonical in seen:
+                continue
+            seen.add(canonical)
+            roots.append(canonical)
         return roots
 
     @staticmethod
@@ -931,3 +964,12 @@ class WorkerModelCatalog:
                 ),
             },
         )
+
+
+def _canonical_registry_root_path(raw_path: str) -> str:
+    return os.fspath(Path(raw_path).expanduser().resolve(strict=False))
+
+
+def _stable_registry_root_id(root_path: str) -> str:
+    digest = hashlib.sha1(root_path.encode("utf-8")).hexdigest()[:12]
+    return f"root-{digest}"

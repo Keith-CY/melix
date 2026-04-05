@@ -2,6 +2,39 @@
 
 ## 2026-04-05
 
+- Closed `M12.1` by making multi-root registry configuration control-plane-owned, worker-backed,
+  and operator-visible across registry snapshots, catalog sync, and the Window UI:
+  - updated the Python worker registry catalog and maintenance core so ordered registry-root
+    overrides, stable root IDs, explicit rescans, and root-level observability now flow through
+    `registry_snapshot` payloads without rewriting environment state
+  - updated the Swift control plane catalog state, registry snapshot sync, and model-ops routing so
+    configured root overrides persist across sync cycles, explicit empty-root overrides remain
+    distinct from fallback environment discovery, and snapshot-driven root state is projected back
+    into catalog truth
+  - extended the native desktop shell and runtime view model so operators can add, remove, reorder,
+    and rescan registry roots directly from the Window UI while seeing ordered root rows,
+    accessibility state, configured-override summaries, and discovered-model counts
+  - added focused Python, control-plane, and menu-bar regression coverage for stable root identity,
+    explicit override ordering, empty-override preservation, root-state formatting, UI guard rails,
+    and snapshot parsing order
+  - marked `M12.1` completed in the roadmap execution index; the next active execution slice can
+    now advance to `M12.2`
+- Verification summary for `M12.1`:
+  - `PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" UV_CACHE_DIR="$(pwd)/.uv-cache" uv run --project services/mlx-worker-python --extra mlx pytest services/mlx-worker-python/tests/test_model_registry_catalog.py services/mlx-worker-python/tests/test_maintenance_service.py -q`: `74 passed in 32.45s`
+  - `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/.build/ModuleCache.noindex" swift test --package-path services/control-plane-swift --filter 'ModelCatalogTests|ControlPlaneServiceTests'`: `175 tests in 2 suites passed after 0.092 seconds`
+  - `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/.build/ModuleCache.noindex" swift test --package-path apps/macos-menubar --filter 'RuntimeViewModelTests|DesktopFoundationViewTests'`: `181 tests in 2 suites passed after 3.913 seconds`
+  - `git diff --check`: pass
+- Metrics report for `M12.1`:
+  - registry snapshot metrics and observability exercised by the touched scope:
+    - stable `root_id` projection from canonical root paths
+    - ordered `root_order` projection through worker, control plane, and Window UI
+    - root-level accessibility, error-state, and discovered-model observability
+  - changed-line coverage for the touched handwritten executable scope:
+    - Python registry scope: `96.49%` (`110/114`)
+    - Swift control-plane scope: `95.75%` (`338/353`)
+    - Swift menu-bar scope: `97.99%` (`730/745`)
+    - aggregate touched-scope coverage: `97.19%` (`1178/1212`)
+
 - Started `M12.1` by moving the active task plan to multi-root registry management and rescan:
   - recorded that the current repository only discovers registry roots from `MELIX_MODEL_ROOTS`
     and caches index-derived root IDs, which is insufficient for operator-facing add, remove,

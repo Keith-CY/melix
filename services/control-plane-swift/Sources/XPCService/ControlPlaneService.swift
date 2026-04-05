@@ -1878,6 +1878,14 @@ public actor ControlPlaneService {
         if let quantProfile = normalizedWorkerQuantProfile(for: command) {
             workerRequest.quantProfile = quantProfile
         }
+        var registryRootOverride = RegistrySnapshotSync.requestedRoots(from: workerRequest.ext)
+        if command.operation == "registry_snapshot",
+           registryRootOverride == nil,
+           let configuredRoots = await modelCatalog.configuredRegistryRootOverride(),
+           let encodedRoots = RegistrySnapshotSync.encodedRegistryRoots(configuredRoots) {
+            registryRootOverride = configuredRoots
+            workerRequest.ext["melix.registry_roots_json"] = encodedRoots
+        }
 
         do {
             let stream = try await workerClient.convertModel(request: workerRequest)
@@ -1935,6 +1943,14 @@ public actor ControlPlaneService {
                 return response
             }
 
+            if command.operation == "registry_snapshot" {
+                _ = await RegistrySnapshotSync.applyManifestJSON(
+                    operation.manifestJson,
+                    modelCatalog: modelCatalog,
+                    reason: "operator_registry_snapshot",
+                    configuredRootPaths: registryRootOverride
+                )
+            }
             if command.operation == "activate_adapter" {
                 await registerActivatedDerivedModel(from: operation.manifestJson)
             }
