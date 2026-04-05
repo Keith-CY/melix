@@ -743,6 +743,9 @@ private struct ServingDefaultsProjection: Equatable, Sendable {
     let concurrentProcessingEnabled: Bool
     let prefillBatchSize: Int
     let completionBatchSize: Int
+    let accelerationMode: String
+    let draftModelID: String
+    let numDraftTokens: Int
     let effectiveTemperature: Double
     let effectiveTopP: Double
     let effectiveMaxTokens: Int
@@ -751,6 +754,9 @@ private struct ServingDefaultsProjection: Equatable, Sendable {
     let effectiveConcurrentProcessingEnabled: Bool
     let effectivePrefillBatchSize: Int
     let effectiveCompletionBatchSize: Int
+    let effectiveAccelerationMode: String
+    let effectiveDraftModelID: String
+    let effectiveNumDraftTokens: Int
     let sourceText: String
     let modelOverrideApplied: Bool
     let updatedAtUnixMS: Int64
@@ -1397,6 +1403,27 @@ public final class RuntimeViewModel {
     public func updateSelectedServerSessionCompletionBatchSize(_ value: Int) {
         updateSelectedServerSession { session in
             session.servingDefaults.completionBatchSize = max(1, value)
+            session.updatedAt = Date()
+        }
+    }
+
+    public func updateSelectedServerSessionAccelerationMode(_ value: String) {
+        updateSelectedServerSession { session in
+            session.servingDefaults.accelerationMode = value
+            session.updatedAt = Date()
+        }
+    }
+
+    public func updateSelectedServerSessionDraftModelID(_ value: String) {
+        updateSelectedServerSession { session in
+            session.servingDefaults.draftModelID = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            session.updatedAt = Date()
+        }
+    }
+
+    public func updateSelectedServerSessionNumDraftTokens(_ value: Int) {
+        updateSelectedServerSession { session in
+            session.servingDefaults.numDraftTokens = max(0, value)
             session.updatedAt = Date()
         }
     }
@@ -3619,7 +3646,12 @@ public final class RuntimeViewModel {
                 maxConcurrentRequests: serverSession.servingDefaults.maxConcurrentRequests,
                 concurrentProcessingEnabled: serverSession.servingDefaults.concurrentProcessingEnabled,
                 prefillBatchSize: serverSession.servingDefaults.prefillBatchSize,
-                completionBatchSize: serverSession.servingDefaults.completionBatchSize
+                completionBatchSize: serverSession.servingDefaults.completionBatchSize,
+                accelerationMode: servingDefaultsAccelerationMode(
+                    from: serverSession.servingDefaults.accelerationMode
+                ),
+                draftModelID: serverSession.servingDefaults.draftModelID,
+                numDraftTokens: serverSession.servingDefaults.numDraftTokens
             )
             await metrics.record(
                 name: "menu.serving_defaults_apply_ms",
@@ -4712,6 +4744,14 @@ public final class RuntimeViewModel {
             session.servingDefaults.effectiveConcurrentProcessingEnabled = effectiveBatchingDefaults.concurrentProcessingEnabled
             session.servingDefaults.effectivePrefillBatchSize = effectiveBatchingDefaults.prefillBatchSize
             session.servingDefaults.effectiveCompletionBatchSize = effectiveBatchingDefaults.completionBatchSize
+            session.servingDefaults.effectiveAccelerationMode = session.servingDefaults.accelerationMode
+            if session.servingDefaults.accelerationMode == "speculative_decode" {
+                session.servingDefaults.effectiveDraftModelID = session.servingDefaults.draftModelID
+                session.servingDefaults.effectiveNumDraftTokens = session.servingDefaults.numDraftTokens
+            } else {
+                session.servingDefaults.effectiveDraftModelID = ""
+                session.servingDefaults.effectiveNumDraftTokens = 0
+            }
             return
         }
         session.servingDefaults.temperature = projection.temperature
@@ -4722,6 +4762,9 @@ public final class RuntimeViewModel {
         session.servingDefaults.concurrentProcessingEnabled = projection.concurrentProcessingEnabled
         session.servingDefaults.prefillBatchSize = projection.prefillBatchSize
         session.servingDefaults.completionBatchSize = projection.completionBatchSize
+        session.servingDefaults.accelerationMode = projection.accelerationMode
+        session.servingDefaults.draftModelID = projection.draftModelID
+        session.servingDefaults.numDraftTokens = projection.numDraftTokens
         session.servingDefaults.effectiveTemperature = projection.effectiveTemperature
         session.servingDefaults.effectiveTopP = projection.effectiveTopP
         session.servingDefaults.effectiveMaxTokens = projection.effectiveMaxTokens
@@ -4730,6 +4773,9 @@ public final class RuntimeViewModel {
         session.servingDefaults.effectiveConcurrentProcessingEnabled = projection.effectiveConcurrentProcessingEnabled
         session.servingDefaults.effectivePrefillBatchSize = projection.effectivePrefillBatchSize
         session.servingDefaults.effectiveCompletionBatchSize = projection.effectiveCompletionBatchSize
+        session.servingDefaults.effectiveAccelerationMode = projection.effectiveAccelerationMode
+        session.servingDefaults.effectiveDraftModelID = projection.effectiveDraftModelID
+        session.servingDefaults.effectiveNumDraftTokens = projection.effectiveNumDraftTokens
         session.servingDefaults.sourceText = projection.sourceText
         session.servingDefaults.modelOverrideApplied = projection.modelOverrideApplied
         session.servingDefaults.updatedAtUnixMS = projection.updatedAtUnixMS
@@ -4872,6 +4918,19 @@ public final class RuntimeViewModel {
             effectiveCompletionBatchSize = Int(summary.effectiveCompletionBatchSize)
         }
 
+        let requestedAccelerationMode = runtimeAccelerationModeDraftValue(summary.requestedAccelerationMode)
+        let effectiveAccelerationMode = summary.effectiveAccelerationMode == .unspecified
+            ? requestedAccelerationMode
+            : runtimeAccelerationModeDraftValue(summary.effectiveAccelerationMode)
+        let requestedDraftModelID = summary.requestedDraftModelID
+        let requestedNumDraftTokens = Int(summary.requestedNumDraftTokens)
+        let effectiveDraftModelID = effectiveAccelerationMode == "speculative_decode"
+            ? (summary.effectiveDraftModelID.isEmpty ? requestedDraftModelID : summary.effectiveDraftModelID)
+            : ""
+        let effectiveNumDraftTokens = effectiveAccelerationMode == "speculative_decode"
+            ? (summary.effectiveNumDraftTokens == 0 ? requestedNumDraftTokens : Int(summary.effectiveNumDraftTokens))
+            : 0
+
         return ServingDefaultsProjection(
             temperature: summary.requestedTemperature,
             topP: summary.requestedTopP,
@@ -4881,6 +4940,9 @@ public final class RuntimeViewModel {
             concurrentProcessingEnabled: requestedConcurrentProcessingEnabled,
             prefillBatchSize: requestedPrefillBatchSize,
             completionBatchSize: requestedCompletionBatchSize,
+            accelerationMode: requestedAccelerationMode,
+            draftModelID: requestedDraftModelID,
+            numDraftTokens: requestedNumDraftTokens,
             effectiveTemperature: summary.effectiveTemperature,
             effectiveTopP: summary.effectiveTopP,
             effectiveMaxTokens: Int(summary.effectiveMaxTokens),
@@ -4889,6 +4951,9 @@ public final class RuntimeViewModel {
             effectiveConcurrentProcessingEnabled: effectiveConcurrentProcessingEnabled,
             effectivePrefillBatchSize: effectivePrefillBatchSize,
             effectiveCompletionBatchSize: effectiveCompletionBatchSize,
+            effectiveAccelerationMode: effectiveAccelerationMode,
+            effectiveDraftModelID: effectiveDraftModelID,
+            effectiveNumDraftTokens: effectiveNumDraftTokens,
             sourceText: servingDefaultsSourceText(summary.source),
             modelOverrideApplied: summary.modelOverrideApplied,
             updatedAtUnixMS: summary.updatedAtUnixMs
@@ -6785,6 +6850,17 @@ private func runtimeAccelerationModeDraftValue(_ mode: Melix_Controlplane_V1_Acc
         return "baseline"
     default:
         return "baseline"
+    }
+}
+
+private func servingDefaultsAccelerationMode(
+    from rawValue: String
+) -> Melix_Controlplane_V1_AccelerationMode {
+    switch rawValue {
+    case "speculative_decode":
+        return .speculativeDecode
+    default:
+        return .baseline
     }
 }
 

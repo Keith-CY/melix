@@ -502,6 +502,8 @@ struct ControlPlaneServiceTests {
             .appendingPathComponent("melix-control-plane-serving-defaults-snapshot-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+        var speculativeReadyTextModel = ModelCatalog.devTextModel()
+        speculativeReadyTextModel.settings.defaultAccelerationMode = .unspecified
 
         let servingDefaultsStore = GatewayServingDefaultsStore(
             storeURL: temporaryRoot.appendingPathComponent("gateway-serving-defaults.json"),
@@ -516,10 +518,13 @@ struct ControlPlaneServiceTests {
             maxConcurrentRequests: 6,
             concurrentProcessingEnabled: true,
             prefillBatchSize: 3,
-            completionBatchSize: 2
+            completionBatchSize: 2,
+            accelerationMode: .speculativeDecode,
+            draftModelID: "melix-dev-text",
+            numDraftTokens: 6
         ))
         let service = ControlPlaneService(
-            modelCatalog: ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels()),
+            modelCatalog: ModelCatalog(seedModels: [speculativeReadyTextModel]),
             gatewayConfigStore: GatewayConfigStore(
                 storeURL: temporaryRoot.appendingPathComponent("gateway-config.json"),
                 defaults: [:]
@@ -541,9 +546,15 @@ struct ControlPlaneServiceTests {
         #expect(session.requestedConcurrentProcessingEnabled)
         #expect(session.requestedPrefillBatchSize == 3)
         #expect(session.requestedCompletionBatchSize == 2)
+        #expect(session.requestedAccelerationMode == .speculativeDecode)
+        #expect(session.requestedDraftModelID == "melix-dev-text")
+        #expect(session.requestedNumDraftTokens == 6)
         #expect(session.effectiveMaxConcurrentRequests == 2)
         #expect(session.effectivePrefillBatchSize == 2)
         #expect(session.effectiveCompletionBatchSize == 2)
+        #expect(session.effectiveAccelerationMode == .speculativeDecode)
+        #expect(session.effectiveDraftModelID == "melix-dev-text")
+        #expect(session.effectiveNumDraftTokens == 6)
         #expect(session.source == .operatorOverride)
     }
 
@@ -553,10 +564,12 @@ struct ControlPlaneServiceTests {
             .appendingPathComponent("melix-control-plane-serving-defaults-apply-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+        var speculativeReadyTextModel = ModelCatalog.devTextModel()
+        speculativeReadyTextModel.settings.defaultAccelerationMode = .unspecified
 
         let metricsStore = MetricsStore()
         let service = ControlPlaneService(
-            modelCatalog: ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels()),
+            modelCatalog: ModelCatalog(seedModels: [speculativeReadyTextModel]),
             metricsStore: metricsStore,
             gatewayConfigStore: GatewayConfigStore(
                 storeURL: temporaryRoot.appendingPathComponent("gateway-config.json"),
@@ -566,7 +579,8 @@ struct ControlPlaneServiceTests {
                 storeURL: temporaryRoot.appendingPathComponent("gateway-serving-defaults.json"),
                 defaults: [:],
                 nowUnixMS: { 1_717_181_930_000 }
-            )
+            ),
+            gatewaySupportsSpeculativeDefaults: true
         )
 
         let response = try await service.execute(
@@ -578,7 +592,10 @@ struct ControlPlaneServiceTests {
                 maxConcurrentRequests: 5,
                 concurrentProcessingEnabled: true,
                 prefillBatchSize: 4,
-                completionBatchSize: 2
+                completionBatchSize: 2,
+                accelerationMode: .speculativeDecode,
+                draftModelID: "melix-dev-text",
+                numDraftTokens: 5
             )
         )
         let session = try #require(response.server.snapshot.servingDefaults.sessions.first)
@@ -592,15 +609,25 @@ struct ControlPlaneServiceTests {
         #expect(session.requestedConcurrentProcessingEnabled)
         #expect(session.requestedPrefillBatchSize == 4)
         #expect(session.requestedCompletionBatchSize == 2)
+        #expect(session.requestedAccelerationMode == .speculativeDecode)
+        #expect(session.requestedDraftModelID == "melix-dev-text")
+        #expect(session.requestedNumDraftTokens == 5)
         #expect(session.effectiveMaxConcurrentRequests == 2)
         #expect(session.effectivePrefillBatchSize == 2)
         #expect(session.effectiveCompletionBatchSize == 2)
+        #expect(session.effectiveAccelerationMode == .speculativeDecode)
+        #expect(session.effectiveDraftModelID == "melix-dev-text")
+        #expect(session.effectiveNumDraftTokens == 5)
         #expect(await metricsStore.value(forKey: "gateway.serving_defaults_apply_ms") >= 0)
+        #expect(await metricsStore.value(forKey: "gateway.speculative_config_apply_ms") >= 0)
     }
 
     @Test("execute rejects serving defaults target mismatches and typed payload validation failures")
     func executeRejectsServingDefaultsTargetMismatchesAndTypedPayloadValidationFailures() async throws {
-        let service = ControlPlaneService(modelCatalog: ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels()))
+        let service = ControlPlaneService(
+            modelCatalog: ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels()),
+            gatewaySupportsSpeculativeDefaults: true
+        )
 
         let mismatchedTarget = try await service.execute(
             makeApplyServingDefaultsRequest(
@@ -641,12 +668,133 @@ struct ControlPlaneServiceTests {
                 prefillBatchSize: 0
             )
         )
+        let invalidAccelerationMode = try await service.execute(
+            makeApplyServingDefaultsRequest(
+                temperature: 0.2,
+                topP: 0.9,
+                maxTokens: 256,
+                streamIntervalTokens: 1,
+                maxConcurrentRequests: 4,
+                accelerationMode: .acceleratedPrefill
+            )
+        )
+        let missingDraftModelID = try await service.execute(
+            makeApplyServingDefaultsRequest(
+                temperature: 0.2,
+                topP: 0.9,
+                maxTokens: 256,
+                streamIntervalTokens: 1,
+                maxConcurrentRequests: 4,
+                accelerationMode: .speculativeDecode,
+                draftModelID: "   ",
+                numDraftTokens: 4
+            )
+        )
+        let invalidNumDraftTokens = try await service.execute(
+            makeApplyServingDefaultsRequest(
+                temperature: 0.2,
+                topP: 0.9,
+                maxTokens: 256,
+                streamIntervalTokens: 1,
+                maxConcurrentRequests: 4,
+                accelerationMode: .speculativeDecode,
+                draftModelID: "melix-dev-text",
+                numDraftTokens: 0
+            )
+        )
 
         #expect(!mismatchedTarget.ok)
         #expect(mismatchedTarget.error.code == "invalid_argument")
         #expect(invalidTopP.error.code == ServingDefaultsValidationError.invalidTopP.code)
         #expect(invalidStreamInterval.error.code == ServingDefaultsValidationError.invalidStreamIntervalTokens.code)
         #expect(invalidPrefillBatchSize.error.code == ServingDefaultsValidationError.invalidPrefillBatchSize.code)
+        #expect(invalidAccelerationMode.error.code == ServingDefaultsValidationError.invalidAccelerationMode.code)
+        #expect(missingDraftModelID.error.code == ServingDefaultsValidationError.missingDraftModelID.code)
+        #expect(invalidNumDraftTokens.error.code == ServingDefaultsValidationError.invalidNumDraftTokens.code)
+    }
+
+    @Test("execute rejects speculative serving defaults for unsupported backends and unsupported models")
+    func executeRejectsSpeculativeServingDefaultsForUnsupportedBackendsAndUnsupportedModels() async throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-control-plane-speculative-serving-defaults-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let backendUnsupportedService = ControlPlaneService(
+            modelCatalog: ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels()),
+            gatewayConfigStore: GatewayConfigStore(
+                storeURL: temporaryRoot.appendingPathComponent("gateway-config-backend.json"),
+                defaults: [:]
+            ),
+            gatewaySupportsSpeculativeDefaults: false
+        )
+        let backendUnsupported = try await backendUnsupportedService.execute(
+            makeApplyServingDefaultsRequest(
+                temperature: 0.3,
+                topP: 0.91,
+                maxTokens: 384,
+                streamIntervalTokens: 2,
+                maxConcurrentRequests: 4,
+                accelerationMode: .speculativeDecode,
+                draftModelID: "melix-dev-text",
+                numDraftTokens: 6
+            )
+        )
+
+        let servedModelUnsupportedService = ControlPlaneService(
+            modelCatalog: ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels()),
+            gatewayConfigStore: GatewayConfigStore(
+                storeURL: temporaryRoot.appendingPathComponent("gateway-config-served.json"),
+                defaults: [:]
+            ),
+            gatewaySupportsSpeculativeDefaults: true
+        )
+        _ = try await servedModelUnsupportedService.execute(
+            makeApplyGatewayConfigRequest(
+                host: "127.0.0.1",
+                port: 11_434,
+                servedModelID: "melix-dev-ocr",
+                rateLimitPerMinute: 120,
+                timeoutSeconds: 60
+            )
+        )
+        let servedModelUnsupported = try await servedModelUnsupportedService.execute(
+            makeApplyServingDefaultsRequest(
+                temperature: 0.3,
+                topP: 0.91,
+                maxTokens: 384,
+                streamIntervalTokens: 2,
+                maxConcurrentRequests: 4,
+                accelerationMode: .speculativeDecode,
+                draftModelID: "melix-dev-text",
+                numDraftTokens: 6
+            )
+        )
+
+        let draftModelUnsupportedService = ControlPlaneService(
+            modelCatalog: ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels()),
+            gatewayConfigStore: GatewayConfigStore(
+                storeURL: temporaryRoot.appendingPathComponent("gateway-config-draft.json"),
+                defaults: [:]
+            ),
+            gatewaySupportsSpeculativeDefaults: true
+        )
+        let draftModelUnsupported = try await draftModelUnsupportedService.execute(
+            makeApplyServingDefaultsRequest(
+                temperature: 0.3,
+                topP: 0.91,
+                maxTokens: 384,
+                streamIntervalTokens: 2,
+                maxConcurrentRequests: 4,
+                accelerationMode: .speculativeDecode,
+                draftModelID: "melix-dev-ocr",
+                numDraftTokens: 6
+            )
+        )
+
+        #expect(backendUnsupported.error.code == ServingDefaultsValidationError.speculativeBackendUnsupported.code)
+        #expect(servedModelUnsupported.error.code == ServingDefaultsValidationError.speculativeServedModelUnsupported.code)
+        #expect(draftModelUnsupported.error.code == ServingDefaultsValidationError.speculativeDraftModelUnsupported.code)
     }
 
     @Test("execute surfaces serving defaults persistence failures with typed metrics")
@@ -6262,7 +6410,10 @@ struct ControlPlaneServiceTests {
         maxConcurrentRequests: UInt32,
         concurrentProcessingEnabled: Bool = true,
         prefillBatchSize: UInt32 = 2,
-        completionBatchSize: UInt32 = 2
+        completionBatchSize: UInt32 = 2,
+        accelerationMode: Melix_Controlplane_V1_AccelerationMode = .baseline,
+        draftModelID: String = "",
+        numDraftTokens: UInt32 = 0
     ) -> Melix_Controlplane_V1_ControlPlaneRequest {
         var request = Melix_Controlplane_V1_ControlPlaneRequest()
         request.requestID = "req-apply-serving-defaults-\(serverSessionID)"
@@ -6278,7 +6429,10 @@ struct ControlPlaneServiceTests {
             maxConcurrentRequests: maxConcurrentRequests,
             concurrentProcessingEnabled: concurrentProcessingEnabled,
             prefillBatchSize: prefillBatchSize,
-            completionBatchSize: completionBatchSize
+            completionBatchSize: completionBatchSize,
+            accelerationMode: accelerationMode,
+            draftModelID: draftModelID,
+            numDraftTokens: numDraftTokens
         )
         return request
     }
@@ -6310,7 +6464,10 @@ struct ControlPlaneServiceTests {
         maxConcurrentRequests: UInt32,
         concurrentProcessingEnabled: Bool = true,
         prefillBatchSize: UInt32 = 2,
-        completionBatchSize: UInt32 = 2
+        completionBatchSize: UInt32 = 2,
+        accelerationMode: Melix_Controlplane_V1_AccelerationMode = .baseline,
+        draftModelID: String = "",
+        numDraftTokens: UInt32 = 0
     ) -> Melix_Controlplane_V1_ApplyServingDefaults {
         var command = Melix_Controlplane_V1_ApplyServingDefaults()
         command.serverSessionID = serverSessionID
@@ -6322,6 +6479,9 @@ struct ControlPlaneServiceTests {
         command.concurrentProcessingEnabled = concurrentProcessingEnabled
         command.prefillBatchSize = prefillBatchSize
         command.completionBatchSize = completionBatchSize
+        command.accelerationMode = accelerationMode
+        command.draftModelID = draftModelID
+        command.numDraftTokens = numDraftTokens
         return command
     }
 

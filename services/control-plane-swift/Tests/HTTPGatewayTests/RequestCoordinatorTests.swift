@@ -2101,6 +2101,90 @@ struct RequestCoordinatorTests {
         #expect(metrics.values["http.reasoning_budget_overflow_count", default: 0] == 1)
     }
 
+    @Test("gateway speculative defaults populate worker acceleration when model defaults are unspecified")
+    func gatewaySpeculativeDefaultsPopulateWorkerAccelerationWhenModelDefaultsAreUnspecified() async throws {
+        let workerClient = PhaseAwareWorkerClient()
+        var textModel = ModelCatalog.devTextModel()
+        textModel.settings.defaultAccelerationMode = .unspecified
+        let catalog = ModelCatalog(seedModels: [textModel])
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog),
+            abortRegistry: AbortRegistry(),
+            modelCatalog: catalog
+        )
+
+        let execution = try await coordinator.startChatCompletion(
+            makeTranslatedChatRequest(
+                requestID: "req-gateway-speculative-defaults",
+                saveBoundarySnapshot: true,
+                executionExt: [
+                    "melix.gateway.acceleration_mode": "speculative_decode",
+                    "melix.gateway.draft_model_id": "melix-dev-text",
+                    "melix.gateway.num_draft_tokens": "7",
+                ]
+            )
+        )
+        let consumer = Task {
+            do {
+                for try await _ in execution.stream {}
+            } catch {}
+        }
+
+        let prefillRequest = try #require(await waitForPrefillRequest(workerClient: workerClient))
+        let decodeRequest = try #require(await waitForDecodeRequest(workerClient: workerClient))
+
+        #expect(prefillRequest.execution.acceleration.mode == .speculativeDecode)
+        #expect(prefillRequest.execution.acceleration.draftModelID == "melix-dev-text")
+        #expect(prefillRequest.execution.acceleration.numDraftTokens == 7)
+        #expect(decodeRequest.execution.acceleration.mode == .speculativeDecode)
+        #expect(decodeRequest.execution.acceleration.draftModelID == "melix-dev-text")
+        #expect(decodeRequest.execution.acceleration.numDraftTokens == 7)
+
+        await workerClient.finish(requestID: "req-gateway-speculative-defaults")
+        _ = await consumer.result
+    }
+
+    @Test("model acceleration defaults override gateway speculative execution defaults")
+    func modelAccelerationDefaultsOverrideGatewaySpeculativeExecutionDefaults() async throws {
+        let workerClient = PhaseAwareWorkerClient()
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel()])
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog),
+            abortRegistry: AbortRegistry(),
+            modelCatalog: catalog
+        )
+
+        let execution = try await coordinator.startChatCompletion(
+            makeTranslatedChatRequest(
+                requestID: "req-gateway-speculative-overridden",
+                saveBoundarySnapshot: true,
+                executionExt: [
+                    "melix.gateway.acceleration_mode": "speculative_decode",
+                    "melix.gateway.draft_model_id": "melix-dev-text",
+                    "melix.gateway.num_draft_tokens": "7",
+                ]
+            )
+        )
+        let consumer = Task {
+            do {
+                for try await _ in execution.stream {}
+            } catch {}
+        }
+
+        let prefillRequest = try #require(await waitForPrefillRequest(workerClient: workerClient))
+        let decodeRequest = try #require(await waitForDecodeRequest(workerClient: workerClient))
+
+        #expect(prefillRequest.execution.acceleration.mode == .baseline)
+        #expect(prefillRequest.execution.acceleration.draftModelID.isEmpty)
+        #expect(prefillRequest.execution.acceleration.numDraftTokens == 0)
+        #expect(decodeRequest.execution.acceleration.mode == .baseline)
+        #expect(decodeRequest.execution.acceleration.draftModelID.isEmpty)
+        #expect(decodeRequest.execution.acceleration.numDraftTokens == 0)
+
+        await workerClient.finish(requestID: "req-gateway-speculative-overridden")
+        _ = await consumer.result
+    }
+
 }
 
 private actor BlockingWorkerClient: WorkerRoutingClient {

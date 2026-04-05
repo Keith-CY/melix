@@ -81,6 +81,9 @@ struct RuntimeViewModelTests {
         viewModel.updateSelectedServerSessionConcurrentProcessingEnabled(true)
         viewModel.updateSelectedServerSessionPrefillBatchSize(3)
         viewModel.updateSelectedServerSessionCompletionBatchSize(2)
+        viewModel.updateSelectedServerSessionAccelerationMode("speculative_decode")
+        viewModel.updateSelectedServerSessionDraftModelID("melix-dev-draft")
+        viewModel.updateSelectedServerSessionNumDraftTokens(6)
 
         await viewModel.applySelectedServerServingDefaults()
 
@@ -96,6 +99,9 @@ struct RuntimeViewModelTests {
         #expect(request.concurrentProcessingEnabled == true)
         #expect(request.prefillBatchSize == 3)
         #expect(request.completionBatchSize == 2)
+        #expect(request.accelerationMode == .speculativeDecode)
+        #expect(request.draftModelID == "melix-dev-draft")
+        #expect(request.numDraftTokens == 6)
         #expect(session.servingDefaults.temperature == 0.33)
         #expect(session.servingDefaults.topP == 0.92)
         #expect(session.servingDefaults.maxTokens == 384)
@@ -103,6 +109,9 @@ struct RuntimeViewModelTests {
         #expect(session.servingDefaults.maxConcurrentRequests == 5)
         #expect(session.servingDefaults.prefillBatchSize == 3)
         #expect(session.servingDefaults.completionBatchSize == 2)
+        #expect(session.servingDefaults.accelerationMode == "speculative_decode")
+        #expect(session.servingDefaults.draftModelID == "melix-dev-draft")
+        #expect(session.servingDefaults.numDraftTokens == 6)
         #expect(session.servingDefaults.sourceText == "Operator Override")
         #expect(await metrics.snapshot()["menu.serving_defaults_apply_ms"] != nil)
     }
@@ -133,6 +142,9 @@ struct RuntimeViewModelTests {
         viewModel.updateSelectedServerSessionConcurrentProcessingEnabled(false)
         viewModel.updateSelectedServerSessionPrefillBatchSize(4)
         viewModel.updateSelectedServerSessionCompletionBatchSize(3)
+        viewModel.updateSelectedServerSessionAccelerationMode("speculative_decode")
+        viewModel.updateSelectedServerSessionDraftModelID("melix-dev-draft")
+        viewModel.updateSelectedServerSessionNumDraftTokens(7)
 
         viewModel.applySelectedServerServingDefaultsFromUI()
 
@@ -153,6 +165,9 @@ struct RuntimeViewModelTests {
         #expect(request.concurrentProcessingEnabled == false)
         #expect(request.prefillBatchSize == 4)
         #expect(request.completionBatchSize == 3)
+        #expect(request.accelerationMode == .speculativeDecode)
+        #expect(request.draftModelID == "melix-dev-draft")
+        #expect(request.numDraftTokens == 7)
     }
 
     @Test("applySelectedServerServingDefaults updates an existing projected summary in the fake control plane client")
@@ -175,6 +190,7 @@ struct RuntimeViewModelTests {
         servingDefaults.requestedConcurrentProcessingEnabled = true
         servingDefaults.requestedPrefillBatchSize = 2
         servingDefaults.requestedCompletionBatchSize = 2
+        servingDefaults.requestedAccelerationMode = .baseline
         servingDefaults.effectiveTemperature = 0.7
         servingDefaults.effectiveTopP = 1.0
         servingDefaults.effectiveMaxTokens = 256
@@ -197,6 +213,9 @@ struct RuntimeViewModelTests {
         viewModel.updateSelectedServerSessionConcurrentProcessingEnabled(true)
         viewModel.updateSelectedServerSessionPrefillBatchSize(3)
         viewModel.updateSelectedServerSessionCompletionBatchSize(2)
+        viewModel.updateSelectedServerSessionAccelerationMode("speculative_decode")
+        viewModel.updateSelectedServerSessionDraftModelID("melix-dev-draft")
+        viewModel.updateSelectedServerSessionNumDraftTokens(6)
 
         await viewModel.applySelectedServerServingDefaults()
 
@@ -214,6 +233,12 @@ struct RuntimeViewModelTests {
         #expect(session.servingDefaults.effectiveConcurrentProcessingEnabled == true)
         #expect(session.servingDefaults.effectivePrefillBatchSize == 2)
         #expect(session.servingDefaults.effectiveCompletionBatchSize == 2)
+        #expect(session.servingDefaults.accelerationMode == "speculative_decode")
+        #expect(session.servingDefaults.draftModelID == "melix-dev-draft")
+        #expect(session.servingDefaults.numDraftTokens == 6)
+        #expect(session.servingDefaults.effectiveAccelerationMode == "speculative_decode")
+        #expect(session.servingDefaults.effectiveDraftModelID == "melix-dev-draft")
+        #expect(session.servingDefaults.effectiveNumDraftTokens == 6)
         #expect(session.servingDefaults.sourceText == "Operator Override")
         #expect(session.servingDefaults.modelOverrideApplied == false)
     }
@@ -401,11 +426,17 @@ struct RuntimeViewModelTests {
         servingDefaults.requestedMaxTokens = 400
         servingDefaults.requestedStreamIntervalTokens = 2
         servingDefaults.requestedMaxConcurrentRequests = 5
+        servingDefaults.requestedAccelerationMode = .speculativeDecode
+        servingDefaults.requestedDraftModelID = "melix-dev-draft"
+        servingDefaults.requestedNumDraftTokens = 6
         servingDefaults.effectiveTemperature = 0.2
         servingDefaults.effectiveTopP = 0.88
         servingDefaults.effectiveMaxTokens = 512
         servingDefaults.effectiveStreamIntervalTokens = 2
         servingDefaults.effectiveMaxConcurrentRequests = 5
+        servingDefaults.effectiveAccelerationMode = .speculativeDecode
+        servingDefaults.effectiveDraftModelID = "melix-dev-draft"
+        servingDefaults.effectiveNumDraftTokens = 6
         servingDefaults.source = .operatorOverride
         servingDefaults.modelOverrideApplied = true
         var projectedSnapshot = snapshot
@@ -421,9 +452,15 @@ struct RuntimeViewModelTests {
         #expect(session.servingDefaults.maxTokens == 400)
         #expect(session.servingDefaults.streamIntervalTokens == 2)
         #expect(session.servingDefaults.maxConcurrentRequests == 5)
+        #expect(session.servingDefaults.accelerationMode == "speculative_decode")
+        #expect(session.servingDefaults.draftModelID == "melix-dev-draft")
+        #expect(session.servingDefaults.numDraftTokens == 6)
         #expect(session.servingDefaults.effectiveTemperature == 0.2)
         #expect(session.servingDefaults.effectiveTopP == 0.88)
         #expect(session.servingDefaults.effectiveMaxTokens == 512)
+        #expect(session.servingDefaults.effectiveAccelerationMode == "speculative_decode")
+        #expect(session.servingDefaults.effectiveDraftModelID == "melix-dev-draft")
+        #expect(session.servingDefaults.effectiveNumDraftTokens == 6)
         #expect(session.servingDefaults.sourceText == "Operator Override")
         #expect(session.servingDefaults.modelOverrideApplied)
     }
@@ -448,6 +485,8 @@ struct RuntimeViewModelTests {
         #expect(session.servingDefaults.maxTokens == 256)
         #expect(session.servingDefaults.streamIntervalTokens == 1)
         #expect(session.servingDefaults.maxConcurrentRequests == 4)
+        #expect(session.servingDefaults.accelerationMode == "baseline")
+        #expect(session.servingDefaults.numDraftTokens == 0)
         #expect(session.servingDefaults.sourceText == "Built-in Defaults")
         #expect(session.servingDefaults.modelOverrideApplied == false)
     }

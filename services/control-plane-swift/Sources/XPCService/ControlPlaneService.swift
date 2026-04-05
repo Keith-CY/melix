@@ -161,6 +161,7 @@ public actor ControlPlaneService {
     private let gatewayServingDefaultsStore: GatewayServingDefaultsStore
     private let gatewayRuntimeBinding: GatewayRuntimeBinding
     private let persistentAuthSessionStore: PersistentAuthSessionStore?
+    private let gatewaySupportsSpeculativeDefaults: Bool
 
     public init(
         serverVersion: String = "0.1.0",
@@ -186,7 +187,9 @@ public actor ControlPlaneService {
         gatewayRuntimeBinding: GatewayRuntimeBinding = GatewayRuntimeBinding(host: "127.0.0.1", port: 11_434),
         audioAssetManager: AudioAssetManager = AudioAssetManager(),
         gatewayAccessPolicyStore: GatewayAccessPolicyStore? = nil,
-        persistentAuthSessionStore: PersistentAuthSessionStore? = nil
+        persistentAuthSessionStore: PersistentAuthSessionStore? = nil,
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        gatewaySupportsSpeculativeDefaults: Bool? = nil
     ) {
         let resolvedSchedulerReadModel = schedulerReadModel ?? SchedulerReadModel(
             metricsStore: metricsStore,
@@ -236,6 +239,8 @@ public actor ControlPlaneService {
         self.gatewayServingDefaultsStore = gatewayServingDefaultsStore ?? GatewayServingDefaultsStore()
         self.gatewayRuntimeBinding = gatewayRuntimeBinding
         self.persistentAuthSessionStore = persistentAuthSessionStore
+        self.gatewaySupportsSpeculativeDefaults = gatewaySupportsSpeculativeDefaults
+            ?? Self.resolveGatewaySpeculativeDefaultsSupport(environment: environment)
     }
 
     public func handshake(
@@ -1469,11 +1474,18 @@ public actor ControlPlaneService {
         }
 
         do {
+            try await validateServingDefaults(command: command)
             try await gatewayServingDefaultsStore.apply(command: command)
             await metricsStore.set(
                 Date().timeIntervalSince(startedAt) * 1000,
                 forKey: "gateway.serving_defaults_apply_ms"
             )
+            if normalizedServingDefaultsAccelerationMode(command.accelerationMode) == .speculativeDecode {
+                await metricsStore.set(
+                    Date().timeIntervalSince(startedAt) * 1000,
+                    forKey: "gateway.speculative_config_apply_ms"
+                )
+            }
             var reply = Melix_Controlplane_V1_ServerReply()
             reply.snapshot = await buildSnapshot()
             await publishServerStateChanged(
@@ -1491,6 +1503,44 @@ public actor ControlPlaneService {
                 code: "serving_defaults_persist_failed",
                 message: "Serving defaults persistence failed: \(error)"
             )
+        }
+    }
+
+    private func validateServingDefaults(
+        command: Melix_Controlplane_V1_ApplyServingDefaults
+    ) async throws {
+        let accelerationMode = normalizedServingDefaultsAccelerationMode(command.accelerationMode)
+        guard accelerationMode == .baseline || accelerationMode == .speculativeDecode else {
+            throw ServingDefaultsValidationError.invalidAccelerationMode
+        }
+        guard accelerationMode == .speculativeDecode else {
+            return
+        }
+        guard gatewaySupportsSpeculativeDefaults else {
+            throw ServingDefaultsValidationError.speculativeBackendUnsupported
+        }
+
+        let draftModelID = command.draftModelID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !draftModelID.isEmpty else {
+            throw ServingDefaultsValidationError.missingDraftModelID
+        }
+        guard command.numDraftTokens > 0 else {
+            throw ServingDefaultsValidationError.invalidNumDraftTokens
+        }
+
+        let gatewayConfigSummary = await gatewayConfigStore.summary(
+            serverSessionIDs: [command.serverSessionID],
+            runtimeBinding: gatewayRuntimeBinding,
+            fallbackServedModelID: ModelCatalog.devTextModel().modelID
+        )
+        let servedModelID = gatewayConfigSummary.listeners.first(where: { $0.serverSessionID == command.serverSessionID })?.servedModelID
+            ?? ModelCatalog.devTextModel().modelID
+
+        guard let servedModel = await modelCatalog.model(id: servedModelID), modelSupportsSpeculativeDefaults(servedModel) else {
+            throw ServingDefaultsValidationError.speculativeServedModelUnsupported
+        }
+        guard let draftModel = await modelCatalog.model(id: draftModelID), modelSupportsSpeculativeDefaults(draftModel) else {
+            throw ServingDefaultsValidationError.speculativeDraftModelUnsupported
         }
     }
 
@@ -2999,6 +3049,33 @@ public actor ControlPlaneService {
         default:
             return .baseline
         }
+    }
+
+    private func normalizedServingDefaultsAccelerationMode(
+        _ mode: Melix_Controlplane_V1_AccelerationMode
+    ) -> Melix_Controlplane_V1_AccelerationMode {
+        switch mode {
+        case .speculativeDecode:
+            return .speculativeDecode
+        case .baseline, .unspecified:
+            return .baseline
+        default:
+            return mode
+        }
+    }
+
+    private func modelSupportsSpeculativeDefaults(
+        _ model: Melix_Controlplane_V1_ModelSummary
+    ) -> Bool {
+        model.capabilityClass == .modelCapabilityText && model.routeClass == .workerRouteSwiftText
+    }
+
+    private static func resolveGatewaySpeculativeDefaultsSupport(
+        environment: [String: String]
+    ) -> Bool {
+        (environment["MELIX_SWIFT_TEXT_WORKER_BACKEND_MODE"] ?? "swift")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased() == "deterministic"
     }
 
     private func makeErrorStatus(

@@ -359,7 +359,10 @@ struct ControlPlaneXPCClientTests {
                 maxConcurrentRequests: 4,
                 concurrentProcessingEnabled: true,
                 prefillBatchSize: 2,
-                completionBatchSize: 2
+                completionBatchSize: 2,
+                accelerationMode: .baseline,
+                draftModelID: "",
+                numDraftTokens: 0
             )
             Issue.record("Expected the protocol default applyServerSessionServingDefaults implementation to throw.")
         } catch let error as ControlPlaneXPCClientError {
@@ -772,6 +775,9 @@ struct ControlPlaneXPCClientTests {
         servingDefaults.requestedConcurrentProcessingEnabled = true
         servingDefaults.requestedPrefillBatchSize = 3
         servingDefaults.requestedCompletionBatchSize = 2
+        servingDefaults.requestedAccelerationMode = .speculativeDecode
+        servingDefaults.requestedDraftModelID = "melix-dev-draft"
+        servingDefaults.requestedNumDraftTokens = 6
         response.server.snapshot.servingDefaults.sessions = [servingDefaults]
         await service.setExecuteResponse(response)
         let client = LocalControlPlaneXPCClient(service: service)
@@ -785,7 +791,10 @@ struct ControlPlaneXPCClientTests {
             maxConcurrentRequests: 5,
             concurrentProcessingEnabled: true,
             prefillBatchSize: 3,
-            completionBatchSize: 2
+            completionBatchSize: 2,
+            accelerationMode: .speculativeDecode,
+            draftModelID: "melix-dev-draft",
+            numDraftTokens: 6
         )
         let request = try #require(await service.lastExecuteRequest)
 
@@ -801,6 +810,9 @@ struct ControlPlaneXPCClientTests {
         #expect(request.server.applyServingDefaults.concurrentProcessingEnabled == true)
         #expect(request.server.applyServingDefaults.prefillBatchSize == 3)
         #expect(request.server.applyServingDefaults.completionBatchSize == 2)
+        #expect(request.server.applyServingDefaults.accelerationMode == .speculativeDecode)
+        #expect(request.server.applyServingDefaults.draftModelID == "melix-dev-draft")
+        #expect(request.server.applyServingDefaults.numDraftTokens == 6)
         #expect(snapshot.servingDefaults.sessions.first?.requestedTemperature == 0.33)
     }
 

@@ -2779,6 +2779,12 @@ public struct Melix_Controlplane_V1_ApplyServingDefaults: Sendable {
 
   public var completionBatchSize: UInt32 = 0
 
+  public var accelerationMode: Melix_Controlplane_V1_AccelerationMode = .unspecified
+
+  public var draftModelID: String = String()
+
+  public var numDraftTokens: UInt32 = 0
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -4432,6 +4438,36 @@ public struct Melix_Controlplane_V1_ServingDefaultsSessionSummary: @unchecked Se
   public var effectiveCompletionBatchSize: UInt32 {
     get {_storage._effectiveCompletionBatchSize}
     set {_uniqueStorage()._effectiveCompletionBatchSize = newValue}
+  }
+
+  public var requestedAccelerationMode: Melix_Controlplane_V1_AccelerationMode {
+    get {_storage._requestedAccelerationMode}
+    set {_uniqueStorage()._requestedAccelerationMode = newValue}
+  }
+
+  public var requestedDraftModelID: String {
+    get {_storage._requestedDraftModelID}
+    set {_uniqueStorage()._requestedDraftModelID = newValue}
+  }
+
+  public var requestedNumDraftTokens: UInt32 {
+    get {_storage._requestedNumDraftTokens}
+    set {_uniqueStorage()._requestedNumDraftTokens = newValue}
+  }
+
+  public var effectiveAccelerationMode: Melix_Controlplane_V1_AccelerationMode {
+    get {_storage._effectiveAccelerationMode}
+    set {_uniqueStorage()._effectiveAccelerationMode = newValue}
+  }
+
+  public var effectiveDraftModelID: String {
+    get {_storage._effectiveDraftModelID}
+    set {_uniqueStorage()._effectiveDraftModelID = newValue}
+  }
+
+  public var effectiveNumDraftTokens: UInt32 {
+    get {_storage._effectiveNumDraftTokens}
+    set {_uniqueStorage()._effectiveNumDraftTokens = newValue}
   }
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
@@ -8879,7 +8915,7 @@ extension Melix_Controlplane_V1_ApplyGatewayConfig: SwiftProtobuf.Message, Swift
 
 extension Melix_Controlplane_V1_ApplyServingDefaults: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ApplyServingDefaults"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}server_session_id\0\u{1}temperature\0\u{3}top_p\0\u{3}max_tokens\0\u{3}stream_interval_tokens\0\u{3}max_concurrent_requests\0\u{3}concurrent_processing_enabled\0\u{3}prefill_batch_size\0\u{3}completion_batch_size\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}server_session_id\0\u{1}temperature\0\u{3}top_p\0\u{3}max_tokens\0\u{3}stream_interval_tokens\0\u{3}max_concurrent_requests\0\u{3}concurrent_processing_enabled\0\u{3}prefill_batch_size\0\u{3}completion_batch_size\0\u{3}acceleration_mode\0\u{3}draft_model_id\0\u{3}num_draft_tokens\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -8896,6 +8932,9 @@ extension Melix_Controlplane_V1_ApplyServingDefaults: SwiftProtobuf.Message, Swi
       case 7: try { try decoder.decodeSingularBoolField(value: &self.concurrentProcessingEnabled) }()
       case 8: try { try decoder.decodeSingularUInt32Field(value: &self.prefillBatchSize) }()
       case 9: try { try decoder.decodeSingularUInt32Field(value: &self.completionBatchSize) }()
+      case 10: try { try decoder.decodeSingularEnumField(value: &self.accelerationMode) }()
+      case 11: try { try decoder.decodeSingularStringField(value: &self.draftModelID) }()
+      case 12: try { try decoder.decodeSingularUInt32Field(value: &self.numDraftTokens) }()
       default: break
       }
     }
@@ -8929,6 +8968,15 @@ extension Melix_Controlplane_V1_ApplyServingDefaults: SwiftProtobuf.Message, Swi
     if self.completionBatchSize != 0 {
       try visitor.visitSingularUInt32Field(value: self.completionBatchSize, fieldNumber: 9)
     }
+    if self.accelerationMode != .unspecified {
+      try visitor.visitSingularEnumField(value: self.accelerationMode, fieldNumber: 10)
+    }
+    if !self.draftModelID.isEmpty {
+      try visitor.visitSingularStringField(value: self.draftModelID, fieldNumber: 11)
+    }
+    if self.numDraftTokens != 0 {
+      try visitor.visitSingularUInt32Field(value: self.numDraftTokens, fieldNumber: 12)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -8942,6 +8990,9 @@ extension Melix_Controlplane_V1_ApplyServingDefaults: SwiftProtobuf.Message, Swi
     if lhs.concurrentProcessingEnabled != rhs.concurrentProcessingEnabled {return false}
     if lhs.prefillBatchSize != rhs.prefillBatchSize {return false}
     if lhs.completionBatchSize != rhs.completionBatchSize {return false}
+    if lhs.accelerationMode != rhs.accelerationMode {return false}
+    if lhs.draftModelID != rhs.draftModelID {return false}
+    if lhs.numDraftTokens != rhs.numDraftTokens {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -12392,7 +12443,7 @@ extension Melix_Controlplane_V1_GatewayConfigSummary: SwiftProtobuf.Message, Swi
 
 extension Melix_Controlplane_V1_ServingDefaultsSessionSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ServingDefaultsSessionSummary"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}server_session_id\0\u{3}served_model_id\0\u{3}requested_temperature\0\u{3}requested_top_p\0\u{3}requested_max_tokens\0\u{3}requested_stream_interval_tokens\0\u{3}requested_max_concurrent_requests\0\u{3}effective_temperature\0\u{3}effective_top_p\0\u{3}effective_max_tokens\0\u{3}effective_stream_interval_tokens\0\u{3}effective_max_concurrent_requests\0\u{1}source\0\u{3}model_override_applied\0\u{3}updated_at_unix_ms\0\u{3}requested_concurrent_processing_enabled\0\u{3}requested_prefill_batch_size\0\u{3}requested_completion_batch_size\0\u{3}effective_concurrent_processing_enabled\0\u{3}effective_prefill_batch_size\0\u{3}effective_completion_batch_size\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}server_session_id\0\u{3}served_model_id\0\u{3}requested_temperature\0\u{3}requested_top_p\0\u{3}requested_max_tokens\0\u{3}requested_stream_interval_tokens\0\u{3}requested_max_concurrent_requests\0\u{3}effective_temperature\0\u{3}effective_top_p\0\u{3}effective_max_tokens\0\u{3}effective_stream_interval_tokens\0\u{3}effective_max_concurrent_requests\0\u{1}source\0\u{3}model_override_applied\0\u{3}updated_at_unix_ms\0\u{3}requested_concurrent_processing_enabled\0\u{3}requested_prefill_batch_size\0\u{3}requested_completion_batch_size\0\u{3}effective_concurrent_processing_enabled\0\u{3}effective_prefill_batch_size\0\u{3}effective_completion_batch_size\0\u{3}requested_acceleration_mode\0\u{3}requested_draft_model_id\0\u{3}requested_num_draft_tokens\0\u{3}effective_acceleration_mode\0\u{3}effective_draft_model_id\0\u{3}effective_num_draft_tokens\0")
 
   fileprivate class _StorageClass {
     var _serverSessionID: String = String()
@@ -12416,6 +12467,12 @@ extension Melix_Controlplane_V1_ServingDefaultsSessionSummary: SwiftProtobuf.Mes
     var _effectiveConcurrentProcessingEnabled: Bool = false
     var _effectivePrefillBatchSize: UInt32 = 0
     var _effectiveCompletionBatchSize: UInt32 = 0
+    var _requestedAccelerationMode: Melix_Controlplane_V1_AccelerationMode = .unspecified
+    var _requestedDraftModelID: String = String()
+    var _requestedNumDraftTokens: UInt32 = 0
+    var _effectiveAccelerationMode: Melix_Controlplane_V1_AccelerationMode = .unspecified
+    var _effectiveDraftModelID: String = String()
+    var _effectiveNumDraftTokens: UInt32 = 0
 
       // This property is used as the initial default value for new instances of the type.
       // The type itself is protecting the reference to its storage via CoW semantics.
@@ -12447,6 +12504,12 @@ extension Melix_Controlplane_V1_ServingDefaultsSessionSummary: SwiftProtobuf.Mes
       _effectiveConcurrentProcessingEnabled = source._effectiveConcurrentProcessingEnabled
       _effectivePrefillBatchSize = source._effectivePrefillBatchSize
       _effectiveCompletionBatchSize = source._effectiveCompletionBatchSize
+      _requestedAccelerationMode = source._requestedAccelerationMode
+      _requestedDraftModelID = source._requestedDraftModelID
+      _requestedNumDraftTokens = source._requestedNumDraftTokens
+      _effectiveAccelerationMode = source._effectiveAccelerationMode
+      _effectiveDraftModelID = source._effectiveDraftModelID
+      _effectiveNumDraftTokens = source._effectiveNumDraftTokens
     }
   }
 
@@ -12486,6 +12549,12 @@ extension Melix_Controlplane_V1_ServingDefaultsSessionSummary: SwiftProtobuf.Mes
         case 19: try { try decoder.decodeSingularBoolField(value: &_storage._effectiveConcurrentProcessingEnabled) }()
         case 20: try { try decoder.decodeSingularUInt32Field(value: &_storage._effectivePrefillBatchSize) }()
         case 21: try { try decoder.decodeSingularUInt32Field(value: &_storage._effectiveCompletionBatchSize) }()
+        case 22: try { try decoder.decodeSingularEnumField(value: &_storage._requestedAccelerationMode) }()
+        case 23: try { try decoder.decodeSingularStringField(value: &_storage._requestedDraftModelID) }()
+        case 24: try { try decoder.decodeSingularUInt32Field(value: &_storage._requestedNumDraftTokens) }()
+        case 25: try { try decoder.decodeSingularEnumField(value: &_storage._effectiveAccelerationMode) }()
+        case 26: try { try decoder.decodeSingularStringField(value: &_storage._effectiveDraftModelID) }()
+        case 27: try { try decoder.decodeSingularUInt32Field(value: &_storage._effectiveNumDraftTokens) }()
         default: break
         }
       }
@@ -12557,6 +12626,24 @@ extension Melix_Controlplane_V1_ServingDefaultsSessionSummary: SwiftProtobuf.Mes
       if _storage._effectiveCompletionBatchSize != 0 {
         try visitor.visitSingularUInt32Field(value: _storage._effectiveCompletionBatchSize, fieldNumber: 21)
       }
+      if _storage._requestedAccelerationMode != .unspecified {
+        try visitor.visitSingularEnumField(value: _storage._requestedAccelerationMode, fieldNumber: 22)
+      }
+      if !_storage._requestedDraftModelID.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._requestedDraftModelID, fieldNumber: 23)
+      }
+      if _storage._requestedNumDraftTokens != 0 {
+        try visitor.visitSingularUInt32Field(value: _storage._requestedNumDraftTokens, fieldNumber: 24)
+      }
+      if _storage._effectiveAccelerationMode != .unspecified {
+        try visitor.visitSingularEnumField(value: _storage._effectiveAccelerationMode, fieldNumber: 25)
+      }
+      if !_storage._effectiveDraftModelID.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._effectiveDraftModelID, fieldNumber: 26)
+      }
+      if _storage._effectiveNumDraftTokens != 0 {
+        try visitor.visitSingularUInt32Field(value: _storage._effectiveNumDraftTokens, fieldNumber: 27)
+      }
     }
     try unknownFields.traverse(visitor: &visitor)
   }
@@ -12587,6 +12674,12 @@ extension Melix_Controlplane_V1_ServingDefaultsSessionSummary: SwiftProtobuf.Mes
         if _storage._effectiveConcurrentProcessingEnabled != rhs_storage._effectiveConcurrentProcessingEnabled {return false}
         if _storage._effectivePrefillBatchSize != rhs_storage._effectivePrefillBatchSize {return false}
         if _storage._effectiveCompletionBatchSize != rhs_storage._effectiveCompletionBatchSize {return false}
+        if _storage._requestedAccelerationMode != rhs_storage._requestedAccelerationMode {return false}
+        if _storage._requestedDraftModelID != rhs_storage._requestedDraftModelID {return false}
+        if _storage._requestedNumDraftTokens != rhs_storage._requestedNumDraftTokens {return false}
+        if _storage._effectiveAccelerationMode != rhs_storage._effectiveAccelerationMode {return false}
+        if _storage._effectiveDraftModelID != rhs_storage._effectiveDraftModelID {return false}
+        if _storage._effectiveNumDraftTokens != rhs_storage._effectiveNumDraftTokens {return false}
         return true
       }
       if !storagesAreEqual {return false}

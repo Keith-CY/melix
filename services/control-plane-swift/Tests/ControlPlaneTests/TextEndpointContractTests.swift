@@ -1242,7 +1242,10 @@ struct TextEndpointContractTests {
                 maxConcurrentRequests: 5,
                 concurrentProcessingEnabled: true,
                 prefillBatchSize: 3,
-                completionBatchSize: 2
+                completionBatchSize: 2,
+                accelerationMode: .speculativeDecode,
+                draftModelID: "melix-dev-draft",
+                numDraftTokens: 6
             )
         )
 
@@ -1254,6 +1257,9 @@ struct TextEndpointContractTests {
         #expect(translated.workerRequest.execution.ext["melix.gateway.concurrent_processing"] == "true")
         #expect(translated.workerRequest.execution.ext["melix.gateway.prefill_batch_size"] == "3")
         #expect(translated.workerRequest.execution.ext["melix.gateway.completion_batch_size"] == "2")
+        #expect(translated.workerRequest.execution.ext["melix.gateway.acceleration_mode"] == "speculative_decode")
+        #expect(translated.workerRequest.execution.ext["melix.gateway.draft_model_id"] == "melix-dev-draft")
+        #expect(translated.workerRequest.execution.ext["melix.gateway.num_draft_tokens"] == "6")
     }
 
     @Test("model generation config overrides gateway serving defaults while admission metadata stays gateway-owned")

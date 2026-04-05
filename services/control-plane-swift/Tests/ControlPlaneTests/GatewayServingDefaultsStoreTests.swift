@@ -46,6 +46,12 @@ struct GatewayServingDefaultsStoreTests {
         #expect(session.effectiveConcurrentProcessingEnabled)
         #expect(session.effectivePrefillBatchSize == 2)
         #expect(session.effectiveCompletionBatchSize == 2)
+        #expect(session.requestedAccelerationMode == .baseline)
+        #expect(session.requestedDraftModelID.isEmpty)
+        #expect(session.requestedNumDraftTokens == 0)
+        #expect(session.effectiveAccelerationMode == .baseline)
+        #expect(session.effectiveDraftModelID.isEmpty)
+        #expect(session.effectiveNumDraftTokens == 0)
         #expect(session.source == .builtInDefaults)
         #expect(session.modelOverrideApplied)
     }
@@ -74,14 +80,19 @@ struct GatewayServingDefaultsStoreTests {
         command.concurrentProcessingEnabled = true
         command.prefillBatchSize = 3
         command.completionBatchSize = 2
+        command.accelerationMode = .speculativeDecode
+        command.draftModelID = "melix-dev-draft"
+        command.numDraftTokens = 6
         try await store.apply(command: command)
 
         let reloaded = GatewayServingDefaultsStore(storeURL: storeURL, defaults: [:])
+        var modelSettings = Melix_Controlplane_V1_ModelSettings()
+        modelSettings.defaultAccelerationMode = .unspecified
         let requested = await reloaded.requestedDefaults()
         let summary = await reloaded.summary(
             serverSessionIDs: [ServerSessionRuntimeStore.defaultServerSessionID],
-            servedModelIDs: [:],
-            modelSettingsByModelID: [:]
+            servedModelIDs: [ServerSessionRuntimeStore.defaultServerSessionID: "melix-dev-text"],
+            modelSettingsByModelID: ["melix-dev-text": modelSettings]
         )
         let session = try #require(summary.sessions.first)
 
@@ -93,14 +104,23 @@ struct GatewayServingDefaultsStoreTests {
         #expect(requested.concurrentProcessingEnabled == true)
         #expect(requested.prefillBatchSize == 3)
         #expect(requested.completionBatchSize == 2)
+        #expect(requested.accelerationMode == .speculativeDecode)
+        #expect(requested.draftModelID == "melix-dev-draft")
+        #expect(requested.numDraftTokens == 6)
         #expect(session.source == .operatorOverride)
         #expect(session.updatedAtUnixMs == 1_717_181_900_000)
         #expect(session.requestedConcurrentProcessingEnabled)
         #expect(session.requestedPrefillBatchSize == 3)
         #expect(session.requestedCompletionBatchSize == 2)
+        #expect(session.requestedAccelerationMode == .speculativeDecode)
+        #expect(session.requestedDraftModelID == "melix-dev-draft")
+        #expect(session.requestedNumDraftTokens == 6)
         #expect(session.effectiveMaxConcurrentRequests == 2)
         #expect(session.effectivePrefillBatchSize == 2)
         #expect(session.effectiveCompletionBatchSize == 2)
+        #expect(session.effectiveAccelerationMode == .speculativeDecode)
+        #expect(session.effectiveDraftModelID == "melix-dev-draft")
+        #expect(session.effectiveNumDraftTokens == 6)
     }
 
     @Test("apply rejects invalid typed payload values")
@@ -183,5 +203,51 @@ struct GatewayServingDefaultsStoreTests {
         #expect(session.effectiveMaxConcurrentRequests == 1)
         #expect(session.effectivePrefillBatchSize == 1)
         #expect(session.effectiveCompletionBatchSize == 1)
+    }
+
+    @Test("summary projects model acceleration overrides over speculative gateway defaults")
+    func summaryProjectsModelAccelerationOverridesOverSpeculativeGatewayDefaults() async throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-serving-defaults-accel-override-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let store = GatewayServingDefaultsStore(
+            storeURL: temporaryRoot.appendingPathComponent("gateway-serving-defaults.json"),
+            defaults: [:]
+        )
+
+        var command = Melix_Controlplane_V1_ApplyServingDefaults()
+        command.serverSessionID = ServerSessionRuntimeStore.defaultServerSessionID
+        command.temperature = 0.4
+        command.topP = 0.9
+        command.maxTokens = 256
+        command.streamIntervalTokens = 2
+        command.maxConcurrentRequests = 4
+        command.concurrentProcessingEnabled = true
+        command.prefillBatchSize = 2
+        command.completionBatchSize = 2
+        command.accelerationMode = .speculativeDecode
+        command.draftModelID = "melix-dev-draft"
+        command.numDraftTokens = 6
+        try await store.apply(command: command)
+
+        var modelSettings = Melix_Controlplane_V1_ModelSettings()
+        modelSettings.defaultAccelerationMode = .baseline
+
+        let summary = await store.summary(
+            serverSessionIDs: [ServerSessionRuntimeStore.defaultServerSessionID],
+            servedModelIDs: [ServerSessionRuntimeStore.defaultServerSessionID: "melix-dev-text"],
+            modelSettingsByModelID: ["melix-dev-text": modelSettings]
+        )
+        let session = try #require(summary.sessions.first)
+
+        #expect(session.requestedAccelerationMode == .speculativeDecode)
+        #expect(session.requestedDraftModelID == "melix-dev-draft")
+        #expect(session.requestedNumDraftTokens == 6)
+        #expect(session.effectiveAccelerationMode == .baseline)
+        #expect(session.effectiveDraftModelID.isEmpty)
+        #expect(session.effectiveNumDraftTokens == 0)
+        #expect(session.modelOverrideApplied)
     }
 }

@@ -487,6 +487,11 @@ private struct DesktopServerSessionEditor: View {
     @Binding var showsInspector: Bool
     @Binding var showsAdvanced: Bool
 
+    private let servingAccelerationModeOptions = [
+        ("Baseline", "baseline"),
+        ("Speculative Decode", "speculative_decode"),
+    ]
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
@@ -677,13 +682,46 @@ private struct DesktopServerSessionEditor: View {
                                     .textFieldStyle(.roundedBorder)
                                 }
 
+                                Picker(
+                                    "Acceleration",
+                                    selection: Binding(
+                                        get: { viewModel.selectedServerSession?.servingDefaults.accelerationMode ?? "baseline" },
+                                        set: { viewModel.updateSelectedServerSessionAccelerationMode($0) }
+                                    )
+                                ) {
+                                    ForEach(servingAccelerationModeOptions, id: \.1) { option in
+                                        Text(option.0).tag(option.1)
+                                    }
+                                }
+
+                                HStack {
+                                    TextField(
+                                        "Draft model id",
+                                        text: Binding(
+                                            get: { viewModel.selectedServerSession?.servingDefaults.draftModelID ?? "" },
+                                            set: { viewModel.updateSelectedServerSessionDraftModelID($0) }
+                                        )
+                                    )
+                                    .textFieldStyle(.roundedBorder)
+
+                                    TextField(
+                                        "Num draft tokens",
+                                        value: Binding(
+                                            get: { viewModel.selectedServerSession?.servingDefaults.numDraftTokens ?? 0 },
+                                            set: { viewModel.updateSelectedServerSessionNumDraftTokens($0) }
+                                        ),
+                                        format: .number
+                                    )
+                                    .textFieldStyle(.roundedBorder)
+                                }
+
                                 HStack {
                                     Button("Apply Serving Defaults", action: viewModel.applySelectedServerServingDefaultsFromUI)
                                     .buttonStyle(.bordered)
 
                                     let servingDefaults = session.servingDefaults
                                     Text(
-                                        "Source: \(servingDefaults.sourceText) • Effective temp \(servingDefaults.effectiveTemperature, format: .number.precision(.fractionLength(2))) • top_p \(servingDefaults.effectiveTopP, format: .number.precision(.fractionLength(2))) • max \(servingDefaults.effectiveMaxTokens) • stream \(servingDefaults.effectiveStreamIntervalTokens) • concurrent \(servingDefaults.effectiveConcurrentProcessingEnabled ? "on" : "off") • sequences \(servingDefaults.effectiveMaxConcurrentRequests) • prefill \(servingDefaults.effectivePrefillBatchSize) • completion \(servingDefaults.effectiveCompletionBatchSize)\(servingDefaults.modelOverrideApplied ? " • model override applied" : "")"
+                                        "Source: \(servingDefaults.sourceText) • Effective temp \(servingDefaults.effectiveTemperature, format: .number.precision(.fractionLength(2))) • top_p \(servingDefaults.effectiveTopP, format: .number.precision(.fractionLength(2))) • max \(servingDefaults.effectiveMaxTokens) • stream \(servingDefaults.effectiveStreamIntervalTokens) • concurrent \(servingDefaults.effectiveConcurrentProcessingEnabled ? "on" : "off") • sequences \(servingDefaults.effectiveMaxConcurrentRequests) • prefill \(servingDefaults.effectivePrefillBatchSize) • completion \(servingDefaults.effectiveCompletionBatchSize) • accel \(servingDefaults.effectiveAccelerationMode)\(servingDefaults.effectiveDraftModelID.isEmpty ? "" : " • draft \(servingDefaults.effectiveDraftModelID)")\(servingDefaults.effectiveNumDraftTokens > 0 ? " • draft tokens \(servingDefaults.effectiveNumDraftTokens)" : "")\(servingDefaults.modelOverrideApplied ? " • model override applied" : "")"
                                     )
                                     .font(.caption)
                                     .foregroundStyle(.secondary)

@@ -42,6 +42,11 @@ class LiveMelixStack:
         self.control_plane_metrics_path = Path("/tmp") / f"melix-control-plane-{token}.json"
         self.swift_text_worker_metrics_path = Path("/tmp") / f"melix-swift-metrics-{token}.json"
         self.python_worker_metrics_path = Path("/tmp") / f"melix-python-metrics-{token}.json"
+        self.runtime_state_root = Path("/tmp") / f"melix-home-{token}"
+        self.gateway_config_store_path = self.runtime_state_root / "state" / "gateway-config.json"
+        self.gateway_serving_defaults_store_path = (
+            self.runtime_state_root / "state" / "gateway-serving-defaults.json"
+        )
         self.http_port = reserve_port()
         self.swift_text_worker_stdout_path = Path("/tmp") / f"melix-swift-worker-{token}.stdout.log"
         self.swift_text_worker_stderr_path = Path("/tmp") / f"melix-swift-worker-{token}.stderr.log"
@@ -54,6 +59,7 @@ class LiveMelixStack:
         self.swift_backend_mode = swift_backend_mode
         self.python_backend_mode = python_backend_mode
         self.environment_overrides = dict(environment_overrides or {})
+        self.cleanup_runtime_state_root = "MELIX_HOME" not in self.environment_overrides
         self.should_start_swift_text_worker = start_swift_text_worker
         self.should_start_python_worker = start_python_worker
         self.swift_text_worker: subprocess.Popen[str] | None = None
@@ -163,6 +169,14 @@ class LiveMelixStack:
         )
         control_plane_env = os.environ.copy()
         control_plane_env.update(self.environment_overrides)
+        if "MELIX_HOME" not in control_plane_env:
+            control_plane_env["MELIX_HOME"] = os.fspath(self.runtime_state_root)
+        if "MELIX_GATEWAY_CONFIG_STORE_PATH" not in control_plane_env:
+            control_plane_env["MELIX_GATEWAY_CONFIG_STORE_PATH"] = os.fspath(self.gateway_config_store_path)
+        if "MELIX_GATEWAY_SERVING_DEFAULTS_STORE_PATH" not in control_plane_env:
+            control_plane_env["MELIX_GATEWAY_SERVING_DEFAULTS_STORE_PATH"] = os.fspath(
+                self.gateway_serving_defaults_store_path
+            )
         control_plane_env["MELIX_HTTP_PORT"] = str(self.http_port)
         control_plane_env["MELIX_WORKER_SOCKET_PATH"] = os.fspath(self.python_socket_path)
         control_plane_env["MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH"] = os.fspath(self.swift_socket_path)
@@ -203,6 +217,8 @@ class LiveMelixStack:
         self.stop_control_plane()
         self.stop_python_worker()
         self.stop_swift_text_worker()
+        if self.cleanup_runtime_state_root:
+            self._remove_tree(self.runtime_state_root)
 
     def stop_python_worker(self) -> None:
         self._stop_process("python worker", self.python_worker)

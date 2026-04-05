@@ -1,4 +1,5 @@
 import Foundation
+import MelixControlPlaneProtocol
 import MelixWorkerProtocol
 
 public enum ChatRequestTranslationError: Error, Equatable {
@@ -184,6 +185,9 @@ public struct ShapedTextRequest: Sendable, Equatable {
     public let concurrentProcessingEnabled: Bool
     public let prefillBatchSize: UInt32
     public let completionBatchSize: UInt32
+    public let accelerationMode: Melix_Controlplane_V1_AccelerationMode
+    public let draftModelID: String
+    public let numDraftTokens: UInt32
     public let sessionID: String?
     public let branchID: String?
     public let parentRequestID: String?
@@ -1687,6 +1691,11 @@ public struct ChatRequestTranslator: Sendable {
         generateRequest.execution.ext["melix.gateway.concurrent_processing"] = shapedRequest.concurrentProcessingEnabled ? "true" : "false"
         generateRequest.execution.ext["melix.gateway.prefill_batch_size"] = String(shapedRequest.prefillBatchSize)
         generateRequest.execution.ext["melix.gateway.completion_batch_size"] = String(shapedRequest.completionBatchSize)
+        generateRequest.execution.ext["melix.gateway.acceleration_mode"] = gatewayAccelerationModeRawValue(shapedRequest.accelerationMode)
+        generateRequest.execution.ext["melix.gateway.num_draft_tokens"] = String(shapedRequest.numDraftTokens)
+        if !shapedRequest.draftModelID.isEmpty {
+            generateRequest.execution.ext["melix.gateway.draft_model_id"] = shapedRequest.draftModelID
+        }
         generateRequest.messages = shapedRequest.messages.map { message in
             var chatMessage = Melix_Worker_V1_ChatMessage()
             chatMessage.role = message.role
@@ -1701,5 +1710,16 @@ public struct ChatRequestTranslator: Sendable {
             workerRequest: generateRequest,
             stream: generateRequest.stream
         )
+    }
+}
+
+private func gatewayAccelerationModeRawValue(
+    _ mode: Melix_Controlplane_V1_AccelerationMode
+) -> String {
+    switch mode {
+    case .speculativeDecode:
+        return "speculative_decode"
+    default:
+        return "baseline"
     }
 }

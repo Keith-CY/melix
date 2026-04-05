@@ -49,6 +49,9 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
         let concurrentProcessingEnabled: Bool
         let prefillBatchSize: Int
         let completionBatchSize: Int
+        let accelerationMode: Melix_Controlplane_V1_AccelerationMode
+        let draftModelID: String
+        let numDraftTokens: Int
     }
 
     struct RecordedServerIdlePolicyRequest: Equatable, Sendable {
@@ -750,7 +753,10 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
         maxConcurrentRequests: Int,
         concurrentProcessingEnabled: Bool,
         prefillBatchSize: Int,
-        completionBatchSize: Int
+        completionBatchSize: Int,
+        accelerationMode: Melix_Controlplane_V1_AccelerationMode,
+        draftModelID: String,
+        numDraftTokens: Int
     ) async throws -> Melix_Controlplane_V1_ServerSnapshot {
         recordedActions.append("serving-defaults.apply:\(serverSessionID)")
         if let applyServingDefaultsError {
@@ -766,7 +772,10 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
                 maxConcurrentRequests: maxConcurrentRequests,
                 concurrentProcessingEnabled: concurrentProcessingEnabled,
                 prefillBatchSize: prefillBatchSize,
-                completionBatchSize: completionBatchSize
+                completionBatchSize: completionBatchSize,
+                accelerationMode: accelerationMode,
+                draftModelID: draftModelID,
+                numDraftTokens: numDraftTokens
             )
         )
 
@@ -789,6 +798,9 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
             summary.sessions[existingIndex].requestedConcurrentProcessingEnabled = concurrentProcessingEnabled
             summary.sessions[existingIndex].requestedPrefillBatchSize = UInt32(max(1, prefillBatchSize))
             summary.sessions[existingIndex].requestedCompletionBatchSize = UInt32(max(1, completionBatchSize))
+            summary.sessions[existingIndex].requestedAccelerationMode = accelerationMode
+            summary.sessions[existingIndex].requestedDraftModelID = draftModelID
+            summary.sessions[existingIndex].requestedNumDraftTokens = UInt32(max(0, numDraftTokens))
             summary.sessions[existingIndex].effectiveTemperature = temperature
             summary.sessions[existingIndex].effectiveTopP = topP
             summary.sessions[existingIndex].effectiveMaxTokens = UInt32(max(1, maxTokens))
@@ -797,6 +809,9 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
             summary.sessions[existingIndex].effectiveConcurrentProcessingEnabled = effectiveConcurrentProcessingEnabled
             summary.sessions[existingIndex].effectivePrefillBatchSize = effectiveConcurrentProcessingEnabled ? effectiveBatchCapacity : 1
             summary.sessions[existingIndex].effectiveCompletionBatchSize = effectiveConcurrentProcessingEnabled ? effectiveBatchCapacity : 1
+            summary.sessions[existingIndex].effectiveAccelerationMode = accelerationMode
+            summary.sessions[existingIndex].effectiveDraftModelID = accelerationMode == .speculativeDecode ? draftModelID : ""
+            summary.sessions[existingIndex].effectiveNumDraftTokens = accelerationMode == .speculativeDecode ? UInt32(max(0, numDraftTokens)) : 0
             summary.sessions[existingIndex].source = .operatorOverride
             summary.sessions[existingIndex].modelOverrideApplied = false
         } else {
@@ -811,6 +826,9 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
             session.requestedConcurrentProcessingEnabled = concurrentProcessingEnabled
             session.requestedPrefillBatchSize = UInt32(max(1, prefillBatchSize))
             session.requestedCompletionBatchSize = UInt32(max(1, completionBatchSize))
+            session.requestedAccelerationMode = accelerationMode
+            session.requestedDraftModelID = draftModelID
+            session.requestedNumDraftTokens = UInt32(max(0, numDraftTokens))
             session.effectiveTemperature = temperature
             session.effectiveTopP = topP
             session.effectiveMaxTokens = UInt32(max(1, maxTokens))
@@ -819,6 +837,9 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
             session.effectiveConcurrentProcessingEnabled = effectiveConcurrentProcessingEnabled
             session.effectivePrefillBatchSize = effectiveConcurrentProcessingEnabled ? effectiveBatchCapacity : 1
             session.effectiveCompletionBatchSize = effectiveConcurrentProcessingEnabled ? effectiveBatchCapacity : 1
+            session.effectiveAccelerationMode = accelerationMode
+            session.effectiveDraftModelID = accelerationMode == .speculativeDecode ? draftModelID : ""
+            session.effectiveNumDraftTokens = accelerationMode == .speculativeDecode ? UInt32(max(0, numDraftTokens)) : 0
             session.source = .operatorOverride
             summary.sessions.append(session)
         }

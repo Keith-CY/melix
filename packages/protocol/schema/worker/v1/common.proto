@@ -363,6 +363,7 @@ message AccelerationPolicy {
   string active_kv_quant_profile = 5;
   bool allow_baseline_fallback = 6;
   map<string, string> ext = 7;
+  uint32 num_draft_tokens = 8;
 }
 
 message ModelSettings {

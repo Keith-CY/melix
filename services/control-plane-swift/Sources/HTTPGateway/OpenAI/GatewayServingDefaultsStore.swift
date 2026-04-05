@@ -10,6 +10,12 @@ public enum ServingDefaultsValidationError: Error, Equatable, Sendable {
     case invalidMaxConcurrentRequests
     case invalidPrefillBatchSize
     case invalidCompletionBatchSize
+    case invalidAccelerationMode
+    case missingDraftModelID
+    case invalidNumDraftTokens
+    case speculativeServedModelUnsupported
+    case speculativeDraftModelUnsupported
+    case speculativeBackendUnsupported
 
     public var code: String {
         switch self {
@@ -29,6 +35,18 @@ public enum ServingDefaultsValidationError: Error, Equatable, Sendable {
             return "invalid_prefill_batch_size"
         case .invalidCompletionBatchSize:
             return "invalid_completion_batch_size"
+        case .invalidAccelerationMode:
+            return "invalid_acceleration_mode"
+        case .missingDraftModelID:
+            return "missing_draft_model_id"
+        case .invalidNumDraftTokens:
+            return "invalid_num_draft_tokens"
+        case .speculativeServedModelUnsupported:
+            return "speculative_served_model_unsupported"
+        case .speculativeDraftModelUnsupported:
+            return "speculative_draft_model_unsupported"
+        case .speculativeBackendUnsupported:
+            return "speculative_backend_unsupported"
         }
     }
 
@@ -50,6 +68,18 @@ public enum ServingDefaultsValidationError: Error, Equatable, Sendable {
             return "Serving defaults require a positive prefill batch size."
         case .invalidCompletionBatchSize:
             return "Serving defaults require a positive completion batch size."
+        case .invalidAccelerationMode:
+            return "Serving defaults only support baseline or speculative decode acceleration."
+        case .missingDraftModelID:
+            return "Speculative serving defaults require a draft model identifier."
+        case .invalidNumDraftTokens:
+            return "Speculative serving defaults require a positive num_draft_tokens value."
+        case .speculativeServedModelUnsupported:
+            return "The served model does not support speculative serving defaults."
+        case .speculativeDraftModelUnsupported:
+            return "The draft model does not support speculative serving defaults."
+        case .speculativeBackendUnsupported:
+            return "Speculative serving defaults are not supported by the active Swift text backend."
         }
     }
 }
@@ -63,6 +93,9 @@ public struct GatewayServingDefaultsPolicy: Sendable, Equatable {
     public let concurrentProcessingEnabled: Bool?
     public let prefillBatchSize: UInt32?
     public let completionBatchSize: UInt32?
+    public let accelerationMode: Melix_Controlplane_V1_AccelerationMode?
+    public let draftModelID: String?
+    public let numDraftTokens: UInt32?
 
     public init(
         temperature: Double?,
@@ -72,7 +105,10 @@ public struct GatewayServingDefaultsPolicy: Sendable, Equatable {
         maxConcurrentRequests: UInt32?,
         concurrentProcessingEnabled: Bool? = nil,
         prefillBatchSize: UInt32? = nil,
-        completionBatchSize: UInt32? = nil
+        completionBatchSize: UInt32? = nil,
+        accelerationMode: Melix_Controlplane_V1_AccelerationMode? = nil,
+        draftModelID: String? = nil,
+        numDraftTokens: UInt32? = nil
     ) {
         self.temperature = temperature
         self.topP = topP
@@ -82,6 +118,9 @@ public struct GatewayServingDefaultsPolicy: Sendable, Equatable {
         self.concurrentProcessingEnabled = concurrentProcessingEnabled
         self.prefillBatchSize = prefillBatchSize
         self.completionBatchSize = completionBatchSize
+        self.accelerationMode = accelerationMode
+        self.draftModelID = draftModelID
+        self.numDraftTokens = numDraftTokens
     }
 }
 
@@ -94,6 +133,9 @@ private struct GatewayServingDefaultsResolvedDefaults: Equatable, Sendable {
     let concurrentProcessingEnabled: Bool
     let prefillBatchSize: UInt32
     let completionBatchSize: UInt32
+    let accelerationMode: Melix_Controlplane_V1_AccelerationMode
+    let draftModelID: String
+    let numDraftTokens: UInt32
     let source: Melix_Controlplane_V1_ServingDefaultsSource
 }
 
@@ -107,6 +149,9 @@ private struct PersistedServingDefaultsRecord: Codable, Equatable, Sendable {
     let concurrentProcessingEnabled: Bool
     let prefillBatchSize: UInt32
     let completionBatchSize: UInt32
+    let accelerationModeRawValue: Int
+    let draftModelID: String
+    let numDraftTokens: UInt32
     let sourceRawValue: Int
     let updatedAtUnixMS: Int64
 
@@ -120,8 +165,15 @@ private struct PersistedServingDefaultsRecord: Codable, Equatable, Sendable {
         case concurrentProcessingEnabled = "concurrent_processing_enabled"
         case prefillBatchSize = "prefill_batch_size"
         case completionBatchSize = "completion_batch_size"
+        case accelerationModeRawValue = "acceleration_mode"
+        case draftModelID = "draft_model_id"
+        case numDraftTokens = "num_draft_tokens"
         case sourceRawValue = "source"
         case updatedAtUnixMS = "updated_at_unix_ms"
+    }
+
+    var accelerationMode: Melix_Controlplane_V1_AccelerationMode {
+        Melix_Controlplane_V1_AccelerationMode(rawValue: accelerationModeRawValue) ?? .baseline
     }
 
     var source: Melix_Controlplane_V1_ServingDefaultsSource {
@@ -186,7 +238,10 @@ public actor GatewayServingDefaultsStore {
             maxConcurrentRequests: record?.maxConcurrentRequests ?? defaults.maxConcurrentRequests,
             concurrentProcessingEnabled: record?.concurrentProcessingEnabled ?? defaults.concurrentProcessingEnabled,
             prefillBatchSize: record?.prefillBatchSize ?? defaults.prefillBatchSize,
-            completionBatchSize: record?.completionBatchSize ?? defaults.completionBatchSize
+            completionBatchSize: record?.completionBatchSize ?? defaults.completionBatchSize,
+            accelerationMode: record?.accelerationMode ?? defaults.accelerationMode,
+            draftModelID: record?.draftModelID ?? defaults.draftModelID,
+            numDraftTokens: record?.numDraftTokens ?? defaults.numDraftTokens
         )
     }
 
@@ -229,6 +284,9 @@ public actor GatewayServingDefaultsStore {
             concurrentProcessingEnabled: command.concurrentProcessingEnabled,
             prefillBatchSize: command.prefillBatchSize,
             completionBatchSize: command.completionBatchSize,
+            accelerationModeRawValue: command.accelerationMode.rawValue,
+            draftModelID: Self.trimmed(command.draftModelID),
+            numDraftTokens: command.numDraftTokens,
             sourceRawValue: Melix_Controlplane_V1_ServingDefaultsSource.operatorOverride.rawValue,
             updatedAtUnixMS: nowUnixMS()
         )
@@ -258,13 +316,23 @@ public actor GatewayServingDefaultsStore {
             let requestedConcurrentProcessingEnabled = record?.concurrentProcessingEnabled ?? defaults.concurrentProcessingEnabled
             let requestedPrefillBatchSize = record?.prefillBatchSize ?? defaults.prefillBatchSize
             let requestedCompletionBatchSize = record?.completionBatchSize ?? defaults.completionBatchSize
+            let requestedAccelerationMode = record?.accelerationMode ?? defaults.accelerationMode
+            let requestedDraftModelID = record?.draftModelID ?? defaults.draftModelID
+            let requestedNumDraftTokens = record?.numDraftTokens ?? defaults.numDraftTokens
             let servedModelID = Self.trimmed(servedModelIDs[serverSessionID] ?? "")
             let modelSamplingPolicy = modelSettingsByModelID[servedModelID].flatMap(ModelSamplingPolicy.init)
+            let modelSettings = modelSettingsByModelID[servedModelID]
             let effectiveBatchingDefaults = Self.effectiveBatchingDefaults(
                 concurrentProcessingEnabled: requestedConcurrentProcessingEnabled,
                 maxConcurrentRequests: requestedMaxConcurrentRequests,
                 prefillBatchSize: requestedPrefillBatchSize,
                 completionBatchSize: requestedCompletionBatchSize
+            )
+            let effectiveSpeculativeDefaults = Self.effectiveSpeculativeDefaults(
+                requestedAccelerationMode: requestedAccelerationMode,
+                requestedDraftModelID: requestedDraftModelID,
+                requestedNumDraftTokens: requestedNumDraftTokens,
+                modelSettings: modelSettings
             )
 
             var session = Melix_Controlplane_V1_ServingDefaultsSessionSummary()
@@ -278,6 +346,9 @@ public actor GatewayServingDefaultsStore {
             session.requestedConcurrentProcessingEnabled = requestedConcurrentProcessingEnabled
             session.requestedPrefillBatchSize = requestedPrefillBatchSize
             session.requestedCompletionBatchSize = requestedCompletionBatchSize
+            session.requestedAccelerationMode = requestedAccelerationMode
+            session.requestedDraftModelID = requestedDraftModelID
+            session.requestedNumDraftTokens = requestedNumDraftTokens
             session.effectiveTemperature = modelSamplingPolicy?.temperature ?? requestedTemperature
             session.effectiveTopP = modelSamplingPolicy?.topP ?? requestedTopP
             session.effectiveMaxTokens = modelSamplingPolicy?.maxTokens ?? requestedMaxTokens
@@ -286,8 +357,11 @@ public actor GatewayServingDefaultsStore {
             session.effectiveConcurrentProcessingEnabled = effectiveBatchingDefaults.concurrentProcessingEnabled
             session.effectivePrefillBatchSize = effectiveBatchingDefaults.prefillBatchSize
             session.effectiveCompletionBatchSize = effectiveBatchingDefaults.completionBatchSize
+            session.effectiveAccelerationMode = effectiveSpeculativeDefaults.accelerationMode
+            session.effectiveDraftModelID = effectiveSpeculativeDefaults.draftModelID
+            session.effectiveNumDraftTokens = effectiveSpeculativeDefaults.numDraftTokens
             session.source = record?.source ?? defaults.source
-            session.modelOverrideApplied = modelSamplingPolicy != nil
+            session.modelOverrideApplied = modelSamplingPolicy != nil || effectiveSpeculativeDefaults.modelOverrideApplied
             session.updatedAtUnixMs = record?.updatedAtUnixMS ?? 0
             return session
         }
@@ -381,6 +455,16 @@ public actor GatewayServingDefaultsStore {
             environment["MELIX_GATEWAY_COMPLETION_BATCH_SIZE"],
             fallback: 2
         )
+        let accelerationMode = parseAccelerationMode(
+            environment["MELIX_GATEWAY_ACCELERATION_MODE"],
+            fallback: .baseline
+        )
+        let draftModelID = (environment["MELIX_GATEWAY_DRAFT_MODEL_ID"] ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let numDraftTokens = parseNonNegativeUInt32(
+            environment["MELIX_GATEWAY_NUM_DRAFT_TOKENS"],
+            fallback: 0
+        )
 
         let usesEnvironmentDefaults =
             environment["MELIX_GATEWAY_DEFAULT_TEMPERATURE"] != nil
@@ -392,6 +476,9 @@ public actor GatewayServingDefaultsStore {
             || environment["MELIX_GATEWAY_COMPLETION_BATCH_SIZE"] != nil
             || environment["MELIX_GATEWAY_MAX_CONCURRENT_SEQUENCES"] != nil
             || environment["MELIX_GATEWAY_MAX_CONCURRENT_REQUESTS"] != nil
+            || environment["MELIX_GATEWAY_ACCELERATION_MODE"] != nil
+            || environment["MELIX_GATEWAY_DRAFT_MODEL_ID"] != nil
+            || environment["MELIX_GATEWAY_NUM_DRAFT_TOKENS"] != nil
 
         return GatewayServingDefaultsResolvedDefaults(
             temperature: temperature,
@@ -402,6 +489,9 @@ public actor GatewayServingDefaultsStore {
             concurrentProcessingEnabled: concurrentProcessingEnabled,
             prefillBatchSize: prefillBatchSize,
             completionBatchSize: completionBatchSize,
+            accelerationMode: accelerationMode,
+            draftModelID: draftModelID,
+            numDraftTokens: numDraftTokens,
             source: usesEnvironmentDefaults ? .environmentDefaults : .builtInDefaults
         )
     }
@@ -420,6 +510,13 @@ public actor GatewayServingDefaultsStore {
         return parsed
     }
 
+    private static func parseNonNegativeUInt32(_ rawValue: String?, fallback: UInt32) -> UInt32 {
+        guard let rawValue = rawValue?.nilIfEmpty, let parsed = UInt32(rawValue) else {
+            return fallback
+        }
+        return parsed
+    }
+
     private static func parseBool(_ rawValue: String?, fallback: Bool) -> Bool {
         guard let rawValue = rawValue?.nilIfEmpty?.lowercased() else {
             return fallback
@@ -431,6 +528,31 @@ public actor GatewayServingDefaultsStore {
             return false
         default:
             return fallback
+        }
+    }
+
+    private static func parseAccelerationMode(
+        _ rawValue: String?,
+        fallback: Melix_Controlplane_V1_AccelerationMode
+    ) -> Melix_Controlplane_V1_AccelerationMode {
+        switch rawValue?.nilIfEmpty?.lowercased() {
+        case "speculative_decode":
+            return .speculativeDecode
+        case "baseline", nil:
+            return fallback
+        default:
+            return fallback
+        }
+    }
+
+    private static func normalizeRequestedAccelerationMode(
+        _ mode: Melix_Controlplane_V1_AccelerationMode
+    ) -> Melix_Controlplane_V1_AccelerationMode {
+        switch mode {
+        case .speculativeDecode:
+            return .speculativeDecode
+        default:
+            return .baseline
         }
     }
 
@@ -466,6 +588,41 @@ public actor GatewayServingDefaultsStore {
             effectiveBatchCapacity,
             effectiveBatchCapacity,
             effectiveBatchCapacity
+        )
+    }
+
+    private static func effectiveSpeculativeDefaults(
+        requestedAccelerationMode: Melix_Controlplane_V1_AccelerationMode,
+        requestedDraftModelID: String,
+        requestedNumDraftTokens: UInt32,
+        modelSettings: Melix_Controlplane_V1_ModelSettings?
+    ) -> (
+        accelerationMode: Melix_Controlplane_V1_AccelerationMode,
+        draftModelID: String,
+        numDraftTokens: UInt32,
+        modelOverrideApplied: Bool
+    ) {
+        let normalizedRequestedMode = normalizeRequestedAccelerationMode(requestedAccelerationMode)
+        let modelAccelerationMode = normalizeRequestedAccelerationMode(
+            modelSettings?.defaultAccelerationMode ?? .baseline
+        )
+        let hasModelAccelerationOverride = modelSettings?.defaultAccelerationMode != .unspecified
+        let effectiveAccelerationMode = hasModelAccelerationOverride
+            ? modelAccelerationMode
+            : normalizedRequestedMode
+        guard effectiveAccelerationMode == .speculativeDecode else {
+            return (
+                effectiveAccelerationMode,
+                "",
+                0,
+                hasModelAccelerationOverride && modelAccelerationMode != normalizedRequestedMode
+            )
+        }
+        return (
+            effectiveAccelerationMode,
+            requestedDraftModelID,
+            requestedNumDraftTokens,
+            hasModelAccelerationOverride && modelAccelerationMode != normalizedRequestedMode
         )
     }
 

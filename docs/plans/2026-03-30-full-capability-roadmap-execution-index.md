@@ -240,6 +240,11 @@ The roadmap extension in `M10-M17` includes milestone-level plans plus decompose
   contract with bootstrap-backed precedence resolution, snapshot projection, typed desktop apply
   actions, and focused changed-line coverage across control-plane and Window UI surfaces.
 - `M13.2` `docs/plans/2026-03-31-m13-2-generation-batching-and-speculative-defaults.md`
+  Status: completed. Generation, batching, and speculative-decoding defaults are now typed,
+  persistent, and operator-visible through the control-plane serving-defaults path, with explicit
+  validation for unsupported speculative targets, requested-versus-effective projection in the
+  desktop shell, isolated integration startup state, and focused changed-line coverage evidence
+  across Swift and Python helper scopes.
 - `M13.3` `docs/plans/2026-03-31-m13-3-tooling-embedding-and-config-file-settings.md`
 - `M13.4` `docs/plans/2026-03-31-m13-4-api-reference-and-quick-start-onboarding.md`
 

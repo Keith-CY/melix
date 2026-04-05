@@ -285,6 +285,49 @@ private struct GatewayBatchingExecutionDefaults: Sendable {
     }
 }
 
+private struct GatewaySpeculativeExecutionDefaults: Sendable {
+    let accelerationMode: Melix_Worker_V1_AccelerationMode
+    let draftModelID: String
+    let numDraftTokens: UInt32
+
+    init(executionExt: [String: String]) {
+        self.accelerationMode = Self.parseAccelerationMode(
+            executionExt["melix.gateway.acceleration_mode"]
+        )
+        self.draftModelID = executionExt["melix.gateway.draft_model_id"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        self.numDraftTokens = Self.parseUInt32(
+            executionExt["melix.gateway.num_draft_tokens"],
+            fallback: 0,
+            allowZero: true
+        )
+    }
+
+    private static func parseAccelerationMode(_ rawValue: String?) -> Melix_Worker_V1_AccelerationMode {
+        switch rawValue?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "speculative_decode":
+            return .speculativeDecode
+        default:
+            return .baseline
+        }
+    }
+
+    private static func parseUInt32(
+        _ rawValue: String?,
+        fallback: UInt32,
+        allowZero: Bool = false
+    ) -> UInt32 {
+        guard
+            let rawValue = rawValue?.trimmingCharacters(in: .whitespacesAndNewlines),
+            let parsed = UInt32(rawValue),
+            allowZero || parsed > 0
+        else {
+            return fallback
+        }
+        return parsed
+    }
+}
+
 private struct SchedulingPlan: Sendable {
     let translatedRequest: TranslatedChatRequest
     let routeKind: WorkerRouteKind
@@ -1331,10 +1374,32 @@ public actor RequestCoordinator {
         }
 
         var workerRequest = translatedRequest.workerRequest
+        let gatewaySpeculativeDefaults = GatewaySpeculativeExecutionDefaults(
+            executionExt: workerRequest.execution.ext
+        )
         if workerRequest.execution.acceleration.mode == .unspecified {
-            workerRequest.execution.acceleration.mode = workerAccelerationMode(
-                from: model.settings.defaultAccelerationMode
-            )
+            let gatewayMode = gatewaySpeculativeDefaults.accelerationMode
+            if model.settings.defaultAccelerationMode != .unspecified {
+                workerRequest.execution.acceleration.mode = workerAccelerationMode(
+                    from: model.settings.defaultAccelerationMode
+                )
+            } else if gatewayMode != .baseline {
+                workerRequest.execution.acceleration.mode = gatewayMode
+            } else {
+                workerRequest.execution.acceleration.mode = .baseline
+            }
+        }
+
+        if workerRequest.execution.acceleration.mode == .speculativeDecode {
+            if workerRequest.execution.acceleration.draftModelID.isEmpty {
+                workerRequest.execution.acceleration.draftModelID = gatewaySpeculativeDefaults.draftModelID
+            }
+            if workerRequest.execution.acceleration.numDraftTokens == 0 {
+                workerRequest.execution.acceleration.numDraftTokens = gatewaySpeculativeDefaults.numDraftTokens
+            }
+        } else {
+            workerRequest.execution.acceleration.draftModelID = ""
+            workerRequest.execution.acceleration.numDraftTokens = 0
         }
 
         if workerRequest.execution.acceleration.profileID.isEmpty,

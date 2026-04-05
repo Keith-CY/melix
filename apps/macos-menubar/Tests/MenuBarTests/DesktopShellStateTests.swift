@@ -203,6 +203,9 @@ struct DesktopShellStateTests {
                 concurrentProcessingEnabled: true,
                 prefillBatchSize: 3,
                 completionBatchSize: 2,
+                accelerationMode: "speculative_decode",
+                draftModelID: "melix-dev-draft",
+                numDraftTokens: 6,
                 effectiveTemperature: 0.2,
                 effectiveTopP: 0.88,
                 effectiveMaxTokens: 512,
@@ -211,6 +214,9 @@ struct DesktopShellStateTests {
                 effectiveConcurrentProcessingEnabled: true,
                 effectivePrefillBatchSize: 3,
                 effectiveCompletionBatchSize: 2,
+                effectiveAccelerationMode: "speculative_decode",
+                effectiveDraftModelID: "melix-dev-draft",
+                effectiveNumDraftTokens: 6,
                 sourceText: "Operator Override",
                 modelOverrideApplied: true,
                 updatedAtUnixMS: 1_717_181_940_000
@@ -238,6 +244,12 @@ struct DesktopShellStateTests {
         #expect(decoded.servingDefaults.effectiveMaxTokens == 512)
         #expect(decoded.servingDefaults.prefillBatchSize == 3)
         #expect(decoded.servingDefaults.effectiveCompletionBatchSize == 2)
+        #expect(decoded.servingDefaults.accelerationMode == "speculative_decode")
+        #expect(decoded.servingDefaults.draftModelID == "melix-dev-draft")
+        #expect(decoded.servingDefaults.numDraftTokens == 6)
+        #expect(decoded.servingDefaults.effectiveAccelerationMode == "speculative_decode")
+        #expect(decoded.servingDefaults.effectiveDraftModelID == "melix-dev-draft")
+        #expect(decoded.servingDefaults.effectiveNumDraftTokens == 6)
         #expect(decoded.servingDefaults.sourceText == "Operator Override")
         #expect(decoded.servingDefaults.modelOverrideApplied)
     }

@@ -1384,6 +1384,8 @@ public struct Melix_Worker_V1_AccelerationPolicy: Sendable {
 
   public var ext: Dictionary<String,String> = [:]
 
+  public var numDraftTokens: UInt32 = 0
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -3213,7 +3215,7 @@ extension Melix_Worker_V1_SchedulingHints: SwiftProtobuf.Message, SwiftProtobuf.
 
 extension Melix_Worker_V1_AccelerationPolicy: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".AccelerationPolicy"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}mode\0\u{3}profile_id\0\u{3}draft_model_id\0\u{3}prefill_hint\0\u{3}active_kv_quant_profile\0\u{3}allow_baseline_fallback\0\u{1}ext\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}mode\0\u{3}profile_id\0\u{3}draft_model_id\0\u{3}prefill_hint\0\u{3}active_kv_quant_profile\0\u{3}allow_baseline_fallback\0\u{1}ext\0\u{3}num_draft_tokens\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -3228,6 +3230,7 @@ extension Melix_Worker_V1_AccelerationPolicy: SwiftProtobuf.Message, SwiftProtob
       case 5: try { try decoder.decodeSingularStringField(value: &self.activeKvQuantProfile) }()
       case 6: try { try decoder.decodeSingularBoolField(value: &self.allowBaselineFallback) }()
       case 7: try { try decoder.decodeMapField(fieldType: SwiftProtobuf._ProtobufMap<SwiftProtobuf.ProtobufString,SwiftProtobuf.ProtobufString>.self, value: &self.ext) }()
+      case 8: try { try decoder.decodeSingularUInt32Field(value: &self.numDraftTokens) }()
       default: break
       }
     }
@@ -3255,6 +3258,9 @@ extension Melix_Worker_V1_AccelerationPolicy: SwiftProtobuf.Message, SwiftProtob
     if !self.ext.isEmpty {
       try visitor.visitMapField(fieldType: SwiftProtobuf._ProtobufMap<SwiftProtobuf.ProtobufString,SwiftProtobuf.ProtobufString>.self, value: self.ext, fieldNumber: 7)
     }
+    if self.numDraftTokens != 0 {
+      try visitor.visitSingularUInt32Field(value: self.numDraftTokens, fieldNumber: 8)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -3266,6 +3272,7 @@ extension Melix_Worker_V1_AccelerationPolicy: SwiftProtobuf.Message, SwiftProtob
     if lhs.activeKvQuantProfile != rhs.activeKvQuantProfile {return false}
     if lhs.allowBaselineFallback != rhs.allowBaselineFallback {return false}
     if lhs.ext != rhs.ext {return false}
+    if lhs.numDraftTokens != rhs.numDraftTokens {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

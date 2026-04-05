@@ -280,6 +280,9 @@ message ApplyServingDefaults {
   bool concurrent_processing_enabled = 7;
   uint32 prefill_batch_size = 8;
   uint32 completion_batch_size = 9;
+  AccelerationMode acceleration_mode = 10;
+  string draft_model_id = 11;
+  uint32 num_draft_tokens = 12;
 }
 
 message ListModels {}
@@ -961,6 +964,12 @@ message ServingDefaultsSessionSummary {
   bool effective_concurrent_processing_enabled = 19;
   uint32 effective_prefill_batch_size = 20;
   uint32 effective_completion_batch_size = 21;
+  AccelerationMode requested_acceleration_mode = 22;
+  string requested_draft_model_id = 23;
+  uint32 requested_num_draft_tokens = 24;
+  AccelerationMode effective_acceleration_mode = 25;
+  string effective_draft_model_id = 26;
+  uint32 effective_num_draft_tokens = 27;
 }
 
 message ServingDefaultsSummary {

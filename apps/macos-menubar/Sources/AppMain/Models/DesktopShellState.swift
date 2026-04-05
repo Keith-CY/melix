@@ -111,6 +111,9 @@ public struct DesktopServerServingDefaultsState: Codable, Equatable, Sendable {
     public var concurrentProcessingEnabled: Bool
     public var prefillBatchSize: Int
     public var completionBatchSize: Int
+    public var accelerationMode: String
+    public var draftModelID: String
+    public var numDraftTokens: Int
     public var effectiveTemperature: Double
     public var effectiveTopP: Double
     public var effectiveMaxTokens: Int
@@ -119,6 +122,9 @@ public struct DesktopServerServingDefaultsState: Codable, Equatable, Sendable {
     public var effectiveConcurrentProcessingEnabled: Bool
     public var effectivePrefillBatchSize: Int
     public var effectiveCompletionBatchSize: Int
+    public var effectiveAccelerationMode: String
+    public var effectiveDraftModelID: String
+    public var effectiveNumDraftTokens: Int
     public var sourceText: String
     public var modelOverrideApplied: Bool
     public var updatedAtUnixMS: Int64
@@ -132,6 +138,9 @@ public struct DesktopServerServingDefaultsState: Codable, Equatable, Sendable {
         concurrentProcessingEnabled: Bool = true,
         prefillBatchSize: Int = 2,
         completionBatchSize: Int = 2,
+        accelerationMode: String = "baseline",
+        draftModelID: String = "",
+        numDraftTokens: Int = 0,
         effectiveTemperature: Double? = nil,
         effectiveTopP: Double? = nil,
         effectiveMaxTokens: Int? = nil,
@@ -140,6 +149,9 @@ public struct DesktopServerServingDefaultsState: Codable, Equatable, Sendable {
         effectiveConcurrentProcessingEnabled: Bool? = nil,
         effectivePrefillBatchSize: Int? = nil,
         effectiveCompletionBatchSize: Int? = nil,
+        effectiveAccelerationMode: String? = nil,
+        effectiveDraftModelID: String? = nil,
+        effectiveNumDraftTokens: Int? = nil,
         sourceText: String = "Built-in Defaults",
         modelOverrideApplied: Bool = false,
         updatedAtUnixMS: Int64 = 0
@@ -152,6 +164,9 @@ public struct DesktopServerServingDefaultsState: Codable, Equatable, Sendable {
         self.concurrentProcessingEnabled = concurrentProcessingEnabled
         self.prefillBatchSize = prefillBatchSize
         self.completionBatchSize = completionBatchSize
+        self.accelerationMode = accelerationMode
+        self.draftModelID = draftModelID
+        self.numDraftTokens = numDraftTokens
         self.effectiveTemperature = effectiveTemperature ?? temperature
         self.effectiveTopP = effectiveTopP ?? topP
         self.effectiveMaxTokens = effectiveMaxTokens ?? maxTokens
@@ -160,6 +175,9 @@ public struct DesktopServerServingDefaultsState: Codable, Equatable, Sendable {
         self.effectiveConcurrentProcessingEnabled = effectiveConcurrentProcessingEnabled ?? concurrentProcessingEnabled
         self.effectivePrefillBatchSize = effectivePrefillBatchSize ?? prefillBatchSize
         self.effectiveCompletionBatchSize = effectiveCompletionBatchSize ?? completionBatchSize
+        self.effectiveAccelerationMode = effectiveAccelerationMode ?? accelerationMode
+        self.effectiveDraftModelID = effectiveDraftModelID ?? draftModelID
+        self.effectiveNumDraftTokens = effectiveNumDraftTokens ?? numDraftTokens
         self.sourceText = sourceText
         self.modelOverrideApplied = modelOverrideApplied
         self.updatedAtUnixMS = updatedAtUnixMS
@@ -174,6 +192,9 @@ public struct DesktopServerServingDefaultsState: Codable, Equatable, Sendable {
         case concurrentProcessingEnabled = "concurrent_processing_enabled"
         case prefillBatchSize = "prefill_batch_size"
         case completionBatchSize = "completion_batch_size"
+        case accelerationMode = "acceleration_mode"
+        case draftModelID = "draft_model_id"
+        case numDraftTokens = "num_draft_tokens"
         case effectiveTemperature = "effective_temperature"
         case effectiveTopP = "effective_top_p"
         case effectiveMaxTokens = "effective_max_tokens"
@@ -182,6 +203,9 @@ public struct DesktopServerServingDefaultsState: Codable, Equatable, Sendable {
         case effectiveConcurrentProcessingEnabled = "effective_concurrent_processing_enabled"
         case effectivePrefillBatchSize = "effective_prefill_batch_size"
         case effectiveCompletionBatchSize = "effective_completion_batch_size"
+        case effectiveAccelerationMode = "effective_acceleration_mode"
+        case effectiveDraftModelID = "effective_draft_model_id"
+        case effectiveNumDraftTokens = "effective_num_draft_tokens"
         case sourceText = "source_text"
         case modelOverrideApplied = "model_override_applied"
         case updatedAtUnixMS = "updated_at_unix_ms"
@@ -197,6 +221,9 @@ public struct DesktopServerServingDefaultsState: Codable, Equatable, Sendable {
         let concurrentProcessingEnabled = try container.decodeIfPresent(Bool.self, forKey: .concurrentProcessingEnabled) ?? true
         let prefillBatchSize = try container.decodeIfPresent(Int.self, forKey: .prefillBatchSize) ?? 2
         let completionBatchSize = try container.decodeIfPresent(Int.self, forKey: .completionBatchSize) ?? 2
+        let accelerationMode = try container.decodeIfPresent(String.self, forKey: .accelerationMode) ?? "baseline"
+        let draftModelID = try container.decodeIfPresent(String.self, forKey: .draftModelID) ?? ""
+        let numDraftTokens = try container.decodeIfPresent(Int.self, forKey: .numDraftTokens) ?? 0
         self.init(
             temperature: temperature,
             topP: topP,
@@ -206,6 +233,9 @@ public struct DesktopServerServingDefaultsState: Codable, Equatable, Sendable {
             concurrentProcessingEnabled: concurrentProcessingEnabled,
             prefillBatchSize: prefillBatchSize,
             completionBatchSize: completionBatchSize,
+            accelerationMode: accelerationMode,
+            draftModelID: draftModelID,
+            numDraftTokens: numDraftTokens,
             effectiveTemperature: try container.decodeIfPresent(Double.self, forKey: .effectiveTemperature),
             effectiveTopP: try container.decodeIfPresent(Double.self, forKey: .effectiveTopP),
             effectiveMaxTokens: try container.decodeIfPresent(Int.self, forKey: .effectiveMaxTokens),
@@ -214,6 +244,9 @@ public struct DesktopServerServingDefaultsState: Codable, Equatable, Sendable {
             effectiveConcurrentProcessingEnabled: try container.decodeIfPresent(Bool.self, forKey: .effectiveConcurrentProcessingEnabled),
             effectivePrefillBatchSize: try container.decodeIfPresent(Int.self, forKey: .effectivePrefillBatchSize),
             effectiveCompletionBatchSize: try container.decodeIfPresent(Int.self, forKey: .effectiveCompletionBatchSize),
+            effectiveAccelerationMode: try container.decodeIfPresent(String.self, forKey: .effectiveAccelerationMode),
+            effectiveDraftModelID: try container.decodeIfPresent(String.self, forKey: .effectiveDraftModelID),
+            effectiveNumDraftTokens: try container.decodeIfPresent(Int.self, forKey: .effectiveNumDraftTokens),
             sourceText: try container.decodeIfPresent(String.self, forKey: .sourceText) ?? "Built-in Defaults",
             modelOverrideApplied: try container.decodeIfPresent(Bool.self, forKey: .modelOverrideApplied) ?? false,
             updatedAtUnixMS: try container.decodeIfPresent(Int64.self, forKey: .updatedAtUnixMS) ?? 0
@@ -230,6 +263,9 @@ public struct DesktopServerServingDefaultsState: Codable, Equatable, Sendable {
         try container.encode(concurrentProcessingEnabled, forKey: .concurrentProcessingEnabled)
         try container.encode(prefillBatchSize, forKey: .prefillBatchSize)
         try container.encode(completionBatchSize, forKey: .completionBatchSize)
+        try container.encode(accelerationMode, forKey: .accelerationMode)
+        try container.encode(draftModelID, forKey: .draftModelID)
+        try container.encode(numDraftTokens, forKey: .numDraftTokens)
         try container.encode(effectiveTemperature, forKey: .effectiveTemperature)
         try container.encode(effectiveTopP, forKey: .effectiveTopP)
         try container.encode(effectiveMaxTokens, forKey: .effectiveMaxTokens)
@@ -238,6 +274,9 @@ public struct DesktopServerServingDefaultsState: Codable, Equatable, Sendable {
         try container.encode(effectiveConcurrentProcessingEnabled, forKey: .effectiveConcurrentProcessingEnabled)
         try container.encode(effectivePrefillBatchSize, forKey: .effectivePrefillBatchSize)
         try container.encode(effectiveCompletionBatchSize, forKey: .effectiveCompletionBatchSize)
+        try container.encode(effectiveAccelerationMode, forKey: .effectiveAccelerationMode)
+        try container.encode(effectiveDraftModelID, forKey: .effectiveDraftModelID)
+        try container.encode(effectiveNumDraftTokens, forKey: .effectiveNumDraftTokens)
         try container.encode(sourceText, forKey: .sourceText)
         try container.encode(modelOverrideApplied, forKey: .modelOverrideApplied)
         try container.encode(updatedAtUnixMS, forKey: .updatedAtUnixMS)

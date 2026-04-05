@@ -2,6 +2,68 @@
 
 ## 2026-04-06
 
+- Closed the third executable `M13.2` slice by making speculative-decoding defaults typed,
+  persistent, and control-plane-validated across the protocol, request shaping, model-resolution,
+  the Window UI, and the integration stack:
+  - extended `ApplyServingDefaults`, `ServingDefaultsSessionSummary`, and worker
+    `AccelerationPolicy` with typed speculative fields for `acceleration_mode`,
+    `draft_model_id`, and `num_draft_tokens`, then regenerated the Swift, Python, and descriptor
+    artifacts
+  - updated `GatewayServingDefaultsStore` so operator overrides for speculative decoding persist
+    beside generation and batching defaults, project requested-versus-effective speculative state,
+    and expose validation failures before unsupported configurations reach the runtime
+  - routed speculative gateway defaults through `TextRequestShaper`, `ChatRequestTranslator`,
+    `RequestCoordinator`, and `ControlPlaneXPCClient`, preserving model-level acceleration
+    precedence while letting gateway defaults provide draft-model and draft-token policy when the
+    served model itself is unspecified
+  - updated the Window UI server workspace, `RuntimeViewModel`, desktop state projection, and
+    apply flow so speculative defaults hydrate from control-plane truth instead of session-local
+    draft state
+  - isolated `LiveMelixStack` state in `tests/integration/helpers.py` by assigning unique
+    `MELIX_HOME`, `MELIX_GATEWAY_CONFIG_STORE_PATH`, and
+    `MELIX_GATEWAY_SERVING_DEFAULTS_STORE_PATH` values per stack, fixing the regression where
+    persisted local gateway bindings overrode integration-test HTTP ports and broke startup
+- Verification summary for the third executable `M13.2` slice:
+  - `make proto`: pass
+  - `make py-test`: `487 passed in 45.14s`
+  - `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/.build/ModuleCache.noindex" swift test --package-path services/control-plane-swift --enable-code-coverage --filter 'GatewayServingDefaultsStoreTests'`: `5 tests in 1 suite passed`
+  - `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/.build/ModuleCache.noindex" swift test --package-path services/control-plane-swift --enable-code-coverage --filter 'ControlPlaneServiceTests'`: `158 tests in 1 suite passed`
+  - `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/.build/ModuleCache.noindex" swift test --package-path services/control-plane-swift --enable-code-coverage --filter 'TextEndpointContractTests'`: `36 tests in 1 suite passed`
+  - `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/.build/ModuleCache.noindex" swift test --package-path services/control-plane-swift --enable-code-coverage --filter 'RequestCoordinatorTests'`: `43 tests in 1 suite passed`
+  - `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/.build/ModuleCache.noindex" swift test --package-path apps/macos-menubar --enable-code-coverage`: `289 tests in 10 suites passed after 5.027 seconds`
+  - `python3 scripts/swift_changed_line_coverage.py --binary services/control-plane-swift/.build/arm64-apple-macosx/debug/MelixControlPlanePackageTests.xctest/Contents/MacOS/MelixControlPlanePackageTests --profdata /tmp/m13_2_slice3_controlplane_merged.profdata services/control-plane-swift/Sources/HTTPGateway/OpenAI/GatewayServingDefaultsStore.swift services/control-plane-swift/Sources/Requests/ChatRequestTranslator.swift services/control-plane-swift/Sources/Requests/RequestCoordinator.swift services/control-plane-swift/Sources/Requests/TextRequestShaper.swift services/control-plane-swift/Sources/XPCService/ControlPlaneService.swift services/control-plane-swift/Tests/ControlPlaneTests/ControlPlaneServiceTests.swift services/control-plane-swift/Tests/ControlPlaneTests/GatewayServingDefaultsStoreTests.swift services/control-plane-swift/Tests/ControlPlaneTests/TextEndpointContractTests.swift services/control-plane-swift/Tests/HTTPGatewayTests/RequestCoordinatorTests.swift`: `99.47%` (`563/566`)
+  - `python3 scripts/swift_changed_line_coverage.py --binary apps/macos-menubar/.build/arm64-apple-macosx/debug/MelixMacOSMenubarPackageTests.xctest/Contents/MacOS/MelixMacOSMenubarPackageTests --profdata apps/macos-menubar/.build/arm64-apple-macosx/debug/codecov/default.profdata services/control-plane-swift/Sources/XPCService/ControlPlaneXPCClient.swift`: `100.00%` (`10/10`)
+  - `python3 scripts/swift_changed_line_coverage.py --binary apps/macos-menubar/.build/arm64-apple-macosx/debug/MelixMacOSMenubarPackageTests.xctest/Contents/MacOS/MelixMacOSMenubarPackageTests --profdata apps/macos-menubar/.build/arm64-apple-macosx/debug/codecov/default.profdata apps/macos-menubar/Sources/AppMain/Dashboard/DesktopWorkspaceShellView.swift apps/macos-menubar/Sources/AppMain/Models/DesktopShellState.swift apps/macos-menubar/Sources/AppMain/Models/RuntimeViewModel.swift apps/macos-menubar/Tests/MenuBarTests/ControlPlaneXPCClientTests.swift apps/macos-menubar/Tests/MenuBarTests/DesktopShellStateTests.swift apps/macos-menubar/Tests/MenuBarTests/RuntimeViewModelTests.swift apps/macos-menubar/Tests/MenuBarTests/TestSupport.swift`: `97.07%` (`199/205`)
+  - `PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" UV_CACHE_DIR="$(pwd)/.uv-cache" uv run --project services/mlx-worker-python --extra mlx coverage run -m pytest tests/integration/test_abort_flow.py::test_abort_finishes_the_live_stream_with_cancelled_completion -q`: `1 passed in 11.20s`
+  - `python3 scripts/python_changed_line_coverage.py --coverage-json /tmp/m13_2_slice3_integration_cov.json tests/integration/helpers.py`: `100.00%` (`12/12`)
+  - `make integration-test`: `66 passed in 892.51s (0:14:52)`
+  - `make swift-test`: failed outside the touched scope when `services/mlx-text-worker-swift` exited with unexpected signal `11` during `WorkerScaffoldTests`
+  - `git diff --check`: pass
+- Metrics report for the third executable `M13.2` slice:
+  - typed speculative-default metrics exercised by the touched scope:
+    - `gateway.serving_defaults_apply_ms`
+    - `gateway.serving_defaults_persist_failures`
+    - `gateway.generation_default_merge_count`
+    - `gateway.speculative_config_apply_ms`
+    - `menu.serving_defaults_apply_ms`
+  - requested-versus-effective speculative evidence exercised by the touched scope:
+    - requested versus effective `acceleration_mode`, `draft_model_id`, and `num_draft_tokens`
+    - gateway-owned speculative defaults in request shaping, coordinator-side model merges, and
+      Window UI state projection
+    - explicit rejection of speculative defaults targeting unsupported served models, unsupported
+      draft models, or unsupported worker backends
+    - integration startup isolation showing gateway bindings now respect per-stack `MELIX_HTTP_PORT`
+      instead of leaking persisted local listener overrides
+  - changed-line coverage for the touched handwritten executable scope:
+    - Swift control-plane scope excluding the shared XPC client: `99.47%` (`563/566`)
+    - shared XPC client under Window UI tests: `100.00%` (`10/10`)
+    - Swift menu-bar scope: `97.07%` (`199/205`)
+    - Python integration-helper scope: `100.00%` (`12/12`)
+    - aggregate touched-scope coverage: `98.87%` (`784/793`)
+  - generated protobuf outputs, `packages/protocol/descriptors/melix.pb`, and planning documents
+    are excluded from executable changed-line coverage because they are regenerated artifacts or
+    non-runtime documentation rather than handwritten executable logic
+
 - Closed the second executable `M13.2` slice by making batching and admission defaults typed,
   persistent, and scheduler-visible control-plane truth across the protocol, request shaping, the
   control-plane store, and the Window UI:

@@ -267,6 +267,9 @@ public struct TextRequestShaper: Sendable {
         let concurrentProcessingEnabled = gatewayServingDefaults?.concurrentProcessingEnabled ?? true
         let prefillBatchSize = gatewayServingDefaults?.prefillBatchSize ?? 2
         let completionBatchSize = gatewayServingDefaults?.completionBatchSize ?? 2
+        let accelerationMode = gatewayServingDefaults?.accelerationMode ?? .baseline
+        let draftModelID = gatewayServingDefaults?.draftModelID ?? ""
+        let numDraftTokens = gatewayServingDefaults?.numDraftTokens ?? 0
         let saveBoundarySnapshot = request.saveBoundarySnapshot
             ?? preset?.saveBoundarySnapshot
             ?? workflow.saveBoundarySnapshot
@@ -307,6 +310,9 @@ public struct TextRequestShaper: Sendable {
             concurrentProcessingEnabled: concurrentProcessingEnabled,
             prefillBatchSize: prefillBatchSize,
             completionBatchSize: completionBatchSize,
+            accelerationMode: accelerationMode,
+            draftModelID: draftModelID,
+            numDraftTokens: numDraftTokens,
             sessionID: resolvedSessionID,
             branchID: resolvedBranchID,
             parentRequestID: request.parentRequestID?.nilIfEmpty,
