@@ -2,6 +2,21 @@
 
 ## 2026-04-05
 
+- Started `M11.4` by documenting the current disk-streaming evidence strategy and execution plan:
+  - added a design spec that records the current runtime constraint that both worker paths still
+    reject `prefer_disk` and `require_disk` with typed `disk_streaming_unsupported` failures, so
+    Melix must not fabricate SSD-backed metrics
+  - added an implementation plan for a repository-owned `melix-disk-streaming-smoke` command that
+    will measure the RAM baseline, capture unsupported-path diagnostics, restore model settings,
+    and produce a machine-readable report plus operator runbook guidance
+  - updated the active `M11.4` execution slice document and the repository task plan so the next
+    implementation transaction starts from an explicit, truthful scope
+- Verification summary for the `M11.4` design-and-plan transaction:
+  - `git diff --check`: pass
+- Metrics report for the `M11.4` design-and-plan transaction:
+  - `N/A` for executable coverage and runtime metrics because this transaction only updates design,
+    planning, and milestone-state documents
+
 - Closed `M11.3` by making streaming-compatible cache policy explicit across the repository-owned
   protocol, control-plane truth, worker summaries, and native operator settings:
   - extended the authoritative control-plane and worker protobuf schemas with typed cache-policy
