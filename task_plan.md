@@ -2,66 +2,69 @@
 
 ## Goal
 
-Close `M11.1` by adding an explicit disk-streaming runtime mode, typed session-facing flags, and
-operator-visible state so Melix can distinguish memory-resident versus disk-streamed execution
-without silent fallback.
+Close `M11.3` by exposing streaming-compatible cache policy and settings surfaces so disk-streamed
+execution has explicit, operator-visible cache compatibility rules instead of hidden downgrade
+paths.
 
 ## Scope
 
-- extend the authoritative control-plane contract with disk-streaming mode semantics and typed
-  runtime flags
-- carry the mode through control-plane session state, CLI surfaces, and worker-facing runtime
-  settings
-- fail unsupported runtime paths explicitly instead of silently ignoring disk-streaming requests
+- define the authoritative cache-compatibility contract that applies when disk streaming or other
+  large-model safety policies are active
+- surface cache-memory limits, cache directories, cache block policy, and multimodal cache budgets
+  through control-plane truth and native operator settings
+- make effective cache-policy resolution observable after merges, overrides, and safety-driven
+  downgrades
 
 ## Measurement Points
 
-- disk-streaming intent must be represented in typed protocol state rather than inferred from free
-  form metadata
-- control-plane snapshots and operator surfaces must show whether a session is using resident or
-  disk-streaming mode
-- runtime adapters must reject unsupported disk-streaming requests with deterministic typed errors
-  so operators can diagnose why a session did not enter the requested mode
+- streaming-compatible cache settings must expose both requested policy and effective resolved
+  policy after control-plane merges or safety downgrades
+- operator surfaces must explain when cache tiers are disabled, bounded, or redirected because of
+  disk-streaming compatibility or memory-aware policy
+- repository-owned verification must demonstrate that cache compatibility rules stay aligned across
+  control-plane truth, worker-facing settings, and native desktop presentation
 
 ## Phases
 
-1. Protocol and settings contract
-   - status: completed
+1. Cache-policy contract audit and gap definition
+   - status: in_progress
    - evidence:
-     - update the control-plane schema and generated outputs so disk-streaming mode is explicit in
-       runtime settings and session projection payloads
-     - define the exact worker-facing flag mapping and validation rules before broad implementation
-2. Control-plane and runtime propagation
-   - status: completed
+     - compare the current cache-tier settings, disk-streaming mode, and large-model safety policy
+       against the `M11.3` milestone contract and identify what remains hidden, downgraded, or
+       untyped
+     - define the exact compatibility settings, measurement points, and effective-policy payloads
+       before broad implementation
+2. Control-plane, runtime, and operator propagation
+   - status: pending
    - evidence:
-     - thread the new mode through control-plane state, CLI or operator mutations, and worker
-       request shaping
-     - ensure unsupported runtimes surface typed failures rather than silently downgrading to
-       resident mode
+     - thread streaming-compatible cache settings through control-plane orchestration, worker-facing
+       requests, and model or session state
+     - ensure effective cache policy, bounded budgets, and compatibility downgrades surface
+       explicit typed state and metrics instead of hidden fallback behavior
 3. Verification and milestone bookkeeping
-   - status: completed
+   - status: pending
    - evidence:
-     - run `make proto`, `make swift-test`, and `make py-test` or narrower authoritative commands
-       as required by the touched scope
-     - record changed-line coverage at or above `95%`, update `progress.md`, and mark `M11.1`
-       completed only after protocol, runtime, and operator evidence are captured
+     - run the authoritative verification commands for the touched scope, including integration
+       coverage if the live path changes or cache compatibility affects live serving paths
+     - record changed-line coverage at or above `95%`, update `progress.md`, and mark `M11.3`
+       completed only after control-plane, worker, operator, and verification evidence is captured
 
 ## Acceptance
 
-- disk-streaming mode is represented consistently across protocol, control plane, and runtime
-  settings
-- operator-facing snapshots and CLI output make the selected mode visible without ad-hoc decoding
-- unsupported runtime paths fail explicitly with typed disk-streaming validation errors
+- streaming-compatible cache policy and settings are explicit, operator-visible, and test-covered
+- effective cache settings can be inspected after merges, overrides, and safety-driven downgrades
+- control-plane truth and worker execution remain aligned on cache compatibility and memory-aware
+  policy
 
 ## Risks
 
-- untyped disk-streaming flags would let different layers disagree about the effective execution
-  mode and make future budgeting or cache-policy work harder to reason about
-- silently ignoring unsupported disk-streaming requests would create false operator confidence and
-  invalidate any later memory-budgeting evidence
-- projecting mode only inside worker internals would leave the control plane and desktop shell
-  unable to explain why a session is resident versus streamed
+- leaving cache compatibility rules implicit would make streamed-model performance and warm-path
+  behavior difficult to diagnose when cache tiers are silently disabled or downgraded
+- exposing requested cache settings without the effective resolved policy would confuse operators
+  when disk-streaming safety policy overrides the request
+- duplicating compatibility rules in multiple layers would invite drift between control-plane
+  orchestration truth, worker execution truth, and native desktop presentation
 
 ## Outcome
 
-- m11_1_disk_streaming_mode_and_runtime_flags_completed
+- m11_3_streaming_cache_compatibility_and_settings_surface_in_progress

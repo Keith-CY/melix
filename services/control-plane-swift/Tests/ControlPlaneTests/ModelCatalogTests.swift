@@ -536,6 +536,28 @@ struct ModelCatalogTests {
         }
     }
 
+    @Test("model settings and failure evidence project memory budget state into residency summaries")
+    func modelSettingsAndFailureEvidenceProjectMemoryBudgetStateIntoResidencySummaries() async throws {
+        var seed = ModelCatalog.devTextModel()
+        seed.settings.memoryBudgetBytes = 8_192
+        let catalog = ModelCatalog(seedModels: [seed])
+
+        let failed = try #require(await catalog.recordLoadFailed(
+            id: "melix-dev-text",
+            reason: "operator_load_memory_budget_exceeded",
+            memoryBudgetEvidence: .init(
+                memoryBudgetBytes: 8_192,
+                memoryHeadroomBytes: 1_024,
+                requiredBytes: 9_216
+            )
+        ))
+
+        #expect(failed.settings.memoryBudgetBytes == 8_192)
+        #expect(failed.residency.memoryBudgetBytes == 8_192)
+        #expect(failed.residency.memoryHeadroomBytes == 1_024)
+        #expect(failed.residency.requiredBytes == 9_216)
+    }
+
     @Test("explicit transition helpers handle missing models custom handles and unload failures")
     func explicitTransitionHelpersHandleMissingModelsCustomHandlesAndUnloadFailures() async throws {
         let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel()])

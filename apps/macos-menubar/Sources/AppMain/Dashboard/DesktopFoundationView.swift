@@ -210,6 +210,13 @@ struct DesktopModelsTabView: View {
                                     Text(option.0).tag(option.1)
                                 }
                             }
+                            TextField(
+                                "Memory Budget Bytes",
+                                text: Binding(
+                                    get: { viewModel.modelSettingsMemoryBudgetDraft },
+                                    set: { viewModel.modelSettingsMemoryBudgetDraft = $0 }
+                                )
+                            )
                             Picker(
                                 "Acceleration",
                                 selection: Binding(
@@ -707,6 +714,9 @@ func desktopModelInfoSummaryContent(
         detailLines.append("type override: \(info.typeOverrideText)")
     }
     detailLines.append("memory policy: \(info.memoryPolicyText)")
+    if !info.memoryBudgetText.isEmpty {
+        detailLines.append("memory budget: \(info.memoryBudgetText)")
+    }
     detailLines.append("disk streaming: \(info.diskStreamingModeText)")
     detailLines.append("adaptive thinking: \(info.adaptiveThinkingText)")
     detailLines.append("acceleration: \(info.accelerationModeText) • \(info.accelerationProfileID.isEmpty ? "no-profile" : info.accelerationProfileID)")

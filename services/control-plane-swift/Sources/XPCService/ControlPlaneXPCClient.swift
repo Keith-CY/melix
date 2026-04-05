@@ -273,6 +273,7 @@ public protocol ControlPlaneXPCClient: Sendable {
         deepSleepAfterSeconds: UInt32
     ) async throws -> Melix_Controlplane_V1_ServerSnapshot
     func loadModel(modelID: String) async throws -> Melix_Controlplane_V1_ModelSummary
+    func loadModel(modelID: String, memoryBudgetBytes: UInt64) async throws -> Melix_Controlplane_V1_ModelSummary
     func unloadModel(modelID: String) async throws -> Melix_Controlplane_V1_ModelSummary
     func updateModelSettings(
         modelID: String,
@@ -311,6 +312,11 @@ public protocol ControlPlaneXPCClient: Sendable {
 }
 
 public extension ControlPlaneXPCClient {
+    func loadModel(modelID: String, memoryBudgetBytes: UInt64) async throws -> Melix_Controlplane_V1_ModelSummary {
+        _ = memoryBudgetBytes
+        return try await loadModel(modelID: modelID)
+    }
+
     func startServerSession(serverSessionID: String) async throws -> Melix_Controlplane_V1_ServerSnapshot {
         _ = serverSessionID
         throw ControlPlaneXPCClientError.requestFailed(
@@ -522,7 +528,14 @@ public actor LocalControlPlaneXPCClient: ControlPlaneXPCClient {
     }
 
     public func loadModel(modelID: String) async throws -> Melix_Controlplane_V1_ModelSummary {
-        try await execute(makeLoadRequest(modelID: modelID)) { response in
+        try await loadModel(modelID: modelID, memoryBudgetBytes: 0)
+    }
+
+    public func loadModel(
+        modelID: String,
+        memoryBudgetBytes: UInt64
+    ) async throws -> Melix_Controlplane_V1_ModelSummary {
+        try await execute(makeLoadRequest(modelID: modelID, memoryBudgetBytes: memoryBudgetBytes)) { response in
             response.model.model
         }
     }
@@ -726,13 +739,17 @@ public actor LocalControlPlaneXPCClient: ControlPlaneXPCClient {
         return transform(response)
     }
 
-    private func makeLoadRequest(modelID: String) -> Melix_Controlplane_V1_ControlPlaneRequest {
+    private func makeLoadRequest(
+        modelID: String,
+        memoryBudgetBytes: UInt64
+    ) -> Melix_Controlplane_V1_ControlPlaneRequest {
         var request = Melix_Controlplane_V1_ControlPlaneRequest()
         request.requestID = "menubar-load-\(modelID)"
         request.commandType = "model.load"
         request.model = Melix_Controlplane_V1_ModelCommand()
         request.model.load = Melix_Controlplane_V1_LoadModel()
         request.model.load.modelID = modelID
+        request.model.load.memoryBudgetBytes = memoryBudgetBytes
         return request
     }
 

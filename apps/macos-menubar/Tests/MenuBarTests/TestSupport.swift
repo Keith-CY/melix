@@ -49,6 +49,7 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
     private(set) var recordedGatewayAccessApplyRequests: [RecordedGatewayAccessApplyRequest] = []
     private(set) var recordedGatewayAccessClearRequests: [String] = []
     private(set) var recordedServerIdlePolicyRequests: [RecordedServerIdlePolicyRequest] = []
+    private(set) var lastLoadMemoryBudgetBytes: UInt64 = 0
     private(set) var handshakeCount = 0
     private(set) var subscriptionRequests: [UInt64] = []
     private var modelState: Melix_Controlplane_V1_ModelState = .modelDiscovered
@@ -331,7 +332,15 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
     }
 
     func loadModel(modelID: String) async throws -> Melix_Controlplane_V1_ModelSummary {
+        try await loadModel(modelID: modelID, memoryBudgetBytes: 0)
+    }
+
+    func loadModel(
+        modelID: String,
+        memoryBudgetBytes: UInt64
+    ) async throws -> Melix_Controlplane_V1_ModelSummary {
         recordedActions.append("load:\(modelID)")
+        lastLoadMemoryBudgetBytes = memoryBudgetBytes
         if let loadError {
             throw loadError
         }
@@ -379,6 +388,13 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
             case "pinned": .memoryResidencyPinned
             case "ttl": .memoryResidencyTtl
             default: .memoryResidencyEvictable
+            }
+        }
+        if let memoryBudgetBytes = values["memory_budget_bytes"] {
+            if memoryBudgetBytes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                modelSettings.memoryBudgetBytes = 0
+            } else {
+                modelSettings.memoryBudgetBytes = UInt64(memoryBudgetBytes) ?? 0
             }
         }
         if let diskStreamingMode = values["disk_streaming_mode"] {

@@ -263,6 +263,7 @@ message ApplyGatewayAccess {
 message ListModels {}
 message LoadModel {
   string model_id = 1;
+  uint64 memory_budget_bytes = 2;
 }
 message UnloadModel {
   string model_id = 1;
@@ -701,6 +702,7 @@ message ModelSettings {
   map<string, string> ext = 8;
   AdaptiveThinkingPolicy adaptive_thinking = 9;
   DiskStreamingMode disk_streaming_mode = 10;
+  uint64 memory_budget_bytes = 11;
 }
 
 message AdaptiveThinkingPolicy {
@@ -716,6 +718,9 @@ message ResidencySummary {
   uint32 ttl_seconds = 5;
   string transition_reason = 6;
   DiskStreamingMode effective_disk_streaming_mode = 7;
+  uint64 memory_budget_bytes = 8;
+  uint64 memory_headroom_bytes = 9;
+  uint64 required_bytes = 10;
 }
 
 enum EventTopic {

@@ -55,6 +55,10 @@ enum OnDemandModelLoader {
            !(model.kind == "text" || model.capabilityClass == .modelCapabilityText) {
             throw OnDemandModelLoadError.modelNotReady
         }
+        let effectiveMemoryBudgetBytes = requestedMemoryBudgetBytes(
+            override: memoryBudgetBytes,
+            model: model
+        )
         guard let modelSpec = BootstrapWorkerPreparation.modelSpec(for: model) else {
             throw OnDemandModelLoadError.modelNotReady
         }
@@ -67,7 +71,7 @@ enum OnDemandModelLoader {
         _ = await modelCatalog.beginLoad(id: modelID, reason: loadReason)
         var request = Melix_Worker_V1_LoadModelRequest()
         request.model = modelSpec
-        request.memoryBudgetBytes = memoryBudgetBytes
+        request.memoryBudgetBytes = effectiveMemoryBudgetBytes
         request.pinOnLoad = false
         request.warmupAfterLoad = false
         request.diskStreamingMode = modelSpec.settings.diskStreamingMode
@@ -86,7 +90,19 @@ enum OnDemandModelLoader {
             } else {
                 "\(loadReason)_\(sanitizeTransitionReasonComponent(response.error.code))"
             }
-            _ = await modelCatalog.recordLoadFailed(id: modelID, reason: failureReason)
+            let memoryBudgetEvidence = memoryBudgetEvidence(from: response.error)
+            if let memoryBudgetEvidence {
+                await recordMemoryBudgetMetrics(
+                    memoryBudgetEvidence,
+                    metricsStore: metricsStore,
+                    metricsPrefix: metricsPrefix
+                )
+            }
+            _ = await modelCatalog.recordLoadFailed(
+                id: modelID,
+                reason: failureReason,
+                memoryBudgetEvidence: memoryBudgetEvidence
+            )
             throw OnDemandModelLoadError.workerUnavailable
         }
 
@@ -118,6 +134,47 @@ enum OnDemandModelLoader {
         )
 
         return response.modelHandle
+    }
+
+    private static func requestedMemoryBudgetBytes(
+        override: UInt64,
+        model: Melix_Controlplane_V1_ModelSummary
+    ) -> UInt64 {
+        override > 0 ? override : model.settings.memoryBudgetBytes
+    }
+
+    private static func memoryBudgetEvidence(
+        from workerError: Melix_Worker_V1_ErrorStatus
+    ) -> ModelCatalog.MemoryBudgetEvidence? {
+        guard workerError.code == "memory_budget_exceeded" || workerError.code == "unsafe_load_rejected" else {
+            return nil
+        }
+        let evidence = ModelCatalog.MemoryBudgetEvidence(
+            memoryBudgetBytes: UInt64(workerError.details["budget_bytes"] ?? "") ?? 0,
+            memoryHeadroomBytes: UInt64(workerError.details["headroom_bytes"] ?? "") ?? 0,
+            requiredBytes: UInt64(workerError.details["required_bytes"] ?? "") ?? 0
+        )
+        return evidence.isEmpty ? nil : evidence
+    }
+
+    private static func recordMemoryBudgetMetrics(
+        _ evidence: ModelCatalog.MemoryBudgetEvidence,
+        metricsStore: MetricsStore,
+        metricsPrefix: String
+    ) async {
+        await metricsStore.increment("control_plane.\(metricsPrefix)_load_memory_budget_rejection_count")
+        await metricsStore.set(
+            Double(evidence.memoryBudgetBytes),
+            forKey: "control_plane.\(metricsPrefix)_load_last_budget_bytes"
+        )
+        await metricsStore.set(
+            Double(evidence.memoryHeadroomBytes),
+            forKey: "control_plane.\(metricsPrefix)_load_last_headroom_bytes"
+        )
+        await metricsStore.set(
+            Double(evidence.requiredBytes),
+            forKey: "control_plane.\(metricsPrefix)_load_last_required_bytes"
+        )
     }
 
     @discardableResult

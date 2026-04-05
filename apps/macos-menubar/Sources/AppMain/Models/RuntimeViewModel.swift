@@ -100,6 +100,7 @@ public struct RuntimeModelInfoState: Equatable, Sendable {
     public let ttlSeconds: UInt32
     public let pinOnLoad: Bool
     public let memoryPolicyText: String
+    public let memoryBudgetText: String
     public let diskStreamingModeText: String
     public let adaptiveThinkingText: String
     public let accelerationModeText: String
@@ -127,6 +128,7 @@ public struct RuntimeModelInfoState: Equatable, Sendable {
         ttlSeconds: UInt32 = 0,
         pinOnLoad: Bool = false,
         memoryPolicyText: String = "Unspecified",
+        memoryBudgetText: String = "",
         diskStreamingModeText: String = "Disabled",
         adaptiveThinkingText: String = "Off",
         accelerationModeText: String = "Unspecified",
@@ -153,6 +155,7 @@ public struct RuntimeModelInfoState: Equatable, Sendable {
         self.ttlSeconds = ttlSeconds
         self.pinOnLoad = pinOnLoad
         self.memoryPolicyText = memoryPolicyText
+        self.memoryBudgetText = memoryBudgetText
         self.diskStreamingModeText = diskStreamingModeText
         self.adaptiveThinkingText = adaptiveThinkingText
         self.accelerationModeText = accelerationModeText
@@ -647,6 +650,7 @@ public final class RuntimeViewModel {
     public var modelSettingsTTLDraft = ""
     public var modelSettingsPinOnLoadDraft = false
     public var modelSettingsMemoryPolicyDraft = "evictable"
+    public var modelSettingsMemoryBudgetDraft = ""
     public var modelSettingsDiskStreamingModeDraft = "disabled"
     public var modelSettingsAccelerationModeDraft = "baseline"
     public var modelSettingsAccelerationProfileIDDraft = ""
@@ -1782,7 +1786,11 @@ public final class RuntimeViewModel {
     public func loadModel(modelID: String) async {
         let startedAt = Date()
         do {
-            let model = try await client.loadModel(modelID: modelID)
+            let requestedMemoryBudgetBytes = resolvedModelLoadMemoryBudgetBytes(for: modelID)
+            let model = try await client.loadModel(
+                modelID: modelID,
+                memoryBudgetBytes: requestedMemoryBudgetBytes
+            )
             await metrics.record(
                 name: "menu.model_load_ms",
                 valueMs: Date().timeIntervalSince(startedAt) * 1_000
@@ -2105,6 +2113,19 @@ public final class RuntimeViewModel {
         await unloadModel(modelID: modelID)
     }
 
+    private func resolvedModelLoadMemoryBudgetBytes(for modelID: String) -> UInt64 {
+        if modelSettingsDraftModelID == modelID,
+           let draftValue = normalizedOptionalUInt64Draft(
+               modelSettingsMemoryBudgetDraft,
+               fieldName: "Memory budget bytes"
+           ) {
+            return draftValue
+        }
+        return primaryModelSummary?.modelID == modelID
+            ? primaryModelSummary?.settings.memoryBudgetBytes ?? 0
+            : latestSnapshot.models.first(where: { $0.modelID == modelID })?.settings.memoryBudgetBytes ?? 0
+    }
+
     public func updateModelSettings(
         modelID: String,
         alias: String,
@@ -2112,6 +2133,7 @@ public final class RuntimeViewModel {
         ttlSeconds: String = "",
         pinOnLoad: Bool,
         memoryPolicy: String,
+        memoryBudgetBytes: String = "",
         diskStreamingMode: String,
         accelerationMode: String,
         accelerationProfileID: String,
@@ -2132,6 +2154,7 @@ public final class RuntimeViewModel {
                 "ttl_seconds": ttlSeconds,
                 "pin_on_load": pinOnLoad ? "true" : "false",
                 "memory_policy": memoryPolicy,
+                "memory_budget_bytes": memoryBudgetBytes,
                 "disk_streaming_mode": diskStreamingMode,
                 "default_acceleration_mode": accelerationMode,
                 "acceleration_profile_id": accelerationProfileID,
@@ -2185,6 +2208,15 @@ public final class RuntimeViewModel {
         }
 
         guard
+            normalizedOptionalUInt64Draft(
+                modelSettingsMemoryBudgetDraft,
+                fieldName: "Memory budget bytes"
+            ) != nil || modelSettingsMemoryBudgetDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else {
+            return
+        }
+
+        guard
             normalizedOptionalDoubleDraft(
                 modelSettingsOCRTemperatureDraft,
                 fieldName: "OCR temperature"
@@ -2218,6 +2250,7 @@ public final class RuntimeViewModel {
             ttlSeconds: modelSettingsTTLDraft.trimmingCharacters(in: .whitespacesAndNewlines),
             pinOnLoad: modelSettingsPinOnLoadDraft,
             memoryPolicy: modelSettingsMemoryPolicyDraft,
+            memoryBudgetBytes: modelSettingsMemoryBudgetDraft.trimmingCharacters(in: .whitespacesAndNewlines),
             diskStreamingMode: modelSettingsDiskStreamingModeDraft,
             accelerationMode: modelSettingsAccelerationModeDraft,
             accelerationProfileID: modelSettingsAccelerationProfileIDDraft.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -2278,6 +2311,9 @@ public final class RuntimeViewModel {
                 memoryPolicyText: snapshotModel.map {
                     runtimeMemoryPolicyText(resolvedResidencyPolicy(for: $0))
                 } ?? "Unspecified",
+                memoryBudgetText: snapshotModel.map {
+                    runtimeMemoryBudgetText($0.settings.memoryBudgetBytes)
+                } ?? "",
                 diskStreamingModeText: snapshotModel.map {
                     runtimeDiskStreamingModeText($0.settings.diskStreamingMode)
                 } ?? "Disabled",
@@ -3895,6 +3931,7 @@ public final class RuntimeViewModel {
             modelSettingsTTLDraft = ""
             modelSettingsPinOnLoadDraft = false
             modelSettingsMemoryPolicyDraft = "evictable"
+            modelSettingsMemoryBudgetDraft = ""
             modelSettingsDiskStreamingModeDraft = "disabled"
             modelSettingsAccelerationModeDraft = "baseline"
             modelSettingsAccelerationProfileIDDraft = ""
@@ -3918,6 +3955,9 @@ public final class RuntimeViewModel {
         modelSettingsTTLDraft = model.settings.ttlSeconds > 0 ? String(model.settings.ttlSeconds) : ""
         modelSettingsPinOnLoadDraft = model.settings.pinOnLoad
         modelSettingsMemoryPolicyDraft = runtimeMemoryPolicyDraftValue(resolvedResidencyPolicy(for: model))
+        modelSettingsMemoryBudgetDraft = model.settings.memoryBudgetBytes > 0
+            ? String(model.settings.memoryBudgetBytes)
+            : ""
         modelSettingsDiskStreamingModeDraft = runtimeDiskStreamingModeDraftValue(model.settings.diskStreamingMode)
         modelSettingsAccelerationModeDraft = runtimeAccelerationModeDraftValue(model.settings.defaultAccelerationMode)
         modelSettingsAccelerationProfileIDDraft = model.settings.accelerationProfileID
@@ -3941,6 +3981,22 @@ public final class RuntimeViewModel {
             return nil
         }
         guard let value = UInt32(trimmed) else {
+            recordLocalError("\(fieldName) must be an unsigned integer.")
+            notifyStateChanged()
+            return nil
+        }
+        return value
+    }
+
+    private func normalizedOptionalUInt64Draft(
+        _ rawValue: String,
+        fieldName: String
+    ) -> UInt64? {
+        let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return nil
+        }
+        guard let value = UInt64(trimmed) else {
             recordLocalError("\(fieldName) must be an unsigned integer.")
             notifyStateChanged()
             return nil
@@ -5517,6 +5573,13 @@ private func runtimeMemoryPolicyDraftValue(
     }
 }
 
+private func runtimeMemoryBudgetText(_ bytes: UInt64) -> String {
+    guard bytes > 0 else {
+        return ""
+    }
+    return runtimeFormatBytes(bytes)
+}
+
 private func runtimeAccelerationModeText(_ mode: Melix_Controlplane_V1_AccelerationMode) -> String {
     switch mode {
     case .speculativeDecode:
@@ -5640,6 +5703,9 @@ private func runtimeMemoryText(for model: Melix_Controlplane_V1_ModelSummary) ->
     if model.estimatedBytes > 0 {
         parts.append("\(runtimeFormatBytes(model.estimatedBytes)) estimated")
     }
+    if model.settings.memoryBudgetBytes > 0 {
+        parts.append("\(runtimeFormatBytes(model.settings.memoryBudgetBytes)) budget")
+    }
     if model.inflightRequests > 0 {
         parts.append("\(model.inflightRequests) inflight")
     }
@@ -5654,7 +5720,17 @@ private func runtimeMemoryAlertText(for model: Melix_Controlplane_V1_ModelSummar
     guard runtimeIsMemoryProtectionReason(reason) else {
         return ""
     }
-    return "Memory protection • \(runtimeTransitionReasonText(reason))"
+    var parts = ["Memory protection", runtimeTransitionReasonText(reason)]
+    if model.residency.memoryBudgetBytes > 0 {
+        parts.append("budget \(runtimeFormatBytes(model.residency.memoryBudgetBytes))")
+    }
+    if model.residency.memoryHeadroomBytes > 0 {
+        parts.append("headroom \(runtimeFormatBytes(model.residency.memoryHeadroomBytes))")
+    }
+    if model.residency.requiredBytes > 0 {
+        parts.append("required \(runtimeFormatBytes(model.residency.requiredBytes))")
+    }
+    return parts.joined(separator: " • ")
 }
 
 private func resolvedResidencyState(
@@ -5754,6 +5830,7 @@ private func runtimeIsMemoryProtectionReason(_ reason: String) -> Bool {
         return false
     }
     return normalized.contains("memory_budget")
+        || normalized.contains("unsafe_load")
         || normalized.contains("prefill_memory_guard")
         || normalized.contains("quadratic_prefill_guard")
 }

@@ -1757,7 +1757,10 @@ struct RuntimeViewModelTests {
             ttlSeconds: 600,
             estimatedBytes: 512 * 1024 * 1024,
             inflightRequests: 3,
-            memoryPolicy: .memoryResidencyPinned
+            memoryPolicy: .memoryResidencyPinned,
+            memoryBudgetBytes: 768 * 1024 * 1024,
+            memoryHeadroomBytes: 256 * 1024 * 1024,
+            requiredBytes: 896 * 1024 * 1024
         )
 
         let row = makeRuntimeModelRow(guarded)
@@ -1768,7 +1771,11 @@ struct RuntimeViewModelTests {
         #expect(row.residencyText.contains("Pin requested"))
         #expect(row.memoryText.contains("estimated"))
         #expect(row.memoryText.contains("3 inflight"))
-        #expect(row.memoryAlertText == "Memory protection • Memory budget exceeded")
+        #expect(row.memoryAlertText.contains("Memory protection"))
+        #expect(row.memoryAlertText.contains("Memory budget exceeded"))
+        #expect(row.memoryAlertText.contains("budget 768 MB"))
+        #expect(row.memoryAlertText.contains("headroom 256 MB"))
+        #expect(row.memoryAlertText.contains("required 896 MB"))
     }
 
     @Test("runtime model row surfaces adaptive thinking policy")
@@ -2489,6 +2496,7 @@ struct RuntimeViewModelTests {
         viewModel.modelSettingsTTLDraft = "600"
         viewModel.modelSettingsPinOnLoadDraft = true
         viewModel.modelSettingsMemoryPolicyDraft = "ttl"
+        viewModel.modelSettingsMemoryBudgetDraft = "32768"
         viewModel.modelSettingsAccelerationModeDraft = "active_kv_quantized"
         viewModel.modelSettingsAccelerationProfileIDDraft = "kv-q8"
         viewModel.modelSettingsAdaptiveThinkingModeDraft = "adaptive"
@@ -2509,6 +2517,7 @@ struct RuntimeViewModelTests {
         #expect(viewModel.primaryModel?.toolParserFallbackText == "XML")
         #expect(viewModel.selectedModelInfo?.typeOverrideText == "mlx-text")
         #expect(viewModel.selectedModelInfo?.ttlSeconds == 600)
+        #expect(viewModel.selectedModelInfo?.memoryBudgetText == "32 KB")
         #expect(viewModel.selectedModelInfo?.adaptiveThinkingText == "Adaptive • 192 tok")
         #expect(viewModel.selectedModelInfo?.toolParserFallbackText == "XML")
         #expect(viewModel.selectedModelInfo?.ocrSamplingProfileText == "ocr-operator")
@@ -2542,6 +2551,13 @@ struct RuntimeViewModelTests {
         await viewModel.applyPrimaryModelSettings()
 
         #expect(viewModel.lastError == "Adaptive thinking budget must be an unsigned integer.")
+        #expect(await client.recordedActions.isEmpty)
+
+        viewModel.modelSettingsAdaptiveThinkingBudgetDraft = "32"
+        viewModel.modelSettingsMemoryBudgetDraft = "bad-budget"
+        await viewModel.applyPrimaryModelSettings()
+
+        #expect(viewModel.lastError == "Memory budget bytes must be an unsigned integer.")
         #expect(await client.recordedActions.isEmpty)
 
         viewModel.modelSettingsAliasDraft = "Mutated Alias"
@@ -2584,6 +2600,33 @@ struct RuntimeViewModelTests {
 
         #expect(viewModel.modelSettingsMemoryPolicyDraft == "pinned")
         #expect(viewModel.modelSettingsAccelerationModeDraft == "sparse_prefill")
+    }
+
+    @Test("model loads forward configured memory budget bytes to the client")
+    @MainActor
+    func modelLoadsForwardConfiguredMemoryBudgetBytesToTheClient() async throws {
+        let client = FakeControlPlaneXPCClient()
+        var snapshot = Melix_Controlplane_V1_ServerSnapshot()
+        snapshot.serverState = .serverReady
+        var model = makeModelSummary(modelID: "melix-dev-text", state: .modelDiscovered)
+        model.settings.memoryBudgetBytes = 65_536
+        snapshot.models = [model]
+        await client.configureSnapshot(snapshot)
+
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        await viewModel.loadModel(modelID: "melix-dev-text")
+
+        #expect(await client.lastLoadMemoryBudgetBytes == 65_536)
+    }
+
+    @Test("fake control-plane client default load helper uses a zero memory budget")
+    func fakeControlPlaneClientDefaultLoadHelperUsesZeroMemoryBudget() async throws {
+        let client = FakeControlPlaneXPCClient()
+
+        _ = try await client.loadModel(modelID: "melix-dev-text")
+
+        #expect(await client.lastLoadMemoryBudgetBytes == 0)
     }
 
     @Test("model info ops doctor and bench dispatch through the client and populate tool state")
@@ -4721,6 +4764,9 @@ private func makeModelSummary(
     estimatedBytes: UInt64 = 0,
     inflightRequests: UInt64 = 0,
     memoryPolicy: Melix_Controlplane_V1_MemoryResidencyPolicy = .memoryResidencyEvictable,
+    memoryBudgetBytes: UInt64 = 0,
+    memoryHeadroomBytes: UInt64 = 0,
+    requiredBytes: UInt64 = 0,
     adaptiveThinkingMode: String = "",
     adaptiveThinkingBudgetTokens: UInt32 = 0
 ) -> Melix_Controlplane_V1_ModelSummary {
@@ -4743,6 +4789,9 @@ private func makeModelSummary(
     model.residency.ttlSeconds = ttlSeconds
     model.residency.policy = memoryPolicy
     model.residency.transitionReason = transitionReason
+    model.residency.memoryBudgetBytes = memoryBudgetBytes
+    model.residency.memoryHeadroomBytes = memoryHeadroomBytes
+    model.residency.requiredBytes = requiredBytes
     return model
 }
 

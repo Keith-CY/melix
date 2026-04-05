@@ -2540,6 +2540,8 @@ public struct Melix_Controlplane_V1_LoadModel: Sendable {
 
   public var modelID: String = String()
 
+  public var memoryBudgetBytes: UInt64 = 0
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -3554,6 +3556,8 @@ public struct Melix_Controlplane_V1_ModelSettings: Sendable {
 
   public var diskStreamingMode: Melix_Controlplane_V1_DiskStreamingMode = .unspecified
 
+  public var memoryBudgetBytes: UInt64 = 0
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -3593,6 +3597,12 @@ public struct Melix_Controlplane_V1_ResidencySummary: Sendable {
   public var transitionReason: String = String()
 
   public var effectiveDiskStreamingMode: Melix_Controlplane_V1_DiskStreamingMode = .unspecified
+
+  public var memoryBudgetBytes: UInt64 = 0
+
+  public var memoryHeadroomBytes: UInt64 = 0
+
+  public var requiredBytes: UInt64 = 0
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -8023,7 +8033,7 @@ extension Melix_Controlplane_V1_ListModels: SwiftProtobuf.Message, SwiftProtobuf
 
 extension Melix_Controlplane_V1_LoadModel: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".LoadModel"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}model_id\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}model_id\0\u{3}memory_budget_bytes\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -8032,6 +8042,7 @@ extension Melix_Controlplane_V1_LoadModel: SwiftProtobuf.Message, SwiftProtobuf.
       // enabled. https://github.com/apple/swift-protobuf/issues/1034
       switch fieldNumber {
       case 1: try { try decoder.decodeSingularStringField(value: &self.modelID) }()
+      case 2: try { try decoder.decodeSingularUInt64Field(value: &self.memoryBudgetBytes) }()
       default: break
       }
     }
@@ -8041,11 +8052,15 @@ extension Melix_Controlplane_V1_LoadModel: SwiftProtobuf.Message, SwiftProtobuf.
     if !self.modelID.isEmpty {
       try visitor.visitSingularStringField(value: self.modelID, fieldNumber: 1)
     }
+    if self.memoryBudgetBytes != 0 {
+      try visitor.visitSingularUInt64Field(value: self.memoryBudgetBytes, fieldNumber: 2)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: Melix_Controlplane_V1_LoadModel, rhs: Melix_Controlplane_V1_LoadModel) -> Bool {
     if lhs.modelID != rhs.modelID {return false}
+    if lhs.memoryBudgetBytes != rhs.memoryBudgetBytes {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -10310,7 +10325,7 @@ extension Melix_Controlplane_V1_ImportPreset: SwiftProtobuf.Message, SwiftProtob
 
 extension Melix_Controlplane_V1_ModelSettings: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ModelSettings"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}alias\0\u{3}type_override\0\u{3}ttl_seconds\0\u{3}pin_on_load\0\u{3}memory_policy\0\u{3}default_acceleration_mode\0\u{3}acceleration_profile_id\0\u{1}ext\0\u{3}adaptive_thinking\0\u{3}disk_streaming_mode\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}alias\0\u{3}type_override\0\u{3}ttl_seconds\0\u{3}pin_on_load\0\u{3}memory_policy\0\u{3}default_acceleration_mode\0\u{3}acceleration_profile_id\0\u{1}ext\0\u{3}adaptive_thinking\0\u{3}disk_streaming_mode\0\u{3}memory_budget_bytes\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -10328,6 +10343,7 @@ extension Melix_Controlplane_V1_ModelSettings: SwiftProtobuf.Message, SwiftProto
       case 8: try { try decoder.decodeMapField(fieldType: SwiftProtobuf._ProtobufMap<SwiftProtobuf.ProtobufString,SwiftProtobuf.ProtobufString>.self, value: &self.ext) }()
       case 9: try { try decoder.decodeSingularMessageField(value: &self._adaptiveThinking) }()
       case 10: try { try decoder.decodeSingularEnumField(value: &self.diskStreamingMode) }()
+      case 11: try { try decoder.decodeSingularUInt64Field(value: &self.memoryBudgetBytes) }()
       default: break
       }
     }
@@ -10368,6 +10384,9 @@ extension Melix_Controlplane_V1_ModelSettings: SwiftProtobuf.Message, SwiftProto
     if self.diskStreamingMode != .unspecified {
       try visitor.visitSingularEnumField(value: self.diskStreamingMode, fieldNumber: 10)
     }
+    if self.memoryBudgetBytes != 0 {
+      try visitor.visitSingularUInt64Field(value: self.memoryBudgetBytes, fieldNumber: 11)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -10382,6 +10401,7 @@ extension Melix_Controlplane_V1_ModelSettings: SwiftProtobuf.Message, SwiftProto
     if lhs.ext != rhs.ext {return false}
     if lhs._adaptiveThinking != rhs._adaptiveThinking {return false}
     if lhs.diskStreamingMode != rhs.diskStreamingMode {return false}
+    if lhs.memoryBudgetBytes != rhs.memoryBudgetBytes {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -10424,7 +10444,7 @@ extension Melix_Controlplane_V1_AdaptiveThinkingPolicy: SwiftProtobuf.Message, S
 
 extension Melix_Controlplane_V1_ResidencySummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ResidencySummary"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}state\0\u{1}policy\0\u{3}pin_requested\0\u{1}pinned\0\u{3}ttl_seconds\0\u{3}transition_reason\0\u{3}effective_disk_streaming_mode\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}state\0\u{1}policy\0\u{3}pin_requested\0\u{1}pinned\0\u{3}ttl_seconds\0\u{3}transition_reason\0\u{3}effective_disk_streaming_mode\0\u{3}memory_budget_bytes\0\u{3}memory_headroom_bytes\0\u{3}required_bytes\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -10439,6 +10459,9 @@ extension Melix_Controlplane_V1_ResidencySummary: SwiftProtobuf.Message, SwiftPr
       case 5: try { try decoder.decodeSingularUInt32Field(value: &self.ttlSeconds) }()
       case 6: try { try decoder.decodeSingularStringField(value: &self.transitionReason) }()
       case 7: try { try decoder.decodeSingularEnumField(value: &self.effectiveDiskStreamingMode) }()
+      case 8: try { try decoder.decodeSingularUInt64Field(value: &self.memoryBudgetBytes) }()
+      case 9: try { try decoder.decodeSingularUInt64Field(value: &self.memoryHeadroomBytes) }()
+      case 10: try { try decoder.decodeSingularUInt64Field(value: &self.requiredBytes) }()
       default: break
       }
     }
@@ -10466,6 +10489,15 @@ extension Melix_Controlplane_V1_ResidencySummary: SwiftProtobuf.Message, SwiftPr
     if self.effectiveDiskStreamingMode != .unspecified {
       try visitor.visitSingularEnumField(value: self.effectiveDiskStreamingMode, fieldNumber: 7)
     }
+    if self.memoryBudgetBytes != 0 {
+      try visitor.visitSingularUInt64Field(value: self.memoryBudgetBytes, fieldNumber: 8)
+    }
+    if self.memoryHeadroomBytes != 0 {
+      try visitor.visitSingularUInt64Field(value: self.memoryHeadroomBytes, fieldNumber: 9)
+    }
+    if self.requiredBytes != 0 {
+      try visitor.visitSingularUInt64Field(value: self.requiredBytes, fieldNumber: 10)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -10477,6 +10509,9 @@ extension Melix_Controlplane_V1_ResidencySummary: SwiftProtobuf.Message, SwiftPr
     if lhs.ttlSeconds != rhs.ttlSeconds {return false}
     if lhs.transitionReason != rhs.transitionReason {return false}
     if lhs.effectiveDiskStreamingMode != rhs.effectiveDiskStreamingMode {return false}
+    if lhs.memoryBudgetBytes != rhs.memoryBudgetBytes {return false}
+    if lhs.memoryHeadroomBytes != rhs.memoryHeadroomBytes {return false}
+    if lhs.requiredBytes != rhs.requiredBytes {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

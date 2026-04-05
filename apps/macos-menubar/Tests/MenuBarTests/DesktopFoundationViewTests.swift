@@ -148,6 +148,7 @@ struct DesktopFoundationViewTests {
         viewModel.modelSettingsAliasDraft = "Melix Form Alias"
         viewModel.modelSettingsTypeOverrideDraft = "mlx-form"
         viewModel.modelSettingsTTLDraft = "321"
+        viewModel.modelSettingsMemoryBudgetDraft = "65536"
         viewModel.modelSettingsAdaptiveThinkingModeDraft = "adaptive"
         viewModel.modelSettingsAdaptiveThinkingBudgetDraft = "64"
         viewModel.modelSettingsToolParserXMLFallbackDraft = true
@@ -665,6 +666,7 @@ struct DesktopFoundationViewTests {
             ttlSeconds: 600,
             pinOnLoad: true,
             memoryPolicyText: "TTL",
+            memoryBudgetText: "32 KB",
             diskStreamingModeText: "Prefer Disk",
             adaptiveThinkingText: "Adaptive • 192 tok",
             accelerationModeText: "Active KV Quantized",
@@ -689,6 +691,7 @@ struct DesktopFoundationViewTests {
         #expect(content.detailLines.contains("alias: Melix Text Turbo"))
         #expect(content.detailLines.contains("type override: mlx-text"))
         #expect(content.detailLines.contains("memory policy: TTL"))
+        #expect(content.detailLines.contains("memory budget: 32 KB"))
         #expect(content.detailLines.contains("adaptive thinking: Adaptive • 192 tok"))
         #expect(content.detailLines.contains("acceleration: Active KV Quantized • kv-q8"))
         #expect(content.detailLines.contains("parser fallback: XML"))

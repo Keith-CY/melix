@@ -2,6 +2,58 @@
 
 ## 2026-04-05
 
+- Closed `M11.2` by making memory-budget admission and headroom-based unsafe-load rejection
+  control-plane-owned, operator-visible, and test-covered across the protocol, control-plane, and
+  native desktop shell:
+  - extended the authoritative control-plane protobuf schema with `LoadModel.memory_budget_bytes`,
+    typed `ModelSettings.memory_budget_bytes`, and residency-summary `memory_budget_bytes`,
+    `memory_headroom_bytes`, and `required_bytes`, then regenerated the repository-owned Swift,
+    Python, and descriptor outputs
+  - updated the Swift control plane, model catalog, on-demand loader, and local XPC client so
+    explicit loads and lazy loads both resolve the effective memory budget from model settings,
+    forward it to worker-backed load requests, map worker rejection details into typed
+    `MemoryBudgetEvidence`, and publish rejection counters plus last-seen budget or headroom
+    metrics instead of opaque generic load failures
+  - updated the native operator shell and runtime view model so per-model settings now include a
+    `Memory Budget Bytes` control, model detail and summaries expose configured budget and
+    headroom-required evidence, and desktop-triggered loads can pass an explicit budget through the
+    control-plane client overload
+  - added focused regression coverage across control-plane and menu bar tests for typed policy
+    normalization, client request construction, lazy-load metric recording, memory-budget evidence
+    projection, and operator-visible budget summaries
+  - marked `M11.2` completed in the roadmap execution index and moved the active task plan to
+    `M11.3`
+- Verification summary for `M11.2`:
+  - `make proto`: pass
+  - `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/.build/ModuleCache.noindex" swift test --package-path services/control-plane-swift --filter 'ControlPlaneServiceTests|ModelCatalogTests|OnDemandModelLoaderTests'`: `181 tests in 3 suites passed after 0.081 seconds`
+  - `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/.build/ModuleCache.noindex" swift test --package-path services/control-plane-swift --scratch-path /tmp/m11_2_cp_cov --enable-code-coverage --filter 'ControlPlaneServiceTests|ModelCatalogTests|OnDemandModelLoaderTests'`: `180 tests in 3 suites passed after 0.087 seconds`
+  - `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/.build/ModuleCache.noindex" swift test --package-path apps/macos-menubar --scratch-path /tmp/m11_2_menu_cov --enable-code-coverage --filter 'ControlPlaneXPCClientTests|DesktopFoundationViewTests|RuntimeViewModelTests'`: `202 tests in 3 suites passed after 3.470 seconds`
+  - `make py-test`: `456 passed in 34.62s`
+  - `make swift-test`: pass
+  - `make integration-test`: `60 passed in 754.26s (0:12:34)`
+  - `git diff --check`: pass
+- Metrics report for `M11.2`:
+  - typed memory-budget rejection metrics now emitted by the touched control-plane scope:
+    - `control_plane.model_load_rejection_count`
+    - `control_plane.model_load_last_budget_bytes`
+    - `control_plane.model_load_last_headroom_bytes`
+    - `control_plane.model_load_last_required_bytes`
+    - `control_plane.text_load_memory_budget_rejection_count`
+    - `control_plane.text_load_last_budget_bytes`
+    - `control_plane.text_load_last_headroom_bytes`
+    - `control_plane.text_load_last_required_bytes`
+  - operator timing metrics exercised by the touched desktop scope:
+    - `menu.model_load_ms`
+    - `menu.model_settings_ms`
+  - changed-line coverage for the touched executable scope:
+    - Swift control-plane scope: `98.39%` (`305/310`)
+    - Swift menu bar scope: `100.00%` (`171/171`)
+    - aggregate changed-line coverage across the touched handwritten executable scope: `98.96%`
+      (`476/481`)
+  - protocol schemas, generated protobuf outputs, `packages/protocol/descriptors/melix.pb`, and
+    task-planning documents are excluded from executable changed-line coverage because they are
+    generated or repository-ownership artifacts rather than handwritten runtime logic
+
 - Closed `M11.1` by making disk-streaming mode a typed, operator-visible runtime setting across
   the repository-owned control-plane, worker, and desktop-shell surfaces:
   - extended the authoritative control-plane and worker protobuf schemas with

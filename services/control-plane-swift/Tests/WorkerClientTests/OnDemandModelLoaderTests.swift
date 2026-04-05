@@ -103,6 +103,32 @@ struct OnDemandModelLoaderTests {
         #expect(metrics.values["control_plane.text_first_load_resident_bytes"] == 8_192)
     }
 
+    @Test("discovered text models lazy-load with configured default memory budgets")
+    func discoveredTextModelsLazyLoadWithConfiguredDefaultMemoryBudgets() async throws {
+        var model = ModelCatalog.devTextModel()
+        model.settings.memoryBudgetBytes = 32_768
+        let catalog = ModelCatalog(seedModels: [model])
+        let workerClient = LoaderTestingWorkerClient()
+        await workerClient.setLoadResponse(
+            ok: true,
+            handle: "melix-dev-text::swift",
+            estimatedResidentBytes: 4_096
+        )
+
+        let registry = WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog)
+        let metricsStore = MetricsStore()
+
+        _ = try await OnDemandModelLoader.ensureTextModelReady(
+            modelID: "melix-dev-text",
+            modelCatalog: catalog,
+            workerRegistry: registry,
+            metricsStore: metricsStore
+        )
+
+        let loadRequest = try #require(await workerClient.lastLoadModelRequest)
+        #expect(loadRequest.memoryBudgetBytes == 32_768)
+    }
+
     @Test("lazy load falls back to estimated resident bytes when runtime stats are unavailable")
     func lazyLoadFallsBackToEstimatedResidentBytesWhenRuntimeStatsAreUnavailable() async throws {
         let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel()])
@@ -198,12 +224,18 @@ struct OnDemandModelLoaderTests {
     func failedLazyLoadsPreserveExplicitWorkerErrorCodesInTransitionReasons() async throws {
         let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel()])
         let workerClient = LoaderTestingWorkerClient()
+        let metricsStore = MetricsStore()
         await workerClient.setLoadResponse(
             ok: false,
             handle: "",
             estimatedResidentBytes: 0,
             errorCode: "memory_budget_exceeded",
-            errorMessage: "Projected resident memory would exceed the process budget."
+            errorMessage: "Projected resident memory would exceed the process budget.",
+            errorDetails: [
+                "budget_bytes": "32768",
+                "headroom_bytes": "2048",
+                "required_bytes": "34816",
+            ]
         )
         let registry = WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog)
 
@@ -212,13 +244,21 @@ struct OnDemandModelLoaderTests {
                 modelID: "melix-dev-text",
                 modelCatalog: catalog,
                 workerRegistry: registry,
-                metricsStore: MetricsStore()
+                metricsStore: metricsStore
             )
         }
 
         let model = try #require(await catalog.model(id: "melix-dev-text"))
+        let metrics = await metricsStore.snapshot()
         #expect(model.state == .modelFailed)
         #expect(model.residency.transitionReason == "lazy_text_load_memory_budget_exceeded")
+        #expect(model.residency.memoryBudgetBytes == 32_768)
+        #expect(model.residency.memoryHeadroomBytes == 2_048)
+        #expect(model.residency.requiredBytes == 34_816)
+        #expect(metrics.values["control_plane.text_load_memory_budget_rejection_count"] == 1)
+        #expect(metrics.values["control_plane.text_load_last_budget_bytes"] == 32_768)
+        #expect(metrics.values["control_plane.text_load_last_headroom_bytes"] == 2_048)
+        #expect(metrics.values["control_plane.text_load_last_required_bytes"] == 34_816)
     }
 
     @Test("failed lazy loads forward disk-streaming mode and preserve explicit worker rejection codes")
@@ -458,7 +498,8 @@ private actor LoaderTestingWorkerClient: WorkerRoutingClient, RuntimeIntrospecti
         handle: String,
         estimatedResidentBytes: UInt64,
         errorCode: String = "",
-        errorMessage: String = ""
+        errorMessage: String = "",
+        errorDetails: [String: String] = [:]
     ) {
         loadResponse = Melix_Worker_V1_LoadModelResponse()
         loadResponse.ok = ok
@@ -467,6 +508,7 @@ private actor LoaderTestingWorkerClient: WorkerRoutingClient, RuntimeIntrospecti
         loadResponse.residency.state = ok ? .warm : .failed
         loadResponse.error.code = errorCode
         loadResponse.error.message = errorMessage
+        loadResponse.error.details = errorDetails
     }
 
     func setUnloadResponse(ok: Bool) {

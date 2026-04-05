@@ -1114,6 +1114,30 @@ struct ControlPlaneServiceTests {
         #expect(events.map(\.modelState.state) == [.modelLoading, .modelFailed])
         #expect(model.state == .modelFailed)
         #expect(model.residency.transitionReason == "operator_load_memory_budget_exceeded")
+        #expect(model.residency.memoryBudgetBytes == 4_500)
+        #expect(model.residency.memoryHeadroomBytes == 1_024)
+        #expect(model.residency.requiredBytes == 5_120)
+    }
+
+    @Test("execute forwards explicit load memory budgets to worker-backed model.load")
+    func executeForwardsExplicitLoadMemoryBudgetsToWorkerBackedModelLoad() async throws {
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel()])
+        let workerClient = ModelLifecycleWorkerClient()
+        var loadResponse = Melix_Worker_V1_LoadModelResponse()
+        loadResponse.ok = true
+        loadResponse.modelHandle = "melix-dev-text::swift"
+        await workerClient.setLoadResponse(loadResponse)
+
+        let registry = WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog)
+        let service = ControlPlaneService(modelCatalog: catalog, workerRegistry: registry)
+
+        let response = try await service.execute(
+            makeLoadModelRequest(modelID: "melix-dev-text", memoryBudgetBytes: 65_536)
+        )
+        let lastRequest = try #require(await workerClient.loadRequests.last)
+
+        #expect(response.ok)
+        #expect(lastRequest.memoryBudgetBytes == 65_536)
     }
 
     @Test("execute surfaces explicit disk-streaming rejections from worker-backed model.load")
@@ -3005,6 +3029,7 @@ struct ControlPlaneServiceTests {
             private(set) var lastBenchRequest: Melix_Controlplane_V1_RunBench?
             private(set) var lastBenchMatrixRequest: Melix_Controlplane_V1_RunBenchMatrix?
             private(set) var lastEvaluationRequest: Melix_Controlplane_V1_RunEvaluation?
+            private(set) var lastLoadRequest: Melix_Controlplane_V1_LoadModel?
             private(set) var lastServerRequest: Melix_Controlplane_V1_ControlPlaneRequest?
 
             func handshake(_ request: Melix_Controlplane_V1_HandshakeRequest) async throws -> Melix_Controlplane_V1_HandshakeResponse {
@@ -3043,6 +3068,10 @@ struct ControlPlaneServiceTests {
                 response.commandType = request.commandType
                 response.ok = true
                 switch request.command {
+                case .model:
+                    lastLoadRequest = request.model.load
+                    response.model.model = Melix_Controlplane_V1_ModelSummary()
+                    response.model.model.modelID = request.model.load.modelID
                 case .server:
                     lastServerRequest = request
                     response.server.snapshot = Melix_Controlplane_V1_ServerSnapshot()
@@ -3131,6 +3160,21 @@ struct ControlPlaneServiceTests {
         #expect(benchRequest.cacheProfile == "partial_prefix")
         #expect(benchRequest.reasoningMode == "enabled")
         #expect(benchRequest.structuredOutputMode == "json_schema")
+
+        let defaultLoaded = try await client.loadModel(modelID: "melix-dev-text")
+        #expect(defaultLoaded.modelID == "melix-dev-text")
+        var loadRequest = try #require(await service.lastLoadRequest)
+        #expect(loadRequest.modelID == "melix-dev-text")
+        #expect(loadRequest.memoryBudgetBytes == 0)
+
+        let explicitLoaded = try await client.loadModel(
+            modelID: "melix-dev-text",
+            memoryBudgetBytes: 65_536
+        )
+        #expect(explicitLoaded.modelID == "melix-dev-text")
+        loadRequest = try #require(await service.lastLoadRequest)
+        #expect(loadRequest.modelID == "melix-dev-text")
+        #expect(loadRequest.memoryBudgetBytes == 65_536)
 
         _ = try await client.runBenchMatrix(
             ControlPlaneBenchMatrixRequest(
@@ -3331,6 +3375,12 @@ struct ControlPlaneServiceTests {
                 deepSleepAfterSeconds: 600
             )
         }
+
+        let loaded = try await client.loadModel(
+            modelID: "melix-dev-text",
+            memoryBudgetBytes: 98_304
+        )
+        #expect(loaded.modelID == "")
     }
 
     @Test("execute rejects canonical bench request validation failures")
@@ -4825,6 +4875,33 @@ struct ControlPlaneServiceTests {
         #expect(response.model.model.settings.adaptiveThinking.budgetTokens == 0)
     }
 
+    @Test("execute maps memory budget model policy values and clears them when drafts are empty")
+    func executeMapsMemoryBudgetModelPolicyValuesAndClearsThemWhenDraftsAreEmpty() async throws {
+        let service = ControlPlaneService(modelCatalog: ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels()))
+
+        let configured = try await service.execute(
+            makeSetModelPolicyRequest(
+                modelID: "melix-dev-text",
+                values: [
+                    "memory_budget_bytes": "65536",
+                ]
+            )
+        )
+        let cleared = try await service.execute(
+            makeSetModelPolicyRequest(
+                modelID: "melix-dev-text",
+                values: [
+                    "memory_budget_bytes": "",
+                ]
+            )
+        )
+
+        #expect(configured.ok)
+        #expect(configured.model.model.settings.memoryBudgetBytes == 65_536)
+        #expect(cleared.ok)
+        #expect(cleared.model.model.settings.memoryBudgetBytes == 0)
+    }
+
     @Test("execute surfaces structured errors for missing or unavailable model tools")
     func executeSurfacesStructuredErrorsForMissingOrUnavailableModelTools() async throws {
         let unavailableService = ControlPlaneService(
@@ -5339,13 +5416,17 @@ struct ControlPlaneServiceTests {
         return request
     }
 
-    private func makeLoadModelRequest(modelID: String) -> Melix_Controlplane_V1_ControlPlaneRequest {
+    private func makeLoadModelRequest(
+        modelID: String,
+        memoryBudgetBytes: UInt64 = 0
+    ) -> Melix_Controlplane_V1_ControlPlaneRequest {
         var request = Melix_Controlplane_V1_ControlPlaneRequest()
         request.requestID = "req-model-load-\(modelID)"
         request.commandType = "model.load"
         request.model = Melix_Controlplane_V1_ModelCommand()
         request.model.load = Melix_Controlplane_V1_LoadModel()
         request.model.load.modelID = modelID
+        request.model.load.memoryBudgetBytes = memoryBudgetBytes
         return request
     }
 

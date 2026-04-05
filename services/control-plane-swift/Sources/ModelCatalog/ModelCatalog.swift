@@ -30,6 +30,29 @@ public actor ModelCatalog {
         var lastAccessOrdinal: UInt64
         var lastAccessUnixMs: Int64
         var transitionReason: String
+        var memoryBudgetBytes: UInt64
+        var memoryHeadroomBytes: UInt64
+        var requiredBytes: UInt64
+    }
+
+    public struct MemoryBudgetEvidence: Equatable, Sendable {
+        public let memoryBudgetBytes: UInt64
+        public let memoryHeadroomBytes: UInt64
+        public let requiredBytes: UInt64
+
+        public init(
+            memoryBudgetBytes: UInt64 = 0,
+            memoryHeadroomBytes: UInt64 = 0,
+            requiredBytes: UInt64 = 0
+        ) {
+            self.memoryBudgetBytes = memoryBudgetBytes
+            self.memoryHeadroomBytes = memoryHeadroomBytes
+            self.requiredBytes = requiredBytes
+        }
+
+        public var isEmpty: Bool {
+            memoryBudgetBytes == 0 && memoryHeadroomBytes == 0 && requiredBytes == 0
+        }
     }
 
     private var models: [String: Melix_Controlplane_V1_ModelSummary]
@@ -55,7 +78,10 @@ public actor ModelCatalog {
             ledger[model.modelID] = ResidencyLedger(
                 lastAccessOrdinal: accessOrdinal,
                 lastAccessUnixMs: seededNow,
-                transitionReason: ""
+                transitionReason: "",
+                memoryBudgetBytes: model.settings.memoryBudgetBytes,
+                memoryHeadroomBytes: 0,
+                requiredBytes: 0
             )
         }
         self.models = Dictionary(uniqueKeysWithValues: normalizedSeedModels.map { ($0.modelID, $0) })
@@ -89,7 +115,7 @@ public actor ModelCatalog {
         guard var model = models[id] else {
             return nil
         }
-        touchModel(id: id, transitionReason: reason)
+        touchModel(id: id, transitionReason: reason, clearMemoryBudgetEvidence: true)
         model.state = .modelLoading
         model.pinned = false
         model = synchronized(model)
@@ -120,7 +146,9 @@ public actor ModelCatalog {
             transitionReason: resolvedLoadTransitionReason(
                 explicitReason: reason,
                 workerResidency: workerResidency
-            )
+            ),
+            memoryBudgetEvidence: nil,
+            clearMemoryBudgetEvidence: true
         )
         model = synchronized(model)
         if let workerResidency {
@@ -141,12 +169,18 @@ public actor ModelCatalog {
 
     public func recordLoadFailed(
         id: String,
-        reason: String = "load_failed"
+        reason: String = "load_failed",
+        memoryBudgetEvidence: MemoryBudgetEvidence? = nil
     ) -> Melix_Controlplane_V1_ModelSummary? {
         guard var model = models[id] else {
             return nil
         }
-        touchModel(id: id, transitionReason: reason)
+        touchModel(
+            id: id,
+            transitionReason: reason,
+            memoryBudgetEvidence: memoryBudgetEvidence,
+            clearMemoryBudgetEvidence: memoryBudgetEvidence == nil
+        )
         model.state = .modelFailed
         model.pinned = false
         model = synchronized(model)
@@ -162,7 +196,7 @@ public actor ModelCatalog {
         guard var model = models[id] else {
             return nil
         }
-        touchModel(id: id, transitionReason: reason)
+        touchModel(id: id, transitionReason: reason, clearMemoryBudgetEvidence: true)
         model.state = .modelEvicting
         model.pinned = false
         model = synchronized(model)
@@ -177,7 +211,11 @@ public actor ModelCatalog {
         guard var model = models[id] else {
             return nil
         }
-        touchModel(id: id, transitionReason: resolvedUnloadTransitionReason(for: id, fallback: reason))
+        touchModel(
+            id: id,
+            transitionReason: resolvedUnloadTransitionReason(for: id, fallback: reason),
+            clearMemoryBudgetEvidence: true
+        )
         model.state = .modelUnloaded
         model.pinned = false
         model = synchronized(model)
@@ -193,7 +231,11 @@ public actor ModelCatalog {
         guard var model = models[id] else {
             return nil
         }
-        touchModel(id: id, transitionReason: failedUnloadTransitionReason(for: id, fallback: reason))
+        touchModel(
+            id: id,
+            transitionReason: failedUnloadTransitionReason(for: id, fallback: reason),
+            clearMemoryBudgetEvidence: true
+        )
         model.state = .modelFailed
         model.pinned = false
         model = synchronized(model)
@@ -280,7 +322,10 @@ public actor ModelCatalog {
             residencyLedger[source.modelID] = ResidencyLedger(
                 lastAccessOrdinal: nextAccessOrdinal,
                 lastAccessUnixMs: now,
-                transitionReason: reason
+                transitionReason: reason,
+                memoryBudgetBytes: source.settings.memoryBudgetBytes,
+                memoryHeadroomBytes: 0,
+                requiredBytes: 0
             )
         } else {
             touchModel(id: source.modelID, transitionReason: reason)
@@ -1114,23 +1159,30 @@ public actor ModelCatalog {
     ) -> Melix_Controlplane_V1_ModelSummary {
         ModelCatalog.withSynchronizedResidency(
             source,
-            transitionReason: residencyLedger[source.modelID]?.transitionReason ?? ""
+            transitionReason: residencyLedger[source.modelID]?.transitionReason ?? "",
+            memoryBudgetEvidence: memoryBudgetEvidence(for: source.modelID)
         )
     }
 
     private static func withSynchronizedResidency(
         _ source: Melix_Controlplane_V1_ModelSummary,
-        transitionReason: String = ""
+        transitionReason: String = "",
+        memoryBudgetEvidence: MemoryBudgetEvidence = MemoryBudgetEvidence()
     ) -> Melix_Controlplane_V1_ModelSummary {
         var model = source
         model.pinned = effectivePinnedFlag(for: model)
-        model.residency = residencySummary(for: model, transitionReason: transitionReason)
+        model.residency = residencySummary(
+            for: model,
+            transitionReason: transitionReason,
+            memoryBudgetEvidence: memoryBudgetEvidence
+        )
         return model
     }
 
     private static func residencySummary(
         for model: Melix_Controlplane_V1_ModelSummary,
-        transitionReason: String
+        transitionReason: String,
+        memoryBudgetEvidence: MemoryBudgetEvidence
     ) -> Melix_Controlplane_V1_ResidencySummary {
         var residency = Melix_Controlplane_V1_ResidencySummary()
         residency.state = residencyState(for: model.state)
@@ -1140,6 +1192,9 @@ public actor ModelCatalog {
         residency.ttlSeconds = model.settings.ttlSeconds
         residency.transitionReason = transitionReason
         residency.effectiveDiskStreamingMode = effectiveDiskStreamingMode(for: model)
+        residency.memoryBudgetBytes = max(model.settings.memoryBudgetBytes, memoryBudgetEvidence.memoryBudgetBytes)
+        residency.memoryHeadroomBytes = memoryBudgetEvidence.memoryHeadroomBytes
+        residency.requiredBytes = memoryBudgetEvidence.requiredBytes
         return residency
     }
 
@@ -1265,20 +1320,50 @@ public actor ModelCatalog {
 
     private func touchModel(
         id: String,
-        transitionReason: String? = nil
+        transitionReason: String? = nil,
+        memoryBudgetEvidence: MemoryBudgetEvidence? = nil,
+        clearMemoryBudgetEvidence: Bool = false
     ) {
         nextAccessOrdinal += 1
         var ledger = residencyLedger[id] ?? ResidencyLedger(
             lastAccessOrdinal: 0,
             lastAccessUnixMs: nowUnixMs(),
-            transitionReason: ""
+            transitionReason: "",
+            memoryBudgetBytes: models[id]?.settings.memoryBudgetBytes ?? 0,
+            memoryHeadroomBytes: 0,
+            requiredBytes: 0
         )
         ledger.lastAccessOrdinal = nextAccessOrdinal
         ledger.lastAccessUnixMs = nowUnixMs()
+        ledger.memoryBudgetBytes = models[id]?.settings.memoryBudgetBytes ?? ledger.memoryBudgetBytes
         if let transitionReason, !transitionReason.isEmpty {
             ledger.transitionReason = transitionReason
         }
+        if clearMemoryBudgetEvidence {
+            ledger.memoryBudgetBytes = models[id]?.settings.memoryBudgetBytes ?? ledger.memoryBudgetBytes
+            ledger.memoryHeadroomBytes = 0
+            ledger.requiredBytes = 0
+        }
+        if let memoryBudgetEvidence {
+            ledger.memoryBudgetBytes = max(
+                models[id]?.settings.memoryBudgetBytes ?? 0,
+                memoryBudgetEvidence.memoryBudgetBytes
+            )
+            ledger.memoryHeadroomBytes = memoryBudgetEvidence.memoryHeadroomBytes
+            ledger.requiredBytes = memoryBudgetEvidence.requiredBytes
+        }
         residencyLedger[id] = ledger
+    }
+
+    private func memoryBudgetEvidence(for modelID: String) -> MemoryBudgetEvidence {
+        guard let ledger = residencyLedger[modelID] else {
+            return MemoryBudgetEvidence()
+        }
+        return MemoryBudgetEvidence(
+            memoryBudgetBytes: ledger.memoryBudgetBytes,
+            memoryHeadroomBytes: ledger.memoryHeadroomBytes,
+            requiredBytes: ledger.requiredBytes
+        )
     }
 
     private func lastAccessUnixMs(for modelID: String) -> Int64 {

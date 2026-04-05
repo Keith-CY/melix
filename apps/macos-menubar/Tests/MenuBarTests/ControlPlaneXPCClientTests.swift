@@ -345,6 +345,16 @@ struct ControlPlaneXPCClientTests {
         }
     }
 
+    @Test("protocol default load helper forwards to the legacy load entry point")
+    func protocolDefaultLoadHelperForwardsToLegacyLoadEntryPoint() async throws {
+        let client = DefaultingControlPlaneXPCClient()
+
+        _ = try await client.loadModel(modelID: "melix-dev-text", memoryBudgetBytes: 65_536)
+
+        #expect(await client.lastLoadModelID == "melix-dev-text")
+        #expect(await client.loadCallCount == 1)
+    }
+
     @Test("local client builds quantize requests with a typed quant profile")
     func localClientBuildsQuantizeRequestsWithTypedQuantProfile() async throws {
         let service = RecordingExecuteControlPlaneService()
@@ -368,6 +378,32 @@ struct ControlPlaneXPCClientTests {
         #expect(request.model.runOperation.quantProfile.quantProfileID == "q6")
         #expect(request.model.runOperation.quantProfile.weightQuant == "q6")
         #expect(request.model.runOperation.quantProfile.kvQuant == "q4")
+    }
+
+    @Test("local client builds model load requests with explicit memory budgets")
+    func localClientBuildsModelLoadRequestsWithExplicitMemoryBudgets() async throws {
+        let service = RecordingExecuteControlPlaneService()
+        let client = LocalControlPlaneXPCClient(service: service)
+
+        _ = try await client.loadModel(modelID: "melix-dev-text", memoryBudgetBytes: 65_536)
+        let request = try #require(await service.lastExecuteRequest)
+
+        #expect(request.commandType == "model.load")
+        #expect(request.model.load.modelID == "melix-dev-text")
+        #expect(request.model.load.memoryBudgetBytes == 65_536)
+    }
+
+    @Test("local client builds model load requests with zero memory budgets by default")
+    func localClientBuildsModelLoadRequestsWithZeroMemoryBudgetsByDefault() async throws {
+        let service = RecordingExecuteControlPlaneService()
+        let client = LocalControlPlaneXPCClient(service: service)
+
+        _ = try await client.loadModel(modelID: "melix-dev-text")
+        let request = try #require(await service.lastExecuteRequest)
+
+        #expect(request.commandType == "model.load")
+        #expect(request.model.load.modelID == "melix-dev-text")
+        #expect(request.model.load.memoryBudgetBytes == 0)
     }
 
     @Test("local client runs doctor and bench through control-plane execute")
@@ -947,6 +983,9 @@ struct ControlPlaneXPCClientTests {
 }
 
 private actor DefaultingControlPlaneXPCClient: ControlPlaneXPCClient {
+    private(set) var lastLoadModelID: String?
+    private(set) var loadCallCount = 0
+
     func handshake() async throws -> Melix_Controlplane_V1_HandshakeResponse {
         Melix_Controlplane_V1_HandshakeResponse()
     }
@@ -974,7 +1013,8 @@ private actor DefaultingControlPlaneXPCClient: ControlPlaneXPCClient {
     }
 
     func loadModel(modelID: String) async throws -> Melix_Controlplane_V1_ModelSummary {
-        _ = modelID
+        lastLoadModelID = modelID
+        loadCallCount += 1
         return Melix_Controlplane_V1_ModelSummary()
     }
 

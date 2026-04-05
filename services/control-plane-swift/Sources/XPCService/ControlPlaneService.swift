@@ -460,7 +460,11 @@ public actor ControlPlaneService {
                workerRegistry != nil {
                 await publishModelStateChanged(loading)
             }
-            let outcome = await handleModelLoad(modelID: load.modelID, reason: "operator_load")
+            let outcome = await handleModelLoad(
+                modelID: load.modelID,
+                reason: "operator_load",
+                requestedMemoryBudgetBytes: load.memoryBudgetBytes
+            )
             let model = outcome.model
             if workerRegistry != nil {
                 await publishModelStateChanged(model)
@@ -2137,6 +2141,12 @@ public actor ControlPlaneService {
                 } else if let budgetTokens = UInt32(value) {
                     settings.adaptiveThinking.budgetTokens = budgetTokens
                 }
+            case "memory_budget_bytes":
+                if value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    settings.memoryBudgetBytes = 0
+                } else if let memoryBudgetBytes = UInt64(value) {
+                    settings.memoryBudgetBytes = memoryBudgetBytes
+                }
             default:
                 settings.ext[key] = value
             }
@@ -2962,12 +2972,18 @@ public actor ControlPlaneService {
 
     private func handleModelLoad(
         modelID: String,
-        reason: String
+        reason: String,
+        requestedMemoryBudgetBytes: UInt64 = 0
     ) async -> ModelLoadOutcome {
-        let preparedModelSpec = await modelCatalog.model(id: modelID).flatMap(BootstrapWorkerPreparation.modelSpec(for:))
-        let hydratedPreparedModelSpec = hydratedModel(await modelCatalog.model(id: modelID))
-            .flatMap(BootstrapWorkerPreparation.modelSpec(for:))
+        let catalogModel = await modelCatalog.model(id: modelID)
+        let hydratedCatalogModel = hydratedModel(catalogModel)
+        let preparedModelSpec = catalogModel.flatMap(BootstrapWorkerPreparation.modelSpec(for:))
+        let hydratedPreparedModelSpec = hydratedCatalogModel.flatMap(BootstrapWorkerPreparation.modelSpec(for:))
         let fallbackPreparedModelSpec = hydratedPreparedModelSpec ?? preparedModelSpec
+        let effectiveMemoryBudgetBytes = resolvedMemoryBudgetBytes(
+            requestedMemoryBudgetBytes: requestedMemoryBudgetBytes,
+            model: hydratedCatalogModel ?? catalogModel
+        )
         let requestedDiskStreamingMode = fallbackPreparedModelSpec.map {
             controlPlaneDiskStreamingMode(for: $0.settings.diskStreamingMode)
         } ?? .diskStreamingDisabled
@@ -3003,7 +3019,7 @@ public actor ControlPlaneService {
 
         var workerRequest = Melix_Worker_V1_LoadModelRequest()
         workerRequest.model = modelSpec
-        workerRequest.memoryBudgetBytes = 0
+        workerRequest.memoryBudgetBytes = effectiveMemoryBudgetBytes
         workerRequest.pinOnLoad = false
         workerRequest.warmupAfterLoad = false
         workerRequest.diskStreamingMode = modelSpec.settings.diskStreamingMode
@@ -3013,13 +3029,21 @@ public actor ControlPlaneService {
             guard response.ok, !response.modelHandle.isEmpty else {
                 let explicitError = response.error.code.isEmpty ? nil : makeErrorStatus(from: response.error)
                 let failureReason = explicitError.map { "\(reason)_\(sanitizeTransitionReasonComponent($0.code))" } ?? "\(reason)_failed"
+                let memoryBudgetEvidence = memoryBudgetEvidence(from: response.error)
+                if let memoryBudgetEvidence {
+                    await recordMemoryBudgetMetrics(
+                        memoryBudgetEvidence,
+                        metricsPrefix: "control_plane.model_load"
+                    )
+                }
                 _ = await serverSessionRuntimeStore.noteDiskStreamingSelection(
                     requestedMode: requestedDiskStreamingMode,
                     effectiveMode: .diskStreamingDisabled
                 )
                 let model = await modelCatalog.recordLoadFailed(
                     id: modelID,
-                    reason: failureReason
+                    reason: failureReason,
+                    memoryBudgetEvidence: memoryBudgetEvidence
                 ) ?? Melix_Controlplane_V1_ModelSummary()
                 return ModelLoadOutcome(model: hydrate(model), error: explicitError)
             }
@@ -3048,6 +3072,43 @@ public actor ControlPlaneService {
             ) ?? Melix_Controlplane_V1_ModelSummary()
             return ModelLoadOutcome(model: hydrate(model), error: nil)
         }
+    }
+
+    private func resolvedMemoryBudgetBytes(
+        requestedMemoryBudgetBytes: UInt64,
+        model: Melix_Controlplane_V1_ModelSummary?
+    ) -> UInt64 {
+        if requestedMemoryBudgetBytes > 0 {
+            return requestedMemoryBudgetBytes
+        }
+        return model?.settings.memoryBudgetBytes ?? 0
+    }
+
+    private func memoryBudgetEvidence(
+        from workerError: Melix_Worker_V1_ErrorStatus
+    ) -> ModelCatalog.MemoryBudgetEvidence? {
+        guard workerError.code == "memory_budget_exceeded" || workerError.code == "unsafe_load_rejected" else {
+            return nil
+        }
+        let budgetBytes = UInt64(workerError.details["budget_bytes"] ?? "") ?? 0
+        let headroomBytes = UInt64(workerError.details["headroom_bytes"] ?? "") ?? 0
+        let requiredBytes = UInt64(workerError.details["required_bytes"] ?? "") ?? 0
+        let evidence = ModelCatalog.MemoryBudgetEvidence(
+            memoryBudgetBytes: budgetBytes,
+            memoryHeadroomBytes: headroomBytes,
+            requiredBytes: requiredBytes
+        )
+        return evidence.isEmpty ? nil : evidence
+    }
+
+    private func recordMemoryBudgetMetrics(
+        _ evidence: ModelCatalog.MemoryBudgetEvidence,
+        metricsPrefix: String
+    ) async {
+        await metricsStore.increment("\(metricsPrefix)_rejection_count")
+        await metricsStore.set(Double(evidence.memoryBudgetBytes), forKey: "\(metricsPrefix)_last_budget_bytes")
+        await metricsStore.set(Double(evidence.memoryHeadroomBytes), forKey: "\(metricsPrefix)_last_headroom_bytes")
+        await metricsStore.set(Double(evidence.requiredBytes), forKey: "\(metricsPrefix)_last_required_bytes")
     }
 
     private func sanitizeTransitionReasonComponent(_ rawCode: String) -> String {
