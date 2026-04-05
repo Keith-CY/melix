@@ -2,6 +2,38 @@
 
 ## 2026-04-06
 
+- Closed the second executable `M13.4` slice and completed the milestone by turning the shipped API
+  onboarding examples into repository-owned executable truth:
+  - added `scripts/m13_api_onboarding_smoke.py`, a live shared-access smoke that exercises the
+    canonical `/health`, `/v1/responses`, and `/v1/messages` quick-start examples against a local
+    `LiveMelixStack`
+  - updated the desktop API quick-start snippets so OpenAI-compatible and Anthropic examples now
+    match the shipped streaming contract, including `stream=true`, SSE-friendly curl flags, and
+    auth-aware `/health` examples for the Ollama compatibility guidance
+  - added deterministic Python unit coverage for smoke error branches plus a new integration test
+    that runs the smoke against the live stack, ensuring example payloads, headers, and endpoint
+    shapes stay aligned with the product UI
+- Verification summary for the second executable `M13.4` slice:
+  - `PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" uv run --project services/mlx-worker-python python scripts/m13_api_onboarding_smoke.py --json`: pass with `/health`, `/v1/responses`, and `/v1/messages` all returning `200`
+  - `PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" uv run --project services/mlx-worker-python pytest tests/test_m13_api_onboarding_smoke.py tests/integration/test_api_onboarding_examples.py -q`: `16 passed in 11.69s`
+  - `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/.build/ModuleCache.noindex" swift test --package-path apps/macos-menubar --enable-code-coverage --filter 'DesktopFoundationViewTests'`: `69 tests in 1 suite passed`
+  - `make py-test`: `487 passed in 44.61s`
+  - `make integration-test`: `67 passed in 898.58s (0:14:58)`
+  - `make swift-test`: failed outside the touched scope when `services/mlx-text-worker-swift` exited with unexpected signal `11` during `WorkerScaffoldTests`
+- Metrics report for the second executable `M13.4` slice:
+  - smoke evidence for the shipped onboarding examples:
+    - `base_url = http://127.0.0.1:50099/v1`
+    - `health.status_code = 200`, `health.status = ok`
+    - `responses.status_code = 200`, `responses.content_type = text/event-stream; charset=utf-8`
+    - `messages.status_code = 200`, `messages.content_type = text/event-stream; charset=utf-8`
+    - `startup_timings_ms.swift_text_worker_ready_ms = 5108.96`
+    - `startup_timings_ms.python_worker_ready_ms = 5121.63`
+    - `startup_timings_ms.control_plane_spawn_to_ready_ms = 365.43`
+  - changed-line coverage for the touched handwritten executable scope:
+    - `scripts/m13_api_onboarding_smoke.py`, `tests/test_m13_api_onboarding_smoke.py`, and `tests/integration/test_api_onboarding_examples.py`: `100.00%` (`163/163`)
+    - `apps/macos-menubar/Sources/AppMain/Dashboard/DesktopWorkspaceShellView.swift` and `apps/macos-menubar/Tests/MenuBarTests/DesktopFoundationViewTests.swift`: `100.00%` (`119/119`)
+    - aggregate touched-scope coverage: `100.00%` (`282/282`)
+
 - Closed the first executable `M13.4` slice by moving API onboarding truth into the typed
   control-plane snapshot and rehydrating the desktop API workspace from that source instead of
   stale hardcoded endpoint catalogs:

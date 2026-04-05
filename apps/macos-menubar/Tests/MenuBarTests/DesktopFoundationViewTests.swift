@@ -803,7 +803,7 @@ struct DesktopFoundationViewTests {
 
     @Test("api quick-start groups use the effective listener URL and compatibility notes")
     @MainActor
-    func apiQuickStartGroupsUseTheEffectiveListenerURLAndCompatibilityNotes() {
+    func apiQuickStartGroupsUseTheEffectiveListenerURLAndCompatibilityNotes() throws {
         var snapshot = Melix_Controlplane_V1_ServerSnapshot()
         snapshot.serverState = .serverReady
         snapshot.models = [ModelCatalog.devTextModel()]
@@ -843,13 +843,21 @@ struct DesktopFoundationViewTests {
             selectedSession: session
         )
         let groupByID = Dictionary(uniqueKeysWithValues: groups.map { ($0.id, $0) })
+        let openAIGroup = try #require(groupByID["openai_compatible"])
+        let anthropicGroup = try #require(groupByID["anthropic_messages"])
+        let ollamaGroup = try #require(groupByID["ollama_compatibility"])
 
         #expect(groups.count == 3)
-        #expect(groupByID["openai_compatible"]?.snippets.contains { $0.body.contains("http://127.0.0.1:11434/v1") } == true)
-        #expect(groupByID["openai_compatible"]?.snippets.contains { $0.body.contains("<desktop-agent>") } == true)
-        #expect(groupByID["anthropic_messages"]?.snippets.contains { $0.body.contains("/messages") } == true)
-        #expect(groupByID["ollama_compatibility"]?.note.contains("Native /api/chat") == true)
-        #expect(groupByID["ollama_compatibility"]?.snippets.contains { $0.body.contains("/health") } == true)
+        #expect(openAIGroup.snippets.contains { $0.body.contains("http://127.0.0.1:11434/v1") })
+        #expect(openAIGroup.snippets.contains { $0.body.contains("<desktop-agent>") })
+        #expect(openAIGroup.snippets.contains { $0.body.contains("\"stream\":true") || $0.body.contains("\"stream\": True") || $0.body.contains("stream: true") })
+        #expect(openAIGroup.snippets.contains { $0.body.contains("client.responses.stream") || $0.body.contains("response.iter_lines()") || $0.body.contains("TextDecoderStream") })
+        #expect(anthropicGroup.snippets.contains { $0.body.contains("/messages") })
+        #expect(anthropicGroup.snippets.contains { $0.body.contains("anthropic-version") })
+        #expect(anthropicGroup.snippets.contains { $0.body.contains("\"stream\":true") || $0.body.contains("\"stream\": True") || $0.body.contains("stream: true") })
+        #expect(ollamaGroup.note.contains("Native /api/chat"))
+        #expect(ollamaGroup.snippets.contains { $0.body.contains("/health") })
+        #expect(ollamaGroup.snippets.contains { $0.body.contains("x-api-key") })
     }
 
     @Test("api onboarding state normalizes unknown surface status text")
@@ -1009,12 +1017,27 @@ struct DesktopFoundationViewTests {
             } == false
         )
         #expect(
+            disabledGroups.first(where: { $0.id == "ollama_compatibility" })?.snippets.contains {
+                $0.body.contains("x-api-key")
+            } == false
+        )
+        #expect(
             unauthenticatedGroups.first(where: { $0.id == "openai_compatible" })?.snippets.contains {
                 $0.body.contains("Authorization")
             } == false
         )
         #expect(
+            unauthenticatedGroups.first(where: { $0.id == "ollama_compatibility" })?.snippets.contains {
+                $0.body.contains("Authorization")
+            } == false
+        )
+        #expect(
             bearerGroups.first(where: { $0.id == "openai_compatible" })?.snippets.contains {
+                $0.body.contains("Authorization: Bearer <desktop-agent>")
+            } == true
+        )
+        #expect(
+            bearerGroups.first(where: { $0.id == "ollama_compatibility" })?.snippets.contains {
                 $0.body.contains("Authorization: Bearer <desktop-agent>")
             } == true
         )

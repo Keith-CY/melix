@@ -2785,13 +2785,30 @@ func desktopAPIQuickStartGroups(
         ? String(serviceBaseURL.dropLast(3))
         : serviceBaseURL
     let authHeader = primaryGatewayHeader(for: selectedSession)
-    let authValue = selectedSession.integrationAuthValue
     let modelID = selectedSession.modelID
     let surfacesByID = Dictionary(uniqueKeysWithValues: foundation.apiSurfaces.map { ($0.id, $0) })
 
     func fetchHeaderBlock(extraHeaders: [(String, String)]) -> String {
         let headers = extraHeaders + (authHeader.map { [$0] } ?? [])
         return headers.map { "        \"\($0.0)\": \"\($0.1)\"," }.joined(separator: "\n") + "\n"
+    }
+
+    func pythonHeaderLiteral(extraHeaders: [(String, String)]) -> String {
+        let headers = extraHeaders + (authHeader.map { [$0] } ?? [])
+        guard headers.isEmpty == false else {
+            return "{}"
+        }
+
+        return ([ "{"] + headers.map { "    \"\($0.0)\": \"\($0.1)\"," } + ["}"]).joined(separator: "\n")
+    }
+
+    func javascriptHeaderLiteral(extraHeaders: [(String, String)]) -> String {
+        let headers = extraHeaders + (authHeader.map { [$0] } ?? [])
+        guard headers.isEmpty == false else {
+            return "{}"
+        }
+
+        return ([ "{"] + headers.map { "  \"\($0.0)\": \"\($0.1)\"," } + ["}"]).joined(separator: "\n")
     }
 
     let anthropicPythonHeaders = fetchHeaderBlock(
@@ -2834,18 +2851,24 @@ func desktopAPIQuickStartGroups(
                         language: "python",
                         title: "Python",
                         body: """
-                        from openai import OpenAI
+                        import requests
 
-                        client = OpenAI(
-                            base_url="\(serviceBaseURL)",
-                            api_key="\(authValue)"
+                        headers = \(pythonHeaderLiteral(extraHeaders: [("Content-Type", "application/json")]))
+                        response = requests.post(
+                            "\(serviceBaseURL)/responses",
+                            headers=headers,
+                            json={
+                                "model": "\(modelID)",
+                                "stream": True,
+                                "input": "Hello from Melix"
+                            },
+                            timeout=30,
+                            stream=True,
                         )
-
-                        response = client.responses.create(
-                            model="\(modelID)",
-                            input="Hello from Melix"
-                        )
-                        print(response.output_text)
+                        response.raise_for_status()
+                        for line in response.iter_lines():
+                            if line:
+                                print(line.decode("utf-8"))
                         """
                     ),
                     DesktopAPIQuickStartSnippet(
@@ -2853,19 +2876,26 @@ func desktopAPIQuickStartGroups(
                         language: "javascript",
                         title: "JavaScript",
                         body: """
-                        import OpenAI from "openai";
-
-                        const client = new OpenAI({
-                          baseURL: "\(serviceBaseURL)",
-                          apiKey: "\(authValue)"
+                        const response = await fetch("\(serviceBaseURL)/responses", {
+                          method: "POST",
+                          headers: \(javascriptHeaderLiteral(extraHeaders: [("Content-Type", "application/json")])),
+                          body: JSON.stringify({
+                            model: "\(modelID)",
+                            stream: true,
+                            input: "Hello from Melix"
+                          })
                         });
 
-                        const response = await client.responses.create({
-                          model: "\(modelID)",
-                          input: "Hello from Melix"
-                        });
+                        if (!response.ok || !response.body) {
+                          throw new Error(`Melix request failed: ${response.status}`);
+                        }
 
-                        console.log(response.output_text);
+                        const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
+                        while (true) {
+                          const { value, done } = await reader.read();
+                          if (done) break;
+                          process.stdout.write(value);
+                        }
                         """
                     ),
                 ]
@@ -2908,13 +2938,18 @@ func desktopAPIQuickStartGroups(
                             "    headers=headers,",
                             "    json={",
                             "        \"model\": \"\(modelID)\",",
+                            "        \"stream\": True,",
                             "        \"max_tokens\": 128,",
                             "        \"messages\": [{\"role\": \"user\", \"content\": \"Hello from Melix\"}]",
                             "    },",
                             "    timeout=30,",
+                            "    stream=True,",
                             ")",
                             "",
-                            "print(response.json())",
+                            "response.raise_for_status()",
+                            "for line in response.iter_lines():",
+                            "    if line:",
+                            "        print(line.decode(\"utf-8\"))",
                         ].joined(separator: "\n")
                     ),
                     DesktopAPIQuickStartSnippet(
@@ -2929,12 +2964,22 @@ func desktopAPIQuickStartGroups(
                             "  },",
                             "  body: JSON.stringify({",
                             "    model: \"\(modelID)\",",
+                            "    stream: true,",
                             "    max_tokens: 128,",
                             "    messages: [{ role: \"user\", content: \"Hello from Melix\" }]",
                             "  })",
                             "});",
                             "",
-                            "console.log(await response.json());",
+                            "if (!response.ok || !response.body) {",
+                            "  throw new Error(`Melix request failed: ${response.status}`);",
+                            "}",
+                            "",
+                            "const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();",
+                            "while (true) {",
+                            "  const { value, done } = await reader.read();",
+                            "  if (done) break;",
+                            "  process.stdout.write(value);",
+                            "}",
                         ].joined(separator: "\n")
                     ),
                 ]
@@ -2960,7 +3005,10 @@ func desktopAPIQuickStartGroups(
                         title: "curl",
                         body: [
                             "# Use this bridge only with clients that can override their provider endpoint.",
-                            "curl -sS \(serviceRootURL)/health",
+                            healthCurlQuickStart(
+                                baseURL: serviceRootURL,
+                                authHeader: authHeader
+                            ),
                             openAICurlQuickStart(
                                 baseURL: serviceBaseURL,
                                 modelID: modelID,
@@ -2976,7 +3024,8 @@ func desktopAPIQuickStartGroups(
                         # Point your client at Melix through an OpenAI-compatible bridge.
                         import requests
 
-                        print(requests.get("\(serviceRootURL)/health", timeout=10).json())
+                        health_headers = \(pythonHeaderLiteral(extraHeaders: []))
+                        print(requests.get("\(serviceRootURL)/health", headers=health_headers, timeout=10).json())
                         print("Use \(serviceBaseURL) as the compatibility base URL for model \(modelID).")
                         """
                     ),
@@ -2986,7 +3035,9 @@ func desktopAPIQuickStartGroups(
                         title: "JavaScript",
                         body: """
                         // Native Ollama /api/* routes are not available yet.
-                        const health = await fetch("\(serviceRootURL)/health");
+                        const health = await fetch("\(serviceRootURL)/health", {
+                          headers: \(javascriptHeaderLiteral(extraHeaders: []))
+                        });
                         console.log(await health.json());
                         console.log("Use \(serviceBaseURL) as the compatibility base URL for model \(modelID).");
                         """
@@ -3004,12 +3055,12 @@ private func openAICurlQuickStart(
     modelID: String,
     authHeader: (String, String)?
 ) -> String {
-    var lines = ["curl -sS \(baseURL)/responses \\"]
+    var lines = ["curl -N -sS \(baseURL)/responses \\"]
     if let authHeader {
         lines.append("  -H \"\(authHeader.0): \(authHeader.1)\" \\")
     }
     lines.append("  -H \"Content-Type: application/json\" \\")
-    lines.append("  -d '{\"model\":\"\(modelID)\",\"input\":\"Hello from Melix\"}'")
+    lines.append("  -d '{\"model\":\"\(modelID)\",\"stream\":true,\"input\":\"Hello from Melix\"}'")
     return lines.joined(separator: "\n")
 }
 
@@ -3018,13 +3069,26 @@ private func anthropicCurlQuickStart(
     modelID: String,
     authHeader: (String, String)?
 ) -> String {
-    var lines = ["curl -sS \(baseURL)/messages \\"]
+    var lines = ["curl -N -sS \(baseURL)/messages \\"]
     if let authHeader {
         lines.append("  -H \"\(authHeader.0): \(authHeader.1)\" \\")
     }
     lines.append("  -H \"anthropic-version: 2023-06-01\" \\")
     lines.append("  -H \"Content-Type: application/json\" \\")
-    lines.append("  -d '{\"model\":\"\(modelID)\",\"max_tokens\":128,\"messages\":[{\"role\":\"user\",\"content\":\"Hello from Melix\"}]}'")
+    lines.append("  -d '{\"model\":\"\(modelID)\",\"stream\":true,\"max_tokens\":128,\"messages\":[{\"role\":\"user\",\"content\":\"Hello from Melix\"}]}'")
+    return lines.joined(separator: "\n")
+}
+
+private func healthCurlQuickStart(
+    baseURL: String,
+    authHeader: (String, String)?
+) -> String {
+    var lines = ["curl -sS \(baseURL)/health \\"]
+    if let authHeader {
+        lines.append("  -H \"\(authHeader.0): \(authHeader.1)\"")
+    } else {
+        lines = ["curl -sS \(baseURL)/health"]
+    }
     return lines.joined(separator: "\n")
 }
 

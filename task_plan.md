@@ -2,73 +2,74 @@
 
 ## Goal
 
-Close the first executable `M13.4` slice by projecting supported API surfaces and endpoint
-reference through one typed, control-plane-owned onboarding summary that the desktop API workspace
-can render without stale hardcoded catalogs.
+Close the second executable `M13.4` slice by adding repo-owned smoke verification for the shipped
+API onboarding examples so the quick-start material cannot drift away from live endpoint behavior.
 
 ## Scope
 
-- add a typed `api_onboarding` snapshot summary under `ServerSnapshot`
-- project supported API surfaces and live endpoint reference from control-plane truth
-- replace the static desktop API endpoint catalog with the typed snapshot summary
-- generate session-aware quick-start snippets in the desktop API workspace from the typed summary
-  plus selected server-session auth and base-URL state
-- keep Ollama guidance truthful by projecting an explicit compatibility boundary instead of
-  pretending native `/api/*` routes already ship
+- add a repo-owned onboarding smoke script for the canonical `/health`, `/v1/responses`, and
+  `/v1/messages` examples
+- cover the same example semantics in deterministic integration tests so CI detects drift
+- tighten desktop quick-start tests so example literals, auth expectations, and endpoint shapes
+  stay aligned with the smoke script
+- update milestone bookkeeping so `M13.4` can be called complete once example verification lands
 
 ## Measurement Points
 
-- `ServerSnapshot.api_onboarding` must remain populated after handshake and snapshot refresh
-- endpoint reference must reflect the shipped gateway routes instead of a desktop-local static list
-- quick-start snippets must use selected server-session auth, base URL, and model truth
-- OpenAI, Anthropic, and Ollama onboarding rows must stay explicit about what is shipped versus
-  compatibility-only guidance
+- the onboarding smoke must pass against a live `LiveMelixStack`
+- `/health` must return route readiness for the same local gateway base URL referenced in product
+  onboarding
+- `/v1/responses` and `/v1/messages` must accept the canonical example payloads and headers used by
+  the quick-start material
+- desktop quick-start helper tests must remain aligned with the example payload text and auth
+  assumptions exercised by the smoke script
 - changed-line coverage for the touched handwritten executable scope must remain at or above `95%`
 
 ## Phases
 
-1. Planning and snapshot contract
+1. Planning and example-verification design
    - status: completed
    - evidence:
-     - identified the current gap: the desktop API workspace still renders a stale phase-4 static
-       endpoint catalog and uses external-agent exports instead of product-owned API quick starts
-     - selected a bounded first slice: add a typed `api_onboarding` snapshot summary and rehydrate
-       the existing API workspace from that summary before considering broader compatibility work
-2. Typed API onboarding summary and desktop hydration
+     - inspected existing integration coverage and confirmed the repository already proves endpoint
+       streaming semantics, but does not yet own a smoke that explicitly validates the product
+       quick-start example payloads and headers
+     - selected a bounded second slice: add one repo-owned onboarding smoke plus aligned
+       integration and desktop quick-start assertions before considering broader API-page changes
+2. Onboarding smoke and quick-start alignment
    - status: completed
    - evidence:
-     - extended `ServerSnapshot` with a typed `api_onboarding` summary covering published API
-       surfaces, per-endpoint reference rows, surface status, and compatibility notes
-     - added `APIOnboardingSnapshotSource` so the Swift control plane now owns the shipped API
-       onboarding catalog instead of the desktop shell reconstructing it from static constants
-     - replaced the desktop API reference catalog with snapshot-driven `apiSurfaces` and
-       `apiReference` rows, preserving surface grouping and compatibility-only guidance
-     - generated session-aware OpenAI, Anthropic, and Ollama quick-start snippets from the
-       selected server session's effective base URL, auth state, and served model
+     - added `scripts/m13_api_onboarding_smoke.py` so the repository now owns one live smoke for
+       the canonical `/health`, `/v1/responses`, and `/v1/messages` examples under shared-access
+       authentication
+     - updated the desktop quick-start snippets to match shipped streaming behavior, including
+       `stream=true`, SSE-friendly curl flags, and auth-aware `/health` examples for compatibility
+       guidance
+     - added deterministic Python and integration coverage for the smoke script and its failure
+       branches so the product quick starts cannot silently drift from live endpoint expectations
 3. Verification and milestone bookkeeping
    - status: completed
    - evidence:
-     - focused control-plane and menu-bar suites passed with code coverage enabled
-     - touched-scope aggregate changed-line coverage reached `96.67% (784/811)`
-     - `make swift-test` still fails outside this slice in `services/mlx-text-worker-swift`
-       because `WorkerScaffoldTests` exits with signal `11`
+     - focused quick-start verification passed in Swift and Python, the repo-owned smoke script ran
+       successfully, and `make integration-test` covered the new live example path
+     - touched-scope changed-line coverage reached `100.00%` (`282/282`) across the modified Swift
+       and Python executable files
+     - `M13.4` is now ready to be marked completed in the execution index
 
 ## Acceptance
 
-- the desktop API workspace renders endpoint reference from typed control-plane truth
-- quick-start snippets are session-aware and match the shipped local API surface
-- operators can inspect OpenAI, Anthropic, and Ollama onboarding guidance without guessing which
-  routes are actually supported
+- operators and CI both have a repo-owned smoke that verifies the canonical onboarding examples
+- example snippets remain aligned with the live local gateway payloads, headers, and base URLs
+- `M13.4` has both product-visible onboarding material and executable example verification
 
 ## Risks
 
-- the desktop API workspace could remain stale if endpoint reference keeps living in a static UI
-  catalog instead of a typed snapshot summary
-- quick-start snippets could drift from live auth and model truth if they are copied from docs
-  instead of generated from the selected session
-- Ollama onboarding could become misleading if the product implies native `/api/*` support before
-  those routes exist
+- example verification could give a false sense of safety if it only tests endpoint availability
+  but not the specific example payloads shown in product quick starts
+- the smoke could drift from UI quick-start literals if shared example text and headers are not
+  asserted in desktop tests
+- shared-access authentication could make the smoke flaky if the script does not derive its headers
+  from repository-owned stack state
 
 ## Outcome
 
-- m13_4_api_onboarding_slice_1_completed
+- m13_4_api_onboarding_completed

@@ -247,6 +247,11 @@ The roadmap extension in `M10-M17` includes milestone-level plans plus decompose
   across Swift and Python helper scopes.
 - `M13.3` `docs/plans/2026-03-31-m13-3-tooling-embedding-and-config-file-settings.md`
 - `M13.4` `docs/plans/2026-03-31-m13-4-api-reference-and-quick-start-onboarding.md`
+  Status: completed. The desktop API workspace now projects supported endpoint reference and
+  session-aware quick-start snippets from typed control-plane onboarding truth, and the canonical
+  `/health`, `/v1/responses`, and `/v1/messages` examples are exercised by a repository-owned live
+  smoke plus focused integration coverage so the onboarding material stays aligned with shipped
+  streaming behavior.
 
 ## M14: Image Iteration And Persisted Creative Workflows
 
