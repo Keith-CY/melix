@@ -887,11 +887,11 @@ public actor RequestCoordinator {
             return
         }
         terminalResumeIneligibleRequestIDs.insert(requestID)
-        await metricsStore.increment("disconnect.terminal_failure_count")
         await metricsStore.set(
             disconnectResumeAttemptCount == 0 ? 0 : (disconnectResumeSuccessCount / disconnectResumeAttemptCount) * 100,
             forKey: "disconnect.resume_success_rate"
         )
+        await metricsStore.increment("disconnect.terminal_failure_count")
         if let workerClient = activeWorkerClients[requestID] {
             _ = try? await workerClient.abort(requestID: requestID)
         }
@@ -2059,6 +2059,14 @@ private func controlPlaneCacheSummary(
     summary.compressionRatio = workerStats.compressionRatio
     summary.l2RestoreHitRate = workerStats.l2RestoreHitRate
     summary.activeMode = makeControlPlaneCacheMode(from: workerStats.activeMode)
+    summary.cacheRoot = workerStats.cacheRoot
+    summary.initialCacheBlocks = workerStats.initialCacheBlocks
+    summary.supportedModes = workerStats.supportedModes.map(makeControlPlaneCacheMode(from:))
+    summary.experimentalModes = workerStats.experimentalModes.map(makeControlPlaneCacheMode(from:))
+    summary.supportsPrefixCache = workerStats.supportsPrefixCache
+    summary.supportsPagedCache = workerStats.supportsPagedCache
+    summary.supportsDiskCache = workerStats.supportsDiskCache
+    summary.supportsBoundarySnapshots = workerStats.supportsBoundarySnapshots
     return summary
 }
 

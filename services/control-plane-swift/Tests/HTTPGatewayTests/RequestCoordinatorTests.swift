@@ -183,7 +183,11 @@ struct RequestCoordinatorTests {
             #expect(error == .requestNotResumable)
         }
 
-        let metrics = await metricsStore.snapshot()
+        var metrics = await metricsStore.snapshot()
+        for _ in 0..<100 where metrics.values["disconnect.terminal_failure_count", default: 0] < 1 {
+            try? await Task.sleep(nanoseconds: 10_000_000)
+            metrics = await metricsStore.snapshot()
+        }
         let terminalProgress = await waitForProgress(
             schedulerReadModel: schedulerReadModel,
             requestID: "req-resume-timeout",
@@ -959,6 +963,14 @@ struct RequestCoordinatorTests {
         cacheStats.stats.l2RestoreHitRate = 1.0
         cacheStats.stats.compressionRatio = 0.25
         cacheStats.stats.activeMode = .hybrid
+        cacheStats.stats.cacheRoot = "/var/melix/cache"
+        cacheStats.stats.initialCacheBlocks = 6
+        cacheStats.stats.supportedModes = [.tiered, .rotating, .hybrid]
+        cacheStats.stats.experimentalModes = [.rotating, .hybrid]
+        cacheStats.stats.supportsPrefixCache = true
+        cacheStats.stats.supportsPagedCache = true
+        cacheStats.stats.supportsDiskCache = true
+        cacheStats.stats.supportsBoundarySnapshots = true
         var scope = Melix_Worker_V1_CacheScope()
         scope.modelID = "melix-dev-text"
         scope.multimodalAdapterHash = "image-hash-hot"
@@ -1062,6 +1074,14 @@ struct RequestCoordinatorTests {
         #expect(cacheSummary.l1Bytes == 2_048)
         #expect(cacheSummary.l2Bytes == 4_096)
         #expect(cacheSummary.activeMode == .hybrid)
+        #expect(cacheSummary.cacheRoot == "/var/melix/cache")
+        #expect(cacheSummary.initialCacheBlocks == 6)
+        #expect(cacheSummary.supportedModes == [.tiered, .rotating, .hybrid])
+        #expect(cacheSummary.experimentalModes == [.rotating, .hybrid])
+        #expect(cacheSummary.supportsPrefixCache)
+        #expect(cacheSummary.supportsPagedCache)
+        #expect(cacheSummary.supportsDiskCache)
+        #expect(cacheSummary.supportsBoundarySnapshots)
         #expect(cacheSnapshot.hotPrefixes.first?.cacheKey.fingerprintHash == Data("fingerprint-hot".utf8))
         #expect(cacheSnapshot.hotPrefixes.first?.cacheKey.scope.multimodalAdapterHash == "image-hash-hot")
         #expect(cacheSnapshot.hotPrefixes.first?.cacheKey.scope.scopeID == "scope-hot")

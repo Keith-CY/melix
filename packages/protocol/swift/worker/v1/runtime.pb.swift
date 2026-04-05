@@ -61,33 +61,45 @@ public struct Melix_Worker_V1_HandshakeResponse: Sendable {
   fileprivate var _capabilities: Melix_Worker_V1_RuntimeCapabilities? = nil
 }
 
-public struct Melix_Worker_V1_LoadModelRequest: Sendable {
+public struct Melix_Worker_V1_LoadModelRequest: @unchecked Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
   public var model: Melix_Worker_V1_ModelSpec {
-    get {_model ?? Melix_Worker_V1_ModelSpec()}
-    set {_model = newValue}
+    get {_storage._model ?? Melix_Worker_V1_ModelSpec()}
+    set {_uniqueStorage()._model = newValue}
   }
   /// Returns true if `model` has been explicitly set.
-  public var hasModel: Bool {self._model != nil}
+  public var hasModel: Bool {_storage._model != nil}
   /// Clears the value of `model`. Subsequent reads from it will return its default value.
-  public mutating func clearModel() {self._model = nil}
+  public mutating func clearModel() {_uniqueStorage()._model = nil}
 
-  public var memoryBudgetBytes: UInt64 = 0
+  public var memoryBudgetBytes: UInt64 {
+    get {_storage._memoryBudgetBytes}
+    set {_uniqueStorage()._memoryBudgetBytes = newValue}
+  }
 
-  public var pinOnLoad: Bool = false
+  public var pinOnLoad: Bool {
+    get {_storage._pinOnLoad}
+    set {_uniqueStorage()._pinOnLoad = newValue}
+  }
 
-  public var warmupAfterLoad: Bool = false
+  public var warmupAfterLoad: Bool {
+    get {_storage._warmupAfterLoad}
+    set {_uniqueStorage()._warmupAfterLoad = newValue}
+  }
 
-  public var diskStreamingMode: Melix_Worker_V1_DiskStreamingMode = .unspecified
+  public var diskStreamingMode: Melix_Worker_V1_DiskStreamingMode {
+    get {_storage._diskStreamingMode}
+    set {_uniqueStorage()._diskStreamingMode = newValue}
+  }
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
 
-  fileprivate var _model: Melix_Worker_V1_ModelSpec? = nil
+  fileprivate var _storage = _StorageClass.defaultInstance
 }
 
 public struct Melix_Worker_V1_LoadModelResponse: Sendable {
@@ -445,39 +457,44 @@ public struct Melix_Worker_V1_ListLoadedModelsResponse: Sendable {
   public init() {}
 }
 
-public struct Melix_Worker_V1_LoadedModelSummary: Sendable {
+public struct Melix_Worker_V1_LoadedModelSummary: @unchecked Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
-  public var modelHandle: String = String()
+  public var modelHandle: String {
+    get {_storage._modelHandle}
+    set {_uniqueStorage()._modelHandle = newValue}
+  }
 
   public var model: Melix_Worker_V1_ModelSpec {
-    get {_model ?? Melix_Worker_V1_ModelSpec()}
-    set {_model = newValue}
+    get {_storage._model ?? Melix_Worker_V1_ModelSpec()}
+    set {_uniqueStorage()._model = newValue}
   }
   /// Returns true if `model` has been explicitly set.
-  public var hasModel: Bool {self._model != nil}
+  public var hasModel: Bool {_storage._model != nil}
   /// Clears the value of `model`. Subsequent reads from it will return its default value.
-  public mutating func clearModel() {self._model = nil}
+  public mutating func clearModel() {_uniqueStorage()._model = nil}
 
   public var residency: Melix_Worker_V1_ResidencyInfo {
-    get {_residency ?? Melix_Worker_V1_ResidencyInfo()}
-    set {_residency = newValue}
+    get {_storage._residency ?? Melix_Worker_V1_ResidencyInfo()}
+    set {_uniqueStorage()._residency = newValue}
   }
   /// Returns true if `residency` has been explicitly set.
-  public var hasResidency: Bool {self._residency != nil}
+  public var hasResidency: Bool {_storage._residency != nil}
   /// Clears the value of `residency`. Subsequent reads from it will return its default value.
-  public mutating func clearResidency() {self._residency = nil}
+  public mutating func clearResidency() {_uniqueStorage()._residency = nil}
 
-  public var estimatedResidentBytes: UInt64 = 0
+  public var estimatedResidentBytes: UInt64 {
+    get {_storage._estimatedResidentBytes}
+    set {_uniqueStorage()._estimatedResidentBytes = newValue}
+  }
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
 
-  fileprivate var _model: Melix_Worker_V1_ModelSpec? = nil
-  fileprivate var _residency: Melix_Worker_V1_ResidencyInfo? = nil
+  fileprivate var _storage = _StorageClass.defaultInstance
 }
 
 public struct Melix_Worker_V1_DrainRequest: Sendable {
@@ -620,51 +637,95 @@ extension Melix_Worker_V1_LoadModelRequest: SwiftProtobuf.Message, SwiftProtobuf
   public static let protoMessageName: String = _protobuf_package + ".LoadModelRequest"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}model\0\u{3}memory_budget_bytes\0\u{3}pin_on_load\0\u{3}warmup_after_load\0\u{3}disk_streaming_mode\0")
 
+  fileprivate class _StorageClass {
+    var _model: Melix_Worker_V1_ModelSpec? = nil
+    var _memoryBudgetBytes: UInt64 = 0
+    var _pinOnLoad: Bool = false
+    var _warmupAfterLoad: Bool = false
+    var _diskStreamingMode: Melix_Worker_V1_DiskStreamingMode = .unspecified
+
+      // This property is used as the initial default value for new instances of the type.
+      // The type itself is protecting the reference to its storage via CoW semantics.
+      // This will force a copy to be made of this reference when the first mutation occurs;
+      // hence, it is safe to mark this as `nonisolated(unsafe)`.
+      static nonisolated(unsafe) let defaultInstance = _StorageClass()
+
+    private init() {}
+
+    init(copying source: _StorageClass) {
+      _model = source._model
+      _memoryBudgetBytes = source._memoryBudgetBytes
+      _pinOnLoad = source._pinOnLoad
+      _warmupAfterLoad = source._warmupAfterLoad
+      _diskStreamingMode = source._diskStreamingMode
+    }
+  }
+
+  fileprivate mutating func _uniqueStorage() -> _StorageClass {
+    if !isKnownUniquelyReferenced(&_storage) {
+      _storage = _StorageClass(copying: _storage)
+    }
+    return _storage
+  }
+
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
-    while let fieldNumber = try decoder.nextFieldNumber() {
-      // The use of inline closures is to circumvent an issue where the compiler
-      // allocates stack space for every case branch when no optimizations are
-      // enabled. https://github.com/apple/swift-protobuf/issues/1034
-      switch fieldNumber {
-      case 1: try { try decoder.decodeSingularMessageField(value: &self._model) }()
-      case 2: try { try decoder.decodeSingularUInt64Field(value: &self.memoryBudgetBytes) }()
-      case 3: try { try decoder.decodeSingularBoolField(value: &self.pinOnLoad) }()
-      case 4: try { try decoder.decodeSingularBoolField(value: &self.warmupAfterLoad) }()
-      case 5: try { try decoder.decodeSingularEnumField(value: &self.diskStreamingMode) }()
-      default: break
+    _ = _uniqueStorage()
+    try withExtendedLifetime(_storage) { (_storage: _StorageClass) in
+      while let fieldNumber = try decoder.nextFieldNumber() {
+        // The use of inline closures is to circumvent an issue where the compiler
+        // allocates stack space for every case branch when no optimizations are
+        // enabled. https://github.com/apple/swift-protobuf/issues/1034
+        switch fieldNumber {
+        case 1: try { try decoder.decodeSingularMessageField(value: &_storage._model) }()
+        case 2: try { try decoder.decodeSingularUInt64Field(value: &_storage._memoryBudgetBytes) }()
+        case 3: try { try decoder.decodeSingularBoolField(value: &_storage._pinOnLoad) }()
+        case 4: try { try decoder.decodeSingularBoolField(value: &_storage._warmupAfterLoad) }()
+        case 5: try { try decoder.decodeSingularEnumField(value: &_storage._diskStreamingMode) }()
+        default: break
+        }
       }
     }
   }
 
   public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
-    // The use of inline closures is to circumvent an issue where the compiler
-    // allocates stack space for every if/case branch local when no optimizations
-    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
-    // https://github.com/apple/swift-protobuf/issues/1182
-    try { if let v = self._model {
-      try visitor.visitSingularMessageField(value: v, fieldNumber: 1)
-    } }()
-    if self.memoryBudgetBytes != 0 {
-      try visitor.visitSingularUInt64Field(value: self.memoryBudgetBytes, fieldNumber: 2)
-    }
-    if self.pinOnLoad != false {
-      try visitor.visitSingularBoolField(value: self.pinOnLoad, fieldNumber: 3)
-    }
-    if self.warmupAfterLoad != false {
-      try visitor.visitSingularBoolField(value: self.warmupAfterLoad, fieldNumber: 4)
-    }
-    if self.diskStreamingMode != .unspecified {
-      try visitor.visitSingularEnumField(value: self.diskStreamingMode, fieldNumber: 5)
+    try withExtendedLifetime(_storage) { (_storage: _StorageClass) in
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every if/case branch local when no optimizations
+      // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+      // https://github.com/apple/swift-protobuf/issues/1182
+      try { if let v = _storage._model {
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 1)
+      } }()
+      if _storage._memoryBudgetBytes != 0 {
+        try visitor.visitSingularUInt64Field(value: _storage._memoryBudgetBytes, fieldNumber: 2)
+      }
+      if _storage._pinOnLoad != false {
+        try visitor.visitSingularBoolField(value: _storage._pinOnLoad, fieldNumber: 3)
+      }
+      if _storage._warmupAfterLoad != false {
+        try visitor.visitSingularBoolField(value: _storage._warmupAfterLoad, fieldNumber: 4)
+      }
+      if _storage._diskStreamingMode != .unspecified {
+        try visitor.visitSingularEnumField(value: _storage._diskStreamingMode, fieldNumber: 5)
+      }
     }
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: Melix_Worker_V1_LoadModelRequest, rhs: Melix_Worker_V1_LoadModelRequest) -> Bool {
-    if lhs._model != rhs._model {return false}
-    if lhs.memoryBudgetBytes != rhs.memoryBudgetBytes {return false}
-    if lhs.pinOnLoad != rhs.pinOnLoad {return false}
-    if lhs.warmupAfterLoad != rhs.warmupAfterLoad {return false}
-    if lhs.diskStreamingMode != rhs.diskStreamingMode {return false}
+    if lhs._storage !== rhs._storage {
+      let storagesAreEqual: Bool = withExtendedLifetime((lhs._storage, rhs._storage)) { (_args: (_StorageClass, _StorageClass)) in
+        let _storage = _args.0
+        let rhs_storage = _args.1
+        if _storage._model != rhs_storage._model {return false}
+        if _storage._memoryBudgetBytes != rhs_storage._memoryBudgetBytes {return false}
+        if _storage._pinOnLoad != rhs_storage._pinOnLoad {return false}
+        if _storage._warmupAfterLoad != rhs_storage._warmupAfterLoad {return false}
+        if _storage._diskStreamingMode != rhs_storage._diskStreamingMode {return false}
+        return true
+      }
+      if !storagesAreEqual {return false}
+    }
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -1283,46 +1344,88 @@ extension Melix_Worker_V1_LoadedModelSummary: SwiftProtobuf.Message, SwiftProtob
   public static let protoMessageName: String = _protobuf_package + ".LoadedModelSummary"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}model_handle\0\u{1}model\0\u{1}residency\0\u{3}estimated_resident_bytes\0")
 
+  fileprivate class _StorageClass {
+    var _modelHandle: String = String()
+    var _model: Melix_Worker_V1_ModelSpec? = nil
+    var _residency: Melix_Worker_V1_ResidencyInfo? = nil
+    var _estimatedResidentBytes: UInt64 = 0
+
+      // This property is used as the initial default value for new instances of the type.
+      // The type itself is protecting the reference to its storage via CoW semantics.
+      // This will force a copy to be made of this reference when the first mutation occurs;
+      // hence, it is safe to mark this as `nonisolated(unsafe)`.
+      static nonisolated(unsafe) let defaultInstance = _StorageClass()
+
+    private init() {}
+
+    init(copying source: _StorageClass) {
+      _modelHandle = source._modelHandle
+      _model = source._model
+      _residency = source._residency
+      _estimatedResidentBytes = source._estimatedResidentBytes
+    }
+  }
+
+  fileprivate mutating func _uniqueStorage() -> _StorageClass {
+    if !isKnownUniquelyReferenced(&_storage) {
+      _storage = _StorageClass(copying: _storage)
+    }
+    return _storage
+  }
+
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
-    while let fieldNumber = try decoder.nextFieldNumber() {
-      // The use of inline closures is to circumvent an issue where the compiler
-      // allocates stack space for every case branch when no optimizations are
-      // enabled. https://github.com/apple/swift-protobuf/issues/1034
-      switch fieldNumber {
-      case 1: try { try decoder.decodeSingularStringField(value: &self.modelHandle) }()
-      case 2: try { try decoder.decodeSingularMessageField(value: &self._model) }()
-      case 3: try { try decoder.decodeSingularMessageField(value: &self._residency) }()
-      case 4: try { try decoder.decodeSingularUInt64Field(value: &self.estimatedResidentBytes) }()
-      default: break
+    _ = _uniqueStorage()
+    try withExtendedLifetime(_storage) { (_storage: _StorageClass) in
+      while let fieldNumber = try decoder.nextFieldNumber() {
+        // The use of inline closures is to circumvent an issue where the compiler
+        // allocates stack space for every case branch when no optimizations are
+        // enabled. https://github.com/apple/swift-protobuf/issues/1034
+        switch fieldNumber {
+        case 1: try { try decoder.decodeSingularStringField(value: &_storage._modelHandle) }()
+        case 2: try { try decoder.decodeSingularMessageField(value: &_storage._model) }()
+        case 3: try { try decoder.decodeSingularMessageField(value: &_storage._residency) }()
+        case 4: try { try decoder.decodeSingularUInt64Field(value: &_storage._estimatedResidentBytes) }()
+        default: break
+        }
       }
     }
   }
 
   public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
-    // The use of inline closures is to circumvent an issue where the compiler
-    // allocates stack space for every if/case branch local when no optimizations
-    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
-    // https://github.com/apple/swift-protobuf/issues/1182
-    if !self.modelHandle.isEmpty {
-      try visitor.visitSingularStringField(value: self.modelHandle, fieldNumber: 1)
-    }
-    try { if let v = self._model {
-      try visitor.visitSingularMessageField(value: v, fieldNumber: 2)
-    } }()
-    try { if let v = self._residency {
-      try visitor.visitSingularMessageField(value: v, fieldNumber: 3)
-    } }()
-    if self.estimatedResidentBytes != 0 {
-      try visitor.visitSingularUInt64Field(value: self.estimatedResidentBytes, fieldNumber: 4)
+    try withExtendedLifetime(_storage) { (_storage: _StorageClass) in
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every if/case branch local when no optimizations
+      // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+      // https://github.com/apple/swift-protobuf/issues/1182
+      if !_storage._modelHandle.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._modelHandle, fieldNumber: 1)
+      }
+      try { if let v = _storage._model {
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 2)
+      } }()
+      try { if let v = _storage._residency {
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 3)
+      } }()
+      if _storage._estimatedResidentBytes != 0 {
+        try visitor.visitSingularUInt64Field(value: _storage._estimatedResidentBytes, fieldNumber: 4)
+      }
     }
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: Melix_Worker_V1_LoadedModelSummary, rhs: Melix_Worker_V1_LoadedModelSummary) -> Bool {
-    if lhs.modelHandle != rhs.modelHandle {return false}
-    if lhs._model != rhs._model {return false}
-    if lhs._residency != rhs._residency {return false}
-    if lhs.estimatedResidentBytes != rhs.estimatedResidentBytes {return false}
+    if lhs._storage !== rhs._storage {
+      let storagesAreEqual: Bool = withExtendedLifetime((lhs._storage, rhs._storage)) { (_args: (_StorageClass, _StorageClass)) in
+        let _storage = _args.0
+        let rhs_storage = _args.1
+        if _storage._modelHandle != rhs_storage._modelHandle {return false}
+        if _storage._model != rhs_storage._model {return false}
+        if _storage._residency != rhs_storage._residency {return false}
+        if _storage._estimatedResidentBytes != rhs_storage._estimatedResidentBytes {return false}
+        return true
+      }
+      if !storagesAreEqual {return false}
+    }
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

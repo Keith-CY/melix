@@ -1150,6 +1150,24 @@ public actor ModelCatalog {
         if source.settings.diskStreamingMode != .unspecified {
             merged.settings.diskStreamingMode = source.settings.diskStreamingMode
         }
+        if source.settings.cacheMode != .unspecified {
+            merged.settings.cacheMode = source.settings.cacheMode
+        }
+        if source.settings.cacheMemoryBudgetBytes > 0 {
+            merged.settings.cacheMemoryBudgetBytes = source.settings.cacheMemoryBudgetBytes
+        }
+        if source.settings.cacheMemoryBudgetPct > 0 {
+            merged.settings.cacheMemoryBudgetPct = source.settings.cacheMemoryBudgetPct
+        }
+        if source.settings.cacheBlockSizeTokens > 0 {
+            merged.settings.cacheBlockSizeTokens = source.settings.cacheBlockSizeTokens
+        }
+        if !source.settings.cacheDirectory.isEmpty {
+            merged.settings.cacheDirectory = source.settings.cacheDirectory
+        }
+        if source.settings.multimodalCacheBudgetBytes > 0 {
+            merged.settings.multimodalCacheBudgetBytes = source.settings.multimodalCacheBudgetBytes
+        }
         merged.settings.ext.merge(source.settings.ext) { _, new in new }
         return merged
     }

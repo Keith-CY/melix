@@ -2478,12 +2478,21 @@ struct RuntimeViewModelTests {
 
         var model = makeModelSummary(modelID: "melix-dev-ocr", state: .modelDiscovered)
         model.kind = "ocr"
+        model.supportedModalities = ["image"]
         model.settings.ext["ocr_prompt_profile_id"] = "ocr-default-v1"
         model.settings.ext["melix.generation_config.source"] = "/tmp/melix-dev-ocr/generation_config.json"
         model.settings.ext["melix.generation_config.temperature"] = "0.12"
         model.settings.ext["melix.generation_config.top_p"] = "0.9"
         model.settings.ext["melix.generation_config.max_tokens"] = "320"
         model.settings.ext["ocr_stop_sequences"] = "<ocr:end>"
+        model.cachePolicy.effectiveMode = .hybrid
+        model.cachePolicy.compatibility = .cacheCompatibilityCompatible
+        model.cachePolicy.compatibilityReason = "requested policy is compatible with the current worker cache capabilities"
+        model.cachePolicy.effectiveDirectory = "/tmp/melix-dev-ocr/cache"
+        model.cachePolicy.effectiveBlockSizeTokens = 64
+        model.cachePolicy.effectiveCacheMemoryBudgetBytes = 4_096
+        model.cachePolicy.effectiveMultimodalCacheBudgetBytes = 2_048
+        model.cachePolicy.initialCacheBlocks = 4
         snapshot.models = [model]
 
         await client.configureSnapshot(snapshot)
@@ -2499,6 +2508,12 @@ struct RuntimeViewModelTests {
         viewModel.modelSettingsMemoryBudgetDraft = "32768"
         viewModel.modelSettingsAccelerationModeDraft = "active_kv_quantized"
         viewModel.modelSettingsAccelerationProfileIDDraft = "kv-q8"
+        viewModel.modelSettingsCacheModeDraft = "rotating"
+        viewModel.modelSettingsCacheMemoryBudgetDraft = "4096"
+        viewModel.modelSettingsCacheMemoryBudgetPctDraft = "25"
+        viewModel.modelSettingsCacheBlockSizeTokensDraft = "64"
+        viewModel.modelSettingsCacheDirectoryDraft = "/tmp/melix-dev-ocr/cache"
+        viewModel.modelSettingsMultimodalCacheBudgetDraft = "2048"
         viewModel.modelSettingsAdaptiveThinkingModeDraft = "adaptive"
         viewModel.modelSettingsAdaptiveThinkingBudgetDraft = "192"
         viewModel.modelSettingsToolParserXMLFallbackDraft = true
@@ -2520,6 +2535,13 @@ struct RuntimeViewModelTests {
         #expect(viewModel.selectedModelInfo?.memoryBudgetText == "32 KB")
         #expect(viewModel.selectedModelInfo?.adaptiveThinkingText == "Adaptive • 192 tok")
         #expect(viewModel.selectedModelInfo?.toolParserFallbackText == "XML")
+        #expect(viewModel.selectedModelInfo?.cacheModeText == "Hybrid")
+        #expect(viewModel.selectedModelInfo?.cacheCompatibilityText == "Compatible")
+        #expect(viewModel.selectedModelInfo?.cacheDirectoryText == "/tmp/melix-dev-ocr/cache")
+        #expect(viewModel.selectedModelInfo?.cacheBlockSizeText == "64 tokens")
+        #expect(viewModel.selectedModelInfo?.cacheBudgetText == "4 KB")
+        #expect(viewModel.selectedModelInfo?.multimodalCacheBudgetText == "2 KB")
+        #expect(viewModel.selectedModelInfo?.initialCacheBlocksText == "4")
         #expect(viewModel.selectedModelInfo?.ocrSamplingProfileText == "ocr-operator")
         #expect(viewModel.selectedModelInfo?.ocrTemperatureText == "0.05")
         #expect(viewModel.selectedModelInfo?.ocrTopPText == "0.82")
@@ -2558,6 +2580,34 @@ struct RuntimeViewModelTests {
         await viewModel.applyPrimaryModelSettings()
 
         #expect(viewModel.lastError == "Memory budget bytes must be an unsigned integer.")
+        #expect(await client.recordedActions.isEmpty)
+
+        viewModel.modelSettingsMemoryBudgetDraft = "1024"
+        viewModel.modelSettingsCacheMemoryBudgetDraft = "bad-cache-budget"
+        await viewModel.applyPrimaryModelSettings()
+
+        #expect(viewModel.lastError == "Cache memory budget bytes must be an unsigned integer.")
+        #expect(await client.recordedActions.isEmpty)
+
+        viewModel.modelSettingsCacheMemoryBudgetDraft = "4096"
+        viewModel.modelSettingsCacheMemoryBudgetPctDraft = "bad-cache-pct"
+        await viewModel.applyPrimaryModelSettings()
+
+        #expect(viewModel.lastError == "Cache memory budget percent must be an unsigned integer.")
+        #expect(await client.recordedActions.isEmpty)
+
+        viewModel.modelSettingsCacheMemoryBudgetPctDraft = "25"
+        viewModel.modelSettingsCacheBlockSizeTokensDraft = "bad-block"
+        await viewModel.applyPrimaryModelSettings()
+
+        #expect(viewModel.lastError == "Cache block size tokens must be an unsigned integer.")
+        #expect(await client.recordedActions.isEmpty)
+
+        viewModel.modelSettingsCacheBlockSizeTokensDraft = "64"
+        viewModel.modelSettingsMultimodalCacheBudgetDraft = "bad-multimodal"
+        await viewModel.applyPrimaryModelSettings()
+
+        #expect(viewModel.lastError == "Multimodal cache budget bytes must be an unsigned integer.")
         #expect(await client.recordedActions.isEmpty)
 
         viewModel.modelSettingsAliasDraft = "Mutated Alias"
@@ -2600,6 +2650,120 @@ struct RuntimeViewModelTests {
 
         #expect(viewModel.modelSettingsMemoryPolicyDraft == "pinned")
         #expect(viewModel.modelSettingsAccelerationModeDraft == "sparse_prefill")
+    }
+
+    @Test("cache policy helpers hydrate row text info summaries and cache mode drafts")
+    @MainActor
+    func cachePolicyHelpersHydrateRowTextInfoSummariesAndCacheModeDrafts() async throws {
+        let client = FakeControlPlaneXPCClient()
+        var snapshot = Melix_Controlplane_V1_ServerSnapshot()
+        snapshot.serverState = .serverReady
+
+        var tieredModel = makeModelSummary(modelID: "melix-dev-text", state: .modelWarm)
+        tieredModel.settings.cacheMode = .tiered
+        tieredModel.cachePolicy.effectiveMode = .tiered
+        tieredModel.cachePolicy.compatibility = .cacheCompatibilityCompatible
+        tieredModel.cachePolicy.compatibilityReason = "requested policy is compatible with the current worker cache capabilities"
+        tieredModel.cachePolicy.effectiveDirectory = "/var/melix/cache"
+        tieredModel.cachePolicy.effectiveCacheMemoryBudgetPct = 25
+        tieredModel.cachePolicy.initialCacheBlocks = 4
+
+        var rotatingModel = makeModelSummary(modelID: "melix-dev-rotate", state: .modelWarm)
+        rotatingModel.settings.cacheMode = .rotating
+        rotatingModel.cachePolicy.requestedMode = .rotating
+        rotatingModel.cachePolicy.effectiveMode = .rotating
+        rotatingModel.cachePolicy.compatibility = .cacheCompatibilityLimited
+        rotatingModel.cachePolicy.compatibilityReason = "requested cache mode is not advertised by the worker"
+        rotatingModel.cachePolicy.requestedDirectory = "/tmp/requested-cache"
+        rotatingModel.cachePolicy.effectiveDirectory = "/var/melix/cache"
+        rotatingModel.cachePolicy.requestedBlockSizeTokens = 32
+        rotatingModel.cachePolicy.effectiveBlockSizeTokens = 64
+
+        var hybridModel = makeModelSummary(modelID: "melix-dev-hybrid", state: .modelWarm)
+        hybridModel.kind = "vlm"
+        hybridModel.supportedModalities = ["text", "image"]
+        hybridModel.settings.cacheMode = .hybrid
+        hybridModel.cachePolicy.requestedMode = .hybrid
+        hybridModel.cachePolicy.effectiveMode = .hybrid
+        hybridModel.cachePolicy.compatibility = .cacheCompatibilityDisabled
+        hybridModel.cachePolicy.compatibilityReason = "requested cache policy is disabled by the current worker safety profile"
+        hybridModel.cachePolicy.effectiveDirectory = "/var/melix/cache-vlm"
+        hybridModel.cachePolicy.requestedCacheMemoryBudgetBytes = 8_192
+        hybridModel.cachePolicy.effectiveCacheMemoryBudgetBytes = 16_384
+        hybridModel.cachePolicy.requestedMultimodalCacheBudgetBytes = 2_048
+        hybridModel.cachePolicy.effectiveMultimodalCacheBudgetBytes = 4_096
+
+        var unknownModel = makeModelSummary(modelID: "melix-dev-unknown", state: .modelWarm)
+        unknownModel.settings.cacheMode = .unspecified
+        unknownModel.cachePolicy.effectiveMode = .unspecified
+        unknownModel.cachePolicy.compatibility = .cacheCompatibilityUnknown
+        unknownModel.cachePolicy.compatibilityReason = "worker cache compatibility evidence is unavailable"
+
+        snapshot.models = [tieredModel, rotatingModel, hybridModel, unknownModel]
+        await client.configureSnapshot(snapshot)
+
+        var info = Melix_Controlplane_V1_ModelInfo()
+        info.ok = true
+        info.modelKind = "text"
+        info.maxContext = 8192
+        info.supportedParsers = ["text", "json"]
+        info.supportedModalities = ["text", "image"]
+        await client.configureModelInfo(info)
+
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+
+        let rows = viewModel.desktopFoundationState.models
+        #expect(rows.first(where: { $0.modelID == "melix-dev-text" })?.cachePolicyText == "Compatible • Tiered")
+        #expect(rows.first(where: { $0.modelID == "melix-dev-text" })?.cacheSettingsText == "/var/melix/cache • cache 25%")
+        #expect(rows.first(where: { $0.modelID == "melix-dev-rotate" })?.cachePolicyText == "Limited • Rotating")
+        #expect(rows.first(where: { $0.modelID == "melix-dev-rotate" })?.cacheSettingsText == "/var/melix/cache • block 64")
+        #expect(rows.first(where: { $0.modelID == "melix-dev-hybrid" })?.cachePolicyText == "Disabled • Hybrid")
+        #expect(rows.first(where: { $0.modelID == "melix-dev-hybrid" })?.cacheSettingsText == "/var/melix/cache-vlm • cache 16 KB • multimodal 4 KB")
+        #expect(rows.first(where: { $0.modelID == "melix-dev-unknown" })?.cachePolicyText == "Unknown • Unspecified")
+        #expect(viewModel.modelSettingsCacheModeDraft == "tiered")
+
+        await viewModel.fetchModelInfo(modelID: "melix-dev-rotate")
+        #expect(viewModel.selectedModelInfo?.cacheCompatibilityText == "Limited")
+        #expect(viewModel.selectedModelInfo?.cacheDirectoryText == "/tmp/requested-cache -> /var/melix/cache")
+        #expect(viewModel.selectedModelInfo?.cacheBlockSizeText == "32 -> 64 tokens")
+
+        await client.configureModelInfo({
+            var info = Melix_Controlplane_V1_ModelInfo()
+            info.ok = true
+            info.modelKind = "vlm"
+            info.maxContext = 8192
+            info.supportedParsers = ["text", "json"]
+            info.supportedModalities = ["text", "image"]
+            return info
+        }())
+        await viewModel.fetchModelInfo(modelID: "melix-dev-hybrid")
+        #expect(viewModel.selectedModelInfo?.cacheModeText == "Hybrid")
+        #expect(viewModel.selectedModelInfo?.cacheCompatibilityText == "Disabled")
+        #expect(viewModel.selectedModelInfo?.cacheBudgetText == "8 KB -> 16 KB")
+        #expect(viewModel.selectedModelInfo?.multimodalCacheBudgetText == "2 KB -> 4 KB")
+
+        let rotatingClient = FakeControlPlaneXPCClient()
+        var rotatingSnapshot = Melix_Controlplane_V1_ServerSnapshot()
+        rotatingSnapshot.serverState = .serverReady
+        var rotatingPrimary = makeModelSummary(modelID: "melix-dev-text", state: .modelWarm)
+        rotatingPrimary.settings.cacheMode = .rotating
+        rotatingSnapshot.models = [rotatingPrimary]
+        await rotatingClient.configureSnapshot(rotatingSnapshot)
+        let rotatingViewModel = RuntimeViewModel(client: rotatingClient)
+        await rotatingViewModel.start()
+        #expect(rotatingViewModel.modelSettingsCacheModeDraft == "rotating")
+
+        let hybridClient = FakeControlPlaneXPCClient()
+        var hybridSnapshot = Melix_Controlplane_V1_ServerSnapshot()
+        hybridSnapshot.serverState = .serverReady
+        var hybridPrimary = makeModelSummary(modelID: "melix-dev-text", state: .modelWarm)
+        hybridPrimary.settings.cacheMode = .hybrid
+        hybridSnapshot.models = [hybridPrimary]
+        await hybridClient.configureSnapshot(hybridSnapshot)
+        let hybridViewModel = RuntimeViewModel(client: hybridClient)
+        await hybridViewModel.start()
+        #expect(hybridViewModel.modelSettingsCacheModeDraft == "hybrid")
     }
 
     @Test("model loads forward configured memory budget bytes to the client")

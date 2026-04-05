@@ -648,6 +648,12 @@ public enum BootstrapWorkerPreparation {
         spec.settings.pinOnLoad = summary.settings.pinOnLoad
         spec.settings.memoryPolicy = workerMemoryPolicy(for: summary.settings.memoryPolicy)
         spec.settings.diskStreamingMode = workerDiskStreamingMode(for: summary.settings.diskStreamingMode)
+        spec.settings.cacheMode = workerCacheMode(for: summary.settings.cacheMode)
+        spec.settings.cacheMemoryBudgetBytes = summary.settings.cacheMemoryBudgetBytes
+        spec.settings.cacheMemoryBudgetPct = summary.settings.cacheMemoryBudgetPct
+        spec.settings.cacheBlockSizeTokens = summary.settings.cacheBlockSizeTokens
+        spec.settings.cacheDirectory = summary.settings.cacheDirectory
+        spec.settings.multimodalCacheBudgetBytes = summary.settings.multimodalCacheBudgetBytes
         spec.settings.ext.merge(summary.settings.ext) { _, new in new }
     }
 
@@ -678,6 +684,21 @@ public enum BootstrapWorkerPreparation {
             return .diskStreamingRequireDisk
         default:
             return .diskStreamingDisabled
+        }
+    }
+
+    private static func workerCacheMode(
+        for mode: Melix_Controlplane_V1_CacheMode
+    ) -> Melix_Worker_V1_CacheMode {
+        switch mode {
+        case .tiered:
+            return .tiered
+        case .rotating:
+            return .rotating
+        case .hybrid:
+            return .hybrid
+        default:
+            return .unspecified
         }
     }
 

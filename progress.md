@@ -2,6 +2,60 @@
 
 ## 2026-04-05
 
+- Closed `M11.3` by making streaming-compatible cache policy explicit across the repository-owned
+  protocol, control-plane truth, worker summaries, and native operator settings:
+  - extended the authoritative control-plane and worker protobuf schemas with typed cache-policy
+    settings and summaries, including durable model settings for cache mode, byte and
+    percentage-based cache budgets, block size, cache directory, and multimodal cache budget, then
+    regenerated the versioned Swift, Python, and descriptor outputs
+  - updated the Swift control plane, snapshot builder, model catalog, and python bridge so
+    requested cache settings merge through model policy application, worker preparation, and
+    snapshot projection, while effective cache compatibility is resolved into explicit
+    `compatible`, `limited`, `disabled`, and `unknown` labels instead of hidden downgrade paths
+  - updated the Swift text worker cache summary and runtime registry so worker snapshots now expose
+    cache roots, supported modes, initial cache blocks, and capability flags, while request cache
+    hints default from loaded model settings when operators have configured durable cache policy
+  - expanded the native desktop shell and runtime view model so model rows, model detail, and
+    model settings now expose requested-versus-effective cache policy, cache directories, block
+    sizing, byte and percentage budgets, and multimodal cache budgets through typed operator-owned
+    controls and summaries
+  - added focused regression coverage across control-plane, menu bar, and Swift text worker tests
+    for cache-policy normalization, settings merge behavior, worker request construction, effective
+    cache-policy projection, and operator-visible cache summaries
+  - stabilized disconnect lifecycle metric ordering in `RequestCoordinator` so
+    `disconnect.resume_success_rate` is published before terminal-failure snapshots become
+    observable, eliminating a live integration race uncovered during the full repository
+    verification run
+  - marked `M11.3` completed in the roadmap execution index; the next active execution slice can
+    advance to `M11.4`
+- Verification summary for `M11.3`:
+  - `make proto`: pass
+  - `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/.build/ModuleCache.noindex" swift test --package-path apps/macos-menubar --filter 'RuntimeViewModelTests|DesktopFoundationViewTests'`: `173 tests in 2 suites passed`
+  - `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/.build/ModuleCache.noindex" swift test --package-path services/control-plane-swift --filter 'ControlPlaneServiceTests|ModelCatalogTests|SnapshotStoreTests|PythonBridgeWorkerClientTests|RequestCoordinatorTests'`: `280 tests in 5 suites passed`
+  - `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/.build/ModuleCache.noindex" swift test --package-path services/mlx-text-worker-swift --filter WorkerScaffoldTests`: `134 tests in 1 suite passed`
+  - `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/.build/ModuleCache.noindex" swift test --package-path services/control-plane-swift --filter RequestCoordinatorTests`: `39 tests in 1 suite passed after 0.538 seconds`
+  - `PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" UV_CACHE_DIR="$(pwd)/.uv-cache" uv run --project services/mlx-worker-python --extra mlx pytest tests/integration/test_connection_lifecycle.py -q`: `2 passed in 26.12s`
+  - `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/.build/ModuleCache.noindex" swift test --package-path services/control-plane-swift --scratch-path /tmp/m11_3_cp_fix_cov --enable-code-coverage --filter 'ControlPlaneServiceTests|ModelCatalogTests|SnapshotStoreTests|PythonBridgeWorkerClientTests|RequestCoordinatorTests'`: `280 tests in 5 suites passed after 1.098 seconds`
+  - `make py-test`: `456 passed in 30.32s`
+  - `make swift-test`: pass
+  - `make integration-test`: `60 passed in 782.74s (0:13:02)`
+  - `git diff --check`: pass
+- Metrics report for `M11.3`:
+  - typed cache-policy and disconnect-lifecycle metrics exercised by the touched scope:
+    - `menu.model_settings_ms`
+    - `http.stream_disconnect_count`
+    - `disconnect.resume_success_rate`
+    - `disconnect.terminal_failure_count`
+  - changed-line coverage for the touched executable scope:
+    - Swift control-plane scope: `98.87%` (`439/444`)
+    - Swift menu bar scope: `97.72%` (`600/614`)
+    - Swift text worker scope: `100.00%` (`60/60`)
+    - aggregate changed-line coverage across the touched handwritten executable scope: `98.30%`
+      (`1099/1118`)
+  - protocol schemas, generated protobuf outputs, `packages/protocol/descriptors/melix.pb`, and
+    task-planning documents are excluded from executable changed-line coverage because they are
+    generated or repository-ownership artifacts rather than handwritten runtime logic
+
 - Closed `M11.2` by making memory-budget admission and headroom-based unsafe-load rejection
   control-plane-owned, operator-visible, and test-covered across the protocol, control-plane, and
   native desktop shell:

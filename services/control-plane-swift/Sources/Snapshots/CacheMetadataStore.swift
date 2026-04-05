@@ -56,6 +56,14 @@ public actor CacheMetadataStore {
         summary.compressionRatio = 0
         summary.l2RestoreHitRate = 0
         summary.activeMode = .tiered
+        summary.cacheRoot = ""
+        summary.initialCacheBlocks = 0
+        summary.supportedModes = []
+        summary.experimentalModes = []
+        summary.supportsPrefixCache = false
+        summary.supportsPagedCache = false
+        summary.supportsDiskCache = false
+        summary.supportsBoundarySnapshots = false
         return summary
     }
 }

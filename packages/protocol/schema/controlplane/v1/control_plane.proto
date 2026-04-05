@@ -703,6 +703,12 @@ message ModelSettings {
   AdaptiveThinkingPolicy adaptive_thinking = 9;
   DiskStreamingMode disk_streaming_mode = 10;
   uint64 memory_budget_bytes = 11;
+  CacheMode cache_mode = 12;
+  uint64 cache_memory_budget_bytes = 13;
+  uint32 cache_memory_budget_pct = 14;
+  uint32 cache_block_size_tokens = 15;
+  string cache_directory = 16;
+  uint64 multimodal_cache_budget_bytes = 17;
 }
 
 message AdaptiveThinkingPolicy {
@@ -721,6 +727,37 @@ message ResidencySummary {
   uint64 memory_budget_bytes = 8;
   uint64 memory_headroom_bytes = 9;
   uint64 required_bytes = 10;
+}
+
+enum CacheCompatibilityState {
+  CACHE_COMPATIBILITY_STATE_UNSPECIFIED = 0;
+  CACHE_COMPATIBILITY_COMPATIBLE = 1;
+  CACHE_COMPATIBILITY_LIMITED = 2;
+  CACHE_COMPATIBILITY_DISABLED = 3;
+  CACHE_COMPATIBILITY_UNKNOWN = 4;
+}
+
+message CachePolicySummary {
+  CacheMode requested_mode = 1;
+  CacheMode effective_mode = 2;
+  CacheCompatibilityState compatibility = 3;
+  string compatibility_reason = 4;
+  string requested_directory = 5;
+  string effective_directory = 6;
+  uint32 requested_block_size_tokens = 7;
+  uint32 effective_block_size_tokens = 8;
+  uint64 requested_cache_memory_budget_bytes = 9;
+  uint64 effective_cache_memory_budget_bytes = 10;
+  uint32 requested_cache_memory_budget_pct = 11;
+  uint32 effective_cache_memory_budget_pct = 12;
+  uint64 requested_multimodal_cache_budget_bytes = 13;
+  uint64 effective_multimodal_cache_budget_bytes = 14;
+  repeated CacheMode supported_modes = 15;
+  bool supports_prefix_cache = 16;
+  bool supports_paged_cache = 17;
+  bool supports_disk_cache = 18;
+  bool supports_boundary_snapshots = 19;
+  uint32 initial_cache_blocks = 20;
 }
 
 enum EventTopic {
@@ -889,6 +926,7 @@ message ModelSummary {
   repeated string supported_modalities = 13;
   repeated string supported_tasks = 14;
   ResidencySummary residency = 15;
+  CachePolicySummary cache_policy = 16;
 }
 
 message ModelInfo {
@@ -973,6 +1011,14 @@ message CacheSummary {
   repeated PrefixRef hot_prefixes = 13;
   repeated SnapshotRef recent_snapshots = 14;
   CacheMode active_mode = 15;
+  string cache_root = 16;
+  uint32 initial_cache_blocks = 17;
+  repeated CacheMode supported_modes = 18;
+  repeated CacheMode experimental_modes = 19;
+  bool supports_prefix_cache = 20;
+  bool supports_paged_cache = 21;
+  bool supports_disk_cache = 22;
+  bool supports_boundary_snapshots = 23;
 }
 
 enum CacheMode {

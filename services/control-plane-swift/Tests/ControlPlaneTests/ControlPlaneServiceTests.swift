@@ -1489,6 +1489,12 @@ struct ControlPlaneServiceTests {
                     "pin_on_load": "true",
                     "memory_policy": "pinned",
                     "disk_streaming_mode": "prefer_disk",
+                    "cache_mode": "hybrid",
+                    "cache_memory_budget_bytes": "4096",
+                    "cache_memory_budget_pct": "25",
+                    "cache_block_size_tokens": "64",
+                    "cache_directory": "/tmp/melix-cache",
+                    "multimodal_cache_budget_bytes": "2048",
                     "default_acceleration_mode": "speculative_decode",
                     "acceleration_profile_id": "draft-q4",
                 ]
@@ -1501,8 +1507,57 @@ struct ControlPlaneServiceTests {
         #expect(response.model.model.settings.pinOnLoad)
         #expect(response.model.model.settings.memoryPolicy == .memoryResidencyPinned)
         #expect(response.model.model.settings.diskStreamingMode == .diskStreamingPreferDisk)
+        #expect(response.model.model.settings.cacheMode == .hybrid)
+        #expect(response.model.model.settings.cacheMemoryBudgetBytes == 4_096)
+        #expect(response.model.model.settings.cacheMemoryBudgetPct == 25)
+        #expect(response.model.model.settings.cacheBlockSizeTokens == 64)
+        #expect(response.model.model.settings.cacheDirectory == "/tmp/melix-cache")
+        #expect(response.model.model.settings.multimodalCacheBudgetBytes == 2_048)
         #expect(response.model.model.settings.defaultAccelerationMode == .speculativeDecode)
         #expect(response.model.model.settings.accelerationProfileID == "draft-q4")
+    }
+
+    @Test("execute normalizes cache mode labels and clears cache policy settings")
+    func executeNormalizesCacheModeLabelsAndClearsCachePolicySettings() async throws {
+        let service = ControlPlaneService(modelCatalog: ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels()))
+
+        let rotatingResponse = try await service.execute(
+            makeSetModelPolicyRequest(
+                modelID: "melix-dev-text",
+                values: ["cache_mode": "rotating"]
+            )
+        )
+        let defaultResponse = try await service.execute(
+            makeSetModelPolicyRequest(
+                modelID: "melix-dev-text",
+                values: ["cache_mode": "default"]
+            )
+        )
+        let clearedResponse = try await service.execute(
+            makeSetModelPolicyRequest(
+                modelID: "melix-dev-text",
+                values: [
+                    "cache_mode": "not-a-real-mode",
+                    "cache_memory_budget_bytes": "",
+                    "cache_memory_budget_pct": "",
+                    "cache_block_size_tokens": "",
+                    "cache_directory": "",
+                    "multimodal_cache_budget_bytes": "",
+                ]
+            )
+        )
+
+        #expect(rotatingResponse.ok)
+        #expect(rotatingResponse.model.model.settings.cacheMode == .rotating)
+        #expect(defaultResponse.ok)
+        #expect(defaultResponse.model.model.settings.cacheMode == .tiered)
+        #expect(clearedResponse.ok)
+        #expect(clearedResponse.model.model.settings.cacheMode == .unspecified)
+        #expect(clearedResponse.model.model.settings.cacheMemoryBudgetBytes == 0)
+        #expect(clearedResponse.model.model.settings.cacheMemoryBudgetPct == 0)
+        #expect(clearedResponse.model.model.settings.cacheBlockSizeTokens == 0)
+        #expect(clearedResponse.model.model.settings.cacheDirectory.isEmpty)
+        #expect(clearedResponse.model.model.settings.multimodalCacheBudgetBytes == 0)
     }
 
     @Test("execute normalizes require and fallback disk-streaming policy strings")

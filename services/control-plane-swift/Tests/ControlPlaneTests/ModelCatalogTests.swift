@@ -344,6 +344,40 @@ struct ModelCatalogTests {
         #expect(merged.residency.effectiveDiskStreamingMode == .diskStreamingRequireDisk)
     }
 
+    @Test("syncRegistryModels merges cache policy settings into warm discovered entries")
+    func syncRegistryModelsMergesCachePolicySettingsIntoWarmDiscoveredEntries() async throws {
+        let catalog = ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels())
+
+        var initial = Melix_Controlplane_V1_ModelSummary()
+        initial.modelID = "mlx-community/Qwen2.5-7B-Instruct/4bit"
+        initial.kind = "text"
+        initial.state = .modelDiscovered
+        initial.capabilityClass = .modelCapabilityText
+        initial.routeClass = .workerRouteSwiftText
+
+        await catalog.syncRegistryModels([initial], reason: "worker_registry_sync")
+        _ = await catalog.loadModel(id: initial.modelID, dispatchHandle: "registry::existing")
+
+        var refreshed = initial
+        refreshed.settings.cacheMode = .hybrid
+        refreshed.settings.cacheMemoryBudgetBytes = 4_096
+        refreshed.settings.cacheMemoryBudgetPct = 25
+        refreshed.settings.cacheBlockSizeTokens = 64
+        refreshed.settings.cacheDirectory = "/tmp/melix-cache"
+        refreshed.settings.multimodalCacheBudgetBytes = 2_048
+
+        await catalog.syncRegistryModels([refreshed], reason: "worker_registry_sync")
+
+        let merged = try #require(await catalog.model(id: initial.modelID))
+        #expect(merged.state == .modelWarm)
+        #expect(merged.settings.cacheMode == .hybrid)
+        #expect(merged.settings.cacheMemoryBudgetBytes == 4_096)
+        #expect(merged.settings.cacheMemoryBudgetPct == 25)
+        #expect(merged.settings.cacheBlockSizeTokens == 64)
+        #expect(merged.settings.cacheDirectory == "/tmp/melix-cache")
+        #expect(merged.settings.multimodalCacheBudgetBytes == 2_048)
+    }
+
     @Test("syncRegistryModels preserves structured registry identity metadata from worker snapshots")
     func syncRegistryModelsPreservesStructuredRegistryIdentityMetadataFromWorkerSnapshots() async throws {
         let catalog = ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels())

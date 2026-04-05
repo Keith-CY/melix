@@ -27,7 +27,7 @@ paths.
 ## Phases
 
 1. Cache-policy contract audit and gap definition
-   - status: in_progress
+   - status: completed
    - evidence:
      - compare the current cache-tier settings, disk-streaming mode, and large-model safety policy
        against the `M11.3` milestone contract and identify what remains hidden, downgraded, or
@@ -35,14 +35,14 @@ paths.
      - define the exact compatibility settings, measurement points, and effective-policy payloads
        before broad implementation
 2. Control-plane, runtime, and operator propagation
-   - status: pending
+   - status: completed
    - evidence:
      - thread streaming-compatible cache settings through control-plane orchestration, worker-facing
        requests, and model or session state
      - ensure effective cache policy, bounded budgets, and compatibility downgrades surface
        explicit typed state and metrics instead of hidden fallback behavior
 3. Verification and milestone bookkeeping
-   - status: pending
+   - status: completed
    - evidence:
      - run the authoritative verification commands for the touched scope, including integration
        coverage if the live path changes or cache compatibility affects live serving paths
@@ -67,4 +67,4 @@ paths.
 
 ## Outcome
 
-- m11_3_streaming_cache_compatibility_and_settings_surface_in_progress
+- m11_3_streaming_cache_compatibility_and_settings_surface_completed

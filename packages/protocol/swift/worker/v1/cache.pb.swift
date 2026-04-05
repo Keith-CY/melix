@@ -20,38 +20,116 @@ fileprivate struct _GeneratedWithProtocGenSwiftVersion: SwiftProtobuf.ProtobufAP
   typealias Version = _2
 }
 
-public struct Melix_Worker_V1_CacheStats: Sendable {
+public struct Melix_Worker_V1_CacheStats: @unchecked Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
-  public var l1Bytes: UInt64 = 0
+  public var l1Bytes: UInt64 {
+    get {_storage._l1Bytes}
+    set {_uniqueStorage()._l1Bytes = newValue}
+  }
 
-  public var l2Bytes: UInt64 = 0
+  public var l2Bytes: UInt64 {
+    get {_storage._l2Bytes}
+    set {_uniqueStorage()._l2Bytes = newValue}
+  }
 
-  public var blockCount: UInt64 = 0
+  public var blockCount: UInt64 {
+    get {_storage._blockCount}
+    set {_uniqueStorage()._blockCount = newValue}
+  }
 
-  public var pinnedPrefixCount: UInt64 = 0
+  public var pinnedPrefixCount: UInt64 {
+    get {_storage._pinnedPrefixCount}
+    set {_uniqueStorage()._pinnedPrefixCount = newValue}
+  }
 
-  public var snapshotCount: UInt64 = 0
+  public var snapshotCount: UInt64 {
+    get {_storage._snapshotCount}
+    set {_uniqueStorage()._snapshotCount = newValue}
+  }
 
-  public var l1HitRate: Double = 0
+  public var l1HitRate: Double {
+    get {_storage._l1HitRate}
+    set {_uniqueStorage()._l1HitRate = newValue}
+  }
 
-  public var l2HitRate: Double = 0
+  public var l2HitRate: Double {
+    get {_storage._l2HitRate}
+    set {_uniqueStorage()._l2HitRate = newValue}
+  }
 
-  public var dedupRatio: Double = 0
+  public var dedupRatio: Double {
+    get {_storage._dedupRatio}
+    set {_uniqueStorage()._dedupRatio = newValue}
+  }
 
-  public var quantizedBytes: UInt64 = 0
+  public var quantizedBytes: UInt64 {
+    get {_storage._quantizedBytes}
+    set {_uniqueStorage()._quantizedBytes = newValue}
+  }
 
-  public var compressionRatio: Double = 0
+  public var compressionRatio: Double {
+    get {_storage._compressionRatio}
+    set {_uniqueStorage()._compressionRatio = newValue}
+  }
 
-  public var l2RestoreHitRate: Double = 0
+  public var l2RestoreHitRate: Double {
+    get {_storage._l2RestoreHitRate}
+    set {_uniqueStorage()._l2RestoreHitRate = newValue}
+  }
 
-  public var activeMode: Melix_Worker_V1_CacheMode = .unspecified
+  public var activeMode: Melix_Worker_V1_CacheMode {
+    get {_storage._activeMode}
+    set {_uniqueStorage()._activeMode = newValue}
+  }
+
+  public var cacheRoot: String {
+    get {_storage._cacheRoot}
+    set {_uniqueStorage()._cacheRoot = newValue}
+  }
+
+  public var initialCacheBlocks: UInt32 {
+    get {_storage._initialCacheBlocks}
+    set {_uniqueStorage()._initialCacheBlocks = newValue}
+  }
+
+  public var supportedModes: [Melix_Worker_V1_CacheMode] {
+    get {_storage._supportedModes}
+    set {_uniqueStorage()._supportedModes = newValue}
+  }
+
+  public var experimentalModes: [Melix_Worker_V1_CacheMode] {
+    get {_storage._experimentalModes}
+    set {_uniqueStorage()._experimentalModes = newValue}
+  }
+
+  public var supportsPrefixCache: Bool {
+    get {_storage._supportsPrefixCache}
+    set {_uniqueStorage()._supportsPrefixCache = newValue}
+  }
+
+  public var supportsPagedCache: Bool {
+    get {_storage._supportsPagedCache}
+    set {_uniqueStorage()._supportsPagedCache = newValue}
+  }
+
+  public var supportsDiskCache: Bool {
+    get {_storage._supportsDiskCache}
+    set {_uniqueStorage()._supportsDiskCache = newValue}
+  }
+
+  public var supportsBoundarySnapshots: Bool {
+    get {_storage._supportsBoundarySnapshots}
+    set {_uniqueStorage()._supportsBoundarySnapshots = newValue}
+  }
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
+
+  fileprivate var _storage = _StorageClass.defaultInstance
 }
 
 public struct Melix_Worker_V1_CacheScopeSummary: Sendable {
@@ -128,34 +206,35 @@ public struct Melix_Worker_V1_GetCacheStatsRequest: Sendable {
   public init() {}
 }
 
-public struct Melix_Worker_V1_GetCacheStatsResponse: @unchecked Sendable {
+public struct Melix_Worker_V1_GetCacheStatsResponse: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
   public var stats: Melix_Worker_V1_CacheStats {
-    get {_storage._stats ?? Melix_Worker_V1_CacheStats()}
-    set {_uniqueStorage()._stats = newValue}
+    get {_stats ?? Melix_Worker_V1_CacheStats()}
+    set {_stats = newValue}
   }
   /// Returns true if `stats` has been explicitly set.
-  public var hasStats: Bool {_storage._stats != nil}
+  public var hasStats: Bool {self._stats != nil}
   /// Clears the value of `stats`. Subsequent reads from it will return its default value.
-  public mutating func clearStats() {_uniqueStorage()._stats = nil}
+  public mutating func clearStats() {self._stats = nil}
 
   public var snapshot: Melix_Worker_V1_CacheSnapshot {
-    get {_storage._snapshot ?? Melix_Worker_V1_CacheSnapshot()}
-    set {_uniqueStorage()._snapshot = newValue}
+    get {_snapshot ?? Melix_Worker_V1_CacheSnapshot()}
+    set {_snapshot = newValue}
   }
   /// Returns true if `snapshot` has been explicitly set.
-  public var hasSnapshot: Bool {_storage._snapshot != nil}
+  public var hasSnapshot: Bool {self._snapshot != nil}
   /// Clears the value of `snapshot`. Subsequent reads from it will return its default value.
-  public mutating func clearSnapshot() {_uniqueStorage()._snapshot = nil}
+  public mutating func clearSnapshot() {self._snapshot = nil}
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
 
-  fileprivate var _storage = _StorageClass.defaultInstance
+  fileprivate var _stats: Melix_Worker_V1_CacheStats? = nil
+  fileprivate var _snapshot: Melix_Worker_V1_CacheSnapshot? = nil
 }
 
 public struct Melix_Worker_V1_PinPrefixRequest: Sendable {
@@ -472,84 +551,198 @@ fileprivate let _protobuf_package = "melix.worker.v1"
 
 extension Melix_Worker_V1_CacheStats: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".CacheStats"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}l1_bytes\0\u{3}l2_bytes\0\u{3}block_count\0\u{3}pinned_prefix_count\0\u{3}snapshot_count\0\u{3}l1_hit_rate\0\u{3}l2_hit_rate\0\u{3}dedup_ratio\0\u{3}quantized_bytes\0\u{3}compression_ratio\0\u{3}l2_restore_hit_rate\0\u{3}active_mode\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}l1_bytes\0\u{3}l2_bytes\0\u{3}block_count\0\u{3}pinned_prefix_count\0\u{3}snapshot_count\0\u{3}l1_hit_rate\0\u{3}l2_hit_rate\0\u{3}dedup_ratio\0\u{3}quantized_bytes\0\u{3}compression_ratio\0\u{3}l2_restore_hit_rate\0\u{3}active_mode\0\u{3}cache_root\0\u{3}initial_cache_blocks\0\u{3}supported_modes\0\u{3}experimental_modes\0\u{3}supports_prefix_cache\0\u{3}supports_paged_cache\0\u{3}supports_disk_cache\0\u{3}supports_boundary_snapshots\0")
+
+  fileprivate class _StorageClass {
+    var _l1Bytes: UInt64 = 0
+    var _l2Bytes: UInt64 = 0
+    var _blockCount: UInt64 = 0
+    var _pinnedPrefixCount: UInt64 = 0
+    var _snapshotCount: UInt64 = 0
+    var _l1HitRate: Double = 0
+    var _l2HitRate: Double = 0
+    var _dedupRatio: Double = 0
+    var _quantizedBytes: UInt64 = 0
+    var _compressionRatio: Double = 0
+    var _l2RestoreHitRate: Double = 0
+    var _activeMode: Melix_Worker_V1_CacheMode = .unspecified
+    var _cacheRoot: String = String()
+    var _initialCacheBlocks: UInt32 = 0
+    var _supportedModes: [Melix_Worker_V1_CacheMode] = []
+    var _experimentalModes: [Melix_Worker_V1_CacheMode] = []
+    var _supportsPrefixCache: Bool = false
+    var _supportsPagedCache: Bool = false
+    var _supportsDiskCache: Bool = false
+    var _supportsBoundarySnapshots: Bool = false
+
+      // This property is used as the initial default value for new instances of the type.
+      // The type itself is protecting the reference to its storage via CoW semantics.
+      // This will force a copy to be made of this reference when the first mutation occurs;
+      // hence, it is safe to mark this as `nonisolated(unsafe)`.
+      static nonisolated(unsafe) let defaultInstance = _StorageClass()
+
+    private init() {}
+
+    init(copying source: _StorageClass) {
+      _l1Bytes = source._l1Bytes
+      _l2Bytes = source._l2Bytes
+      _blockCount = source._blockCount
+      _pinnedPrefixCount = source._pinnedPrefixCount
+      _snapshotCount = source._snapshotCount
+      _l1HitRate = source._l1HitRate
+      _l2HitRate = source._l2HitRate
+      _dedupRatio = source._dedupRatio
+      _quantizedBytes = source._quantizedBytes
+      _compressionRatio = source._compressionRatio
+      _l2RestoreHitRate = source._l2RestoreHitRate
+      _activeMode = source._activeMode
+      _cacheRoot = source._cacheRoot
+      _initialCacheBlocks = source._initialCacheBlocks
+      _supportedModes = source._supportedModes
+      _experimentalModes = source._experimentalModes
+      _supportsPrefixCache = source._supportsPrefixCache
+      _supportsPagedCache = source._supportsPagedCache
+      _supportsDiskCache = source._supportsDiskCache
+      _supportsBoundarySnapshots = source._supportsBoundarySnapshots
+    }
+  }
+
+  fileprivate mutating func _uniqueStorage() -> _StorageClass {
+    if !isKnownUniquelyReferenced(&_storage) {
+      _storage = _StorageClass(copying: _storage)
+    }
+    return _storage
+  }
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
-    while let fieldNumber = try decoder.nextFieldNumber() {
-      // The use of inline closures is to circumvent an issue where the compiler
-      // allocates stack space for every case branch when no optimizations are
-      // enabled. https://github.com/apple/swift-protobuf/issues/1034
-      switch fieldNumber {
-      case 1: try { try decoder.decodeSingularUInt64Field(value: &self.l1Bytes) }()
-      case 2: try { try decoder.decodeSingularUInt64Field(value: &self.l2Bytes) }()
-      case 3: try { try decoder.decodeSingularUInt64Field(value: &self.blockCount) }()
-      case 4: try { try decoder.decodeSingularUInt64Field(value: &self.pinnedPrefixCount) }()
-      case 5: try { try decoder.decodeSingularUInt64Field(value: &self.snapshotCount) }()
-      case 6: try { try decoder.decodeSingularDoubleField(value: &self.l1HitRate) }()
-      case 7: try { try decoder.decodeSingularDoubleField(value: &self.l2HitRate) }()
-      case 8: try { try decoder.decodeSingularDoubleField(value: &self.dedupRatio) }()
-      case 9: try { try decoder.decodeSingularUInt64Field(value: &self.quantizedBytes) }()
-      case 10: try { try decoder.decodeSingularDoubleField(value: &self.compressionRatio) }()
-      case 11: try { try decoder.decodeSingularDoubleField(value: &self.l2RestoreHitRate) }()
-      case 12: try { try decoder.decodeSingularEnumField(value: &self.activeMode) }()
-      default: break
+    _ = _uniqueStorage()
+    try withExtendedLifetime(_storage) { (_storage: _StorageClass) in
+      while let fieldNumber = try decoder.nextFieldNumber() {
+        // The use of inline closures is to circumvent an issue where the compiler
+        // allocates stack space for every case branch when no optimizations are
+        // enabled. https://github.com/apple/swift-protobuf/issues/1034
+        switch fieldNumber {
+        case 1: try { try decoder.decodeSingularUInt64Field(value: &_storage._l1Bytes) }()
+        case 2: try { try decoder.decodeSingularUInt64Field(value: &_storage._l2Bytes) }()
+        case 3: try { try decoder.decodeSingularUInt64Field(value: &_storage._blockCount) }()
+        case 4: try { try decoder.decodeSingularUInt64Field(value: &_storage._pinnedPrefixCount) }()
+        case 5: try { try decoder.decodeSingularUInt64Field(value: &_storage._snapshotCount) }()
+        case 6: try { try decoder.decodeSingularDoubleField(value: &_storage._l1HitRate) }()
+        case 7: try { try decoder.decodeSingularDoubleField(value: &_storage._l2HitRate) }()
+        case 8: try { try decoder.decodeSingularDoubleField(value: &_storage._dedupRatio) }()
+        case 9: try { try decoder.decodeSingularUInt64Field(value: &_storage._quantizedBytes) }()
+        case 10: try { try decoder.decodeSingularDoubleField(value: &_storage._compressionRatio) }()
+        case 11: try { try decoder.decodeSingularDoubleField(value: &_storage._l2RestoreHitRate) }()
+        case 12: try { try decoder.decodeSingularEnumField(value: &_storage._activeMode) }()
+        case 13: try { try decoder.decodeSingularStringField(value: &_storage._cacheRoot) }()
+        case 14: try { try decoder.decodeSingularUInt32Field(value: &_storage._initialCacheBlocks) }()
+        case 15: try { try decoder.decodeRepeatedEnumField(value: &_storage._supportedModes) }()
+        case 16: try { try decoder.decodeRepeatedEnumField(value: &_storage._experimentalModes) }()
+        case 17: try { try decoder.decodeSingularBoolField(value: &_storage._supportsPrefixCache) }()
+        case 18: try { try decoder.decodeSingularBoolField(value: &_storage._supportsPagedCache) }()
+        case 19: try { try decoder.decodeSingularBoolField(value: &_storage._supportsDiskCache) }()
+        case 20: try { try decoder.decodeSingularBoolField(value: &_storage._supportsBoundarySnapshots) }()
+        default: break
+        }
       }
     }
   }
 
   public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
-    if self.l1Bytes != 0 {
-      try visitor.visitSingularUInt64Field(value: self.l1Bytes, fieldNumber: 1)
-    }
-    if self.l2Bytes != 0 {
-      try visitor.visitSingularUInt64Field(value: self.l2Bytes, fieldNumber: 2)
-    }
-    if self.blockCount != 0 {
-      try visitor.visitSingularUInt64Field(value: self.blockCount, fieldNumber: 3)
-    }
-    if self.pinnedPrefixCount != 0 {
-      try visitor.visitSingularUInt64Field(value: self.pinnedPrefixCount, fieldNumber: 4)
-    }
-    if self.snapshotCount != 0 {
-      try visitor.visitSingularUInt64Field(value: self.snapshotCount, fieldNumber: 5)
-    }
-    if self.l1HitRate.bitPattern != 0 {
-      try visitor.visitSingularDoubleField(value: self.l1HitRate, fieldNumber: 6)
-    }
-    if self.l2HitRate.bitPattern != 0 {
-      try visitor.visitSingularDoubleField(value: self.l2HitRate, fieldNumber: 7)
-    }
-    if self.dedupRatio.bitPattern != 0 {
-      try visitor.visitSingularDoubleField(value: self.dedupRatio, fieldNumber: 8)
-    }
-    if self.quantizedBytes != 0 {
-      try visitor.visitSingularUInt64Field(value: self.quantizedBytes, fieldNumber: 9)
-    }
-    if self.compressionRatio.bitPattern != 0 {
-      try visitor.visitSingularDoubleField(value: self.compressionRatio, fieldNumber: 10)
-    }
-    if self.l2RestoreHitRate.bitPattern != 0 {
-      try visitor.visitSingularDoubleField(value: self.l2RestoreHitRate, fieldNumber: 11)
-    }
-    if self.activeMode != .unspecified {
-      try visitor.visitSingularEnumField(value: self.activeMode, fieldNumber: 12)
+    try withExtendedLifetime(_storage) { (_storage: _StorageClass) in
+      if _storage._l1Bytes != 0 {
+        try visitor.visitSingularUInt64Field(value: _storage._l1Bytes, fieldNumber: 1)
+      }
+      if _storage._l2Bytes != 0 {
+        try visitor.visitSingularUInt64Field(value: _storage._l2Bytes, fieldNumber: 2)
+      }
+      if _storage._blockCount != 0 {
+        try visitor.visitSingularUInt64Field(value: _storage._blockCount, fieldNumber: 3)
+      }
+      if _storage._pinnedPrefixCount != 0 {
+        try visitor.visitSingularUInt64Field(value: _storage._pinnedPrefixCount, fieldNumber: 4)
+      }
+      if _storage._snapshotCount != 0 {
+        try visitor.visitSingularUInt64Field(value: _storage._snapshotCount, fieldNumber: 5)
+      }
+      if _storage._l1HitRate.bitPattern != 0 {
+        try visitor.visitSingularDoubleField(value: _storage._l1HitRate, fieldNumber: 6)
+      }
+      if _storage._l2HitRate.bitPattern != 0 {
+        try visitor.visitSingularDoubleField(value: _storage._l2HitRate, fieldNumber: 7)
+      }
+      if _storage._dedupRatio.bitPattern != 0 {
+        try visitor.visitSingularDoubleField(value: _storage._dedupRatio, fieldNumber: 8)
+      }
+      if _storage._quantizedBytes != 0 {
+        try visitor.visitSingularUInt64Field(value: _storage._quantizedBytes, fieldNumber: 9)
+      }
+      if _storage._compressionRatio.bitPattern != 0 {
+        try visitor.visitSingularDoubleField(value: _storage._compressionRatio, fieldNumber: 10)
+      }
+      if _storage._l2RestoreHitRate.bitPattern != 0 {
+        try visitor.visitSingularDoubleField(value: _storage._l2RestoreHitRate, fieldNumber: 11)
+      }
+      if _storage._activeMode != .unspecified {
+        try visitor.visitSingularEnumField(value: _storage._activeMode, fieldNumber: 12)
+      }
+      if !_storage._cacheRoot.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._cacheRoot, fieldNumber: 13)
+      }
+      if _storage._initialCacheBlocks != 0 {
+        try visitor.visitSingularUInt32Field(value: _storage._initialCacheBlocks, fieldNumber: 14)
+      }
+      if !_storage._supportedModes.isEmpty {
+        try visitor.visitPackedEnumField(value: _storage._supportedModes, fieldNumber: 15)
+      }
+      if !_storage._experimentalModes.isEmpty {
+        try visitor.visitPackedEnumField(value: _storage._experimentalModes, fieldNumber: 16)
+      }
+      if _storage._supportsPrefixCache != false {
+        try visitor.visitSingularBoolField(value: _storage._supportsPrefixCache, fieldNumber: 17)
+      }
+      if _storage._supportsPagedCache != false {
+        try visitor.visitSingularBoolField(value: _storage._supportsPagedCache, fieldNumber: 18)
+      }
+      if _storage._supportsDiskCache != false {
+        try visitor.visitSingularBoolField(value: _storage._supportsDiskCache, fieldNumber: 19)
+      }
+      if _storage._supportsBoundarySnapshots != false {
+        try visitor.visitSingularBoolField(value: _storage._supportsBoundarySnapshots, fieldNumber: 20)
+      }
     }
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: Melix_Worker_V1_CacheStats, rhs: Melix_Worker_V1_CacheStats) -> Bool {
-    if lhs.l1Bytes != rhs.l1Bytes {return false}
-    if lhs.l2Bytes != rhs.l2Bytes {return false}
-    if lhs.blockCount != rhs.blockCount {return false}
-    if lhs.pinnedPrefixCount != rhs.pinnedPrefixCount {return false}
-    if lhs.snapshotCount != rhs.snapshotCount {return false}
-    if lhs.l1HitRate != rhs.l1HitRate {return false}
-    if lhs.l2HitRate != rhs.l2HitRate {return false}
-    if lhs.dedupRatio != rhs.dedupRatio {return false}
-    if lhs.quantizedBytes != rhs.quantizedBytes {return false}
-    if lhs.compressionRatio != rhs.compressionRatio {return false}
-    if lhs.l2RestoreHitRate != rhs.l2RestoreHitRate {return false}
-    if lhs.activeMode != rhs.activeMode {return false}
+    if lhs._storage !== rhs._storage {
+      let storagesAreEqual: Bool = withExtendedLifetime((lhs._storage, rhs._storage)) { (_args: (_StorageClass, _StorageClass)) in
+        let _storage = _args.0
+        let rhs_storage = _args.1
+        if _storage._l1Bytes != rhs_storage._l1Bytes {return false}
+        if _storage._l2Bytes != rhs_storage._l2Bytes {return false}
+        if _storage._blockCount != rhs_storage._blockCount {return false}
+        if _storage._pinnedPrefixCount != rhs_storage._pinnedPrefixCount {return false}
+        if _storage._snapshotCount != rhs_storage._snapshotCount {return false}
+        if _storage._l1HitRate != rhs_storage._l1HitRate {return false}
+        if _storage._l2HitRate != rhs_storage._l2HitRate {return false}
+        if _storage._dedupRatio != rhs_storage._dedupRatio {return false}
+        if _storage._quantizedBytes != rhs_storage._quantizedBytes {return false}
+        if _storage._compressionRatio != rhs_storage._compressionRatio {return false}
+        if _storage._l2RestoreHitRate != rhs_storage._l2RestoreHitRate {return false}
+        if _storage._activeMode != rhs_storage._activeMode {return false}
+        if _storage._cacheRoot != rhs_storage._cacheRoot {return false}
+        if _storage._initialCacheBlocks != rhs_storage._initialCacheBlocks {return false}
+        if _storage._supportedModes != rhs_storage._supportedModes {return false}
+        if _storage._experimentalModes != rhs_storage._experimentalModes {return false}
+        if _storage._supportsPrefixCache != rhs_storage._supportsPrefixCache {return false}
+        if _storage._supportsPagedCache != rhs_storage._supportsPagedCache {return false}
+        if _storage._supportsDiskCache != rhs_storage._supportsDiskCache {return false}
+        if _storage._supportsBoundarySnapshots != rhs_storage._supportsBoundarySnapshots {return false}
+        return true
+      }
+      if !storagesAreEqual {return false}
+    }
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -701,74 +894,36 @@ extension Melix_Worker_V1_GetCacheStatsResponse: SwiftProtobuf.Message, SwiftPro
   public static let protoMessageName: String = _protobuf_package + ".GetCacheStatsResponse"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}stats\0\u{1}snapshot\0")
 
-  fileprivate class _StorageClass {
-    var _stats: Melix_Worker_V1_CacheStats? = nil
-    var _snapshot: Melix_Worker_V1_CacheSnapshot? = nil
-
-      // This property is used as the initial default value for new instances of the type.
-      // The type itself is protecting the reference to its storage via CoW semantics.
-      // This will force a copy to be made of this reference when the first mutation occurs;
-      // hence, it is safe to mark this as `nonisolated(unsafe)`.
-      static nonisolated(unsafe) let defaultInstance = _StorageClass()
-
-    private init() {}
-
-    init(copying source: _StorageClass) {
-      _stats = source._stats
-      _snapshot = source._snapshot
-    }
-  }
-
-  fileprivate mutating func _uniqueStorage() -> _StorageClass {
-    if !isKnownUniquelyReferenced(&_storage) {
-      _storage = _StorageClass(copying: _storage)
-    }
-    return _storage
-  }
-
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
-    _ = _uniqueStorage()
-    try withExtendedLifetime(_storage) { (_storage: _StorageClass) in
-      while let fieldNumber = try decoder.nextFieldNumber() {
-        // The use of inline closures is to circumvent an issue where the compiler
-        // allocates stack space for every case branch when no optimizations are
-        // enabled. https://github.com/apple/swift-protobuf/issues/1034
-        switch fieldNumber {
-        case 1: try { try decoder.decodeSingularMessageField(value: &_storage._stats) }()
-        case 2: try { try decoder.decodeSingularMessageField(value: &_storage._snapshot) }()
-        default: break
-        }
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularMessageField(value: &self._stats) }()
+      case 2: try { try decoder.decodeSingularMessageField(value: &self._snapshot) }()
+      default: break
       }
     }
   }
 
   public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
-    try withExtendedLifetime(_storage) { (_storage: _StorageClass) in
-      // The use of inline closures is to circumvent an issue where the compiler
-      // allocates stack space for every if/case branch local when no optimizations
-      // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
-      // https://github.com/apple/swift-protobuf/issues/1182
-      try { if let v = _storage._stats {
-        try visitor.visitSingularMessageField(value: v, fieldNumber: 1)
-      } }()
-      try { if let v = _storage._snapshot {
-        try visitor.visitSingularMessageField(value: v, fieldNumber: 2)
-      } }()
-    }
+    // The use of inline closures is to circumvent an issue where the compiler
+    // allocates stack space for every if/case branch local when no optimizations
+    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+    // https://github.com/apple/swift-protobuf/issues/1182
+    try { if let v = self._stats {
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 1)
+    } }()
+    try { if let v = self._snapshot {
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 2)
+    } }()
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: Melix_Worker_V1_GetCacheStatsResponse, rhs: Melix_Worker_V1_GetCacheStatsResponse) -> Bool {
-    if lhs._storage !== rhs._storage {
-      let storagesAreEqual: Bool = withExtendedLifetime((lhs._storage, rhs._storage)) { (_args: (_StorageClass, _StorageClass)) in
-        let _storage = _args.0
-        let rhs_storage = _args.1
-        if _storage._stats != rhs_storage._stats {return false}
-        if _storage._snapshot != rhs_storage._snapshot {return false}
-        return true
-      }
-      if !storagesAreEqual {return false}
-    }
+    if lhs._stats != rhs._stats {return false}
+    if lhs._snapshot != rhs._snapshot {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

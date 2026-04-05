@@ -101,6 +101,12 @@ struct DesktopModelsTabView: View {
         ("Require Disk", "require_disk"),
     ]
 
+    private let cacheModeOptions = [
+        ("Tiered", "tiered"),
+        ("Rotating", "rotating"),
+        ("Hybrid", "hybrid"),
+    ]
+
     private let accelerationModeOptions = [
         ("Baseline", "baseline"),
         ("Speculative Decode", "speculative_decode"),
@@ -143,6 +149,16 @@ struct DesktopModelsTabView: View {
                         }
                         if model.adaptiveThinkingText != "Off" || model.toolParserFallbackText != "Off" {
                             Text("adaptive thinking: \(model.adaptiveThinkingText) • parser fallback: \(model.toolParserFallbackText)")
+                                .font(.caption2)
+                                .foregroundStyle(.tertiary)
+                        }
+                        if !model.cachePolicyText.isEmpty {
+                            Text("cache policy: \(model.cachePolicyText)")
+                                .font(.caption2)
+                                .foregroundStyle(.tertiary)
+                        }
+                        if !model.cacheSettingsText.isEmpty {
+                            Text("cache settings: \(model.cacheSettingsText)")
                                 .font(.caption2)
                                 .foregroundStyle(.tertiary)
                         }
@@ -239,6 +255,56 @@ struct DesktopModelsTabView: View {
                                     Text(option.0).tag(option.1)
                                 }
                             }
+                        }
+                        HStack(spacing: 12) {
+                            Picker(
+                                "Cache Mode",
+                                selection: Binding(
+                                    get: { viewModel.modelSettingsCacheModeDraft },
+                                    set: { viewModel.modelSettingsCacheModeDraft = $0 }
+                                )
+                            ) {
+                                ForEach(cacheModeOptions, id: \.1) { option in
+                                    Text(option.0).tag(option.1)
+                                }
+                            }
+                            TextField(
+                                "Cache Budget Bytes",
+                                text: Binding(
+                                    get: { viewModel.modelSettingsCacheMemoryBudgetDraft },
+                                    set: { viewModel.modelSettingsCacheMemoryBudgetDraft = $0 }
+                                )
+                            )
+                            TextField(
+                                "Cache Budget %",
+                                text: Binding(
+                                    get: { viewModel.modelSettingsCacheMemoryBudgetPctDraft },
+                                    set: { viewModel.modelSettingsCacheMemoryBudgetPctDraft = $0 }
+                                )
+                            )
+                        }
+                        HStack(spacing: 12) {
+                            TextField(
+                                "Cache Block Tokens",
+                                text: Binding(
+                                    get: { viewModel.modelSettingsCacheBlockSizeTokensDraft },
+                                    set: { viewModel.modelSettingsCacheBlockSizeTokensDraft = $0 }
+                                )
+                            )
+                            TextField(
+                                "Cache Directory",
+                                text: Binding(
+                                    get: { viewModel.modelSettingsCacheDirectoryDraft },
+                                    set: { viewModel.modelSettingsCacheDirectoryDraft = $0 }
+                                )
+                            )
+                            TextField(
+                                "Multimodal Cache Budget",
+                                text: Binding(
+                                    get: { viewModel.modelSettingsMultimodalCacheBudgetDraft },
+                                    set: { viewModel.modelSettingsMultimodalCacheBudgetDraft = $0 }
+                                )
+                            )
                         }
                         HStack(spacing: 12) {
                             TextField(
@@ -718,6 +784,33 @@ func desktopModelInfoSummaryContent(
         detailLines.append("memory budget: \(info.memoryBudgetText)")
     }
     detailLines.append("disk streaming: \(info.diskStreamingModeText)")
+    if !info.cacheModeText.isEmpty {
+        detailLines.append("cache mode: \(info.cacheModeText)")
+    }
+    if !info.cacheCompatibilityText.isEmpty {
+        detailLines.append("cache compatibility: \(info.cacheCompatibilityText)")
+    }
+    if !info.cacheCompatibilityReasonText.isEmpty {
+        detailLines.append("cache detail: \(info.cacheCompatibilityReasonText)")
+    }
+    if !info.cacheDirectoryText.isEmpty {
+        detailLines.append("cache directory: \(info.cacheDirectoryText)")
+    }
+    if !info.cacheRootText.isEmpty {
+        detailLines.append("cache root: \(info.cacheRootText)")
+    }
+    if !info.cacheBlockSizeText.isEmpty {
+        detailLines.append("cache block size: \(info.cacheBlockSizeText)")
+    }
+    if !info.cacheBudgetText.isEmpty {
+        detailLines.append("cache budget: \(info.cacheBudgetText)")
+    }
+    if !info.multimodalCacheBudgetText.isEmpty {
+        detailLines.append("multimodal cache budget: \(info.multimodalCacheBudgetText)")
+    }
+    if !info.initialCacheBlocksText.isEmpty {
+        detailLines.append("initial cache blocks: \(info.initialCacheBlocksText)")
+    }
     detailLines.append("adaptive thinking: \(info.adaptiveThinkingText)")
     detailLines.append("acceleration: \(info.accelerationModeText) • \(info.accelerationProfileID.isEmpty ? "no-profile" : info.accelerationProfileID)")
     detailLines.append("parser fallback: \(info.toolParserFallbackText)")

@@ -314,6 +314,105 @@ struct SnapshotStoreTests {
         #expect(stoppedSnapshot.serverState == .serverStopped)
     }
 
+    @Test("server snapshot builder resolves limited cache compatibility downgrades")
+    func serverSnapshotBuilderResolvesLimitedCacheCompatibilityDowngrades() {
+        var model = ModelCatalog.devTextModel()
+        model.settings.cacheMode = .rotating
+        model.settings.cacheDirectory = "/tmp/requested-cache"
+        model.settings.cacheBlockSizeTokens = 32
+        model.settings.cacheMemoryBudgetBytes = 4_096
+        model.settings.cacheMemoryBudgetPct = 25
+        model.settings.multimodalCacheBudgetBytes = 2_048
+        model.settings.diskStreamingMode = .diskStreamingRequireDisk
+        model.supportedModalities = ["text"]
+
+        var cache = CacheMetadataStore.emptySummary()
+        cache.activeMode = .hybrid
+        cache.cacheRoot = "/var/melix/cache"
+        cache.initialCacheBlocks = 4
+        cache.supportedModes = [.tiered]
+        cache.experimentalModes = [.rotating, .hybrid]
+        cache.supportsPrefixCache = true
+        cache.supportsPagedCache = true
+        cache.supportsDiskCache = false
+        cache.supportsBoundarySnapshots = true
+
+        let snapshot = ServerSnapshotBuilder().build(
+            models: [model],
+            metrics: Melix_Controlplane_V1_MetricsSummary(),
+            cache: cache
+        )
+        let policy = try? #require(snapshot.models.first?.cachePolicy)
+
+        #expect(policy?.requestedMode == .rotating)
+        #expect(policy?.effectiveMode == .tiered)
+        #expect(policy?.supportedModes == [.tiered])
+        #expect(policy?.supportsPrefixCache == true)
+        #expect(policy?.supportsPagedCache == true)
+        #expect(policy?.supportsDiskCache == false)
+        #expect(policy?.supportsBoundarySnapshots == true)
+        #expect(policy?.requestedDirectory == "/tmp/requested-cache")
+        #expect(policy?.effectiveDirectory == "/var/melix/cache")
+        #expect(policy?.requestedBlockSizeTokens == 32)
+        #expect(policy?.effectiveBlockSizeTokens == 32)
+        #expect(policy?.requestedCacheMemoryBudgetBytes == 4_096)
+        #expect(policy?.effectiveCacheMemoryBudgetBytes == 4_096)
+        #expect(policy?.requestedCacheMemoryBudgetPct == 25)
+        #expect(policy?.effectiveCacheMemoryBudgetPct == 0)
+        #expect(policy?.requestedMultimodalCacheBudgetBytes == 2_048)
+        #expect(policy?.effectiveMultimodalCacheBudgetBytes == 0)
+        #expect(policy?.initialCacheBlocks == 4)
+        #expect(policy?.compatibility == .cacheCompatibilityLimited)
+        #expect(policy?.compatibilityReason.contains("requested cache mode is not advertised by the worker") == true)
+        #expect(policy?.compatibilityReason.contains("per-model cache directory overrides are not supported") == true)
+        #expect(policy?.compatibilityReason.contains("disk streaming is requested") == true)
+        #expect(policy?.compatibilityReason.contains("multimodal cache budget is ignored") == true)
+        #expect(policy?.compatibilityReason.contains("fixed cache budget bytes take precedence") == true)
+    }
+
+    @Test("server snapshot builder emits default cache compatibility reasons for compatible and unknown workers")
+    func serverSnapshotBuilderEmitsDefaultCacheCompatibilityReasons() {
+        var compatibleModel = ModelCatalog.devTextModel()
+        compatibleModel.settings.cacheMode = .tiered
+
+        var compatibleCache = CacheMetadataStore.emptySummary()
+        compatibleCache.activeMode = .tiered
+        compatibleCache.cacheRoot = "/var/melix/cache"
+        compatibleCache.supportedModes = [.tiered, .rotating]
+
+        let compatibleSnapshot = ServerSnapshotBuilder().build(
+            models: [compatibleModel],
+            metrics: Melix_Controlplane_V1_MetricsSummary(),
+            cache: compatibleCache
+        )
+
+        var unknownCache = CacheMetadataStore.emptySummary()
+        unknownCache.activeMode = .unspecified
+        unknownCache.cacheRoot = "/var/melix/cache"
+        unknownCache.supportedModes = []
+
+        var unknownModel = ModelCatalog.devTextModel()
+        unknownModel.settings.cacheMode = .unspecified
+
+        let unknownSnapshot = ServerSnapshotBuilder().build(
+            models: [unknownModel],
+            metrics: Melix_Controlplane_V1_MetricsSummary(),
+            cache: unknownCache
+        )
+
+        #expect(compatibleSnapshot.models.first?.cachePolicy.compatibility == .cacheCompatibilityCompatible)
+        #expect(
+            compatibleSnapshot.models.first?.cachePolicy.compatibilityReason
+                == "requested policy is compatible with the current worker cache capabilities"
+        )
+        #expect(unknownSnapshot.models.first?.cachePolicy.compatibility == .cacheCompatibilityUnknown)
+        #expect(
+            unknownSnapshot.models.first?.cachePolicy.compatibilityReason
+                == "worker cache compatibility evidence is unavailable"
+        )
+        #expect(unknownSnapshot.models.first?.cachePolicy.effectiveMode == .tiered)
+    }
+
     @Test("session graph store exposes sorted summaries and session state")
     func sessionGraphStoreExposesSortedSummaries() async {
         let store = SessionGraphStore(sessions: [makeSessionState(id: "session-b"), makeSessionState(id: "session-a")])

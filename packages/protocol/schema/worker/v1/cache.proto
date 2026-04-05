@@ -26,6 +26,14 @@ message CacheStats {
   double compression_ratio = 10;
   double l2_restore_hit_rate = 11;
   CacheMode active_mode = 12;
+  string cache_root = 13;
+  uint32 initial_cache_blocks = 14;
+  repeated CacheMode supported_modes = 15;
+  repeated CacheMode experimental_modes = 16;
+  bool supports_prefix_cache = 17;
+  bool supports_paged_cache = 18;
+  bool supports_disk_cache = 19;
+  bool supports_boundary_snapshots = 20;
 }
 
 message CacheScopeSummary {

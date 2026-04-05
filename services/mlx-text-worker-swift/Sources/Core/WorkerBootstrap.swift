@@ -24,7 +24,8 @@ package struct WorkerBootstrap: Sendable {
             modelCatalog: WorkerModelCatalog(),
             runtime: makeTextRuntime(for: configuration),
             cacheStore: HotCacheStore(
-                diskStore: DiskCacheStore(rootPath: configuration.cacheRootPath)
+                diskStore: DiskCacheStore(rootPath: configuration.cacheRootPath),
+                cacheRootPath: configuration.cacheRootPath
             )
         )
         metrics.recordMilliseconds("swift_text.registry_init_ms", value: elapsedMilliseconds(since: registryStartedAt))

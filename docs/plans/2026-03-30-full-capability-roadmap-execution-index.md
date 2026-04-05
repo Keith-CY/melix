@@ -182,7 +182,9 @@ The roadmap extension in `M10-M17` includes milestone-level plans plus decompose
 - Status: in progress. `M11.1` is completed with typed disk-streaming settings, worker-facing
   runtime flags, explicit unsupported-runtime failures, and operator-visible session or residency
   state. `M11.2` is completed with repository-owned memory-budget load settings, typed headroom
-  rejection evidence, and operator-visible budget summaries. `M11.3-M11.4` remain open.
+  rejection evidence, and operator-visible budget summaries. `M11.3` is completed with typed cache
+  policy summaries, effective streaming-compatibility resolution, worker-aligned cache settings,
+  and operator-visible requested-versus-effective cache state. `M11.4` remains open.
 
 - `M11.1` `docs/plans/2026-03-31-m11-1-disk-streaming-mode-and-runtime-flags.md`
   Status: completed. Disk-streaming mode is now part of the repository-owned control-plane and
@@ -195,6 +197,10 @@ The roadmap extension in `M10-M17` includes milestone-level plans plus decompose
   evidence into residency summaries plus metrics, and the native desktop shell exposes the budget
   setting and rejection detail through model settings and summaries.
 - `M11.3` `docs/plans/2026-03-31-m11-3-streaming-cache-compatibility-and-settings-surface.md`
+  Status: completed. Cache mode, memory-budget, block-size, directory, and multimodal-cache
+  controls now flow through the repository-owned control-plane contract, worker summaries, native
+  operator settings, and effective cache-policy projection, with changed-line coverage and full
+  repository verification recorded in the repository.
 - `M11.4` `docs/plans/2026-03-31-m11-4-large-model-streaming-benchmarks-and-runbooks.md`
 
 ## M12: Model Registry, Family Coverage, And Model Tools

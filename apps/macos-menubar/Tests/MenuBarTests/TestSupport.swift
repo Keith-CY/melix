@@ -404,6 +404,49 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
             default: .diskStreamingDisabled
             }
         }
+        if let cacheMode = values["cache_mode"] {
+            modelSettings.cacheMode = switch cacheMode.lowercased() {
+            case "rotating":
+                .rotating
+            case "hybrid":
+                .hybrid
+            case "tiered", "default":
+                .tiered
+            default:
+                .unspecified
+            }
+        }
+        if let cacheMemoryBudgetBytes = values["cache_memory_budget_bytes"] {
+            if cacheMemoryBudgetBytes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                modelSettings.cacheMemoryBudgetBytes = 0
+            } else {
+                modelSettings.cacheMemoryBudgetBytes = UInt64(cacheMemoryBudgetBytes) ?? 0
+            }
+        }
+        if let cacheMemoryBudgetPct = values["cache_memory_budget_pct"] {
+            if cacheMemoryBudgetPct.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                modelSettings.cacheMemoryBudgetPct = 0
+            } else {
+                modelSettings.cacheMemoryBudgetPct = UInt32(cacheMemoryBudgetPct) ?? 0
+            }
+        }
+        if let cacheBlockSizeTokens = values["cache_block_size_tokens"] {
+            if cacheBlockSizeTokens.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                modelSettings.cacheBlockSizeTokens = 0
+            } else {
+                modelSettings.cacheBlockSizeTokens = UInt32(cacheBlockSizeTokens) ?? 0
+            }
+        }
+        if let cacheDirectory = values["cache_directory"] {
+            modelSettings.cacheDirectory = cacheDirectory
+        }
+        if let multimodalCacheBudgetBytes = values["multimodal_cache_budget_bytes"] {
+            if multimodalCacheBudgetBytes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                modelSettings.multimodalCacheBudgetBytes = 0
+            } else {
+                modelSettings.multimodalCacheBudgetBytes = UInt64(multimodalCacheBudgetBytes) ?? 0
+            }
+        }
         if let accelerationMode = values["default_acceleration_mode"] {
             modelSettings.defaultAccelerationMode = switch accelerationMode.lowercased() {
             case "speculative_decode": .speculativeDecode
@@ -436,6 +479,38 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
         }
         if let ocrDefaultMaxTokens = values["ocr_default_max_tokens"] {
             modelSettings.ext["ocr_default_max_tokens"] = ocrDefaultMaxTokens
+        }
+        if var snapshot = snapshotOverride,
+           let modelIndex = snapshot.models.firstIndex(where: { $0.modelID == modelID }) {
+            snapshot.models[modelIndex].settings = modelSettings
+            snapshot.models[modelIndex].cachePolicy.requestedMode = modelSettings.cacheMode
+            snapshot.models[modelIndex].cachePolicy.requestedDirectory = modelSettings.cacheDirectory
+            snapshot.models[modelIndex].cachePolicy.requestedBlockSizeTokens = modelSettings.cacheBlockSizeTokens
+            snapshot.models[modelIndex].cachePolicy.requestedCacheMemoryBudgetBytes = modelSettings.cacheMemoryBudgetBytes
+            snapshot.models[modelIndex].cachePolicy.requestedCacheMemoryBudgetPct = modelSettings.cacheMemoryBudgetPct
+            snapshot.models[modelIndex].cachePolicy.requestedMultimodalCacheBudgetBytes = modelSettings.multimodalCacheBudgetBytes
+            if snapshot.models[modelIndex].cachePolicy.effectiveMode == .unspecified {
+                snapshot.models[modelIndex].cachePolicy.effectiveMode = modelSettings.cacheMode == .unspecified
+                    ? .tiered
+                    : modelSettings.cacheMode
+            }
+            if snapshot.models[modelIndex].cachePolicy.effectiveDirectory.isEmpty {
+                snapshot.models[modelIndex].cachePolicy.effectiveDirectory = modelSettings.cacheDirectory
+            }
+            if snapshot.models[modelIndex].cachePolicy.effectiveBlockSizeTokens == 0 {
+                snapshot.models[modelIndex].cachePolicy.effectiveBlockSizeTokens = modelSettings.cacheBlockSizeTokens
+            }
+            if snapshot.models[modelIndex].cachePolicy.effectiveCacheMemoryBudgetBytes == 0 {
+                snapshot.models[modelIndex].cachePolicy.effectiveCacheMemoryBudgetBytes = modelSettings.cacheMemoryBudgetBytes
+            }
+            if snapshot.models[modelIndex].cachePolicy.effectiveCacheMemoryBudgetPct == 0 {
+                snapshot.models[modelIndex].cachePolicy.effectiveCacheMemoryBudgetPct = modelSettings.cacheMemoryBudgetPct
+            }
+            if snapshot.models[modelIndex].cachePolicy.effectiveMultimodalCacheBudgetBytes == 0 {
+                snapshot.models[modelIndex].cachePolicy.effectiveMultimodalCacheBudgetBytes = modelSettings.multimodalCacheBudgetBytes
+            }
+            snapshotOverride = snapshot
+            return snapshot.models[modelIndex]
         }
         return makeModelSummary(state: modelState)
     }
@@ -888,6 +963,15 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
         cache.l2Bytes = 64 * 1024 * 1024
         cache.l1HitRate = 0.72
         cache.l2HitRate = 0.35
+        cache.activeMode = .tiered
+        cache.cacheRoot = "/tmp/melix-cache"
+        cache.initialCacheBlocks = 4
+        cache.supportedModes = [.tiered, .rotating, .hybrid]
+        cache.experimentalModes = [.rotating, .hybrid]
+        cache.supportsPrefixCache = true
+        cache.supportsPagedCache = true
+        cache.supportsDiskCache = true
+        cache.supportsBoundarySnapshots = true
         return cache
     }
 

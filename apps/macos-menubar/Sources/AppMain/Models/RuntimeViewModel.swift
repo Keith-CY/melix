@@ -36,6 +36,8 @@ public struct RuntimeModelRow: Identifiable, Equatable, Sendable {
     public let residencyText: String
     public let memoryText: String
     public let memoryAlertText: String
+    public let cachePolicyText: String
+    public let cacheSettingsText: String
 
     public init(
         modelID: String,
@@ -54,7 +56,9 @@ public struct RuntimeModelRow: Identifiable, Equatable, Sendable {
         toolParserFallbackText: String = "Off",
         residencyText: String,
         memoryText: String,
-        memoryAlertText: String
+        memoryAlertText: String,
+        cachePolicyText: String = "",
+        cacheSettingsText: String = ""
     ) {
         self.modelID = modelID
         self.kind = kind
@@ -73,6 +77,8 @@ public struct RuntimeModelRow: Identifiable, Equatable, Sendable {
         self.residencyText = residencyText
         self.memoryText = memoryText
         self.memoryAlertText = memoryAlertText
+        self.cachePolicyText = cachePolicyText
+        self.cacheSettingsText = cacheSettingsText
     }
 
     public var id: String {
@@ -111,6 +117,15 @@ public struct RuntimeModelInfoState: Equatable, Sendable {
     public let ocrTemperatureText: String
     public let ocrTopPText: String
     public let ocrMaxTokensText: String
+    public let cacheModeText: String
+    public let cacheCompatibilityText: String
+    public let cacheCompatibilityReasonText: String
+    public let cacheDirectoryText: String
+    public let cacheBlockSizeText: String
+    public let cacheBudgetText: String
+    public let multimodalCacheBudgetText: String
+    public let cacheRootText: String
+    public let initialCacheBlocksText: String
     public let generationConfigSourceText: String
     public let generationConfigTemperatureText: String
     public let generationConfigTopPText: String
@@ -139,6 +154,15 @@ public struct RuntimeModelInfoState: Equatable, Sendable {
         ocrTemperatureText: String = "",
         ocrTopPText: String = "",
         ocrMaxTokensText: String = "",
+        cacheModeText: String = "",
+        cacheCompatibilityText: String = "",
+        cacheCompatibilityReasonText: String = "",
+        cacheDirectoryText: String = "",
+        cacheBlockSizeText: String = "",
+        cacheBudgetText: String = "",
+        multimodalCacheBudgetText: String = "",
+        cacheRootText: String = "",
+        initialCacheBlocksText: String = "",
         generationConfigSourceText: String = "",
         generationConfigTemperatureText: String = "",
         generationConfigTopPText: String = "",
@@ -166,6 +190,15 @@ public struct RuntimeModelInfoState: Equatable, Sendable {
         self.ocrTemperatureText = ocrTemperatureText
         self.ocrTopPText = ocrTopPText
         self.ocrMaxTokensText = ocrMaxTokensText
+        self.cacheModeText = cacheModeText
+        self.cacheCompatibilityText = cacheCompatibilityText
+        self.cacheCompatibilityReasonText = cacheCompatibilityReasonText
+        self.cacheDirectoryText = cacheDirectoryText
+        self.cacheBlockSizeText = cacheBlockSizeText
+        self.cacheBudgetText = cacheBudgetText
+        self.multimodalCacheBudgetText = multimodalCacheBudgetText
+        self.cacheRootText = cacheRootText
+        self.initialCacheBlocksText = initialCacheBlocksText
         self.generationConfigSourceText = generationConfigSourceText
         self.generationConfigTemperatureText = generationConfigTemperatureText
         self.generationConfigTopPText = generationConfigTopPText
@@ -652,6 +685,12 @@ public final class RuntimeViewModel {
     public var modelSettingsMemoryPolicyDraft = "evictable"
     public var modelSettingsMemoryBudgetDraft = ""
     public var modelSettingsDiskStreamingModeDraft = "disabled"
+    public var modelSettingsCacheModeDraft = "tiered"
+    public var modelSettingsCacheMemoryBudgetDraft = ""
+    public var modelSettingsCacheMemoryBudgetPctDraft = ""
+    public var modelSettingsCacheBlockSizeTokensDraft = ""
+    public var modelSettingsCacheDirectoryDraft = ""
+    public var modelSettingsMultimodalCacheBudgetDraft = ""
     public var modelSettingsAccelerationModeDraft = "baseline"
     public var modelSettingsAccelerationProfileIDDraft = ""
     public var modelSettingsAdaptiveThinkingModeDraft = "off"
@@ -2135,6 +2174,12 @@ public final class RuntimeViewModel {
         memoryPolicy: String,
         memoryBudgetBytes: String = "",
         diskStreamingMode: String,
+        cacheMode: String = "tiered",
+        cacheMemoryBudgetBytes: String = "",
+        cacheMemoryBudgetPct: String = "",
+        cacheBlockSizeTokens: String = "",
+        cacheDirectory: String = "",
+        multimodalCacheBudgetBytes: String = "",
         accelerationMode: String,
         accelerationProfileID: String,
         adaptiveThinkingMode: String = "off",
@@ -2156,6 +2201,12 @@ public final class RuntimeViewModel {
                 "memory_policy": memoryPolicy,
                 "memory_budget_bytes": memoryBudgetBytes,
                 "disk_streaming_mode": diskStreamingMode,
+                "cache_mode": cacheMode,
+                "cache_memory_budget_bytes": cacheMemoryBudgetBytes,
+                "cache_memory_budget_pct": cacheMemoryBudgetPct,
+                "cache_block_size_tokens": cacheBlockSizeTokens,
+                "cache_directory": cacheDirectory,
+                "multimodal_cache_budget_bytes": multimodalCacheBudgetBytes,
                 "default_acceleration_mode": accelerationMode,
                 "acceleration_profile_id": accelerationProfileID,
                 "adaptive_thinking_mode": adaptiveThinkingMode,
@@ -2217,6 +2268,42 @@ public final class RuntimeViewModel {
         }
 
         guard
+            normalizedOptionalUInt64Draft(
+                modelSettingsCacheMemoryBudgetDraft,
+                fieldName: "Cache memory budget bytes"
+            ) != nil || modelSettingsCacheMemoryBudgetDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else {
+            return
+        }
+
+        guard
+            normalizedOptionalUInt32Draft(
+                modelSettingsCacheMemoryBudgetPctDraft,
+                fieldName: "Cache memory budget percent"
+            ) != nil || modelSettingsCacheMemoryBudgetPctDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else {
+            return
+        }
+
+        guard
+            normalizedOptionalUInt32Draft(
+                modelSettingsCacheBlockSizeTokensDraft,
+                fieldName: "Cache block size tokens"
+            ) != nil || modelSettingsCacheBlockSizeTokensDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else {
+            return
+        }
+
+        guard
+            normalizedOptionalUInt64Draft(
+                modelSettingsMultimodalCacheBudgetDraft,
+                fieldName: "Multimodal cache budget bytes"
+            ) != nil || modelSettingsMultimodalCacheBudgetDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else {
+            return
+        }
+
+        guard
             normalizedOptionalDoubleDraft(
                 modelSettingsOCRTemperatureDraft,
                 fieldName: "OCR temperature"
@@ -2252,6 +2339,12 @@ public final class RuntimeViewModel {
             memoryPolicy: modelSettingsMemoryPolicyDraft,
             memoryBudgetBytes: modelSettingsMemoryBudgetDraft.trimmingCharacters(in: .whitespacesAndNewlines),
             diskStreamingMode: modelSettingsDiskStreamingModeDraft,
+            cacheMode: modelSettingsCacheModeDraft,
+            cacheMemoryBudgetBytes: modelSettingsCacheMemoryBudgetDraft.trimmingCharacters(in: .whitespacesAndNewlines),
+            cacheMemoryBudgetPct: modelSettingsCacheMemoryBudgetPctDraft.trimmingCharacters(in: .whitespacesAndNewlines),
+            cacheBlockSizeTokens: modelSettingsCacheBlockSizeTokensDraft.trimmingCharacters(in: .whitespacesAndNewlines),
+            cacheDirectory: modelSettingsCacheDirectoryDraft.trimmingCharacters(in: .whitespacesAndNewlines),
+            multimodalCacheBudgetBytes: modelSettingsMultimodalCacheBudgetDraft.trimmingCharacters(in: .whitespacesAndNewlines),
             accelerationMode: modelSettingsAccelerationModeDraft,
             accelerationProfileID: modelSettingsAccelerationProfileIDDraft.trimmingCharacters(in: .whitespacesAndNewlines),
             adaptiveThinkingMode: modelSettingsAdaptiveThinkingModeDraft,
@@ -2352,6 +2445,19 @@ public final class RuntimeViewModel {
                         generationConfigValue: generationConfigMaxTokensText
                     )
                 } ?? "",
+                cacheModeText: snapshotModel.map {
+                    runtimeCacheModeText($0.cachePolicy.effectiveMode)
+                } ?? "",
+                cacheCompatibilityText: snapshotModel.map {
+                    runtimeCacheCompatibilityText($0.cachePolicy.compatibility)
+                } ?? "",
+                cacheCompatibilityReasonText: snapshotModel?.cachePolicy.compatibilityReason ?? "",
+                cacheDirectoryText: snapshotModel.map(runtimeCacheDirectoryText(for:)) ?? "",
+                cacheBlockSizeText: snapshotModel.map(runtimeCacheBlockSizeText(for:)) ?? "",
+                cacheBudgetText: snapshotModel.map(runtimeCacheBudgetText(for:)) ?? "",
+                multimodalCacheBudgetText: snapshotModel.map(runtimeMultimodalCacheBudgetText(for:)) ?? "",
+                cacheRootText: snapshotModel?.cachePolicy.effectiveDirectory ?? "",
+                initialCacheBlocksText: snapshotModel.map(runtimeInitialCacheBlocksText(for:)) ?? "",
                 generationConfigSourceText: generationConfigSourceText,
                 generationConfigTemperatureText: generationConfigTemperatureText,
                 generationConfigTopPText: generationConfigTopPText,
@@ -3933,6 +4039,12 @@ public final class RuntimeViewModel {
             modelSettingsMemoryPolicyDraft = "evictable"
             modelSettingsMemoryBudgetDraft = ""
             modelSettingsDiskStreamingModeDraft = "disabled"
+            modelSettingsCacheModeDraft = "tiered"
+            modelSettingsCacheMemoryBudgetDraft = ""
+            modelSettingsCacheMemoryBudgetPctDraft = ""
+            modelSettingsCacheBlockSizeTokensDraft = ""
+            modelSettingsCacheDirectoryDraft = ""
+            modelSettingsMultimodalCacheBudgetDraft = ""
             modelSettingsAccelerationModeDraft = "baseline"
             modelSettingsAccelerationProfileIDDraft = ""
             modelSettingsAdaptiveThinkingModeDraft = "off"
@@ -3959,6 +4071,20 @@ public final class RuntimeViewModel {
             ? String(model.settings.memoryBudgetBytes)
             : ""
         modelSettingsDiskStreamingModeDraft = runtimeDiskStreamingModeDraftValue(model.settings.diskStreamingMode)
+        modelSettingsCacheModeDraft = runtimeCacheModeDraftValue(model.settings.cacheMode)
+        modelSettingsCacheMemoryBudgetDraft = model.settings.cacheMemoryBudgetBytes > 0
+            ? String(model.settings.cacheMemoryBudgetBytes)
+            : ""
+        modelSettingsCacheMemoryBudgetPctDraft = model.settings.cacheMemoryBudgetPct > 0
+            ? String(model.settings.cacheMemoryBudgetPct)
+            : ""
+        modelSettingsCacheBlockSizeTokensDraft = model.settings.cacheBlockSizeTokens > 0
+            ? String(model.settings.cacheBlockSizeTokens)
+            : ""
+        modelSettingsCacheDirectoryDraft = model.settings.cacheDirectory
+        modelSettingsMultimodalCacheBudgetDraft = model.settings.multimodalCacheBudgetBytes > 0
+            ? String(model.settings.multimodalCacheBudgetBytes)
+            : ""
         modelSettingsAccelerationModeDraft = runtimeAccelerationModeDraftValue(model.settings.defaultAccelerationMode)
         modelSettingsAccelerationProfileIDDraft = model.settings.accelerationProfileID
         modelSettingsAdaptiveThinkingModeDraft = runtimeAdaptiveThinkingDraftValue(model.settings.adaptiveThinking)
@@ -5465,7 +5591,9 @@ func makeRuntimeModelRow(_ model: Melix_Controlplane_V1_ModelSummary) -> Runtime
         toolParserFallbackText: runtimeToolParserFallbackText(model),
         residencyText: runtimeResidencyText(for: model),
         memoryText: runtimeMemoryText(for: model),
-        memoryAlertText: runtimeMemoryAlertText(for: model)
+        memoryAlertText: runtimeMemoryAlertText(for: model),
+        cachePolicyText: runtimeCachePolicyText(for: model),
+        cacheSettingsText: runtimeCacheSettingsText(for: model)
     )
 }
 
@@ -5578,6 +5706,140 @@ private func runtimeMemoryBudgetText(_ bytes: UInt64) -> String {
         return ""
     }
     return runtimeFormatBytes(bytes)
+}
+
+private func runtimeCacheModeText(_ mode: Melix_Controlplane_V1_CacheMode) -> String {
+    switch mode {
+    case .rotating:
+        return "Rotating"
+    case .hybrid:
+        return "Hybrid"
+    case .tiered:
+        return "Tiered"
+    default:
+        return "Unspecified"
+    }
+}
+
+private func runtimeCacheModeDraftValue(_ mode: Melix_Controlplane_V1_CacheMode) -> String {
+    switch mode {
+    case .rotating:
+        return "rotating"
+    case .hybrid:
+        return "hybrid"
+    case .tiered, .unspecified:
+        return "tiered"
+    default:
+        return "tiered"
+    }
+}
+
+private func runtimeCacheCompatibilityText(
+    _ compatibility: Melix_Controlplane_V1_CacheCompatibilityState
+) -> String {
+    switch compatibility {
+    case .cacheCompatibilityCompatible:
+        return "Compatible"
+    case .cacheCompatibilityLimited:
+        return "Limited"
+    case .cacheCompatibilityDisabled:
+        return "Disabled"
+    case .cacheCompatibilityUnknown, .unspecified:
+        return "Unknown"
+    default:
+        return "Unknown"
+    }
+}
+
+private func runtimeCachePolicyText(for model: Melix_Controlplane_V1_ModelSummary) -> String {
+    let compatibility = runtimeCacheCompatibilityText(model.cachePolicy.compatibility)
+    let effectiveMode = runtimeCacheModeText(model.cachePolicy.effectiveMode)
+    return "\(compatibility) • \(effectiveMode)"
+}
+
+private func runtimeCacheSettingsText(for model: Melix_Controlplane_V1_ModelSummary) -> String {
+    var parts: [String] = []
+    let effectiveDirectory = model.cachePolicy.effectiveDirectory
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+    if !effectiveDirectory.isEmpty {
+        parts.append(effectiveDirectory)
+    }
+    if model.cachePolicy.effectiveBlockSizeTokens > 0 {
+        parts.append("block \(model.cachePolicy.effectiveBlockSizeTokens)")
+    }
+    if model.cachePolicy.effectiveCacheMemoryBudgetBytes > 0 {
+        parts.append("cache \(runtimeFormatBytes(model.cachePolicy.effectiveCacheMemoryBudgetBytes))")
+    } else if model.cachePolicy.effectiveCacheMemoryBudgetPct > 0 {
+        parts.append("cache \(model.cachePolicy.effectiveCacheMemoryBudgetPct)%")
+    }
+    if model.cachePolicy.effectiveMultimodalCacheBudgetBytes > 0 {
+        parts.append("multimodal \(runtimeFormatBytes(model.cachePolicy.effectiveMultimodalCacheBudgetBytes))")
+    }
+    return parts.joined(separator: " • ")
+}
+
+private func runtimeCacheDirectoryText(for model: Melix_Controlplane_V1_ModelSummary) -> String {
+    let requested = model.cachePolicy.requestedDirectory.trimmingCharacters(in: .whitespacesAndNewlines)
+    let effective = model.cachePolicy.effectiveDirectory.trimmingCharacters(in: .whitespacesAndNewlines)
+    if !requested.isEmpty && requested != effective {
+        return "\(requested) -> \(effective)"
+    }
+    return effective
+}
+
+private func runtimeCacheBlockSizeText(for model: Melix_Controlplane_V1_ModelSummary) -> String {
+    let requested = model.cachePolicy.requestedBlockSizeTokens
+    let effective = model.cachePolicy.effectiveBlockSizeTokens
+    guard requested > 0 || effective > 0 else {
+        return ""
+    }
+    if requested > 0 && requested != effective {
+        return "\(requested) -> \(effective) tokens"
+    }
+    let value = effective > 0 ? effective : requested
+    return "\(value) tokens"
+}
+
+private func runtimeCacheBudgetText(for model: Melix_Controlplane_V1_ModelSummary) -> String {
+    let requestedBytes = model.cachePolicy.requestedCacheMemoryBudgetBytes
+    let effectiveBytes = model.cachePolicy.effectiveCacheMemoryBudgetBytes
+    let requestedPct = model.cachePolicy.requestedCacheMemoryBudgetPct
+    let effectivePct = model.cachePolicy.effectiveCacheMemoryBudgetPct
+    if requestedBytes > 0 || effectiveBytes > 0 {
+        if requestedBytes > 0 && requestedBytes != effectiveBytes {
+            return "\(runtimeFormatBytes(requestedBytes)) -> \(runtimeFormatBytes(effectiveBytes))"
+        }
+        let value = effectiveBytes > 0 ? effectiveBytes : requestedBytes
+        return runtimeFormatBytes(value)
+    }
+    if requestedPct > 0 || effectivePct > 0 {
+        if requestedPct > 0 && requestedPct != effectivePct {
+            return "\(requestedPct)% -> \(effectivePct)%"
+        }
+        let value = effectivePct > 0 ? effectivePct : requestedPct
+        return "\(value)%"
+    }
+    return ""
+}
+
+private func runtimeMultimodalCacheBudgetText(for model: Melix_Controlplane_V1_ModelSummary) -> String {
+    let requested = model.cachePolicy.requestedMultimodalCacheBudgetBytes
+    let effective = model.cachePolicy.effectiveMultimodalCacheBudgetBytes
+    guard requested > 0 || effective > 0 else {
+        return ""
+    }
+    if requested > 0 && requested != effective {
+        return "\(runtimeFormatBytes(requested)) -> \(runtimeFormatBytes(effective))"
+    }
+    let value = effective > 0 ? effective : requested
+    return runtimeFormatBytes(value)
+}
+
+private func runtimeInitialCacheBlocksText(for model: Melix_Controlplane_V1_ModelSummary) -> String {
+    guard model.cachePolicy.initialCacheBlocks > 0 else {
+        return ""
+    }
+    return String(model.cachePolicy.initialCacheBlocks)
 }
 
 private func runtimeAccelerationModeText(_ mode: Melix_Controlplane_V1_AccelerationMode) -> String {

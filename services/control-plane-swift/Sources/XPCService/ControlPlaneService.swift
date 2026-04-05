@@ -2147,6 +2147,34 @@ public actor ControlPlaneService {
                 } else if let memoryBudgetBytes = UInt64(value) {
                     settings.memoryBudgetBytes = memoryBudgetBytes
                 }
+            case "cache_mode":
+                settings.cacheMode = cacheMode(for: value)
+            case "cache_memory_budget_bytes":
+                if value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    settings.cacheMemoryBudgetBytes = 0
+                } else if let cacheMemoryBudgetBytes = UInt64(value) {
+                    settings.cacheMemoryBudgetBytes = cacheMemoryBudgetBytes
+                }
+            case "cache_memory_budget_pct":
+                if value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    settings.cacheMemoryBudgetPct = 0
+                } else if let cacheMemoryBudgetPct = UInt32(value) {
+                    settings.cacheMemoryBudgetPct = cacheMemoryBudgetPct
+                }
+            case "cache_block_size_tokens":
+                if value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    settings.cacheBlockSizeTokens = 0
+                } else if let cacheBlockSizeTokens = UInt32(value) {
+                    settings.cacheBlockSizeTokens = cacheBlockSizeTokens
+                }
+            case "cache_directory":
+                settings.cacheDirectory = value
+            case "multimodal_cache_budget_bytes":
+                if value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    settings.multimodalCacheBudgetBytes = 0
+                } else if let multimodalCacheBudgetBytes = UInt64(value) {
+                    settings.multimodalCacheBudgetBytes = multimodalCacheBudgetBytes
+                }
             default:
                 settings.ext[key] = value
             }
@@ -2159,6 +2187,24 @@ public actor ControlPlaneService {
             return true
         default:
             return false
+        }
+    }
+
+    private func cacheMode(for rawValue: String) -> Melix_Controlplane_V1_CacheMode {
+        switch rawValue
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .replacingOccurrences(of: "-", with: "_")
+            .replacingOccurrences(of: " ", with: "_")
+        {
+        case "rotating":
+            return .rotating
+        case "hybrid":
+            return .hybrid
+        case "tiered", "default":
+            return .tiered
+        default:
+            return .unspecified
         }
     }
 

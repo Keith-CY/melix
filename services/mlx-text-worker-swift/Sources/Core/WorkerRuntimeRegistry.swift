@@ -73,6 +73,7 @@ actor WorkerRuntimeRegistry {
         self.runtime = runtime
         self.cacheStore = cacheStore ?? HotCacheStore(
             diskStore: DiskCacheStore(rootPath: configuration.cacheRootPath),
+            cacheRootPath: configuration.cacheRootPath,
             initialCacheBlocks: configuration.initialCacheBlocks
         )
         self.loadedModels = [:]
@@ -304,7 +305,16 @@ actor WorkerRuntimeRegistry {
         guard let loaded = loadedModels[modelHandle] else {
             throw WorkerRuntimeRegistryError.unknownModelHandle
         }
-        let cacheMode = CacheModePolicy.resolve(from: execution.cacheHints)
+        var effectiveExecution = execution
+        if effectiveExecution.cacheHints.cacheMode == .unspecified,
+           loaded.spec.settings.cacheMode != .unspecified {
+            effectiveExecution.cacheHints.cacheMode = loaded.spec.settings.cacheMode
+        }
+        if effectiveExecution.cacheHints.preferredBlockSize == 0,
+           loaded.spec.settings.cacheBlockSizeTokens > 0 {
+            effectiveExecution.cacheHints.preferredBlockSize = loaded.spec.settings.cacheBlockSizeTokens
+        }
+        let cacheMode = CacheModePolicy.resolve(from: effectiveExecution.cacheHints)
         await cacheStore.setActiveMode(cacheMode)
 
         let resolvedAcceleration = normalizedAccelerationPolicy(acceleration)
@@ -325,8 +335,8 @@ actor WorkerRuntimeRegistry {
             }
         }
 
-        if !execution.cacheHints.restoreSnapshotID.isEmpty {
-            let restored = try await restoreBoundarySnapshotRecord(snapshotID: execution.cacheHints.restoreSnapshotID)
+        if !effectiveExecution.cacheHints.restoreSnapshotID.isEmpty {
+            let restored = try await restoreBoundarySnapshotRecord(snapshotID: effectiveExecution.cacheHints.restoreSnapshotID)
             let requestMessages = messages.isEmpty ? restored.messages : messages
             if let restorePlan = makeWalkedBackCacheRestorePlan(
                 snapshot: restored.snapshot,
@@ -402,7 +412,7 @@ actor WorkerRuntimeRegistry {
             decodeHandle = "\(modelHandle)::decode::\(nextDecodeHandle)"
             nextDecodeHandle += 1
             let registration = try await cacheStore.registerPrefill(
-                execution: execution,
+                execution: effectiveExecution,
                 model: loaded.spec,
                 messages: messages,
                 promptTokens: result.promptTokens,

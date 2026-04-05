@@ -1617,6 +1617,42 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(cacheResponse.stats.blockCount, 4)
     }
 
+    func testRuntimeRegistryDefaultsCacheHintsFromModelSettings() async throws {
+        let registry = WorkerRuntimeRegistry(
+            configuration: WorkerConfiguration(),
+            modelCatalog: WorkerModelCatalog(environment: [
+                "MELIX_DEV_TEXT_MODEL_PATH": "mlx-community/melix-dev-text-4bit"
+            ]),
+            runtime: TextRuntime(backend: FakeRuntimeBackend())
+        )
+
+        var loadRequest = Melix_Worker_V1_ModelSpec()
+        loadRequest.modelID = "melix-dev-text"
+        loadRequest.settings.cacheMode = .hybrid
+        loadRequest.settings.cacheBlockSizeTokens = 16
+        let loaded = try await registry.loadModel(loadRequest)
+
+        var acceleration = Melix_Worker_V1_AccelerationPolicy()
+        acceleration.mode = .baseline
+
+        let messages = (0..<32).map { _ in makeUserMessage("token") }
+        let result = try await registry.prefill(
+            requestID: "req-prefill-model-cache-defaults",
+            modelHandle: loaded.handle,
+            messages: messages,
+            prefillStepSize: 8,
+            returnDecodeHandle: true,
+            resumeHint: "model-cache-defaults",
+            acceleration: acceleration,
+            shouldAbort: { false }
+        )
+        let cacheResponse = await registry.cacheStatsResponse()
+
+        XCTAssertEqual(result.promptTokens, 32)
+        XCTAssertEqual(result.blockTable.blocks.count, 2)
+        XCTAssertEqual(cacheResponse.stats.activeMode, .hybrid)
+    }
+
     func testRuntimeRegistryCountsNameOnlyPromptTokensForContextGuard() async throws {
         let registry = WorkerRuntimeRegistry(
             configuration: WorkerConfiguration(),

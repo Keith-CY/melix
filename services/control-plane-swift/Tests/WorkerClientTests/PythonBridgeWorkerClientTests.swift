@@ -930,6 +930,35 @@ struct PythonBridgeWorkerClientTests {
         #expect(ttlSpec.settings.memoryPolicy == .memoryResidencyTtl)
     }
 
+    @Test("bootstrap worker preparation maps cache settings into worker specs")
+    func bootstrapWorkerPreparationMapsCacheSettingsIntoWorkerSpecs() throws {
+        var tieredSummary = ModelCatalog.devTextModel()
+        tieredSummary.settings.cacheMode = .tiered
+        tieredSummary.settings.cacheMemoryBudgetBytes = 4_096
+        tieredSummary.settings.cacheMemoryBudgetPct = 25
+        tieredSummary.settings.cacheBlockSizeTokens = 64
+        tieredSummary.settings.cacheDirectory = "/tmp/melix-cache"
+        tieredSummary.settings.multimodalCacheBudgetBytes = 2_048
+
+        let tieredSpec = try #require(BootstrapWorkerPreparation.modelSpec(for: tieredSummary))
+        #expect(tieredSpec.settings.cacheMode == .tiered)
+        #expect(tieredSpec.settings.cacheMemoryBudgetBytes == 4_096)
+        #expect(tieredSpec.settings.cacheMemoryBudgetPct == 25)
+        #expect(tieredSpec.settings.cacheBlockSizeTokens == 64)
+        #expect(tieredSpec.settings.cacheDirectory == "/tmp/melix-cache")
+        #expect(tieredSpec.settings.multimodalCacheBudgetBytes == 2_048)
+
+        var rotatingSummary = ModelCatalog.devTextModel()
+        rotatingSummary.settings.cacheMode = .rotating
+        let rotatingSpec = try #require(BootstrapWorkerPreparation.modelSpec(for: rotatingSummary))
+        #expect(rotatingSpec.settings.cacheMode == .rotating)
+
+        var hybridSummary = ModelCatalog.devTextModel()
+        hybridSummary.settings.cacheMode = .hybrid
+        let hybridSpec = try #require(BootstrapWorkerPreparation.modelSpec(for: hybridSummary))
+        #expect(hybridSpec.settings.cacheMode == .hybrid)
+    }
+
     @Test("bootstrap worker preparation builds generic text specs for activated derived models")
     func bootstrapWorkerPreparationBuildsGenericTextSpecsForActivatedDerivedModels() throws {
         var summary = ModelCatalog.devTextModel()

@@ -7,10 +7,11 @@ compatibility rules.
 
 ## Status
 
-In progress on 2026-04-05. `M11.2` is closed; `M11.3` starts from a repository state where cache
-statistics, cache modes, and worker cache roots already exist internally, but operators still do
-not have a typed, control-plane-owned surface for streaming-compatible cache policy, effective
-cache compatibility resolution, or cache-budget diagnostics.
+Completed on 2026-04-05. `M11.3` now exposes a typed, control-plane-owned cache-policy surface for
+streaming-compatible cache modes, cache-memory budgeting, block sizing, cache directories,
+multimodal cache budgets, and effective compatibility resolution across the worker, control plane,
+and native operator shell. Full repository verification and changed-line coverage evidence are
+recorded in `progress.md`.
 
 ## Scope
 

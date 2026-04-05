@@ -374,6 +374,12 @@ message ModelSettings {
   AccelerationPolicy default_acceleration = 6;
   map<string, string> ext = 7;
   DiskStreamingMode disk_streaming_mode = 8;
+  CacheMode cache_mode = 9;
+  uint64 cache_memory_budget_bytes = 10;
+  uint32 cache_memory_budget_pct = 11;
+  uint32 cache_block_size_tokens = 12;
+  string cache_directory = 13;
+  uint64 multimodal_cache_budget_bytes = 14;
 }
 
 message BlockTable {

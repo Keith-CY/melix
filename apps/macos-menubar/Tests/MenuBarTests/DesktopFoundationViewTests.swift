@@ -74,6 +74,24 @@ struct DesktopFoundationViewTests {
         #expect(options.map(\.1) == ["disabled", "prefer_disk", "require_disk"])
     }
 
+    @Test("models tab exposes explicit cache mode picker options")
+    @MainActor
+    func modelsTabExposesExplicitCacheModePickerOptions() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+
+        let tab = DesktopModelsTabView(
+            foundation: viewModel.desktopFoundationState,
+            viewModel: viewModel
+        )
+        let mirror = Mirror(reflecting: tab)
+        let options = try #require(mirror.descendant("cacheModeOptions") as? [(String, String)])
+
+        #expect(options.map(\.0) == ["Tiered", "Rotating", "Hybrid"])
+        #expect(options.map(\.1) == ["tiered", "rotating", "hybrid"])
+    }
+
     @Test("models tab renders residency memory alerts when a model is guard-blocked")
     @MainActor
     func modelsTabRendersResidencyMemoryAlerts() async throws {
@@ -618,6 +636,18 @@ struct DesktopFoundationViewTests {
         model.settings.ext["melix.generation_config.top_p"] = "0.9"
         model.settings.ext["melix.generation_config.max_tokens"] = "320"
         model.settings.ext["ocr_stop_sequences"] = "<ocr:end>"
+        model.cachePolicy.effectiveMode = .hybrid
+        model.cachePolicy.compatibility = .cacheCompatibilityLimited
+        model.cachePolicy.compatibilityReason = "requested cache mode is not advertised by the worker"
+        model.cachePolicy.requestedDirectory = "/tmp/requested-cache"
+        model.cachePolicy.effectiveDirectory = "/var/melix/cache"
+        model.cachePolicy.requestedBlockSizeTokens = 32
+        model.cachePolicy.effectiveBlockSizeTokens = 64
+        model.cachePolicy.requestedCacheMemoryBudgetBytes = 4_096
+        model.cachePolicy.effectiveCacheMemoryBudgetBytes = 8_192
+        model.cachePolicy.requestedMultimodalCacheBudgetBytes = 2_048
+        model.cachePolicy.effectiveMultimodalCacheBudgetBytes = 4_096
+        model.cachePolicy.initialCacheBlocks = 4
         snapshot.models = [model]
 
         var info = Melix_Controlplane_V1_ModelInfo()
@@ -633,10 +663,13 @@ struct DesktopFoundationViewTests {
         let viewModel = RuntimeViewModel(client: client)
         await viewModel.start()
         await viewModel.inspectPrimaryModel()
-        viewModel.selectSurface(.tools)
-        viewModel.selectToolSection(.modelsLibrary)
-
-        let view = hostView(DesktopWorkspaceShellView(viewModel: viewModel))
+        let modelRow = try #require(viewModel.desktopFoundationState.models.first)
+        let view = hostView(
+            DesktopModelsTabView(
+                foundation: viewModel.desktopFoundationState,
+                viewModel: viewModel
+            )
+        )
         let values = renderedTextValues(in: view)
 
         #expect(view.subviews.isEmpty == false)
@@ -646,6 +679,8 @@ struct DesktopFoundationViewTests {
         #expect(values.contains("Active KV Quantized"))
         #expect(values.contains("Adaptive"))
         #expect(values.contains("192"))
+        #expect(modelRow.cachePolicyText == "Limited • Hybrid")
+        #expect(modelRow.cacheSettingsText == "/var/melix/cache • block 64 • cache 8 KB • multimodal 4 KB")
         #expect(viewModel.selectedModelInfo?.toolParserFallbackText == "XML")
         #expect(viewModel.selectedModelInfo?.ocrSamplingProfileText == "ocr-deterministic")
         #expect(viewModel.selectedModelInfo?.ocrTemperatureText == "0.05")
@@ -677,6 +712,15 @@ struct DesktopFoundationViewTests {
             ocrTemperatureText: "0.05",
             ocrTopPText: "0.82",
             ocrMaxTokensText: "192",
+            cacheModeText: "Hybrid",
+            cacheCompatibilityText: "Limited",
+            cacheCompatibilityReasonText: "requested cache mode is not advertised by the worker",
+            cacheDirectoryText: "/tmp/requested-cache -> /var/melix/cache",
+            cacheBlockSizeText: "32 -> 64 tokens",
+            cacheBudgetText: "4 KB -> 8 KB",
+            multimodalCacheBudgetText: "2 KB -> 4 KB",
+            cacheRootText: "/var/melix/cache",
+            initialCacheBlocksText: "4",
             generationConfigSourceText: "/tmp/melix-dev-text/generation_config.json",
             generationConfigTemperatureText: "0.12",
             generationConfigTopPText: "0.9",
@@ -692,6 +736,15 @@ struct DesktopFoundationViewTests {
         #expect(content.detailLines.contains("type override: mlx-text"))
         #expect(content.detailLines.contains("memory policy: TTL"))
         #expect(content.detailLines.contains("memory budget: 32 KB"))
+        #expect(content.detailLines.contains("cache mode: Hybrid"))
+        #expect(content.detailLines.contains("cache compatibility: Limited"))
+        #expect(content.detailLines.contains("cache detail: requested cache mode is not advertised by the worker"))
+        #expect(content.detailLines.contains("cache directory: /tmp/requested-cache -> /var/melix/cache"))
+        #expect(content.detailLines.contains("cache root: /var/melix/cache"))
+        #expect(content.detailLines.contains("cache block size: 32 -> 64 tokens"))
+        #expect(content.detailLines.contains("cache budget: 4 KB -> 8 KB"))
+        #expect(content.detailLines.contains("multimodal cache budget: 2 KB -> 4 KB"))
+        #expect(content.detailLines.contains("initial cache blocks: 4"))
         #expect(content.detailLines.contains("adaptive thinking: Adaptive • 192 tok"))
         #expect(content.detailLines.contains("acceleration: Active KV Quantized • kv-q8"))
         #expect(content.detailLines.contains("parser fallback: XML"))
