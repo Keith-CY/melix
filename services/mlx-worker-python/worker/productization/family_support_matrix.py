@@ -16,6 +16,73 @@ _OPERATOR_RUNBOOK = "docs/runbooks/model-family-support-matrix.md"
 
 _FAMILY_VARIANTS: tuple[dict[str, Any], ...] = (
     {
+        "capability": "text",
+        "family_id": "llama",
+        "model_id": "melix-dev-text",
+        "environment": {},
+        "integration_tests": [
+            "tests/integration/test_chat_completions_stream.py::test_chat_completions_streams_from_the_live_worker_path",
+        ],
+    },
+    {
+        "capability": "text",
+        "family_id": "mistral4",
+        "model_id": "melix-dev-text",
+        "environment": {
+            "MELIX_DEV_TEXT_FAMILY_ID": "mistral4",
+            "MELIX_DEV_TEXT_MODEL_PATH": "models/mistral-small-4",
+        },
+        "integration_tests": [
+            "tests/integration/test_text_family_endpoints.py::test_text_generation_endpoint_supports_mistral4_python_compatibility_family_override",
+        ],
+    },
+    {
+        "capability": "text",
+        "family_id": "mixtral",
+        "model_id": "melix-dev-text",
+        "environment": {
+            "MELIX_DEV_TEXT_FAMILY_ID": "mixtral",
+            "MELIX_DEV_TEXT_MODEL_PATH": "models/mixtral-8x7b",
+        },
+        "integration_tests": [],
+    },
+    {
+        "capability": "text",
+        "family_id": "qwen3moe",
+        "model_id": "melix-dev-text",
+        "environment": {
+            "MELIX_DEV_TEXT_FAMILY_ID": "qwen3moe",
+            "MELIX_DEV_TEXT_MODEL_PATH": "models/qwen3-moe-128e",
+        },
+        "integration_tests": [
+            "tests/integration/test_text_family_endpoints.py::test_text_generation_endpoint_supports_qwen3moe_family_override",
+        ],
+    },
+    {
+        "capability": "text",
+        "family_id": "deepseek-mla",
+        "model_id": "melix-dev-text",
+        "environment": {
+            "MELIX_DEV_TEXT_FAMILY_ID": "deepseek-mla",
+            "MELIX_DEV_TEXT_MODEL_PATH": "models/deepseek-v3-mla",
+        },
+        "integration_tests": [
+            "tests/integration/test_text_family_endpoints.py::test_text_generation_endpoint_supports_deepseek_mla_and_nemotron_h_family_overrides",
+        ],
+    },
+    {
+        "capability": "text",
+        "family_id": "nemotron-h",
+        "model_id": "melix-dev-text",
+        "environment": {
+            "MELIX_DEV_TEXT_FAMILY_ID": "nemotron-h",
+            "MELIX_DEV_TEXT_MODEL_PATH": "models/nemotron-h",
+        },
+        "integration_tests": [
+            "tests/integration/test_text_family_endpoints.py::test_text_generation_endpoint_supports_deepseek_mla_and_nemotron_h_family_overrides",
+        ],
+    },
+    {
         "capability": "embedding",
         "family_id": "bert",
         "model_id": "melix-dev-embed",
@@ -110,6 +177,17 @@ def _contract_payload(variant: dict[str, Any]) -> dict[str, Any]:
                 "dimensions": int(ext.get("embedding_dimensions", "0") or "0"),
             }
         )
+    elif variant["capability"] == "text":
+        contract.update(
+            {
+                "backend_id": ext.get("text_backend_id", ""),
+                "attention_profile": ext.get("melix.text.attention_profile", ""),
+                "rope_profile": ext.get("melix.text.rope_profile", ""),
+                "moe_enabled": ext.get("melix.text.moe.enabled", "") == "true",
+                "expert_count": int(ext.get("melix.text.moe.expert_count", "0") or "0"),
+                "moe_gate_dequant": ext.get("melix.text.moe.gate_dequant", "") == "true",
+            }
+        )
     else:
         contract.update(
             {
@@ -144,6 +222,7 @@ def build_family_support_matrix() -> dict[str, Any]:
     return {
         "summary": {
             "family_count": len(families),
+            "text_family_count": sum(1 for row in families if row["capability"] == "text"),
             "embedding_family_count": sum(1 for row in families if row["capability"] == "embedding"),
             "rerank_family_count": sum(1 for row in families if row["capability"] == "rerank"),
             "live_verified_count": live_verified_count,

@@ -9,6 +9,10 @@ import time
 from typing import Iterable
 
 from packages.protocol.python.worker.v1 import common_pb2
+from worker.runtime.text_family_adapters import (
+    detect_text_family_identity,
+    resolve_text_family_config,
+)
 
 _ADAPTER_SET_HASH_KEY = "melix.adapter_set_hash"
 _CAPABILITY_ROUTE_KIND_KEY = "melix.capability.route_kind"
@@ -21,6 +25,7 @@ _REGISTRY_PROVIDER_ID_KEY = "melix.registry_provider_id"
 _REGISTRY_ORGANIZATION_ID_KEY = "melix.registry_organization_id"
 _REGISTRY_MODEL_NAME_KEY = "melix.registry_model_name"
 _REGISTRY_VARIANT_ID_KEY = "melix.registry_variant_id"
+_TEXT_BACKEND_ID_KEY = "text_backend_id"
 _AUDIO_BACKEND_ID_KEY = "melix.audio.backend_id"
 _AUDIO_FAMILY_ID_KEY = "melix.audio.family_id"
 _AUDIO_INSTALL_PROFILE_KEY = "melix.audio.install_profile"
@@ -105,6 +110,17 @@ def _merge_generation_config_metadata(
         ext[_GENERATION_CONFIG_SOURCE_KEY] = str(generation_config_path)
 
 
+def _load_model_config_payload(model_dir: Path) -> dict[str, object]:
+    config_path = model_dir / "config.json"
+    if not config_path.is_file():
+        return {}
+    try:
+        payload = json.loads(config_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
 def _path_derived_registry_identity(relative_parts: tuple[str, ...]) -> tuple[str, str, str, str] | None:
     if len(relative_parts) == 3:
         organization_id, model_name, variant_id = relative_parts
@@ -171,6 +187,37 @@ def _capability_metadata(
     if tool_parser_xml_fallback:
         metadata["tool_parser_xml_fallback"] = "true"
     return metadata
+
+
+def _text_capability_metadata(
+    *,
+    model_path: str,
+    metadata: dict[str, str] | None = None,
+    config_payload: dict[str, object] | None = None,
+    default_route_kind: str,
+) -> dict[str, str]:
+    resolved = resolve_text_family_config(
+        metadata,
+        model_path=model_path,
+        config_payload=config_payload,
+        default_route_kind=default_route_kind,
+    )
+    detected = detect_text_family_identity(
+        model_path=model_path,
+        config_payload=config_payload,
+        explicit_family_id="",
+    )
+    identity_override = (
+        resolved.family_id != detected.family_id
+        or resolved.architecture != detected.architecture
+    )
+    return {
+        **resolved.capability_metadata(),
+        "detected_architecture": detected.architecture,
+        "detected_family_id": detected.family_id,
+        "detected_identity_source": detected.source,
+        "identity_override": "true" if identity_override else "false",
+    }
 
 
 def _embedding_capability_metadata(family_id: str) -> dict[str, str]:
@@ -586,6 +633,16 @@ class WorkerModelCatalog:
         parser_mode = _normalized(str(payload.get("parser_mode", "text"))) or "text"
         reasoning_mode = _normalized(str(payload.get("reasoning_mode", "off"))) or "off"
         max_context = int(payload.get("max_context", 8192) or 8192)
+        config_payload = _load_model_config_payload(manifest_path.parent)
+        if model_kind == "text":
+            normalized_ext.update(
+                _text_capability_metadata(
+                    model_path=str(manifest_path.parent),
+                    metadata=normalized_ext,
+                    config_payload=config_payload,
+                    default_route_kind="python_text_compatibility",
+                )
+            )
         _merge_generation_config_metadata(manifest_path.parent, ext=normalized_ext)
 
         return model_id, common_pb2.ModelSpec(
@@ -604,9 +661,22 @@ class WorkerModelCatalog:
     @staticmethod
     def dev_text_model(environment: dict[str, str] | None = None) -> common_pb2.ModelSpec:
         environment = dict(environment or os.environ)
+        model_path = environment.get("MELIX_DEV_TEXT_MODEL_PATH", "models/melix-dev-text")
+        configured_family_id = _normalized(environment.get("MELIX_DEV_TEXT_FAMILY_ID"))
+        configured_route_kind = _normalized(environment.get("MELIX_DEV_TEXT_ROUTE_KIND"))
+        metadata: dict[str, str] = {}
+        if configured_family_id:
+            metadata["text_family_id"] = configured_family_id
+        if configured_route_kind:
+            metadata["melix.capability.route_kind"] = configured_route_kind
+        text_metadata = _text_capability_metadata(
+            model_path=model_path,
+            metadata=metadata,
+            default_route_kind="swift_text",
+        )
         return common_pb2.ModelSpec(
             model_id="melix-dev-text",
-            model_path=environment.get("MELIX_DEV_TEXT_MODEL_PATH", "models/melix-dev-text"),
+            model_path=model_path,
             model_kind="text",
             revision="dev",
             tokenizer_hash="tok-dev",
@@ -614,6 +684,7 @@ class WorkerModelCatalog:
             parser_mode="text",
             reasoning_mode="off",
             max_context=8192,
+            ext=text_metadata,
         )
 
     @staticmethod

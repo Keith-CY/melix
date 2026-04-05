@@ -21,6 +21,8 @@ struct ModelCatalogTests {
         #expect(models.first(where: { $0.modelID == "melix-dev-text" })?.capabilityClass == .modelCapabilityText)
         #expect(models.first(where: { $0.modelID == "melix-dev-text" })?.settings.adaptiveThinking.mode == "adaptive")
         #expect(models.first(where: { $0.modelID == "melix-dev-text" })?.settings.adaptiveThinking.budgetTokens == 192)
+        #expect(models.first(where: { $0.modelID == "melix-dev-text" })?.settings.ext["text_family_id"] == "llama")
+        #expect(models.first(where: { $0.modelID == "melix-dev-text" })?.settings.ext["melix.capability.route_kind"] == "swift_text")
         #expect(models.first(where: { $0.modelID == "melix-dev-embed" })?.routeClass == .workerRoutePythonEmbedding)
         #expect(models.first(where: { $0.modelID == "melix-dev-embed" })?.settings.ext["embedding_backend_id"] == "bert-v1")
         #expect(models.first(where: { $0.modelID == "melix-dev-embed" })?.settings.ext["embedding_family_id"] == "bert")
@@ -39,6 +41,79 @@ struct ModelCatalogTests {
         #expect(models.first(where: { $0.modelID == "melix-dev-rerank" })?.supportedModalities == ["text"])
         #expect(models.first(where: { $0.modelID == "melix-dev-rerank" })?.supportedTasks == ["rerank"])
         #expect(models.first(where: { $0.modelID == "melix-dev-model-ops" })?.routeClass == .workerRoutePythonModelOperations)
+    }
+
+    @Test("dev text model reads qwen3moe family overrides into compatibility routing metadata")
+    func devTextModelReadsQwen3MoEFamilyOverrides() async throws {
+        let model = ModelCatalog.devTextModel(environment: [
+            "MELIX_DEV_TEXT_FAMILY_ID": "qwen3moe",
+            "MELIX_DEV_TEXT_MODEL_PATH": "models/qwen3-moe-128e",
+        ])
+
+        #expect(model.routeClass == .workerRoutePythonTextCompatibility)
+        #expect(model.supportedModalities == ["text"])
+        #expect(model.supportedTasks == ["generate"])
+        #expect(model.settings.ext["text_backend_id"] == "mlx_lm")
+        #expect(model.settings.ext["text_family_id"] == "qwen3moe")
+        #expect(model.settings.ext["model_architecture"] == "qwen3_moe")
+        #expect(model.settings.ext["detected_identity_source"] == "explicit_override")
+        #expect(model.settings.ext["melix.adapter_set_hash"] == "text-family-qwen3moe")
+        #expect(model.settings.ext["melix.capability.route_kind"] == "python_text_compatibility")
+        #expect(model.settings.ext["melix.capability.supported_parsers"] == "text,qwen")
+        #expect(model.settings.ext["tool_parser_mode"] == "qwen")
+        #expect(model.settings.ext["tool_parser_namespaces"] == "tools.text")
+        #expect(model.settings.ext["tool_parser_xml_fallback"] == "true")
+        #expect(model.settings.ext["melix.text.rope_profile"] == "yarn_interleaved")
+        #expect(model.settings.ext["melix.text.moe.enabled"] == "true")
+        #expect(model.settings.ext["melix.text.moe.expert_count"] == "128")
+        #expect(model.settings.ext["melix.text.moe.gate_dequant"] == "true")
+    }
+
+    @Test("dev text model infers directory based dense and moe families")
+    func devTextModelInfersDirectoryBasedFamilies() async throws {
+        let cases: [(String, String, String)] = [
+            ("models/mistral-small-4", "mistral4", "mistral4"),
+            ("models/mixtral-8x7b", "mixtral", "mixtral"),
+            ("models/qwen3-moe-128e", "qwen3moe", "qwen3_moe"),
+            ("models/deepseek-v3-mla", "deepseek-mla", "deepseek_v3"),
+            ("models/nemotron-h", "nemotron-h", "nemotron_h"),
+        ]
+
+        for (modelPath, familyID, architecture) in cases {
+            let model = ModelCatalog.devTextModel(environment: [
+                "MELIX_DEV_TEXT_MODEL_PATH": modelPath,
+            ])
+
+            #expect(model.routeClass == .workerRoutePythonTextCompatibility)
+            #expect(model.settings.ext["text_family_id"] == familyID)
+            #expect(model.settings.ext["model_architecture"] == architecture)
+            #expect(model.settings.ext["detected_identity_source"] == "directory_name")
+        }
+    }
+
+    @Test("dev text model exposes explicit family defaults for dense and moe adapters")
+    func devTextModelExposesExplicitFamilyDefaults() async throws {
+        let cases: [(String, String, String, String, String)] = [
+            ("llama", "llama", "0", "false", "false"),
+            ("mistral4", "mistral4", "8", "true", "true"),
+            ("mixtral", "mixtral", "8", "true", "false"),
+            ("deepseek-mla", "deepseek_v3", "64", "true", "true"),
+            ("nemotron-h", "nemotron_h", "0", "false", "false"),
+        ]
+
+        for (familyID, architecture, expertCount, moeEnabled, gateDequant) in cases {
+            let model = ModelCatalog.devTextModel(environment: [
+                "MELIX_DEV_TEXT_FAMILY_ID": familyID,
+                "MELIX_DEV_TEXT_MODEL_PATH": "models/\(familyID)",
+            ])
+
+            #expect(model.settings.ext["text_family_id"] == familyID)
+            #expect(model.settings.ext["model_architecture"] == architecture)
+            #expect(model.settings.ext["detected_identity_source"] == "explicit_override")
+            #expect(model.settings.ext["melix.text.moe.enabled"] == moeEnabled)
+            #expect(model.settings.ext["melix.text.moe.gate_dequant"] == gateDequant)
+            #expect(model.settings.ext["melix.text.moe.expert_count", default: "0"] == expertCount)
+        }
     }
 
     @Test("dev rerank model reads causal-lm environment overrides")

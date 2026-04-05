@@ -37,6 +37,11 @@ def _expected_root_id(root: Path) -> str:
     return f"root-{digest}"
 
 
+def _write_model_config(variant_dir: Path, payload: dict[str, object]) -> None:
+    variant_dir.mkdir(parents=True, exist_ok=True)
+    (variant_dir / "config.json").write_text(json.dumps(payload) + "\n", encoding="utf-8")
+
+
 def test_registry_snapshot_collects_models_from_ordered_roots_and_keeps_first_duplicate(tmp_path: Path) -> None:
     root_a = tmp_path / "root-a"
     root_b = tmp_path / "root-b"
@@ -236,6 +241,67 @@ def test_registry_snapshot_derives_structured_identity_from_paths_and_sidecar_ov
     assert phi.ext["melix.registry_model_name"] == "Phi-4-mini"
     assert phi.ext["melix.registry_variant_id"] == "q8"
     assert phi.ext["melix.registry_relative_path"] == "mlx-community/Phi-4-mini/q8"
+
+
+def test_registry_snapshot_applies_text_family_adapter_metadata_from_local_config(tmp_path: Path) -> None:
+    root = tmp_path / "root"
+    variant_dir = root / "mlx-community" / "Qwen3-MoE-30B-A3B-Instruct" / "4bit"
+    _write_registry_manifest(
+        variant_dir,
+        model_id="mlx-community/Qwen3-MoE-30B-A3B-Instruct/4bit",
+    )
+    _write_model_config(
+        variant_dir,
+        {
+            "model_type": "qwen3_moe",
+            "rope_scaling": {"type": "yarn", "interleaved": True},
+            "num_local_experts": 128,
+            "moe_gate_dequant": True,
+        },
+    )
+
+    catalog = WorkerModelCatalog(environment={"MELIX_MODEL_ROOTS": str(root)})
+
+    snapshot = catalog.registry_snapshot()
+    discovered = {model.model_id: model for model in snapshot.models}
+    qwen3moe = discovered["mlx-community/Qwen3-MoE-30B-A3B-Instruct/4bit"]
+
+    assert qwen3moe.ext["text_backend_id"] == "mlx_lm"
+    assert qwen3moe.ext["text_family_id"] == "qwen3moe"
+    assert qwen3moe.ext["model_architecture"] == "qwen3_moe"
+    assert qwen3moe.ext["detected_architecture"] == "qwen3_moe"
+    assert qwen3moe.ext["detected_family_id"] == "qwen3moe"
+    assert qwen3moe.ext["detected_identity_source"] == "config.model_type"
+    assert qwen3moe.ext["melix.adapter_set_hash"] == "text-family-qwen3moe"
+    assert qwen3moe.ext["melix.capability.route_kind"] == "python_text_compatibility"
+    assert qwen3moe.ext["melix.capability.supported_parsers"] == "text,qwen"
+    assert qwen3moe.ext["tool_parser_mode"] == "qwen"
+    assert qwen3moe.ext["melix.text.attention_profile"] == "gqa"
+    assert qwen3moe.ext["melix.text.rope_profile"] == "yarn_interleaved"
+    assert qwen3moe.ext["melix.text.moe.enabled"] == "true"
+    assert qwen3moe.ext["melix.text.moe.expert_count"] == "128"
+    assert qwen3moe.ext["melix.text.moe.gate_dequant"] == "true"
+
+
+def test_registry_snapshot_ignores_invalid_model_config_payloads(tmp_path: Path) -> None:
+    root = tmp_path / "root"
+    variant_dir = root / "mlx-community" / "Broken-Unknown" / "4bit"
+    _write_registry_manifest(
+        variant_dir,
+        model_id="mlx-community/Broken-Unknown/4bit",
+    )
+    variant_dir.mkdir(parents=True, exist_ok=True)
+    (variant_dir / "config.json").write_text("{broken\n", encoding="utf-8")
+
+    catalog = WorkerModelCatalog(environment={"MELIX_MODEL_ROOTS": str(root)})
+
+    snapshot = catalog.registry_snapshot()
+    discovered = {model.model_id: model for model in snapshot.models}
+    broken = discovered["mlx-community/Broken-Unknown/4bit"]
+
+    assert broken.ext["text_family_id"] == "llama"
+    assert broken.ext["detected_identity_source"] == "default"
+    assert broken.ext["melix.capability.route_kind"] == "python_text_compatibility"
 
 
 def test_registry_snapshot_skips_manifests_outside_supported_identity_depths(tmp_path: Path) -> None:

@@ -404,6 +404,18 @@ public enum BootstrapWorkerPreparation {
         "tool_parser_xml_fallback",
     ]
     private static let genericTextExtKeys = [
+        "text_backend_id",
+        "text_family_id",
+        "model_architecture",
+        "detected_architecture",
+        "detected_family_id",
+        "detected_identity_source",
+        "identity_override",
+        "melix.text.attention_profile",
+        "melix.text.rope_profile",
+        "melix.text.moe.enabled",
+        "melix.text.moe.expert_count",
+        "melix.text.moe.gate_dequant",
         "melix.model_path",
         "melix.model_revision",
         "melix.tokenizer_hash",

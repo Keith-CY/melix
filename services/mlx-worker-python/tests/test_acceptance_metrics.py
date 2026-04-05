@@ -178,9 +178,20 @@ def test_build_family_support_matrix_exposes_contract_rows_and_live_path_evidenc
         for row in matrix["families"]
     }
 
-    assert matrix["summary"]["family_count"] == 7
-    assert matrix["summary"]["live_verified_count"] == 6
-    assert matrix["summary"]["contract_only_count"] == 1
+    assert matrix["summary"]["family_count"] == 13
+    assert matrix["summary"]["text_family_count"] == 6
+    assert matrix["summary"]["live_verified_count"] == 11
+    assert matrix["summary"]["contract_only_count"] == 2
+
+    qwen3moe = rows[("text", "qwen3moe")]
+    assert qwen3moe["contract"]["route_kind"] == "python_text_compatibility"
+    assert qwen3moe["contract"]["supported_parsers"] == ["text", "qwen"]
+    assert qwen3moe["contract"]["attention_profile"] == "gqa"
+    assert qwen3moe["contract"]["rope_profile"] == "yarn_interleaved"
+    assert qwen3moe["contract"]["moe_enabled"] is True
+    assert qwen3moe["contract"]["expert_count"] == 128
+    assert qwen3moe["contract"]["moe_gate_dequant"] is True
+    assert qwen3moe["live_path"]["status"] == "verified"
 
     bge = rows[("embedding", "bge-m3")]
     assert bge["contract"]["route_kind"] == "python_embedding"
@@ -196,6 +207,12 @@ def test_build_family_support_matrix_exposes_contract_rows_and_live_path_evidenc
     assert basic["contract"]["route_kind"] == "python_rerank"
     assert basic["contract"]["supported_tasks"] == ["rerank"]
     assert basic["live_path"]["status"] == "contract_only"
+
+    mixtral = rows[("text", "mixtral")]
+    assert mixtral["contract"]["route_kind"] == "python_text_compatibility"
+    assert mixtral["contract"]["moe_enabled"] is True
+    assert mixtral["contract"]["expert_count"] == 8
+    assert mixtral["live_path"]["status"] == "contract_only"
 
     causal = rows[("rerank", "causal-lm")]
     assert causal["contract"]["architecture"] == "causal-lm"

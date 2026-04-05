@@ -218,6 +218,10 @@ The roadmap extension in `M10-M17` includes milestone-level plans plus decompose
   overrides, and Window UI root-management actions, with focused verification and changed-line
   coverage evidence recorded in the repository.
 - `M12.2` `docs/plans/2026-03-31-m12-2-text-and-moe-family-adapters.md`
+  Status: completed. Dense and MoE text-family adapters now project family-specific routing,
+  parser, attention, RoPE, and MoE declarations through worker registry snapshots, control-plane
+  catalog sync, the repository-owned support matrix, and deterministic live-path integration
+  coverage.
 - `M12.3` `docs/plans/2026-03-31-m12-3-image-family-dispatch-and-picker-completion.md`
 - `M12.4` `docs/plans/2026-03-31-m12-4-model-inspect-health-and-conversion-tools.md`
 

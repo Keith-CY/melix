@@ -340,6 +340,12 @@ def test_family_support_matrix_tracks_live_verified_family_overrides() -> None:
         for row in build_family_support_matrix()["families"]
     }
 
+    assert rows[("text", "llama")]["live_path"]["status"] == "verified"
+    assert rows[("text", "mistral4")]["live_path"]["status"] == "verified"
+    assert rows[("text", "qwen3moe")]["live_path"]["status"] == "verified"
+    assert rows[("text", "deepseek-mla")]["live_path"]["status"] == "verified"
+    assert rows[("text", "nemotron-h")]["live_path"]["status"] == "verified"
+    assert rows[("text", "mixtral")]["live_path"]["status"] == "contract_only"
     assert rows[("embedding", "bge-m3")]["live_path"]["status"] == "verified"
     assert rows[("embedding", "mxbai-embed")]["live_path"]["status"] == "verified"
     assert rows[("rerank", "causal-lm")]["live_path"]["status"] == "verified"

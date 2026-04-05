@@ -669,6 +669,84 @@ struct ControlPlaneServiceTests {
         #expect(discovered.settings.ext["melix.model_path"] == "/tmp/registry-root/mlx-community/Qwen2.5-7B-Instruct/4bit")
     }
 
+    @Test("registry snapshot text families preserve compatibility routing and parser metadata")
+    func registrySnapshotTextFamiliesPreserveCompatibilityRoutingAndParserMetadata() async throws {
+        let modelOpsClient = ScriptedModelOperationsWorkerClient()
+        let manifestJSON = try makeRegistrySnapshotManifestJSON(
+            models: [
+                [
+                    "model_id": "mlx-community/Qwen3-MoE-30B-A3B-Instruct/4bit",
+                    "model_path": "/tmp/registry-root/mlx-community/Qwen3-MoE-30B-A3B-Instruct/4bit",
+                    "model_kind": "text",
+                    "revision": "registry",
+                    "tokenizer_hash": "tok-registry",
+                    "quant_profile_id": "q4",
+                    "parser_mode": "text",
+                    "reasoning_mode": "off",
+                    "max_context": 32768,
+                    "ext": [
+                        "text_backend_id": "mlx_lm",
+                        "text_family_id": "qwen3moe",
+                        "model_architecture": "qwen3_moe",
+                        "detected_architecture": "qwen3_moe",
+                        "detected_family_id": "qwen3moe",
+                        "detected_identity_source": "config.model_type",
+                        "melix.adapter_set_hash": "text-family-qwen3moe",
+                        "melix.capability.route_kind": "python_text_compatibility",
+                        "melix.capability.class": "text",
+                        "melix.capability.supported_modalities": "text",
+                        "melix.capability.supported_tasks": "generate",
+                        "melix.capability.supported_parsers": "text,qwen",
+                        "tool_parser_mode": "qwen",
+                        "tool_parser_namespaces": "tools.text",
+                        "tool_parser_xml_fallback": "true",
+                        "melix.text.attention_profile": "gqa",
+                        "melix.text.rope_profile": "yarn_interleaved",
+                        "melix.text.moe.enabled": "true",
+                        "melix.text.moe.expert_count": "128",
+                        "melix.text.moe.gate_dequant": "true",
+                        "melix.registry_root_id": "root-1",
+                        "melix.registry_root_path": "/tmp/registry-root",
+                        "melix.registry_relative_path": "mlx-community/Qwen3-MoE-30B-A3B-Instruct/4bit",
+                        "melix.model_path": "/tmp/registry-root/mlx-community/Qwen3-MoE-30B-A3B-Instruct/4bit",
+                    ],
+                ],
+            ]
+        )
+        await modelOpsClient.setConvertEvents([
+            {
+                var event = Melix_Worker_V1_ConvertModelEvent()
+                event.manifest = Melix_Worker_V1_ConvertManifest()
+                event.manifest.manifestJson = manifestJSON
+                return event
+            }(),
+        ])
+
+        let service = ControlPlaneService(
+            modelCatalog: ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels()),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                modelOperationsClient: modelOpsClient
+            )
+        )
+
+        let response = try await service.execute(makeListModelsRequest())
+        let discovered = try #require(
+            response.model.models.first(where: { $0.modelID == "mlx-community/Qwen3-MoE-30B-A3B-Instruct/4bit" })
+        )
+
+        #expect(discovered.routeClass == .workerRoutePythonTextCompatibility)
+        #expect(discovered.capabilityClass == .modelCapabilityText)
+        #expect(discovered.supportedModalities == ["text"])
+        #expect(discovered.supportedTasks == ["generate"])
+        #expect(discovered.settings.ext["text_family_id"] == "qwen3moe")
+        #expect(discovered.settings.ext["melix.capability.route_kind"] == "python_text_compatibility")
+        #expect(discovered.settings.ext["melix.capability.supported_parsers"] == "text,qwen")
+        #expect(discovered.settings.ext["tool_parser_mode"] == "qwen")
+        #expect(discovered.settings.ext["melix.text.rope_profile"] == "yarn_interleaved")
+        #expect(discovered.settings.ext["melix.text.moe.expert_count"] == "128")
+    }
+
     @Test("execute handles model.list by keeping the current catalog when registry sync throws")
     func executeHandlesModelListByKeepingTheCurrentCatalogWhenRegistrySyncThrows() async throws {
         let modelOpsClient = ScriptedModelOperationsWorkerClient()

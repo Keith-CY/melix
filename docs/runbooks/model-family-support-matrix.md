@@ -2,7 +2,8 @@
 
 ## Purpose
 
-This runbook explains how to inspect the repository-owned support matrix for Melix embedding and rerank families.
+This runbook explains how to inspect the repository-owned support matrix for Melix text, embedding,
+and rerank families.
 
 The matrix distinguishes two support levels:
 
@@ -35,6 +36,7 @@ Rows marked `contract_only` are intentional gaps. They indicate Melix can descri
 
 Use this matrix when:
 
+- checking whether a requested dense or MoE text family is only declared or also live-verified
 - checking whether a requested embedding or rerank family is only declared or also live-verified
 - reviewing family-expansion changes for support drift
 - locating the integration test that currently proves a family-specific live path

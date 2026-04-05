@@ -547,6 +547,31 @@ public actor ModelCatalog {
         }
     }
 
+    private struct DetectedTextIdentity: Sendable {
+        let architecture: String
+        let familyID: String
+        let source: String
+    }
+
+    private static func textCapabilityAdapter(
+        familyID: String,
+        defaultRouteKind: WorkerRouteKind
+    ) -> CapabilityAdapterMetadata {
+        let routeKind = preferredTextRouteKind(for: familyID, defaultRouteKind: defaultRouteKind)
+        let supportedParsers = textSupportedParsers(for: familyID)
+        return CapabilityAdapterMetadata(
+            adapterSetHash: "text-family-\(familyID)",
+            routeKind: routeKind,
+            capabilityIdentifier: "text",
+            supportedModalities: ["text"],
+            supportedTasks: ["generate"],
+            supportedParsers: supportedParsers,
+            toolParserMode: familyID == "qwen3moe" ? .qwen : nil,
+            toolParserNamespaces: familyID == "qwen3moe" ? ["tools.text"] : [],
+            toolParserXMLFallback: familyID == "qwen3moe"
+        )
+    }
+
     private static func embeddingCapabilityAdapter(
         familyID: String
     ) -> CapabilityAdapterMetadata {
@@ -712,13 +737,161 @@ public actor ModelCatalog {
         }
     }
 
-    public static func devTextModel() -> Melix_Controlplane_V1_ModelSummary {
+    private static func inferTextIdentity(
+        from modelPath: String,
+        explicitFamilyID: String?
+    ) -> DetectedTextIdentity {
+        let normalizedPath = modelPath.lowercased()
+        if let explicitFamilyID, !explicitFamilyID.isEmpty {
+            return DetectedTextIdentity(
+                architecture: textArchitecture(for: explicitFamilyID),
+                familyID: explicitFamilyID,
+                source: "explicit_override"
+            )
+        }
+        if normalizedPath.contains("mistral4") || normalizedPath.contains("mistral-small-4") {
+            return DetectedTextIdentity(
+                architecture: "mistral4",
+                familyID: "mistral4",
+                source: "directory_name"
+            )
+        }
+        if normalizedPath.contains("mixtral") {
+            return DetectedTextIdentity(
+                architecture: "mixtral",
+                familyID: "mixtral",
+                source: "directory_name"
+            )
+        }
+        if normalizedPath.contains("qwen3") && normalizedPath.contains("moe") {
+            return DetectedTextIdentity(
+                architecture: "qwen3_moe",
+                familyID: "qwen3moe",
+                source: "directory_name"
+            )
+        }
+        if normalizedPath.contains("deepseek") || normalizedPath.contains("mla") {
+            return DetectedTextIdentity(
+                architecture: "deepseek_v3",
+                familyID: "deepseek-mla",
+                source: "directory_name"
+            )
+        }
+        if normalizedPath.contains("nemotron-h") || normalizedPath.contains("nemotron_h") {
+            return DetectedTextIdentity(
+                architecture: "nemotron_h",
+                familyID: "nemotron-h",
+                source: "directory_name"
+            )
+        }
+        return DetectedTextIdentity(
+            architecture: "llama",
+            familyID: "llama",
+            source: "default"
+        )
+    }
+
+    private static func preferredTextRouteKind(
+        for familyID: String,
+        defaultRouteKind: WorkerRouteKind
+    ) -> WorkerRouteKind {
+        switch familyID {
+        case "mistral4", "mixtral", "qwen3moe", "deepseek-mla", "nemotron-h":
+            return .pythonCompatibility
+        default:
+            return defaultRouteKind
+        }
+    }
+
+    private static func textSupportedParsers(for familyID: String) -> [String] {
+        familyID == "qwen3moe" ? ["text", "qwen"] : ["text"]
+    }
+
+    private static func textArchitecture(for familyID: String) -> String {
+        switch familyID {
+        case "mistral4":
+            return "mistral4"
+        case "mixtral":
+            return "mixtral"
+        case "qwen3moe":
+            return "qwen3_moe"
+        case "deepseek-mla":
+            return "deepseek_v3"
+        case "nemotron-h":
+            return "nemotron_h"
+        default:
+            return "llama"
+        }
+    }
+
+    private static func textAttentionProfile(for familyID: String) -> String {
+        familyID == "deepseek-mla" ? "mla" : "gqa"
+    }
+
+    private static func textRoPEProfile(for familyID: String) -> String {
+        switch familyID {
+        case "mistral4", "qwen3moe":
+            return "yarn_interleaved"
+        default:
+            return "standard"
+        }
+    }
+
+    private static func textMOEEnabled(for familyID: String) -> Bool {
+        switch familyID {
+        case "mistral4", "mixtral", "qwen3moe", "deepseek-mla":
+            return true
+        default:
+            return false
+        }
+    }
+
+    private static func textExpertCount(for familyID: String) -> Int {
+        switch familyID {
+        case "mistral4", "mixtral":
+            return 8
+        case "qwen3moe":
+            return 128
+        case "deepseek-mla":
+            return 64
+        default:
+            return 0
+        }
+    }
+
+    private static func textMOEGateDequant(for familyID: String) -> Bool {
+        switch familyID {
+        case "mistral4", "qwen3moe", "deepseek-mla":
+            return true
+        default:
+            return false
+        }
+    }
+
+    public static func devTextModel(
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> Melix_Controlplane_V1_ModelSummary {
+        let modelPath = normalizedEnvironmentValue(
+            "MELIX_DEV_TEXT_MODEL_PATH",
+            environment: environment
+        ) ?? "models/melix-dev-text"
+        let explicitFamilyID = normalizedEnvironmentValue(
+            "MELIX_DEV_TEXT_FAMILY_ID",
+            environment: environment
+        )
+        let detected = inferTextIdentity(from: modelPath, explicitFamilyID: explicitFamilyID)
+        let capabilityAdapter = textCapabilityAdapter(
+            familyID: detected.familyID,
+            defaultRouteKind: .swiftText
+        )
+        let identityOverride = explicitFamilyID?.isEmpty == false ? "true" : "false"
+
         var model = Melix_Controlplane_V1_ModelSummary()
         model.modelID = "melix-dev-text"
         model.kind = "text"
         model.state = .modelDiscovered
         model.capabilityClass = .modelCapabilityText
-        model.routeClass = .workerRouteSwiftText
+        model.routeClass = workerRouteClass(for: capabilityAdapter.routeKind)
         model.quantProfileID = "dev-q4"
         model.maxContext = 8192
         model.features = ["chat", "adaptive_thinking"]
@@ -728,6 +901,28 @@ public actor ModelCatalog {
         model.settings.defaultAccelerationMode = .baseline
         model.settings.adaptiveThinking.mode = "adaptive"
         model.settings.adaptiveThinking.budgetTokens = 192
+        model.settings.ext["text_backend_id"] = "mlx_lm"
+        model.settings.ext["text_family_id"] = detected.familyID
+        model.settings.ext["model_architecture"] = detected.architecture
+        model.settings.ext["detected_architecture"] = detected.architecture
+        model.settings.ext["detected_family_id"] = detected.familyID
+        model.settings.ext["detected_identity_source"] = detected.source
+        model.settings.ext["identity_override"] = identityOverride
+        model.settings.ext["melix.text.attention_profile"] = textAttentionProfile(for: detected.familyID)
+        model.settings.ext["melix.text.rope_profile"] = textRoPEProfile(for: detected.familyID)
+        model.settings.ext["melix.text.moe.enabled"] = textMOEEnabled(for: detected.familyID) ? "true" : "false"
+        model.settings.ext["melix.text.moe.gate_dequant"] = textMOEGateDequant(for: detected.familyID) ? "true" : "false"
+        let expertCount = textExpertCount(for: detected.familyID)
+        if expertCount > 0 {
+            model.settings.ext["melix.text.moe.expert_count"] = String(expertCount)
+        }
+        model.settings.ext["melix.model_path"] = modelPath
+        model.settings.ext["melix.model_revision"] = "dev"
+        model.settings.ext["melix.tokenizer_hash"] = "tok-dev"
+        applyCapabilityAdapter(capabilityAdapter, to: &model)
+        model.settings.ext["melix.capability.route_kind"] = capabilityAdapter.routeKind == .pythonCompatibility
+            ? "python_text_compatibility"
+            : capabilityAdapter.routeKind.rawValue
         return withSynchronizedResidency(model)
     }
 

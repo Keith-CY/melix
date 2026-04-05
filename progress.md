@@ -2,6 +2,56 @@
 
 ## 2026-04-05
 
+- Closed `M12.2` by making text-family and MoE-family adapter metadata repository-owned across the
+  Python worker, control-plane catalog, support matrix, and deterministic live-path verification:
+  - added worker-owned text-family adapters for `llama`, `mistral4`, `mixtral`, `qwen3moe`,
+    `deepseek-mla`, and `nemotron-h`, including metadata-driven detection from explicit
+    overrides, `config.json`, and path heuristics plus family-specific parser, attention, RoPE,
+    and MoE declarations
+  - updated worker registry snapshots and runtime loads so scanned text models now carry stable
+    family metadata, `python_text_compatibility` routing for larger dense or MoE families, and
+    runtime-visible architecture or MoE descriptors without changing the base `swift_text` dev
+    seed defaults
+  - updated the Swift control-plane catalog seed path and registry-sync logic so discovered or
+    dev text models preserve text-family identity, parser declarations, route kind, and MoE
+    settings through worker preparation and catalog truth
+  - expanded the repository-owned family support matrix and integration evidence so the text
+    matrix now distinguishes live-verified rows for `llama`, `mistral4`, `qwen3moe`,
+    `deepseek-mla`, and `nemotron-h`, while keeping `mixtral` explicitly `contract_only`
+  - marked `M12.2` completed in the roadmap execution index; the next active execution slice can
+    now advance to `M12.3`
+- Verification summary for `M12.2`:
+  - `PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" UV_CACHE_DIR="$(pwd)/.uv-cache" uv run --project services/mlx-worker-python --extra mlx pytest services/mlx-worker-python/tests/test_text_family_adapters.py services/mlx-worker-python/tests/test_model_registry_catalog.py services/mlx-worker-python/tests/test_mlx_backend.py services/mlx-worker-python/tests/test_acceptance_metrics.py -q`: `49 passed in 0.22s`
+  - `PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" UV_CACHE_DIR="$(pwd)/.uv-cache" uv run --project services/mlx-worker-python --extra mlx pytest tests/integration/test_text_family_endpoints.py tests/integration/test_non_text_endpoints.py::test_family_support_matrix_tracks_live_verified_family_overrides -q`: `4 passed in 58.25s`
+  - `PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" COVERAGE_FILE=/tmp/m12_2_python.coverage UV_CACHE_DIR="$(pwd)/.uv-cache" uv run --project services/mlx-worker-python --extra mlx coverage run --source=services/mlx-worker-python/worker,services/mlx-worker-python/tests,tests/integration -m pytest services/mlx-worker-python/tests/test_text_family_adapters.py services/mlx-worker-python/tests/test_model_registry_catalog.py services/mlx-worker-python/tests/test_mlx_backend.py services/mlx-worker-python/tests/test_acceptance_metrics.py tests/integration/test_text_family_endpoints.py tests/integration/test_non_text_endpoints.py::test_family_support_matrix_tracks_live_verified_family_overrides -q && PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" COVERAGE_FILE=/tmp/m12_2_python.coverage UV_CACHE_DIR="$(pwd)/.uv-cache" uv run --project services/mlx-worker-python --extra mlx coverage json -o /tmp/m12_2_python_coverage.json`: `53 passed in 58.82s`
+  - `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/.build/ModuleCache.noindex" swift test --package-path services/control-plane-swift --enable-code-coverage --filter 'ModelCatalogTests|ControlPlaneServiceTests|PythonBridgeWorkerClientTests'`: `227 tests in 3 suites passed after 1.106 seconds`
+  - `git diff --check`: pass
+- Metrics report for `M12.2`:
+  - repository-owned family-matrix metrics exercised by the touched scope:
+    - `family_count = 13`
+    - `text_family_count = 6`
+    - `live_verified_count = 11`
+    - `contract_only_count = 2`
+  - changed-line coverage for the touched handwritten executable scope:
+    - Python worker and integration scope: `100.00%` (`389/389`)
+    - Swift control-plane scope: `100.00%` (`315/315`)
+    - aggregate touched-scope coverage: `100.00%` (`704/704`)
+
+- Started `M12.2` by moving the active task plan to metadata-driven text and MoE family adapters:
+  - recorded that the repository still treated larger dense and MoE text models as generic text
+    entries, which hid parser, routing, and MoE-specific capability declarations from both the
+    registry snapshot and the support matrix
+  - defined the next implementation slice around family detection from explicit overrides,
+    `config.json`, and path heuristics, `python_text_compatibility` routing for advanced families,
+    and deterministic live-path verification through the HTTP text-generation surface
+  - updated the active task plan so the `M12.2` execution transaction started from an explicit
+    milestone contract instead of an implicit family-expansion goal
+- Verification summary for the `M12.2` planning transaction:
+  - `git diff --check`: pass
+- Metrics report for the `M12.2` planning transaction:
+  - `N/A` for executable coverage and runtime metrics because this transaction only updated the
+    active task plan before implementation started
+
 - Closed `M12.1` by making multi-root registry configuration control-plane-owned, worker-backed,
   and operator-visible across registry snapshots, catalog sync, and the Window UI:
   - updated the Python worker registry catalog and maintenance core so ordered registry-root

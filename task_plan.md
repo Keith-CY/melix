@@ -2,59 +2,70 @@
 
 ## Goal
 
-Advance `M12.1` by making multi-root model registry management and rescans operator-facing,
-control-plane-owned, and deterministic across worker scans, catalog sync, and Window UI actions.
+Advance `M12.2` by adding metadata-driven text and MoE family adapters so larger text-model
+families can be discovered, routed, and exercised through deterministic live-path verification.
 
 ## Scope
 
-- replace environment-only registry-root discovery with control-plane-managed root configuration
-- preserve stable registry-root identity across rescans while keeping root ordering explicit
-- expose root add, remove, reorder, and rescan actions through the Window UI and model-ops path
-- keep invalid roots observable without poisoning successful roots or discovered models
+- add text-family adapter metadata for dense and MoE text families
+- detect family identity from `config.json`, explicit metadata overrides, and path heuristics
+- route larger text and MoE families through `python_text_compatibility` while preserving the
+  default `swift_text` seed path for the base dev text model
+- surface family-specific parser, attention, RoPE, and MoE declarations through registry snapshots,
+  support-matrix output, and control-plane summaries
+- add focused unit and integration coverage for scanned-model metadata, routing, and live endpoint
+  exercise of the targeted family matrix
 
 ## Measurement Points
 
-- registry snapshots must surface stable root IDs, ordered roots, accessibility, and discovered
-  model IDs
-- rescans must preserve first-root-wins discovery semantics while updating catalog entries
-  deterministically
-- Window UI actions must be able to add, remove, reorder, and rescan roots without losing the
-  latest root snapshot or adapter-registry state
+- discovered text models must carry stable adapter metadata including route kind, family ID,
+  architecture, parser support, attention profile, RoPE profile, and MoE-specific declarations
+- control-plane summaries must preserve text-family metadata and route advanced families through
+  `python_text_compatibility`
+- the family support matrix must distinguish contract-only from live-verified text and MoE rows
+- live integration coverage must prove that targeted text-family overrides can be loaded and served
+  through the HTTP text-generation path using repository-owned deterministic workers
 
 ## Phases
 
-1. Root identity, control-plane sync, and worker scan contract
+1. Text-family adapter contract and detection
    - status: completed
    - evidence:
-     - define the root identity scheme, rescan contract, and first-root-wins precedence rules
-     - route configured registry roots through the control plane into worker-backed
-       `registry_snapshot` execution without requiring environment rewrites
-2. Window UI root management and observability
+     - add adapter descriptors for the targeted dense and MoE families
+     - resolve family identity from explicit overrides, `config.json`, and path-based fallback
+     - project capability metadata and family-specific declarations into worker model specs
+2. Control-plane propagation and support-matrix expansion
    - status: completed
    - evidence:
-     - add operator controls for root add, remove, reorder, and rescan
-     - surface ordered root rows, accessibility, and discovered model counts in the tools surface
+     - preserve discovered text-family metadata through registry snapshot sync and worker
+       preparation
+     - expand the repository-owned family support matrix and runbook to include text and MoE rows
 3. Verification and milestone bookkeeping
    - status: completed
    - evidence:
-     - run the authoritative Swift and Python verification commands for the touched scope
-     - record changed-line coverage at or above `95%`, update `progress.md`, and close `M12.1`
-       only after root identity and rescan behavior are test-backed
+     - add focused Python, Swift, and integration coverage for routing and live-path family
+       exercise
+     - record changed-line coverage at or above `95%`, update `progress.md`, and close `M12.2`
+       only after the family matrix and routing behavior are test-backed
 
 ## Acceptance
 
-- operators can manage multiple model roots and trigger rescans deterministically
-- registry-root identity remains stable across rescans and root reordering
-- invalid roots remain visible without breaking successful discovery from valid roots
+- expanded dense and MoE text families are scanned with adapter metadata instead of generic text
+  fallback
+- advanced families route through `python_text_compatibility` while the base dev text seed remains
+  `swift_text`
+- the support matrix, tests, and runbook evidence cover both contract and live-path status for the
+  targeted family matrix
 
 ## Risks
 
-- path-order-only root IDs would make reorders look like different roots and break observability
-- UI-only root management would drift from control-plane truth and disappear on the next
-  catalog-driven sync
-- rescans that do not preserve first-root-wins precedence could make sidecar overrides
-  non-deterministic
+- over-broad fallback heuristics could collapse distinct families into one generic text profile and
+  hide parser or routing differences
+- changing the default dev text route would break existing repository-wide phase-0 assumptions and
+  unrelated integration tests
+- support-matrix rows without live verification would overstate runtime compatibility for newly
+  added families
 
 ## Outcome
 
-- m12_1_multi_root_registry_management_completed
+- m12_2_text_and_moe_family_adapters_completed
