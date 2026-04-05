@@ -191,3 +191,36 @@ def test_phase7_image_cancel_smoke_returns_cancelled_conflict() -> None:
         assert payload["error"]["message"]
     finally:
         stack.stop()
+
+
+def test_phase7_image_generate_timeout_returns_deadline_exceeded() -> None:
+    stack = LiveMelixStack(
+        Path(__file__).resolve().parents[2],
+        environment_overrides={
+            "MELIX_DETERMINISTIC_IMAGE_DELAY_MS": "1500",
+            "MELIX_IMAGE_REQUEST_TIMEOUT_SECONDS": "1",
+        },
+    )
+    try:
+        stack.start()
+        stack.wait_for_models(["melix-dev-image"])
+
+        status, payload = _post_json(
+            stack.image_generations_url(),
+            {
+                "id": "phase7-image-timeout",
+                "model": "melix-dev-image",
+                "prompt": "timeout this image job",
+                "size": "256x256",
+                "n": 1,
+                "response_format": "png",
+            },
+            timeout=20.0,
+        )
+
+        assert status == 504
+        assert payload["error"]["code"] == "deadline_exceeded"
+        assert "1-second creative workflow deadline" in payload["error"]["message"]
+
+    finally:
+        stack.stop()

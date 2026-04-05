@@ -18,6 +18,10 @@ class FakeChannel:
 
 
 class FakeInferenceStub:
+    def __init__(self) -> None:
+        self.last_image_generate_timeout = None
+        self.last_image_edit_timeout = None
+
     def Embed(self, request):
         return inference_pb2.EmbedResponse(
             embeddings=[
@@ -49,7 +53,8 @@ class FakeInferenceStub:
             format=request.format or "wav",
         )
 
-    def ImageGenerate(self, request):
+    def ImageGenerate(self, request, timeout=None):
+        self.last_image_generate_timeout = timeout
         return inference_pb2.ImageGenerateResponse(
             images=[b"generated-image"],
             job=inference_pb2.ImageJobDescriptor(
@@ -61,7 +66,8 @@ class FakeInferenceStub:
             ),
         )
 
-    def ImageEdit(self, request):
+    def ImageEdit(self, request, timeout=None):
+        self.last_image_edit_timeout = timeout
         return inference_pb2.ImageEditResponse(
             images=[b"edited-image"],
             job=inference_pb2.ImageJobDescriptor(
@@ -629,7 +635,8 @@ def test_bridge_helper_forwards_phase6_audio_unary_commands(monkeypatch, capsys)
 
 def test_bridge_helper_forwards_phase7_image_unary_commands(monkeypatch, capsys) -> None:
     monkeypatch.setattr(control_plane_bridge.grpc, "insecure_channel", lambda target: FakeChannel())
-    monkeypatch.setattr(control_plane_bridge.inference_pb2_grpc, "InferenceServiceStub", lambda channel: FakeInferenceStub())
+    stub = FakeInferenceStub()
+    monkeypatch.setattr(control_plane_bridge.inference_pb2_grpc, "InferenceServiceStub", lambda channel: stub)
 
     image_generate_request = inference_pb2.ImageGenerateRequest(
         id=common_pb2.RequestIdentity(request_id="image-generate-bridge"),
@@ -655,6 +662,7 @@ def test_bridge_helper_forwards_phase7_image_unary_commands(monkeypatch, capsys)
     generate_payload = inference_pb2.ImageGenerateResponse.FromString(base64.b64decode(generate_line["message_b64"]))
     assert generate_payload.job.job_id == "image-generate-bridge::image-generate"
     assert generate_payload.images == [b"generated-image"]
+    assert stub.last_image_generate_timeout == 1800.0
 
     image_edit_request = inference_pb2.ImageEditRequest(
         id=common_pb2.RequestIdentity(request_id="image-edit-bridge"),
@@ -682,3 +690,10 @@ def test_bridge_helper_forwards_phase7_image_unary_commands(monkeypatch, capsys)
     edit_payload = inference_pb2.ImageEditResponse.FromString(base64.b64decode(edit_line["message_b64"]))
     assert edit_payload.job.job_id == "image-edit-bridge::image-edit"
     assert edit_payload.images == [b"edited-image"]
+    assert stub.last_image_edit_timeout == 1800.0
+
+
+def test_image_request_timeout_seconds_uses_env_override(monkeypatch) -> None:
+    monkeypatch.setenv("MELIX_IMAGE_REQUEST_TIMEOUT_SECONDS", "42")
+
+    assert control_plane_bridge.image_request_timeout_seconds() == 42.0

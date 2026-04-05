@@ -268,6 +268,7 @@ public struct OpenAIHandler: Sendable {
     private let gatewayServingDefaultsStore: GatewayServingDefaultsStore
     private let gatewayRuntimeBinding: GatewayRuntimeBinding
     private let persistentAuthSessionStore: PersistentAuthSessionStore?
+    private let imageRequestTimeoutSeconds: UInt32
     private let decoder: JSONDecoder
     private let encoder: JSONEncoder
 
@@ -288,7 +289,8 @@ public struct OpenAIHandler: Sendable {
         gatewayAccessPolicyStore: GatewayAccessPolicyStore? = nil,
         gatewayServingDefaultsStore: GatewayServingDefaultsStore? = nil,
         gatewayRuntimeBinding: GatewayRuntimeBinding = GatewayRuntimeBinding(host: "127.0.0.1", port: 11_434),
-        persistentAuthSessionStore: PersistentAuthSessionStore? = nil
+        persistentAuthSessionStore: PersistentAuthSessionStore? = nil,
+        environment: [String: String] = ProcessInfo.processInfo.environment
     ) {
         self.modelCatalog = modelCatalog
         self.requestCoordinator = requestCoordinator
@@ -309,6 +311,7 @@ public struct OpenAIHandler: Sendable {
         self.gatewayServingDefaultsStore = gatewayServingDefaultsStore ?? GatewayServingDefaultsStore()
         self.gatewayRuntimeBinding = gatewayRuntimeBinding
         self.persistentAuthSessionStore = persistentAuthSessionStore
+        self.imageRequestTimeoutSeconds = Self.resolveImageRequestTimeoutSeconds(environment: environment)
         self.decoder = JSONDecoder()
         self.encoder = JSONEncoder()
         self.encoder.outputFormatting = [.sortedKeys]
@@ -1014,7 +1017,21 @@ public struct OpenAIHandler: Sendable {
             jobID: jobID,
             modelID: imageRequest.model,
             operation: "image_generate",
-            lane: routeKind.defaultSchedulingLane
+            lane: routeKind.defaultSchedulingLane,
+            recipe: imageJobRecipe(
+                prompt: imageRequest.prompt,
+                size: workerRequest.size,
+                steps: 0,
+                guidance: 0,
+                strength: nil,
+                negativePrompt: "",
+                variantCount: workerRequest.n,
+                responseFormat: workerRequest.responseFormat,
+                artifactNamespace: workerRequest.artifactNamespace,
+                sourceImageURI: "",
+                maskURI: ""
+            ),
+            timeoutSeconds: imageRequestTimeoutSeconds
         )
         do {
             try await imageJobAdmissionController.acquire(
@@ -1085,6 +1102,13 @@ public struct OpenAIHandler: Sendable {
                 return workerErrorResponse(response.error)
             }
 
+            let queuedReplyJob = await imageJobReadModel?.job(jobID: resolvedJobID)
+            let persistedReplyJob: Melix_Controlplane_V1_ImageJobSummary?
+            if let queuedReplyJob {
+                persistedReplyJob = queuedReplyJob
+            } else {
+                persistedReplyJob = await imageJobReadModel?.job(requestID: requestID)
+            }
             let payload = OpenAIImagesResponse(
                 created: Int(Date().timeIntervalSince1970.rounded()),
                 model: imageRequest.model,
@@ -1094,19 +1118,27 @@ public struct OpenAIHandler: Sendable {
                         artifact: OpenAIImageArtifactPayload(artifact: imageArtifactRef(from: artifact))
                     )
                 },
-                job: OpenAIImageJobPayload(job: controlPlaneImageJob(from: response.job, modelID: imageRequest.model))
+                job: OpenAIImageJobPayload(
+                    job: persistedReplyJob ?? controlPlaneImageJob(from: response.job, modelID: imageRequest.model)
+                )
             )
             return try encodedJSONResponse(payload)
         } catch {
+            let failure = imageWorkerFailure(error: error, timeoutSeconds: imageRequestTimeoutSeconds)
             await imageJobReadModel?.recordFailed(
                 jobID: jobID,
-                error: controlPlaneError(code: "worker_unavailable", message: "The worker cannot accept requests.")
+                error: failure
             )
             await imageJobAdmissionController.finish(
                 requestID: requestID,
                 phase: .requestFailed
             )
-            return workerUnavailableResponse()
+            return workerErrorResponse({
+                var workerError = Melix_Worker_V1_ErrorStatus()
+                workerError.code = failure.code
+                workerError.message = failure.message
+                return workerError
+            }())
         }
     }
 
@@ -1209,6 +1241,20 @@ public struct OpenAIHandler: Sendable {
             modelID: imageRequest.model,
             operation: imageEditOperationName(for: resolvedEditMode),
             lane: routeKind.defaultSchedulingLane,
+            recipe: imageJobRecipe(
+                prompt: resolvedPrompt,
+                size: workerRequest.size,
+                steps: 0,
+                guidance: 0,
+                strength: workerRequest.strength,
+                negativePrompt: "",
+                variantCount: workerRequest.n,
+                responseFormat: workerRequest.responseFormat,
+                artifactNamespace: "",
+                sourceImageURI: resolvedImageURI,
+                maskURI: workerRequest.maskUri
+            ),
+            timeoutSeconds: imageRequestTimeoutSeconds,
             sourceArtifactID: sourceArtifactID,
             sourceJobID: sourceJobID,
             promptDelta: promptDelta,
@@ -1284,6 +1330,13 @@ public struct OpenAIHandler: Sendable {
             }
 
             let outputArtifacts = Array(response.job.artifacts.suffix(response.images.count))
+            let queuedReplyJob = await imageJobReadModel?.job(jobID: resolvedJobID)
+            let persistedReplyJob: Melix_Controlplane_V1_ImageJobSummary?
+            if let queuedReplyJob {
+                persistedReplyJob = queuedReplyJob
+            } else {
+                persistedReplyJob = await imageJobReadModel?.job(requestID: requestID)
+            }
             let payload = OpenAIImagesResponse(
                 created: Int(Date().timeIntervalSince1970.rounded()),
                 model: imageRequest.model,
@@ -1293,19 +1346,27 @@ public struct OpenAIHandler: Sendable {
                         artifact: OpenAIImageArtifactPayload(artifact: imageArtifactRef(from: artifact))
                     )
                 },
-                job: OpenAIImageJobPayload(job: controlPlaneImageJob(from: response.job, modelID: imageRequest.model))
+                job: OpenAIImageJobPayload(
+                    job: persistedReplyJob ?? controlPlaneImageJob(from: response.job, modelID: imageRequest.model)
+                )
             )
             return try encodedJSONResponse(payload)
         } catch {
+            let failure = imageWorkerFailure(error: error, timeoutSeconds: imageRequestTimeoutSeconds)
             await imageJobReadModel?.recordFailed(
                 jobID: jobID,
-                error: controlPlaneError(code: "worker_unavailable", message: "The worker cannot accept requests.")
+                error: failure
             )
             await imageJobAdmissionController.finish(
                 requestID: requestID,
                 phase: .requestFailed
             )
-            return workerUnavailableResponse()
+            return workerErrorResponse({
+                var workerError = Melix_Worker_V1_ErrorStatus()
+                workerError.code = failure.code
+                workerError.message = failure.message
+                return workerError
+            }())
         }
     }
 
@@ -1548,6 +1609,12 @@ public struct OpenAIHandler: Sendable {
             statusCode = 404
         case "cancelled":
             statusCode = 409
+        case "resource_exhausted":
+            statusCode = 503
+        case "deadline_exceeded":
+            statusCode = 504
+        case "unavailable", "worker_unavailable":
+            statusCode = 503
         default:
             statusCode = 500
         }
@@ -1846,6 +1913,72 @@ public struct OpenAIHandler: Sendable {
         return prompt
     }
 
+    private func imageJobRecipe(
+        prompt: String,
+        size: String,
+        steps: UInt32,
+        guidance: Float,
+        strength: Float?,
+        negativePrompt: String,
+        variantCount: UInt32,
+        responseFormat: String,
+        artifactNamespace: String,
+        sourceImageURI: String,
+        maskURI: String
+    ) -> Melix_Controlplane_V1_ImageJobRecipeSummary {
+        var recipe = Melix_Controlplane_V1_ImageJobRecipeSummary()
+        recipe.prompt = prompt
+        recipe.size = size
+        recipe.steps = steps
+        recipe.guidance = guidance
+        recipe.strength = strength ?? 0
+        recipe.negativePrompt = negativePrompt
+        recipe.variantCount = variantCount
+        recipe.responseFormat = responseFormat
+        recipe.artifactNamespace = artifactNamespace
+        recipe.sourceImageUri = sourceImageURI
+        recipe.maskUri = maskURI
+        return recipe
+    }
+
+    private func imageWorkerFailure(
+        error: Error,
+        timeoutSeconds: UInt32
+    ) -> Melix_Controlplane_V1_ErrorStatus {
+        guard let workerError = error as? WorkerClientError else {
+            return controlPlaneError(code: "worker_unavailable", message: "The worker cannot accept requests.")
+        }
+        switch workerError {
+        case .unavailable:
+            return controlPlaneError(code: "worker_unavailable", message: "The worker cannot accept requests.")
+        case let .requestFailed(code, message):
+            let normalizedCode = normalizedBridgeErrorCode(code)
+            switch normalizedCode {
+            case "deadline_exceeded":
+                return controlPlaneError(
+                    code: "deadline_exceeded",
+                    message: "Image request exceeded the \(timeoutSeconds)-second creative workflow deadline."
+                )
+            case "cancelled":
+                return controlPlaneError(code: "cancelled", message: message.isEmpty ? "Image request was cancelled." : message)
+            case "":
+                return controlPlaneError(code: "worker_unavailable", message: "The worker cannot accept requests.")
+            default:
+                return controlPlaneError(
+                    code: normalizedCode,
+                    message: message.isEmpty ? "Image worker request failed." : message
+                )
+            }
+        }
+    }
+
+    private func normalizedBridgeErrorCode(_ rawValue: String) -> String {
+        rawValue
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .replacingOccurrences(of: "-", with: "_")
+    }
+
     private func controlPlaneError(from workerError: Melix_Worker_V1_ErrorStatus) -> Melix_Controlplane_V1_ErrorStatus {
         controlPlaneError(code: workerError.code, message: workerError.message)
     }
@@ -1946,6 +2079,15 @@ public struct OpenAIHandler: Sendable {
             return await workerRegistry.client(for: route)
         }
         return await workerRegistry.client(forModelID: modelID)
+    }
+
+    private static func resolveImageRequestTimeoutSeconds(environment: [String: String]) -> UInt32 {
+        let rawValue = environment["MELIX_IMAGE_REQUEST_TIMEOUT_SECONDS"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard let parsed = UInt32(rawValue), parsed > 0 else {
+            return 1_800
+        }
+        return parsed
     }
 
     private func routedWorkerKind(

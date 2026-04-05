@@ -3,6 +3,7 @@ import MelixWorkerProtocol
 
 public enum WorkerClientError: Error, Equatable {
     case unavailable
+    case requestFailed(code: String, message: String)
 }
 
 public struct WorkerMemoryEvidence: Equatable, Sendable {

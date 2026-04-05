@@ -4784,6 +4784,9 @@ struct ControlPlaneServiceTests {
         #expect(forwardedRequest.n == 2)
         #expect(response.image.job.jobID == "req-image-generate::image-generate")
         #expect(response.image.job.state == .imageJobCompleted)
+        #expect(response.image.job.recipe.prompt == "Draw a neon fox")
+        #expect(response.image.job.recipe.size == "512x512")
+        #expect(response.image.job.timeoutSeconds == 1_800)
         #expect(snapshot.server.snapshot.imageJobs.contains(where: { $0.jobID == "req-image-generate::image-generate" }))
     }
 
@@ -5285,6 +5288,162 @@ struct ControlPlaneServiceTests {
         #expect(recordedJob.error.code == "unavailable")
     }
 
+    @Test("execute maps image generate deadline_exceeded failures into explicit timeout state")
+    func executeMapsImageGenerateDeadlineExceededFailuresIntoTimeoutState() async throws {
+        let modelCatalog = ModelCatalog(seedModels: ModelCatalog.phaseSevenContractSeedModels())
+        _ = await modelCatalog.loadModel(id: "melix-dev-image", dispatchHandle: "melix-dev-image::python")
+        let imageClient = ScriptedImageWorkerClient()
+        await imageClient.setImageGenerateError(
+            WorkerClientError.requestFailed(code: "DEADLINE_EXCEEDED", message: "image generate timed out")
+        )
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-image-timeout-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+        let service = ControlPlaneService(
+            modelCatalog: modelCatalog,
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                pythonCompatibilityClient: imageClient,
+                modelCatalog: modelCatalog
+            ),
+            imageDefaultsStore: ImageDefaultsStore(
+                storeURL: temporaryRoot.appendingPathComponent("image-defaults.json"),
+                defaults: ["MELIX_IMAGE_REQUEST_TIMEOUT_SECONDS": "600"]
+            )
+        )
+
+        let response = try await service.execute(
+            makeImageGenerateRequest(
+                requestID: "req-image-generate-timeout",
+                modelID: "melix-dev-image",
+                prompt: "Draw a fox",
+                size: "1024x1024",
+                n: 1
+            )
+        )
+        let snapshot = try await service.execute(makeServerSnapshotRequest())
+        let recordedJob = try #require(
+            snapshot.server.snapshot.imageJobs.first(where: { $0.requestID == "req-image-generate-timeout" })
+        )
+
+        #expect(response.ok == false)
+        #expect(response.error.code == "deadline_exceeded")
+        #expect(response.error.message.contains("600-second creative workflow deadline"))
+        #expect(recordedJob.state == Melix_Controlplane_V1_ImageJobState.imageJobFailed)
+        #expect(recordedJob.progress.stage == "timed_out")
+        #expect(recordedJob.error.code == "deadline_exceeded")
+        #expect(recordedJob.timeoutSeconds == 600)
+        #expect(recordedJob.recipe.prompt == "Draw a fox")
+    }
+
+    @Test("execute falls back to request mapped image jobs when worker job identifiers drift")
+    func executeFallsBackToRequestMappedImageJobsWhenWorkerJobIdentifiersDrift() async throws {
+        let modelCatalog = ModelCatalog(seedModels: ModelCatalog.phaseSevenContractSeedModels())
+        _ = await modelCatalog.loadModel(id: "melix-dev-image", dispatchHandle: "melix-dev-image::python")
+        let imageClient = ScriptedImageWorkerClient()
+        await imageClient.setImageGenerateResponse({
+            var response = Melix_Worker_V1_ImageGenerateResponse()
+            response.job.requestID = "req-image-generate-fallback"
+            response.job.jobID = "worker-generated-image-job"
+            response.job.modelHandle = "melix-dev-image::python"
+            response.job.operation = "image_generate"
+            response.job.state = .imageJobCompleted
+            response.job.progress.stage = "completed"
+            response.job.progress.pct = 1
+            response.job.artifacts = [makeWorkerArtifact(jobID: "worker-generated-image-job")]
+            return response
+        }())
+        await imageClient.setImageEditResponse({
+            var response = Melix_Worker_V1_ImageEditResponse()
+            response.job.requestID = "req-image-edit-fallback"
+            response.job.jobID = "worker-edited-image-job"
+            response.job.modelHandle = "melix-dev-image::python"
+            response.job.operation = "image_edit"
+            response.job.state = .imageJobCompleted
+            response.job.progress.stage = "completed"
+            response.job.progress.pct = 1
+            response.job.artifacts = [makeWorkerArtifact(jobID: "worker-edited-image-job")]
+            return response
+        }())
+        let imageJobReadModel = ImageJobReadModel()
+        let service = ControlPlaneService(
+            modelCatalog: modelCatalog,
+            imageJobReadModel: imageJobReadModel,
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                pythonCompatibilityClient: imageClient,
+                modelCatalog: modelCatalog
+            )
+        )
+
+        let generateResponse = try await service.execute(
+            makeImageGenerateRequest(
+                requestID: "req-image-generate-fallback",
+                modelID: "melix-dev-image",
+                prompt: "Draw a fallback fox",
+                size: "1024x1024",
+                n: 1
+            )
+        )
+        let editResponse = try await service.execute(
+            makeImageEditRequest(
+                requestID: "req-image-edit-fallback",
+                modelID: "melix-dev-image",
+                prompt: "Adjust the fallback fox",
+                imageURI: "file:///tmp/source.png",
+                maskURI: "",
+                strength: 1
+            )
+        )
+
+        #expect(generateResponse.ok)
+        #expect(generateResponse.image.job.jobID == "req-image-generate-fallback::image-generate")
+        #expect(generateResponse.image.job.requestID == "req-image-generate-fallback")
+        #expect(editResponse.ok)
+        #expect(editResponse.image.job.jobID == "req-image-edit-fallback::image-edit")
+        #expect(editResponse.image.job.requestID == "req-image-edit-fallback")
+    }
+
+    @Test("execute maps image worker availability cancellation empty and passthrough bridge errors")
+    func executeMapsImageWorkerAvailabilityCancellationEmptyAndPassthroughBridgeErrors() async throws {
+        let modelCatalog = ModelCatalog(seedModels: ModelCatalog.phaseSevenContractSeedModels())
+        _ = await modelCatalog.loadModel(id: "melix-dev-image", dispatchHandle: "melix-dev-image::python")
+        let imageClient = ScriptedImageWorkerClient()
+        let service = ControlPlaneService(
+            modelCatalog: modelCatalog,
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                pythonCompatibilityClient: imageClient,
+                modelCatalog: modelCatalog
+            )
+        )
+
+        let cases: [(String, Error, String, String)] = [
+            ("req-image-generate-unavailable", WorkerClientError.unavailable, "unavailable", "Image worker request failed"),
+            ("req-image-generate-cancelled", WorkerClientError.requestFailed(code: "cancelled", message: "operator stop"), "cancelled", "operator stop"),
+            ("req-image-generate-empty", WorkerClientError.requestFailed(code: "", message: ""), "unavailable", "Image worker request failed."),
+            ("req-image-generate-resource", WorkerClientError.requestFailed(code: "RESOURCE_EXHAUSTED", message: "queue full"), "resource_exhausted", "queue full"),
+        ]
+
+        for (requestID, error, expectedCode, expectedMessageFragment) in cases {
+            await imageClient.setImageGenerateError(error)
+            let response = try await service.execute(
+                makeImageGenerateRequest(
+                    requestID: requestID,
+                    modelID: "melix-dev-image",
+                    prompt: "Draw a typed failure",
+                    size: "1024x1024",
+                    n: 1
+                )
+            )
+
+            #expect(response.ok == false)
+            #expect(response.error.code == expectedCode)
+            #expect(response.error.message.contains(expectedMessageFragment))
+        }
+    }
+
     @Test("execute fills an implicit image job identifier when the worker omits one")
     func executeFillsImplicitImageJobIdentifier() async throws {
         let modelCatalog = ModelCatalog(seedModels: ModelCatalog.phaseSevenContractSeedModels())
@@ -5503,7 +5662,7 @@ struct ControlPlaneServiceTests {
         let recordedJob = try #require(snapshot.server.snapshot.imageJobs.first)
 
         #expect(response.ok)
-        #expect(response.image.job.state == .imageJobRunning)
+        #expect(response.image.job.state == .imageJobFailed)
         #expect(recordedJob.state == .imageJobFailed)
         #expect(recordedJob.error.code == "runtime_error")
     }

@@ -639,8 +639,9 @@ struct ControlPlaneXPCClientTests {
         #expect(forwardedRequest.ext["melix.image.guidance"] == "6.25")
         #expect(forwardedRequest.ext["melix.image.negative_prompt"] == "blur")
         #expect(forwardedRequest.n == 2)
-        #expect(job.jobID == "menubar-image-generate::image-generate")
-        #expect(job.state == .imageJobCompleted)
+        #expect(job.jobID.hasPrefix("menubar-image-generate-"))
+        #expect(job.jobID.hasSuffix("::image-generate"))
+        #expect(job.state == .imageJobRunning)
     }
 
     @Test("local client submits image edits through control-plane execute")
@@ -691,7 +692,8 @@ struct ControlPlaneXPCClientTests {
         #expect(forwardedRequest.ext["melix.image.steps"] == "22")
         #expect(forwardedRequest.ext["melix.image.guidance"] == "5.5")
         #expect(forwardedRequest.ext["melix.image.negative_prompt"] == "washed out")
-        #expect(job.jobID == "menubar-image-edit::image-edit")
+        #expect(job.jobID.hasPrefix("menubar-image-edit-"))
+        #expect(job.jobID.hasSuffix("::image-edit"))
         #expect(job.operation == "image_edit")
     }
 

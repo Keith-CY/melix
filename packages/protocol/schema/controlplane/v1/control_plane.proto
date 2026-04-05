@@ -852,6 +852,20 @@ message ImageJobProgress {
   uint32 total_steps = 4;
 }
 
+message ImageJobRecipeSummary {
+  string prompt = 1;
+  string size = 2;
+  uint32 steps = 3;
+  float guidance = 4;
+  float strength = 5;
+  string negative_prompt = 6;
+  uint32 variant_count = 7;
+  string response_format = 8;
+  string artifact_namespace = 9;
+  string source_image_uri = 10;
+  string mask_uri = 11;
+}
+
 message ImageArtifactRef {
   string artifact_id = 1;
   string job_id = 2;
@@ -887,6 +901,8 @@ message ImageJobSummary {
   string source_job_id = 16;
   string prompt_delta = 17;
   ImageEditMode edit_mode = 18;
+  ImageJobRecipeSummary recipe = 19;
+  uint32 timeout_seconds = 20;
 }
 
 message SubscribeRequest {
@@ -1090,6 +1106,7 @@ message ImageDefaultsSummary {
   string effective_negative_prompt = 14;
   ImageDefaultsSource source = 15;
   int64 updated_at_unix_ms = 16;
+  uint32 request_timeout_seconds = 17;
 }
 
 message ServerSnapshot {

@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import base64
 import json
+import os
 from pathlib import Path
 
 import grpc
@@ -113,11 +114,21 @@ def main() -> None:
             elif args.command == "image-generate":
                 stub = inference_pb2_grpc.InferenceServiceStub(channel)
                 request = inference_pb2.ImageGenerateRequest.FromString(request_bytes)
-                emit_message(stub.ImageGenerate(request).SerializeToString())
+                emit_message(
+                    stub.ImageGenerate(
+                        request,
+                        timeout=image_request_timeout_seconds(),
+                    ).SerializeToString()
+                )
             elif args.command == "image-edit":
                 stub = inference_pb2_grpc.InferenceServiceStub(channel)
                 request = inference_pb2.ImageEditRequest.FromString(request_bytes)
-                emit_message(stub.ImageEdit(request).SerializeToString())
+                emit_message(
+                    stub.ImageEdit(
+                        request,
+                        timeout=image_request_timeout_seconds(),
+                    ).SerializeToString()
+                )
             elif args.command == "get-model-info":
                 stub = maintenance_pb2_grpc.MaintenanceServiceStub(channel)
                 request = maintenance_pb2.GetModelInfoRequest.FromString(request_bytes)
@@ -178,6 +189,18 @@ def emit_message(message: bytes) -> None:
 
 def emit_error(code: str, message: str) -> None:
     print(json.dumps({"kind": "error", "code": code, "message": message}), flush=True)
+
+
+def image_request_timeout_seconds(environment: dict[str, str] | None = None) -> float:
+    env = environment or os.environ
+    raw_value = env.get("MELIX_IMAGE_REQUEST_TIMEOUT_SECONDS", "").strip()
+    try:
+        parsed = int(raw_value)
+    except ValueError:
+        parsed = 0
+    if parsed <= 0:
+        parsed = 1800
+    return float(parsed)
 
 
 if __name__ == "__main__":

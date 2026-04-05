@@ -340,7 +340,10 @@ public struct PythonBridgeWorkerClient:
             }
             return try Message(serializedBytes: data)
         case "error":
-            throw WorkerClientError.unavailable
+            throw WorkerClientError.requestFailed(
+                code: payload.code ?? "unavailable",
+                message: payload.message ?? "Worker bridge request failed."
+            )
         default:
             throw WorkerClientError.unavailable
         }
@@ -1125,10 +1128,14 @@ public enum BootstrapWorkerPreparation {
 private struct WorkerBridgeLine: Decodable {
     let kind: String
     let messageBase64: String?
+    let code: String?
+    let message: String?
 
     enum CodingKeys: String, CodingKey {
         case kind
         case messageBase64 = "message_b64"
+        case code
+        case message
     }
 
     static func decode(from line: String) throws -> WorkerBridgeLine {
@@ -1179,7 +1186,7 @@ public struct ProcessWorkerBridgeRunner: WorkerBridgeRunning, Sendable {
         process.standardError = stderr
 
         try process.run()
-        let terminationStatus = await waitForTermination(
+        _ = await waitForTermination(
             of: process,
             state: terminationState
         )
@@ -1187,8 +1194,7 @@ public struct ProcessWorkerBridgeRunner: WorkerBridgeRunning, Sendable {
         let output = String(decoding: try stdout.fileHandleForReading.readToEnd() ?? Data(), as: UTF8.self)
         _ = String(decoding: try stderr.fileHandleForReading.readToEnd() ?? Data(), as: UTF8.self)
 
-        guard terminationStatus == 0,
-              let line = output.split(separator: "\n").last.map(String.init),
+        guard let line = output.split(separator: "\n").last.map(String.init),
               !line.isEmpty
         else {
             throw WorkerClientError.unavailable

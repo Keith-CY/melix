@@ -27,6 +27,8 @@ public actor ImageJobReadModel {
         operation: String,
         lane: String,
         promptDigest: String = "",
+        recipe: Melix_Controlplane_V1_ImageJobRecipeSummary = Melix_Controlplane_V1_ImageJobRecipeSummary(),
+        timeoutSeconds: UInt32 = 0,
         sourceArtifactID: String = "",
         sourceJobID: String = "",
         promptDelta: String = "",
@@ -43,6 +45,8 @@ public actor ImageJobReadModel {
         job.lane = lane
         job.cancelable = cancelable
         job.promptDigest = promptDigest
+        job.recipe = recipe
+        job.timeoutSeconds = timeoutSeconds
         job.sourceArtifactID = sourceArtifactID
         job.sourceJobID = sourceJobID
         job.promptDelta = promptDelta
@@ -106,7 +110,7 @@ public actor ImageJobReadModel {
         job.state = .imageJobFailed
         job.cancelable = false
         job.error = error
-        job.progress.stage = "failed"
+        job.progress.stage = error.code == "deadline_exceeded" ? "timed_out" : "failed"
         job.updatedAtUnixMs = unixMilliseconds()
         jobsByID[jobID] = job
         await publish(job)

@@ -2,6 +2,45 @@
 
 ## 2026-04-06
 
+- Closed `M14.3` by making creative image redo or reiteration flows operator-visible and by
+  turning long-running image requests into typed timeout policy instead of generic worker
+  unavailability:
+  - extended the control-plane image-job protocol with `ImageJobRecipeSummary`, persisted image-job
+    `recipe` projection, and `request_timeout_seconds`, then regenerated the Swift, Python, and
+    descriptor protocol artifacts
+  - updated the Swift control plane, OpenAI image gateway, Python bridge, and image read model so
+    image generate or edit requests use an explicit `30-minute` creative deadline by default,
+    surface typed `deadline_exceeded` failures, map those failures to `timed_out` image-job
+    progress, and preserve enough recipe truth for redo or reiteration without relying on
+    desktop-local copies
+  - updated `RuntimeViewModel`, `DesktopImageView`, and menu-bar test support so the Window UI now
+    shows timeout policy, timeout-aware status text, always-visible redo or reiteration actions,
+    typed edit-mode/source-artifact inspection, and stable source-artifact summaries for selected
+    jobs
+- Verification summary for `M14.3`:
+  - `make proto`: pass
+  - `PYTHONPATH='.:services/mlx-worker-python' uv run --project services/mlx-worker-python pytest services/mlx-worker-python/tests/test_control_plane_bridge_phase5.py -q`: `5 passed in 0.03s`
+  - `PYTHONPATH='.:services/mlx-worker-python' uv run --project services/mlx-worker-python pytest services/mlx-worker-python/tests/test_control_plane_bridge_phase5.py tests/integration/test_phase7_operator_workflows.py -k timeout -q`: `2 passed, 6 deselected in 13.72s`
+  - `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/.build/ModuleCache.noindex" swift test --enable-code-coverage --package-path services/control-plane-swift --filter 'ControlPlaneServiceTests|ImageJobReadModelTests|OpenAIHandlerTests|ImageDefaultsStoreTests|PythonBridgeWorkerClientTests'`: `333 tests in 5 suites passed after 1.003 seconds`
+  - `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/.build/ModuleCache.noindex" swift test --enable-code-coverage --package-path apps/macos-menubar --filter 'RuntimeViewModelTests|DesktopFoundationViewTests|ControlPlaneXPCClientTests'`: `265 tests in 3 suites passed after 4.445 seconds`
+  - `git diff --check`: pass
+- Metrics report for `M14.3`:
+  - typed redo and timeout evidence exercised by the touched scope:
+    - selected image jobs now project persisted recipe truth and request timeout policy through one
+      control-plane-owned source rather than Window-UI-local scratch state
+    - redo can re-submit selected image jobs from persisted recipe state, and reiteration can seed
+      iterate mode from stable artifact lineage and source-artifact summaries
+    - image worker deadline failures now remain distinguishable from cancelation and generic bridge
+      failures across control-plane, HTTP, integration, and Window UI surfaces
+  - changed-line coverage for the touched handwritten executable scope:
+    - Swift control-plane scope: `99.84%` (`618/619`)
+    - Swift menu-bar scope: `99.79%` (`953/955`)
+    - Python worker plus timeout integration scope: `100.00%` (`37/37`)
+    - aggregate touched-scope coverage: `99.81%` (`1608/1611`)
+  - generated protobuf outputs and `packages/protocol/descriptors/melix.pb` are excluded from
+    executable changed-line coverage because they are regenerated interface artifacts rather than
+    handwritten runtime logic
+
 - Closed `M14.2` by making image defaults persistent across restart and projecting role-aware image
   model selection through one control-plane-owned source of truth:
   - extended the control-plane protocol with typed `ApplyImageDefaults`,

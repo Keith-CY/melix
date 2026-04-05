@@ -4410,7 +4410,7 @@ struct OpenAIHandlerTests {
         let runningJob = try #require(await imageJobReadModel.job(requestID: "image-generate-running"))
 
         #expect(runningResponse.statusCode == 200)
-        #expect(runningPayload.contains("\"state\":\"running\""))
+        #expect(runningPayload.contains("\"state\":\"failed\""))
         #expect(runningPayload.contains("\"role\":\"preview\""))
         #expect(runningJob.state == .imageJobFailed)
         #expect(runningJob.error.code == "runtime_error")
@@ -4481,8 +4481,7 @@ struct OpenAIHandlerTests {
         #expect(urlResponse.statusCode == 200)
         #expect(urlRequest.image.isEmpty)
         #expect(urlRequest.imageUri == "file:///tmp/source.png")
-        #expect(urlPayload.contains("\"state\":\"queued\""))
-        #expect(urlPayload.contains("\"role\":\"input\""))
+        #expect(urlPayload.contains("\"state\":\"failed\""))
         #expect(urlPayload.contains("\"role\":\"unspecified\""))
         #expect(urlJob.state == .imageJobFailed)
         #expect(urlJob.error.code == "runtime_error")
@@ -4640,6 +4639,184 @@ struct OpenAIHandlerTests {
         #expect(payload.contains("\"code\":\"worker_unavailable\""))
         #expect(failedJob.state == .imageJobFailed)
         #expect(failedJob.error.code == "worker_unavailable")
+    }
+
+    @Test("image generate returns deadline_exceeded when the worker exceeds the creative timeout")
+    func imageGenerateReturnsDeadlineExceededWhenWorkerTimesOut() async throws {
+        let textClient = ScriptedWorkerClient(events: [])
+        let imageClient = ScriptedPhaseFiveWorkerClient()
+        await imageClient.setThrownFailure(
+            WorkerClientError.requestFailed(code: "DEADLINE_EXCEEDED", message: "image generate timed out")
+        )
+        let imageJobReadModel = ImageJobReadModel()
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devImageModel()])
+        _ = await catalog.loadModel(id: "melix-dev-image", dispatchHandle: "melix-dev-image::python")
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: textClient),
+                abortRegistry: AbortRegistry()
+            ),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: textClient,
+                pythonCompatibilityClient: imageClient,
+                modelCatalog: catalog
+            ),
+            imageJobReadModel: imageJobReadModel,
+            environment: ["MELIX_IMAGE_REQUEST_TIMEOUT_SECONDS": "600"]
+        )
+
+        let body = try #require(
+            """
+            {
+              "id": "image-generate-timeout",
+              "model": "melix-dev-image",
+              "prompt": "timeout"
+            }
+            """.data(using: .utf8)
+        )
+        let response = try await handler.handle(
+            HTTPRequest(method: .post, path: "/v1/images/generations", headers: [:], body: body)
+        )
+        let payload = try await collectBody(response.body)
+        let failedJob = try #require(await imageJobReadModel.job(requestID: "image-generate-timeout"))
+
+        #expect(response.statusCode == 504)
+        #expect(payload.contains("\"code\":\"deadline_exceeded\""))
+        #expect(payload.contains("600-second creative workflow deadline"))
+        #expect(failedJob.state == .imageJobFailed)
+        #expect(failedJob.error.code == "deadline_exceeded")
+        #expect(failedJob.progress.stage == "timed_out")
+        #expect(failedJob.timeoutSeconds == 600)
+        #expect(failedJob.recipe.prompt == "timeout")
+    }
+
+    @Test("image endpoints fall back to request mapped jobs when worker job identifiers drift")
+    func imageEndpointsFallBackToRequestMappedJobsWhenWorkerJobIdentifiersDrift() async throws {
+        let textClient = ScriptedWorkerClient(events: [])
+        let imageClient = ScriptedPhaseFiveWorkerClient()
+        var generateResponse = Melix_Worker_V1_ImageGenerateResponse()
+        generateResponse.images = [Data("generate".utf8)]
+        generateResponse.job.requestID = "image-generate-fallback"
+        generateResponse.job.jobID = "worker-generate-fallback"
+        generateResponse.job.modelHandle = "melix-dev-image::python"
+        generateResponse.job.operation = "image_generate"
+        generateResponse.job.state = .imageJobCompleted
+        generateResponse.job.artifacts = [makeWorkerArtifact(jobID: "worker-generate-fallback", role: .imageArtifactGenerated)]
+        await imageClient.setImageGenerateResponse(generateResponse)
+
+        var editResponse = Melix_Worker_V1_ImageEditResponse()
+        editResponse.images = [Data("edit".utf8)]
+        editResponse.job.requestID = "image-edit-fallback"
+        editResponse.job.jobID = "worker-edit-fallback"
+        editResponse.job.modelHandle = "melix-dev-image::python"
+        editResponse.job.operation = "image_edit"
+        editResponse.job.state = .imageJobCompleted
+        editResponse.job.artifacts = [makeWorkerArtifact(jobID: "worker-edit-fallback", role: .imageArtifactGenerated)]
+        await imageClient.setImageEditResponse(editResponse)
+
+        let imageJobReadModel = ImageJobReadModel()
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devImageModel()])
+        _ = await catalog.loadModel(id: "melix-dev-image", dispatchHandle: "melix-dev-image::python")
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: textClient),
+                abortRegistry: AbortRegistry()
+            ),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: textClient,
+                pythonCompatibilityClient: imageClient,
+                modelCatalog: catalog
+            ),
+            imageJobReadModel: imageJobReadModel
+        )
+
+        let generateBody = try #require(
+            """
+            {
+              "id": "image-generate-fallback",
+              "model": "melix-dev-image",
+              "prompt": "fallback generate"
+            }
+            """.data(using: .utf8)
+        )
+        let generateHTTPResponse = try await handler.handle(
+            HTTPRequest(method: .post, path: "/v1/images/generations", headers: [:], body: generateBody)
+        )
+        let generatePayload = try await collectBody(generateHTTPResponse.body)
+
+        let editBody = try #require(
+            """
+            {
+              "id": "image-edit-fallback",
+              "model": "melix-dev-image",
+              "prompt": "fallback edit",
+              "image_url": "file:///tmp/source.png"
+            }
+            """.data(using: .utf8)
+        )
+        let editHTTPResponse = try await handler.handle(
+            HTTPRequest(method: .post, path: "/v1/images/edits", headers: [:], body: editBody)
+        )
+        let editPayload = try await collectBody(editHTTPResponse.body)
+
+        #expect(generateHTTPResponse.statusCode == 200)
+        #expect(generatePayload.contains("\"job_id\":\"image-generate-fallback::image-generate\""))
+        #expect(editHTTPResponse.statusCode == 200)
+        #expect(editPayload.contains("\"job_id\":\"image-edit-fallback::image-edit\""))
+    }
+
+    @Test("image generation maps resource exhausted cancelled empty default and generic worker failures")
+    func imageGenerationMapsResourceExhaustedCancelledEmptyDefaultAndGenericWorkerFailures() async throws {
+        let textClient = ScriptedWorkerClient(events: [])
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devImageModel()])
+        _ = await catalog.loadModel(id: "melix-dev-image", dispatchHandle: "melix-dev-image::python")
+
+        let cases: [(String, Error, Int, String, String)] = [
+            ("image-generate-resource", WorkerClientError.requestFailed(code: "RESOURCE_EXHAUSTED", message: "queue full"), 503, "resource_exhausted", "queue full"),
+            ("image-generate-cancelled", WorkerClientError.requestFailed(code: "cancelled", message: "operator stop"), 409, "cancelled", "operator stop"),
+            ("image-generate-empty-code", WorkerClientError.requestFailed(code: "", message: ""), 503, "worker_unavailable", "worker_unavailable"),
+            ("image-generate-invalid-argument", WorkerClientError.requestFailed(code: "invalid_argument", message: "bad image request"), 400, "invalid_argument", "bad image request"),
+            ("image-generate-generic", NSError(domain: "OpenAIHandlerTests", code: 17, userInfo: [NSLocalizedDescriptionKey: "generic failure"]), 503, "worker_unavailable", "worker_unavailable"),
+        ]
+
+        for (requestID, failure, expectedStatusCode, expectedCode, expectedFragment) in cases {
+            let imageClient = ScriptedPhaseFiveWorkerClient()
+            await imageClient.setThrownFailure(failure)
+            let imageJobReadModel = ImageJobReadModel()
+            let handler = OpenAIHandler(
+                modelCatalog: catalog,
+                requestCoordinator: RequestCoordinator(
+                    workerRegistry: WorkerRegistry(defaultTextClient: textClient),
+                    abortRegistry: AbortRegistry()
+                ),
+                workerRegistry: WorkerRegistry(
+                    defaultTextClient: textClient,
+                    pythonCompatibilityClient: imageClient,
+                    modelCatalog: catalog
+                ),
+                imageJobReadModel: imageJobReadModel
+            )
+
+            let body = try #require(
+                """
+                {
+                  "id": "\(requestID)",
+                  "model": "melix-dev-image",
+                  "prompt": "map this worker failure"
+                }
+                """.data(using: .utf8)
+            )
+            let response = try await handler.handle(
+                HTTPRequest(method: .post, path: "/v1/images/generations", headers: [:], body: body)
+            )
+            let payload = try await collectBody(response.body)
+
+            #expect(response.statusCode == expectedStatusCode)
+            #expect(payload.contains("\"\(expectedCode)\""))
+            #expect(payload.contains(expectedFragment))
+        }
     }
 
     @Test("GET /health reports route readiness and model counts")

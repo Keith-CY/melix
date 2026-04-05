@@ -2,76 +2,88 @@
 
 ## Goal
 
-Complete `M14.2` by making image defaults persistent across restart and exposing role-aware image
-model selection for generation versus editing through the control-plane and Window UI truth.
+Close `M14.3` by making redo and reiteration actions operator-visible and by turning image request
+timeouts into explicit, longer-running creative-workflow policy instead of generic worker
+unavailable failures.
 
 ## Scope
 
-- persist creative defaults such as steps, guidance, strength, and negative prompt through a
-  control-plane-owned store
-- project requested-versus-effective image defaults through reconnect-stable snapshots
-- expose role-aware generate and edit model selection in the Window UI based on capability metadata
-- keep the slice bounded to protocol, control-plane, Window UI, and focused Swift verification
+- persist enough image job recipe state to redo or reiterate from stable control-plane truth
+- expose always-visible redo and reiteration actions in the Window UI image workspace
+- apply a creative image request timeout policy with a `30-minute` default and typed timeout errors
+- keep timeout, retry, and cancel state distinguishable across control-plane, HTTP, and Window UI
+  surfaces
 
 ## Measurement Points
 
-- explicit image defaults survive service restart and remain inspectable through `ServerSnapshot`
-- generate and edit requests keep explicit per-request values authoritative over persisted defaults
-- Window UI image model pickers only surface models that support the requested creative role
+- selected image jobs expose stable recipe state for prompt, size, creative parameters, and source
+  lineage without relying on Window-UI-local copies
+- redo can re-submit the selected job from persisted job state, and reiterate can seed an iterate
+  workflow from a selected generated artifact
+- image worker timeouts surface as explicit `deadline_exceeded` failures rather than collapsing into
+  generic worker-unavailable errors
+- the active image timeout policy remains operator-visible through snapshot or job state projection
 - changed-line coverage for the touched handwritten executable scope remains at or above `95%`
 
 ## Phases
 
-1. Contract and persistence design
+1. Current-state review and execution contract
    - status: completed
    - evidence:
-     - reviewed the existing creative request flow and confirmed generation or edit parameters still
-       lived in request-local UI draft state rather than a control-plane-owned persisted summary
-     - inspected the image-model catalog metadata and confirmed the picker still lacked
-       capability-driven generate-versus-edit role filtering
-2. Persisted image defaults and snapshot projection
+     - reviewed `M14.3` and the umbrella `M14` plan plus the current image workspace and confirmed
+       the Window UI still exposes only generate/edit submit and cancel actions, with no redo or
+       reiterate workflow on top of the typed `variation` and `iterate` contract
+     - inspected the control-plane, OpenAI image handler, Python bridge, and image read-model paths
+       and confirmed image requests currently have no explicit long-running timeout policy and map
+       bridge failures into generic unavailable states
+2. Persisted recipe and timeout policy projection
    - status: completed
    - evidence:
-     - extended the control-plane protocol with typed `ApplyImageDefaults`, `ImageDefaultsSummary`,
-       and optional creative parameter fields on generate or edit requests, then regenerated the
-       versioned Swift, Python, and descriptor artifacts
-     - added `ImageDefaultsStore` so the Swift control plane persists creative defaults, validates
-       requested values, and projects requested-versus-effective summaries through reconnect-stable
-       snapshots and XPC replies
-     - updated the catalog seed and snapshot builders so image models declare generate/edit role
-       support explicitly for downstream picker filtering
-3. Window UI role-aware picker and defaults flow
+     - extended the control-plane image job summary contract with `recipe`,
+       `request_timeout_seconds`, and recipe-summary projection so selected jobs keep stable prompt,
+       size, strength, negative prompt, and lineage truth for redo or reiteration flows
+     - projected the active image timeout policy through control-plane snapshot and request summary
+       truth so the Window UI can inspect the creative-workflow deadline without relying on
+       desktop-local defaults
+3. Timeout-aware bridge and control-plane mapping
    - status: completed
    - evidence:
-     - updated `RuntimeViewModel`, `DesktopImageView`, and the shared XPC client so the Window UI
-       hydrates image defaults from control-plane truth, applies persisted defaults explicitly, and
-       routes typed creative parameters back through generate or edit requests
-     - added role-aware picker filtering so generation and edit surfaces only expose compatible
-       image families while keeping effective defaults inspectable after merge
-4. Verification and milestone bookkeeping
+     - added a default `30-minute` image request deadline in the Python bridge with deterministic
+       test override coverage through `MELIX_IMAGE_REQUEST_TIMEOUT_SECONDS`
+     - mapped image worker deadline failures into typed `deadline_exceeded` image-job failures,
+       explicit `timed_out` progress state, and OpenAI-compatible `504` responses instead of
+       collapsing into generic unavailable failures
+4. Window UI redo and reiteration flows
    - status: completed
    - evidence:
-     - reran `make proto`, focused control-plane and menu-bar Swift suites, coverage-enabled
-       changed-line reports, `git diff --check`, and repository integration coverage for the
-       touched slice
-     - updated the active `M14.2` plan plus the roadmap execution index to reflect the completed
-       persisted-image-defaults and role-aware-picker slice
+     - added always-visible redo and reiteration actions, timeout-policy inspection, timeout-aware
+       status text, and edit-mode/source-artifact inspection in the Window UI image workspace and
+       inspector
+     - drove redo and reiteration from persisted job recipe state plus artifact lineage instead of
+       UI-local temporary copies
+5. Verification and milestone bookkeeping
+   - status: completed
+   - evidence:
+     - reran focused Swift control-plane and menu-bar suites plus focused Python and integration
+       timeout coverage, then measured changed-line coverage for the touched Swift and Python scope
+       above the `95%` threshold
+     - updated the roadmap execution index and progress log to close `M14.3`
 
 ## Acceptance
 
-- persisted image defaults survive restart and remain inspectable through control-plane truth
-- generate and edit requests merge persisted defaults without silently overriding explicit inputs
-- role-aware picking for generation and editing is capability-driven and test-covered
+- redo flows and longer-running timeout policy are explicit, operator-visible, and test-covered
+- timeout-triggered image failures remain distinguishable from cancelation and generic worker
+  failures
+- reiteration actions are backed by stable image-job lineage rather than ad hoc desktop-only state
 
 ## Risks
 
-- persisted creative defaults could drift from runtime truth if snapshots stop projecting the
-  requested-versus-effective merge result
-- picker filtering could hide usable models if image-role metadata is not kept aligned with family
-  capabilities
-- negative-prompt or strength defaults could become misleading if the control plane persists values
-  the runtime path later ignores
+- storing too little recipe state will make redo or reiteration depend on ephemeral UI inputs
+- adding timeout handling only in one surface could leave HTTP and local Window UI behavior
+  inconsistent
+- timeout escalation could leak bridge subprocesses if the timeout policy does not terminate the
+  worker-bridge command cleanly
 
 ## Outcome
 
-- m14_2_image_defaults_role_picker_completed
+- m14_3_redo_timeout_policy_completed

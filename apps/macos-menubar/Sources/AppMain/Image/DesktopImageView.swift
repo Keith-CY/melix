@@ -15,6 +15,19 @@ struct DesktopImageTabView: View {
         }
     }
 
+    @MainActor
+    func redoSelectedJob() {
+        Task {
+            await viewModel.redoSelectedImageJob()
+        }
+    }
+
+    @MainActor
+    func prepareReiterateFromSelectedJob() {
+        selectedMode = .edit
+        viewModel.prepareReiterateFromSelectedImageJob()
+    }
+
     var body: some View {
         HSplitView {
             if showsSidebar {
@@ -30,7 +43,12 @@ struct DesktopImageTabView: View {
             )
 
             if showsInspector {
-                DesktopImageInspector(viewModel: viewModel, cancelSelectedJob: cancelSelectedJob)
+                DesktopImageInspector(
+                    viewModel: viewModel,
+                    cancelSelectedJob: cancelSelectedJob,
+                    redoSelectedJob: redoSelectedJob,
+                    prepareReiterateFromSelectedJob: prepareReiterateFromSelectedJob
+                )
                     .frame(minWidth: 300, idealWidth: 320)
             }
         }
@@ -163,6 +181,13 @@ struct DesktopImageWorkspace: View {
                             Text(effectiveDefaultsSummary)
                                 .multilineTextAlignment(.trailing)
                         }
+                        HStack {
+                            Text("Timeout policy")
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                            Text(viewModel.imageTimeoutPolicyText)
+                                .multilineTextAlignment(.trailing)
+                        }
                     }
                     .font(.caption)
                 }
@@ -239,6 +264,25 @@ struct DesktopImageWorkspace: View {
                         .textFieldStyle(.roundedBorder)
 
                         if selectedMode == .edit {
+                            Picker(
+                                "Edit mode",
+                                selection: Binding(
+                                    get: { viewModel.imageEditMode },
+                                    set: { viewModel.imageEditMode = $0 }
+                                )
+                            ) {
+                                Text("Edit").tag(RuntimeImageEditMode.edit)
+                                Text("Variation").tag(RuntimeImageEditMode.variation)
+                                Text("Iterate").tag(RuntimeImageEditMode.iterate)
+                            }
+                            .pickerStyle(.segmented)
+
+                            if let sourceArtifactSummary = viewModel.imageEditSourceArtifactSummaryText {
+                                Text("Source artifact • \(sourceArtifactSummary)")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+
                             TextField(
                                 "Source image URI",
                                 text: Binding(
@@ -305,8 +349,18 @@ struct DesktopImageWorkspace: View {
             return viewModel.imagePromptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 || availableImageModels.isEmpty
         case .edit:
-            return viewModel.imageEditSourceURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                || availableImageModels.isEmpty
+            if availableImageModels.isEmpty {
+                return true
+            }
+            switch viewModel.imageEditMode {
+            case .edit:
+                return viewModel.imageEditSourceURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            case .variation:
+                return viewModel.imageEditSourceArtifactID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            case .iterate:
+                return viewModel.imageEditSourceArtifactID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    || viewModel.imagePromptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            }
         }
     }
 
@@ -356,6 +410,8 @@ struct DesktopImageWorkspace: View {
 struct DesktopImageInspector: View {
     let viewModel: RuntimeViewModel
     let cancelSelectedJob: @MainActor () -> Void
+    let redoSelectedJob: @MainActor () -> Void
+    let prepareReiterateFromSelectedJob: @MainActor () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -369,7 +425,14 @@ struct DesktopImageInspector: View {
                         Text("\(job.progress.stage) • \(String(format: "%.0f%%", job.progress.pct * 100))")
                             .font(.caption.monospacedDigit())
                             .foregroundStyle(.secondary)
+                        Text(viewModel.selectedImageJobTimeoutText)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                         HStack {
+                            Button("Redo", action: redoSelectedJob)
+                                .disabled(viewModel.canRedoSelectedImageJob == false)
+                            Button("Reiterate", action: prepareReiterateFromSelectedJob)
+                                .disabled(viewModel.canPrepareReiterateFromSelectedImageJob == false)
                             Spacer()
                             Button("Cancel", action: cancelSelectedJob)
                                 .disabled(job.cancelable == false)
@@ -443,7 +506,7 @@ private struct DesktopImageJobRowView: View {
         case .imageJobCanceled:
             return "canceled"
         case .imageJobFailed:
-            return "failed"
+            return job.error.code == "deadline_exceeded" ? "timed_out" : "failed"
         default:
             return "unknown"
         }

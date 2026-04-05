@@ -5282,6 +5282,7 @@ struct RuntimeViewModelTests {
         defaults.effectiveGuidance = 7
         defaults.effectiveStrength = 0.6
         defaults.effectiveNegativePrompt = "grain"
+        defaults.requestTimeoutSeconds = 900
         defaults.source = .operatorOverride
         defaults.updatedAtUnixMs = 1_717_171_717_000
         snapshot.imageDefaults = defaults
@@ -5305,6 +5306,8 @@ struct RuntimeViewModelTests {
         #expect(viewModel.effectiveImageGuidance == "7")
         #expect(viewModel.effectiveImageStrength == "0.6")
         #expect(viewModel.effectiveImageNegativePrompt == "grain")
+        #expect(viewModel.imageRequestTimeoutSeconds == 900)
+        #expect(viewModel.imageTimeoutPolicyText == "15-minute creative workflow deadline")
     }
 
     @Test("image defaults apply forwards typed defaults and projects hydrated summary")
@@ -5551,6 +5554,443 @@ struct RuntimeViewModelTests {
 
         #expect(await client.recordedActions.contains("image.generate:melix-qwen-image"))
         #expect(await client.recordedActions.contains("image.edit:melix-fill-image"))
+    }
+
+    @Test("redo selected image job reconstructs generation parameters from persisted recipe")
+    @MainActor
+    func redoSelectedImageJobReconstructsGenerationRecipe() async throws {
+        let client = FakeControlPlaneXPCClient()
+        var snapshot = makeSnapshot(
+            serverState: .serverReady,
+            models: [makeMenuBarImageModelSummary()]
+        )
+        var recipe = Melix_Controlplane_V1_ImageJobRecipeSummary()
+        recipe.prompt = "Redo this cover"
+        recipe.size = "1536x1024"
+        recipe.steps = 48
+        recipe.guidance = 6.25
+        recipe.negativePrompt = "artifacts"
+        recipe.variantCount = 2
+        recipe.responseFormat = "png"
+        recipe.artifactNamespace = "melix.image.demo"
+        snapshot.imageJobs = [
+            makeMenuBarImageJobSummary(
+                jobID: "job-image-redo-generate",
+                requestID: "req-image-redo-generate",
+                operation: "image_generate",
+                recipe: recipe
+            ),
+        ]
+        await client.configureSnapshot(snapshot)
+        await client.configureImageResponses(
+            generation: makeMenuBarImageJobSummary(
+                jobID: "job-image-redo-generate-2",
+                requestID: "req-image-redo-generate-2",
+                operation: "image_generate",
+                artifacts: [makeMenuBarImageArtifact(jobID: "job-image-redo-generate-2")]
+            )
+        )
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+        await viewModel.redoSelectedImageJob()
+
+        let request = try #require(await client.recordedImageGenerateRequests.last)
+        #expect(request.prompt == "Redo this cover")
+        #expect(request.size == "1536x1024")
+        #expect(request.steps == 48)
+        #expect(request.guidance == 6.25)
+        #expect(request.negativePrompt == "artifacts")
+        #expect(request.n == 2)
+        #expect(request.responseFormat == "png")
+        #expect(request.artifactNamespace == "melix.image.demo")
+    }
+
+    @Test("reiterate preparation seeds iterate state from the selected image job and dispatches iterate edits")
+    @MainActor
+    func prepareReiterateSeedsIterateStateAndDispatchesEdit() async throws {
+        let client = FakeControlPlaneXPCClient()
+        var snapshot = makeSnapshot(
+            serverState: .serverReady,
+            models: [makeMenuBarImageModelSummary()]
+        )
+        let generatedArtifact = makeMenuBarImageArtifact(
+            jobID: "job-image-iterate-source",
+            role: .imageArtifactGenerated,
+            storageURI: "/tmp/generated.png"
+        )
+        var recipe = Melix_Controlplane_V1_ImageJobRecipeSummary()
+        recipe.prompt = "Base prompt"
+        recipe.size = "1024x1024"
+        recipe.steps = 36
+        recipe.guidance = 5.5
+        recipe.strength = 0.45
+        recipe.negativePrompt = "noise"
+        recipe.variantCount = 1
+        recipe.responseFormat = "png"
+        snapshot.imageJobs = [
+            makeMenuBarImageJobSummary(
+                jobID: "job-image-iterate-source",
+                requestID: "req-image-iterate-source",
+                operation: "image_edit",
+                artifacts: [generatedArtifact],
+                recipe: recipe,
+                timeoutSeconds: 600,
+                sourceArtifactID: "artifact-origin",
+                promptDelta: "make it brighter",
+                editMode: .iterate
+            ),
+        ]
+        await client.configureSnapshot(snapshot)
+        await client.configureImageResponses(
+            edit: makeMenuBarImageJobSummary(
+                jobID: "job-image-iterate-dispatch",
+                requestID: "req-image-iterate-dispatch",
+                operation: "image_iterate",
+                artifacts: [makeMenuBarImageArtifact(jobID: "job-image-iterate-dispatch")]
+            )
+        )
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+        viewModel.prepareReiterateFromSelectedImageJob()
+
+        #expect(viewModel.imageEditMode == .iterate)
+        #expect(viewModel.imageEditSourceArtifactID == generatedArtifact.artifactID)
+        #expect(viewModel.imageEditSourceURL.isEmpty)
+        #expect(viewModel.imagePromptText.isEmpty)
+        #expect(viewModel.imageSteps == "36")
+        #expect(viewModel.imageGuidance == "5.5")
+        #expect(viewModel.imageStrength == "0.45")
+        #expect(viewModel.imageNegativePrompt == "noise")
+        #expect(viewModel.imageStatusText == "Iterate draft seeded")
+        #expect(viewModel.selectedImageJobTimeoutText == "10-minute deadline")
+
+        viewModel.imagePromptText = "push the contrast further"
+        await viewModel.submitImageEdit()
+
+        let request = try #require(await client.recordedImageEditRequests.last)
+        #expect(request.sourceArtifactID == generatedArtifact.artifactID)
+        #expect(request.imageURL.isEmpty)
+        #expect(request.prompt.isEmpty)
+        #expect(request.promptDelta == "push the contrast further")
+        #expect(request.mode == .iterate)
+        #expect(request.strength == 0.45)
+    }
+
+    @Test("timed out image jobs surface explicit timeout status text")
+    @MainActor
+    func timedOutImageJobsSurfaceExplicitStatusText() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [makeMenuBarImageModelSummary()]
+            )
+        )
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+
+        var timedOutError = Melix_Controlplane_V1_ErrorStatus()
+        timedOutError.code = "deadline_exceeded"
+        timedOutError.message = "Image request exceeded the 600-second creative workflow deadline."
+
+        let timedOutJob = makeMenuBarImageJobSummary(
+            jobID: "job-image-timeout",
+            requestID: "req-image-timeout",
+            operation: "image_generate",
+            state: .imageJobFailed,
+            timeoutSeconds: 600,
+            error: timedOutError
+        )
+        await client.sendImageJobStateChanged(timedOutJob)
+
+        try await waitForRuntimeViewModelCondition("expected timed out image job to appear") {
+            viewModel.selectedImageJob?.jobID == "job-image-timeout"
+        }
+
+        #expect(viewModel.imageStatusText == "Timed Out • image_generate")
+        #expect(viewModel.selectedImageJobTimeoutText == "Timed out • 10-minute deadline")
+    }
+
+    @Test("runtime image edit mode exposes typed identifiers titles and control-plane mapping")
+    func runtimeImageEditModeExposesTypedIdentifiersTitlesAndControlPlaneMapping() {
+        let expectations: [(RuntimeImageEditMode, String, String, ControlPlaneImageEditRequest.Mode)] = [
+            (.edit, "edit", "Edit", .edit),
+            (.variation, "variation", "Variation", .variation),
+            (.iterate, "iterate", "Iterate", .iterate),
+        ]
+
+        for (mode, expectedID, expectedTitle, expectedControlPlaneMode) in expectations {
+            #expect(mode.id == expectedID)
+            #expect(mode.title == expectedTitle)
+            #expect(mode.controlPlaneMode == expectedControlPlaneMode)
+        }
+    }
+
+    @Test("image timeout text falls back to second-based policy text when no job is selected")
+    @MainActor
+    func imageTimeoutTextFallsBackToSecondBasedPolicyTextWhenNoJobIsSelected() async throws {
+        let client = FakeControlPlaneXPCClient()
+        var snapshot = makeSnapshot(
+            serverState: .serverReady,
+            models: [makeMenuBarImageModelSummary()]
+        )
+        snapshot.imageDefaults.requestTimeoutSeconds = 75
+        snapshot.imageDefaults.source = .operatorOverride
+        await client.configureSnapshot(snapshot)
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+
+        #expect(viewModel.selectedImageJob == nil)
+        #expect(viewModel.imageTimeoutPolicyText == "75-second creative workflow deadline")
+        #expect(viewModel.selectedImageJobTimeoutText == "75-second creative workflow deadline")
+    }
+
+    @Test("image source artifact summary resolves matching artifacts and raw fallback text")
+    @MainActor
+    func imageSourceArtifactSummaryResolvesMatchingArtifactsAndRawFallbackText() async throws {
+        let client = FakeControlPlaneXPCClient()
+        var snapshot = makeSnapshot(
+            serverState: .serverReady,
+            models: [makeMenuBarImageModelSummary()]
+        )
+        var sourceArtifact = makeMenuBarImageArtifact(
+            jobID: "job-image-source-summary",
+            role: .imageArtifactGenerated,
+            storageURI: "/tmp/generated-source.png"
+        )
+        sourceArtifact.artifactID = "artifact-source-summary"
+        snapshot.imageJobs = [
+            makeMenuBarImageJobSummary(
+                jobID: "job-image-source-summary",
+                requestID: "req-image-source-summary",
+                operation: "image_edit",
+                artifacts: [sourceArtifact]
+            ),
+        ]
+        await client.configureSnapshot(snapshot)
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+        viewModel.imageEditSourceArtifactID = "artifact-source-summary"
+        #expect(viewModel.imageEditSourceArtifactSummaryText == "artifact-source-summary • /tmp/generated-source.png")
+
+        viewModel.imageEditSourceArtifactID = "artifact-missing"
+        #expect(viewModel.imageEditSourceArtifactSummaryText == "artifact-missing")
+
+        viewModel.imageEditSourceArtifactID = "   "
+        #expect(viewModel.imageEditSourceArtifactSummaryText == nil)
+    }
+
+    @Test("image edit validation enforces source artifact prompt delta and strength bounds")
+    @MainActor
+    func imageEditValidationEnforcesSourceArtifactPromptDeltaAndStrengthBounds() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [makeMenuBarImageModelSummary()]
+            )
+        )
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+        viewModel.imagePromptText = "Edit the scene"
+        viewModel.imageStrength = "0.5"
+        viewModel.imageEditMode = .variation
+        viewModel.imageEditSourceURL = "file:///tmp/source.png"
+
+        await viewModel.submitImageEdit()
+        #expect(viewModel.imageStatusText == "Failed")
+        #expect(viewModel.lastError?.contains("source artifact") == true)
+        #expect(await client.recordedImageEditRequests.isEmpty)
+
+        viewModel.imageEditMode = .iterate
+        viewModel.imageEditSourceArtifactID = "artifact-source"
+        viewModel.imageEditSourceURL = ""
+        viewModel.imagePromptText = "   "
+        viewModel.imageStrength = "0.5"
+
+        await viewModel.submitImageEdit()
+        #expect(viewModel.lastError?.contains("prompt delta") == true)
+        #expect(await client.recordedImageEditRequests.isEmpty)
+
+        viewModel.imageEditMode = .edit
+        viewModel.imageEditSourceArtifactID = ""
+        viewModel.imageEditSourceURL = "file:///tmp/source.png"
+        viewModel.imagePromptText = "Adjust the contrast"
+        viewModel.imageStrength = "1.25"
+
+        await viewModel.submitImageEdit()
+        #expect(viewModel.lastError?.contains("between 0 and 1") == true)
+        #expect(await client.recordedImageEditRequests.isEmpty)
+    }
+
+    @Test("redo selected image edit reconstructs direct and fallback lineage branches across edit modes")
+    @MainActor
+    func redoSelectedImageEditReconstructsDirectAndFallbackLineageBranchesAcrossEditModes() async throws {
+        let client = FakeControlPlaneXPCClient()
+        var snapshot = makeSnapshot(
+            serverState: .serverReady,
+            models: [makeMenuBarImageModelSummary()]
+        )
+
+        var editRecipe = Melix_Controlplane_V1_ImageJobRecipeSummary()
+        editRecipe.prompt = "Replace the sky"
+        var editSourceArtifact = makeMenuBarImageArtifact(
+            jobID: "job-image-redo-edit",
+            role: .imageArtifactEditSource,
+            storageURI: "/tmp/edit-source.png"
+        )
+        editSourceArtifact.artifactID = "artifact-edit-source"
+        var editMaskArtifact = makeMenuBarImageArtifact(
+            jobID: "job-image-redo-edit",
+            role: .imageArtifactMask,
+            storageURI: "/tmp/edit-mask.png"
+        )
+        editMaskArtifact.artifactID = "artifact-edit-mask"
+
+        var variationRecipe = Melix_Controlplane_V1_ImageJobRecipeSummary()
+        variationRecipe.prompt = "Keep the composition"
+        variationRecipe.sourceImageUri = "file:///tmp/direct-variation-source.png"
+        variationRecipe.maskUri = "file:///tmp/direct-variation-mask.png"
+        variationRecipe.size = "2048x1024"
+
+        var iterateRecipe = Melix_Controlplane_V1_ImageJobRecipeSummary()
+        iterateRecipe.prompt = "Make it warmer"
+        iterateRecipe.maskUri = "file:///tmp/direct-iterate-mask.png"
+
+        snapshot.imageJobs = [
+            makeMenuBarImageJobSummary(
+                jobID: "job-image-redo-edit",
+                requestID: "req-image-redo-edit",
+                operation: "image_edit",
+                artifacts: [editSourceArtifact, editMaskArtifact],
+                recipe: editRecipe,
+                editMode: .edit
+            ),
+            makeMenuBarImageJobSummary(
+                jobID: "job-image-redo-variation",
+                requestID: "req-image-redo-variation",
+                operation: "image_edit",
+                recipe: variationRecipe,
+                editMode: .variation
+            ),
+            makeMenuBarImageJobSummary(
+                jobID: "job-image-redo-iterate",
+                requestID: "req-image-redo-iterate",
+                operation: "image_edit",
+                recipe: iterateRecipe,
+                sourceArtifactID: "artifact-iterate-source",
+                promptDelta: "   ",
+                editMode: .iterate
+            ),
+        ]
+        await client.configureSnapshot(snapshot)
+        await client.configureImageResponses(
+            edit: makeMenuBarImageJobSummary(
+                jobID: "job-image-redo-edit-dispatched",
+                requestID: "req-image-redo-edit-dispatched",
+                operation: "image_edit",
+                artifacts: [makeMenuBarImageArtifact(jobID: "job-image-redo-edit-dispatched")]
+            )
+        )
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+
+        viewModel.selectImageJob(jobID: "job-image-redo-edit")
+        await viewModel.redoSelectedImageJob()
+        let editRequest = try #require(await client.recordedImageEditRequests.last)
+        #expect(editRequest.mode == .edit)
+        #expect(editRequest.imageURL == "/tmp/edit-source.png")
+        #expect(editRequest.maskURL == "/tmp/edit-mask.png")
+        #expect(editRequest.prompt == "Replace the sky")
+        #expect(editRequest.sourceArtifactID.isEmpty)
+        #expect(editRequest.strength == 1)
+        #expect(editRequest.size == "1024x1024")
+        #expect(editRequest.responseFormat == "png")
+
+        viewModel.selectImageJob(jobID: "job-image-redo-variation")
+        await viewModel.redoSelectedImageJob()
+        let variationRequest = try #require(await client.recordedImageEditRequests.last)
+        #expect(variationRequest.mode == .variation)
+        #expect(variationRequest.imageURL == "file:///tmp/direct-variation-source.png")
+        #expect(variationRequest.maskURL == "file:///tmp/direct-variation-mask.png")
+        #expect(variationRequest.prompt == "Keep the composition")
+        #expect(variationRequest.size == "2048x1024")
+
+        viewModel.selectImageJob(jobID: "job-image-redo-iterate")
+        await viewModel.redoSelectedImageJob()
+        let iterateRequest = try #require(await client.recordedImageEditRequests.last)
+        #expect(iterateRequest.mode == .iterate)
+        #expect(iterateRequest.sourceArtifactID == "artifact-iterate-source")
+        #expect(iterateRequest.imageURL.isEmpty)
+        #expect(iterateRequest.maskURL == "file:///tmp/direct-iterate-mask.png")
+        #expect(iterateRequest.prompt.isEmpty)
+        #expect(iterateRequest.promptDelta == "Make it warmer")
+    }
+
+    @Test("redo and reiterate no-op branches preserve state and image generation load failures surface local errors")
+    @MainActor
+    func redoAndReiterateNoOpBranchesPreserveStateAndImageGenerationLoadFailuresSurfaceLocalErrors() async throws {
+        let client = FakeControlPlaneXPCClient()
+        var snapshot = makeSnapshot(
+            serverState: .serverReady,
+            models: [makeMenuBarImageModelSummary()]
+        )
+        snapshot.imageJobs = [
+            makeMenuBarImageJobSummary(
+                jobID: "job-image-running-no-redo",
+                requestID: "req-image-running-no-redo",
+                operation: "image_edit",
+                state: .imageJobRunning
+            ),
+            makeMenuBarImageJobSummary(
+                jobID: "job-image-no-generated-artifact",
+                requestID: "req-image-no-generated-artifact",
+                operation: "image_edit",
+                artifacts: [
+                    makeMenuBarImageArtifact(
+                        jobID: "job-image-no-generated-artifact",
+                        role: .imageArtifactEditSource,
+                        storageURI: "/tmp/source-only.png"
+                    )
+                ]
+            ),
+        ]
+        await client.configureSnapshot(snapshot)
+        await client.configureErrors(
+            imageGenerate: NSError(
+                domain: "MenuBarTests",
+                code: 17,
+                userInfo: [NSLocalizedDescriptionKey: "synthetic generate failure"]
+            )
+        )
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+        viewModel.selectImageJob(jobID: "job-image-running-no-redo")
+        await viewModel.redoSelectedImageJob()
+        #expect(await client.recordedImageGenerateRequests.isEmpty)
+        #expect(await client.recordedImageEditRequests.isEmpty)
+
+        viewModel.selectImageJob(jobID: "job-image-no-generated-artifact")
+        viewModel.imageEditMode = .edit
+        let priorMode = viewModel.imageEditMode
+        let priorArtifactID = viewModel.imageEditSourceArtifactID
+        viewModel.prepareReiterateFromSelectedImageJob()
+        #expect(viewModel.imageEditMode == priorMode)
+        #expect(viewModel.imageEditSourceArtifactID == priorArtifactID)
+
+        viewModel.imagePromptText = "Draw a failure case"
+        await viewModel.submitImageGeneration()
+        #expect(await client.recordedActions.contains("image.generate:melix-dev-image"))
+        #expect(viewModel.imageStatusText == "Failed")
+        #expect(viewModel.lastError?.contains("synthetic generate failure") == true)
     }
 
     @Test("image cancel action dispatches through the client and records cancel latency")

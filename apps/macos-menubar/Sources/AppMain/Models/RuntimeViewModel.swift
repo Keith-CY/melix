@@ -333,6 +333,38 @@ public enum RuntimeImageWorkflowRole: String, CaseIterable, Sendable {
     case edit
 }
 
+public enum RuntimeImageEditMode: String, CaseIterable, Identifiable, Sendable {
+    case edit
+    case variation
+    case iterate
+
+    public var id: String {
+        rawValue
+    }
+
+    public var title: String {
+        switch self {
+        case .edit:
+            return "Edit"
+        case .variation:
+            return "Variation"
+        case .iterate:
+            return "Iterate"
+        }
+    }
+
+    var controlPlaneMode: ControlPlaneImageEditRequest.Mode {
+        switch self {
+        case .edit:
+            return .edit
+        case .variation:
+            return .variation
+        case .iterate:
+            return .iterate
+        }
+    }
+}
+
 public enum RuntimeBenchmarkPresentationMode: String, CaseIterable, Identifiable, Sendable {
     case standard = "standard"
     case matrix = "matrix"
@@ -780,6 +812,7 @@ private struct ImageDefaultsProjection: Equatable, Sendable {
     let effectiveGuidance: Double
     let effectiveStrength: Double
     let effectiveNegativePrompt: String
+    let requestTimeoutSeconds: UInt32
     let sourceText: String
     let updatedAtUnixMS: Int64
 }
@@ -838,6 +871,7 @@ public final class RuntimeViewModel {
     public private(set) var imageJobs: [Melix_Controlplane_V1_ImageJobSummary] = []
     public private(set) var imageStatusText = "Idle"
     public private(set) var selectedImageJobID = ""
+    public private(set) var imageRequestTimeoutSeconds: UInt32 = 1_800
     public private(set) var selectedAgentIntegrationTarget: AgentIntegrationExportTarget = .openAICompatible
     public var chatComposerText = ""
     public var selectedChatModelID = "melix-dev-text"
@@ -930,8 +964,10 @@ public final class RuntimeViewModel {
     public var selectedAdapterPackageID = ""
     public var registryRootPathDraft = ""
     public var imagePromptText = ""
+    public var imageEditMode: RuntimeImageEditMode = .edit
     public var imageEditSourceURL = ""
     public var imageEditMaskURL = ""
+    public var imageEditSourceArtifactID = ""
     public var imageSize = "1024x1024"
     public var imageSteps = "28"
     public var imageGuidance = "7.5"
@@ -1931,6 +1967,48 @@ public final class RuntimeViewModel {
         return imageJobs.first(where: { $0.jobID == selectedImageJobID }) ?? imageJobs.first
     }
 
+    public var imageTimeoutPolicyText: String {
+        let minutes = max(1, Int(imageRequestTimeoutSeconds) / 60)
+        if minutes * 60 == Int(imageRequestTimeoutSeconds) {
+            return "\(minutes)-minute creative workflow deadline"
+        }
+        return "\(imageRequestTimeoutSeconds)-second creative workflow deadline"
+    }
+
+    public var selectedImageJobTimeoutText: String {
+        guard let job = selectedImageJob else {
+            return imageTimeoutPolicyText
+        }
+        let timeoutSeconds = job.timeoutSeconds == 0 ? imageRequestTimeoutSeconds : job.timeoutSeconds
+        let minutes = max(1, Int(timeoutSeconds) / 60)
+        let policyText = minutes * 60 == Int(timeoutSeconds)
+            ? "\(minutes)-minute deadline"
+            : "\(timeoutSeconds)-second deadline"
+        if job.error.code == "deadline_exceeded" {
+            return "Timed out • \(policyText)"
+        }
+        return policyText
+    }
+
+    public var canRedoSelectedImageJob: Bool {
+        selectedImageJob.map(Self.canRedoImageJob(_:)) ?? false
+    }
+
+    public var canPrepareReiterateFromSelectedImageJob: Bool {
+        selectedImageJob.flatMap(Self.reiterateSourceArtifactID(from:)) != nil
+    }
+
+    public var imageEditSourceArtifactSummaryText: String? {
+        let artifactID = imageEditSourceArtifactID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !artifactID.isEmpty else {
+            return nil
+        }
+        if let artifact = selectedImageJob?.artifacts.first(where: { $0.artifactID == artifactID }) {
+            return "\(artifactID) • \(artifact.storageUri)"
+        }
+        return artifactID
+    }
+
     public var desktopFoundationState: DesktopFoundationState {
         DesktopFoundationState.build(
             statusTitle: statusTitle,
@@ -2335,47 +2413,46 @@ public final class RuntimeViewModel {
             return
         }
 
-        let modelID = resolvedImageModelID(for: .generate)
-        if models.contains(where: { $0.modelID == modelID && $0.isLoaded }) == false {
-            await loadModel(modelID: modelID)
-        }
-
-        let startedAt = Date()
-        imageStatusText = "Submitting"
-        notifyStateChanged()
-
-        do {
-            let job = try await client.generateImage(
-                ControlPlaneImageGenerationRequest(
-                    modelID: modelID,
-                    prompt: prompt,
-                    size: imageSize,
-                    steps: imageSteps,
-                    guidance: Float(imageGuidance),
-                    negativePrompt: imageNegativePrompt.trimmingCharacters(in: .whitespacesAndNewlines),
-                    n: max(1, imageVariantCount)
-                )
-            )
-            upsert(imageJob: job)
-            imageStatusText = Self.imageStatusText(for: job)
-            imagePromptText = ""
-            await metrics.record(
-                name: "desktop.image_action_latency_ms",
-                valueMs: Date().timeIntervalSince(startedAt) * 1_000
-            )
-        } catch {
-            imageStatusText = "Failed"
-            recordLocalError(String(describing: error))
-        }
-
-        notifyStateChanged()
+        await submitImageGeneration(
+            ControlPlaneImageGenerationRequest(
+                modelID: resolvedImageModelID(for: .generate),
+                prompt: prompt,
+                size: imageSize,
+                steps: imageSteps,
+                guidance: Float(imageGuidance),
+                negativePrompt: imageNegativePrompt.trimmingCharacters(in: .whitespacesAndNewlines),
+                n: max(1, imageVariantCount)
+            ),
+            statusText: "Submitting",
+            clearPromptOnSuccess: true
+        )
     }
 
     public func submitImageEdit() async {
         let sourceURL = imageEditSourceURL.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !sourceURL.isEmpty else {
+        let sourceArtifactID = imageEditSourceArtifactID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let selectedEditMode = imageEditMode
+        let trimmedPrompt = imagePromptText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let promptDelta = selectedEditMode == .iterate ? trimmedPrompt : ""
+
+        if selectedEditMode == .variation || selectedEditMode == .iterate {
+            guard !sourceArtifactID.isEmpty else {
+                imageStatusText = "Failed"
+                recordLocalError("Variation and iterate requests require a source artifact.")
+                notifyStateChanged()
+                return
+            }
+        }
+
+        guard !sourceURL.isEmpty || !sourceArtifactID.isEmpty else {
             imageStatusText = "Failed"
             recordLocalError("Image edit source is required.")
+            notifyStateChanged()
+            return
+        }
+        if selectedEditMode == .iterate, promptDelta.isEmpty {
+            imageStatusText = "Failed"
+            recordLocalError("Iterate requests require a prompt delta.")
             notifyStateChanged()
             return
         }
@@ -2390,33 +2467,126 @@ public final class RuntimeViewModel {
             return
         }
 
-        let modelID = resolvedImageModelID(for: .edit)
-        if models.contains(where: { $0.modelID == modelID && $0.isLoaded }) == false {
-            await loadModel(modelID: modelID)
+        await submitImageEdit(
+            ControlPlaneImageEditRequest(
+                modelID: resolvedImageModelID(for: .edit),
+                prompt: selectedEditMode == .iterate ? "" : trimmedPrompt,
+                imageURL: sourceArtifactID.isEmpty ? sourceURL : "",
+                maskURL: imageEditMaskURL.trimmingCharacters(in: .whitespacesAndNewlines),
+                sourceArtifactID: sourceArtifactID,
+                promptDelta: promptDelta,
+                mode: selectedEditMode.controlPlaneMode,
+                strength: Float(resolvedImageStrength),
+                size: imageSize,
+                steps: imageSteps,
+                guidance: Float(imageGuidance),
+                negativePrompt: imageNegativePrompt.trimmingCharacters(in: .whitespacesAndNewlines),
+                n: max(1, imageVariantCount)
+            ),
+            statusText: selectedEditMode == .iterate ? "Submitting Iterate" : "Submitting",
+            clearPromptOnSuccess: true
+        )
+    }
+
+    public func redoSelectedImageJob() async {
+        guard let job = selectedImageJob, Self.canRedoImageJob(job) else {
+            return
+        }
+        if job.operation == "image_generate" {
+            await submitImageGeneration(Self.redoGenerationRequest(from: job), statusText: "Redoing", clearPromptOnSuccess: false)
+            return
+        }
+        await submitImageEdit(Self.redoEditRequest(from: job), statusText: "Redoing", clearPromptOnSuccess: false)
+    }
+
+    public func prepareReiterateFromSelectedImageJob() {
+        guard let job = selectedImageJob,
+              let artifactID = Self.reiterateSourceArtifactID(from: job) else {
+            return
+        }
+        if let imageModel = models.first(where: { $0.modelID == job.modelID && Self.imageModel($0, supports: .edit) }) {
+            selectedImageEditModelID = imageModel.modelID
+        }
+        imageEditMode = .iterate
+        imageEditSourceArtifactID = artifactID
+        imageEditSourceURL = ""
+        imageEditMaskURL = ""
+        imagePromptText = ""
+        if job.recipe.steps > 0 {
+            imageSteps = String(job.recipe.steps)
+        }
+        if job.recipe.guidance > 0 {
+            imageGuidance = Self.formatImageDefaultNumber(Double(job.recipe.guidance))
+        }
+        if job.recipe.strength > 0 {
+            imageStrength = Self.formatImageDefaultNumber(Double(job.recipe.strength))
+        }
+        if job.recipe.size.isEmpty == false {
+            imageSize = job.recipe.size
+        }
+        if job.recipe.negativePrompt.isEmpty == false {
+            imageNegativePrompt = job.recipe.negativePrompt
+        }
+        imageStatusText = "Iterate draft seeded"
+        notifyStateChanged()
+    }
+
+    private func submitImageGeneration(
+        _ request: ControlPlaneImageGenerationRequest,
+        statusText: String,
+        clearPromptOnSuccess: Bool
+    ) async {
+        if models.contains(where: { $0.modelID == request.modelID && $0.isLoaded }) == false {
+            await loadModel(modelID: request.modelID)
         }
 
         let startedAt = Date()
-        imageStatusText = "Submitting"
+        imageStatusText = statusText
         notifyStateChanged()
 
         do {
-            let job = try await client.editImage(
-                ControlPlaneImageEditRequest(
-                    modelID: modelID,
-                    prompt: imagePromptText.trimmingCharacters(in: .whitespacesAndNewlines),
-                    imageURL: sourceURL,
-                    maskURL: imageEditMaskURL.trimmingCharacters(in: .whitespacesAndNewlines),
-                    strength: Float(resolvedImageStrength),
-                    size: imageSize,
-                    steps: imageSteps,
-                    guidance: Float(imageGuidance),
-                    negativePrompt: imageNegativePrompt.trimmingCharacters(in: .whitespacesAndNewlines),
-                    n: max(1, imageVariantCount)
-                )
-            )
+            let job = try await client.generateImage(request)
             upsert(imageJob: job)
             imageStatusText = Self.imageStatusText(for: job)
-            imagePromptText = ""
+            if clearPromptOnSuccess {
+                imagePromptText = ""
+            }
+            await metrics.record(
+                name: "desktop.image_action_latency_ms",
+                valueMs: Date().timeIntervalSince(startedAt) * 1_000
+            )
+        } catch {
+            imageStatusText = "Failed"
+            recordLocalError(String(describing: error))
+        }
+
+        notifyStateChanged()
+    }
+
+    private func submitImageEdit(
+        _ request: ControlPlaneImageEditRequest,
+        statusText: String,
+        clearPromptOnSuccess: Bool
+    ) async {
+        if models.contains(where: { $0.modelID == request.modelID && $0.isLoaded }) == false {
+            await loadModel(modelID: request.modelID)
+        }
+
+        let startedAt = Date()
+        imageStatusText = statusText
+        notifyStateChanged()
+
+        do {
+            let job = try await client.editImage(request)
+            upsert(imageJob: job)
+            imageStatusText = Self.imageStatusText(for: job)
+            if clearPromptOnSuccess {
+                imagePromptText = ""
+            }
+            if request.sourceArtifactID.isEmpty == false {
+                imageEditSourceArtifactID = ""
+                imageEditMode = .edit
+            }
             await metrics.record(
                 name: "desktop.image_action_latency_ms",
                 valueMs: Date().timeIntervalSince(startedAt) * 1_000
@@ -4902,6 +5072,7 @@ public final class RuntimeViewModel {
             effectiveImageGuidance = imageGuidance
             effectiveImageStrength = imageStrength
             effectiveImageNegativePrompt = imageNegativePrompt
+            imageRequestTimeoutSeconds = 1_800
             return
         }
 
@@ -4929,6 +5100,7 @@ public final class RuntimeViewModel {
         effectiveImageGuidance = Self.formatImageDefaultNumber(projection.effectiveGuidance)
         effectiveImageStrength = Self.formatImageDefaultNumber(projection.effectiveStrength)
         effectiveImageNegativePrompt = projection.effectiveNegativePrompt
+        imageRequestTimeoutSeconds = projection.requestTimeoutSeconds
         imageDefaultsUpdatedAtUnixMS = projection.updatedAtUnixMS
     }
 
@@ -5139,6 +5311,7 @@ public final class RuntimeViewModel {
             effectiveGuidance: Double(summary.effectiveGuidance == 0 ? Float(requestedGuidance) : summary.effectiveGuidance),
             effectiveStrength: Double(summary.effectiveStrength == 0 ? Float(requestedStrength) : summary.effectiveStrength),
             effectiveNegativePrompt: summary.effectiveNegativePrompt,
+            requestTimeoutSeconds: summary.requestTimeoutSeconds == 0 ? 1_800 : summary.requestTimeoutSeconds,
             sourceText: imageDefaultsSourceText(summary.source),
             updatedAtUnixMS: summary.updatedAtUnixMs
         )
@@ -5915,6 +6088,9 @@ public final class RuntimeViewModel {
         case .imageJobCanceled:
             return "Canceled • \(job.operation)"
         case .imageJobFailed:
+            if job.error.code == "deadline_exceeded" {
+                return "Timed Out • \(job.operation)"
+            }
             return "Failed • \(job.operation)"
         default:
             return job.operation.isEmpty ? "Idle" : job.operation
@@ -6692,6 +6868,104 @@ public final class RuntimeViewModel {
         let sanitizedJobID = (jobID?.isEmpty == false ? jobID! : "all-runs")
             .replacingOccurrences(of: "/", with: "-")
         return "melix-evaluation-samples-\(sanitizedJobID).jsonl"
+    }
+
+    private static func canRedoImageJob(_ job: Melix_Controlplane_V1_ImageJobSummary) -> Bool {
+        if job.operation == "image_generate" {
+            return job.recipe.prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+        }
+        return job.sourceArtifactID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+            || recipeSourceImageURI(from: job).isEmpty == false
+    }
+
+    private static func redoGenerationRequest(
+        from job: Melix_Controlplane_V1_ImageJobSummary
+    ) -> ControlPlaneImageGenerationRequest {
+        ControlPlaneImageGenerationRequest(
+            modelID: job.modelID,
+            prompt: job.recipe.prompt,
+            size: job.recipe.size.isEmpty ? "1024x1024" : job.recipe.size,
+            steps: job.recipe.steps,
+            guidance: job.recipe.guidance,
+            negativePrompt: job.recipe.negativePrompt,
+            n: max(1, job.recipe.variantCount),
+            responseFormat: job.recipe.responseFormat.isEmpty ? "png" : job.recipe.responseFormat,
+            artifactNamespace: job.recipe.artifactNamespace
+        )
+    }
+
+    private static func redoEditRequest(
+        from job: Melix_Controlplane_V1_ImageJobSummary
+    ) -> ControlPlaneImageEditRequest {
+        let sourceArtifactID = job.sourceArtifactID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let prompt = job.editMode == .iterate ? "" : job.recipe.prompt
+        let promptDelta: String
+        if job.editMode == .iterate {
+            let delta = job.promptDelta.trimmingCharacters(in: .whitespacesAndNewlines)
+            promptDelta = delta.isEmpty ? job.recipe.prompt : delta
+        } else {
+            promptDelta = ""
+        }
+
+        return ControlPlaneImageEditRequest(
+            modelID: job.modelID,
+            prompt: prompt,
+            imageURL: sourceArtifactID.isEmpty ? recipeSourceImageURI(from: job) : "",
+            maskURL: recipeMaskURI(from: job),
+            sourceArtifactID: sourceArtifactID,
+            promptDelta: promptDelta,
+            mode: controlPlaneEditMode(from: job.editMode),
+            strength: job.recipe.strength > 0 ? job.recipe.strength : 1,
+            size: job.recipe.size.isEmpty ? "1024x1024" : job.recipe.size,
+            steps: job.recipe.steps,
+            guidance: job.recipe.guidance,
+            negativePrompt: job.recipe.negativePrompt,
+            n: max(1, job.recipe.variantCount),
+            responseFormat: job.recipe.responseFormat.isEmpty ? "png" : job.recipe.responseFormat
+        )
+    }
+
+    private static func reiterateSourceArtifactID(
+        from job: Melix_Controlplane_V1_ImageJobSummary
+    ) -> String? {
+        job.artifacts
+            .last(where: { $0.role == .imageArtifactGenerated && !$0.artifactID.isEmpty })?
+            .artifactID
+    }
+
+    private static func recipeSourceImageURI(
+        from job: Melix_Controlplane_V1_ImageJobSummary
+    ) -> String {
+        let directURI = job.recipe.sourceImageUri.trimmingCharacters(in: .whitespacesAndNewlines)
+        if directURI.isEmpty == false {
+            return directURI
+        }
+        return job.artifacts.first(where: {
+            $0.role == .imageArtifactEditSource || $0.role == .imageArtifactInput
+        })?.storageUri ?? ""
+    }
+
+    private static func recipeMaskURI(
+        from job: Melix_Controlplane_V1_ImageJobSummary
+    ) -> String {
+        let directURI = job.recipe.maskUri.trimmingCharacters(in: .whitespacesAndNewlines)
+        if directURI.isEmpty == false {
+            return directURI
+        }
+        return job.artifacts.first(where: { $0.role == .imageArtifactMask })?.storageUri ?? ""
+    }
+
+    private static func controlPlaneEditMode(
+        from mode: Melix_Controlplane_V1_ImageEditMode
+    ) -> ControlPlaneImageEditRequest.Mode {
+        switch mode {
+        case .variation:
+            return .variation
+        case .iterate:
+            return .iterate
+        case .edit, .unspecified, .UNRECOGNIZED:
+            return .edit
+        }
     }
 
     private static func isImageModelKind(_ kind: String) -> Bool {

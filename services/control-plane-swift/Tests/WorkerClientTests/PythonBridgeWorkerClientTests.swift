@@ -796,21 +796,21 @@ struct PythonBridgeWorkerClientTests {
             _ = try await client.embed(request: embedRequest)
             Issue.record("Expected embed bridge call to fail.")
         } catch let error as WorkerClientError {
-            #expect(error == .unavailable)
+            #expect(error == .requestFailed(code: "UNAVAILABLE", message: "embed down"))
         }
 
         do {
             _ = try await client.rerank(request: rerankRequest)
             Issue.record("Expected rerank bridge call to fail.")
         } catch let error as WorkerClientError {
-            #expect(error == .unavailable)
+            #expect(error == .requestFailed(code: "UNAVAILABLE", message: "rerank down"))
         }
 
         do {
             _ = try await client.getModelInfo(request: infoRequest)
             Issue.record("Expected get-model-info bridge call to fail.")
         } catch let error as WorkerClientError {
-            #expect(error == .unavailable)
+            #expect(error == .requestFailed(code: "UNAVAILABLE", message: "info down"))
         }
     }
 
@@ -836,14 +836,14 @@ struct PythonBridgeWorkerClientTests {
             _ = try await client.transcribe(request: transcribeRequest)
             Issue.record("Expected transcribe bridge call to fail.")
         } catch let error as WorkerClientError {
-            #expect(error == .unavailable)
+            #expect(error == .requestFailed(code: "UNAVAILABLE", message: "transcribe down"))
         }
 
         do {
             _ = try await client.speak(request: speakRequest)
             Issue.record("Expected speak bridge call to fail.")
         } catch let error as WorkerClientError {
-            #expect(error == .unavailable)
+            #expect(error == .requestFailed(code: "UNAVAILABLE", message: "speech down"))
         }
     }
 
@@ -872,14 +872,14 @@ struct PythonBridgeWorkerClientTests {
             _ = try await client.imageGenerate(request: generateRequest)
             Issue.record("Expected image-generate bridge call to fail.")
         } catch let error as WorkerClientError {
-            #expect(error == .unavailable)
+            #expect(error == .requestFailed(code: "UNAVAILABLE", message: "image generate down"))
         }
 
         do {
             _ = try await client.imageEdit(request: editRequest)
             Issue.record("Expected image-edit bridge call to fail.")
         } catch let error as WorkerClientError {
-            #expect(error == .unavailable)
+            #expect(error == .requestFailed(code: "UNAVAILABLE", message: "image edit down"))
         }
     }
 
@@ -1493,6 +1493,26 @@ struct PythonBridgeWorkerClientTests {
         }
     }
 
+    @Test("process bridge runner preserves unary error payloads from non-zero exits")
+    func processBridgeRunnerPreservesUnaryErrorPayloadsFromNonZeroExits() async throws {
+        let fixtureRoot = try makeProcessBridgeFixtureRepo()
+        let runner = ProcessWorkerBridgeRunner(
+            repoRoot: fixtureRoot.path,
+            environment: ProcessInfo.processInfo.environment
+        )
+
+        let errorLine = try await runner.runUnary(
+            command: BridgeCommand(
+                kind: .imageGenerate,
+                socketPath: "/tmp/unused.sock",
+                requestData: Data("rpc-error".utf8)
+            )
+        )
+
+        #expect(errorLine.contains("\"kind\": \"error\""))
+        #expect(errorLine.contains("\"code\": \"DEADLINE_EXCEEDED\""))
+    }
+
     @Test("process bridge runner surfaces non-zero stream exits as unavailable")
     func processBridgeRunnerSurfacesNonZeroStreamExitsAsUnavailable() async throws {
         let fixtureRoot = try makeProcessBridgeFixtureRepo()
@@ -1685,6 +1705,9 @@ private func makeProcessBridgeFixtureRepo() throws -> URL {
         print(json.dumps({"kind": "message", "message_b64": base64.b64encode(b"second").decode("ascii")}), flush=True)
     elif args.command == "handshake":
         print(json.dumps({"kind": "message", "message_b64": ""}), flush=True)
+    elif payload == b"rpc-error":
+        print(json.dumps({"kind": "error", "code": "DEADLINE_EXCEEDED", "message": "timed out"}), flush=True)
+        sys.exit(1)
     else:
         print(json.dumps({"kind": "message", "message_b64": base64.b64encode(b"ok").decode("ascii")}), flush=True)
     """.write(

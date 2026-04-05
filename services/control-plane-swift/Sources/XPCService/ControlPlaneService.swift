@@ -1741,6 +1741,7 @@ public actor ControlPlaneService {
         let resolvedNegativePrompt = command.negativePrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             ? imageDefaults.negativePrompt
             : command.negativePrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        let requestTimeoutSeconds = imageDefaults.requestTimeoutSeconds
 
         switch await prepareDefaultServerSessionForServingActivity() {
         case .blocked(let code, let message):
@@ -1786,7 +1787,21 @@ public actor ControlPlaneService {
             jobID: jobID,
             modelID: resolvedModelID,
             operation: "image_generate",
-            lane: routeKind.defaultSchedulingLane
+            lane: routeKind.defaultSchedulingLane,
+            recipe: imageJobRecipe(
+                prompt: command.prompt,
+                size: workerRequest.size,
+                steps: resolvedSteps,
+                guidance: resolvedGuidance,
+                strength: nil,
+                negativePrompt: resolvedNegativePrompt,
+                variantCount: workerRequest.n,
+                responseFormat: workerRequest.responseFormat,
+                artifactNamespace: workerRequest.artifactNamespace,
+                sourceImageURI: "",
+                maskURI: ""
+            ),
+            timeoutSeconds: requestTimeoutSeconds
         )
         do {
             try await imageJobAdmissionController.acquire(
@@ -1852,23 +1867,32 @@ public actor ControlPlaneService {
                 )
             }
 
+            let queuedReplyJob = await imageJobReadModel.job(jobID: resolvedJobID)
+            let persistedReplyJob: Melix_Controlplane_V1_ImageJobSummary?
+            if let queuedReplyJob {
+                persistedReplyJob = queuedReplyJob
+            } else {
+                persistedReplyJob = await imageJobReadModel.job(requestID: request.requestID)
+            }
+            let replyJob = persistedReplyJob ?? controlPlaneImageJob(from: workerResponse.job, modelID: resolvedModelID)
             var reply = Melix_Controlplane_V1_ImageReply()
-            reply.job = controlPlaneImageJob(from: workerResponse.job, modelID: resolvedModelID)
+            reply.job = replyJob
             if reply.job.jobID.isEmpty {
                 reply.job.jobID = resolvedJobID
             }
             return okResponse(for: request, image: reply)
         } catch {
+            let failure = imageWorkerFailure(error: error, timeoutSeconds: requestTimeoutSeconds)
             await imageJobReadModel.recordFailed(
                 jobID: jobID,
-                error: controlPlaneError(code: "unavailable", message: "Image worker request failed: \(error)")
+                error: failure
             )
             await imageJobAdmissionController.finish(
                 requestID: request.requestID,
                 phase: .requestFailed,
                 workerID: routeKind.workerSourceID
             )
-            return errorResponse(for: request, code: "unavailable", message: "Image worker request failed: \(error)")
+            return errorResponse(for: request, code: failure.code, message: failure.message)
         }
     }
 
@@ -1891,6 +1915,7 @@ public actor ControlPlaneService {
         let resolvedNegativePrompt = command.negativePrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             ? imageDefaults.negativePrompt
             : command.negativePrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        let requestTimeoutSeconds = imageDefaults.requestTimeoutSeconds
 
         guard !command.image.isEmpty || !command.imageUri.isEmpty || !sourceArtifactID.isEmpty else {
             if resolvedEditMode == .variation || resolvedEditMode == .iterate {
@@ -2014,6 +2039,20 @@ public actor ControlPlaneService {
             modelID: resolvedModelID,
             operation: imageEditOperationName(for: resolvedEditMode),
             lane: routeKind.defaultSchedulingLane,
+            recipe: imageJobRecipe(
+                prompt: resolvedPrompt,
+                size: workerRequest.size,
+                steps: resolvedSteps,
+                guidance: resolvedGuidance,
+                strength: workerRequest.strength,
+                negativePrompt: resolvedNegativePrompt,
+                variantCount: workerRequest.n,
+                responseFormat: workerRequest.responseFormat,
+                artifactNamespace: "",
+                sourceImageURI: resolvedImageURI,
+                maskURI: workerRequest.maskUri
+            ),
+            timeoutSeconds: requestTimeoutSeconds,
             sourceArtifactID: sourceArtifactID,
             sourceJobID: sourceJobID,
             promptDelta: promptDelta,
@@ -2083,23 +2122,32 @@ public actor ControlPlaneService {
                 )
             }
 
+            let queuedReplyJob = await imageJobReadModel.job(jobID: resolvedJobID)
+            let persistedReplyJob: Melix_Controlplane_V1_ImageJobSummary?
+            if let queuedReplyJob {
+                persistedReplyJob = queuedReplyJob
+            } else {
+                persistedReplyJob = await imageJobReadModel.job(requestID: request.requestID)
+            }
+            let replyJob = persistedReplyJob ?? controlPlaneImageJob(from: workerResponse.job, modelID: resolvedModelID)
             var reply = Melix_Controlplane_V1_ImageReply()
-            reply.job = controlPlaneImageJob(from: workerResponse.job, modelID: resolvedModelID)
+            reply.job = replyJob
             if reply.job.jobID.isEmpty {
                 reply.job.jobID = resolvedJobID
             }
             return okResponse(for: request, image: reply)
         } catch {
+            let failure = imageWorkerFailure(error: error, timeoutSeconds: requestTimeoutSeconds)
             await imageJobReadModel.recordFailed(
                 jobID: jobID,
-                error: controlPlaneError(code: "unavailable", message: "Image worker request failed: \(error)")
+                error: failure
             )
             await imageJobAdmissionController.finish(
                 requestID: request.requestID,
                 phase: .requestFailed,
                 workerID: routeKind.workerSourceID
             )
-            return errorResponse(for: request, code: "unavailable", message: "Image worker request failed: \(error)")
+            return errorResponse(for: request, code: failure.code, message: failure.message)
         }
     }
 
@@ -3376,6 +3424,69 @@ public actor ControlPlaneService {
             ext["melix.image.strength"] = String(strength)
         }
         return ext
+    }
+
+    private func imageJobRecipe(
+        prompt: String,
+        size: String,
+        steps: UInt32,
+        guidance: Float,
+        strength: Float?,
+        negativePrompt: String,
+        variantCount: UInt32,
+        responseFormat: String,
+        artifactNamespace: String,
+        sourceImageURI: String,
+        maskURI: String
+    ) -> Melix_Controlplane_V1_ImageJobRecipeSummary {
+        var recipe = Melix_Controlplane_V1_ImageJobRecipeSummary()
+        recipe.prompt = prompt
+        recipe.size = size
+        recipe.steps = steps
+        recipe.guidance = guidance
+        recipe.strength = strength ?? 0
+        recipe.negativePrompt = negativePrompt
+        recipe.variantCount = variantCount
+        recipe.responseFormat = responseFormat
+        recipe.artifactNamespace = artifactNamespace
+        recipe.sourceImageUri = sourceImageURI
+        recipe.maskUri = maskURI
+        return recipe
+    }
+
+    private func imageWorkerFailure(
+        error: Error,
+        timeoutSeconds: UInt32
+    ) -> Melix_Controlplane_V1_ErrorStatus {
+        guard let workerError = error as? WorkerClientError else {
+            return controlPlaneError(code: "unavailable", message: "Image worker request failed: \(error)")
+        }
+        switch workerError {
+        case .unavailable:
+            return controlPlaneError(code: "unavailable", message: "Image worker request failed: \(error)")
+        case let .requestFailed(code, message):
+            let normalizedCode = normalizedBridgeErrorCode(code)
+            switch normalizedCode {
+            case "deadline_exceeded":
+                return controlPlaneError(
+                    code: "deadline_exceeded",
+                    message: "Image request exceeded the \(timeoutSeconds)-second creative workflow deadline."
+                )
+            case "cancelled":
+                return controlPlaneError(code: "cancelled", message: message.isEmpty ? "Image request was cancelled." : message)
+            case "":
+                return controlPlaneError(code: "unavailable", message: message.isEmpty ? "Image worker request failed." : message)
+            default:
+                return controlPlaneError(code: normalizedCode, message: message.isEmpty ? "Image worker request failed." : message)
+            }
+        }
+    }
+
+    private func normalizedBridgeErrorCode(_ rawValue: String) -> String {
+        rawValue
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .replacingOccurrences(of: "-", with: "_")
     }
 
     private func controlPlaneError(from workerError: Melix_Worker_V1_ErrorStatus) -> Melix_Controlplane_V1_ErrorStatus {

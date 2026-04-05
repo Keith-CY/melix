@@ -2407,6 +2407,119 @@ struct DesktopFoundationViewTests {
         #expect(viewModel.imageEditMaskURL == "file:///tmp/mask.png")
     }
 
+    @Test("image inspector renders timeout redo and reiterate branches")
+    @MainActor
+    func imageInspectorRendersTimeoutRedoAndReiterateBranches() async throws {
+        let client = FakeControlPlaneXPCClient()
+        var snapshot = Melix_Controlplane_V1_ServerSnapshot()
+        snapshot.serverState = .serverReady
+        snapshot.models = [
+            makeMenuBarImageModelSummary(),
+        ]
+        var timedOutError = Melix_Controlplane_V1_ErrorStatus()
+        timedOutError.code = "deadline_exceeded"
+        timedOutError.message = "Image request exceeded the 600-second creative workflow deadline."
+        let generatedArtifact = makeMenuBarImageArtifact(
+            jobID: "job-image-timeout",
+            role: .imageArtifactGenerated,
+            storageURI: "/tmp/timeout-output.png"
+        )
+        snapshot.imageJobs = [
+            makeMenuBarImageJobSummary(
+                jobID: "job-image-timeout",
+                requestID: "req-image-timeout",
+                operation: "image_edit",
+                state: .imageJobFailed,
+                artifacts: [generatedArtifact],
+                timeoutSeconds: 600,
+                sourceArtifactID: "artifact-source",
+                editMode: .iterate,
+                error: timedOutError
+            ),
+        ]
+        await client.configureSnapshot(snapshot)
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+
+        let view = hostView(
+            DesktopImageInspector(
+                viewModel: viewModel,
+                cancelSelectedJob: {},
+                redoSelectedJob: {},
+                prepareReiterateFromSelectedJob: {}
+            )
+        )
+
+        #expect(view.subviews.isEmpty == false)
+        #expect(viewModel.canRedoSelectedImageJob == true)
+        #expect(viewModel.canPrepareReiterateFromSelectedImageJob == true)
+        #expect(viewModel.selectedImageJobTimeoutText == "Timed out • 10-minute deadline")
+    }
+
+    @Test("image workspace renders source artifact summaries and variation or iterate disabled branches")
+    @MainActor
+    func imageWorkspaceRendersSourceArtifactSummariesAndVariationOrIterateDisabledBranches() async throws {
+        let client = FakeControlPlaneXPCClient()
+        var snapshot = Melix_Controlplane_V1_ServerSnapshot()
+        snapshot.serverState = .serverReady
+        snapshot.models = [makeMenuBarImageModelSummary()]
+        var generatedArtifact = makeMenuBarImageArtifact(
+            jobID: "job-image-workspace-summary",
+            role: .imageArtifactGenerated,
+            storageURI: "/tmp/workspace-generated.png"
+        )
+        generatedArtifact.artifactID = "artifact-workspace-generated"
+        snapshot.imageJobs = [
+            makeMenuBarImageJobSummary(
+                jobID: "job-image-workspace-summary",
+                requestID: "req-image-workspace-summary",
+                operation: "image_edit",
+                artifacts: [generatedArtifact]
+            ),
+        ]
+        await client.configureSnapshot(snapshot)
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+
+        viewModel.imageEditMode = .variation
+        viewModel.imageEditSourceArtifactID = ""
+        let variationView = hostView(
+            DesktopImageWorkspace(
+                viewModel: viewModel,
+                selectedMode: .constant(.edit),
+                showsSidebar: .constant(true),
+                showsInspector: .constant(true)
+            )
+        )
+
+        viewModel.imageEditMode = .iterate
+        viewModel.imageEditSourceArtifactID = "artifact-workspace-generated"
+        viewModel.imagePromptText = ""
+        let iterateDisabledView = hostView(
+            DesktopImageWorkspace(
+                viewModel: viewModel,
+                selectedMode: .constant(.edit),
+                showsSidebar: .constant(true),
+                showsInspector: .constant(true)
+            )
+        )
+
+        viewModel.imagePromptText = "Push the lighting"
+        let iterateEnabledView = hostView(
+            DesktopImageWorkspace(
+                viewModel: viewModel,
+                selectedMode: .constant(.edit),
+                showsSidebar: .constant(true),
+                showsInspector: .constant(true)
+            )
+        )
+
+        #expect(variationView.subviews.isEmpty == false)
+        #expect(iterateDisabledView.subviews.isEmpty == false)
+        #expect(iterateEnabledView.subviews.isEmpty == false)
+        #expect(viewModel.imageEditSourceArtifactSummaryText == "artifact-workspace-generated • /tmp/workspace-generated.png")
+    }
+
     @Test("image tab dispatches generate and edit actions through the view model")
     @MainActor
     func imageTabDispatchesGenerateAndEditActions() async throws {
@@ -2480,6 +2593,53 @@ struct DesktopFoundationViewTests {
         #expect(view.subviews.isEmpty == false)
     }
 
+    @Test("image tab helper actions dispatch redo and prepare reiterate through the view model")
+    @MainActor
+    func imageTabHelperActionsDispatchRedoAndPrepareReiterateThroughViewModel() async throws {
+        let client = FakeControlPlaneXPCClient()
+        var snapshot = Melix_Controlplane_V1_ServerSnapshot()
+        snapshot.serverState = .serverReady
+        snapshot.models = [makeMenuBarImageModelSummary()]
+        let generatedArtifact = makeMenuBarImageArtifact(
+            jobID: "job-image-tab-helper",
+            role: .imageArtifactGenerated,
+            storageURI: "/tmp/tab-helper-generated.png"
+        )
+        var recipe = Melix_Controlplane_V1_ImageJobRecipeSummary()
+        recipe.prompt = "Redo this poster"
+        recipe.steps = 24
+        snapshot.imageJobs = [
+            makeMenuBarImageJobSummary(
+                jobID: "job-image-tab-helper",
+                requestID: "req-image-tab-helper",
+                operation: "image_generate",
+                artifacts: [generatedArtifact],
+                recipe: recipe
+            ),
+        ]
+        await client.configureSnapshot(snapshot)
+        await client.configureImageResponses(
+            generation: makeMenuBarImageJobSummary(
+                jobID: "job-image-tab-helper-redo",
+                requestID: "req-image-tab-helper-redo",
+                operation: "image_generate",
+                artifacts: [makeMenuBarImageArtifact(jobID: "job-image-tab-helper-redo")]
+            )
+        )
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+
+        let tab = DesktopImageTabView(viewModel: viewModel)
+        tab.redoSelectedJob()
+        try await Task.sleep(for: .milliseconds(20))
+        tab.prepareReiterateFromSelectedJob()
+
+        let request = try #require(await client.recordedImageGenerateRequests.last)
+        #expect(request.prompt == "Redo this poster")
+        #expect(viewModel.imageEditMode == .iterate)
+        #expect(viewModel.imageEditSourceArtifactID == "job-image-tab-helper-redo::artifact")
+    }
+
     @Test("image tab renders completed jobs without dispatching cancel")
     @MainActor
     func imageTabRendersCompletedJobsWithoutCancelDispatch() async throws {
@@ -2545,6 +2705,37 @@ struct DesktopFoundationViewTests {
         #expect(view.subviews.isEmpty == false)
         #expect(viewModel.imageJobs.isEmpty)
         #expect(viewModel.selectedImageJob == nil)
+    }
+
+    @Test("image tab renders timed out image rows through the sidebar")
+    @MainActor
+    func imageTabRendersTimedOutImageRowsThroughTheSidebar() async throws {
+        let client = FakeControlPlaneXPCClient()
+        var snapshot = Melix_Controlplane_V1_ServerSnapshot()
+        snapshot.serverState = .serverReady
+        snapshot.models = [makeMenuBarImageModelSummary()]
+        var timedOutError = Melix_Controlplane_V1_ErrorStatus()
+        timedOutError.code = "deadline_exceeded"
+        timedOutError.message = "Image request exceeded the 600-second creative workflow deadline."
+        snapshot.imageJobs = [
+            makeMenuBarImageJobSummary(
+                jobID: "job-image-row-timeout",
+                requestID: "req-image-row-timeout",
+                operation: "image_generate",
+                state: .imageJobFailed,
+                timeoutSeconds: 600,
+                error: timedOutError
+            ),
+        ]
+        await client.configureSnapshot(snapshot)
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+
+        let view = hostView(DesktopImageTabView(viewModel: viewModel))
+        viewModel.selectImageJob(jobID: "job-image-row-timeout")
+
+        #expect(view.subviews.isEmpty == false)
+        #expect(viewModel.selectedImageJobTimeoutText == "Timed out • 10-minute deadline")
     }
 
     @Test("dashboard renders residency and memory protection summaries from control-plane truth")

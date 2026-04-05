@@ -52,6 +52,7 @@ public struct ImageDefaultsPolicy: Equatable, Sendable {
     public let guidance: Float
     public let strength: Float
     public let negativePrompt: String
+    public let requestTimeoutSeconds: UInt32
     public let source: Melix_Controlplane_V1_ImageDefaultsSource
     public let updatedAtUnixMS: Int64
 
@@ -63,6 +64,7 @@ public struct ImageDefaultsPolicy: Equatable, Sendable {
         guidance: Float,
         strength: Float,
         negativePrompt: String,
+        requestTimeoutSeconds: UInt32,
         source: Melix_Controlplane_V1_ImageDefaultsSource,
         updatedAtUnixMS: Int64
     ) {
@@ -73,6 +75,7 @@ public struct ImageDefaultsPolicy: Equatable, Sendable {
         self.guidance = guidance
         self.strength = strength
         self.negativePrompt = negativePrompt
+        self.requestTimeoutSeconds = requestTimeoutSeconds
         self.source = source
         self.updatedAtUnixMS = updatedAtUnixMS
     }
@@ -93,6 +96,7 @@ private struct ImageDefaultsResolvedDefaults: Equatable, Sendable {
     let effectiveGuidance: Float
     let effectiveStrength: Float
     let effectiveNegativePrompt: String
+    let requestTimeoutSeconds: UInt32
     let source: Melix_Controlplane_V1_ImageDefaultsSource
     let updatedAtUnixMS: Int64
 }
@@ -140,6 +144,7 @@ public actor ImageDefaultsStore {
     private let fileManager: FileManager
     private let nowUnixMS: @Sendable () -> Int64
     private let defaults: PersistedImageDefaultsRecord
+    private let requestTimeoutSeconds: UInt32
     private var record: PersistedImageDefaultsRecord?
 
     public init(
@@ -151,6 +156,7 @@ public actor ImageDefaultsStore {
         self.nowUnixMS = nowUnixMS
         self.storeURL = Self.resolveStoreURL(environment: environment, fileManager: fileManager)
         self.defaults = Self.resolveDefaults(environment: environment)
+        self.requestTimeoutSeconds = Self.resolveRequestTimeoutSeconds(environment: environment)
         self.record = Self.loadRecord(from: self.storeURL, fileManager: fileManager)
     }
 
@@ -164,6 +170,7 @@ public actor ImageDefaultsStore {
         self.nowUnixMS = nowUnixMS
         self.storeURL = storeURL
         self.defaults = Self.resolveDefaults(environment: defaults)
+        self.requestTimeoutSeconds = Self.resolveRequestTimeoutSeconds(environment: defaults)
         self.record = Self.loadRecord(from: storeURL, fileManager: fileManager)
     }
 
@@ -217,7 +224,12 @@ public actor ImageDefaultsStore {
     public func resolvedDefaults(
         models: [Melix_Controlplane_V1_ModelSummary]
     ) -> ImageDefaultsPolicy {
-        let resolved = Self.resolve(record: record, defaults: defaults, models: models)
+        let resolved = Self.resolve(
+            record: record,
+            defaults: defaults,
+            models: models,
+            requestTimeoutSeconds: requestTimeoutSeconds
+        )
         return ImageDefaultsPolicy(
             generateModelID: resolved.effectiveGenerateModelID,
             editModelID: resolved.effectiveEditModelID,
@@ -226,6 +238,7 @@ public actor ImageDefaultsStore {
             guidance: resolved.effectiveGuidance,
             strength: resolved.effectiveStrength,
             negativePrompt: resolved.effectiveNegativePrompt,
+            requestTimeoutSeconds: resolved.requestTimeoutSeconds,
             source: resolved.source,
             updatedAtUnixMS: resolved.updatedAtUnixMS
         )
@@ -234,7 +247,12 @@ public actor ImageDefaultsStore {
     public func summary(
         models: [Melix_Controlplane_V1_ModelSummary]
     ) -> Melix_Controlplane_V1_ImageDefaultsSummary {
-        let resolved = Self.resolve(record: record, defaults: defaults, models: models)
+        let resolved = Self.resolve(
+            record: record,
+            defaults: defaults,
+            models: models,
+            requestTimeoutSeconds: requestTimeoutSeconds
+        )
         var summary = Melix_Controlplane_V1_ImageDefaultsSummary()
         summary.requestedGenerateModelID = resolved.requestedGenerateModelID
         summary.requestedEditModelID = resolved.requestedEditModelID
@@ -252,6 +270,7 @@ public actor ImageDefaultsStore {
         summary.effectiveNegativePrompt = resolved.effectiveNegativePrompt
         summary.source = resolved.source
         summary.updatedAtUnixMs = resolved.updatedAtUnixMS
+        summary.requestTimeoutSeconds = resolved.requestTimeoutSeconds
         return summary
     }
 
@@ -272,7 +291,8 @@ public actor ImageDefaultsStore {
     private static func resolve(
         record: PersistedImageDefaultsRecord?,
         defaults: PersistedImageDefaultsRecord,
-        models: [Melix_Controlplane_V1_ModelSummary]
+        models: [Melix_Controlplane_V1_ModelSummary],
+        requestTimeoutSeconds: UInt32
     ) -> ImageDefaultsResolvedDefaults {
         let requested = record ?? defaults
         let source = record?.source ?? defaults.source
@@ -308,6 +328,7 @@ public actor ImageDefaultsStore {
             effectiveNegativePrompt: requested.negativePrompt.isEmpty
                 ? (generateModelDefaults?.negativePrompt ?? defaults.negativePrompt)
                 : requested.negativePrompt,
+            requestTimeoutSeconds: requestTimeoutSeconds,
             source: source,
             updatedAtUnixMS: record?.updatedAtUnixMS ?? 0
         )
@@ -477,6 +498,17 @@ public actor ImageDefaultsStore {
             sourceRawValue: source.rawValue,
             updatedAtUnixMS: 0
         )
+    }
+
+    private static func resolveRequestTimeoutSeconds(
+        environment: [String: String]
+    ) -> UInt32 {
+        let rawValue = environment["MELIX_IMAGE_REQUEST_TIMEOUT_SECONDS"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard let parsed = UInt32(rawValue), parsed > 0 else {
+            return 1_800
+        }
+        return parsed
     }
 
     private static func loadRecord(

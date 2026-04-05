@@ -72,6 +72,8 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
         let guidance: Float
         let negativePrompt: String
         let n: UInt32
+        let responseFormat: String
+        let artifactNamespace: String
     }
 
     struct RecordedImageEditRequest: Equatable, Sendable {
@@ -79,12 +81,16 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
         let prompt: String
         let imageURL: String
         let maskURL: String
+        let sourceArtifactID: String
+        let promptDelta: String
+        let mode: ControlPlaneImageEditRequest.Mode
         let strength: Float
         let size: String
         let steps: UInt32
         let guidance: Float
         let negativePrompt: String
         let n: UInt32
+        let responseFormat: String
     }
 
     struct RecordedServerIdlePolicyRequest: Equatable, Sendable {
@@ -676,7 +682,9 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
                 steps: request.steps,
                 guidance: request.guidance,
                 negativePrompt: request.negativePrompt,
-                n: request.n
+                n: request.n,
+                responseFormat: request.responseFormat,
+                artifactNamespace: request.artifactNamespace
             )
         )
         var response = imageGenerateResponse
@@ -700,12 +708,16 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
                 prompt: request.prompt,
                 imageURL: request.imageURL,
                 maskURL: request.maskURL,
+                sourceArtifactID: request.sourceArtifactID,
+                promptDelta: request.promptDelta,
+                mode: request.mode,
                 strength: request.strength,
                 size: request.size,
                 steps: request.steps,
                 guidance: request.guidance,
                 negativePrompt: request.negativePrompt,
-                n: request.n
+                n: request.n,
+                responseFormat: request.responseFormat
             )
         )
         var response = imageEditResponse
@@ -1426,7 +1438,14 @@ func makeMenuBarImageJobSummary(
     modelID: String = "melix-dev-image",
     operation: String,
     state: Melix_Controlplane_V1_ImageJobState = .imageJobCompleted,
-    artifacts: [Melix_Controlplane_V1_ImageArtifactRef] = []
+    artifacts: [Melix_Controlplane_V1_ImageArtifactRef] = [],
+    recipe: Melix_Controlplane_V1_ImageJobRecipeSummary = Melix_Controlplane_V1_ImageJobRecipeSummary(),
+    timeoutSeconds: UInt32 = 0,
+    sourceArtifactID: String = "",
+    sourceJobID: String = "",
+    promptDelta: String = "",
+    editMode: Melix_Controlplane_V1_ImageEditMode = .unspecified,
+    error: Melix_Controlplane_V1_ErrorStatus = Melix_Controlplane_V1_ErrorStatus()
 ) -> Melix_Controlplane_V1_ImageJobSummary {
     var job = Melix_Controlplane_V1_ImageJobSummary()
     job.jobID = jobID
@@ -1439,6 +1458,13 @@ func makeMenuBarImageJobSummary(
     job.progress.stage = state == .imageJobCompleted ? "completed" : "running"
     job.progress.pct = state == .imageJobCompleted ? 1 : 0.5
     job.artifacts = artifacts
+    job.recipe = recipe
+    job.timeoutSeconds = timeoutSeconds
+    job.sourceArtifactID = sourceArtifactID
+    job.sourceJobID = sourceJobID
+    job.promptDelta = promptDelta
+    job.editMode = editMode
+    job.error = error
     job.cancelable = state == .imageJobRunning || state == .imageJobQueued
     job.createdAtUnixMs = 1_710_000_000_000
     job.updatedAtUnixMs = 1_710_000_000_500
