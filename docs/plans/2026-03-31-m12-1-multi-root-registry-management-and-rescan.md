@@ -1,5 +1,14 @@
 # M12.1 Multi-Root Registry Management And Rescan
 
+## Status
+
+In progress on 2026-04-05. The current repository can discover registry roots from
+`MELIX_MODEL_ROOTS` and emit snapshot payloads, but root configuration is still environment-owned,
+root identity is index-derived, and there is no operator-facing add, remove, reorder, or rescan
+surface. This slice closes that gap by making root configuration control-plane-owned, root
+identity stable, and rescans explicit across worker snapshots, catalog sync, and Window UI
+actions.
+
 ## Goal
 
 Complete the operator-facing management layer for multiple model roots, ordered scanning, and rescan behavior.

@@ -2,6 +2,21 @@
 
 ## 2026-04-05
 
+- Started `M12.1` by moving the active task plan to multi-root registry management and rescan:
+  - recorded that the current repository only discovers registry roots from `MELIX_MODEL_ROOTS`
+    and caches index-derived root IDs, which is insufficient for operator-facing add, remove,
+    reorder, and rescan workflows
+  - defined the next implementation slice around control-plane-owned root configuration, stable
+    root identity, first-root-wins precedence, and tools-surface observability for ordered root
+    rows plus discovery results
+  - updated the active task plan so the implementation transaction starts from an explicit
+    milestone contract instead of the minimal placeholder plan
+- Verification summary for the `M12.1` planning transaction:
+  - `git diff --check`: pass
+- Metrics report for the `M12.1` planning transaction:
+  - `N/A` for executable coverage and runtime metrics because this transaction only updates active
+    planning and milestone-state documents
+
 - Closed `M11.4` and, with it, the parent `M11` milestone by adding repository-owned truthful
   disk-streaming smoke evidence and operator runbook guidance without fabricating unsupported
   SSD-backed runtime metrics:

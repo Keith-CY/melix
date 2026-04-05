@@ -2,62 +2,59 @@
 
 ## Goal
 
-Advance `M11.4` by adding truthful large-model streaming evidence, unsupported-path smoke
-coverage, and operator runbook guidance for the current Melix disk-streaming surface.
+Advance `M12.1` by making multi-root model registry management and rescans operator-facing,
+control-plane-owned, and deterministic across worker scans, catalog sync, and Window UI actions.
 
 ## Scope
 
-- measure the RAM-resident baseline with the current benchmark pipeline
-- capture typed unsupported-path evidence for `prefer_disk` and `require_disk`
-- preserve requested-versus-effective disk-streaming and cache-policy visibility in a smoke report
-- document current operator setup and diagnostic workflows without fabricating SSD-backed metrics
+- replace environment-only registry-root discovery with control-plane-managed root configuration
+- preserve stable registry-root identity across rescans while keeping root ordering explicit
+- expose root add, remove, reorder, and rescan actions through the Window UI and model-ops path
+- keep invalid roots observable without poisoning successful roots or discovered models
 
 ## Measurement Points
 
-- the smoke runner must emit numeric RAM-baseline benchmark metrics for the selected model
-- `prefer_disk` and `require_disk` attempts must capture typed unsupported evidence plus
-  requested-versus-effective disk-streaming state
-- the report must expose runtime support flags and cache-compatibility detail without inventing
-  unavailable SSD-backed metrics
+- registry snapshots must surface stable root IDs, ordered roots, accessibility, and discovered
+  model IDs
+- rescans must preserve first-root-wins discovery semantics while updating catalog entries
+  deterministically
+- Window UI actions must be able to add, remove, reorder, and rescan roots without losing the
+  latest root snapshot or adapter-registry state
 
 ## Phases
 
-1. Streaming evidence design and command contract
-   - status: completed
+1. Root identity, control-plane sync, and worker scan contract
+   - status: in_progress
    - evidence:
-     - define the smoke report structure, baseline benchmark inputs, and unsupported-path evidence
-       fields for the current disk-streaming surface
-     - record the current runtime constraint that true SSD-backed execution is still unsupported
-2. Smoke runner, integration coverage, and runbook
-   - status: completed
+     - define the root identity scheme, rescan contract, and first-root-wins precedence rules
+     - route configured registry roots through the control plane into worker-backed
+       `registry_snapshot` execution without requiring environment rewrites
+2. Window UI root management and observability
+   - status: pending
    - evidence:
-     - implement a repository-owned smoke command that benchmarks the RAM baseline, exercises
-       `prefer_disk` and `require_disk`, restores settings, and emits a machine-readable report
-     - add live integration coverage plus an operator runbook for setup and diagnosis
+     - add operator controls for root add, remove, reorder, and rescan
+     - surface ordered root rows, accessibility, and discovered model counts in the tools surface
 3. Verification and milestone bookkeeping
-   - status: completed
+   - status: pending
    - evidence:
-     - run the authoritative verification commands for the touched scope, including the new
-       disk-streaming smoke integration path
-     - record changed-line coverage at or above `95%`, update `progress.md`, and only close
-       `M11.4` if the resulting evidence stays truthful to current runtime capabilities
+     - run the authoritative Swift and Python verification commands for the touched scope
+     - record changed-line coverage at or above `95%`, update `progress.md`, and close `M12.1`
+       only after root identity and rescan behavior are test-backed
 
 ## Acceptance
 
-- Melix owns reproducible smoke evidence for the current disk-streaming surface
-- operators can inspect requested-versus-effective disk-streaming state and unsupported-path
-  diagnostics in one report
-- runbook guidance explains current capability boundaries and diagnostic interpretation
+- operators can manage multiple model roots and trigger rescans deterministically
+- registry-root identity remains stable across rescans and root reordering
+- invalid roots remain visible without breaking successful discovery from valid roots
 
 ## Risks
 
-- emitting deterministic SSD metrics would make the milestone look complete while the runtime still
-  rejects disk-backed execution
-- treating unsupported-path smoke as a hard test failure would remove the operator evidence Melix
-  currently can and should surface
-- failing to restore model settings after the smoke path would leave operator state mutated between
-  verification runs
+- path-order-only root IDs would make reorders look like different roots and break observability
+- UI-only root management would drift from control-plane truth and disappear on the next
+  catalog-driven sync
+- rescans that do not preserve first-root-wins precedence could make sidecar overrides
+  non-deterministic
 
 ## Outcome
 
-- m11_4_truthful_streaming_evidence_completed_m11_closed
+- m12_1_multi_root_registry_management_in_progress
