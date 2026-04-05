@@ -2,6 +2,22 @@
 
 ## 2026-04-05
 
+- Started `M13.2` by refining gateway defaults work into explicit executable slices and selecting
+  gateway-level generation defaults as the next implementation target:
+  - updated the `M13.2` plan so the milestone now executes in three bounded slices: typed
+    generation defaults, batching or admission defaults, and speculative defaults
+  - recorded that the current repository still keeps `temperature`, `top_p`, `max_tokens`, and
+    `max_concurrent_requests` inside desktop-only session state while request shaping still falls
+    back to built-in defaults or model-level generation config
+  - moved the active task plan to the first executable `M13.2` slice so the next code transaction
+    can establish a control-plane-owned serving-defaults state model before expanding into
+    batching and speculative-decoding
+- Verification summary for the `M13.2` planning transaction:
+  - `git diff --check`: pending until the executable change set is complete
+- Metrics report for the `M13.2` planning transaction:
+  - `N/A` for executable coverage and runtime metrics because this transaction only moved the
+    active task plan before implementation started
+
 - Closed `M13.1` by making gateway listener configuration typed, persistent, and
   control-plane-owned across bootstrap, snapshot projection, and the Window UI server workspace:
   - extended the control-plane protocol with `server.apply_gateway_config`,
