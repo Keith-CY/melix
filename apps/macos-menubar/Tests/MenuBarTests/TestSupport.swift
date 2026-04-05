@@ -46,6 +46,9 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
         let maxTokens: Int
         let streamIntervalTokens: Int
         let maxConcurrentRequests: Int
+        let concurrentProcessingEnabled: Bool
+        let prefillBatchSize: Int
+        let completionBatchSize: Int
     }
 
     struct RecordedServerIdlePolicyRequest: Equatable, Sendable {
@@ -744,7 +747,10 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
         topP: Double,
         maxTokens: Int,
         streamIntervalTokens: Int,
-        maxConcurrentRequests: Int
+        maxConcurrentRequests: Int,
+        concurrentProcessingEnabled: Bool,
+        prefillBatchSize: Int,
+        completionBatchSize: Int
     ) async throws -> Melix_Controlplane_V1_ServerSnapshot {
         recordedActions.append("serving-defaults.apply:\(serverSessionID)")
         if let applyServingDefaultsError {
@@ -757,9 +763,20 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
                 topP: topP,
                 maxTokens: maxTokens,
                 streamIntervalTokens: streamIntervalTokens,
-                maxConcurrentRequests: maxConcurrentRequests
+                maxConcurrentRequests: maxConcurrentRequests,
+                concurrentProcessingEnabled: concurrentProcessingEnabled,
+                prefillBatchSize: prefillBatchSize,
+                completionBatchSize: completionBatchSize
             )
         )
+
+        let normalizedMaxConcurrentRequests = UInt32(max(1, maxConcurrentRequests))
+        let normalizedPrefillBatchSize = UInt32(max(1, prefillBatchSize))
+        let normalizedCompletionBatchSize = UInt32(max(1, completionBatchSize))
+        let effectiveBatchCapacity: UInt32 = concurrentProcessingEnabled
+            ? min(normalizedMaxConcurrentRequests, normalizedPrefillBatchSize, normalizedCompletionBatchSize)
+            : 1
+        let effectiveConcurrentProcessingEnabled = concurrentProcessingEnabled && effectiveBatchCapacity > 1
 
         var snapshot = snapshotOverride ?? makeSnapshot(state: modelState)
         var summary = snapshot.servingDefaults
@@ -769,11 +786,17 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
             summary.sessions[existingIndex].requestedMaxTokens = UInt32(max(1, maxTokens))
             summary.sessions[existingIndex].requestedStreamIntervalTokens = UInt32(max(1, streamIntervalTokens))
             summary.sessions[existingIndex].requestedMaxConcurrentRequests = UInt32(max(1, maxConcurrentRequests))
+            summary.sessions[existingIndex].requestedConcurrentProcessingEnabled = concurrentProcessingEnabled
+            summary.sessions[existingIndex].requestedPrefillBatchSize = UInt32(max(1, prefillBatchSize))
+            summary.sessions[existingIndex].requestedCompletionBatchSize = UInt32(max(1, completionBatchSize))
             summary.sessions[existingIndex].effectiveTemperature = temperature
             summary.sessions[existingIndex].effectiveTopP = topP
             summary.sessions[existingIndex].effectiveMaxTokens = UInt32(max(1, maxTokens))
             summary.sessions[existingIndex].effectiveStreamIntervalTokens = UInt32(max(1, streamIntervalTokens))
-            summary.sessions[existingIndex].effectiveMaxConcurrentRequests = UInt32(max(1, maxConcurrentRequests))
+            summary.sessions[existingIndex].effectiveMaxConcurrentRequests = effectiveConcurrentProcessingEnabled ? effectiveBatchCapacity : 1
+            summary.sessions[existingIndex].effectiveConcurrentProcessingEnabled = effectiveConcurrentProcessingEnabled
+            summary.sessions[existingIndex].effectivePrefillBatchSize = effectiveConcurrentProcessingEnabled ? effectiveBatchCapacity : 1
+            summary.sessions[existingIndex].effectiveCompletionBatchSize = effectiveConcurrentProcessingEnabled ? effectiveBatchCapacity : 1
             summary.sessions[existingIndex].source = .operatorOverride
             summary.sessions[existingIndex].modelOverrideApplied = false
         } else {
@@ -785,11 +808,17 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
             session.requestedMaxTokens = UInt32(max(1, maxTokens))
             session.requestedStreamIntervalTokens = UInt32(max(1, streamIntervalTokens))
             session.requestedMaxConcurrentRequests = UInt32(max(1, maxConcurrentRequests))
+            session.requestedConcurrentProcessingEnabled = concurrentProcessingEnabled
+            session.requestedPrefillBatchSize = UInt32(max(1, prefillBatchSize))
+            session.requestedCompletionBatchSize = UInt32(max(1, completionBatchSize))
             session.effectiveTemperature = temperature
             session.effectiveTopP = topP
             session.effectiveMaxTokens = UInt32(max(1, maxTokens))
             session.effectiveStreamIntervalTokens = UInt32(max(1, streamIntervalTokens))
-            session.effectiveMaxConcurrentRequests = UInt32(max(1, maxConcurrentRequests))
+            session.effectiveMaxConcurrentRequests = effectiveConcurrentProcessingEnabled ? effectiveBatchCapacity : 1
+            session.effectiveConcurrentProcessingEnabled = effectiveConcurrentProcessingEnabled
+            session.effectivePrefillBatchSize = effectiveConcurrentProcessingEnabled ? effectiveBatchCapacity : 1
+            session.effectiveCompletionBatchSize = effectiveConcurrentProcessingEnabled ? effectiveBatchCapacity : 1
             session.source = .operatorOverride
             summary.sessions.append(session)
         }

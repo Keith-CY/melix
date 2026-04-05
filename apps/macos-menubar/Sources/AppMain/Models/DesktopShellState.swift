@@ -108,11 +108,17 @@ public struct DesktopServerServingDefaultsState: Codable, Equatable, Sendable {
     public var maxTokens: Int
     public var streamIntervalTokens: Int
     public var maxConcurrentRequests: Int
+    public var concurrentProcessingEnabled: Bool
+    public var prefillBatchSize: Int
+    public var completionBatchSize: Int
     public var effectiveTemperature: Double
     public var effectiveTopP: Double
     public var effectiveMaxTokens: Int
     public var effectiveStreamIntervalTokens: Int
     public var effectiveMaxConcurrentRequests: Int
+    public var effectiveConcurrentProcessingEnabled: Bool
+    public var effectivePrefillBatchSize: Int
+    public var effectiveCompletionBatchSize: Int
     public var sourceText: String
     public var modelOverrideApplied: Bool
     public var updatedAtUnixMS: Int64
@@ -123,11 +129,17 @@ public struct DesktopServerServingDefaultsState: Codable, Equatable, Sendable {
         maxTokens: Int = 256,
         streamIntervalTokens: Int = 1,
         maxConcurrentRequests: Int = 4,
+        concurrentProcessingEnabled: Bool = true,
+        prefillBatchSize: Int = 2,
+        completionBatchSize: Int = 2,
         effectiveTemperature: Double? = nil,
         effectiveTopP: Double? = nil,
         effectiveMaxTokens: Int? = nil,
         effectiveStreamIntervalTokens: Int? = nil,
         effectiveMaxConcurrentRequests: Int? = nil,
+        effectiveConcurrentProcessingEnabled: Bool? = nil,
+        effectivePrefillBatchSize: Int? = nil,
+        effectiveCompletionBatchSize: Int? = nil,
         sourceText: String = "Built-in Defaults",
         modelOverrideApplied: Bool = false,
         updatedAtUnixMS: Int64 = 0
@@ -137,11 +149,17 @@ public struct DesktopServerServingDefaultsState: Codable, Equatable, Sendable {
         self.maxTokens = maxTokens
         self.streamIntervalTokens = streamIntervalTokens
         self.maxConcurrentRequests = maxConcurrentRequests
+        self.concurrentProcessingEnabled = concurrentProcessingEnabled
+        self.prefillBatchSize = prefillBatchSize
+        self.completionBatchSize = completionBatchSize
         self.effectiveTemperature = effectiveTemperature ?? temperature
         self.effectiveTopP = effectiveTopP ?? topP
         self.effectiveMaxTokens = effectiveMaxTokens ?? maxTokens
         self.effectiveStreamIntervalTokens = effectiveStreamIntervalTokens ?? streamIntervalTokens
         self.effectiveMaxConcurrentRequests = effectiveMaxConcurrentRequests ?? maxConcurrentRequests
+        self.effectiveConcurrentProcessingEnabled = effectiveConcurrentProcessingEnabled ?? concurrentProcessingEnabled
+        self.effectivePrefillBatchSize = effectivePrefillBatchSize ?? prefillBatchSize
+        self.effectiveCompletionBatchSize = effectiveCompletionBatchSize ?? completionBatchSize
         self.sourceText = sourceText
         self.modelOverrideApplied = modelOverrideApplied
         self.updatedAtUnixMS = updatedAtUnixMS
@@ -153,11 +171,17 @@ public struct DesktopServerServingDefaultsState: Codable, Equatable, Sendable {
         case maxTokens = "max_tokens"
         case streamIntervalTokens = "stream_interval_tokens"
         case maxConcurrentRequests = "max_concurrent_requests"
+        case concurrentProcessingEnabled = "concurrent_processing_enabled"
+        case prefillBatchSize = "prefill_batch_size"
+        case completionBatchSize = "completion_batch_size"
         case effectiveTemperature = "effective_temperature"
         case effectiveTopP = "effective_top_p"
         case effectiveMaxTokens = "effective_max_tokens"
         case effectiveStreamIntervalTokens = "effective_stream_interval_tokens"
         case effectiveMaxConcurrentRequests = "effective_max_concurrent_requests"
+        case effectiveConcurrentProcessingEnabled = "effective_concurrent_processing_enabled"
+        case effectivePrefillBatchSize = "effective_prefill_batch_size"
+        case effectiveCompletionBatchSize = "effective_completion_batch_size"
         case sourceText = "source_text"
         case modelOverrideApplied = "model_override_applied"
         case updatedAtUnixMS = "updated_at_unix_ms"
@@ -170,17 +194,26 @@ public struct DesktopServerServingDefaultsState: Codable, Equatable, Sendable {
         let maxTokens = try container.decodeIfPresent(Int.self, forKey: .maxTokens) ?? 256
         let streamIntervalTokens = try container.decodeIfPresent(Int.self, forKey: .streamIntervalTokens) ?? 1
         let maxConcurrentRequests = try container.decodeIfPresent(Int.self, forKey: .maxConcurrentRequests) ?? 4
+        let concurrentProcessingEnabled = try container.decodeIfPresent(Bool.self, forKey: .concurrentProcessingEnabled) ?? true
+        let prefillBatchSize = try container.decodeIfPresent(Int.self, forKey: .prefillBatchSize) ?? 2
+        let completionBatchSize = try container.decodeIfPresent(Int.self, forKey: .completionBatchSize) ?? 2
         self.init(
             temperature: temperature,
             topP: topP,
             maxTokens: maxTokens,
             streamIntervalTokens: streamIntervalTokens,
             maxConcurrentRequests: maxConcurrentRequests,
+            concurrentProcessingEnabled: concurrentProcessingEnabled,
+            prefillBatchSize: prefillBatchSize,
+            completionBatchSize: completionBatchSize,
             effectiveTemperature: try container.decodeIfPresent(Double.self, forKey: .effectiveTemperature),
             effectiveTopP: try container.decodeIfPresent(Double.self, forKey: .effectiveTopP),
             effectiveMaxTokens: try container.decodeIfPresent(Int.self, forKey: .effectiveMaxTokens),
             effectiveStreamIntervalTokens: try container.decodeIfPresent(Int.self, forKey: .effectiveStreamIntervalTokens),
             effectiveMaxConcurrentRequests: try container.decodeIfPresent(Int.self, forKey: .effectiveMaxConcurrentRequests),
+            effectiveConcurrentProcessingEnabled: try container.decodeIfPresent(Bool.self, forKey: .effectiveConcurrentProcessingEnabled),
+            effectivePrefillBatchSize: try container.decodeIfPresent(Int.self, forKey: .effectivePrefillBatchSize),
+            effectiveCompletionBatchSize: try container.decodeIfPresent(Int.self, forKey: .effectiveCompletionBatchSize),
             sourceText: try container.decodeIfPresent(String.self, forKey: .sourceText) ?? "Built-in Defaults",
             modelOverrideApplied: try container.decodeIfPresent(Bool.self, forKey: .modelOverrideApplied) ?? false,
             updatedAtUnixMS: try container.decodeIfPresent(Int64.self, forKey: .updatedAtUnixMS) ?? 0
@@ -194,11 +227,17 @@ public struct DesktopServerServingDefaultsState: Codable, Equatable, Sendable {
         try container.encode(maxTokens, forKey: .maxTokens)
         try container.encode(streamIntervalTokens, forKey: .streamIntervalTokens)
         try container.encode(maxConcurrentRequests, forKey: .maxConcurrentRequests)
+        try container.encode(concurrentProcessingEnabled, forKey: .concurrentProcessingEnabled)
+        try container.encode(prefillBatchSize, forKey: .prefillBatchSize)
+        try container.encode(completionBatchSize, forKey: .completionBatchSize)
         try container.encode(effectiveTemperature, forKey: .effectiveTemperature)
         try container.encode(effectiveTopP, forKey: .effectiveTopP)
         try container.encode(effectiveMaxTokens, forKey: .effectiveMaxTokens)
         try container.encode(effectiveStreamIntervalTokens, forKey: .effectiveStreamIntervalTokens)
         try container.encode(effectiveMaxConcurrentRequests, forKey: .effectiveMaxConcurrentRequests)
+        try container.encode(effectiveConcurrentProcessingEnabled, forKey: .effectiveConcurrentProcessingEnabled)
+        try container.encode(effectivePrefillBatchSize, forKey: .effectivePrefillBatchSize)
+        try container.encode(effectiveCompletionBatchSize, forKey: .effectiveCompletionBatchSize)
         try container.encode(sourceText, forKey: .sourceText)
         try container.encode(modelOverrideApplied, forKey: .modelOverrideApplied)
         try container.encode(updatedAtUnixMS, forKey: .updatedAtUnixMS)

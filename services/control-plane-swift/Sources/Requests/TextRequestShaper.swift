@@ -264,6 +264,9 @@ public struct TextRequestShaper: Sendable {
         let maxTokens = request.maxTokens ?? preset?.maxTokens ?? fallbackMaxTokens ?? 256
         let streamIntervalTokens = gatewayServingDefaults?.streamIntervalTokens ?? 1
         let maxConcurrentRequests = gatewayServingDefaults?.maxConcurrentRequests ?? 4
+        let concurrentProcessingEnabled = gatewayServingDefaults?.concurrentProcessingEnabled ?? true
+        let prefillBatchSize = gatewayServingDefaults?.prefillBatchSize ?? 2
+        let completionBatchSize = gatewayServingDefaults?.completionBatchSize ?? 2
         let saveBoundarySnapshot = request.saveBoundarySnapshot
             ?? preset?.saveBoundarySnapshot
             ?? workflow.saveBoundarySnapshot
@@ -301,6 +304,9 @@ public struct TextRequestShaper: Sendable {
             maxTokens: maxTokens,
             streamIntervalTokens: streamIntervalTokens,
             maxConcurrentRequests: maxConcurrentRequests,
+            concurrentProcessingEnabled: concurrentProcessingEnabled,
+            prefillBatchSize: prefillBatchSize,
+            completionBatchSize: completionBatchSize,
             sessionID: resolvedSessionID,
             branchID: resolvedBranchID,
             parentRequestID: request.parentRequestID?.nilIfEmpty,

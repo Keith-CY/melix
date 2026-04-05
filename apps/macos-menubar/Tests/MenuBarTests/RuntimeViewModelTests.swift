@@ -78,6 +78,9 @@ struct RuntimeViewModelTests {
         viewModel.updateSelectedServerSessionMaxTokens(384)
         viewModel.updateSelectedServerSessionStreamIntervalTokens(3)
         viewModel.updateSelectedServerSessionMaxConcurrentRequests(5)
+        viewModel.updateSelectedServerSessionConcurrentProcessingEnabled(true)
+        viewModel.updateSelectedServerSessionPrefillBatchSize(3)
+        viewModel.updateSelectedServerSessionCompletionBatchSize(2)
 
         await viewModel.applySelectedServerServingDefaults()
 
@@ -90,11 +93,16 @@ struct RuntimeViewModelTests {
         #expect(request.maxTokens == 384)
         #expect(request.streamIntervalTokens == 3)
         #expect(request.maxConcurrentRequests == 5)
+        #expect(request.concurrentProcessingEnabled == true)
+        #expect(request.prefillBatchSize == 3)
+        #expect(request.completionBatchSize == 2)
         #expect(session.servingDefaults.temperature == 0.33)
         #expect(session.servingDefaults.topP == 0.92)
         #expect(session.servingDefaults.maxTokens == 384)
         #expect(session.servingDefaults.streamIntervalTokens == 3)
         #expect(session.servingDefaults.maxConcurrentRequests == 5)
+        #expect(session.servingDefaults.prefillBatchSize == 3)
+        #expect(session.servingDefaults.completionBatchSize == 2)
         #expect(session.servingDefaults.sourceText == "Operator Override")
         #expect(await metrics.snapshot()["menu.serving_defaults_apply_ms"] != nil)
     }
@@ -122,6 +130,9 @@ struct RuntimeViewModelTests {
         viewModel.updateSelectedServerSessionMaxTokens(300)
         viewModel.updateSelectedServerSessionStreamIntervalTokens(2)
         viewModel.updateSelectedServerSessionMaxConcurrentRequests(6)
+        viewModel.updateSelectedServerSessionConcurrentProcessingEnabled(false)
+        viewModel.updateSelectedServerSessionPrefillBatchSize(4)
+        viewModel.updateSelectedServerSessionCompletionBatchSize(3)
 
         viewModel.applySelectedServerServingDefaultsFromUI()
 
@@ -139,6 +150,9 @@ struct RuntimeViewModelTests {
         #expect(request.maxTokens == 300)
         #expect(request.streamIntervalTokens == 2)
         #expect(request.maxConcurrentRequests == 6)
+        #expect(request.concurrentProcessingEnabled == false)
+        #expect(request.prefillBatchSize == 4)
+        #expect(request.completionBatchSize == 3)
     }
 
     @Test("applySelectedServerServingDefaults updates an existing projected summary in the fake control plane client")
@@ -158,11 +172,17 @@ struct RuntimeViewModelTests {
         servingDefaults.requestedMaxTokens = 256
         servingDefaults.requestedStreamIntervalTokens = 1
         servingDefaults.requestedMaxConcurrentRequests = 4
+        servingDefaults.requestedConcurrentProcessingEnabled = true
+        servingDefaults.requestedPrefillBatchSize = 2
+        servingDefaults.requestedCompletionBatchSize = 2
         servingDefaults.effectiveTemperature = 0.7
         servingDefaults.effectiveTopP = 1.0
         servingDefaults.effectiveMaxTokens = 256
         servingDefaults.effectiveStreamIntervalTokens = 1
         servingDefaults.effectiveMaxConcurrentRequests = 4
+        servingDefaults.effectiveConcurrentProcessingEnabled = true
+        servingDefaults.effectivePrefillBatchSize = 2
+        servingDefaults.effectiveCompletionBatchSize = 2
         servingDefaults.source = .builtInDefaults
         snapshot.servingDefaults.sessions = [servingDefaults]
         await client.configureSnapshot(snapshot)
@@ -174,6 +194,9 @@ struct RuntimeViewModelTests {
         viewModel.updateSelectedServerSessionMaxTokens(384)
         viewModel.updateSelectedServerSessionStreamIntervalTokens(3)
         viewModel.updateSelectedServerSessionMaxConcurrentRequests(5)
+        viewModel.updateSelectedServerSessionConcurrentProcessingEnabled(true)
+        viewModel.updateSelectedServerSessionPrefillBatchSize(3)
+        viewModel.updateSelectedServerSessionCompletionBatchSize(2)
 
         await viewModel.applySelectedServerServingDefaults()
 
@@ -187,7 +210,10 @@ struct RuntimeViewModelTests {
         #expect(session.servingDefaults.effectiveTopP == 0.92)
         #expect(session.servingDefaults.effectiveMaxTokens == 384)
         #expect(session.servingDefaults.effectiveStreamIntervalTokens == 3)
-        #expect(session.servingDefaults.effectiveMaxConcurrentRequests == 5)
+        #expect(session.servingDefaults.effectiveMaxConcurrentRequests == 2)
+        #expect(session.servingDefaults.effectiveConcurrentProcessingEnabled == true)
+        #expect(session.servingDefaults.effectivePrefillBatchSize == 2)
+        #expect(session.servingDefaults.effectiveCompletionBatchSize == 2)
         #expect(session.servingDefaults.sourceText == "Operator Override")
         #expect(session.servingDefaults.modelOverrideApplied == false)
     }

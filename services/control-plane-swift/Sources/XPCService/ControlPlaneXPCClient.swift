@@ -322,7 +322,10 @@ public protocol ControlPlaneXPCClient: Sendable {
         topP: Double,
         maxTokens: Int,
         streamIntervalTokens: Int,
-        maxConcurrentRequests: Int
+        maxConcurrentRequests: Int,
+        concurrentProcessingEnabled: Bool,
+        prefillBatchSize: Int,
+        completionBatchSize: Int
     ) async throws -> Melix_Controlplane_V1_ServerSnapshot
     func clearServerSessionGatewayAccess(serverSessionID: String) async throws
 }
@@ -516,7 +519,10 @@ public extension ControlPlaneXPCClient {
         topP: Double,
         maxTokens: Int,
         streamIntervalTokens: Int,
-        maxConcurrentRequests: Int
+        maxConcurrentRequests: Int,
+        concurrentProcessingEnabled: Bool,
+        prefillBatchSize: Int,
+        completionBatchSize: Int
     ) async throws -> Melix_Controlplane_V1_ServerSnapshot {
         _ = serverSessionID
         _ = temperature
@@ -524,6 +530,9 @@ public extension ControlPlaneXPCClient {
         _ = maxTokens
         _ = streamIntervalTokens
         _ = maxConcurrentRequests
+        _ = concurrentProcessingEnabled
+        _ = prefillBatchSize
+        _ = completionBatchSize
         throw ControlPlaneXPCClientError.requestFailed(
             code: "unimplemented",
             message: "Serving defaults apply is not implemented for this control-plane client."
@@ -809,7 +818,10 @@ public actor LocalControlPlaneXPCClient: ControlPlaneXPCClient {
         topP: Double,
         maxTokens: Int,
         streamIntervalTokens: Int,
-        maxConcurrentRequests: Int
+        maxConcurrentRequests: Int,
+        concurrentProcessingEnabled: Bool,
+        prefillBatchSize: Int,
+        completionBatchSize: Int
     ) async throws -> Melix_Controlplane_V1_ServerSnapshot {
         try await execute(
             makeApplyServerSessionServingDefaultsRequest(
@@ -818,7 +830,10 @@ public actor LocalControlPlaneXPCClient: ControlPlaneXPCClient {
                 topP: topP,
                 maxTokens: maxTokens,
                 streamIntervalTokens: streamIntervalTokens,
-                maxConcurrentRequests: maxConcurrentRequests
+                maxConcurrentRequests: maxConcurrentRequests,
+                concurrentProcessingEnabled: concurrentProcessingEnabled,
+                prefillBatchSize: prefillBatchSize,
+                completionBatchSize: completionBatchSize
             )
         ) { response in
             response.server.snapshot
@@ -1210,7 +1225,10 @@ public actor LocalControlPlaneXPCClient: ControlPlaneXPCClient {
         topP: Double,
         maxTokens: Int,
         streamIntervalTokens: Int,
-        maxConcurrentRequests: Int
+        maxConcurrentRequests: Int,
+        concurrentProcessingEnabled: Bool,
+        prefillBatchSize: Int,
+        completionBatchSize: Int
     ) -> Melix_Controlplane_V1_ControlPlaneRequest {
         var request = Melix_Controlplane_V1_ControlPlaneRequest()
         request.requestID = "menubar-apply-serving-defaults-\(serverSessionID)"
@@ -1224,6 +1242,9 @@ public actor LocalControlPlaneXPCClient: ControlPlaneXPCClient {
         request.server.applyServingDefaults.maxTokens = UInt32(max(0, maxTokens))
         request.server.applyServingDefaults.streamIntervalTokens = UInt32(max(0, streamIntervalTokens))
         request.server.applyServingDefaults.maxConcurrentRequests = UInt32(max(0, maxConcurrentRequests))
+        request.server.applyServingDefaults.concurrentProcessingEnabled = concurrentProcessingEnabled
+        request.server.applyServingDefaults.prefillBatchSize = UInt32(max(0, prefillBatchSize))
+        request.server.applyServingDefaults.completionBatchSize = UInt32(max(0, completionBatchSize))
         return request
     }
 }

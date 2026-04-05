@@ -2,27 +2,27 @@
 
 ## Goal
 
-Close the first executable `M13.2` slice by turning gateway-level generation defaults into typed
-control-plane truth before the next batching and speculative-decoding slices.
+Close the second executable `M13.2` slice by turning batching and admission defaults into typed,
+persistent, and request-coordinator-visible control-plane truth.
 
 ## Scope
 
-- define the first executable `M13.2` slice around gateway-owned generation defaults and stream
-  interval state
-- persist operator defaults for `temperature`, `top_p`, `max_tokens`, and `stream_interval_tokens`
-- project requested and effective defaults through `ServerSnapshot`
-- route text request shaping through gateway defaults before request-level overrides while
-  preserving model-level generation config precedence
-- migrate the Window UI advanced serving-default controls off desktop-only session state
+- extend the gateway serving-defaults contract with concurrent-processing and batching controls
+- persist operator defaults for `concurrent_processing_enabled`, `prefill_batch_size`, and
+  `completion_batch_size` beside the existing generation defaults
+- project requested and effective batching or admission defaults through `ServerSnapshot`
+- route text request shaping and scheduler admission through gateway-owned batching defaults
+- migrate the Window UI server workspace so batching or admission controls hydrate from
+  control-plane truth rather than session-local draft state
 
 ## Measurement Points
 
-- gateway-level generation defaults must be typed, persistent, and inspectable through
-  `ServerSnapshot`
-- request translation must merge gateway defaults, model-level generation config, and explicit
-  request overrides deterministically
-- Window UI server defaults must hydrate from control-plane truth rather than transient local
-  draft state
+- batching and admission defaults must be typed, persistent, and inspectable through
+  `ServerSnapshot.serving_defaults`
+- request translation must carry gateway-owned batching defaults into scheduler-visible execution
+  metadata
+- `RequestCoordinator` must derive effective continuous-batch capacity from gateway defaults rather
+  than the current hard-coded target size
 - changed-line coverage for the touched Swift scope must remain at or above `95%`
 
 ## Phases
@@ -30,46 +30,54 @@ control-plane truth before the next batching and speculative-decoding slices.
 1. Planning and contract refinement
    - status: completed
    - evidence:
-     - refined `M13.2` into three executable slices: generation defaults, batching or admission
-       defaults, and speculative defaults
-     - selected the generation-defaults slice as the next implementation target because it closes
-       an existing divergence between desktop-only state and request-shaping truth
-2. Gateway generation-defaults state model
+     - confirmed `M13.2` Slice 2 should use the existing serving-defaults truth path instead of
+       inventing a second gateway settings surface
+     - identified the handwritten drift: `GatewayServingDefaultsStore` and the Window UI only
+       expose generation defaults, while `RequestCoordinator` still hard-codes
+       `continuousBatchTargetSize = 2` and does not consume gateway admission metadata
+     - selected the executable slice around `concurrent_processing_enabled`,
+       `max_concurrent_requests` as the operator-visible max concurrent sequence cap, plus
+       `prefill_batch_size` and `completion_batch_size`
+2. Typed batching or admission defaults
    - status: completed
    - evidence:
-     - added a typed `server.apply_serving_defaults` command plus protobuf summaries for requested
-       and effective serving defaults, and regenerated the versioned Swift, Python, and
-       descriptor artifacts
-     - persisted operator serving defaults through `GatewayServingDefaultsStore`, projected them
-       through `ServerSnapshot`, and wired gateway defaults into request shaping before request
-       overrides while preserving model-level generation-config precedence
-     - updated the Window UI server workspace so serving-default values, source metadata, and
-       effective merged defaults hydrate from control-plane truth and server starts persist the
-       typed defaults before lifecycle mutation
+     - extended `ApplyServingDefaults` and `ServingDefaultsSessionSummary` so
+       `concurrent_processing_enabled`, `prefill_batch_size`, and `completion_batch_size` are
+       versioned protocol fields rather than Window-UI-only drafts
+     - persisted batching defaults inside `GatewayServingDefaultsStore`, projected requested and
+       effective batching state through `ServerSnapshot`, and routed those values into request
+       shaping plus scheduler-visible execution metadata
+     - removed the `RequestCoordinator` hard-coded continuous-batch target and replaced it with a
+       gateway-default-driven effective admission batch size that can expand, shrink, or disable
+       continuous batching
 3. Verification and milestone bookkeeping
    - status: completed
    - evidence:
-     - focused control-plane, HTTP gateway, and menu-bar coverage now exercises typed defaults,
-       effective request shaping, server-start persistence, and UI projection
-     - changed-line coverage for the touched handwritten Swift scope closed at or above the
-       repository `95%` gate before commit
+     - `make proto` passed and `git diff --check` is clean
+     - focused control-plane and Window UI Swift suites passed for the touched scope
+     - changed-line coverage stayed above the repository gate with `95.41%` for the touched
+       control-plane scope, `99.59%` for the touched menu-bar scope, and `96.81%` aggregated
+     - `make swift-test` still fails outside the touched scope at
+       `services/mlx-text-worker-swift` with an unexpected signal `11`, so that package remains a
+       repository-level follow-up rather than a regression introduced by this slice
 
 ## Acceptance
 
-- gateway generation defaults are operator-visible, persistent, and backed by control-plane truth
-- effective defaults remain consistent across request translation and desktop surfaces
-- model-level generation config still overrides gateway defaults, and explicit request fields still
-  override both
+- gateway batching and admission defaults are operator-visible, persistent, and backed by
+  control-plane truth
+- effective defaults remain consistent across request translation, scheduler admission, and desktop
+  surfaces
+- gateway defaults can disable continuous batching or shrink batch capacity without editing source
 
 ## Risks
 
-- generation defaults could drift between desktop state and request shaping if they are projected
-  in snapshots but not consumed by the translator
-- precedence could become ambiguous if model-level generation config and gateway defaults are not
-  merged in one place
-- batching and speculative defaults could bleed into this slice if the serving-defaults state model
-  is not narrowly scoped
+- batching defaults could remain display-only if request translation does not pass them into
+  scheduler-visible execution metadata
+- `RequestCoordinator` could keep using a hard-coded batch size if default resolution is not
+  centralized
+- the existing `maxConcurrentRequests` field could become semantically ambiguous unless it is
+  explicitly treated as the operator-visible max concurrent sequence cap for this slice
 
 ## Outcome
 
-- m13_2_generation_defaults_completed
+- m13_2_batching_defaults_completed

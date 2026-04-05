@@ -637,10 +637,40 @@ private struct DesktopServerSessionEditor: View {
 
                                 HStack {
                                     TextField(
-                                        "Max concurrent",
+                                        "Max concurrent sequences",
                                         value: Binding(
                                             get: { viewModel.selectedServerSession?.servingDefaults.maxConcurrentRequests ?? 4 },
                                             set: { viewModel.updateSelectedServerSessionMaxConcurrentRequests($0) }
+                                        ),
+                                        format: .number
+                                    )
+                                    .textFieldStyle(.roundedBorder)
+                                }
+
+                                Toggle(
+                                    "Concurrent processing",
+                                    isOn: Binding(
+                                        get: { viewModel.selectedServerSession?.servingDefaults.concurrentProcessingEnabled ?? true },
+                                        set: { viewModel.updateSelectedServerSessionConcurrentProcessingEnabled($0) }
+                                    )
+                                )
+
+                                HStack {
+                                    TextField(
+                                        "Prefill batch size",
+                                        value: Binding(
+                                            get: { viewModel.selectedServerSession?.servingDefaults.prefillBatchSize ?? 2 },
+                                            set: { viewModel.updateSelectedServerSessionPrefillBatchSize($0) }
+                                        ),
+                                        format: .number
+                                    )
+                                    .textFieldStyle(.roundedBorder)
+
+                                    TextField(
+                                        "Completion batch size",
+                                        value: Binding(
+                                            get: { viewModel.selectedServerSession?.servingDefaults.completionBatchSize ?? 2 },
+                                            set: { viewModel.updateSelectedServerSessionCompletionBatchSize($0) }
                                         ),
                                         format: .number
                                     )
@@ -653,7 +683,7 @@ private struct DesktopServerSessionEditor: View {
 
                                     let servingDefaults = session.servingDefaults
                                     Text(
-                                        "Source: \(servingDefaults.sourceText) • Effective temp \(servingDefaults.effectiveTemperature, format: .number.precision(.fractionLength(2))) • top_p \(servingDefaults.effectiveTopP, format: .number.precision(.fractionLength(2))) • max \(servingDefaults.effectiveMaxTokens) • stream \(servingDefaults.effectiveStreamIntervalTokens) • concurrent \(servingDefaults.effectiveMaxConcurrentRequests)\(servingDefaults.modelOverrideApplied ? " • model override applied" : "")"
+                                        "Source: \(servingDefaults.sourceText) • Effective temp \(servingDefaults.effectiveTemperature, format: .number.precision(.fractionLength(2))) • top_p \(servingDefaults.effectiveTopP, format: .number.precision(.fractionLength(2))) • max \(servingDefaults.effectiveMaxTokens) • stream \(servingDefaults.effectiveStreamIntervalTokens) • concurrent \(servingDefaults.effectiveConcurrentProcessingEnabled ? "on" : "off") • sequences \(servingDefaults.effectiveMaxConcurrentRequests) • prefill \(servingDefaults.effectivePrefillBatchSize) • completion \(servingDefaults.effectiveCompletionBatchSize)\(servingDefaults.modelOverrideApplied ? " • model override applied" : "")"
                                     )
                                     .font(.caption)
                                     .foregroundStyle(.secondary)

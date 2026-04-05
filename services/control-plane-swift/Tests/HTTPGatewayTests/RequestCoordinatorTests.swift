@@ -1324,6 +1324,180 @@ struct RequestCoordinatorTests {
         _ = await consumer2.result
     }
 
+    @Test("gateway batching defaults can expand continuous batch capacity")
+    func gatewayBatchingDefaultsCanExpandContinuousBatchCapacity() async throws {
+        let workerClient = PhaseAwareWorkerClient()
+        let metricsStore = MetricsStore()
+        let schedulerReadModel = SchedulerReadModel(metricsStore: metricsStore)
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(defaultTextClient: workerClient),
+            abortRegistry: AbortRegistry(),
+            schedulerReadModel: schedulerReadModel,
+            metricsStore: metricsStore
+        )
+
+        let batchingExt = [
+            "melix.gateway.concurrent_processing": "true",
+            "melix.gateway.max_concurrent_sequences": "5",
+            "melix.gateway.prefill_batch_size": "3",
+            "melix.gateway.completion_batch_size": "4",
+        ]
+
+        let execution1 = try await coordinator.startChatCompletion(
+            makeTranslatedChatRequest(
+                requestID: "req-batch-override-1",
+                saveBoundarySnapshot: true,
+                executionExt: batchingExt
+            )
+        )
+        let consumer1 = Task {
+            do {
+                for try await _ in execution1.stream {
+                }
+            } catch {
+            }
+        }
+        defer { consumer1.cancel() }
+
+        let secondTask = Task {
+            try await coordinator.startChatCompletion(
+                makeTranslatedChatRequest(
+                    requestID: "req-batch-override-2",
+                    saveBoundarySnapshot: true,
+                    executionExt: batchingExt
+                )
+            )
+        }
+        let thirdTask = Task {
+            try await coordinator.startChatCompletion(
+                makeTranslatedChatRequest(
+                    requestID: "req-batch-override-3",
+                    saveBoundarySnapshot: true,
+                    executionExt: batchingExt
+                )
+            )
+        }
+
+        let execution2 = try await secondTask.value
+        let execution3 = try await thirdTask.value
+        let consumer2 = Task {
+            do {
+                for try await _ in execution2.stream {
+                }
+            } catch {
+            }
+        }
+        let consumer3 = Task {
+            do {
+                for try await _ in execution3.stream {
+                }
+            } catch {
+            }
+        }
+        defer {
+            consumer2.cancel()
+            consumer3.cancel()
+        }
+
+        let snapshot = await schedulerReadModel.snapshot()
+        let metrics = await metricsStore.snapshot()
+
+        #expect(snapshot.activeRequests == 3)
+        #expect(metrics.values["scheduler.continuous_batch_size"] == 3)
+        #expect(metrics.values["scheduler.continuous_batch_active_cohorts"] == 1)
+
+        for requestID in ["req-batch-override-1", "req-batch-override-2", "req-batch-override-3"] {
+            await workerClient.emitDecodeStarted(requestID: requestID, decodeHandle: "decode-\(requestID)")
+            await workerClient.emitToken(requestID: requestID, text: requestID)
+            await workerClient.finishDecode(requestID: requestID)
+        }
+
+        _ = await consumer1.result
+        _ = await consumer2.result
+        _ = await consumer3.result
+    }
+
+    @Test("gateway batching defaults can disable continuous batch admissions")
+    func gatewayBatchingDefaultsCanDisableContinuousBatchAdmissions() async throws {
+        let workerClient = PhaseAwareWorkerClient()
+        let metricsStore = MetricsStore()
+        let schedulerReadModel = SchedulerReadModel(metricsStore: metricsStore)
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(defaultTextClient: workerClient),
+            abortRegistry: AbortRegistry(),
+            schedulerReadModel: schedulerReadModel,
+            metricsStore: metricsStore
+        )
+
+        let batchingExt = [
+            "melix.gateway.concurrent_processing": "false",
+            "melix.gateway.max_concurrent_sequences": "6",
+            "melix.gateway.prefill_batch_size": "4",
+            "melix.gateway.completion_batch_size": "3",
+        ]
+
+        let execution1 = try await coordinator.startChatCompletion(
+            makeTranslatedChatRequest(
+                requestID: "req-batch-disabled-1",
+                saveBoundarySnapshot: true,
+                executionExt: batchingExt
+            )
+        )
+        let consumer1 = Task {
+            do {
+                for try await _ in execution1.stream {
+                }
+            } catch {
+            }
+        }
+        defer { consumer1.cancel() }
+
+        let secondTask = Task {
+            try await coordinator.startChatCompletion(
+                makeTranslatedChatRequest(
+                    requestID: "req-batch-disabled-2",
+                    saveBoundarySnapshot: true,
+                    executionExt: batchingExt
+                )
+            )
+        }
+
+        let queuedProgress = await waitForProgress(
+            schedulerReadModel: schedulerReadModel,
+            requestID: "req-batch-disabled-2",
+            phase: .requestQueued,
+            lane: "text.prefill.background",
+            attempts: 50
+        )
+        let snapshotBeforeRelease = await schedulerReadModel.snapshot()
+        let metricsBeforeRelease = await metricsStore.snapshot()
+
+        #expect(queuedProgress?.phase == .requestQueued)
+        #expect(snapshotBeforeRelease.activeRequests == 1)
+        #expect(metricsBeforeRelease.values["scheduler.continuous_batch_eligible_rate"] == 0)
+
+        await workerClient.emitDecodeStarted(requestID: "req-batch-disabled-1", decodeHandle: "decode-req-batch-disabled-1")
+        await workerClient.emitToken(requestID: "req-batch-disabled-1", text: "one")
+        await workerClient.finishDecode(requestID: "req-batch-disabled-1")
+
+        let execution2 = try await secondTask.value
+        let consumer2 = Task {
+            do {
+                for try await _ in execution2.stream {
+                }
+            } catch {
+            }
+        }
+        defer { consumer2.cancel() }
+
+        await workerClient.emitDecodeStarted(requestID: "req-batch-disabled-2", decodeHandle: "decode-req-batch-disabled-2")
+        await workerClient.emitToken(requestID: "req-batch-disabled-2", text: "two")
+        await workerClient.finishDecode(requestID: "req-batch-disabled-2")
+
+        _ = await consumer1.result
+        _ = await consumer2.result
+    }
+
     @Test("cold session requests prefer background prefill lanes before reuse exists")
     func coldSessionRequestsPreferBackgroundPrefillLanesBeforeReuseExists() async throws {
         let workerClient = PhaseAwareWorkerClient()
@@ -2584,7 +2758,8 @@ private func makeTranslatedChatRequest(
     parentRequestID: String = "",
     restoreSnapshotID: String = "",
     saveBoundarySnapshot: Bool = false,
-    preferHotPrefix: Bool = false
+    preferHotPrefix: Bool = false,
+    executionExt: [String: String] = [:]
 ) -> TranslatedChatRequest {
     var workerRequest = Melix_Worker_V1_GenerateRequest()
     workerRequest.execution = Melix_Worker_V1_ExecutionMetadata()
@@ -2602,6 +2777,7 @@ private func makeTranslatedChatRequest(
     workerRequest.execution.cacheHints.restoreSnapshotID = restoreSnapshotID
     workerRequest.execution.cacheHints.saveBoundarySnapshot = saveBoundarySnapshot
     workerRequest.execution.cacheHints.preferHotPrefix = preferHotPrefix
+    workerRequest.execution.ext = executionExt
     workerRequest.messages = messages
 
     return TranslatedChatRequest(

@@ -1239,7 +1239,10 @@ struct TextEndpointContractTests {
                 topP: 0.92,
                 maxTokens: 384,
                 streamIntervalTokens: 3,
-                maxConcurrentRequests: 5
+                maxConcurrentRequests: 5,
+                concurrentProcessingEnabled: true,
+                prefillBatchSize: 3,
+                completionBatchSize: 2
             )
         )
 
@@ -1248,6 +1251,9 @@ struct TextEndpointContractTests {
         #expect(translated.workerRequest.sampling.maxOutputTokens == 384)
         #expect(translated.workerRequest.execution.ext["melix.stream.interval_tokens"] == "3")
         #expect(translated.workerRequest.execution.ext["melix.gateway.max_concurrent_requests"] == "5")
+        #expect(translated.workerRequest.execution.ext["melix.gateway.concurrent_processing"] == "true")
+        #expect(translated.workerRequest.execution.ext["melix.gateway.prefill_batch_size"] == "3")
+        #expect(translated.workerRequest.execution.ext["melix.gateway.completion_batch_size"] == "2")
     }
 
     @Test("model generation config overrides gateway serving defaults while admission metadata stays gateway-owned")
@@ -1274,7 +1280,10 @@ struct TextEndpointContractTests {
                 topP: 0.92,
                 maxTokens: 384,
                 streamIntervalTokens: 4,
-                maxConcurrentRequests: 6
+                maxConcurrentRequests: 6,
+                concurrentProcessingEnabled: false,
+                prefillBatchSize: 4,
+                completionBatchSize: 3
             )
         )
 
@@ -1283,6 +1292,9 @@ struct TextEndpointContractTests {
         #expect(translated.workerRequest.sampling.maxOutputTokens == 512)
         #expect(translated.workerRequest.execution.ext["melix.stream.interval_tokens"] == "4")
         #expect(translated.workerRequest.execution.ext["melix.gateway.max_concurrent_requests"] == "6")
+        #expect(translated.workerRequest.execution.ext["melix.gateway.concurrent_processing"] == "false")
+        #expect(translated.workerRequest.execution.ext["melix.gateway.prefill_batch_size"] == "4")
+        #expect(translated.workerRequest.execution.ext["melix.gateway.completion_batch_size"] == "3")
     }
 
     @Test("request contracts decode preset and workflow shaping metadata across endpoint variants")

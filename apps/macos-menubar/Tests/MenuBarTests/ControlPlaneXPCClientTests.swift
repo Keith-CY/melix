@@ -356,7 +356,10 @@ struct ControlPlaneXPCClientTests {
                 topP: 1.0,
                 maxTokens: 256,
                 streamIntervalTokens: 1,
-                maxConcurrentRequests: 4
+                maxConcurrentRequests: 4,
+                concurrentProcessingEnabled: true,
+                prefillBatchSize: 2,
+                completionBatchSize: 2
             )
             Issue.record("Expected the protocol default applyServerSessionServingDefaults implementation to throw.")
         } catch let error as ControlPlaneXPCClientError {
@@ -766,6 +769,9 @@ struct ControlPlaneXPCClientTests {
         servingDefaults.requestedMaxTokens = 384
         servingDefaults.requestedStreamIntervalTokens = 3
         servingDefaults.requestedMaxConcurrentRequests = 5
+        servingDefaults.requestedConcurrentProcessingEnabled = true
+        servingDefaults.requestedPrefillBatchSize = 3
+        servingDefaults.requestedCompletionBatchSize = 2
         response.server.snapshot.servingDefaults.sessions = [servingDefaults]
         await service.setExecuteResponse(response)
         let client = LocalControlPlaneXPCClient(service: service)
@@ -776,7 +782,10 @@ struct ControlPlaneXPCClientTests {
             topP: 0.92,
             maxTokens: 384,
             streamIntervalTokens: 3,
-            maxConcurrentRequests: 5
+            maxConcurrentRequests: 5,
+            concurrentProcessingEnabled: true,
+            prefillBatchSize: 3,
+            completionBatchSize: 2
         )
         let request = try #require(await service.lastExecuteRequest)
 
@@ -789,6 +798,9 @@ struct ControlPlaneXPCClientTests {
         #expect(request.server.applyServingDefaults.maxTokens == 384)
         #expect(request.server.applyServingDefaults.streamIntervalTokens == 3)
         #expect(request.server.applyServingDefaults.maxConcurrentRequests == 5)
+        #expect(request.server.applyServingDefaults.concurrentProcessingEnabled == true)
+        #expect(request.server.applyServingDefaults.prefillBatchSize == 3)
+        #expect(request.server.applyServingDefaults.completionBatchSize == 2)
         #expect(snapshot.servingDefaults.sessions.first?.requestedTemperature == 0.33)
     }
 

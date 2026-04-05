@@ -513,7 +513,10 @@ struct ControlPlaneServiceTests {
             topP: 0.9,
             maxTokens: 640,
             streamIntervalTokens: 4,
-            maxConcurrentRequests: 6
+            maxConcurrentRequests: 6,
+            concurrentProcessingEnabled: true,
+            prefillBatchSize: 3,
+            completionBatchSize: 2
         ))
         let service = ControlPlaneService(
             modelCatalog: ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels()),
@@ -535,6 +538,12 @@ struct ControlPlaneServiceTests {
         #expect(session.requestedMaxTokens == 640)
         #expect(session.requestedStreamIntervalTokens == 4)
         #expect(session.requestedMaxConcurrentRequests == 6)
+        #expect(session.requestedConcurrentProcessingEnabled)
+        #expect(session.requestedPrefillBatchSize == 3)
+        #expect(session.requestedCompletionBatchSize == 2)
+        #expect(session.effectiveMaxConcurrentRequests == 2)
+        #expect(session.effectivePrefillBatchSize == 2)
+        #expect(session.effectiveCompletionBatchSize == 2)
         #expect(session.source == .operatorOverride)
     }
 
@@ -566,7 +575,10 @@ struct ControlPlaneServiceTests {
                 topP: 0.87,
                 maxTokens: 512,
                 streamIntervalTokens: 2,
-                maxConcurrentRequests: 5
+                maxConcurrentRequests: 5,
+                concurrentProcessingEnabled: true,
+                prefillBatchSize: 4,
+                completionBatchSize: 2
             )
         )
         let session = try #require(response.server.snapshot.servingDefaults.sessions.first)
@@ -577,6 +589,12 @@ struct ControlPlaneServiceTests {
         #expect(session.requestedMaxTokens == 512)
         #expect(session.requestedStreamIntervalTokens == 2)
         #expect(session.requestedMaxConcurrentRequests == 5)
+        #expect(session.requestedConcurrentProcessingEnabled)
+        #expect(session.requestedPrefillBatchSize == 4)
+        #expect(session.requestedCompletionBatchSize == 2)
+        #expect(session.effectiveMaxConcurrentRequests == 2)
+        #expect(session.effectivePrefillBatchSize == 2)
+        #expect(session.effectiveCompletionBatchSize == 2)
         #expect(await metricsStore.value(forKey: "gateway.serving_defaults_apply_ms") >= 0)
     }
 
@@ -613,10 +631,22 @@ struct ControlPlaneServiceTests {
             )
         )
 
+        let invalidPrefillBatchSize = try await service.execute(
+            makeApplyServingDefaultsRequest(
+                temperature: 0.2,
+                topP: 0.9,
+                maxTokens: 256,
+                streamIntervalTokens: 1,
+                maxConcurrentRequests: 4,
+                prefillBatchSize: 0
+            )
+        )
+
         #expect(!mismatchedTarget.ok)
         #expect(mismatchedTarget.error.code == "invalid_argument")
         #expect(invalidTopP.error.code == ServingDefaultsValidationError.invalidTopP.code)
         #expect(invalidStreamInterval.error.code == ServingDefaultsValidationError.invalidStreamIntervalTokens.code)
+        #expect(invalidPrefillBatchSize.error.code == ServingDefaultsValidationError.invalidPrefillBatchSize.code)
     }
 
     @Test("execute surfaces serving defaults persistence failures with typed metrics")
@@ -5412,7 +5442,10 @@ struct ControlPlaneServiceTests {
             topP: 0.93,
             maxTokens: 320,
             streamIntervalTokens: 3,
-            maxConcurrentRequests: 5
+            maxConcurrentRequests: 5,
+            concurrentProcessingEnabled: false,
+            prefillBatchSize: 4,
+            completionBatchSize: 3
         ))
 
         let modelCatalog = ModelCatalog()
@@ -5447,6 +5480,9 @@ struct ControlPlaneServiceTests {
         #expect(generated.sampling.maxOutputTokens == 320)
         #expect(generated.execution.ext["melix.stream.interval_tokens"] == "3")
         #expect(generated.execution.ext["melix.gateway.max_concurrent_requests"] == "5")
+        #expect(generated.execution.ext["melix.gateway.concurrent_processing"] == "false")
+        #expect(generated.execution.ext["melix.gateway.prefill_batch_size"] == "4")
+        #expect(generated.execution.ext["melix.gateway.completion_batch_size"] == "3")
     }
 
     @Test("startChat auto injects MCP tool metadata into worker requests")
@@ -6223,7 +6259,10 @@ struct ControlPlaneServiceTests {
         topP: Double,
         maxTokens: UInt32,
         streamIntervalTokens: UInt32,
-        maxConcurrentRequests: UInt32
+        maxConcurrentRequests: UInt32,
+        concurrentProcessingEnabled: Bool = true,
+        prefillBatchSize: UInt32 = 2,
+        completionBatchSize: UInt32 = 2
     ) -> Melix_Controlplane_V1_ControlPlaneRequest {
         var request = Melix_Controlplane_V1_ControlPlaneRequest()
         request.requestID = "req-apply-serving-defaults-\(serverSessionID)"
@@ -6236,7 +6275,10 @@ struct ControlPlaneServiceTests {
             topP: topP,
             maxTokens: maxTokens,
             streamIntervalTokens: streamIntervalTokens,
-            maxConcurrentRequests: maxConcurrentRequests
+            maxConcurrentRequests: maxConcurrentRequests,
+            concurrentProcessingEnabled: concurrentProcessingEnabled,
+            prefillBatchSize: prefillBatchSize,
+            completionBatchSize: completionBatchSize
         )
         return request
     }
@@ -6265,7 +6307,10 @@ struct ControlPlaneServiceTests {
         topP: Double,
         maxTokens: UInt32,
         streamIntervalTokens: UInt32,
-        maxConcurrentRequests: UInt32
+        maxConcurrentRequests: UInt32,
+        concurrentProcessingEnabled: Bool = true,
+        prefillBatchSize: UInt32 = 2,
+        completionBatchSize: UInt32 = 2
     ) -> Melix_Controlplane_V1_ApplyServingDefaults {
         var command = Melix_Controlplane_V1_ApplyServingDefaults()
         command.serverSessionID = serverSessionID
@@ -6274,6 +6319,9 @@ struct ControlPlaneServiceTests {
         command.maxTokens = maxTokens
         command.streamIntervalTokens = streamIntervalTokens
         command.maxConcurrentRequests = maxConcurrentRequests
+        command.concurrentProcessingEnabled = concurrentProcessingEnabled
+        command.prefillBatchSize = prefillBatchSize
+        command.completionBatchSize = completionBatchSize
         return command
     }
 

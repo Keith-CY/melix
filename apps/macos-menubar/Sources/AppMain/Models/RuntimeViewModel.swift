@@ -740,11 +740,17 @@ private struct ServingDefaultsProjection: Equatable, Sendable {
     let maxTokens: Int
     let streamIntervalTokens: Int
     let maxConcurrentRequests: Int
+    let concurrentProcessingEnabled: Bool
+    let prefillBatchSize: Int
+    let completionBatchSize: Int
     let effectiveTemperature: Double
     let effectiveTopP: Double
     let effectiveMaxTokens: Int
     let effectiveStreamIntervalTokens: Int
     let effectiveMaxConcurrentRequests: Int
+    let effectiveConcurrentProcessingEnabled: Bool
+    let effectivePrefillBatchSize: Int
+    let effectiveCompletionBatchSize: Int
     let sourceText: String
     let modelOverrideApplied: Bool
     let updatedAtUnixMS: Int64
@@ -1370,6 +1376,27 @@ public final class RuntimeViewModel {
     public func updateSelectedServerSessionMaxConcurrentRequests(_ value: Int) {
         updateSelectedServerSession { session in
             session.servingDefaults.maxConcurrentRequests = max(1, value)
+            session.updatedAt = Date()
+        }
+    }
+
+    public func updateSelectedServerSessionConcurrentProcessingEnabled(_ value: Bool) {
+        updateSelectedServerSession { session in
+            session.servingDefaults.concurrentProcessingEnabled = value
+            session.updatedAt = Date()
+        }
+    }
+
+    public func updateSelectedServerSessionPrefillBatchSize(_ value: Int) {
+        updateSelectedServerSession { session in
+            session.servingDefaults.prefillBatchSize = max(1, value)
+            session.updatedAt = Date()
+        }
+    }
+
+    public func updateSelectedServerSessionCompletionBatchSize(_ value: Int) {
+        updateSelectedServerSession { session in
+            session.servingDefaults.completionBatchSize = max(1, value)
             session.updatedAt = Date()
         }
     }
@@ -3589,7 +3616,10 @@ public final class RuntimeViewModel {
                 topP: serverSession.servingDefaults.topP,
                 maxTokens: serverSession.servingDefaults.maxTokens,
                 streamIntervalTokens: serverSession.servingDefaults.streamIntervalTokens,
-                maxConcurrentRequests: serverSession.servingDefaults.maxConcurrentRequests
+                maxConcurrentRequests: serverSession.servingDefaults.maxConcurrentRequests,
+                concurrentProcessingEnabled: serverSession.servingDefaults.concurrentProcessingEnabled,
+                prefillBatchSize: serverSession.servingDefaults.prefillBatchSize,
+                completionBatchSize: serverSession.servingDefaults.completionBatchSize
             )
             await metrics.record(
                 name: "menu.serving_defaults_apply_ms",
@@ -4668,11 +4698,20 @@ public final class RuntimeViewModel {
 
     private func applyServingDefaultsProjection(to session: inout DesktopServerSessionState) {
         guard let projection = Self.servingDefaultsProjection(from: latestSnapshot, serverSessionID: session.id) else {
+            let effectiveBatchingDefaults = Self.effectiveBatchingDefaults(
+                concurrentProcessingEnabled: session.servingDefaults.concurrentProcessingEnabled,
+                maxConcurrentRequests: session.servingDefaults.maxConcurrentRequests,
+                prefillBatchSize: session.servingDefaults.prefillBatchSize,
+                completionBatchSize: session.servingDefaults.completionBatchSize
+            )
             session.servingDefaults.effectiveTemperature = session.servingDefaults.temperature
             session.servingDefaults.effectiveTopP = session.servingDefaults.topP
             session.servingDefaults.effectiveMaxTokens = session.servingDefaults.maxTokens
             session.servingDefaults.effectiveStreamIntervalTokens = session.servingDefaults.streamIntervalTokens
-            session.servingDefaults.effectiveMaxConcurrentRequests = session.servingDefaults.maxConcurrentRequests
+            session.servingDefaults.effectiveMaxConcurrentRequests = effectiveBatchingDefaults.maxConcurrentRequests
+            session.servingDefaults.effectiveConcurrentProcessingEnabled = effectiveBatchingDefaults.concurrentProcessingEnabled
+            session.servingDefaults.effectivePrefillBatchSize = effectiveBatchingDefaults.prefillBatchSize
+            session.servingDefaults.effectiveCompletionBatchSize = effectiveBatchingDefaults.completionBatchSize
             return
         }
         session.servingDefaults.temperature = projection.temperature
@@ -4680,11 +4719,17 @@ public final class RuntimeViewModel {
         session.servingDefaults.maxTokens = projection.maxTokens
         session.servingDefaults.streamIntervalTokens = projection.streamIntervalTokens
         session.servingDefaults.maxConcurrentRequests = projection.maxConcurrentRequests
+        session.servingDefaults.concurrentProcessingEnabled = projection.concurrentProcessingEnabled
+        session.servingDefaults.prefillBatchSize = projection.prefillBatchSize
+        session.servingDefaults.completionBatchSize = projection.completionBatchSize
         session.servingDefaults.effectiveTemperature = projection.effectiveTemperature
         session.servingDefaults.effectiveTopP = projection.effectiveTopP
         session.servingDefaults.effectiveMaxTokens = projection.effectiveMaxTokens
         session.servingDefaults.effectiveStreamIntervalTokens = projection.effectiveStreamIntervalTokens
         session.servingDefaults.effectiveMaxConcurrentRequests = projection.effectiveMaxConcurrentRequests
+        session.servingDefaults.effectiveConcurrentProcessingEnabled = projection.effectiveConcurrentProcessingEnabled
+        session.servingDefaults.effectivePrefillBatchSize = projection.effectivePrefillBatchSize
+        session.servingDefaults.effectiveCompletionBatchSize = projection.effectiveCompletionBatchSize
         session.servingDefaults.sourceText = projection.sourceText
         session.servingDefaults.modelOverrideApplied = projection.modelOverrideApplied
         session.servingDefaults.updatedAtUnixMS = projection.updatedAtUnixMS
@@ -4795,17 +4840,55 @@ public final class RuntimeViewModel {
             return nil
         }
 
+        let requestedConcurrentProcessingEnabled: Bool
+        let requestedPrefillBatchSize: Int
+        let requestedCompletionBatchSize: Int
+        if summary.requestedPrefillBatchSize == 0, summary.requestedCompletionBatchSize == 0 {
+            requestedConcurrentProcessingEnabled = true
+            requestedPrefillBatchSize = 2
+            requestedCompletionBatchSize = 2
+        } else {
+            requestedConcurrentProcessingEnabled = summary.requestedConcurrentProcessingEnabled
+            requestedPrefillBatchSize = Int(summary.requestedPrefillBatchSize)
+            requestedCompletionBatchSize = Int(summary.requestedCompletionBatchSize)
+        }
+
+        let effectiveConcurrentProcessingEnabled: Bool
+        let effectivePrefillBatchSize: Int
+        let effectiveCompletionBatchSize: Int
+        if summary.effectivePrefillBatchSize == 0, summary.effectiveCompletionBatchSize == 0 {
+            let effectiveBatchingDefaults = effectiveBatchingDefaults(
+                concurrentProcessingEnabled: requestedConcurrentProcessingEnabled,
+                maxConcurrentRequests: Int(summary.requestedMaxConcurrentRequests),
+                prefillBatchSize: requestedPrefillBatchSize,
+                completionBatchSize: requestedCompletionBatchSize
+            )
+            effectiveConcurrentProcessingEnabled = effectiveBatchingDefaults.concurrentProcessingEnabled
+            effectivePrefillBatchSize = effectiveBatchingDefaults.prefillBatchSize
+            effectiveCompletionBatchSize = effectiveBatchingDefaults.completionBatchSize
+        } else {
+            effectiveConcurrentProcessingEnabled = summary.effectiveConcurrentProcessingEnabled
+            effectivePrefillBatchSize = Int(summary.effectivePrefillBatchSize)
+            effectiveCompletionBatchSize = Int(summary.effectiveCompletionBatchSize)
+        }
+
         return ServingDefaultsProjection(
             temperature: summary.requestedTemperature,
             topP: summary.requestedTopP,
             maxTokens: Int(summary.requestedMaxTokens),
             streamIntervalTokens: Int(summary.requestedStreamIntervalTokens),
             maxConcurrentRequests: Int(summary.requestedMaxConcurrentRequests),
+            concurrentProcessingEnabled: requestedConcurrentProcessingEnabled,
+            prefillBatchSize: requestedPrefillBatchSize,
+            completionBatchSize: requestedCompletionBatchSize,
             effectiveTemperature: summary.effectiveTemperature,
             effectiveTopP: summary.effectiveTopP,
             effectiveMaxTokens: Int(summary.effectiveMaxTokens),
             effectiveStreamIntervalTokens: Int(summary.effectiveStreamIntervalTokens),
             effectiveMaxConcurrentRequests: Int(summary.effectiveMaxConcurrentRequests),
+            effectiveConcurrentProcessingEnabled: effectiveConcurrentProcessingEnabled,
+            effectivePrefillBatchSize: effectivePrefillBatchSize,
+            effectiveCompletionBatchSize: effectiveCompletionBatchSize,
             sourceText: servingDefaultsSourceText(summary.source),
             modelOverrideApplied: summary.modelOverrideApplied,
             updatedAtUnixMS: summary.updatedAtUnixMs
@@ -4844,6 +4927,31 @@ public final class RuntimeViewModel {
         default:
             return "Unknown Source"
         }
+    }
+
+    private static func effectiveBatchingDefaults(
+        concurrentProcessingEnabled: Bool,
+        maxConcurrentRequests: Int,
+        prefillBatchSize: Int,
+        completionBatchSize: Int
+    ) -> (
+        concurrentProcessingEnabled: Bool,
+        maxConcurrentRequests: Int,
+        prefillBatchSize: Int,
+        completionBatchSize: Int
+    ) {
+        guard concurrentProcessingEnabled else {
+            return (false, 1, 1, 1)
+        }
+        let effectiveBatchCapacity = min(
+            max(1, maxConcurrentRequests),
+            max(1, prefillBatchSize),
+            max(1, completionBatchSize)
+        )
+        guard effectiveBatchCapacity > 1 else {
+            return (false, 1, 1, 1)
+        }
+        return (true, effectiveBatchCapacity, effectiveBatchCapacity, effectiveBatchCapacity)
     }
 
     private func upsert(session: Melix_Controlplane_V1_SessionState) {

@@ -200,11 +200,17 @@ struct DesktopShellStateTests {
                 maxTokens: 384,
                 streamIntervalTokens: 3,
                 maxConcurrentRequests: 5,
+                concurrentProcessingEnabled: true,
+                prefillBatchSize: 3,
+                completionBatchSize: 2,
                 effectiveTemperature: 0.2,
                 effectiveTopP: 0.88,
                 effectiveMaxTokens: 512,
                 effectiveStreamIntervalTokens: 3,
                 effectiveMaxConcurrentRequests: 5,
+                effectiveConcurrentProcessingEnabled: true,
+                effectivePrefillBatchSize: 3,
+                effectiveCompletionBatchSize: 2,
                 sourceText: "Operator Override",
                 modelOverrideApplied: true,
                 updatedAtUnixMS: 1_717_181_940_000
@@ -230,6 +236,8 @@ struct DesktopShellStateTests {
         #expect(decoded.servingDefaults.temperature == 0.33)
         #expect(decoded.servingDefaults.streamIntervalTokens == 3)
         #expect(decoded.servingDefaults.effectiveMaxTokens == 512)
+        #expect(decoded.servingDefaults.prefillBatchSize == 3)
+        #expect(decoded.servingDefaults.effectiveCompletionBatchSize == 2)
         #expect(decoded.servingDefaults.sourceText == "Operator Override")
         #expect(decoded.servingDefaults.modelOverrideApplied)
     }

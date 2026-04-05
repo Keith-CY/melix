@@ -277,6 +277,9 @@ message ApplyServingDefaults {
   uint32 max_tokens = 4;
   uint32 stream_interval_tokens = 5;
   uint32 max_concurrent_requests = 6;
+  bool concurrent_processing_enabled = 7;
+  uint32 prefill_batch_size = 8;
+  uint32 completion_batch_size = 9;
 }
 
 message ListModels {}
@@ -952,6 +955,12 @@ message ServingDefaultsSessionSummary {
   ServingDefaultsSource source = 13;
   bool model_override_applied = 14;
   int64 updated_at_unix_ms = 15;
+  bool requested_concurrent_processing_enabled = 16;
+  uint32 requested_prefill_batch_size = 17;
+  uint32 requested_completion_batch_size = 18;
+  bool effective_concurrent_processing_enabled = 19;
+  uint32 effective_prefill_batch_size = 20;
+  uint32 effective_completion_batch_size = 21;
 }
 
 message ServingDefaultsSummary {

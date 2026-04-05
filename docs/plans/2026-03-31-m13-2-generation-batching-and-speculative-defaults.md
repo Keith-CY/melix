@@ -25,6 +25,8 @@ Status: completed on 2026-04-05
 
 ### Slice 2
 
+Status: completed on 2026-04-06
+
 - add batching and admission defaults including concurrent-processing and batch-size fields
 - keep admission-shaping defaults visible beside timeout and rate-limit state
 - surface effective batching defaults through the same snapshot path as generation defaults
@@ -69,3 +71,20 @@ Status: completed on 2026-04-05
 - Generation, batching, and speculative defaults are operator-visible and test-covered.
 - Effective defaults are consistent across the gateway and desktop shell.
 - Adjacent serving defaults that shape request admission remain inspectable after settings merges.
+
+## Slice 2 Verification
+
+- `make proto`: pass
+- `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/.build/ModuleCache.noindex" swift test --package-path services/control-plane-swift --enable-code-coverage --skip-build --filter 'GatewayServingDefaultsStoreTests'`: `4 tests in 1 suite passed`
+- `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/.build/ModuleCache.noindex" swift test --package-path services/control-plane-swift --enable-code-coverage --skip-build --filter 'TextEndpointContractTests'`: `36 tests in 1 suite passed`
+- `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/.build/ModuleCache.noindex" swift test --package-path services/control-plane-swift --enable-code-coverage --skip-build --filter 'OpenAIHandlerTests'`: `101 tests in 1 suite passed`
+- `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/.build/ModuleCache.noindex" swift test --package-path services/control-plane-swift --enable-code-coverage --skip-build --filter 'ControlPlaneServiceTests'`: `157 tests in 1 suite passed`
+- `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/.build/ModuleCache.noindex" swift test --package-path services/control-plane-swift --enable-code-coverage --skip-build --filter 'HTTPGatewayTests.RequestCoordinatorTests/gatewayBatchingDefaultsCanExpandContinuousBatchCapacity()'`: `1 test in 1 suite passed`
+- `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/.build/ModuleCache.noindex" swift test --package-path services/control-plane-swift --enable-code-coverage --skip-build --filter 'HTTPGatewayTests.RequestCoordinatorTests/gatewayBatchingDefaultsCanDisableContinuousBatchAdmissions()'`: `1 test in 1 suite passed`
+- `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/.build/ModuleCache.noindex" swift test --package-path apps/macos-menubar --enable-code-coverage --filter 'RuntimeViewModelTests|ControlPlaneXPCClientTests|DesktopShellStateTests|DesktopFoundationViewTests'`: `246 tests in 4 suites passed after 4.357 seconds`
+- `python3 scripts/swift_changed_line_coverage.py --binary services/control-plane-swift/.build/arm64-apple-macosx/debug/MelixControlPlanePackageTests.xctest/Contents/MacOS/MelixControlPlanePackageTests --profdata /tmp/m13_2_cp_profdata_pieces/merged.profdata services/control-plane-swift/Sources/HTTPGateway/OpenAI/GatewayServingDefaultsStore.swift services/control-plane-swift/Sources/Requests/ChatRequestTranslator.swift services/control-plane-swift/Sources/Requests/RequestCoordinator.swift services/control-plane-swift/Sources/Requests/TextRequestShaper.swift services/control-plane-swift/Tests/ControlPlaneTests/ControlPlaneServiceTests.swift services/control-plane-swift/Tests/ControlPlaneTests/GatewayServingDefaultsStoreTests.swift services/control-plane-swift/Tests/ControlPlaneTests/TextEndpointContractTests.swift services/control-plane-swift/Tests/HTTPGatewayTests/OpenAIHandlerTests.swift services/control-plane-swift/Tests/HTTPGatewayTests/RequestCoordinatorTests.swift`: `95.41%` (`457/479`)
+- `python3 scripts/swift_changed_line_coverage.py --binary apps/macos-menubar/.build/arm64-apple-macosx/debug/MelixMacOSMenubarPackageTests.xctest/Contents/MacOS/MelixMacOSMenubarPackageTests --profdata apps/macos-menubar/.build/arm64-apple-macosx/debug/codecov/default.profdata services/control-plane-swift/Sources/XPCService/ControlPlaneXPCClient.swift apps/macos-menubar/Sources/AppMain/Dashboard/DesktopWorkspaceShellView.swift apps/macos-menubar/Sources/AppMain/Models/DesktopShellState.swift apps/macos-menubar/Sources/AppMain/Models/RuntimeViewModel.swift apps/macos-menubar/Tests/MenuBarTests/ControlPlaneXPCClientTests.swift apps/macos-menubar/Tests/MenuBarTests/DesktopFoundationViewTests.swift apps/macos-menubar/Tests/MenuBarTests/DesktopShellStateTests.swift apps/macos-menubar/Tests/MenuBarTests/RuntimeViewModelTests.swift apps/macos-menubar/Tests/MenuBarTests/TestSupport.swift`: `99.59%` (`240/241`)
+- aggregate changed-line coverage across the touched handwritten executable scope: `96.81%` (`697/720`)
+- `make integration-test`: `66 passed in 883.49s (0:14:43)`
+- `make swift-test`: failed outside the touched scope when `services/mlx-text-worker-swift` exited with unexpected signal `11` during `WorkerScaffoldTests`
+- `git diff --check`: pass

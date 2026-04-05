@@ -8,6 +8,8 @@ public enum ServingDefaultsValidationError: Error, Equatable, Sendable {
     case invalidMaxTokens
     case invalidStreamIntervalTokens
     case invalidMaxConcurrentRequests
+    case invalidPrefillBatchSize
+    case invalidCompletionBatchSize
 
     public var code: String {
         switch self {
@@ -23,6 +25,10 @@ public enum ServingDefaultsValidationError: Error, Equatable, Sendable {
             return "invalid_stream_interval_tokens"
         case .invalidMaxConcurrentRequests:
             return "invalid_max_concurrent_requests"
+        case .invalidPrefillBatchSize:
+            return "invalid_prefill_batch_size"
+        case .invalidCompletionBatchSize:
+            return "invalid_completion_batch_size"
         }
     }
 
@@ -40,6 +46,10 @@ public enum ServingDefaultsValidationError: Error, Equatable, Sendable {
             return "Serving defaults require a positive stream interval token count."
         case .invalidMaxConcurrentRequests:
             return "Serving defaults require a positive max concurrent request count."
+        case .invalidPrefillBatchSize:
+            return "Serving defaults require a positive prefill batch size."
+        case .invalidCompletionBatchSize:
+            return "Serving defaults require a positive completion batch size."
         }
     }
 }
@@ -50,19 +60,28 @@ public struct GatewayServingDefaultsPolicy: Sendable, Equatable {
     public let maxTokens: UInt32?
     public let streamIntervalTokens: UInt32?
     public let maxConcurrentRequests: UInt32?
+    public let concurrentProcessingEnabled: Bool?
+    public let prefillBatchSize: UInt32?
+    public let completionBatchSize: UInt32?
 
     public init(
         temperature: Double?,
         topP: Double?,
         maxTokens: UInt32?,
         streamIntervalTokens: UInt32?,
-        maxConcurrentRequests: UInt32?
+        maxConcurrentRequests: UInt32?,
+        concurrentProcessingEnabled: Bool? = nil,
+        prefillBatchSize: UInt32? = nil,
+        completionBatchSize: UInt32? = nil
     ) {
         self.temperature = temperature
         self.topP = topP
         self.maxTokens = maxTokens
         self.streamIntervalTokens = streamIntervalTokens
         self.maxConcurrentRequests = maxConcurrentRequests
+        self.concurrentProcessingEnabled = concurrentProcessingEnabled
+        self.prefillBatchSize = prefillBatchSize
+        self.completionBatchSize = completionBatchSize
     }
 }
 
@@ -72,6 +91,9 @@ private struct GatewayServingDefaultsResolvedDefaults: Equatable, Sendable {
     let maxTokens: UInt32
     let streamIntervalTokens: UInt32
     let maxConcurrentRequests: UInt32
+    let concurrentProcessingEnabled: Bool
+    let prefillBatchSize: UInt32
+    let completionBatchSize: UInt32
     let source: Melix_Controlplane_V1_ServingDefaultsSource
 }
 
@@ -82,6 +104,9 @@ private struct PersistedServingDefaultsRecord: Codable, Equatable, Sendable {
     let maxTokens: UInt32
     let streamIntervalTokens: UInt32
     let maxConcurrentRequests: UInt32
+    let concurrentProcessingEnabled: Bool
+    let prefillBatchSize: UInt32
+    let completionBatchSize: UInt32
     let sourceRawValue: Int
     let updatedAtUnixMS: Int64
 
@@ -92,6 +117,9 @@ private struct PersistedServingDefaultsRecord: Codable, Equatable, Sendable {
         case maxTokens = "max_tokens"
         case streamIntervalTokens = "stream_interval_tokens"
         case maxConcurrentRequests = "max_concurrent_requests"
+        case concurrentProcessingEnabled = "concurrent_processing_enabled"
+        case prefillBatchSize = "prefill_batch_size"
+        case completionBatchSize = "completion_batch_size"
         case sourceRawValue = "source"
         case updatedAtUnixMS = "updated_at_unix_ms"
     }
@@ -155,7 +183,10 @@ public actor GatewayServingDefaultsStore {
             topP: record?.topP ?? defaults.topP,
             maxTokens: record?.maxTokens ?? defaults.maxTokens,
             streamIntervalTokens: record?.streamIntervalTokens ?? defaults.streamIntervalTokens,
-            maxConcurrentRequests: record?.maxConcurrentRequests ?? defaults.maxConcurrentRequests
+            maxConcurrentRequests: record?.maxConcurrentRequests ?? defaults.maxConcurrentRequests,
+            concurrentProcessingEnabled: record?.concurrentProcessingEnabled ?? defaults.concurrentProcessingEnabled,
+            prefillBatchSize: record?.prefillBatchSize ?? defaults.prefillBatchSize,
+            completionBatchSize: record?.completionBatchSize ?? defaults.completionBatchSize
         )
     }
 
@@ -181,6 +212,12 @@ public actor GatewayServingDefaultsStore {
         guard command.maxConcurrentRequests > 0 else {
             throw ServingDefaultsValidationError.invalidMaxConcurrentRequests
         }
+        guard command.prefillBatchSize > 0 else {
+            throw ServingDefaultsValidationError.invalidPrefillBatchSize
+        }
+        guard command.completionBatchSize > 0 else {
+            throw ServingDefaultsValidationError.invalidCompletionBatchSize
+        }
 
         let record = PersistedServingDefaultsRecord(
             serverSessionID: serverSessionID,
@@ -189,6 +226,9 @@ public actor GatewayServingDefaultsStore {
             maxTokens: command.maxTokens,
             streamIntervalTokens: command.streamIntervalTokens,
             maxConcurrentRequests: command.maxConcurrentRequests,
+            concurrentProcessingEnabled: command.concurrentProcessingEnabled,
+            prefillBatchSize: command.prefillBatchSize,
+            completionBatchSize: command.completionBatchSize,
             sourceRawValue: Melix_Controlplane_V1_ServingDefaultsSource.operatorOverride.rawValue,
             updatedAtUnixMS: nowUnixMS()
         )
@@ -215,8 +255,17 @@ public actor GatewayServingDefaultsStore {
             let requestedMaxTokens = record?.maxTokens ?? defaults.maxTokens
             let requestedStreamIntervalTokens = record?.streamIntervalTokens ?? defaults.streamIntervalTokens
             let requestedMaxConcurrentRequests = record?.maxConcurrentRequests ?? defaults.maxConcurrentRequests
+            let requestedConcurrentProcessingEnabled = record?.concurrentProcessingEnabled ?? defaults.concurrentProcessingEnabled
+            let requestedPrefillBatchSize = record?.prefillBatchSize ?? defaults.prefillBatchSize
+            let requestedCompletionBatchSize = record?.completionBatchSize ?? defaults.completionBatchSize
             let servedModelID = Self.trimmed(servedModelIDs[serverSessionID] ?? "")
             let modelSamplingPolicy = modelSettingsByModelID[servedModelID].flatMap(ModelSamplingPolicy.init)
+            let effectiveBatchingDefaults = Self.effectiveBatchingDefaults(
+                concurrentProcessingEnabled: requestedConcurrentProcessingEnabled,
+                maxConcurrentRequests: requestedMaxConcurrentRequests,
+                prefillBatchSize: requestedPrefillBatchSize,
+                completionBatchSize: requestedCompletionBatchSize
+            )
 
             var session = Melix_Controlplane_V1_ServingDefaultsSessionSummary()
             session.serverSessionID = serverSessionID
@@ -226,11 +275,17 @@ public actor GatewayServingDefaultsStore {
             session.requestedMaxTokens = requestedMaxTokens
             session.requestedStreamIntervalTokens = requestedStreamIntervalTokens
             session.requestedMaxConcurrentRequests = requestedMaxConcurrentRequests
+            session.requestedConcurrentProcessingEnabled = requestedConcurrentProcessingEnabled
+            session.requestedPrefillBatchSize = requestedPrefillBatchSize
+            session.requestedCompletionBatchSize = requestedCompletionBatchSize
             session.effectiveTemperature = modelSamplingPolicy?.temperature ?? requestedTemperature
             session.effectiveTopP = modelSamplingPolicy?.topP ?? requestedTopP
             session.effectiveMaxTokens = modelSamplingPolicy?.maxTokens ?? requestedMaxTokens
             session.effectiveStreamIntervalTokens = requestedStreamIntervalTokens
-            session.effectiveMaxConcurrentRequests = requestedMaxConcurrentRequests
+            session.effectiveMaxConcurrentRequests = effectiveBatchingDefaults.maxConcurrentRequests
+            session.effectiveConcurrentProcessingEnabled = effectiveBatchingDefaults.concurrentProcessingEnabled
+            session.effectivePrefillBatchSize = effectiveBatchingDefaults.prefillBatchSize
+            session.effectiveCompletionBatchSize = effectiveBatchingDefaults.completionBatchSize
             session.source = record?.source ?? defaults.source
             session.modelOverrideApplied = modelSamplingPolicy != nil
             session.updatedAtUnixMs = record?.updatedAtUnixMS ?? 0
@@ -309,9 +364,22 @@ public actor GatewayServingDefaultsStore {
             environment["MELIX_GATEWAY_STREAM_INTERVAL_TOKENS"],
             fallback: 1
         )
+        let maxConcurrentSequencesOverride = environment["MELIX_GATEWAY_MAX_CONCURRENT_SEQUENCES"]
         let maxConcurrentRequests = parseUInt32(
-            environment["MELIX_GATEWAY_MAX_CONCURRENT_REQUESTS"],
+            maxConcurrentSequencesOverride ?? environment["MELIX_GATEWAY_MAX_CONCURRENT_REQUESTS"],
             fallback: 4
+        )
+        let concurrentProcessingEnabled = parseBool(
+            environment["MELIX_GATEWAY_CONCURRENT_PROCESSING_ENABLED"],
+            fallback: true
+        )
+        let prefillBatchSize = parseUInt32(
+            environment["MELIX_GATEWAY_PREFILL_BATCH_SIZE"],
+            fallback: 2
+        )
+        let completionBatchSize = parseUInt32(
+            environment["MELIX_GATEWAY_COMPLETION_BATCH_SIZE"],
+            fallback: 2
         )
 
         let usesEnvironmentDefaults =
@@ -319,6 +387,10 @@ public actor GatewayServingDefaultsStore {
             || environment["MELIX_GATEWAY_DEFAULT_TOP_P"] != nil
             || environment["MELIX_GATEWAY_DEFAULT_MAX_TOKENS"] != nil
             || environment["MELIX_GATEWAY_STREAM_INTERVAL_TOKENS"] != nil
+            || environment["MELIX_GATEWAY_CONCURRENT_PROCESSING_ENABLED"] != nil
+            || environment["MELIX_GATEWAY_PREFILL_BATCH_SIZE"] != nil
+            || environment["MELIX_GATEWAY_COMPLETION_BATCH_SIZE"] != nil
+            || environment["MELIX_GATEWAY_MAX_CONCURRENT_SEQUENCES"] != nil
             || environment["MELIX_GATEWAY_MAX_CONCURRENT_REQUESTS"] != nil
 
         return GatewayServingDefaultsResolvedDefaults(
@@ -327,6 +399,9 @@ public actor GatewayServingDefaultsStore {
             maxTokens: maxTokens,
             streamIntervalTokens: streamIntervalTokens,
             maxConcurrentRequests: maxConcurrentRequests,
+            concurrentProcessingEnabled: concurrentProcessingEnabled,
+            prefillBatchSize: prefillBatchSize,
+            completionBatchSize: completionBatchSize,
             source: usesEnvironmentDefaults ? .environmentDefaults : .builtInDefaults
         )
     }
@@ -343,6 +418,55 @@ public actor GatewayServingDefaultsStore {
             return fallback
         }
         return parsed
+    }
+
+    private static func parseBool(_ rawValue: String?, fallback: Bool) -> Bool {
+        guard let rawValue = rawValue?.nilIfEmpty?.lowercased() else {
+            return fallback
+        }
+        switch rawValue {
+        case "1", "true", "yes", "on":
+            return true
+        case "0", "false", "no", "off":
+            return false
+        default:
+            return fallback
+        }
+    }
+
+    private static func effectiveBatchingDefaults(
+        concurrentProcessingEnabled: Bool,
+        maxConcurrentRequests: UInt32,
+        prefillBatchSize: UInt32,
+        completionBatchSize: UInt32
+    ) -> (
+        concurrentProcessingEnabled: Bool,
+        maxConcurrentRequests: UInt32,
+        prefillBatchSize: UInt32,
+        completionBatchSize: UInt32
+    ) {
+        guard concurrentProcessingEnabled else {
+            return (false, 1, 1, 1)
+        }
+
+        let normalizedMaxConcurrentRequests = max(maxConcurrentRequests, 1)
+        let normalizedPrefillBatchSize = max(prefillBatchSize, 1)
+        let normalizedCompletionBatchSize = max(completionBatchSize, 1)
+        let effectiveBatchCapacity = min(
+            normalizedMaxConcurrentRequests,
+            normalizedPrefillBatchSize,
+            normalizedCompletionBatchSize
+        )
+        guard effectiveBatchCapacity > 1 else {
+            return (false, 1, 1, 1)
+        }
+
+        return (
+            true,
+            effectiveBatchCapacity,
+            effectiveBatchCapacity,
+            effectiveBatchCapacity
+        )
     }
 
     private static func trimmed(_ value: String) -> String {

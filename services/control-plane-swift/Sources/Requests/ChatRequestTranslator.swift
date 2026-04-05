@@ -181,6 +181,9 @@ public struct ShapedTextRequest: Sendable, Equatable {
     public let maxTokens: UInt32
     public let streamIntervalTokens: UInt32
     public let maxConcurrentRequests: UInt32
+    public let concurrentProcessingEnabled: Bool
+    public let prefillBatchSize: UInt32
+    public let completionBatchSize: UInt32
     public let sessionID: String?
     public let branchID: String?
     public let parentRequestID: String?
@@ -1680,6 +1683,10 @@ public struct ChatRequestTranslator: Sendable {
         generateRequest.execution.ext["melix.stream.include_usage"] = shapedRequest.includeUsage ? "true" : "false"
         generateRequest.execution.ext["melix.stream.interval_tokens"] = String(shapedRequest.streamIntervalTokens)
         generateRequest.execution.ext["melix.gateway.max_concurrent_requests"] = String(shapedRequest.maxConcurrentRequests)
+        generateRequest.execution.ext["melix.gateway.max_concurrent_sequences"] = String(shapedRequest.maxConcurrentRequests)
+        generateRequest.execution.ext["melix.gateway.concurrent_processing"] = shapedRequest.concurrentProcessingEnabled ? "true" : "false"
+        generateRequest.execution.ext["melix.gateway.prefill_batch_size"] = String(shapedRequest.prefillBatchSize)
+        generateRequest.execution.ext["melix.gateway.completion_batch_size"] = String(shapedRequest.completionBatchSize)
         generateRequest.messages = shapedRequest.messages.map { message in
             var chatMessage = Melix_Worker_V1_ChatMessage()
             chatMessage.role = message.role

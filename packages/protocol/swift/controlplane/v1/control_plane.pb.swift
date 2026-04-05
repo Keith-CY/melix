@@ -2773,6 +2773,12 @@ public struct Melix_Controlplane_V1_ApplyServingDefaults: Sendable {
 
   public var maxConcurrentRequests: UInt32 = 0
 
+  public var concurrentProcessingEnabled: Bool = false
+
+  public var prefillBatchSize: UInt32 = 0
+
+  public var completionBatchSize: UInt32 = 0
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -4318,44 +4324,121 @@ public struct Melix_Controlplane_V1_GatewayConfigSummary: Sendable {
   public init() {}
 }
 
-public struct Melix_Controlplane_V1_ServingDefaultsSessionSummary: Sendable {
+public struct Melix_Controlplane_V1_ServingDefaultsSessionSummary: @unchecked Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
-  public var serverSessionID: String = String()
+  public var serverSessionID: String {
+    get {_storage._serverSessionID}
+    set {_uniqueStorage()._serverSessionID = newValue}
+  }
 
-  public var servedModelID: String = String()
+  public var servedModelID: String {
+    get {_storage._servedModelID}
+    set {_uniqueStorage()._servedModelID = newValue}
+  }
 
-  public var requestedTemperature: Double = 0
+  public var requestedTemperature: Double {
+    get {_storage._requestedTemperature}
+    set {_uniqueStorage()._requestedTemperature = newValue}
+  }
 
-  public var requestedTopP: Double = 0
+  public var requestedTopP: Double {
+    get {_storage._requestedTopP}
+    set {_uniqueStorage()._requestedTopP = newValue}
+  }
 
-  public var requestedMaxTokens: UInt32 = 0
+  public var requestedMaxTokens: UInt32 {
+    get {_storage._requestedMaxTokens}
+    set {_uniqueStorage()._requestedMaxTokens = newValue}
+  }
 
-  public var requestedStreamIntervalTokens: UInt32 = 0
+  public var requestedStreamIntervalTokens: UInt32 {
+    get {_storage._requestedStreamIntervalTokens}
+    set {_uniqueStorage()._requestedStreamIntervalTokens = newValue}
+  }
 
-  public var requestedMaxConcurrentRequests: UInt32 = 0
+  public var requestedMaxConcurrentRequests: UInt32 {
+    get {_storage._requestedMaxConcurrentRequests}
+    set {_uniqueStorage()._requestedMaxConcurrentRequests = newValue}
+  }
 
-  public var effectiveTemperature: Double = 0
+  public var effectiveTemperature: Double {
+    get {_storage._effectiveTemperature}
+    set {_uniqueStorage()._effectiveTemperature = newValue}
+  }
 
-  public var effectiveTopP: Double = 0
+  public var effectiveTopP: Double {
+    get {_storage._effectiveTopP}
+    set {_uniqueStorage()._effectiveTopP = newValue}
+  }
 
-  public var effectiveMaxTokens: UInt32 = 0
+  public var effectiveMaxTokens: UInt32 {
+    get {_storage._effectiveMaxTokens}
+    set {_uniqueStorage()._effectiveMaxTokens = newValue}
+  }
 
-  public var effectiveStreamIntervalTokens: UInt32 = 0
+  public var effectiveStreamIntervalTokens: UInt32 {
+    get {_storage._effectiveStreamIntervalTokens}
+    set {_uniqueStorage()._effectiveStreamIntervalTokens = newValue}
+  }
 
-  public var effectiveMaxConcurrentRequests: UInt32 = 0
+  public var effectiveMaxConcurrentRequests: UInt32 {
+    get {_storage._effectiveMaxConcurrentRequests}
+    set {_uniqueStorage()._effectiveMaxConcurrentRequests = newValue}
+  }
 
-  public var source: Melix_Controlplane_V1_ServingDefaultsSource = .unspecified
+  public var source: Melix_Controlplane_V1_ServingDefaultsSource {
+    get {_storage._source}
+    set {_uniqueStorage()._source = newValue}
+  }
 
-  public var modelOverrideApplied: Bool = false
+  public var modelOverrideApplied: Bool {
+    get {_storage._modelOverrideApplied}
+    set {_uniqueStorage()._modelOverrideApplied = newValue}
+  }
 
-  public var updatedAtUnixMs: Int64 = 0
+  public var updatedAtUnixMs: Int64 {
+    get {_storage._updatedAtUnixMs}
+    set {_uniqueStorage()._updatedAtUnixMs = newValue}
+  }
+
+  public var requestedConcurrentProcessingEnabled: Bool {
+    get {_storage._requestedConcurrentProcessingEnabled}
+    set {_uniqueStorage()._requestedConcurrentProcessingEnabled = newValue}
+  }
+
+  public var requestedPrefillBatchSize: UInt32 {
+    get {_storage._requestedPrefillBatchSize}
+    set {_uniqueStorage()._requestedPrefillBatchSize = newValue}
+  }
+
+  public var requestedCompletionBatchSize: UInt32 {
+    get {_storage._requestedCompletionBatchSize}
+    set {_uniqueStorage()._requestedCompletionBatchSize = newValue}
+  }
+
+  public var effectiveConcurrentProcessingEnabled: Bool {
+    get {_storage._effectiveConcurrentProcessingEnabled}
+    set {_uniqueStorage()._effectiveConcurrentProcessingEnabled = newValue}
+  }
+
+  public var effectivePrefillBatchSize: UInt32 {
+    get {_storage._effectivePrefillBatchSize}
+    set {_uniqueStorage()._effectivePrefillBatchSize = newValue}
+  }
+
+  public var effectiveCompletionBatchSize: UInt32 {
+    get {_storage._effectiveCompletionBatchSize}
+    set {_uniqueStorage()._effectiveCompletionBatchSize = newValue}
+  }
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
+
+  fileprivate var _storage = _StorageClass.defaultInstance
 }
 
 public struct Melix_Controlplane_V1_ServingDefaultsSummary: Sendable {
@@ -8796,7 +8879,7 @@ extension Melix_Controlplane_V1_ApplyGatewayConfig: SwiftProtobuf.Message, Swift
 
 extension Melix_Controlplane_V1_ApplyServingDefaults: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ApplyServingDefaults"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}server_session_id\0\u{1}temperature\0\u{3}top_p\0\u{3}max_tokens\0\u{3}stream_interval_tokens\0\u{3}max_concurrent_requests\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}server_session_id\0\u{1}temperature\0\u{3}top_p\0\u{3}max_tokens\0\u{3}stream_interval_tokens\0\u{3}max_concurrent_requests\0\u{3}concurrent_processing_enabled\0\u{3}prefill_batch_size\0\u{3}completion_batch_size\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -8810,6 +8893,9 @@ extension Melix_Controlplane_V1_ApplyServingDefaults: SwiftProtobuf.Message, Swi
       case 4: try { try decoder.decodeSingularUInt32Field(value: &self.maxTokens) }()
       case 5: try { try decoder.decodeSingularUInt32Field(value: &self.streamIntervalTokens) }()
       case 6: try { try decoder.decodeSingularUInt32Field(value: &self.maxConcurrentRequests) }()
+      case 7: try { try decoder.decodeSingularBoolField(value: &self.concurrentProcessingEnabled) }()
+      case 8: try { try decoder.decodeSingularUInt32Field(value: &self.prefillBatchSize) }()
+      case 9: try { try decoder.decodeSingularUInt32Field(value: &self.completionBatchSize) }()
       default: break
       }
     }
@@ -8834,6 +8920,15 @@ extension Melix_Controlplane_V1_ApplyServingDefaults: SwiftProtobuf.Message, Swi
     if self.maxConcurrentRequests != 0 {
       try visitor.visitSingularUInt32Field(value: self.maxConcurrentRequests, fieldNumber: 6)
     }
+    if self.concurrentProcessingEnabled != false {
+      try visitor.visitSingularBoolField(value: self.concurrentProcessingEnabled, fieldNumber: 7)
+    }
+    if self.prefillBatchSize != 0 {
+      try visitor.visitSingularUInt32Field(value: self.prefillBatchSize, fieldNumber: 8)
+    }
+    if self.completionBatchSize != 0 {
+      try visitor.visitSingularUInt32Field(value: self.completionBatchSize, fieldNumber: 9)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -8844,6 +8939,9 @@ extension Melix_Controlplane_V1_ApplyServingDefaults: SwiftProtobuf.Message, Swi
     if lhs.maxTokens != rhs.maxTokens {return false}
     if lhs.streamIntervalTokens != rhs.streamIntervalTokens {return false}
     if lhs.maxConcurrentRequests != rhs.maxConcurrentRequests {return false}
+    if lhs.concurrentProcessingEnabled != rhs.concurrentProcessingEnabled {return false}
+    if lhs.prefillBatchSize != rhs.prefillBatchSize {return false}
+    if lhs.completionBatchSize != rhs.completionBatchSize {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -12294,99 +12392,205 @@ extension Melix_Controlplane_V1_GatewayConfigSummary: SwiftProtobuf.Message, Swi
 
 extension Melix_Controlplane_V1_ServingDefaultsSessionSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ServingDefaultsSessionSummary"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}server_session_id\0\u{3}served_model_id\0\u{3}requested_temperature\0\u{3}requested_top_p\0\u{3}requested_max_tokens\0\u{3}requested_stream_interval_tokens\0\u{3}requested_max_concurrent_requests\0\u{3}effective_temperature\0\u{3}effective_top_p\0\u{3}effective_max_tokens\0\u{3}effective_stream_interval_tokens\0\u{3}effective_max_concurrent_requests\0\u{1}source\0\u{3}model_override_applied\0\u{3}updated_at_unix_ms\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}server_session_id\0\u{3}served_model_id\0\u{3}requested_temperature\0\u{3}requested_top_p\0\u{3}requested_max_tokens\0\u{3}requested_stream_interval_tokens\0\u{3}requested_max_concurrent_requests\0\u{3}effective_temperature\0\u{3}effective_top_p\0\u{3}effective_max_tokens\0\u{3}effective_stream_interval_tokens\0\u{3}effective_max_concurrent_requests\0\u{1}source\0\u{3}model_override_applied\0\u{3}updated_at_unix_ms\0\u{3}requested_concurrent_processing_enabled\0\u{3}requested_prefill_batch_size\0\u{3}requested_completion_batch_size\0\u{3}effective_concurrent_processing_enabled\0\u{3}effective_prefill_batch_size\0\u{3}effective_completion_batch_size\0")
+
+  fileprivate class _StorageClass {
+    var _serverSessionID: String = String()
+    var _servedModelID: String = String()
+    var _requestedTemperature: Double = 0
+    var _requestedTopP: Double = 0
+    var _requestedMaxTokens: UInt32 = 0
+    var _requestedStreamIntervalTokens: UInt32 = 0
+    var _requestedMaxConcurrentRequests: UInt32 = 0
+    var _effectiveTemperature: Double = 0
+    var _effectiveTopP: Double = 0
+    var _effectiveMaxTokens: UInt32 = 0
+    var _effectiveStreamIntervalTokens: UInt32 = 0
+    var _effectiveMaxConcurrentRequests: UInt32 = 0
+    var _source: Melix_Controlplane_V1_ServingDefaultsSource = .unspecified
+    var _modelOverrideApplied: Bool = false
+    var _updatedAtUnixMs: Int64 = 0
+    var _requestedConcurrentProcessingEnabled: Bool = false
+    var _requestedPrefillBatchSize: UInt32 = 0
+    var _requestedCompletionBatchSize: UInt32 = 0
+    var _effectiveConcurrentProcessingEnabled: Bool = false
+    var _effectivePrefillBatchSize: UInt32 = 0
+    var _effectiveCompletionBatchSize: UInt32 = 0
+
+      // This property is used as the initial default value for new instances of the type.
+      // The type itself is protecting the reference to its storage via CoW semantics.
+      // This will force a copy to be made of this reference when the first mutation occurs;
+      // hence, it is safe to mark this as `nonisolated(unsafe)`.
+      static nonisolated(unsafe) let defaultInstance = _StorageClass()
+
+    private init() {}
+
+    init(copying source: _StorageClass) {
+      _serverSessionID = source._serverSessionID
+      _servedModelID = source._servedModelID
+      _requestedTemperature = source._requestedTemperature
+      _requestedTopP = source._requestedTopP
+      _requestedMaxTokens = source._requestedMaxTokens
+      _requestedStreamIntervalTokens = source._requestedStreamIntervalTokens
+      _requestedMaxConcurrentRequests = source._requestedMaxConcurrentRequests
+      _effectiveTemperature = source._effectiveTemperature
+      _effectiveTopP = source._effectiveTopP
+      _effectiveMaxTokens = source._effectiveMaxTokens
+      _effectiveStreamIntervalTokens = source._effectiveStreamIntervalTokens
+      _effectiveMaxConcurrentRequests = source._effectiveMaxConcurrentRequests
+      _source = source._source
+      _modelOverrideApplied = source._modelOverrideApplied
+      _updatedAtUnixMs = source._updatedAtUnixMs
+      _requestedConcurrentProcessingEnabled = source._requestedConcurrentProcessingEnabled
+      _requestedPrefillBatchSize = source._requestedPrefillBatchSize
+      _requestedCompletionBatchSize = source._requestedCompletionBatchSize
+      _effectiveConcurrentProcessingEnabled = source._effectiveConcurrentProcessingEnabled
+      _effectivePrefillBatchSize = source._effectivePrefillBatchSize
+      _effectiveCompletionBatchSize = source._effectiveCompletionBatchSize
+    }
+  }
+
+  fileprivate mutating func _uniqueStorage() -> _StorageClass {
+    if !isKnownUniquelyReferenced(&_storage) {
+      _storage = _StorageClass(copying: _storage)
+    }
+    return _storage
+  }
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
-    while let fieldNumber = try decoder.nextFieldNumber() {
-      // The use of inline closures is to circumvent an issue where the compiler
-      // allocates stack space for every case branch when no optimizations are
-      // enabled. https://github.com/apple/swift-protobuf/issues/1034
-      switch fieldNumber {
-      case 1: try { try decoder.decodeSingularStringField(value: &self.serverSessionID) }()
-      case 2: try { try decoder.decodeSingularStringField(value: &self.servedModelID) }()
-      case 3: try { try decoder.decodeSingularDoubleField(value: &self.requestedTemperature) }()
-      case 4: try { try decoder.decodeSingularDoubleField(value: &self.requestedTopP) }()
-      case 5: try { try decoder.decodeSingularUInt32Field(value: &self.requestedMaxTokens) }()
-      case 6: try { try decoder.decodeSingularUInt32Field(value: &self.requestedStreamIntervalTokens) }()
-      case 7: try { try decoder.decodeSingularUInt32Field(value: &self.requestedMaxConcurrentRequests) }()
-      case 8: try { try decoder.decodeSingularDoubleField(value: &self.effectiveTemperature) }()
-      case 9: try { try decoder.decodeSingularDoubleField(value: &self.effectiveTopP) }()
-      case 10: try { try decoder.decodeSingularUInt32Field(value: &self.effectiveMaxTokens) }()
-      case 11: try { try decoder.decodeSingularUInt32Field(value: &self.effectiveStreamIntervalTokens) }()
-      case 12: try { try decoder.decodeSingularUInt32Field(value: &self.effectiveMaxConcurrentRequests) }()
-      case 13: try { try decoder.decodeSingularEnumField(value: &self.source) }()
-      case 14: try { try decoder.decodeSingularBoolField(value: &self.modelOverrideApplied) }()
-      case 15: try { try decoder.decodeSingularInt64Field(value: &self.updatedAtUnixMs) }()
-      default: break
+    _ = _uniqueStorage()
+    try withExtendedLifetime(_storage) { (_storage: _StorageClass) in
+      while let fieldNumber = try decoder.nextFieldNumber() {
+        // The use of inline closures is to circumvent an issue where the compiler
+        // allocates stack space for every case branch when no optimizations are
+        // enabled. https://github.com/apple/swift-protobuf/issues/1034
+        switch fieldNumber {
+        case 1: try { try decoder.decodeSingularStringField(value: &_storage._serverSessionID) }()
+        case 2: try { try decoder.decodeSingularStringField(value: &_storage._servedModelID) }()
+        case 3: try { try decoder.decodeSingularDoubleField(value: &_storage._requestedTemperature) }()
+        case 4: try { try decoder.decodeSingularDoubleField(value: &_storage._requestedTopP) }()
+        case 5: try { try decoder.decodeSingularUInt32Field(value: &_storage._requestedMaxTokens) }()
+        case 6: try { try decoder.decodeSingularUInt32Field(value: &_storage._requestedStreamIntervalTokens) }()
+        case 7: try { try decoder.decodeSingularUInt32Field(value: &_storage._requestedMaxConcurrentRequests) }()
+        case 8: try { try decoder.decodeSingularDoubleField(value: &_storage._effectiveTemperature) }()
+        case 9: try { try decoder.decodeSingularDoubleField(value: &_storage._effectiveTopP) }()
+        case 10: try { try decoder.decodeSingularUInt32Field(value: &_storage._effectiveMaxTokens) }()
+        case 11: try { try decoder.decodeSingularUInt32Field(value: &_storage._effectiveStreamIntervalTokens) }()
+        case 12: try { try decoder.decodeSingularUInt32Field(value: &_storage._effectiveMaxConcurrentRequests) }()
+        case 13: try { try decoder.decodeSingularEnumField(value: &_storage._source) }()
+        case 14: try { try decoder.decodeSingularBoolField(value: &_storage._modelOverrideApplied) }()
+        case 15: try { try decoder.decodeSingularInt64Field(value: &_storage._updatedAtUnixMs) }()
+        case 16: try { try decoder.decodeSingularBoolField(value: &_storage._requestedConcurrentProcessingEnabled) }()
+        case 17: try { try decoder.decodeSingularUInt32Field(value: &_storage._requestedPrefillBatchSize) }()
+        case 18: try { try decoder.decodeSingularUInt32Field(value: &_storage._requestedCompletionBatchSize) }()
+        case 19: try { try decoder.decodeSingularBoolField(value: &_storage._effectiveConcurrentProcessingEnabled) }()
+        case 20: try { try decoder.decodeSingularUInt32Field(value: &_storage._effectivePrefillBatchSize) }()
+        case 21: try { try decoder.decodeSingularUInt32Field(value: &_storage._effectiveCompletionBatchSize) }()
+        default: break
+        }
       }
     }
   }
 
   public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
-    if !self.serverSessionID.isEmpty {
-      try visitor.visitSingularStringField(value: self.serverSessionID, fieldNumber: 1)
-    }
-    if !self.servedModelID.isEmpty {
-      try visitor.visitSingularStringField(value: self.servedModelID, fieldNumber: 2)
-    }
-    if self.requestedTemperature.bitPattern != 0 {
-      try visitor.visitSingularDoubleField(value: self.requestedTemperature, fieldNumber: 3)
-    }
-    if self.requestedTopP.bitPattern != 0 {
-      try visitor.visitSingularDoubleField(value: self.requestedTopP, fieldNumber: 4)
-    }
-    if self.requestedMaxTokens != 0 {
-      try visitor.visitSingularUInt32Field(value: self.requestedMaxTokens, fieldNumber: 5)
-    }
-    if self.requestedStreamIntervalTokens != 0 {
-      try visitor.visitSingularUInt32Field(value: self.requestedStreamIntervalTokens, fieldNumber: 6)
-    }
-    if self.requestedMaxConcurrentRequests != 0 {
-      try visitor.visitSingularUInt32Field(value: self.requestedMaxConcurrentRequests, fieldNumber: 7)
-    }
-    if self.effectiveTemperature.bitPattern != 0 {
-      try visitor.visitSingularDoubleField(value: self.effectiveTemperature, fieldNumber: 8)
-    }
-    if self.effectiveTopP.bitPattern != 0 {
-      try visitor.visitSingularDoubleField(value: self.effectiveTopP, fieldNumber: 9)
-    }
-    if self.effectiveMaxTokens != 0 {
-      try visitor.visitSingularUInt32Field(value: self.effectiveMaxTokens, fieldNumber: 10)
-    }
-    if self.effectiveStreamIntervalTokens != 0 {
-      try visitor.visitSingularUInt32Field(value: self.effectiveStreamIntervalTokens, fieldNumber: 11)
-    }
-    if self.effectiveMaxConcurrentRequests != 0 {
-      try visitor.visitSingularUInt32Field(value: self.effectiveMaxConcurrentRequests, fieldNumber: 12)
-    }
-    if self.source != .unspecified {
-      try visitor.visitSingularEnumField(value: self.source, fieldNumber: 13)
-    }
-    if self.modelOverrideApplied != false {
-      try visitor.visitSingularBoolField(value: self.modelOverrideApplied, fieldNumber: 14)
-    }
-    if self.updatedAtUnixMs != 0 {
-      try visitor.visitSingularInt64Field(value: self.updatedAtUnixMs, fieldNumber: 15)
+    try withExtendedLifetime(_storage) { (_storage: _StorageClass) in
+      if !_storage._serverSessionID.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._serverSessionID, fieldNumber: 1)
+      }
+      if !_storage._servedModelID.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._servedModelID, fieldNumber: 2)
+      }
+      if _storage._requestedTemperature.bitPattern != 0 {
+        try visitor.visitSingularDoubleField(value: _storage._requestedTemperature, fieldNumber: 3)
+      }
+      if _storage._requestedTopP.bitPattern != 0 {
+        try visitor.visitSingularDoubleField(value: _storage._requestedTopP, fieldNumber: 4)
+      }
+      if _storage._requestedMaxTokens != 0 {
+        try visitor.visitSingularUInt32Field(value: _storage._requestedMaxTokens, fieldNumber: 5)
+      }
+      if _storage._requestedStreamIntervalTokens != 0 {
+        try visitor.visitSingularUInt32Field(value: _storage._requestedStreamIntervalTokens, fieldNumber: 6)
+      }
+      if _storage._requestedMaxConcurrentRequests != 0 {
+        try visitor.visitSingularUInt32Field(value: _storage._requestedMaxConcurrentRequests, fieldNumber: 7)
+      }
+      if _storage._effectiveTemperature.bitPattern != 0 {
+        try visitor.visitSingularDoubleField(value: _storage._effectiveTemperature, fieldNumber: 8)
+      }
+      if _storage._effectiveTopP.bitPattern != 0 {
+        try visitor.visitSingularDoubleField(value: _storage._effectiveTopP, fieldNumber: 9)
+      }
+      if _storage._effectiveMaxTokens != 0 {
+        try visitor.visitSingularUInt32Field(value: _storage._effectiveMaxTokens, fieldNumber: 10)
+      }
+      if _storage._effectiveStreamIntervalTokens != 0 {
+        try visitor.visitSingularUInt32Field(value: _storage._effectiveStreamIntervalTokens, fieldNumber: 11)
+      }
+      if _storage._effectiveMaxConcurrentRequests != 0 {
+        try visitor.visitSingularUInt32Field(value: _storage._effectiveMaxConcurrentRequests, fieldNumber: 12)
+      }
+      if _storage._source != .unspecified {
+        try visitor.visitSingularEnumField(value: _storage._source, fieldNumber: 13)
+      }
+      if _storage._modelOverrideApplied != false {
+        try visitor.visitSingularBoolField(value: _storage._modelOverrideApplied, fieldNumber: 14)
+      }
+      if _storage._updatedAtUnixMs != 0 {
+        try visitor.visitSingularInt64Field(value: _storage._updatedAtUnixMs, fieldNumber: 15)
+      }
+      if _storage._requestedConcurrentProcessingEnabled != false {
+        try visitor.visitSingularBoolField(value: _storage._requestedConcurrentProcessingEnabled, fieldNumber: 16)
+      }
+      if _storage._requestedPrefillBatchSize != 0 {
+        try visitor.visitSingularUInt32Field(value: _storage._requestedPrefillBatchSize, fieldNumber: 17)
+      }
+      if _storage._requestedCompletionBatchSize != 0 {
+        try visitor.visitSingularUInt32Field(value: _storage._requestedCompletionBatchSize, fieldNumber: 18)
+      }
+      if _storage._effectiveConcurrentProcessingEnabled != false {
+        try visitor.visitSingularBoolField(value: _storage._effectiveConcurrentProcessingEnabled, fieldNumber: 19)
+      }
+      if _storage._effectivePrefillBatchSize != 0 {
+        try visitor.visitSingularUInt32Field(value: _storage._effectivePrefillBatchSize, fieldNumber: 20)
+      }
+      if _storage._effectiveCompletionBatchSize != 0 {
+        try visitor.visitSingularUInt32Field(value: _storage._effectiveCompletionBatchSize, fieldNumber: 21)
+      }
     }
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: Melix_Controlplane_V1_ServingDefaultsSessionSummary, rhs: Melix_Controlplane_V1_ServingDefaultsSessionSummary) -> Bool {
-    if lhs.serverSessionID != rhs.serverSessionID {return false}
-    if lhs.servedModelID != rhs.servedModelID {return false}
-    if lhs.requestedTemperature != rhs.requestedTemperature {return false}
-    if lhs.requestedTopP != rhs.requestedTopP {return false}
-    if lhs.requestedMaxTokens != rhs.requestedMaxTokens {return false}
-    if lhs.requestedStreamIntervalTokens != rhs.requestedStreamIntervalTokens {return false}
-    if lhs.requestedMaxConcurrentRequests != rhs.requestedMaxConcurrentRequests {return false}
-    if lhs.effectiveTemperature != rhs.effectiveTemperature {return false}
-    if lhs.effectiveTopP != rhs.effectiveTopP {return false}
-    if lhs.effectiveMaxTokens != rhs.effectiveMaxTokens {return false}
-    if lhs.effectiveStreamIntervalTokens != rhs.effectiveStreamIntervalTokens {return false}
-    if lhs.effectiveMaxConcurrentRequests != rhs.effectiveMaxConcurrentRequests {return false}
-    if lhs.source != rhs.source {return false}
-    if lhs.modelOverrideApplied != rhs.modelOverrideApplied {return false}
-    if lhs.updatedAtUnixMs != rhs.updatedAtUnixMs {return false}
+    if lhs._storage !== rhs._storage {
+      let storagesAreEqual: Bool = withExtendedLifetime((lhs._storage, rhs._storage)) { (_args: (_StorageClass, _StorageClass)) in
+        let _storage = _args.0
+        let rhs_storage = _args.1
+        if _storage._serverSessionID != rhs_storage._serverSessionID {return false}
+        if _storage._servedModelID != rhs_storage._servedModelID {return false}
+        if _storage._requestedTemperature != rhs_storage._requestedTemperature {return false}
+        if _storage._requestedTopP != rhs_storage._requestedTopP {return false}
+        if _storage._requestedMaxTokens != rhs_storage._requestedMaxTokens {return false}
+        if _storage._requestedStreamIntervalTokens != rhs_storage._requestedStreamIntervalTokens {return false}
+        if _storage._requestedMaxConcurrentRequests != rhs_storage._requestedMaxConcurrentRequests {return false}
+        if _storage._effectiveTemperature != rhs_storage._effectiveTemperature {return false}
+        if _storage._effectiveTopP != rhs_storage._effectiveTopP {return false}
+        if _storage._effectiveMaxTokens != rhs_storage._effectiveMaxTokens {return false}
+        if _storage._effectiveStreamIntervalTokens != rhs_storage._effectiveStreamIntervalTokens {return false}
+        if _storage._effectiveMaxConcurrentRequests != rhs_storage._effectiveMaxConcurrentRequests {return false}
+        if _storage._source != rhs_storage._source {return false}
+        if _storage._modelOverrideApplied != rhs_storage._modelOverrideApplied {return false}
+        if _storage._updatedAtUnixMs != rhs_storage._updatedAtUnixMs {return false}
+        if _storage._requestedConcurrentProcessingEnabled != rhs_storage._requestedConcurrentProcessingEnabled {return false}
+        if _storage._requestedPrefillBatchSize != rhs_storage._requestedPrefillBatchSize {return false}
+        if _storage._requestedCompletionBatchSize != rhs_storage._requestedCompletionBatchSize {return false}
+        if _storage._effectiveConcurrentProcessingEnabled != rhs_storage._effectiveConcurrentProcessingEnabled {return false}
+        if _storage._effectivePrefillBatchSize != rhs_storage._effectivePrefillBatchSize {return false}
+        if _storage._effectiveCompletionBatchSize != rhs_storage._effectiveCompletionBatchSize {return false}
+        return true
+      }
+      if !storagesAreEqual {return false}
+    }
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

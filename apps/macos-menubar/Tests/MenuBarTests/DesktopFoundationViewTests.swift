@@ -55,11 +55,17 @@ struct DesktopFoundationViewTests {
         servingDefaults.requestedMaxTokens = 384
         servingDefaults.requestedStreamIntervalTokens = 3
         servingDefaults.requestedMaxConcurrentRequests = 5
+        servingDefaults.requestedConcurrentProcessingEnabled = true
+        servingDefaults.requestedPrefillBatchSize = 3
+        servingDefaults.requestedCompletionBatchSize = 2
         servingDefaults.effectiveTemperature = 0.2
         servingDefaults.effectiveTopP = 0.88
         servingDefaults.effectiveMaxTokens = 512
         servingDefaults.effectiveStreamIntervalTokens = 3
         servingDefaults.effectiveMaxConcurrentRequests = 5
+        servingDefaults.effectiveConcurrentProcessingEnabled = true
+        servingDefaults.effectivePrefillBatchSize = 3
+        servingDefaults.effectiveCompletionBatchSize = 2
         servingDefaults.source = .operatorOverride
         servingDefaults.modelOverrideApplied = true
         snapshot.servingDefaults.sessions = [servingDefaults]
@@ -102,11 +108,17 @@ struct DesktopFoundationViewTests {
         servingDefaults.requestedMaxTokens = 320
         servingDefaults.requestedStreamIntervalTokens = 2
         servingDefaults.requestedMaxConcurrentRequests = 6
+        servingDefaults.requestedConcurrentProcessingEnabled = false
+        servingDefaults.requestedPrefillBatchSize = 4
+        servingDefaults.requestedCompletionBatchSize = 3
         servingDefaults.effectiveTemperature = 0.25
         servingDefaults.effectiveTopP = 0.85
         servingDefaults.effectiveMaxTokens = 512
         servingDefaults.effectiveStreamIntervalTokens = 2
-        servingDefaults.effectiveMaxConcurrentRequests = 6
+        servingDefaults.effectiveMaxConcurrentRequests = 1
+        servingDefaults.effectiveConcurrentProcessingEnabled = false
+        servingDefaults.effectivePrefillBatchSize = 1
+        servingDefaults.effectiveCompletionBatchSize = 1
         servingDefaults.source = .environmentDefaults
         snapshot.servingDefaults.sessions = [servingDefaults]
         await client.configureSnapshot(snapshot)

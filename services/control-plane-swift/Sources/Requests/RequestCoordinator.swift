@@ -230,7 +230,60 @@ private enum CacheRouteClass: String, Sendable {
 }
 
 private let boundarySafePrefillChunkTargetTokens: UInt32 = 16
-private let continuousBatchTargetSize: UInt32 = 2
+
+private struct GatewayBatchingExecutionDefaults: Sendable {
+    let concurrentProcessingEnabled: Bool
+    let maxConcurrentRequests: UInt32
+    let prefillBatchSize: UInt32
+    let completionBatchSize: UInt32
+
+    init(executionExt: [String: String]) {
+        self.concurrentProcessingEnabled = Self.parseBool(
+            executionExt["melix.gateway.concurrent_processing"],
+            fallback: true
+        )
+        self.maxConcurrentRequests = Self.parseUInt32(
+            executionExt["melix.gateway.max_concurrent_sequences"] ?? executionExt["melix.gateway.max_concurrent_requests"],
+            fallback: 4
+        )
+        self.prefillBatchSize = Self.parseUInt32(
+            executionExt["melix.gateway.prefill_batch_size"],
+            fallback: 2
+        )
+        self.completionBatchSize = Self.parseUInt32(
+            executionExt["melix.gateway.completion_batch_size"],
+            fallback: 2
+        )
+    }
+
+    var effectiveAdmissionBatchSize: UInt32 {
+        guard concurrentProcessingEnabled else {
+            return 1
+        }
+        return min(maxConcurrentRequests, prefillBatchSize, completionBatchSize)
+    }
+
+    private static func parseBool(_ rawValue: String?, fallback: Bool) -> Bool {
+        guard let rawValue = rawValue?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(), !rawValue.isEmpty else {
+            return fallback
+        }
+        switch rawValue {
+        case "1", "true", "yes", "on":
+            return true
+        case "0", "false", "no", "off":
+            return false
+        default:
+            return fallback
+        }
+    }
+
+    private static func parseUInt32(_ rawValue: String?, fallback: UInt32) -> UInt32 {
+        guard let rawValue = rawValue?.trimmingCharacters(in: .whitespacesAndNewlines), let parsed = UInt32(rawValue), parsed > 0 else {
+            return fallback
+        }
+        return parsed
+    }
+}
 
 private struct SchedulingPlan: Sendable {
     let translatedRequest: TranslatedChatRequest
@@ -1131,6 +1184,7 @@ public actor RequestCoordinator {
     ) async -> SchedulingPlan {
         let recoveredRequest = await resolvedRecoveryRequest(translatedRequest)
         let request = await resolvedModelAccelerationRequest(recoveredRequest)
+        let batchingDefaults = GatewayBatchingExecutionDefaults(executionExt: request.workerRequest.execution.ext)
         let routeKind = await workerRegistry.route(forModelID: request.modelID) ?? .swiftText
         if routeKind.isMultimodalBackgroundRoute {
             let lane = routeKind.defaultSchedulingLane
@@ -1174,7 +1228,8 @@ public actor RequestCoordinator {
                 continuousBatchEligible: isContinuousBatchEligible(
                     request: request,
                     routeKind: routeKind,
-                    prefillLane: prefillLane
+                    prefillLane: prefillLane,
+                    batchingDefaults: batchingDefaults
                 ),
                 batchCohortID: continuousBatchCohortID(
                     request: request,
@@ -1185,7 +1240,8 @@ public actor RequestCoordinator {
                 batchMaxSize: resolvedContinuousBatchSize(
                     request: request,
                     routeKind: routeKind,
-                    prefillLane: prefillLane
+                    prefillLane: prefillLane,
+                    batchingDefaults: batchingDefaults
                 )
             )
         }
@@ -1231,7 +1287,8 @@ public actor RequestCoordinator {
         let continuousBatchEligible = isContinuousBatchEligible(
             request: request,
             routeKind: routeKind,
-            prefillLane: prefillLane
+            prefillLane: prefillLane,
+            batchingDefaults: batchingDefaults
         )
         return SchedulingPlan(
             translatedRequest: request,
@@ -1252,7 +1309,14 @@ public actor RequestCoordinator {
                     cacheRouteClass: cacheRouteClass
                 )
                 : "",
-            batchMaxSize: continuousBatchEligible ? continuousBatchTargetSize : 1
+            batchMaxSize: continuousBatchEligible
+                ? resolvedContinuousBatchSize(
+                    request: request,
+                    routeKind: routeKind,
+                    prefillLane: prefillLane,
+                    batchingDefaults: batchingDefaults
+                )
+                : 1
         )
     }
 
@@ -1302,12 +1366,19 @@ public actor RequestCoordinator {
     private func isContinuousBatchEligible(
         request: TranslatedChatRequest,
         routeKind: WorkerRouteKind,
-        prefillLane: String
+        prefillLane: String,
+        batchingDefaults: GatewayBatchingExecutionDefaults
     ) -> Bool {
         guard routeKind == .swiftText else {
             return false
         }
         guard shouldUsePhaseAwareExecution(for: request.workerRequest) else {
+            return false
+        }
+        guard batchingDefaults.concurrentProcessingEnabled else {
+            return false
+        }
+        guard batchingDefaults.effectiveAdmissionBatchSize > 1 else {
             return false
         }
         return prefillLane.hasPrefix("text.prefill.")
@@ -1316,13 +1387,15 @@ public actor RequestCoordinator {
     private func resolvedContinuousBatchSize(
         request: TranslatedChatRequest,
         routeKind: WorkerRouteKind,
-        prefillLane: String
+        prefillLane: String,
+        batchingDefaults: GatewayBatchingExecutionDefaults
     ) -> UInt32 {
         isContinuousBatchEligible(
             request: request,
             routeKind: routeKind,
-            prefillLane: prefillLane
-        ) ? continuousBatchTargetSize : 1
+            prefillLane: prefillLane,
+            batchingDefaults: batchingDefaults
+        ) ? batchingDefaults.effectiveAdmissionBatchSize : 1
     }
 
     private func continuousBatchCohortID(

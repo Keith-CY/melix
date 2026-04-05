@@ -1,5 +1,62 @@
 # Progress Log
 
+## 2026-04-06
+
+- Closed the second executable `M13.2` slice by making batching and admission defaults typed,
+  persistent, and scheduler-visible control-plane truth across the protocol, request shaping, the
+  control-plane store, and the Window UI:
+  - extended `ApplyServingDefaults` and `ServingDefaultsSessionSummary` so
+    `concurrent_processing_enabled`, `prefill_batch_size`, and `completion_batch_size` are part
+    of the versioned control-plane contract, then regenerated the Swift, Python, and descriptor
+    artifacts
+  - updated `GatewayServingDefaultsStore` so operator overrides for batching defaults persist
+    beside the existing generation defaults, validate invalid batch sizes, and project both
+    requested and effective batching state through `ServerSnapshot`
+  - routed batching defaults through `TextRequestShaper` and `ChatRequestTranslator`, exposing
+    gateway-owned admission metadata in worker execution `ext` so downstream scheduling no longer
+    depends on desktop-local draft state
+  - replaced the `RequestCoordinator` hard-coded continuous-batch target with effective admission
+    capacity derived from gateway defaults, allowing continuous batching to expand, shrink, or
+    disable entirely without source edits
+  - updated the Window UI server workspace, state models, and persistence flow so concurrent
+    processing plus prefill or completion batch sizes hydrate from control-plane truth, display
+    requested-versus-effective state, and round-trip through `Apply Serving Defaults`
+- Verification summary for the second executable `M13.2` slice:
+  - `make proto`: pass
+  - `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/.build/ModuleCache.noindex" swift test --package-path services/control-plane-swift --enable-code-coverage --skip-build --filter 'GatewayServingDefaultsStoreTests'`: `4 tests in 1 suite passed`
+  - `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/.build/ModuleCache.noindex" swift test --package-path services/control-plane-swift --enable-code-coverage --skip-build --filter 'TextEndpointContractTests'`: `36 tests in 1 suite passed`
+  - `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/.build/ModuleCache.noindex" swift test --package-path services/control-plane-swift --enable-code-coverage --skip-build --filter 'OpenAIHandlerTests'`: `101 tests in 1 suite passed`
+  - `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/.build/ModuleCache.noindex" swift test --package-path services/control-plane-swift --enable-code-coverage --skip-build --filter 'ControlPlaneServiceTests'`: `157 tests in 1 suite passed`
+  - `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/.build/ModuleCache.noindex" swift test --package-path services/control-plane-swift --enable-code-coverage --skip-build --filter 'HTTPGatewayTests.RequestCoordinatorTests/gatewayBatchingDefaultsCanExpandContinuousBatchCapacity()'`: `1 test in 1 suite passed`
+  - `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/.build/ModuleCache.noindex" swift test --package-path services/control-plane-swift --enable-code-coverage --skip-build --filter 'HTTPGatewayTests.RequestCoordinatorTests/gatewayBatchingDefaultsCanDisableContinuousBatchAdmissions()'`: `1 test in 1 suite passed`
+  - `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/.build/ModuleCache.noindex" swift test --package-path apps/macos-menubar --enable-code-coverage --filter 'RuntimeViewModelTests|ControlPlaneXPCClientTests|DesktopShellStateTests|DesktopFoundationViewTests'`: `246 tests in 4 suites passed after 4.357 seconds`
+  - `python3 scripts/swift_changed_line_coverage.py --binary services/control-plane-swift/.build/arm64-apple-macosx/debug/MelixControlPlanePackageTests.xctest/Contents/MacOS/MelixControlPlanePackageTests --profdata /tmp/m13_2_cp_profdata_pieces/merged.profdata services/control-plane-swift/Sources/HTTPGateway/OpenAI/GatewayServingDefaultsStore.swift services/control-plane-swift/Sources/Requests/ChatRequestTranslator.swift services/control-plane-swift/Sources/Requests/RequestCoordinator.swift services/control-plane-swift/Sources/Requests/TextRequestShaper.swift services/control-plane-swift/Tests/ControlPlaneTests/ControlPlaneServiceTests.swift services/control-plane-swift/Tests/ControlPlaneTests/GatewayServingDefaultsStoreTests.swift services/control-plane-swift/Tests/ControlPlaneTests/TextEndpointContractTests.swift services/control-plane-swift/Tests/HTTPGatewayTests/OpenAIHandlerTests.swift services/control-plane-swift/Tests/HTTPGatewayTests/RequestCoordinatorTests.swift`: `95.41%` (`457/479`)
+  - `python3 scripts/swift_changed_line_coverage.py --binary apps/macos-menubar/.build/arm64-apple-macosx/debug/MelixMacOSMenubarPackageTests.xctest/Contents/MacOS/MelixMacOSMenubarPackageTests --profdata apps/macos-menubar/.build/arm64-apple-macosx/debug/codecov/default.profdata services/control-plane-swift/Sources/XPCService/ControlPlaneXPCClient.swift apps/macos-menubar/Sources/AppMain/Dashboard/DesktopWorkspaceShellView.swift apps/macos-menubar/Sources/AppMain/Models/DesktopShellState.swift apps/macos-menubar/Sources/AppMain/Models/RuntimeViewModel.swift apps/macos-menubar/Tests/MenuBarTests/ControlPlaneXPCClientTests.swift apps/macos-menubar/Tests/MenuBarTests/DesktopFoundationViewTests.swift apps/macos-menubar/Tests/MenuBarTests/DesktopShellStateTests.swift apps/macos-menubar/Tests/MenuBarTests/RuntimeViewModelTests.swift apps/macos-menubar/Tests/MenuBarTests/TestSupport.swift`: `99.59%` (`240/241`)
+  - `make integration-test`: `66 passed in 883.49s (0:14:43)`
+  - `make swift-test`: failed outside the touched scope when `services/mlx-text-worker-swift` exited with unexpected signal `11` during `WorkerScaffoldTests`
+  - `git diff --check`: pass
+- Metrics report for the second executable `M13.2` slice:
+  - typed batching or admission metrics exercised by the touched scope:
+    - `gateway.serving_defaults_apply_ms`
+    - `gateway.serving_defaults_persist_failures`
+    - `menu.serving_defaults_apply_ms`
+    - `scheduler.continuous_batch_eligible_rate`
+    - `scheduler.continuous_batch_merge_rate`
+    - `scheduler.continuous_batch_size`
+    - `scheduler.continuous_batch_active_cohorts`
+  - effective-state and admission evidence exercised by the touched scope:
+    - requested versus effective `concurrent_processing_enabled`,
+      `max_concurrent_requests`, `prefill_batch_size`, and `completion_batch_size`
+    - gateway-owned batching defaults in request shaping and execution metadata
+    - scheduler-visible continuous-batch expansion and disablement without source changes
+  - changed-line coverage for the touched handwritten executable scope:
+    - Swift control-plane scope: `95.41%` (`457/479`)
+    - Swift menu-bar plus shared XPC-client scope: `99.59%` (`240/241`)
+    - aggregate touched-scope coverage: `96.81%` (`697/720`)
+  - generated protobuf outputs, `packages/protocol/descriptors/melix.pb`, and planning documents
+    are excluded from executable changed-line coverage because they are regenerated artifacts or
+    non-runtime documentation rather than handwritten executable logic
+
 ## 2026-04-05
 
 - Closed the first executable `M13.2` slice by making gateway-level serving defaults typed,
