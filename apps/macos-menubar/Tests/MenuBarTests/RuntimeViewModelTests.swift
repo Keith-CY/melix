@@ -2301,6 +2301,35 @@ struct RuntimeViewModelTests {
     @MainActor
     func desktopFoundationDerivesOperatorPanelsFromSnapshotTruth() async throws {
         let client = FakeControlPlaneXPCClient()
+        var snapshot = makeSnapshot(
+            serverState: .serverReady,
+            models: [makeModelSummary(modelID: "melix-dev-text", state: .modelWarm)]
+        )
+        var surface = Melix_Controlplane_V1_APIOnboardingSurfaceSummary()
+        surface.surfaceID = "openai_compatible"
+        surface.title = "OpenAI-Compatible"
+        surface.status = .shipped
+        surface.endpointIds = ["responses"]
+        var endpoint = Melix_Controlplane_V1_APIReferenceEndpointSummary()
+        endpoint.endpointID = "responses"
+        endpoint.surfaceID = "openai_compatible"
+        endpoint.method = "POST"
+        endpoint.path = "/v1/responses"
+        endpoint.summary = "Run Responses-style generation."
+        endpoint.streaming = true
+        snapshot.apiOnboarding.surfaces = [surface]
+        snapshot.apiOnboarding.endpoints = [endpoint]
+        var queue = Melix_Controlplane_V1_QueueSummary()
+        var decode = Melix_Controlplane_V1_QueueLaneSummary()
+        decode.laneID = "text.decode.interactive"
+        decode.laneClass = "interactive-decode"
+        decode.activeRequests = 1
+        queue.lanes = [decode]
+        snapshot.queues = queue
+        var metrics = Melix_Controlplane_V1_MetricsSummary()
+        metrics.values = ["http.translation_ms": 2.4]
+        snapshot.metrics = metrics
+        await client.configureSnapshot(snapshot)
         let viewModel = RuntimeViewModel(client: client)
 
         await viewModel.start()
@@ -5217,6 +5246,123 @@ struct RuntimeViewModelTests {
         #expect(viewModel.selectedImageModelID == "melix-qwen-image")
     }
 
+    @Test("image defaults snapshot hydrates requested and effective control state")
+    @MainActor
+    func imageDefaultsSnapshotHydratesRequestedAndEffectiveState() async throws {
+        let client = FakeControlPlaneXPCClient()
+        var snapshot = makeSnapshot(
+            serverState: .serverReady,
+            models: [
+                makeMenuBarImageModelSummary(
+                    modelID: "melix-qwen-image",
+                    familyID: "qwenimage-v1",
+                    supportsGeneration: true,
+                    supportsEdit: false
+                ),
+                makeMenuBarImageModelSummary(
+                    modelID: "melix-fill-image",
+                    familyID: "fill-v1",
+                    supportsGeneration: false,
+                    supportsEdit: true
+                ),
+            ]
+        )
+        var defaults = Melix_Controlplane_V1_ImageDefaultsSummary()
+        defaults.requestedGenerateModelID = "melix-qwen-image"
+        defaults.requestedEditModelID = "melix-fill-image"
+        defaults.requestedSize = "1536x1024"
+        defaults.requestedSteps = 40
+        defaults.requestedGuidance = 6.5
+        defaults.requestedStrength = 0.75
+        defaults.requestedNegativePrompt = "grain"
+        defaults.effectiveGenerateModelID = "melix-qwen-image"
+        defaults.effectiveEditModelID = "melix-fill-image"
+        defaults.effectiveSize = "1024x1024"
+        defaults.effectiveSteps = 32
+        defaults.effectiveGuidance = 7
+        defaults.effectiveStrength = 0.6
+        defaults.effectiveNegativePrompt = "grain"
+        defaults.source = .operatorOverride
+        defaults.updatedAtUnixMs = 1_717_171_717_000
+        snapshot.imageDefaults = defaults
+        await client.configureSnapshot(snapshot)
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+
+        #expect(viewModel.selectedImageModelID(for: .generate) == "melix-qwen-image")
+        #expect(viewModel.selectedImageModelID(for: .edit) == "melix-fill-image")
+        #expect(viewModel.imageSize == "1536x1024")
+        #expect(viewModel.imageSteps == "40")
+        #expect(viewModel.imageGuidance == "6.5")
+        #expect(viewModel.imageStrength == "0.75")
+        #expect(viewModel.imageNegativePrompt == "grain")
+        #expect(viewModel.imageDefaultsSourceText == "Operator Override")
+        #expect(viewModel.effectiveImageGenerateModelID == "melix-qwen-image")
+        #expect(viewModel.effectiveImageEditModelID == "melix-fill-image")
+        #expect(viewModel.effectiveImageSize == "1024x1024")
+        #expect(viewModel.effectiveImageSteps == "32")
+        #expect(viewModel.effectiveImageGuidance == "7")
+        #expect(viewModel.effectiveImageStrength == "0.6")
+        #expect(viewModel.effectiveImageNegativePrompt == "grain")
+    }
+
+    @Test("image defaults apply forwards typed defaults and projects hydrated summary")
+    @MainActor
+    func imageDefaultsApplyForwardsTypedDefaultsAndProjectsHydratedSummary() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [
+                    makeMenuBarImageModelSummary(
+                        modelID: "melix-qwen-image",
+                        familyID: "qwenimage-v1",
+                        supportsGeneration: true,
+                        supportsEdit: false
+                    ),
+                    makeMenuBarImageModelSummary(
+                        modelID: "melix-fill-image",
+                        familyID: "fill-v1",
+                        supportsGeneration: false,
+                        supportsEdit: true
+                    ),
+                ]
+            )
+        )
+        let metrics = MenuBarMetricsStore()
+        let viewModel = RuntimeViewModel(client: client, metrics: metrics)
+
+        await viewModel.start()
+        viewModel.setSelectedImageModelID("melix-qwen-image", for: .generate)
+        viewModel.setSelectedImageModelID("melix-fill-image", for: .edit)
+        viewModel.imageSize = "1536x1024"
+        viewModel.imageSteps = "40"
+        viewModel.imageGuidance = "6.25"
+        viewModel.imageStrength = "0.7"
+        viewModel.imageNegativePrompt = "noise"
+
+        await viewModel.applyImageDefaults()
+
+        let request = try #require(await client.recordedImageDefaultsApplyRequests.last)
+        #expect(request.generateModelID == "melix-qwen-image")
+        #expect(request.editModelID == "melix-fill-image")
+        #expect(request.size == "1536x1024")
+        #expect(request.steps == 40)
+        #expect(request.guidance == 6.25)
+        #expect(request.strength == 0.7)
+        #expect(request.negativePrompt == "noise")
+        #expect(viewModel.imageDefaultsSourceText == "Operator Override")
+        #expect(viewModel.effectiveImageGenerateModelID == "melix-qwen-image")
+        #expect(viewModel.effectiveImageEditModelID == "melix-fill-image")
+        #expect(viewModel.effectiveImageSize == "1536x1024")
+        #expect(viewModel.effectiveImageSteps == "40")
+        #expect(viewModel.effectiveImageGuidance == "6.25")
+        #expect(viewModel.effectiveImageStrength == "0.7")
+        #expect(viewModel.effectiveImageNegativePrompt == "noise")
+        #expect(await metrics.snapshot()["desktop.image_defaults_apply_ms"] != nil)
+    }
+
     @Test("desktop image workspace body evaluates role-aware picker and summary branches")
     @MainActor
     func desktopImageWorkspaceBodyEvaluatesRoleAwarePickerAndSummaryBranches() async throws {
@@ -5323,9 +5469,16 @@ struct RuntimeViewModelTests {
 
         await viewModel.start()
         viewModel.imagePromptText = "Generate a poster"
+        viewModel.imageSteps = "36"
+        viewModel.imageGuidance = "6.75"
+        viewModel.imageNegativePrompt = "blur"
         await viewModel.submitImageGeneration()
 
+        let generateRequest = try #require(await client.recordedImageGenerateRequests.last)
         #expect(await client.recordedActions.contains("image.generate:melix-dev-image"))
+        #expect(generateRequest.steps == 36)
+        #expect(generateRequest.guidance == 6.75)
+        #expect(generateRequest.negativePrompt == "blur")
         #expect(viewModel.imageStatusText == "Completed • image_generate")
         #expect(viewModel.imageJobs.contains(where: { $0.jobID == "job-image-generate" }))
         #expect(await metrics.snapshot()["desktop.image_action_latency_ms"] != nil)
@@ -5333,9 +5486,18 @@ struct RuntimeViewModelTests {
         viewModel.imagePromptText = "Edit the poster"
         viewModel.imageEditSourceURL = "file:///tmp/source.png"
         viewModel.imageEditMaskURL = "file:///tmp/mask.png"
+        viewModel.imageStrength = "0.45"
+        viewModel.imageSteps = "28"
+        viewModel.imageGuidance = "5.5"
+        viewModel.imageNegativePrompt = "washed out"
         await viewModel.submitImageEdit()
 
+        let editRequest = try #require(await client.recordedImageEditRequests.last)
         #expect(await client.recordedActions.contains("image.edit:melix-dev-image"))
+        #expect(editRequest.strength == 0.45)
+        #expect(editRequest.steps == 28)
+        #expect(editRequest.guidance == 5.5)
+        #expect(editRequest.negativePrompt == "washed out")
         #expect(viewModel.imageJobs.contains(where: { $0.jobID == "job-image-edit" }))
         #expect(viewModel.selectedImageJob?.artifacts.contains(where: { $0.storageUri == "/tmp/output.png" }) == true)
     }

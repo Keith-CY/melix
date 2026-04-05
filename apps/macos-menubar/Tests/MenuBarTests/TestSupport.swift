@@ -54,6 +54,39 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
         let numDraftTokens: Int
     }
 
+    struct RecordedImageDefaultsApplyRequest: Equatable, Sendable {
+        let generateModelID: String
+        let editModelID: String
+        let size: String
+        let steps: UInt32
+        let guidance: Float
+        let strength: Float
+        let negativePrompt: String
+    }
+
+    struct RecordedImageGenerateRequest: Equatable, Sendable {
+        let modelID: String
+        let prompt: String
+        let size: String
+        let steps: UInt32
+        let guidance: Float
+        let negativePrompt: String
+        let n: UInt32
+    }
+
+    struct RecordedImageEditRequest: Equatable, Sendable {
+        let modelID: String
+        let prompt: String
+        let imageURL: String
+        let maskURL: String
+        let strength: Float
+        let size: String
+        let steps: UInt32
+        let guidance: Float
+        let negativePrompt: String
+        let n: UInt32
+    }
+
     struct RecordedServerIdlePolicyRequest: Equatable, Sendable {
         let serverSessionID: String
         let autoSleepEnabled: Bool
@@ -73,6 +106,9 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
     private(set) var recordedGatewayAccessApplyRequests: [RecordedGatewayAccessApplyRequest] = []
     private(set) var recordedGatewayConfigApplyRequests: [RecordedGatewayConfigApplyRequest] = []
     private(set) var recordedServingDefaultsApplyRequests: [RecordedServingDefaultsApplyRequest] = []
+    private(set) var recordedImageDefaultsApplyRequests: [RecordedImageDefaultsApplyRequest] = []
+    private(set) var recordedImageGenerateRequests: [RecordedImageGenerateRequest] = []
+    private(set) var recordedImageEditRequests: [RecordedImageEditRequest] = []
     private(set) var recordedGatewayAccessClearRequests: [String] = []
     private(set) var recordedServerIdlePolicyRequests: [RecordedServerIdlePolicyRequest] = []
     private(set) var lastLoadMemoryBudgetBytes: UInt64 = 0
@@ -98,6 +134,7 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
     private var applyGatewayAccessError: Error?
     private var applyGatewayConfigError: Error?
     private var applyServingDefaultsError: Error?
+    private var applyImageDefaultsError: Error?
     private var clearGatewayAccessError: Error?
     private var startServerError: Error?
     private var pauseServerError: Error?
@@ -334,6 +371,10 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
 
     func configureServingDefaultsApplyError(_ error: Error?) {
         applyServingDefaultsError = error
+    }
+
+    func configureImageDefaultsApplyError(_ error: Error?) {
+        applyImageDefaultsError = error
     }
 
     func handshake() async throws -> Melix_Controlplane_V1_HandshakeResponse {
@@ -627,6 +668,17 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
         if let imageGenerateError {
             throw imageGenerateError
         }
+        recordedImageGenerateRequests.append(
+            RecordedImageGenerateRequest(
+                modelID: request.modelID,
+                prompt: request.prompt,
+                size: request.size,
+                steps: request.steps,
+                guidance: request.guidance,
+                negativePrompt: request.negativePrompt,
+                n: request.n
+            )
+        )
         var response = imageGenerateResponse
         response.modelID = request.modelID
         if response.requestID.isEmpty {
@@ -642,12 +694,69 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
         if let imageEditError {
             throw imageEditError
         }
+        recordedImageEditRequests.append(
+            RecordedImageEditRequest(
+                modelID: request.modelID,
+                prompt: request.prompt,
+                imageURL: request.imageURL,
+                maskURL: request.maskURL,
+                strength: request.strength,
+                size: request.size,
+                steps: request.steps,
+                guidance: request.guidance,
+                negativePrompt: request.negativePrompt,
+                n: request.n
+            )
+        )
         var response = imageEditResponse
         response.modelID = request.modelID
         if response.requestID.isEmpty {
             response.requestID = "image-edit-1"
         }
         return response
+    }
+
+    func applyImageDefaults(
+        _ request: ControlPlaneImageDefaultsRequest
+    ) async throws -> Melix_Controlplane_V1_ImageDefaultsSummary {
+        recordedActions.append("image.defaults.apply")
+        if let applyImageDefaultsError {
+            throw applyImageDefaultsError
+        }
+        recordedImageDefaultsApplyRequests.append(
+            RecordedImageDefaultsApplyRequest(
+                generateModelID: request.generateModelID,
+                editModelID: request.editModelID,
+                size: request.size,
+                steps: request.steps,
+                guidance: request.guidance,
+                strength: request.strength,
+                negativePrompt: request.negativePrompt
+            )
+        )
+
+        var summary = Melix_Controlplane_V1_ImageDefaultsSummary()
+        summary.requestedGenerateModelID = request.generateModelID
+        summary.requestedEditModelID = request.editModelID
+        summary.requestedSize = request.size
+        summary.requestedSteps = request.steps
+        summary.requestedGuidance = request.guidance
+        summary.requestedStrength = request.strength
+        summary.requestedNegativePrompt = request.negativePrompt
+        summary.effectiveGenerateModelID = request.generateModelID
+        summary.effectiveEditModelID = request.editModelID
+        summary.effectiveSize = request.size
+        summary.effectiveSteps = request.steps
+        summary.effectiveGuidance = request.guidance
+        summary.effectiveStrength = request.strength
+        summary.effectiveNegativePrompt = request.negativePrompt
+        summary.source = .operatorOverride
+        summary.updatedAtUnixMs = 1_717_171_717_000
+
+        var snapshot = snapshotOverride ?? makeSnapshot(state: modelState)
+        snapshot.imageDefaults = summary
+        snapshotOverride = snapshot
+        return summary
     }
 
     func cancelRequest(requestID: String) async throws -> Bool {

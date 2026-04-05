@@ -1002,6 +1002,37 @@ public actor ModelCatalog {
         }
     }
 
+    private static func imageDefaultSteps(for familyID: String) -> String {
+        switch familyID {
+        case "qwenimage-v1":
+            return "32"
+        case "fill-v1", "klein-v1":
+            return "24"
+        default:
+            return "28"
+        }
+    }
+
+    private static func imageDefaultGuidance(for familyID: String) -> String {
+        switch familyID {
+        case "qwenimage-v1":
+            return "4.0"
+        case "fill-v1", "kontext-v1", "klein-v1":
+            return "6.5"
+        default:
+            return "7.5"
+        }
+    }
+
+    private static func imageDefaultStrength(for familyID: String) -> String {
+        switch familyID {
+        case "fill-v1", "kontext-v1", "klein-v1":
+            return "0.8"
+        default:
+            return "1.0"
+        }
+    }
+
     public static func devTextModel(
         environment: [String: String] = ProcessInfo.processInfo.environment
     ) -> Melix_Controlplane_V1_ModelSummary {
@@ -1403,6 +1434,11 @@ public actor ModelCatalog {
         model.settings.ext["melix.image.default_workflow_role"] = imageDefaultWorkflowRole(for: detected.familyID)
         model.settings.ext["melix.image.supports_generation"] = supportsGeneration ? "true" : "false"
         model.settings.ext["melix.image.supports_edit"] = supportsEdit ? "true" : "false"
+        model.settings.ext["melix.image.default_size"] = "1024x1024"
+        model.settings.ext["melix.image.default_steps"] = imageDefaultSteps(for: detected.familyID)
+        model.settings.ext["melix.image.default_guidance"] = imageDefaultGuidance(for: detected.familyID)
+        model.settings.ext["melix.image.default_strength"] = imageDefaultStrength(for: detected.familyID)
+        model.settings.ext["melix.image.default_negative_prompt"] = ""
         model.settings.ext["detected_family_id"] = detected.familyID
         model.settings.ext["detected_task_kind"] = detected.taskKind
         model.settings.ext["detected_identity_source"] = detected.source

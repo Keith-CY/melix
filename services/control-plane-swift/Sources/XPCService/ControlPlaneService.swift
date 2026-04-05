@@ -159,6 +159,7 @@ public actor ControlPlaneService {
     private let gatewayAccessPolicyStore: GatewayAccessPolicyStore
     private let gatewayConfigStore: GatewayConfigStore
     private let gatewayServingDefaultsStore: GatewayServingDefaultsStore
+    private let imageDefaultsStore: ImageDefaultsStore
     private let gatewayRuntimeBinding: GatewayRuntimeBinding
     private let persistentAuthSessionStore: PersistentAuthSessionStore?
     private let gatewaySupportsSpeculativeDefaults: Bool
@@ -186,6 +187,7 @@ public actor ControlPlaneService {
         gatewayAccessPolicy: GatewayAccessPolicy = .localTrust,
         gatewayConfigStore: GatewayConfigStore? = nil,
         gatewayServingDefaultsStore: GatewayServingDefaultsStore? = nil,
+        imageDefaultsStore: ImageDefaultsStore? = nil,
         gatewayRuntimeBinding: GatewayRuntimeBinding = GatewayRuntimeBinding(host: "127.0.0.1", port: 11_434),
         audioAssetManager: AudioAssetManager = AudioAssetManager(),
         gatewayAccessPolicyStore: GatewayAccessPolicyStore? = nil,
@@ -240,6 +242,7 @@ public actor ControlPlaneService {
         self.gatewayAccessPolicyStore = gatewayAccessPolicyStore ?? GatewayAccessPolicyStore(gatewayAccessPolicy)
         self.gatewayConfigStore = gatewayConfigStore ?? GatewayConfigStore()
         self.gatewayServingDefaultsStore = gatewayServingDefaultsStore ?? GatewayServingDefaultsStore()
+        self.imageDefaultsStore = imageDefaultsStore ?? ImageDefaultsStore()
         self.gatewayRuntimeBinding = gatewayRuntimeBinding
         self.persistentAuthSessionStore = persistentAuthSessionStore
         self.gatewaySupportsSpeculativeDefaults = gatewaySupportsSpeculativeDefaults
@@ -1316,6 +1319,8 @@ public actor ControlPlaneService {
             return await handleGenerateImage(request: request, command: generate)
         case .edit(let edit):
             return await handleEditImage(request: request, command: edit)
+        case .applyDefaults(let applyDefaults):
+            return await handleApplyImageDefaults(request: request, command: applyDefaults)
         default:
             return errorResponse(
                 for: request,
@@ -1355,11 +1360,13 @@ public actor ControlPlaneService {
         let cache = await cacheMetadataStore.cacheSummary()
         let sessions = await sessionGraphStore.sessionSummaries()
         let imageJobs = await imageJobReadModel.snapshot()
+        let imageDefaultsSummary = await imageDefaultsStore.summary(models: models)
         let toolingSettingsSummary = toolingSettingsSnapshotSource.summary(
             models: models,
             mcpToolCatalog: mcpToolCatalog,
             gatewayConfigStorePath: await gatewayConfigStore.storePath(),
-            gatewayServingDefaultsStorePath: await gatewayServingDefaultsStore.storePath()
+            gatewayServingDefaultsStorePath: await gatewayServingDefaultsStore.storePath(),
+            imageDefaultsStorePath: await imageDefaultsStore.storePath()
         )
         let apiOnboardingSummary = apiOnboardingSnapshotSource.summary()
         return snapshotBuilder.build(
@@ -1375,7 +1382,8 @@ public actor ControlPlaneService {
             gatewayConfig: gatewayConfigSummary,
             servingDefaults: servingDefaultsSummary,
             toolingSettings: toolingSettingsSummary,
-            apiOnboarding: apiOnboardingSummary
+            apiOnboarding: apiOnboardingSummary,
+            imageDefaults: imageDefaultsSummary
         )
     }
 
@@ -1519,6 +1527,32 @@ public actor ControlPlaneService {
                 for: request,
                 code: "serving_defaults_persist_failed",
                 message: "Serving defaults persistence failed: \(error)"
+            )
+        }
+    }
+
+    private func handleApplyImageDefaults(
+        request: Melix_Controlplane_V1_ControlPlaneRequest,
+        command: Melix_Controlplane_V1_ApplyImageDefaults
+    ) async -> Melix_Controlplane_V1_ControlPlaneResponse {
+        let startedAt = Date()
+
+        do {
+            try await imageDefaultsStore.apply(command: command, models: await modelCatalog.listModels())
+            await metricsStore.set(
+                Date().timeIntervalSince(startedAt) * 1000,
+                forKey: "images.defaults_apply_latency_ms"
+            )
+            var imageReply = Melix_Controlplane_V1_ImageReply()
+            imageReply.imageDefaults = await imageDefaultsStore.summary(models: await modelCatalog.listModels())
+            return okResponse(for: request, image: imageReply)
+        } catch let error as ImageDefaultsValidationError {
+            return errorResponse(for: request, code: error.code, message: error.message)
+        } catch {
+            return errorResponse(
+                for: request,
+                code: "image_defaults_persist_failed",
+                message: "Image defaults persistence failed: \(error)"
             )
         }
     }
@@ -1696,6 +1730,18 @@ public actor ControlPlaneService {
         command: Melix_Controlplane_V1_GenerateImage
     ) async -> Melix_Controlplane_V1_ControlPlaneResponse {
         let startedAt = Date()
+        let models = await modelCatalog.listModels()
+        let imageDefaults = await imageDefaultsStore.resolvedDefaults(models: models)
+        let resolvedModelID = command.modelID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? imageDefaults.generateModelID
+            : command.modelID
+        let resolvedSize = command.size.isEmpty ? imageDefaults.size : command.size
+        let resolvedSteps = command.steps == 0 ? imageDefaults.steps : command.steps
+        let resolvedGuidance = command.guidance == 0 ? imageDefaults.guidance : command.guidance
+        let resolvedNegativePrompt = command.negativePrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? imageDefaults.negativePrompt
+            : command.negativePrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+
         switch await prepareDefaultServerSessionForServingActivity() {
         case .blocked(let code, let message):
             return errorResponse(for: request, code: code, message: message)
@@ -1704,32 +1750,41 @@ public actor ControlPlaneService {
                 await publishCurrentServerState(source: "server_runtime")
             }
         }
-        guard let modelHandle = await modelCatalog.dispatchHandle(for: command.modelID) else {
+        guard resolvedModelID.isEmpty == false else {
+            return errorResponse(for: request, code: "invalid_argument", message: "Image generate model is required.")
+        }
+        guard let modelHandle = await modelCatalog.dispatchHandle(for: resolvedModelID) else {
             return errorResponse(for: request, code: "not_ready", message: "Image model is not loaded.")
         }
         guard
             let workerRegistry,
-            let workerClient = await workerRegistry.client(forModelID: command.modelID) as? any NonTextInferenceWorkerClientProtocol
+            let workerClient = await workerRegistry.client(forModelID: resolvedModelID) as? any NonTextInferenceWorkerClientProtocol
         else {
             return errorResponse(for: request, code: "unavailable", message: "Image worker is unavailable.")
         }
 
-        let routeKind = await workerRegistry.route(forModelID: command.modelID) ?? .pythonImage
+        let routeKind = await workerRegistry.route(forModelID: resolvedModelID) ?? .pythonImage
         let jobID = "\(request.requestID)::image-generate"
 
         var workerRequest = Melix_Worker_V1_ImageGenerateRequest()
         workerRequest.id.requestID = request.requestID
         workerRequest.modelHandle = modelHandle
         workerRequest.prompt = command.prompt
-        workerRequest.size = command.size.isEmpty ? "1024x1024" : command.size
+        workerRequest.size = resolvedSize.isEmpty ? "1024x1024" : resolvedSize
         workerRequest.n = command.n == 0 ? 1 : command.n
         workerRequest.responseFormat = command.responseFormat.isEmpty ? "png" : command.responseFormat
         workerRequest.artifactNamespace = command.artifactNamespace
+        workerRequest.ext = imageRequestExt(
+            steps: resolvedSteps,
+            guidance: resolvedGuidance,
+            negativePrompt: resolvedNegativePrompt,
+            strength: nil
+        )
 
         await imageJobReadModel.recordQueued(
             requestID: request.requestID,
             jobID: jobID,
-            modelID: command.modelID,
+            modelID: resolvedModelID,
             operation: "image_generate",
             lane: routeKind.defaultSchedulingLane
         )
@@ -1798,7 +1853,7 @@ public actor ControlPlaneService {
             }
 
             var reply = Melix_Controlplane_V1_ImageReply()
-            reply.job = controlPlaneImageJob(from: workerResponse.job, modelID: command.modelID)
+            reply.job = controlPlaneImageJob(from: workerResponse.job, modelID: resolvedModelID)
             if reply.job.jobID.isEmpty {
                 reply.job.jobID = resolvedJobID
             }
@@ -1824,6 +1879,18 @@ public actor ControlPlaneService {
         let resolvedEditMode = resolvedImageEditMode(command.editMode)
         let sourceArtifactID = command.sourceArtifactID.trimmingCharacters(in: .whitespacesAndNewlines)
         let promptDelta = command.promptDelta.trimmingCharacters(in: .whitespacesAndNewlines)
+        let models = await modelCatalog.listModels()
+        let imageDefaults = await imageDefaultsStore.resolvedDefaults(models: models)
+        let resolvedModelID = command.modelID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? imageDefaults.editModelID
+            : command.modelID
+        let resolvedStrength = command.strength == 0 ? imageDefaults.strength : command.strength
+        let resolvedSize = command.size.isEmpty ? imageDefaults.size : command.size
+        let resolvedSteps = command.steps == 0 ? imageDefaults.steps : command.steps
+        let resolvedGuidance = command.guidance == 0 ? imageDefaults.guidance : command.guidance
+        let resolvedNegativePrompt = command.negativePrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? imageDefaults.negativePrompt
+            : command.negativePrompt.trimmingCharacters(in: .whitespacesAndNewlines)
 
         guard !command.image.isEmpty || !command.imageUri.isEmpty || !sourceArtifactID.isEmpty else {
             if resolvedEditMode == .variation || resolvedEditMode == .iterate {
@@ -1844,17 +1911,20 @@ public actor ControlPlaneService {
                 await publishCurrentServerState(source: "server_runtime")
             }
         }
-        guard let modelHandle = await modelCatalog.dispatchHandle(for: command.modelID) else {
+        guard resolvedModelID.isEmpty == false else {
+            return errorResponse(for: request, code: "invalid_argument", message: "Image edit model is required.")
+        }
+        guard let modelHandle = await modelCatalog.dispatchHandle(for: resolvedModelID) else {
             return errorResponse(for: request, code: "not_ready", message: "Image model is not loaded.")
         }
         guard
             let workerRegistry,
-            let workerClient = await workerRegistry.client(forModelID: command.modelID) as? any NonTextInferenceWorkerClientProtocol
+            let workerClient = await workerRegistry.client(forModelID: resolvedModelID) as? any NonTextInferenceWorkerClientProtocol
         else {
             return errorResponse(for: request, code: "unavailable", message: "Image worker is unavailable.")
         }
 
-        let routeKind = await workerRegistry.route(forModelID: command.modelID) ?? .pythonImage
+        let routeKind = await workerRegistry.route(forModelID: resolvedModelID) ?? .pythonImage
         let jobID = "\(request.requestID)::image-edit"
         if (resolvedEditMode == .variation || resolvedEditMode == .iterate) && sourceArtifactID.isEmpty {
             return errorResponse(
@@ -1924,10 +1994,16 @@ public actor ControlPlaneService {
         workerRequest.sourceArtifactID = sourceArtifactID
         workerRequest.promptDelta = promptDelta
         workerRequest.editMode = workerImageEditMode(resolvedEditMode)
-        workerRequest.strength = command.strength == 0 ? 1 : command.strength
-        workerRequest.size = command.size.isEmpty ? "1024x1024" : command.size
+        workerRequest.strength = resolvedStrength == 0 ? 1 : resolvedStrength
+        workerRequest.size = resolvedSize.isEmpty ? "1024x1024" : resolvedSize
         workerRequest.n = command.n == 0 ? 1 : command.n
         workerRequest.responseFormat = command.responseFormat.isEmpty ? "png" : command.responseFormat
+        workerRequest.ext = imageRequestExt(
+            steps: resolvedSteps,
+            guidance: resolvedGuidance,
+            negativePrompt: resolvedNegativePrompt,
+            strength: resolvedStrength
+        )
         if sourceJobID.isEmpty == false {
             workerRequest.ext["melix.image.source_job_id"] = sourceJobID
         }
@@ -1935,7 +2011,7 @@ public actor ControlPlaneService {
         await imageJobReadModel.recordQueued(
             requestID: request.requestID,
             jobID: jobID,
-            modelID: command.modelID,
+            modelID: resolvedModelID,
             operation: imageEditOperationName(for: resolvedEditMode),
             lane: routeKind.defaultSchedulingLane,
             sourceArtifactID: sourceArtifactID,
@@ -2008,7 +2084,7 @@ public actor ControlPlaneService {
             }
 
             var reply = Melix_Controlplane_V1_ImageReply()
-            reply.job = controlPlaneImageJob(from: workerResponse.job, modelID: command.modelID)
+            reply.job = controlPlaneImageJob(from: workerResponse.job, modelID: resolvedModelID)
             if reply.job.jobID.isEmpty {
                 reply.job.jobID = resolvedJobID
             }
@@ -3277,6 +3353,29 @@ public actor ControlPlaneService {
             return promptDelta
         }
         return prompt
+    }
+
+    private func imageRequestExt(
+        steps: UInt32,
+        guidance: Float,
+        negativePrompt: String,
+        strength: Float?
+    ) -> [String: String] {
+        var ext: [String: String] = [:]
+        if steps > 0 {
+            ext["melix.image.steps"] = String(steps)
+        }
+        if guidance > 0 {
+            ext["melix.image.guidance"] = String(guidance)
+        }
+        let trimmedNegativePrompt = negativePrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmedNegativePrompt.isEmpty == false {
+            ext["melix.image.negative_prompt"] = trimmedNegativePrompt
+        }
+        if let strength, strength > 0 {
+            ext["melix.image.strength"] = String(strength)
+        }
+        return ext
     }
 
     private func controlPlaneError(from workerError: Melix_Worker_V1_ErrorStatus) -> Melix_Controlplane_V1_ErrorStatus {

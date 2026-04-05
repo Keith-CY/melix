@@ -938,6 +938,10 @@ struct ModelCatalogTests {
         #expect(qwen.settings.ext["melix.image.task_kind"] == "text-to-image")
         #expect(qwen.settings.ext["melix.image.supports_generation"] == "true")
         #expect(qwen.settings.ext["melix.image.supports_edit"] == "false")
+        #expect(qwen.settings.ext["melix.image.default_size"] == "1024x1024")
+        #expect(qwen.settings.ext["melix.image.default_steps"] == "32")
+        #expect(qwen.settings.ext["melix.image.default_guidance"] == "4.0")
+        #expect(qwen.settings.ext["melix.image.default_strength"] == "1.0")
         #expect(qwen.supportedTasks == ["image_generate"])
         #expect(qwen.settings.ext["detected_identity_source"] == "explicit_override")
 
@@ -946,11 +950,19 @@ struct ModelCatalogTests {
         #expect(fill.settings.ext["melix.image.default_workflow_role"] == "edit")
         #expect(fill.settings.ext["melix.image.supports_generation"] == "false")
         #expect(fill.settings.ext["melix.image.supports_edit"] == "true")
+        #expect(fill.settings.ext["melix.image.default_size"] == "1024x1024")
+        #expect(fill.settings.ext["melix.image.default_steps"] == "24")
+        #expect(fill.settings.ext["melix.image.default_guidance"] == "6.5")
+        #expect(fill.settings.ext["melix.image.default_strength"] == "0.8")
         #expect(fill.supportedTasks == ["image_edit"])
         #expect(fill.settings.ext["task_override"] == "true")
 
         #expect(kontext.settings.ext["melix.image.family_id"] == "kontext-v1")
         #expect(kontext.settings.ext["detected_identity_source"] == "directory_name")
+        #expect(kontext.settings.ext["melix.image.default_size"] == "1024x1024")
+        #expect(kontext.settings.ext["melix.image.default_steps"] == "28")
+        #expect(kontext.settings.ext["melix.image.default_guidance"] == "6.5")
+        #expect(kontext.settings.ext["melix.image.default_strength"] == "0.8")
         #expect(kontext.supportedTasks == ["image_generate", "image_edit"])
     }
 

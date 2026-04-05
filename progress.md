@@ -2,6 +2,45 @@
 
 ## 2026-04-06
 
+- Closed `M14.2` by making image defaults persistent across restart and projecting role-aware image
+  model selection through one control-plane-owned source of truth:
+  - extended the control-plane protocol with typed `ApplyImageDefaults`,
+    `ImageDefaultsSummary`, and explicit creative parameter fields on generate or edit requests,
+    then regenerated the Swift, Python, and descriptor artifacts
+  - added `ImageDefaultsStore` so the Swift control plane now persists creative defaults, validates
+    operator input, merges requested-versus-effective values, and projects the merged summary
+    through reconnect-stable snapshots plus XPC replies
+  - updated image catalog metadata and snapshot assembly so creative models declare generate or edit
+    role support explicitly instead of relying on Window-UI-local picker knowledge
+  - updated the shared XPC client, `RuntimeViewModel`, `DesktopImageView`, and menu-bar test
+    support so the Window UI hydrates defaults from control-plane truth, persists them explicitly,
+    and filters generate versus edit model pickers by supported creative role
+- Verification summary for `M14.2`:
+  - `make proto`: pass
+  - `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/.build/ModuleCache.noindex" swift test --package-path services/control-plane-swift --filter 'ControlPlaneServiceTests|ImageDefaultsStoreTests|ModelCatalogTests'`: `204 tests in 3 suites passed`
+  - `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/.build/ModuleCache.noindex" swift test --package-path apps/macos-menubar --filter 'RuntimeViewModelTests|ControlPlaneXPCClientTests'`: `183 tests in 2 suites passed`
+  - `make swift-test`: failed outside the touched scope when `services/mlx-text-worker-swift`
+    exited with unexpected signal `11` during `WorkerScaffoldTests`
+  - `make integration-test`: `67 passed in 920.65s (0:15:20)`
+  - `git diff --check`: pass
+- Metrics report for `M14.2`:
+  - typed persisted-defaults evidence exercised by the touched scope:
+    - creative defaults for steps, guidance, strength, and negative prompt now persist through a
+      control-plane-owned store instead of Window-UI-local draft state
+    - reconnect-stable snapshots now project requested-versus-effective image defaults so the
+      operator can inspect merged creative policy after restart
+    - generate and edit request forwarding now keeps explicit per-request values authoritative while
+      still filling missing fields from the persisted defaults summary
+    - image pickers now derive role visibility from capability metadata so generate and edit flows
+      surface only compatible creative families
+  - changed-line coverage for the touched handwritten executable scope:
+    - Swift control-plane scope: `95.61%` (`936/979`)
+    - Swift menu-bar scope: `95.16%` (`609/640`)
+    - aggregate touched-scope coverage: `95.43%` (`1545/1619`)
+  - generated protobuf outputs and `packages/protocol/descriptors/melix.pb` are excluded from
+    executable changed-line coverage because they are regenerated interface artifacts rather than
+    handwritten runtime logic
+
 - Closed `M14.1` by making image variation and iterate flows typed, lineage-aware, and compatible
   with the existing image-job model instead of treating every derived image request as a generic
   edit:

@@ -16,7 +16,8 @@ public struct ServerSnapshotBuilder {
         gatewayConfig: Melix_Controlplane_V1_GatewayConfigSummary? = nil,
         servingDefaults: Melix_Controlplane_V1_ServingDefaultsSummary? = nil,
         toolingSettings: Melix_Controlplane_V1_ToolingSettingsSummary? = nil,
-        apiOnboarding: Melix_Controlplane_V1_APIOnboardingSummary? = nil
+        apiOnboarding: Melix_Controlplane_V1_APIOnboardingSummary? = nil,
+        imageDefaults: Melix_Controlplane_V1_ImageDefaultsSummary? = nil
     ) -> Melix_Controlplane_V1_ServerSnapshot {
         var snapshot = Melix_Controlplane_V1_ServerSnapshot()
         let cacheSummary = cache ?? CacheMetadataStore.emptySummary()
@@ -47,6 +48,9 @@ public struct ServerSnapshotBuilder {
         }
         if let apiOnboarding {
             snapshot.apiOnboarding = apiOnboarding
+        }
+        if let imageDefaults {
+            snapshot.imageDefaults = imageDefaults
         }
         return snapshot
     }

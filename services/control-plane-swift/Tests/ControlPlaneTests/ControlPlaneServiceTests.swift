@@ -86,6 +86,10 @@ struct ControlPlaneServiceTests {
             storeURL: tempDirectory.appendingPathComponent("gateway-serving-defaults.json"),
             defaults: [:]
         )
+        let imageDefaultsStore = ImageDefaultsStore(
+            storeURL: tempDirectory.appendingPathComponent("image-defaults.json"),
+            defaults: [:]
+        )
         let service = ControlPlaneService(
             modelCatalog: ModelCatalog(seedModels: ModelCatalog.phaseSevenContractSeedModels()),
             mcpToolCatalog: MCPToolCatalog(
@@ -97,6 +101,7 @@ struct ControlPlaneServiceTests {
             ),
             gatewayConfigStore: gatewayConfigStore,
             gatewayServingDefaultsStore: servingDefaultsStore,
+            imageDefaultsStore: imageDefaultsStore,
             environment: [
                 "MELIX_CONTROL_PLANE_METRICS_PATH": "/tmp/control-plane-metrics.json"
             ],
@@ -129,6 +134,7 @@ struct ControlPlaneServiceTests {
         )
         #expect(configPaths["gateway_config_store_path"] == tempDirectory.appendingPathComponent("gateway-config.json").path)
         #expect(configPaths["gateway_serving_defaults_store_path"] == tempDirectory.appendingPathComponent("gateway-serving-defaults.json").path)
+        #expect(configPaths["image_defaults_store_path"] == tempDirectory.appendingPathComponent("image-defaults.json").path)
         #expect(configPaths["control_plane_metrics_path"] == "/tmp/control-plane-metrics.json")
     }
 
@@ -919,6 +925,165 @@ struct ControlPlaneServiceTests {
         #expect(!response.ok)
         #expect(response.error.code == "serving_defaults_persist_failed")
         #expect(await metricsStore.value(forKey: "gateway.serving_defaults_persist_failures") == 1)
+    }
+
+    @Test("execute projects image defaults state through server snapshots")
+    func executeProjectsImageDefaultsStateThroughServerSnapshots() async throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-control-plane-image-defaults-snapshot-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let imageDefaultsStore = ImageDefaultsStore(
+            storeURL: temporaryRoot.appendingPathComponent("image-defaults.json"),
+            defaults: [:],
+            nowUnixMS: { 1_717_181_940_000 }
+        )
+        try await imageDefaultsStore.apply(
+            command: makeApplyImageDefaultsCommand(
+                generateModelID: "melix-dev-image",
+                editModelID: "melix-dev-image",
+                size: "1536x1024",
+                steps: 40,
+                guidance: 6.25,
+                strength: 0.7,
+                negativePrompt: "noise"
+            ),
+            models: ModelCatalog.phaseSevenContractSeedModels()
+        )
+        let service = ControlPlaneService(
+            modelCatalog: ModelCatalog(seedModels: ModelCatalog.phaseSevenContractSeedModels()),
+            imageDefaultsStore: imageDefaultsStore
+        )
+
+        let response = try await service.execute(makeServerSnapshotRequest())
+        let summary = response.server.snapshot.imageDefaults
+
+        #expect(response.ok)
+        #expect(summary.requestedGenerateModelID == "melix-dev-image")
+        #expect(summary.requestedEditModelID == "melix-dev-image")
+        #expect(summary.requestedSize == "1536x1024")
+        #expect(summary.requestedSteps == 40)
+        #expect(summary.requestedGuidance == 6.25)
+        #expect(summary.requestedStrength == 0.7)
+        #expect(summary.requestedNegativePrompt == "noise")
+        #expect(summary.effectiveGenerateModelID == "melix-dev-image")
+        #expect(summary.effectiveEditModelID == "melix-dev-image")
+        #expect(summary.effectiveSize == "1536x1024")
+        #expect(summary.effectiveSteps == 40)
+        #expect(summary.effectiveGuidance == 6.25)
+        #expect(summary.effectiveStrength == 0.7)
+        #expect(summary.effectiveNegativePrompt == "noise")
+        #expect(summary.source == .operatorOverride)
+        #expect(summary.updatedAtUnixMs == 1_717_181_940_000)
+    }
+
+    @Test("execute applies image defaults and returns a hydrated summary")
+    func executeAppliesImageDefaultsAndReturnsAHydratedSummary() async throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-control-plane-image-defaults-apply-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let metricsStore = MetricsStore()
+        let service = ControlPlaneService(
+            modelCatalog: ModelCatalog(seedModels: ModelCatalog.phaseSevenContractSeedModels()),
+            metricsStore: metricsStore,
+            imageDefaultsStore: ImageDefaultsStore(
+                storeURL: temporaryRoot.appendingPathComponent("image-defaults.json"),
+                defaults: [:],
+                nowUnixMS: { 1_717_181_950_000 }
+            )
+        )
+
+        let response = try await service.execute(
+            makeApplyImageDefaultsRequest(
+                generateModelID: "melix-dev-image",
+                editModelID: "melix-dev-image",
+                size: "1536x1024",
+                steps: 36,
+                guidance: 6.5,
+                strength: 0.65,
+                negativePrompt: "blur"
+            )
+        )
+        let summary = response.image.imageDefaults
+
+        #expect(response.ok)
+        #expect(summary.requestedGenerateModelID == "melix-dev-image")
+        #expect(summary.requestedEditModelID == "melix-dev-image")
+        #expect(summary.requestedSize == "1536x1024")
+        #expect(summary.requestedSteps == 36)
+        #expect(summary.requestedGuidance == 6.5)
+        #expect(summary.requestedStrength == 0.65)
+        #expect(summary.requestedNegativePrompt == "blur")
+        #expect(summary.effectiveGenerateModelID == "melix-dev-image")
+        #expect(summary.effectiveEditModelID == "melix-dev-image")
+        #expect(summary.source == .operatorOverride)
+        #expect(await metricsStore.value(forKey: "images.defaults_apply_latency_ms") >= 0)
+    }
+
+    @Test("execute rejects invalid image defaults payloads and unsupported workflow models")
+    func executeRejectsInvalidImageDefaultsPayloadsAndUnsupportedWorkflowModels() async throws {
+        var qwen = ModelCatalog.devImageModel(environment: [
+            "MELIX_DEV_IMAGE_FAMILY_ID": "qwenimage-v1",
+            "MELIX_DEV_IMAGE_MODEL_PATH": "models/qwen-image-dev",
+        ])
+        qwen.modelID = "melix-qwen-image"
+        var fill = ModelCatalog.devImageModel(environment: [
+            "MELIX_DEV_IMAGE_FAMILY_ID": "fill-v1",
+            "MELIX_DEV_IMAGE_MODEL_PATH": "models/fill-dev",
+            "MELIX_DEV_IMAGE_TASK_KIND": "image-text-to-image",
+        ])
+        fill.modelID = "melix-fill-image"
+        let text = ModelCatalog.devTextModel()
+        let service = ControlPlaneService(modelCatalog: ModelCatalog(seedModels: [qwen, fill, text]))
+
+        let invalidSize = try await service.execute(
+            makeApplyImageDefaultsRequest(
+                generateModelID: qwen.modelID,
+                editModelID: fill.modelID,
+                size: "wide",
+                steps: 28,
+                guidance: 7.5,
+                strength: 0.8
+            )
+        )
+        let invalidStrength = try await service.execute(
+            makeApplyImageDefaultsRequest(
+                generateModelID: qwen.modelID,
+                editModelID: fill.modelID,
+                size: "1024x1024",
+                steps: 28,
+                guidance: 7.5,
+                strength: 1.2
+            )
+        )
+        let unsupportedGenerate = try await service.execute(
+            makeApplyImageDefaultsRequest(
+                generateModelID: fill.modelID,
+                editModelID: fill.modelID,
+                size: "1024x1024",
+                steps: 28,
+                guidance: 7.5,
+                strength: 0.8
+            )
+        )
+        let unsupportedEdit = try await service.execute(
+            makeApplyImageDefaultsRequest(
+                generateModelID: qwen.modelID,
+                editModelID: qwen.modelID,
+                size: "1024x1024",
+                steps: 28,
+                guidance: 7.5,
+                strength: 0.8
+            )
+        )
+
+        #expect(invalidSize.error.code == ImageDefaultsValidationError.invalidSize.code)
+        #expect(invalidStrength.error.code == ImageDefaultsValidationError.invalidStrength.code)
+        #expect(unsupportedGenerate.error.code == ImageDefaultsValidationError.unsupportedGenerateModel.code)
+        #expect(unsupportedEdit.error.code == ImageDefaultsValidationError.unsupportedEditModel.code)
     }
 
     @Test("execute handles server lifecycle controls and derives server state")
@@ -4674,6 +4839,125 @@ struct ControlPlaneServiceTests {
         #expect(response.image.job.artifacts.last?.role == .imageArtifactGenerated)
     }
 
+    @Test("execute image requests fall back to persisted defaults and role-aware model selections")
+    func executeImageRequestsFallBackToPersistedDefaultsAndRoleAwareModelSelections() async throws {
+        var qwen = ModelCatalog.devImageModel(environment: [
+            "MELIX_DEV_IMAGE_FAMILY_ID": "qwenimage-v1",
+            "MELIX_DEV_IMAGE_MODEL_PATH": "models/qwen-image-dev",
+        ])
+        qwen.modelID = "melix-qwen-image"
+        var fill = ModelCatalog.devImageModel(environment: [
+            "MELIX_DEV_IMAGE_FAMILY_ID": "fill-v1",
+            "MELIX_DEV_IMAGE_MODEL_PATH": "models/fill-dev",
+            "MELIX_DEV_IMAGE_TASK_KIND": "image-text-to-image",
+        ])
+        fill.modelID = "melix-fill-image"
+        let modelCatalog = ModelCatalog(seedModels: [qwen, fill])
+        _ = await modelCatalog.loadModel(id: qwen.modelID, dispatchHandle: "\(qwen.modelID)::python")
+        _ = await modelCatalog.loadModel(id: fill.modelID, dispatchHandle: "\(fill.modelID)::python")
+
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-image-default-routing-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let imageDefaultsStore = ImageDefaultsStore(
+            storeURL: temporaryRoot.appendingPathComponent("image-defaults.json"),
+            defaults: [:]
+        )
+        try await imageDefaultsStore.apply(
+            command: makeApplyImageDefaultsCommand(
+                generateModelID: qwen.modelID,
+                editModelID: fill.modelID,
+                size: "1536x1024",
+                steps: 40,
+                guidance: 6.25,
+                strength: 0.7,
+                negativePrompt: "noise"
+            ),
+            models: [qwen, fill]
+        )
+
+        let imageClient = ScriptedImageWorkerClient()
+        await imageClient.setImageGenerateResponse({
+            var response = Melix_Worker_V1_ImageGenerateResponse()
+            response.job.requestID = "req-image-default-generate"
+            response.job.jobID = "req-image-default-generate::image-generate"
+            response.job.modelHandle = "\(qwen.modelID)::python"
+            response.job.operation = "image_generate"
+            response.job.state = .imageJobCompleted
+            response.job.progress.stage = "completed"
+            response.job.progress.pct = 1
+            return response
+        }())
+        await imageClient.setImageEditResponse({
+            var response = Melix_Worker_V1_ImageEditResponse()
+            response.job.requestID = "req-image-default-edit"
+            response.job.jobID = "req-image-default-edit::image-edit"
+            response.job.modelHandle = "\(fill.modelID)::python"
+            response.job.operation = "image_edit"
+            response.job.state = .imageJobCompleted
+            response.job.progress.stage = "completed"
+            response.job.progress.pct = 1
+            return response
+        }())
+        let service = ControlPlaneService(
+            modelCatalog: modelCatalog,
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                pythonCompatibilityClient: imageClient,
+                modelCatalog: modelCatalog
+            ),
+            imageDefaultsStore: imageDefaultsStore
+        )
+
+        var generateRequest = makeImageGenerateRequest(
+            requestID: "req-image-default-generate",
+            modelID: "",
+            prompt: "Draw a skyline",
+            size: "",
+            n: 0
+        )
+        generateRequest.image.generate.steps = 0
+        generateRequest.image.generate.guidance = 0
+        generateRequest.image.generate.negativePrompt = ""
+        let generateResponse = try await service.execute(generateRequest)
+
+        var editRequest = makeImageEditRequest(
+            requestID: "req-image-default-edit",
+            modelID: "",
+            prompt: "Adjust the skyline",
+            imageURI: "file:///tmp/source.png",
+            maskURI: "",
+            strength: 0
+        )
+        editRequest.image.edit.size = ""
+        editRequest.image.edit.steps = 0
+        editRequest.image.edit.guidance = 0
+        editRequest.image.edit.negativePrompt = ""
+        let editResponse = try await service.execute(editRequest)
+
+        let forwardedGenerateRequest = try #require(await imageClient.lastImageGenerateRequest)
+        let forwardedEditRequest = try #require(await imageClient.lastImageEditRequest)
+
+        #expect(generateResponse.ok)
+        #expect(generateResponse.image.job.modelID == qwen.modelID)
+        #expect(forwardedGenerateRequest.modelHandle == "\(qwen.modelID)::python")
+        #expect(forwardedGenerateRequest.size == "1536x1024")
+        #expect(forwardedGenerateRequest.ext["melix.image.steps"] == "40")
+        #expect(forwardedGenerateRequest.ext["melix.image.guidance"] == "6.25")
+        #expect(forwardedGenerateRequest.ext["melix.image.negative_prompt"] == "noise")
+        #expect(editResponse.ok)
+        #expect(editResponse.image.job.modelID == fill.modelID)
+        #expect(forwardedEditRequest.modelHandle == "\(fill.modelID)::python")
+        #expect(forwardedEditRequest.size == "1536x1024")
+        #expect(forwardedEditRequest.strength == 0.7)
+        #expect(forwardedEditRequest.ext["melix.image.steps"] == "40")
+        #expect(forwardedEditRequest.ext["melix.image.guidance"] == "6.25")
+        #expect(forwardedEditRequest.ext["melix.image.negative_prompt"] == "noise")
+        #expect(forwardedEditRequest.ext["melix.image.strength"] == "0.7")
+    }
+
     @Test("execute resolves iterate image edits from a prior artifact and preserves lineage")
     func executeResolvesIterateImageEditsFromPriorArtifact() async throws {
         let modelCatalog = ModelCatalog(seedModels: ModelCatalog.phaseSevenContractSeedModels())
@@ -6727,6 +7011,31 @@ struct ControlPlaneServiceTests {
         return request
     }
 
+    private func makeApplyImageDefaultsRequest(
+        generateModelID: String,
+        editModelID: String,
+        size: String,
+        steps: UInt32,
+        guidance: Float,
+        strength: Float,
+        negativePrompt: String = ""
+    ) -> Melix_Controlplane_V1_ControlPlaneRequest {
+        var request = Melix_Controlplane_V1_ControlPlaneRequest()
+        request.requestID = "req-apply-image-defaults"
+        request.commandType = "image.apply_defaults"
+        request.image = Melix_Controlplane_V1_ImageCommand()
+        request.image.applyDefaults = makeApplyImageDefaultsCommand(
+            generateModelID: generateModelID,
+            editModelID: editModelID,
+            size: size,
+            steps: steps,
+            guidance: guidance,
+            strength: strength,
+            negativePrompt: negativePrompt
+        )
+        return request
+    }
+
     private func makeApplyGatewayConfigCommand(
         serverSessionID: String = ServerSessionRuntimeStore.defaultServerSessionID,
         host: String,
@@ -6775,6 +7084,26 @@ struct ControlPlaneServiceTests {
         return command
     }
 
+    private func makeApplyImageDefaultsCommand(
+        generateModelID: String,
+        editModelID: String,
+        size: String,
+        steps: UInt32,
+        guidance: Float,
+        strength: Float,
+        negativePrompt: String = ""
+    ) -> Melix_Controlplane_V1_ApplyImageDefaults {
+        var command = Melix_Controlplane_V1_ApplyImageDefaults()
+        command.generateModelID = generateModelID
+        command.editModelID = editModelID
+        command.size = size
+        command.steps = steps
+        command.guidance = guidance
+        command.strength = strength
+        command.negativePrompt = negativePrompt
+        return command
+    }
+
     private func makeListModelsRequest() -> Melix_Controlplane_V1_ControlPlaneRequest {
         var request = Melix_Controlplane_V1_ControlPlaneRequest()
         request.requestID = "req-model-list"
@@ -6813,7 +7142,10 @@ struct ControlPlaneServiceTests {
         modelID: String,
         prompt: String,
         size: String,
-        n: UInt32
+        n: UInt32,
+        steps: UInt32 = 0,
+        guidance: Float = 0,
+        negativePrompt: String = ""
     ) -> Melix_Controlplane_V1_ControlPlaneRequest {
         var request = Melix_Controlplane_V1_ControlPlaneRequest()
         request.requestID = requestID
@@ -6823,6 +7155,9 @@ struct ControlPlaneServiceTests {
         request.image.generate.modelID = modelID
         request.image.generate.prompt = prompt
         request.image.generate.size = size
+        request.image.generate.steps = steps
+        request.image.generate.guidance = guidance
+        request.image.generate.negativePrompt = negativePrompt
         request.image.generate.n = n
         request.image.generate.responseFormat = "png"
         return request
@@ -6834,7 +7169,11 @@ struct ControlPlaneServiceTests {
         prompt: String,
         imageURI: String,
         maskURI: String,
-        strength: Float
+        strength: Float,
+        size: String = "1024x1024",
+        steps: UInt32 = 0,
+        guidance: Float = 0,
+        negativePrompt: String = ""
     ) -> Melix_Controlplane_V1_ControlPlaneRequest {
         var request = Melix_Controlplane_V1_ControlPlaneRequest()
         request.requestID = requestID
@@ -6846,7 +7185,10 @@ struct ControlPlaneServiceTests {
         request.image.edit.imageUri = imageURI
         request.image.edit.maskUri = maskURI
         request.image.edit.strength = strength
-        request.image.edit.size = "1024x1024"
+        request.image.edit.size = size
+        request.image.edit.steps = steps
+        request.image.edit.guidance = guidance
+        request.image.edit.negativePrompt = negativePrompt
         request.image.edit.n = 1
         request.image.edit.responseFormat = "png"
         return request

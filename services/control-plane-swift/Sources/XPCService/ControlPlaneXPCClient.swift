@@ -9,6 +9,9 @@ public struct ControlPlaneImageGenerationRequest: Equatable, Sendable {
     public let modelID: String
     public let prompt: String
     public let size: String
+    public let steps: UInt32
+    public let guidance: Float
+    public let negativePrompt: String
     public let n: UInt32
     public let responseFormat: String
     public let artifactNamespace: String
@@ -17,6 +20,9 @@ public struct ControlPlaneImageGenerationRequest: Equatable, Sendable {
         modelID: String,
         prompt: String,
         size: String = "1024x1024",
+        steps: UInt32 = 0,
+        guidance: Float = 0,
+        negativePrompt: String = "",
         n: UInt32 = 1,
         responseFormat: String = "png",
         artifactNamespace: String = ""
@@ -24,6 +30,9 @@ public struct ControlPlaneImageGenerationRequest: Equatable, Sendable {
         self.modelID = modelID
         self.prompt = prompt
         self.size = size
+        self.steps = steps
+        self.guidance = guidance
+        self.negativePrompt = negativePrompt
         self.n = n
         self.responseFormat = responseFormat
         self.artifactNamespace = artifactNamespace
@@ -48,6 +57,9 @@ public struct ControlPlaneImageEditRequest: Equatable, Sendable {
     public let mode: Mode
     public let strength: Float
     public let size: String
+    public let steps: UInt32
+    public let guidance: Float
+    public let negativePrompt: String
     public let n: UInt32
     public let responseFormat: String
 
@@ -63,6 +75,9 @@ public struct ControlPlaneImageEditRequest: Equatable, Sendable {
         mode: Mode = .edit,
         strength: Float = 1,
         size: String = "1024x1024",
+        steps: UInt32 = 0,
+        guidance: Float = 0,
+        negativePrompt: String = "",
         n: UInt32 = 1,
         responseFormat: String = "png"
     ) {
@@ -77,8 +92,39 @@ public struct ControlPlaneImageEditRequest: Equatable, Sendable {
         self.mode = mode
         self.strength = strength
         self.size = size
+        self.steps = steps
+        self.guidance = guidance
+        self.negativePrompt = negativePrompt
         self.n = n
         self.responseFormat = responseFormat
+    }
+}
+
+public struct ControlPlaneImageDefaultsRequest: Equatable, Sendable {
+    public let generateModelID: String
+    public let editModelID: String
+    public let size: String
+    public let steps: UInt32
+    public let guidance: Float
+    public let strength: Float
+    public let negativePrompt: String
+
+    public init(
+        generateModelID: String,
+        editModelID: String,
+        size: String,
+        steps: UInt32,
+        guidance: Float,
+        strength: Float,
+        negativePrompt: String
+    ) {
+        self.generateModelID = generateModelID
+        self.editModelID = editModelID
+        self.size = size
+        self.steps = steps
+        self.guidance = guidance
+        self.strength = strength
+        self.negativePrompt = negativePrompt
     }
 }
 
@@ -310,6 +356,9 @@ public protocol ControlPlaneXPCClient: Sendable {
     func editImage(
         _ request: ControlPlaneImageEditRequest
     ) async throws -> Melix_Controlplane_V1_ImageJobSummary
+    func applyImageDefaults(
+        _ request: ControlPlaneImageDefaultsRequest
+    ) async throws -> Melix_Controlplane_V1_ImageDefaultsSummary
     func runDoctor() async throws -> Melix_Controlplane_V1_DoctorReport
     func runBench(_ request: ControlPlaneBenchRequest) async throws -> ControlPlaneBenchResult
     func runBenchMatrix(_ request: ControlPlaneBenchMatrixRequest) async throws -> ControlPlaneBenchMatrixResult
@@ -427,6 +476,16 @@ public extension ControlPlaneXPCClient {
         throw ControlPlaneXPCClientError.requestFailed(
             code: "unimplemented",
             message: "Image editing is not implemented for this control-plane client."
+        )
+    }
+
+    func applyImageDefaults(
+        _ request: ControlPlaneImageDefaultsRequest
+    ) async throws -> Melix_Controlplane_V1_ImageDefaultsSummary {
+        _ = request
+        throw ControlPlaneXPCClientError.requestFailed(
+            code: "unimplemented",
+            message: "Image defaults apply is not implemented for this control-plane client."
         )
     }
 
@@ -741,6 +800,14 @@ public actor LocalControlPlaneXPCClient: ControlPlaneXPCClient {
     ) async throws -> Melix_Controlplane_V1_ImageJobSummary {
         try await execute(makeImageEditRequest(request)) { response in
             response.image.job
+        }
+    }
+
+    public func applyImageDefaults(
+        _ request: ControlPlaneImageDefaultsRequest
+    ) async throws -> Melix_Controlplane_V1_ImageDefaultsSummary {
+        try await execute(makeApplyImageDefaultsRequest(request)) { response in
+            response.image.imageDefaults
         }
     }
 
@@ -1060,6 +1127,9 @@ public actor LocalControlPlaneXPCClient: ControlPlaneXPCClient {
         request.image.generate.modelID = generation.modelID
         request.image.generate.prompt = generation.prompt
         request.image.generate.size = generation.size
+        request.image.generate.steps = generation.steps
+        request.image.generate.guidance = generation.guidance
+        request.image.generate.negativePrompt = generation.negativePrompt
         request.image.generate.n = generation.n
         request.image.generate.responseFormat = generation.responseFormat
         request.image.generate.artifactNamespace = generation.artifactNamespace
@@ -1085,8 +1155,29 @@ public actor LocalControlPlaneXPCClient: ControlPlaneXPCClient {
         request.image.edit.editMode = imageEditModeProto(edit.mode)
         request.image.edit.strength = edit.strength
         request.image.edit.size = edit.size
+        request.image.edit.steps = edit.steps
+        request.image.edit.guidance = edit.guidance
+        request.image.edit.negativePrompt = edit.negativePrompt
         request.image.edit.n = edit.n
         request.image.edit.responseFormat = edit.responseFormat
+        return request
+    }
+
+    private func makeApplyImageDefaultsRequest(
+        _ defaults: ControlPlaneImageDefaultsRequest
+    ) -> Melix_Controlplane_V1_ControlPlaneRequest {
+        var request = Melix_Controlplane_V1_ControlPlaneRequest()
+        request.requestID = "menubar-image-defaults-\(UUID().uuidString)"
+        request.commandType = "image.apply_defaults"
+        request.image = Melix_Controlplane_V1_ImageCommand()
+        request.image.applyDefaults = Melix_Controlplane_V1_ApplyImageDefaults()
+        request.image.applyDefaults.generateModelID = defaults.generateModelID
+        request.image.applyDefaults.editModelID = defaults.editModelID
+        request.image.applyDefaults.size = defaults.size
+        request.image.applyDefaults.steps = defaults.steps
+        request.image.applyDefaults.guidance = defaults.guidance
+        request.image.applyDefaults.strength = defaults.strength
+        request.image.applyDefaults.negativePrompt = defaults.negativePrompt
         return request
     }
 

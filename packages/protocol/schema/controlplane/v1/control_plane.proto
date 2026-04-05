@@ -174,6 +174,7 @@ message ImageCommand {
   oneof kind {
     GenerateImage generate = 1;
     EditImage edit = 2;
+    ApplyImageDefaults apply_defaults = 3;
   }
 }
 
@@ -227,6 +228,7 @@ message PresetReply {
 
 message ImageReply {
   ImageJobSummary job = 1;
+  ImageDefaultsSummary image_defaults = 2;
 }
 
 message StartServer {
@@ -335,6 +337,9 @@ message GenerateImage {
   uint32 n = 4;
   string response_format = 5;
   string artifact_namespace = 6;
+  uint32 steps = 7;
+  float guidance = 8;
+  string negative_prompt = 9;
 }
 
 message EditImage {
@@ -351,6 +356,19 @@ message EditImage {
   string source_artifact_id = 11;
   string prompt_delta = 12;
   ImageEditMode edit_mode = 13;
+  uint32 steps = 14;
+  float guidance = 15;
+  string negative_prompt = 16;
+}
+
+message ApplyImageDefaults {
+  string generate_model_id = 1;
+  string edit_model_id = 2;
+  string size = 3;
+  uint32 steps = 4;
+  float guidance = 5;
+  float strength = 6;
+  string negative_prompt = 7;
 }
 
 message GetCacheSnapshot {}
@@ -1013,6 +1031,14 @@ enum ServingDefaultsSource {
   SERVING_DEFAULTS_SOURCE_OPERATOR_OVERRIDE = 4;
 }
 
+enum ImageDefaultsSource {
+  IMAGE_DEFAULTS_SOURCE_UNSPECIFIED = 0;
+  IMAGE_DEFAULTS_SOURCE_BUILT_IN_DEFAULTS = 1;
+  IMAGE_DEFAULTS_SOURCE_ENVIRONMENT_DEFAULTS = 2;
+  IMAGE_DEFAULTS_SOURCE_CONFIG_FILE_IMPORT = 3;
+  IMAGE_DEFAULTS_SOURCE_OPERATOR_OVERRIDE = 4;
+}
+
 message ServingDefaultsSessionSummary {
   string server_session_id = 1;
   string served_model_id = 2;
@@ -1047,6 +1073,25 @@ message ServingDefaultsSummary {
   repeated ServingDefaultsSessionSummary sessions = 1;
 }
 
+message ImageDefaultsSummary {
+  string requested_generate_model_id = 1;
+  string requested_edit_model_id = 2;
+  string requested_size = 3;
+  uint32 requested_steps = 4;
+  float requested_guidance = 5;
+  float requested_strength = 6;
+  string requested_negative_prompt = 7;
+  string effective_generate_model_id = 8;
+  string effective_edit_model_id = 9;
+  string effective_size = 10;
+  uint32 effective_steps = 11;
+  float effective_guidance = 12;
+  float effective_strength = 13;
+  string effective_negative_prompt = 14;
+  ImageDefaultsSource source = 15;
+  int64 updated_at_unix_ms = 16;
+}
+
 message ServerSnapshot {
   ServerState server_state = 1;
   repeated WorkerSummary workers = 2;
@@ -1065,6 +1110,7 @@ message ServerSnapshot {
   ServingDefaultsSummary serving_defaults = 15;
   ToolingSettingsSummary tooling_settings = 16;
   APIOnboardingSummary api_onboarding = 17;
+  ImageDefaultsSummary image_defaults = 18;
 }
 
 message WorkerSummary {

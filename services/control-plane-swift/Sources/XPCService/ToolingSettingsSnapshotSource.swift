@@ -20,7 +20,8 @@ struct ToolingSettingsSnapshotSource: Sendable {
         models: [Melix_Controlplane_V1_ModelSummary],
         mcpToolCatalog: MCPToolCatalog,
         gatewayConfigStorePath: String,
-        gatewayServingDefaultsStorePath: String
+        gatewayServingDefaultsStorePath: String,
+        imageDefaultsStorePath: String
     ) -> Melix_Controlplane_V1_ToolingSettingsSummary {
         var summary = Melix_Controlplane_V1_ToolingSettingsSummary()
         summary.embedding = resolvedEmbeddingSummary(from: models)
@@ -31,7 +32,8 @@ struct ToolingSettingsSnapshotSource: Sendable {
         summary.mcpResolvedToolCount = mcpToolCatalog.resolvedToolCount
         summary.configPaths = resolvedConfigPaths(
             gatewayConfigStorePath: gatewayConfigStorePath,
-            gatewayServingDefaultsStorePath: gatewayServingDefaultsStorePath
+            gatewayServingDefaultsStorePath: gatewayServingDefaultsStorePath,
+            imageDefaultsStorePath: imageDefaultsStorePath
         )
         summary.additionalArguments = additionalArguments
         return summary
@@ -74,11 +76,13 @@ struct ToolingSettingsSnapshotSource: Sendable {
 
     private func resolvedConfigPaths(
         gatewayConfigStorePath: String,
-        gatewayServingDefaultsStorePath: String
+        gatewayServingDefaultsStorePath: String,
+        imageDefaultsStorePath: String
     ) -> [Melix_Controlplane_V1_ToolingConfigPathSummary] {
         [
             configPath(id: "gateway_config_store_path", path: gatewayConfigStorePath),
             configPath(id: "gateway_serving_defaults_store_path", path: gatewayServingDefaultsStorePath),
+            configPath(id: "image_defaults_store_path", path: imageDefaultsStorePath),
             configPath(id: "control_plane_metrics_path", path: controlPlaneMetricsPath),
         ].filter { !$0.path.isEmpty }
     }

@@ -40,6 +40,7 @@ public struct RuntimeModelRow: Identifiable, Equatable, Sendable {
     public let cachePolicyText: String
     public let cacheSettingsText: String
     public let imageFamilyID: String
+    public let imageDefaultWorkflowRole: String
     public let imageSupportsGeneration: Bool
     public let imageSupportsEdit: Bool
 
@@ -65,6 +66,7 @@ public struct RuntimeModelRow: Identifiable, Equatable, Sendable {
         cachePolicyText: String = "",
         cacheSettingsText: String = "",
         imageFamilyID: String = "",
+        imageDefaultWorkflowRole: String = "",
         imageSupportsGeneration: Bool = false,
         imageSupportsEdit: Bool = false
     ) {
@@ -89,6 +91,7 @@ public struct RuntimeModelRow: Identifiable, Equatable, Sendable {
         self.cachePolicyText = cachePolicyText
         self.cacheSettingsText = cacheSettingsText
         self.imageFamilyID = imageFamilyID
+        self.imageDefaultWorkflowRole = imageDefaultWorkflowRole
         self.imageSupportsGeneration = imageSupportsGeneration
         self.imageSupportsEdit = imageSupportsEdit
     }
@@ -762,6 +765,25 @@ private struct ServingDefaultsProjection: Equatable, Sendable {
     let updatedAtUnixMS: Int64
 }
 
+private struct ImageDefaultsProjection: Equatable, Sendable {
+    let generateModelID: String
+    let editModelID: String
+    let size: String
+    let steps: Int
+    let guidance: Double
+    let strength: Double
+    let negativePrompt: String
+    let effectiveGenerateModelID: String
+    let effectiveEditModelID: String
+    let effectiveSize: String
+    let effectiveSteps: Int
+    let effectiveGuidance: Double
+    let effectiveStrength: Double
+    let effectiveNegativePrompt: String
+    let sourceText: String
+    let updatedAtUnixMS: Int64
+}
+
 @MainActor
 @Observable
 public final class RuntimeViewModel {
@@ -911,9 +933,22 @@ public final class RuntimeViewModel {
     public var imageEditSourceURL = ""
     public var imageEditMaskURL = ""
     public var imageSize = "1024x1024"
+    public var imageSteps = "28"
+    public var imageGuidance = "7.5"
+    public var imageStrength = "1.0"
+    public var imageNegativePrompt = ""
     public var imageVariantCount: UInt32 = 1
     public var selectedImageGenerateModelID = "melix-dev-image"
     public var selectedImageEditModelID = "melix-dev-image"
+    public private(set) var imageDefaultsSourceText = "Built-in Defaults"
+    public private(set) var effectiveImageGenerateModelID = ""
+    public private(set) var effectiveImageEditModelID = ""
+    public private(set) var effectiveImageSize = "1024x1024"
+    public private(set) var effectiveImageSteps = "28"
+    public private(set) var effectiveImageGuidance = "7.5"
+    public private(set) var effectiveImageStrength = "1.0"
+    public private(set) var effectiveImageNegativePrompt = ""
+    public private(set) var imageDefaultsUpdatedAtUnixMS: Int64 = 0
     public let availableQuantizationProfileIDs = ["q2", "q3", "q4", "q5", "q6", "q7", "q8"]
     public var selectedQuantizationProfileID = "q4"
     public var openCommandCenterAction: (@MainActor @Sendable () -> Void)?
@@ -1858,7 +1893,16 @@ public final class RuntimeViewModel {
     }
 
     public func imageModels(for role: RuntimeImageWorkflowRole) -> [RuntimeModelRow] {
-        imageModels.filter { Self.imageModel($0, supports: role) }
+        imageModels
+            .filter { Self.imageModel($0, supports: role) }
+            .sorted { lhs, rhs in
+                let lhsPreferred = lhs.imageDefaultWorkflowRole == role.rawValue
+                let rhsPreferred = rhs.imageDefaultWorkflowRole == role.rawValue
+                if lhsPreferred != rhsPreferred {
+                    return lhsPreferred && !rhsPreferred
+                }
+                return lhs.modelID < rhs.modelID
+            }
     }
 
     public func selectedImageModelID(for role: RuntimeImageWorkflowRole) -> String {
@@ -2284,6 +2328,12 @@ public final class RuntimeViewModel {
         guard !prompt.isEmpty else {
             return
         }
+        guard
+            let imageSteps = normalizedOptionalUInt32Draft(imageSteps, fieldName: "Image steps"),
+            let imageGuidance = normalizedOptionalDoubleDraft(imageGuidance, fieldName: "Image guidance")
+        else {
+            return
+        }
 
         let modelID = resolvedImageModelID(for: .generate)
         if models.contains(where: { $0.modelID == modelID && $0.isLoaded }) == false {
@@ -2300,6 +2350,9 @@ public final class RuntimeViewModel {
                     modelID: modelID,
                     prompt: prompt,
                     size: imageSize,
+                    steps: imageSteps,
+                    guidance: Float(imageGuidance),
+                    negativePrompt: imageNegativePrompt.trimmingCharacters(in: .whitespacesAndNewlines),
                     n: max(1, imageVariantCount)
                 )
             )
@@ -2326,6 +2379,16 @@ public final class RuntimeViewModel {
             notifyStateChanged()
             return
         }
+        guard let imageSteps = normalizedOptionalUInt32Draft(imageSteps, fieldName: "Image steps"),
+              let imageGuidance = normalizedOptionalDoubleDraft(imageGuidance, fieldName: "Image guidance"),
+              let resolvedImageStrength = normalizedOptionalDoubleDraft(imageStrength, fieldName: "Image strength") else {
+            return
+        }
+        guard resolvedImageStrength > 0, resolvedImageStrength <= 1 else {
+            recordLocalError("Image strength must be between 0 and 1.")
+            notifyStateChanged()
+            return
+        }
 
         let modelID = resolvedImageModelID(for: .edit)
         if models.contains(where: { $0.modelID == modelID && $0.isLoaded }) == false {
@@ -2343,8 +2406,11 @@ public final class RuntimeViewModel {
                     prompt: imagePromptText.trimmingCharacters(in: .whitespacesAndNewlines),
                     imageURL: sourceURL,
                     maskURL: imageEditMaskURL.trimmingCharacters(in: .whitespacesAndNewlines),
-                    strength: 1,
+                    strength: Float(resolvedImageStrength),
                     size: imageSize,
+                    steps: imageSteps,
+                    guidance: Float(imageGuidance),
+                    negativePrompt: imageNegativePrompt.trimmingCharacters(in: .whitespacesAndNewlines),
                     n: max(1, imageVariantCount)
                 )
             )
@@ -2357,6 +2423,50 @@ public final class RuntimeViewModel {
             )
         } catch {
             imageStatusText = "Failed"
+            recordLocalError(String(describing: error))
+        }
+
+        notifyStateChanged()
+    }
+
+    public func applyImageDefaultsFromUI() {
+        Task {
+            await applyImageDefaults()
+        }
+    }
+
+    public func applyImageDefaults() async {
+        guard let imageSteps = normalizedOptionalUInt32Draft(imageSteps, fieldName: "Image steps"),
+              let imageGuidance = normalizedOptionalDoubleDraft(imageGuidance, fieldName: "Image guidance"),
+              let resolvedImageStrength = normalizedOptionalDoubleDraft(imageStrength, fieldName: "Image strength") else {
+            return
+        }
+        guard resolvedImageStrength > 0, resolvedImageStrength <= 1 else {
+            recordLocalError("Image strength must be between 0 and 1.")
+            notifyStateChanged()
+            return
+        }
+
+        let startedAt = Date()
+        do {
+            let summary = try await client.applyImageDefaults(
+                ControlPlaneImageDefaultsRequest(
+                    generateModelID: resolvedImageModelID(for: .generate),
+                    editModelID: resolvedImageModelID(for: .edit),
+                    size: imageSize.trimmingCharacters(in: .whitespacesAndNewlines),
+                    steps: imageSteps,
+                    guidance: Float(imageGuidance),
+                    strength: Float(resolvedImageStrength),
+                    negativePrompt: imageNegativePrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+                )
+            )
+            latestSnapshot.imageDefaults = summary
+            applyImageDefaultsProjection()
+            await metrics.record(
+                name: "desktop.image_defaults_apply_ms",
+                valueMs: Date().timeIntervalSince(startedAt) * 1_000
+            )
+        } catch {
             recordLocalError(String(describing: error))
         }
 
@@ -4094,6 +4204,7 @@ public final class RuntimeViewModel {
         models = snapshot.models
             .sorted { $0.modelID < $1.modelID }
             .map(makeRuntimeModelRow)
+        applyImageDefaultsProjection()
         syncServerSessionsWithModels()
         ensureChatSessionsBoundToServerSessions()
         refreshImageState()
@@ -4545,6 +4656,7 @@ public final class RuntimeViewModel {
             models.append(row)
             models.sort { $0.modelID < $1.modelID }
         }
+        applyImageDefaultsProjection()
         syncServerSessionsWithModels()
         ensureChatSessionsBoundToServerSessions()
         refreshImageState()
@@ -4781,6 +4893,45 @@ public final class RuntimeViewModel {
         session.servingDefaults.updatedAtUnixMS = projection.updatedAtUnixMS
     }
 
+    private func applyImageDefaultsProjection() {
+        guard let projection = Self.imageDefaultsProjection(from: latestSnapshot) else {
+            effectiveImageGenerateModelID = selectedImageGenerateModelID
+            effectiveImageEditModelID = selectedImageEditModelID
+            effectiveImageSize = imageSize
+            effectiveImageSteps = imageSteps
+            effectiveImageGuidance = imageGuidance
+            effectiveImageStrength = imageStrength
+            effectiveImageNegativePrompt = imageNegativePrompt
+            return
+        }
+
+        if projection.generateModelID.isEmpty == false {
+            selectedImageGenerateModelID = projection.generateModelID
+        } else if projection.effectiveGenerateModelID.isEmpty == false {
+            selectedImageGenerateModelID = projection.effectiveGenerateModelID
+        }
+        if projection.editModelID.isEmpty == false {
+            selectedImageEditModelID = projection.editModelID
+        } else if projection.effectiveEditModelID.isEmpty == false {
+            selectedImageEditModelID = projection.effectiveEditModelID
+        }
+
+        imageSize = projection.size
+        imageSteps = String(projection.steps)
+        imageGuidance = Self.formatImageDefaultNumber(projection.guidance)
+        imageStrength = Self.formatImageDefaultNumber(projection.strength)
+        imageNegativePrompt = projection.negativePrompt
+        imageDefaultsSourceText = projection.sourceText
+        effectiveImageGenerateModelID = projection.effectiveGenerateModelID
+        effectiveImageEditModelID = projection.effectiveEditModelID
+        effectiveImageSize = projection.effectiveSize
+        effectiveImageSteps = String(projection.effectiveSteps)
+        effectiveImageGuidance = Self.formatImageDefaultNumber(projection.effectiveGuidance)
+        effectiveImageStrength = Self.formatImageDefaultNumber(projection.effectiveStrength)
+        effectiveImageNegativePrompt = projection.effectiveNegativePrompt
+        imageDefaultsUpdatedAtUnixMS = projection.updatedAtUnixMS
+    }
+
     private static func gatewayAccessProjection(
         from snapshot: Melix_Controlplane_V1_ServerSnapshot
     ) -> GatewayAccessProjection? {
@@ -4960,6 +5111,39 @@ public final class RuntimeViewModel {
         )
     }
 
+    private static func imageDefaultsProjection(
+        from snapshot: Melix_Controlplane_V1_ServerSnapshot
+    ) -> ImageDefaultsProjection? {
+        guard snapshot.hasImageDefaults else {
+            return nil
+        }
+        let summary = snapshot.imageDefaults
+        let requestedSize = summary.requestedSize.isEmpty ? (summary.effectiveSize.isEmpty ? "1024x1024" : summary.effectiveSize) : summary.requestedSize
+        let requestedSteps = summary.requestedSteps == 0 ? Int(summary.effectiveSteps == 0 ? 28 : summary.effectiveSteps) : Int(summary.requestedSteps)
+        let requestedGuidance = summary.requestedGuidance == 0 ? Double(summary.effectiveGuidance == 0 ? 7.5 : summary.effectiveGuidance) : Double(summary.requestedGuidance)
+        let requestedStrength = summary.requestedStrength == 0 ? Double(summary.effectiveStrength == 0 ? 1.0 : summary.effectiveStrength) : Double(summary.requestedStrength)
+        let requestedNegativePrompt = summary.requestedNegativePrompt.isEmpty ? summary.effectiveNegativePrompt : summary.requestedNegativePrompt
+
+        return ImageDefaultsProjection(
+            generateModelID: summary.requestedGenerateModelID,
+            editModelID: summary.requestedEditModelID,
+            size: requestedSize,
+            steps: requestedSteps,
+            guidance: requestedGuidance,
+            strength: requestedStrength,
+            negativePrompt: requestedNegativePrompt,
+            effectiveGenerateModelID: summary.effectiveGenerateModelID,
+            effectiveEditModelID: summary.effectiveEditModelID,
+            effectiveSize: summary.effectiveSize.isEmpty ? requestedSize : summary.effectiveSize,
+            effectiveSteps: Int(summary.effectiveSteps == 0 ? UInt32(requestedSteps) : summary.effectiveSteps),
+            effectiveGuidance: Double(summary.effectiveGuidance == 0 ? Float(requestedGuidance) : summary.effectiveGuidance),
+            effectiveStrength: Double(summary.effectiveStrength == 0 ? Float(requestedStrength) : summary.effectiveStrength),
+            effectiveNegativePrompt: summary.effectiveNegativePrompt,
+            sourceText: imageDefaultsSourceText(summary.source),
+            updatedAtUnixMS: summary.updatedAtUnixMs
+        )
+    }
+
     private static func gatewayConfigSourceText(
         _ source: Melix_Controlplane_V1_GatewayConfigSource
     ) -> String {
@@ -4992,6 +5176,31 @@ public final class RuntimeViewModel {
         default:
             return "Unknown Source"
         }
+    }
+
+    private static func imageDefaultsSourceText(
+        _ source: Melix_Controlplane_V1_ImageDefaultsSource
+    ) -> String {
+        switch source {
+        case .builtInDefaults:
+            return "Built-in Defaults"
+        case .environmentDefaults:
+            return "Environment Defaults"
+        case .configFileImport:
+            return "Config File Import"
+        case .operatorOverride:
+            return "Operator Override"
+        default:
+            return "Unknown Source"
+        }
+    }
+
+    private static func formatImageDefaultNumber(_ value: Double) -> String {
+        let rounded = (value * 100).rounded() / 100
+        if rounded == rounded.rounded() {
+            return String(Int(rounded))
+        }
+        return String(format: "%.2f", rounded).replacingOccurrences(of: #"\.?0+$"#, with: "", options: .regularExpression)
     }
 
     private static func effectiveBatchingDefaults(
@@ -6533,6 +6742,7 @@ func makeRuntimeModelRow(_ model: Melix_Controlplane_V1_ModelSummary) -> Runtime
         cachePolicyText: runtimeCachePolicyText(for: model),
         cacheSettingsText: runtimeCacheSettingsText(for: model),
         imageFamilyID: model.settings.ext["melix.image.family_id"] ?? "",
+        imageDefaultWorkflowRole: model.settings.ext["melix.image.default_workflow_role"] ?? "",
         imageSupportsGeneration: imageSupportsGeneration,
         imageSupportsEdit: imageSupportsEdit
     )

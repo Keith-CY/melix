@@ -375,6 +375,33 @@ struct ControlPlaneXPCClientTests {
         }
     }
 
+    @Test("protocol default image defaults helper reports an unimplemented error")
+    func protocolDefaultImageDefaultsHelperReportsUnimplemented() async throws {
+        let client = DefaultingControlPlaneXPCClient()
+
+        do {
+            _ = try await client.applyImageDefaults(
+                ControlPlaneImageDefaultsRequest(
+                    generateModelID: "melix-dev-image",
+                    editModelID: "melix-dev-image",
+                    size: "1024x1024",
+                    steps: 28,
+                    guidance: 7.5,
+                    strength: 0.8,
+                    negativePrompt: "noise"
+                )
+            )
+            Issue.record("Expected the protocol default applyImageDefaults implementation to throw.")
+        } catch let error as ControlPlaneXPCClientError {
+            #expect(
+                error == .requestFailed(
+                    code: "unimplemented",
+                    message: "Image defaults apply is not implemented for this control-plane client."
+                )
+            )
+        }
+    }
+
     @Test("protocol default load helper forwards to the legacy load entry point")
     func protocolDefaultLoadHelperForwardsToLegacyLoadEntryPoint() async throws {
         let client = DefaultingControlPlaneXPCClient()
@@ -597,6 +624,9 @@ struct ControlPlaneXPCClientTests {
                 modelID: "melix-dev-image",
                 prompt: "Render a sunrise",
                 size: "512x512",
+                steps: 36,
+                guidance: 6.25,
+                negativePrompt: "blur",
                 n: 2
             )
         )
@@ -605,6 +635,9 @@ struct ControlPlaneXPCClientTests {
         #expect(forwardedRequest.modelHandle == "melix-dev-image::python")
         #expect(forwardedRequest.prompt == "Render a sunrise")
         #expect(forwardedRequest.size == "512x512")
+        #expect(forwardedRequest.ext["melix.image.steps"] == "36")
+        #expect(forwardedRequest.ext["melix.image.guidance"] == "6.25")
+        #expect(forwardedRequest.ext["melix.image.negative_prompt"] == "blur")
         #expect(forwardedRequest.n == 2)
         #expect(job.jobID == "menubar-image-generate::image-generate")
         #expect(job.state == .imageJobCompleted)
@@ -642,7 +675,10 @@ struct ControlPlaneXPCClientTests {
                 prompt: "Change the clouds",
                 imageURL: "file:///tmp/source.png",
                 maskURL: "file:///tmp/mask.png",
-                strength: 0.4
+                strength: 0.4,
+                steps: 22,
+                guidance: 5.5,
+                negativePrompt: "washed out"
             )
         )
         let forwardedRequest = try #require(await imageClient.lastImageEditRequest)
@@ -652,8 +688,62 @@ struct ControlPlaneXPCClientTests {
         #expect(forwardedRequest.imageUri == "file:///tmp/source.png")
         #expect(forwardedRequest.maskUri == "file:///tmp/mask.png")
         #expect(forwardedRequest.strength == 0.4)
+        #expect(forwardedRequest.ext["melix.image.steps"] == "22")
+        #expect(forwardedRequest.ext["melix.image.guidance"] == "5.5")
+        #expect(forwardedRequest.ext["melix.image.negative_prompt"] == "washed out")
         #expect(job.jobID == "menubar-image-edit::image-edit")
         #expect(job.operation == "image_edit")
+    }
+
+    @Test("applyImageDefaults builds image.apply_defaults request")
+    func applyImageDefaultsBuildsTypedRequest() async throws {
+        let service = RecordingExecuteControlPlaneService()
+        var response = Melix_Controlplane_V1_ControlPlaneResponse()
+        response.ok = true
+        response.image = Melix_Controlplane_V1_ImageReply()
+        response.image.imageDefaults = Melix_Controlplane_V1_ImageDefaultsSummary()
+        response.image.imageDefaults.requestedGenerateModelID = "melix-qwen-image"
+        response.image.imageDefaults.requestedEditModelID = "melix-fill-image"
+        response.image.imageDefaults.requestedSize = "1536x1024"
+        response.image.imageDefaults.requestedSteps = 40
+        response.image.imageDefaults.requestedGuidance = 6.25
+        response.image.imageDefaults.requestedStrength = 0.7
+        response.image.imageDefaults.requestedNegativePrompt = "noise"
+        response.image.imageDefaults.effectiveGenerateModelID = "melix-qwen-image"
+        response.image.imageDefaults.effectiveEditModelID = "melix-fill-image"
+        response.image.imageDefaults.effectiveSize = "1536x1024"
+        response.image.imageDefaults.effectiveSteps = 40
+        response.image.imageDefaults.effectiveGuidance = 6.25
+        response.image.imageDefaults.effectiveStrength = 0.7
+        response.image.imageDefaults.effectiveNegativePrompt = "noise"
+        response.image.imageDefaults.source = .operatorOverride
+        await service.setExecuteResponse(response)
+        let client = LocalControlPlaneXPCClient(service: service)
+
+        let summary = try await client.applyImageDefaults(
+            ControlPlaneImageDefaultsRequest(
+                generateModelID: "melix-qwen-image",
+                editModelID: "melix-fill-image",
+                size: "1536x1024",
+                steps: 40,
+                guidance: 6.25,
+                strength: 0.7,
+                negativePrompt: "noise"
+            )
+        )
+        let request = try #require(await service.lastExecuteRequest)
+
+        #expect(request.requestID.hasPrefix("menubar-image-defaults-"))
+        #expect(request.commandType == "image.apply_defaults")
+        #expect(request.image.applyDefaults.generateModelID == "melix-qwen-image")
+        #expect(request.image.applyDefaults.editModelID == "melix-fill-image")
+        #expect(request.image.applyDefaults.size == "1536x1024")
+        #expect(request.image.applyDefaults.steps == 40)
+        #expect(request.image.applyDefaults.guidance == 6.25)
+        #expect(request.image.applyDefaults.strength == 0.7)
+        #expect(request.image.applyDefaults.negativePrompt == "noise")
+        #expect(summary.effectiveGenerateModelID == "melix-qwen-image")
+        #expect(summary.effectiveEditModelID == "melix-fill-image")
     }
 
     @Test("local client cancels requests through control-plane execute")

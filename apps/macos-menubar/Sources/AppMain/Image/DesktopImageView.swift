@@ -141,6 +141,32 @@ struct DesktopImageWorkspace: View {
                         .foregroundStyle(.secondary)
                 }
 
+                GroupBox("Defaults") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack {
+                            Text("Source")
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                            Text(viewModel.imageDefaultsSourceText)
+                        }
+                        HStack {
+                            Text("Effective models")
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                            Text(effectiveModelSummary)
+                                .multilineTextAlignment(.trailing)
+                        }
+                        HStack {
+                            Text("Effective parameters")
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                            Text(effectiveDefaultsSummary)
+                                .multilineTextAlignment(.trailing)
+                        }
+                    }
+                    .font(.caption)
+                }
+
                 GroupBox(selectedMode.rawValue) {
                     VStack(alignment: .leading, spacing: 10) {
                         TextEditor(
@@ -172,6 +198,46 @@ struct DesktopImageWorkspace: View {
                             )
                         }
 
+                        HStack {
+                            TextField(
+                                "Steps",
+                                text: Binding(
+                                    get: { viewModel.imageSteps },
+                                    set: { viewModel.imageSteps = $0 }
+                                )
+                            )
+                            .textFieldStyle(.roundedBorder)
+
+                            TextField(
+                                "Guidance",
+                                text: Binding(
+                                    get: { viewModel.imageGuidance },
+                                    set: { viewModel.imageGuidance = $0 }
+                                )
+                            )
+                            .textFieldStyle(.roundedBorder)
+
+                            if selectedMode == .edit {
+                                TextField(
+                                    "Strength",
+                                    text: Binding(
+                                        get: { viewModel.imageStrength },
+                                        set: { viewModel.imageStrength = $0 }
+                                    )
+                                )
+                                .textFieldStyle(.roundedBorder)
+                            }
+                        }
+
+                        TextField(
+                            "Negative prompt",
+                            text: Binding(
+                                get: { viewModel.imageNegativePrompt },
+                                set: { viewModel.imageNegativePrompt = $0 }
+                            )
+                        )
+                        .textFieldStyle(.roundedBorder)
+
                         if selectedMode == .edit {
                             TextField(
                                 "Source image URI",
@@ -197,6 +263,8 @@ struct DesktopImageWorkspace: View {
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                             Spacer()
+                            Button("Save Defaults", action: viewModel.applyImageDefaultsFromUI)
+                                .buttonStyle(.bordered)
                             Button("Run") {
                                 Task {
                                     if selectedMode == .generate {
@@ -244,6 +312,15 @@ struct DesktopImageWorkspace: View {
 
     private func imageRoleSummary(for model: RuntimeModelRow) -> String {
         let familyText = model.imageFamilyID.isEmpty ? "generic-image" : model.imageFamilyID
+        let defaultRoleText: String
+        switch model.imageDefaultWorkflowRole {
+        case RuntimeImageWorkflowRole.generate.rawValue:
+            defaultRoleText = "Primary role generate"
+        case RuntimeImageWorkflowRole.edit.rawValue:
+            defaultRoleText = "Primary role edit"
+        default:
+            defaultRoleText = "Primary role mixed"
+        }
         let roleText: String
         switch workflowRole {
         case .generate:
@@ -251,7 +328,28 @@ struct DesktopImageWorkspace: View {
         case .edit:
             roleText = model.imageSupportsGeneration ? "Supports edit + generate" : "Supports edit"
         }
-        return "Family \(familyText) • \(roleText)"
+        return "Family \(familyText) • \(roleText) • \(defaultRoleText)"
+    }
+
+    private var effectiveModelSummary: String {
+        let generateModelID = viewModel.effectiveImageGenerateModelID.isEmpty
+            ? viewModel.selectedImageModelID(for: .generate)
+            : viewModel.effectiveImageGenerateModelID
+        let editModelID = viewModel.effectiveImageEditModelID.isEmpty
+            ? viewModel.selectedImageModelID(for: .edit)
+            : viewModel.effectiveImageEditModelID
+        return "Generate \(generateModelID)\nEdit \(editModelID)"
+    }
+
+    private var effectiveDefaultsSummary: String {
+        let negativePrompt = viewModel.effectiveImageNegativePrompt.isEmpty
+            ? "None"
+            : viewModel.effectiveImageNegativePrompt
+        return """
+        size \(viewModel.effectiveImageSize) • steps \(viewModel.effectiveImageSteps)
+        guidance \(viewModel.effectiveImageGuidance) • strength \(viewModel.effectiveImageStrength)
+        negative \(negativePrompt)
+        """
     }
 }
 
