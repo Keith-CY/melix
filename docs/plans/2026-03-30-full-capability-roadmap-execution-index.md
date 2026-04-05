@@ -223,6 +223,10 @@ The roadmap extension in `M10-M17` includes milestone-level plans plus decompose
   catalog sync, the repository-owned support matrix, and deterministic live-path integration
   coverage.
 - `M12.3` `docs/plans/2026-03-31-m12-3-image-family-dispatch-and-picker-completion.md`
+  Status: completed. Supported creative image families now carry stable family identity,
+  generate-versus-edit role declarations, and operator-visible picker metadata through worker
+  registry snapshots, control-plane catalog sync, the repository-owned family support matrix, and
+  focused live-path validation.
 - `M12.4` `docs/plans/2026-03-31-m12-4-model-inspect-health-and-conversion-tools.md`
 
 ## M13: Gateway Configuration, Defaults, And API Onboarding

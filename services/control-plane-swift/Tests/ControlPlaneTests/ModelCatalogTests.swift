@@ -917,4 +917,80 @@ struct ModelCatalogTests {
         #expect(imageModel.supportedTasks == ["image_generate", "image_edit"])
         #expect(imageModel.supportedModalities == ["text", "image"])
     }
+
+    @Test("dev image model reads family and role overrides")
+    func devImageModelReadsFamilyAndRoleOverrides() async throws {
+        let qwen = ModelCatalog.devImageModel(environment: [
+            "MELIX_DEV_IMAGE_FAMILY_ID": "qwenimage-v1",
+            "MELIX_DEV_IMAGE_MODEL_PATH": "models/qwen-image-dev",
+        ])
+        let fill = ModelCatalog.devImageModel(environment: [
+            "MELIX_DEV_IMAGE_FAMILY_ID": "fill-v1",
+            "MELIX_DEV_IMAGE_MODEL_PATH": "models/flux-fill-dev",
+            "MELIX_DEV_IMAGE_TASK_KIND": "image-text-to-image",
+        ])
+        let kontext = ModelCatalog.devImageModel(environment: [
+            "MELIX_DEV_IMAGE_MODEL_PATH": "models/flux-kontext-dev",
+        ])
+
+        #expect(qwen.routeClass == .workerRoutePythonImage)
+        #expect(qwen.settings.ext["melix.image.family_id"] == "qwenimage-v1")
+        #expect(qwen.settings.ext["melix.image.task_kind"] == "text-to-image")
+        #expect(qwen.settings.ext["melix.image.supports_generation"] == "true")
+        #expect(qwen.settings.ext["melix.image.supports_edit"] == "false")
+        #expect(qwen.supportedTasks == ["image_generate"])
+        #expect(qwen.settings.ext["detected_identity_source"] == "explicit_override")
+
+        #expect(fill.settings.ext["melix.image.family_id"] == "fill-v1")
+        #expect(fill.settings.ext["melix.image.task_kind"] == "image-text-to-image")
+        #expect(fill.settings.ext["melix.image.default_workflow_role"] == "edit")
+        #expect(fill.settings.ext["melix.image.supports_generation"] == "false")
+        #expect(fill.settings.ext["melix.image.supports_edit"] == "true")
+        #expect(fill.supportedTasks == ["image_edit"])
+        #expect(fill.settings.ext["task_override"] == "true")
+
+        #expect(kontext.settings.ext["melix.image.family_id"] == "kontext-v1")
+        #expect(kontext.settings.ext["detected_identity_source"] == "directory_name")
+        #expect(kontext.supportedTasks == ["image_generate", "image_edit"])
+    }
+
+    @Test("dev image model infers directory and task-kind families across image adapters")
+    func devImageModelInfersDirectoryAndTaskKindFamiliesAcrossImageAdapters() async throws {
+        let fibo = ModelCatalog.devImageModel(environment: [
+            "MELIX_DEV_IMAGE_MODEL_PATH": "models/fibo-dev",
+        ])
+        let klein = ModelCatalog.devImageModel(environment: [
+            "MELIX_DEV_IMAGE_MODEL_PATH": "models/klein-edit-dev",
+        ])
+        let taskKindFallback = ModelCatalog.devImageModel(environment: [
+            "MELIX_DEV_IMAGE_MODEL_PATH": "models/plain-image-dev",
+            "MELIX_DEV_IMAGE_TASK_KIND": "image-text-to-image",
+        ])
+        let blankTaskKind = ModelCatalog.devImageModel(environment: [
+            "MELIX_DEV_IMAGE_MODEL_PATH": "models/plain-image-dev",
+            "MELIX_DEV_IMAGE_TASK_KIND": "   ",
+        ])
+        let invalidTaskKind = ModelCatalog.devImageModel(environment: [
+            "MELIX_DEV_IMAGE_MODEL_PATH": "models/qwen-image-dev",
+            "MELIX_DEV_IMAGE_TASK_KIND": "image-to-text",
+        ])
+
+        #expect(fibo.settings.ext["melix.image.family_id"] == "fibo-v1")
+        #expect(fibo.settings.ext["melix.image.supports_edit"] == "false")
+        #expect(fibo.settings.ext["detected_identity_source"] == "directory_name")
+
+        #expect(klein.settings.ext["melix.image.family_id"] == "klein-v1")
+        #expect(klein.settings.ext["melix.image.supports_generation"] == "false")
+        #expect(klein.settings.ext["melix.image.default_workflow_role"] == "edit")
+
+        #expect(taskKindFallback.settings.ext["melix.image.family_id"] == "kontext-v1")
+        #expect(taskKindFallback.settings.ext["detected_identity_source"] == "task_kind")
+        #expect(taskKindFallback.settings.ext["melix.image.task_kind"] == "image-text-to-image")
+
+        #expect(blankTaskKind.settings.ext["melix.image.family_id"] == "deterministic-v1")
+        #expect(blankTaskKind.settings.ext["melix.image.task_kind"] == "text-to-image")
+
+        #expect(invalidTaskKind.settings.ext["melix.image.family_id"] == "qwenimage-v1")
+        #expect(invalidTaskKind.settings.ext["melix.image.task_kind"] == "text-to-image")
+    }
 }

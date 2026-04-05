@@ -178,10 +178,11 @@ def test_build_family_support_matrix_exposes_contract_rows_and_live_path_evidenc
         for row in matrix["families"]
     }
 
-    assert matrix["summary"]["family_count"] == 13
+    assert matrix["summary"]["family_count"] == 19
     assert matrix["summary"]["text_family_count"] == 6
-    assert matrix["summary"]["live_verified_count"] == 11
-    assert matrix["summary"]["contract_only_count"] == 2
+    assert matrix["summary"]["image_family_count"] == 6
+    assert matrix["summary"]["live_verified_count"] == 15
+    assert matrix["summary"]["contract_only_count"] == 4
 
     qwen3moe = rows[("text", "qwen3moe")]
     assert qwen3moe["contract"]["route_kind"] == "python_text_compatibility"
@@ -218,6 +219,25 @@ def test_build_family_support_matrix_exposes_contract_rows_and_live_path_evidenc
     assert causal["contract"]["architecture"] == "causal-lm"
     assert causal["contract"]["scoring_mode"] == "yes-no-logits"
     assert causal["live_path"]["status"] == "verified"
+
+    qwenimage = rows[("image", "qwenimage-v1")]
+    assert qwenimage["contract"]["route_kind"] == "python_image"
+    assert qwenimage["contract"]["task_kind"] == "text-to-image"
+    assert qwenimage["contract"]["supports_generation"] is True
+    assert qwenimage["contract"]["supports_edit"] is False
+    assert qwenimage["live_path"]["status"] == "verified"
+
+    fill = rows[("image", "fill-v1")]
+    assert fill["contract"]["task_kind"] == "image-text-to-image"
+    assert fill["contract"]["default_workflow_role"] == "edit"
+    assert fill["contract"]["supports_generation"] is False
+    assert fill["contract"]["supports_edit"] is True
+    assert fill["live_path"]["status"] == "verified"
+
+    fibo = rows[("image", "fibo-v1")]
+    assert fibo["contract"]["supports_generation"] is True
+    assert fibo["contract"]["supports_edit"] is False
+    assert fibo["live_path"]["status"] == "contract_only"
 
 
 def test_compute_install_success_rate_returns_percentage() -> None:

@@ -169,7 +169,7 @@ class WorkerRegistry:
         memory_budget_bytes: int = 0,
         disk_streaming_mode: int = common_pb2.DISK_STREAMING_MODE_UNSPECIFIED,
     ) -> LoadedModel:
-        resolved = self.model_catalog.get(model_spec.model_id) or model_spec
+        resolved = self._resolved_model_spec(model_spec)
         requested_disk_streaming_mode = self._effective_disk_streaming_mode_request(
             resolved,
             request_mode=disk_streaming_mode,
@@ -230,6 +230,19 @@ class WorkerRegistry:
             if runtime_kind in {"transcription", "speech"}:
                 self._last_audio_model_load_latency_ms = float(getattr(runtime_model, "load_latency_ms", 0.0))
             return loaded
+
+    def _resolved_model_spec(self, requested: common_pb2.ModelSpec) -> common_pb2.ModelSpec:
+        catalog_model = self.model_catalog.get(requested.model_id)
+        if catalog_model is None:
+            return requested
+        if self._is_sparse_model_request(requested):
+            return catalog_model
+        return requested
+
+    @staticmethod
+    def _is_sparse_model_request(model_spec: common_pb2.ModelSpec) -> bool:
+        populated_fields = {descriptor.name for descriptor, _ in model_spec.ListFields()}
+        return populated_fields <= {"model_id"}
 
     def unload_model(self, handle: str) -> bool:
         with self._lock:

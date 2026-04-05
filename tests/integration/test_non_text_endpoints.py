@@ -350,6 +350,9 @@ def test_family_support_matrix_tracks_live_verified_family_overrides() -> None:
     assert rows[("embedding", "mxbai-embed")]["live_path"]["status"] == "verified"
     assert rows[("rerank", "causal-lm")]["live_path"]["status"] == "verified"
     assert rows[("rerank", "basic")]["live_path"]["status"] == "contract_only"
+    assert rows[("image", "qwenimage-v1")]["live_path"]["status"] == "verified"
+    assert rows[("image", "fill-v1")]["live_path"]["status"] == "verified"
+    assert rows[("image", "fibo-v1")]["live_path"]["status"] == "contract_only"
 
     repo_root = Path(__file__).resolve().parents[2]
     bge_stack = LiveMelixStack(

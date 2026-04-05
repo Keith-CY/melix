@@ -21,6 +21,7 @@ public actor MenuBarMetricsStore {
 public struct RuntimeModelRow: Identifiable, Equatable, Sendable {
     public let modelID: String
     public let kind: String
+    public let supportedTasks: [String]
     public let state: Melix_Controlplane_V1_ModelState
     public let stateText: String
     public let actionTitle: String
@@ -38,10 +39,14 @@ public struct RuntimeModelRow: Identifiable, Equatable, Sendable {
     public let memoryAlertText: String
     public let cachePolicyText: String
     public let cacheSettingsText: String
+    public let imageFamilyID: String
+    public let imageSupportsGeneration: Bool
+    public let imageSupportsEdit: Bool
 
     public init(
         modelID: String,
         kind: String,
+        supportedTasks: [String] = [],
         state: Melix_Controlplane_V1_ModelState,
         stateText: String,
         actionTitle: String,
@@ -58,10 +63,14 @@ public struct RuntimeModelRow: Identifiable, Equatable, Sendable {
         memoryText: String,
         memoryAlertText: String,
         cachePolicyText: String = "",
-        cacheSettingsText: String = ""
+        cacheSettingsText: String = "",
+        imageFamilyID: String = "",
+        imageSupportsGeneration: Bool = false,
+        imageSupportsEdit: Bool = false
     ) {
         self.modelID = modelID
         self.kind = kind
+        self.supportedTasks = supportedTasks
         self.state = state
         self.stateText = stateText
         self.actionTitle = actionTitle
@@ -79,6 +88,9 @@ public struct RuntimeModelRow: Identifiable, Equatable, Sendable {
         self.memoryAlertText = memoryAlertText
         self.cachePolicyText = cachePolicyText
         self.cacheSettingsText = cacheSettingsText
+        self.imageFamilyID = imageFamilyID
+        self.imageSupportsGeneration = imageSupportsGeneration
+        self.imageSupportsEdit = imageSupportsEdit
     }
 
     public var id: String {
@@ -264,6 +276,11 @@ public enum RuntimeBenchmarkTargetMode: String, CaseIterable, Identifiable, Send
             return "Hugging Face Repo"
         }
     }
+}
+
+public enum RuntimeImageWorkflowRole: String, CaseIterable, Sendable {
+    case generate
+    case edit
 }
 
 public enum RuntimeBenchmarkPresentationMode: String, CaseIterable, Identifiable, Sendable {
@@ -807,7 +824,8 @@ public final class RuntimeViewModel {
     public var imageEditMaskURL = ""
     public var imageSize = "1024x1024"
     public var imageVariantCount: UInt32 = 1
-    public var selectedImageModelID = "melix-dev-image"
+    public var selectedImageGenerateModelID = "melix-dev-image"
+    public var selectedImageEditModelID = "melix-dev-image"
     public let availableQuantizationProfileIDs = ["q2", "q3", "q4", "q5", "q6", "q7", "q8"]
     public var selectedQuantizationProfileID = "q4"
     public var openCommandCenterAction: (@MainActor @Sendable () -> Void)?
@@ -1671,6 +1689,34 @@ public final class RuntimeViewModel {
         models.filter { $0.kind == "image" || $0.kind == "image_generation" }
     }
 
+    public var selectedImageModelID: String {
+        get { selectedImageGenerateModelID }
+        set { selectedImageGenerateModelID = newValue }
+    }
+
+    public func imageModels(for role: RuntimeImageWorkflowRole) -> [RuntimeModelRow] {
+        imageModels.filter { Self.imageModel($0, supports: role) }
+    }
+
+    public func selectedImageModelID(for role: RuntimeImageWorkflowRole) -> String {
+        switch role {
+        case .generate:
+            return selectedImageGenerateModelID
+        case .edit:
+            return selectedImageEditModelID
+        }
+    }
+
+    public func setSelectedImageModelID(_ modelID: String, for role: RuntimeImageWorkflowRole) {
+        switch role {
+        case .generate:
+            selectedImageGenerateModelID = modelID
+        case .edit:
+            selectedImageEditModelID = modelID
+        }
+        notifyStateChanged()
+    }
+
     public var selectedImageJob: Melix_Controlplane_V1_ImageJobSummary? {
         guard !selectedImageJobID.isEmpty else {
             return imageJobs.first
@@ -2076,7 +2122,7 @@ public final class RuntimeViewModel {
             return
         }
 
-        let modelID = resolvedImageModelID()
+        let modelID = resolvedImageModelID(for: .generate)
         if models.contains(where: { $0.modelID == modelID && $0.isLoaded }) == false {
             await loadModel(modelID: modelID)
         }
@@ -2118,7 +2164,7 @@ public final class RuntimeViewModel {
             return
         }
 
-        let modelID = resolvedImageModelID()
+        let modelID = resolvedImageModelID(for: .edit)
         if models.contains(where: { $0.modelID == modelID && $0.isLoaded }) == false {
             await loadModel(modelID: modelID)
         }
@@ -4554,15 +4600,21 @@ public final class RuntimeViewModel {
         return ""
     }
 
-    private func resolvedImageModelID() -> String {
-        if models.contains(where: { $0.modelID == selectedImageModelID && Self.isImageModelKind($0.kind) }) {
-            return selectedImageModelID
+    private func resolvedImageModelID(for role: RuntimeImageWorkflowRole) -> String {
+        let current = selectedImageModelID(for: role)
+        if imageModels(for: role).contains(where: { $0.modelID == current }) {
+            return current
         }
-        if let imageModel = models.first(where: { Self.isImageModelKind($0.kind) }) {
-            selectedImageModelID = imageModel.modelID
+        if let imageModel = imageModels(for: role).first {
+            switch role {
+            case .generate:
+                selectedImageGenerateModelID = imageModel.modelID
+            case .edit:
+                selectedImageEditModelID = imageModel.modelID
+            }
             return imageModel.modelID
         }
-        return selectedImageModelID
+        return current
     }
 
     private func moveRegistryRoot(rootID: String, offset: Int) async {
@@ -4612,10 +4664,8 @@ public final class RuntimeViewModel {
     }
 
     private func refreshImageState(preferredJobID: String? = nil) {
-        if models.contains(where: { $0.modelID == selectedImageModelID && Self.isImageModelKind($0.kind) }) == false,
-           let imageModel = models.first(where: { Self.isImageModelKind($0.kind) }) {
-            selectedImageModelID = imageModel.modelID
-        }
+        _ = resolvedImageModelID(for: .generate)
+        _ = resolvedImageModelID(for: .edit)
 
         imageJobs = latestSnapshot.imageJobs.sorted { lhs, rhs in
             if lhs.updatedAtUnixMs == rhs.updatedAtUnixMs {
@@ -5872,12 +5922,30 @@ public final class RuntimeViewModel {
     private static func isImageModelKind(_ kind: String) -> Bool {
         kind == "image" || kind == "image_generation"
     }
+
+    private static func imageModel(
+        _ model: RuntimeModelRow,
+        supports role: RuntimeImageWorkflowRole
+    ) -> Bool {
+        guard isImageModelKind(model.kind) else {
+            return false
+        }
+        switch role {
+        case .generate:
+            return model.imageSupportsGeneration
+        case .edit:
+            return model.imageSupportsEdit
+        }
+    }
 }
 
 func makeRuntimeModelRow(_ model: Melix_Controlplane_V1_ModelSummary) -> RuntimeModelRow {
-    RuntimeModelRow(
+    let imageSupportsGeneration = runtimeImageSupportsGeneration(model)
+    let imageSupportsEdit = runtimeImageSupportsEdit(model)
+    return RuntimeModelRow(
         modelID: model.modelID,
         kind: model.kind,
+        supportedTasks: model.supportedTasks,
         state: model.state,
         stateText: runtimeModelStateText(
             model.state,
@@ -5897,8 +5965,47 @@ func makeRuntimeModelRow(_ model: Melix_Controlplane_V1_ModelSummary) -> Runtime
         memoryText: runtimeMemoryText(for: model),
         memoryAlertText: runtimeMemoryAlertText(for: model),
         cachePolicyText: runtimeCachePolicyText(for: model),
-        cacheSettingsText: runtimeCacheSettingsText(for: model)
+        cacheSettingsText: runtimeCacheSettingsText(for: model),
+        imageFamilyID: model.settings.ext["melix.image.family_id"] ?? "",
+        imageSupportsGeneration: imageSupportsGeneration,
+        imageSupportsEdit: imageSupportsEdit
     )
+}
+
+private func runtimeImageSupportsGeneration(_ model: Melix_Controlplane_V1_ModelSummary) -> Bool {
+    if let explicit = model.settings.ext["melix.image.supports_generation"]?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        switch explicit {
+        case "true", "1", "yes", "on":
+            return true
+        case "false", "0", "no", "off":
+            return false
+        default:
+            break
+        }
+    }
+    if model.supportedTasks.contains("image_generate") {
+        return true
+    }
+    let taskKind = model.settings.ext["melix.image.task_kind"]?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
+    return taskKind != "image-text-to-image"
+}
+
+private func runtimeImageSupportsEdit(_ model: Melix_Controlplane_V1_ModelSummary) -> Bool {
+    if let explicit = model.settings.ext["melix.image.supports_edit"]?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        switch explicit {
+        case "true", "1", "yes", "on":
+            return true
+        case "false", "0", "no", "off":
+            return false
+        default:
+            break
+        }
+    }
+    if model.supportedTasks.contains("image_edit") {
+        return true
+    }
+    let taskKind = model.settings.ext["melix.image.task_kind"]?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
+    return taskKind == "image-text-to-image"
 }
 
 private func runtimeModelStateText(

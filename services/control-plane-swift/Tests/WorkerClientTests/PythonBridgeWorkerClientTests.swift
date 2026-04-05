@@ -720,6 +720,55 @@ struct PythonBridgeWorkerClientTests {
         #expect(await catalog.dispatchHandle(for: "melix-dev-image") == "melix-dev-image::bridge")
     }
 
+    @Test("phase-seven preload uses catalog-aware image metadata when the seed model is overridden")
+    func phaseSevenPreloadUsesCatalogAwareImageMetadataWhenSeedModelIsOverridden() async throws {
+        let runner = ScriptedBridgeRunner()
+        for handle in [
+            "melix-dev-embed::bridge",
+            "melix-dev-rerank::bridge",
+            "melix-dev-ocr::bridge",
+            "melix-dev-vlm::bridge",
+            "melix-dev-transcribe::bridge",
+            "melix-dev-speech::bridge",
+            "melix-dev-image::bridge",
+        ] {
+            var response = Melix_Worker_V1_LoadModelResponse()
+            response.ok = true
+            response.modelHandle = handle
+            await runner.enqueueUnaryResponse(
+                .loadModel,
+                line: bridgeMessageLine(message: try response.serializedData())
+            )
+        }
+
+        var fillImage = ModelCatalog.devImageModel(
+            environment: [
+                "MELIX_DEV_IMAGE_FAMILY_ID": "fill-v1",
+                "MELIX_DEV_IMAGE_TASK_KIND": "image-text-to-image",
+                "MELIX_DEV_IMAGE_MODEL_PATH": "models/flux-fill-dev",
+            ]
+        )
+        fillImage.modelID = "melix-dev-image"
+        let seedModels = ModelCatalog.phaseSixContractSeedModels() + [fillImage]
+        let catalog = ModelCatalog(seedModels: seedModels)
+        let client = PythonBridgeWorkerClient(socketPath: "/tmp/melix-test.sock", runner: runner)
+
+        try await BootstrapWorkerPreparation.preloadPhaseSevenPythonModels(
+            workerClient: client,
+            modelCatalog: catalog,
+            memoryBudgetBytes: 4096
+        )
+
+        let loadRequests = try await runner.recordedLoadModelRequests()
+        #expect(loadRequests.count == 7)
+        let imageRequest = try #require(loadRequests.last)
+        #expect(imageRequest.model.modelID == "melix-dev-image")
+        #expect(imageRequest.model.modelPath == "models/flux-fill-dev")
+        #expect(imageRequest.model.ext["melix.image.family_id"] == "fill-v1")
+        #expect(imageRequest.model.ext["melix.image.supports_generation"] == "false")
+        #expect(imageRequest.model.ext["melix.image.supports_edit"] == "true")
+    }
+
     @Test("phase-five unary methods surface helper errors as unavailable")
     func phaseFiveUnaryMethodsSurfaceHelperErrorsAsUnavailable() async throws {
         let runner = ScriptedBridgeRunner()
@@ -1129,7 +1178,11 @@ struct PythonBridgeWorkerClientTests {
         summary.settings.ext["melix.model_revision"] = "main"
         summary.settings.ext["melix.tokenizer_hash"] = "hf.mlx-community.sdxl-turbo"
         summary.settings.ext["melix.image.backend_id"] = "deterministic"
+        summary.settings.ext["melix.image.family_id"] = "qwenimage-v1"
         summary.settings.ext["melix.image.task_kind"] = "text-to-image"
+        summary.settings.ext["melix.image.default_workflow_role"] = "generate"
+        summary.settings.ext["melix.image.supports_generation"] = "true"
+        summary.settings.ext["melix.image.supports_edit"] = "false"
         summary.settings.ext["melix.hf_repo_id"] = "mlx-community/sdxl-turbo"
         summary.settings.ext["melix.capability.route_kind"] = "python_image"
         summary.settings.ext["melix.capability.class"] = "image_generation"
@@ -1143,7 +1196,11 @@ struct PythonBridgeWorkerClientTests {
         #expect(spec.modelPath == "mlx-community/sdxl-turbo")
         #expect(spec.modelKind == "image")
         #expect(spec.ext["melix.image.backend_id"] == "deterministic")
+        #expect(spec.ext["melix.image.family_id"] == "qwenimage-v1")
         #expect(spec.ext["melix.image.task_kind"] == "text-to-image")
+        #expect(spec.ext["melix.image.default_workflow_role"] == "generate")
+        #expect(spec.ext["melix.image.supports_generation"] == "true")
+        #expect(spec.ext["melix.image.supports_edit"] == "false")
     }
 
     @Test("bootstrap worker preparation carries embedding family metadata into worker model specs")
@@ -1521,6 +1578,7 @@ struct PythonBridgeWorkerClientTests {
 private actor ScriptedBridgeRunner: WorkerBridgeRunning {
     private var unary: [BridgeCommandKind: [String]] = [:]
     private var streams: [BridgeCommandKind: [String]] = [:]
+    private var recordedCommands: [BridgeCommandKind: [BridgeCommand]] = [:]
 
     func setUnaryResponse(_ kind: BridgeCommandKind, line: String) {
         unary[kind] = [line]
@@ -1535,6 +1593,7 @@ private actor ScriptedBridgeRunner: WorkerBridgeRunning {
     }
 
     func runUnary(command: BridgeCommand) async throws -> String {
+        recordedCommands[command.kind, default: []].append(command)
         if var lines = unary[command.kind], let line = lines.first {
             lines.removeFirst()
             unary[command.kind] = lines
@@ -1544,12 +1603,19 @@ private actor ScriptedBridgeRunner: WorkerBridgeRunning {
     }
 
     func runStream(command: BridgeCommand) async throws -> AsyncThrowingStream<String, Error> {
+        recordedCommands[command.kind, default: []].append(command)
         let lines = streams[command.kind] ?? []
         return AsyncThrowingStream { continuation in
             for line in lines {
                 continuation.yield(line)
             }
             continuation.finish()
+        }
+    }
+
+    func recordedLoadModelRequests() throws -> [Melix_Worker_V1_LoadModelRequest] {
+        try recordedCommands[.loadModel, default: []].map {
+            try Melix_Worker_V1_LoadModelRequest(serializedBytes: $0.requestData)
         }
     }
 }

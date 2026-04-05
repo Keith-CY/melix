@@ -2,6 +2,58 @@
 
 ## 2026-04-05
 
+- Closed `M12.3` by making creative image-family identity repository-owned across worker dispatch,
+  control-plane catalog truth, the family support matrix, and the Window UI picker:
+  - added image-family adapter descriptors plus detection from explicit overrides, imported model
+    metadata, and path heuristics for the supported generation and edit families, with stable
+    backend IDs, task kinds, default workflow roles, and support declarations projected into
+    worker-visible model specs
+  - updated the worker registry, image generation and edit request gates, and dev image seed path
+    so sparse model requests preserve catalog truth, unsupported generation-versus-edit workflows
+    fail with typed validation, and the repository-owned family support matrix distinguishes live
+    verified versus contract-only image rows
+  - updated the Swift control-plane catalog and Python bridge preload path so image-family
+    metadata survives registry sync, imported model preparation, and phase-seven preload even when
+    operators override the seed image family
+  - updated the Window UI image workspace so generate and edit workflows each resolve against
+    role-capable models, keep separate selections, and expose family support summaries instead of
+    collapsing all creative families into one generic image picker entry
+  - marked `M12.3` completed in the roadmap execution index; the next active execution slice can
+    now advance to `M12.4`
+- Verification summary for `M12.3`:
+  - `PYTHONPATH=services/mlx-worker-python uv run --project services/mlx-worker-python --extra mlx pytest services/mlx-worker-python/tests/test_image_family_adapters.py services/mlx-worker-python/tests/test_model_registry_catalog.py services/mlx-worker-python/tests/test_image_runtime.py services/mlx-worker-python/tests/test_acceptance_metrics.py services/mlx-worker-python/tests/test_runtime_service.py tests/integration/test_image_endpoints.py tests/integration/test_non_text_endpoints.py::test_family_support_matrix_tracks_live_verified_family_overrides -q`: `61 passed in 106.50s (0:01:46)`
+  - `swift test --package-path services/control-plane-swift --filter 'ModelCatalogTests|PythonBridgeWorkerClientTests'`: `84 tests in 2 suites passed after 0.783 seconds`
+  - `swift test --package-path apps/macos-menubar --filter RuntimeViewModelTests`: `129 tests in 1 suite passed after 0.779 seconds`
+  - `git diff --check`: pass
+- Metrics report for `M12.3`:
+  - repository-owned image family matrix metrics exercised by the touched scope:
+    - `family_count = 19`
+    - `text_family_count = 6`
+    - `image_family_count = 6`
+    - `live_verified_count = 15`
+    - `contract_only_count = 4`
+  - changed-line coverage for the touched handwritten executable scope:
+    - Python worker scope: `98.08%` (`153/156`)
+    - Swift control-plane scope: `96.77%` (`180/186`)
+    - Swift menu-bar scope: `95.31%` (`122/128`)
+    - aggregate touched-scope coverage: `96.81%` (`455/470`)
+
+- Started `M12.3` by moving the active task plan to metadata-driven image family dispatch and
+  role-aware picker completion:
+  - recorded that the repository still treated creative image models as one generic deterministic
+    image family, which hid generation-versus-edit constraints from both registry metadata and the
+    Window UI picker
+  - defined the next implementation slice around image-family detection from explicit overrides,
+    imported metadata, and path heuristics, plus role support declarations that drive request
+    validation and picker visibility
+  - updated the active task plan so the `M12.3` execution transaction starts from an explicit
+    family-dispatch and operator-routing contract instead of an implicit image-shell cleanup goal
+- Verification summary for the `M12.3` planning transaction:
+  - `git diff --check`: pending until the executable change set is complete
+- Metrics report for the `M12.3` planning transaction:
+  - `N/A` for executable coverage and runtime metrics because this transaction only moved the
+    active task plan before implementation started
+
 - Closed `M12.2` by making text-family and MoE-family adapter metadata repository-owned across the
   Python worker, control-plane catalog, support matrix, and deterministic live-path verification:
   - added worker-owned text-family adapters for `llama`, `mistral4`, `mixtral`, `qwen3moe`,

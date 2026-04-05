@@ -9,6 +9,10 @@ import time
 from typing import Iterable
 
 from packages.protocol.python.worker.v1 import common_pb2
+from worker.runtime.image_family_adapters import (
+    detect_image_family_identity,
+    resolve_image_family_config,
+)
 from worker.runtime.text_family_adapters import (
     detect_text_family_identity,
     resolve_text_family_config,
@@ -217,6 +221,35 @@ def _text_capability_metadata(
         "detected_family_id": detected.family_id,
         "detected_identity_source": detected.source,
         "identity_override": "true" if identity_override else "false",
+    }
+
+
+def _image_capability_metadata(
+    *,
+    model_path: str,
+    metadata: dict[str, str] | None = None,
+    default_task_kind: str,
+) -> dict[str, str]:
+    metadata = dict(metadata or {})
+    resolved = resolve_image_family_config(
+        metadata,
+        model_path=model_path,
+        default_task_kind=default_task_kind,
+    )
+    detected = detect_image_family_identity(
+        model_path=model_path,
+        explicit_family_id=metadata.get("melix.image.family_id", ""),
+        explicit_task_kind=metadata.get("melix.image.task_kind", ""),
+    )
+    identity_override = bool(metadata.get("melix.image.family_id")) or resolved.family_id != detected.family_id
+    task_override = bool(metadata.get("melix.image.task_kind")) or resolved.task_kind != detected.task_kind
+    return {
+        **resolved.capability_metadata(),
+        "detected_family_id": detected.family_id,
+        "detected_identity_source": detected.source,
+        "detected_task_kind": detected.task_kind,
+        "identity_override": "true" if identity_override else "false",
+        "task_override": "true" if task_override else "false",
     }
 
 
@@ -643,6 +676,14 @@ class WorkerModelCatalog:
                     default_route_kind="python_text_compatibility",
                 )
             )
+        if model_kind == "image":
+            normalized_ext.update(
+                _image_capability_metadata(
+                    model_path=str(manifest_path.parent),
+                    metadata=normalized_ext,
+                    default_task_kind=normalized_ext.get("melix.image.task_kind", "text-to-image"),
+                )
+            )
         _merge_generation_config_metadata(manifest_path.parent, ext=normalized_ext)
 
         return model_id, common_pb2.ModelSpec(
@@ -890,9 +931,22 @@ class WorkerModelCatalog:
     @staticmethod
     def dev_image_model(environment: dict[str, str] | None = None) -> common_pb2.ModelSpec:
         environment = dict(environment or os.environ)
+        model_path = environment.get("MELIX_DEV_IMAGE_MODEL_PATH", "models/melix-dev-image")
+        configured_family_id = _normalized(environment.get("MELIX_DEV_IMAGE_FAMILY_ID"))
+        configured_task_kind = _normalized(environment.get("MELIX_DEV_IMAGE_TASK_KIND"))
+        metadata: dict[str, str] = {}
+        if configured_family_id:
+            metadata["melix.image.family_id"] = configured_family_id
+        if configured_task_kind:
+            metadata["melix.image.task_kind"] = configured_task_kind
+        image_metadata = _image_capability_metadata(
+            model_path=model_path,
+            metadata=metadata,
+            default_task_kind=configured_task_kind or "text-to-image",
+        )
         return common_pb2.ModelSpec(
             model_id="melix-dev-image",
-            model_path=environment.get("MELIX_DEV_IMAGE_MODEL_PATH", "models/melix-dev-image"),
+            model_path=model_path,
             model_kind="image",
             revision="dev",
             tokenizer_hash="tok-image-dev",
@@ -900,18 +954,7 @@ class WorkerModelCatalog:
             parser_mode="text",
             reasoning_mode="off",
             max_context=4096,
-            ext={
-                "melix.image.backend_id": "deterministic",
-                "melix.image.task_kind": "text-to-image",
-                **_capability_metadata(
-                    adapter_set_hash="image-family-deterministic-v1",
-                    route_kind="python_image",
-                    capability_class="image_generation",
-                    supported_modalities=("text", "image"),
-                    supported_tasks=("image_generate", "image_edit"),
-                    supported_parsers=("text",),
-                ),
-            },
+            ext=image_metadata,
         )
 
     @staticmethod

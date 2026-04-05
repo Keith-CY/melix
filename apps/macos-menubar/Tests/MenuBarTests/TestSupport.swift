@@ -1052,15 +1052,29 @@ struct MenuBarTestError: Error, CustomStringConvertible {
 
 func makeMenuBarImageModelSummary(
     modelID: String = "melix-dev-image",
-    state: Melix_Controlplane_V1_ModelState = .modelWarm
+    state: Melix_Controlplane_V1_ModelState = .modelWarm,
+    familyID: String = "deterministic-v1",
+    supportsGeneration: Bool = true,
+    supportsEdit: Bool = true
 ) -> Melix_Controlplane_V1_ModelSummary {
     var model = Melix_Controlplane_V1_ModelSummary()
     model.modelID = modelID
     model.kind = "image"
     model.state = state
-    model.features = ["image_generate", "image_edit", "artifact_jobs"]
+    model.features = (supportsGeneration ? ["image_generate"] : [])
+        + (supportsEdit ? ["image_edit"] : [])
+        + ["artifact_jobs"]
+    model.supportedTasks = (supportsGeneration ? ["image_generate"] : [])
+        + (supportsEdit ? ["image_edit"] : [])
+    model.supportedModalities = ["text", "image"]
     model.maxContext = 0
     model.settings.alias = "Melix Dev Image"
+    model.settings.ext["melix.image.family_id"] = familyID
+    model.settings.ext["melix.image.supports_generation"] = supportsGeneration ? "true" : "false"
+    model.settings.ext["melix.image.supports_edit"] = supportsEdit ? "true" : "false"
+    model.settings.ext["melix.image.task_kind"] = supportsEdit && !supportsGeneration
+        ? "image-text-to-image"
+        : "text-to-image"
     return model
 }
 

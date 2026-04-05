@@ -143,6 +143,72 @@ _FAMILY_VARIANTS: tuple[dict[str, Any], ...] = (
             "tests/integration/test_non_text_endpoints.py::test_rerank_endpoint_supports_causal_lm_yes_no_scoring",
         ],
     },
+    {
+        "capability": "image",
+        "family_id": "deterministic-v1",
+        "model_id": "melix-dev-image",
+        "environment": {},
+        "integration_tests": [
+            "tests/integration/test_image_endpoints.py::test_image_generation_endpoint_returns_job_and_artifact_metadata",
+            "tests/integration/test_image_endpoints.py::test_image_edit_endpoint_returns_generated_output_and_lineage",
+        ],
+    },
+    {
+        "capability": "image",
+        "family_id": "kontext-v1",
+        "model_id": "melix-dev-image",
+        "environment": {
+            "MELIX_DEV_IMAGE_FAMILY_ID": "kontext-v1",
+            "MELIX_DEV_IMAGE_MODEL_PATH": "models/flux-kontext-dev",
+        },
+        "integration_tests": [
+            "tests/integration/test_image_endpoints.py::test_image_generation_endpoint_supports_qwenimage_and_kontext_family_overrides",
+        ],
+    },
+    {
+        "capability": "image",
+        "family_id": "fill-v1",
+        "model_id": "melix-dev-image",
+        "environment": {
+            "MELIX_DEV_IMAGE_FAMILY_ID": "fill-v1",
+            "MELIX_DEV_IMAGE_MODEL_PATH": "models/flux-fill-dev",
+        },
+        "integration_tests": [
+            "tests/integration/test_image_endpoints.py::test_image_edit_endpoint_supports_fill_override_and_generation_rejects_edit_only_families",
+        ],
+    },
+    {
+        "capability": "image",
+        "family_id": "qwenimage-v1",
+        "model_id": "melix-dev-image",
+        "environment": {
+            "MELIX_DEV_IMAGE_FAMILY_ID": "qwenimage-v1",
+            "MELIX_DEV_IMAGE_MODEL_PATH": "models/qwen-image-dev",
+        },
+        "integration_tests": [
+            "tests/integration/test_image_endpoints.py::test_image_generation_endpoint_supports_qwenimage_and_kontext_family_overrides",
+        ],
+    },
+    {
+        "capability": "image",
+        "family_id": "fibo-v1",
+        "model_id": "melix-dev-image",
+        "environment": {
+            "MELIX_DEV_IMAGE_FAMILY_ID": "fibo-v1",
+            "MELIX_DEV_IMAGE_MODEL_PATH": "models/fibo-image-dev",
+        },
+        "integration_tests": [],
+    },
+    {
+        "capability": "image",
+        "family_id": "klein-v1",
+        "model_id": "melix-dev-image",
+        "environment": {
+            "MELIX_DEV_IMAGE_FAMILY_ID": "klein-v1",
+            "MELIX_DEV_IMAGE_MODEL_PATH": "models/klein-edit-dev",
+        },
+        "integration_tests": [],
+    },
 )
 
 
@@ -188,11 +254,21 @@ def _contract_payload(variant: dict[str, Any]) -> dict[str, Any]:
                 "moe_gate_dequant": ext.get("melix.text.moe.gate_dequant", "") == "true",
             }
         )
-    else:
+    elif variant["capability"] == "rerank":
         contract.update(
             {
                 "backend_id": ext.get("rerank_backend_id", ""),
                 "scoring_mode": ext.get("rerank_scoring_mode", ""),
+            }
+        )
+    else:
+        contract.update(
+            {
+                "backend_id": ext.get("melix.image.backend_id", ""),
+                "task_kind": ext.get("melix.image.task_kind", ""),
+                "default_workflow_role": ext.get("melix.image.default_workflow_role", ""),
+                "supports_generation": ext.get("melix.image.supports_generation", "") == "true",
+                "supports_edit": ext.get("melix.image.supports_edit", "") == "true",
             }
         )
 
@@ -225,6 +301,7 @@ def build_family_support_matrix() -> dict[str, Any]:
             "text_family_count": sum(1 for row in families if row["capability"] == "text"),
             "embedding_family_count": sum(1 for row in families if row["capability"] == "embedding"),
             "rerank_family_count": sum(1 for row in families if row["capability"] == "rerank"),
+            "image_family_count": sum(1 for row in families if row["capability"] == "image"),
             "live_verified_count": live_verified_count,
             "contract_only_count": contract_only_count,
         },

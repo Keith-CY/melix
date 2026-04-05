@@ -391,7 +391,16 @@ public enum BootstrapWorkerPreparation {
     ]
     private static let imageExtKeys = [
         "melix.image.backend_id",
+        "melix.image.family_id",
         "melix.image.task_kind",
+        "melix.image.default_workflow_role",
+        "melix.image.supports_generation",
+        "melix.image.supports_edit",
+        "detected_family_id",
+        "detected_task_kind",
+        "detected_identity_source",
+        "identity_override",
+        "task_override",
     ]
     private static let capabilityExtKeys = [
         "melix.capability.route_kind",
@@ -766,28 +775,48 @@ public enum BootstrapWorkerPreparation {
             modelCatalog: modelCatalog,
             memoryBudgetBytes: memoryBudgetBytes
         )
-        _ = try await preloadModel(
-            workerClient: workerClient,
+        let ocrModel = await catalogAwareModelSpec(
+            for: "melix-dev-ocr",
             modelCatalog: modelCatalog,
-            model: devOCRModel(),
-            memoryBudgetBytes: memoryBudgetBytes
+            fallback: devOCRModel()
         )
         _ = try await preloadModel(
             workerClient: workerClient,
             modelCatalog: modelCatalog,
-            model: devVLMModel(),
+            model: ocrModel,
             memoryBudgetBytes: memoryBudgetBytes
+        )
+        let vlmModel = await catalogAwareModelSpec(
+            for: "melix-dev-vlm",
+            modelCatalog: modelCatalog,
+            fallback: devVLMModel()
         )
         _ = try await preloadModel(
             workerClient: workerClient,
             modelCatalog: modelCatalog,
-            model: devTranscriptionModel(),
+            model: vlmModel,
             memoryBudgetBytes: memoryBudgetBytes
+        )
+        let transcriptionModel = await catalogAwareModelSpec(
+            for: "melix-dev-transcribe",
+            modelCatalog: modelCatalog,
+            fallback: devTranscriptionModel()
         )
         _ = try await preloadModel(
             workerClient: workerClient,
             modelCatalog: modelCatalog,
-            model: devSpeechModel(),
+            model: transcriptionModel,
+            memoryBudgetBytes: memoryBudgetBytes
+        )
+        let speechModel = await catalogAwareModelSpec(
+            for: "melix-dev-speech",
+            modelCatalog: modelCatalog,
+            fallback: devSpeechModel()
+        )
+        _ = try await preloadModel(
+            workerClient: workerClient,
+            modelCatalog: modelCatalog,
+            model: speechModel,
             memoryBudgetBytes: memoryBudgetBytes
         )
     }
@@ -802,10 +831,15 @@ public enum BootstrapWorkerPreparation {
             modelCatalog: modelCatalog,
             memoryBudgetBytes: memoryBudgetBytes
         )
+        let imageModel = await catalogAwareModelSpec(
+            for: "melix-dev-image",
+            modelCatalog: modelCatalog,
+            fallback: devImageModel()
+        )
         _ = try await preloadModel(
             workerClient: workerClient,
             modelCatalog: modelCatalog,
-            model: devImageModel(),
+            model: imageModel,
             memoryBudgetBytes: memoryBudgetBytes
         )
     }

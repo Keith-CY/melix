@@ -88,6 +88,18 @@ struct DesktopImageWorkspace: View {
     @Binding var showsSidebar: Bool
     @Binding var showsInspector: Bool
 
+    private var workflowRole: RuntimeImageWorkflowRole {
+        selectedMode == .generate ? .generate : .edit
+    }
+
+    private var availableImageModels: [RuntimeModelRow] {
+        viewModel.imageModels(for: workflowRole)
+    }
+
+    private var selectedImageModelSummary: RuntimeModelRow? {
+        availableImageModels.first(where: { $0.modelID == viewModel.selectedImageModelID(for: workflowRole) })
+    }
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
@@ -113,15 +125,21 @@ struct DesktopImageWorkspace: View {
                 Picker(
                     "Model",
                     selection: Binding(
-                        get: { viewModel.selectedImageModelID },
-                        set: { viewModel.selectedImageModelID = $0 }
+                        get: { viewModel.selectedImageModelID(for: workflowRole) },
+                        set: { viewModel.setSelectedImageModelID($0, for: workflowRole) }
                     )
                 ) {
-                    ForEach(viewModel.imageModels, id: \.modelID) { model in
+                    ForEach(availableImageModels, id: \.modelID) { model in
                         Text(model.modelID).tag(model.modelID)
                     }
                 }
                 .frame(maxWidth: 320)
+
+                if let selectedImageModelSummary {
+                    Text(imageRoleSummary(for: selectedImageModelSummary))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
 
                 GroupBox(selectedMode.rawValue) {
                     VStack(alignment: .leading, spacing: 10) {
@@ -217,9 +235,23 @@ struct DesktopImageWorkspace: View {
         switch selectedMode {
         case .generate:
             return viewModel.imagePromptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                || availableImageModels.isEmpty
         case .edit:
             return viewModel.imageEditSourceURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                || availableImageModels.isEmpty
         }
+    }
+
+    private func imageRoleSummary(for model: RuntimeModelRow) -> String {
+        let familyText = model.imageFamilyID.isEmpty ? "generic-image" : model.imageFamilyID
+        let roleText: String
+        switch workflowRole {
+        case .generate:
+            roleText = model.imageSupportsEdit ? "Supports generate + edit" : "Supports generate"
+        case .edit:
+            roleText = model.imageSupportsGeneration ? "Supports edit + generate" : "Supports edit"
+        }
+        return "Family \(familyText) • \(roleText)"
     }
 }
 

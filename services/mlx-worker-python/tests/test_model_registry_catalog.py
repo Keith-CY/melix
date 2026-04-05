@@ -304,6 +304,67 @@ def test_registry_snapshot_ignores_invalid_model_config_payloads(tmp_path: Path)
     assert broken.ext["melix.capability.route_kind"] == "python_text_compatibility"
 
 
+def test_registry_snapshot_applies_image_family_adapter_metadata_from_path_and_manifest_task_kind(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "root"
+    variant_dir = root / "mlx-community" / "FLUX-Kontext" / "8bit"
+    _write_registry_manifest(
+        variant_dir,
+        model_id="mlx-community/FLUX-Kontext/8bit",
+        model_kind="image",
+        ext={"melix.image.task_kind": "image-text-to-image"},
+    )
+
+    catalog = WorkerModelCatalog(environment={"MELIX_MODEL_ROOTS": str(root)})
+
+    snapshot = catalog.registry_snapshot()
+    discovered = {model.model_id: model for model in snapshot.models}
+    kontext = discovered["mlx-community/FLUX-Kontext/8bit"]
+
+    assert kontext.ext["melix.image.backend_id"] == "deterministic"
+    assert kontext.ext["melix.image.family_id"] == "kontext-v1"
+    assert kontext.ext["melix.image.task_kind"] == "image-text-to-image"
+    assert kontext.ext["melix.image.default_workflow_role"] == "edit"
+    assert kontext.ext["melix.image.supports_generation"] == "true"
+    assert kontext.ext["melix.image.supports_edit"] == "true"
+    assert kontext.ext["detected_family_id"] == "kontext-v1"
+    assert kontext.ext["detected_task_kind"] == "image-text-to-image"
+    assert kontext.ext["detected_identity_source"] == "directory_name"
+    assert kontext.ext["melix.adapter_set_hash"] == "image-family-kontext-v1"
+    assert kontext.ext["melix.capability.route_kind"] == "python_image"
+    assert kontext.ext["melix.capability.supported_tasks"] == "image_generate,image_edit"
+
+
+def test_dev_image_model_reads_family_and_task_overrides() -> None:
+    qwen = WorkerModelCatalog.dev_image_model(
+        {
+            "MELIX_DEV_IMAGE_FAMILY_ID": "qwenimage-v1",
+            "MELIX_DEV_IMAGE_MODEL_PATH": "models/qwen-image-dev",
+        }
+    )
+    fill = WorkerModelCatalog.dev_image_model(
+        {
+            "MELIX_DEV_IMAGE_FAMILY_ID": "fill-v1",
+            "MELIX_DEV_IMAGE_MODEL_PATH": "models/flux-fill-dev",
+            "MELIX_DEV_IMAGE_TASK_KIND": "image-text-to-image",
+        }
+    )
+
+    assert qwen.ext["melix.image.family_id"] == "qwenimage-v1"
+    assert qwen.ext["melix.image.task_kind"] == "text-to-image"
+    assert qwen.ext["melix.image.supports_generation"] == "true"
+    assert qwen.ext["melix.image.supports_edit"] == "false"
+    assert qwen.ext["melix.capability.supported_tasks"] == "image_generate"
+    assert qwen.ext["detected_identity_source"] == "explicit_override"
+
+    assert fill.ext["melix.image.family_id"] == "fill-v1"
+    assert fill.ext["melix.image.task_kind"] == "image-text-to-image"
+    assert fill.ext["melix.image.supports_generation"] == "false"
+    assert fill.ext["melix.image.supports_edit"] == "true"
+    assert fill.ext["melix.capability.supported_tasks"] == "image_edit"
+
+
 def test_registry_snapshot_skips_manifests_outside_supported_identity_depths(tmp_path: Path) -> None:
     root = tmp_path / "root"
 

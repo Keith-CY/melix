@@ -167,6 +167,81 @@ def test_load_model_supports_ocr_and_vlm_models() -> None:
     assert vlm.model_handle.startswith("melix-dev-vlm::")
 
 
+def test_load_model_prefers_explicit_request_spec_over_seed_catalog_model() -> None:
+    service = build_runtime_service()
+    request_model = WorkerModelCatalog.dev_image_model(
+        {
+            "MELIX_DEV_IMAGE_FAMILY_ID": "fill-v1",
+            "MELIX_DEV_IMAGE_TASK_KIND": "image-text-to-image",
+            "MELIX_DEV_IMAGE_MODEL_PATH": "models/flux-fill-dev",
+        }
+    )
+
+    response = service.LoadModel(
+        runtime_pb2.LoadModelRequest(
+            model=request_model,
+        ),
+        context=None,
+    )
+
+    assert response.ok is True
+    listed = service.ListLoadedModels(
+        runtime_pb2.ListLoadedModelsRequest(),
+        context=None,
+    )
+
+    assert listed.loaded_models[0].model.model_path == "models/flux-fill-dev"
+    assert listed.loaded_models[0].model.ext["melix.image.family_id"] == "fill-v1"
+    assert listed.loaded_models[0].model.ext["melix.image.supports_generation"] == "false"
+    assert listed.loaded_models[0].model.ext["melix.image.supports_edit"] == "true"
+
+
+def test_load_model_uses_catalog_model_for_sparse_requests() -> None:
+    service = build_runtime_service()
+
+    response = service.LoadModel(
+        runtime_pb2.LoadModelRequest(
+            model=common_pb2.ModelSpec(model_id="melix-dev-text"),
+        ),
+        context=None,
+    )
+
+    assert response.ok is True
+    listed = service.ListLoadedModels(
+        runtime_pb2.ListLoadedModelsRequest(),
+        context=None,
+    )
+    assert listed.loaded_models[0].model.model_path == "models/melix-dev-text"
+
+
+def test_load_model_uses_requested_spec_when_catalog_has_no_match() -> None:
+    service = build_runtime_service()
+    request_model = common_pb2.ModelSpec(
+        model_id="custom-dev-text",
+        model_path="models/custom-dev-text",
+        model_kind="text",
+        revision="dev",
+        tokenizer_hash="tok-custom-dev",
+        quant_profile_id="q8",
+        parser_mode="text",
+        reasoning_mode="off",
+        max_context=4096,
+    )
+
+    response = service.LoadModel(
+        runtime_pb2.LoadModelRequest(model=request_model),
+        context=None,
+    )
+
+    assert response.ok is True
+    listed = service.ListLoadedModels(
+        runtime_pb2.ListLoadedModelsRequest(),
+        context=None,
+    )
+    assert listed.loaded_models[0].model.model_id == "custom-dev-text"
+    assert listed.loaded_models[0].model.model_path == "models/custom-dev-text"
+
+
 def test_load_model_supports_transcription_and_speech_models() -> None:
     service = build_runtime_service()
 

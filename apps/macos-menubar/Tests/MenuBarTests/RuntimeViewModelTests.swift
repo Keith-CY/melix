@@ -1,4 +1,5 @@
 import Foundation
+import SwiftUI
 import Testing
 
 @testable import AppMain
@@ -4353,11 +4354,22 @@ struct RuntimeViewModelTests {
 
         await viewModel.submitChatPrompt()
 
+        let hasUserEntry = viewModel.chatTranscript.contains { $0.kind == .user && $0.body == "Explain Melix" }
+        let hasAssistantEntry = viewModel.chatTranscript.contains {
+            $0.kind == .assistant && $0.body.contains("Assistant response")
+        }
+        let hasReasoningEntry = viewModel.chatTranscript.contains {
+            $0.kind == .reasoning && $0.body.contains("Reasoning trace")
+        }
+        let hasToolEntry = viewModel.chatTranscript.contains {
+            $0.kind == .tool && $0.body.contains(#""q":"melix""#)
+        }
+
         #expect(await client.recordedActions.contains("chat:melix-dev-text"))
-        #expect(viewModel.chatTranscript.contains(where: { $0.kind == .user && $0.body == "Explain Melix" }))
-        #expect(viewModel.chatTranscript.contains(where: { $0.kind == .assistant && $0.body.contains("Assistant response") }))
-        #expect(viewModel.chatTranscript.contains(where: { $0.kind == .reasoning && $0.body.contains("Reasoning trace") }))
-        #expect(viewModel.chatTranscript.contains(where: { $0.kind == .tool && $0.body.contains(#""q":"melix""#) }))
+        #expect(hasUserEntry)
+        #expect(hasAssistantEntry)
+        #expect(hasReasoningEntry)
+        #expect(hasToolEntry)
         #expect(viewModel.chatStatusText.contains("Completed"))
         #expect(viewModel.lastChatUsageText == "12 prompt • 24 completion")
         #expect(await metrics.snapshot()["menu.chat_submit_ms"] != nil)
@@ -4415,8 +4427,15 @@ struct RuntimeViewModelTests {
 
         await viewModel.submitChatPrompt()
 
-        #expect(viewModel.chatTranscript.contains(where: { $0.kind == .assistant && $0.body == "Assistant final" }))
-        #expect(viewModel.chatTranscript.contains(where: { $0.kind == .reasoning && $0.body == "Reasoning final" }))
+        let hasAssistantFinal = viewModel.chatTranscript.contains {
+            $0.kind == .assistant && $0.body == "Assistant final"
+        }
+        let hasReasoningFinal = viewModel.chatTranscript.contains {
+            $0.kind == .reasoning && $0.body == "Reasoning final"
+        }
+
+        #expect(hasAssistantFinal)
+        #expect(hasReasoningFinal)
         #expect(viewModel.chatStatusText == "Completed • stop")
     }
 
@@ -4439,11 +4458,15 @@ struct RuntimeViewModelTests {
 
         await viewModel.submitChatPrompt()
 
+        let hasErrorEntry = viewModel.chatTranscript.contains {
+            $0.kind == .error && $0.body == "worker failed"
+        }
+
         #expect(viewModel.lastChatRequestID == "chat-request-1")
         #expect(viewModel.chatStatusText == "Failed • runtime_error")
         #expect(viewModel.lastError == "worker failed")
         #expect(viewModel.isChatStreaming == false)
-        #expect(viewModel.chatTranscript.contains(where: { $0.kind == .error && $0.body == "worker failed" }))
+        #expect(hasErrorEntry)
     }
 
     @Test("chat transport failures surface local error rows and reset streaming state")
@@ -4458,10 +4481,14 @@ struct RuntimeViewModelTests {
 
         await viewModel.submitChatPrompt()
 
+        let hasTransportErrorEntry = viewModel.chatTranscript.contains {
+            $0.kind == .error && $0.body.contains("chat transport failed")
+        }
+
         #expect(viewModel.chatStatusText == "Failed")
         #expect(viewModel.lastError?.contains("chat transport failed") == true)
         #expect(viewModel.isChatStreaming == false)
-        #expect(viewModel.chatTranscript.contains(where: { $0.kind == .error && $0.body.contains("chat transport failed") }))
+        #expect(hasTransportErrorEntry)
     }
 
     @Test("chat route readiness reflects multimodal model availability from the snapshot")
@@ -4528,6 +4555,124 @@ struct RuntimeViewModelTests {
         #expect(viewModel.selectedImageJob?.artifacts.first?.storageUri == "/tmp/melix-image-preview.png")
     }
 
+    @Test("image picker filters models by workflow role and keeps separate selections")
+    @MainActor
+    func imagePickerFiltersModelsByWorkflowRoleAndKeepsSeparateSelections() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [
+                    makeMenuBarImageModelSummary(
+                        modelID: "melix-qwen-image",
+                        familyID: "qwenimage-v1",
+                        supportsGeneration: true,
+                        supportsEdit: false
+                    ),
+                    makeMenuBarImageModelSummary(
+                        modelID: "melix-fill-image",
+                        familyID: "fill-v1",
+                        supportsGeneration: false,
+                        supportsEdit: true
+                    ),
+                    makeMenuBarImageModelSummary(
+                        modelID: "melix-kontext-image",
+                        familyID: "kontext-v1",
+                        supportsGeneration: true,
+                        supportsEdit: true
+                    ),
+                ]
+            )
+        )
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+
+        #expect(viewModel.imageModels(for: .generate).map(\.modelID) == ["melix-kontext-image", "melix-qwen-image"])
+        #expect(viewModel.imageModels(for: .edit).map(\.modelID) == ["melix-fill-image", "melix-kontext-image"])
+        #expect(viewModel.selectedImageModelID(for: .generate) == "melix-kontext-image")
+        #expect(viewModel.selectedImageModelID(for: .edit) == "melix-fill-image")
+
+        viewModel.setSelectedImageModelID("melix-qwen-image", for: .generate)
+        viewModel.setSelectedImageModelID("melix-kontext-image", for: .edit)
+
+        #expect(viewModel.selectedImageModelID(for: .generate) == "melix-qwen-image")
+        #expect(viewModel.selectedImageModelID(for: .edit) == "melix-kontext-image")
+        #expect(viewModel.selectedImageModelID == "melix-qwen-image")
+    }
+
+    @Test("desktop image workspace body evaluates role-aware picker and summary branches")
+    @MainActor
+    func desktopImageWorkspaceBodyEvaluatesRoleAwarePickerAndSummaryBranches() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [
+                    makeMenuBarImageModelSummary(
+                        modelID: "melix-fill-image",
+                        familyID: "fill-v1",
+                        supportsGeneration: false,
+                        supportsEdit: true
+                    ),
+                    makeMenuBarImageModelSummary(
+                        modelID: "melix-kontext-image",
+                        familyID: "kontext-v1",
+                        supportsGeneration: true,
+                        supportsEdit: true
+                    ),
+                ]
+            )
+        )
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        viewModel.imagePromptText = "Generate a poster"
+        viewModel.imageEditSourceURL = "file:///tmp/source.png"
+        viewModel.setSelectedImageModelID("melix-kontext-image", for: .generate)
+        viewModel.setSelectedImageModelID("melix-kontext-image", for: .edit)
+
+        var generateMode = DesktopImageWorkspaceMode.generate
+        var editMode = DesktopImageWorkspaceMode.edit
+        var showsSidebar = true
+        var showsInspector = true
+        let generateWorkspace = DesktopImageWorkspace(
+            viewModel: viewModel,
+            selectedMode: Binding(
+                get: { generateMode },
+                set: { generateMode = $0 }
+            ),
+            showsSidebar: Binding(
+                get: { showsSidebar },
+                set: { showsSidebar = $0 }
+            ),
+            showsInspector: Binding(
+                get: { showsInspector },
+                set: { showsInspector = $0 }
+            )
+        )
+        let editWorkspace = DesktopImageWorkspace(
+            viewModel: viewModel,
+            selectedMode: Binding(
+                get: { editMode },
+                set: { editMode = $0 }
+            ),
+            showsSidebar: Binding(
+                get: { showsSidebar },
+                set: { showsSidebar = $0 }
+            ),
+            showsInspector: Binding(
+                get: { showsInspector },
+                set: { showsInspector = $0 }
+            )
+        )
+
+        let generateBody = generateWorkspace.body
+        let editBody = editWorkspace.body
+
+        #expect(String(describing: type(of: generateBody)).isEmpty == false)
+        #expect(String(describing: type(of: editBody)).isEmpty == false)
+    }
+
     @Test("image generate and edit actions dispatch through the client and update runtime state")
     @MainActor
     func imageActionsDispatchThroughClientAndUpdateRuntimeState() async throws {
@@ -4577,6 +4722,57 @@ struct RuntimeViewModelTests {
         #expect(await client.recordedActions.contains("image.edit:melix-dev-image"))
         #expect(viewModel.imageJobs.contains(where: { $0.jobID == "job-image-edit" }))
         #expect(viewModel.selectedImageJob?.artifacts.contains(where: { $0.storageUri == "/tmp/output.png" }) == true)
+    }
+
+    @Test("image actions use workflow-specific model selections")
+    @MainActor
+    func imageActionsUseWorkflowSpecificModelSelections() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [
+                    makeMenuBarImageModelSummary(
+                        modelID: "melix-qwen-image",
+                        familyID: "qwenimage-v1",
+                        supportsGeneration: true,
+                        supportsEdit: false
+                    ),
+                    makeMenuBarImageModelSummary(
+                        modelID: "melix-fill-image",
+                        familyID: "fill-v1",
+                        supportsGeneration: false,
+                        supportsEdit: true
+                    ),
+                ]
+            )
+        )
+        await client.configureImageResponses(
+            generation: makeMenuBarImageJobSummary(
+                jobID: "job-image-generate",
+                requestID: "req-image-generate",
+                operation: "image_generate",
+                artifacts: [makeMenuBarImageArtifact(jobID: "job-image-generate")]
+            ),
+            edit: makeMenuBarImageJobSummary(
+                jobID: "job-image-edit",
+                requestID: "req-image-edit",
+                operation: "image_edit",
+                artifacts: [makeMenuBarImageArtifact(jobID: "job-image-edit")]
+            )
+        )
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+        viewModel.imagePromptText = "Generate a poster"
+        await viewModel.submitImageGeneration()
+
+        viewModel.imagePromptText = "Edit the poster"
+        viewModel.imageEditSourceURL = "file:///tmp/source.png"
+        await viewModel.submitImageEdit()
+
+        #expect(await client.recordedActions.contains("image.generate:melix-qwen-image"))
+        #expect(await client.recordedActions.contains("image.edit:melix-fill-image"))
     }
 
     @Test("image cancel action dispatches through the client and records cancel latency")

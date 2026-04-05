@@ -553,6 +553,12 @@ public actor ModelCatalog {
         let source: String
     }
 
+    private struct DetectedImageIdentity: Sendable {
+        let familyID: String
+        let taskKind: String
+        let source: String
+    }
+
     private static func textCapabilityAdapter(
         familyID: String,
         defaultRouteKind: WorkerRouteKind
@@ -646,6 +652,28 @@ public actor ModelCatalog {
             capabilityIdentifier: "speech",
             supportedModalities: ["text", "audio"],
             supportedTasks: ["speak"],
+            supportedParsers: ["text"]
+        )
+    }
+
+    private static func imageCapabilityAdapter(
+        familyID: String,
+        supportsGeneration: Bool,
+        supportsEdit: Bool
+    ) -> CapabilityAdapterMetadata {
+        var supportedTasks: [String] = []
+        if supportsGeneration {
+            supportedTasks.append("image_generate")
+        }
+        if supportsEdit {
+            supportedTasks.append("image_edit")
+        }
+        return CapabilityAdapterMetadata(
+            adapterSetHash: "image-family-\(familyID)",
+            routeKind: .pythonImage,
+            capabilityIdentifier: "image_generation",
+            supportedModalities: ["text", "image"],
+            supportedTasks: supportedTasks,
             supportedParsers: ["text"]
         )
     }
@@ -865,6 +893,112 @@ public actor ModelCatalog {
             return true
         default:
             return false
+        }
+    }
+
+    private static func inferImageIdentity(
+        from modelPath: String,
+        explicitFamilyID: String?,
+        explicitTaskKind: String?
+    ) -> DetectedImageIdentity {
+        let normalizedTaskKind = normalizedImageTaskKind(explicitTaskKind) ?? "text-to-image"
+        if let explicitFamilyID, !explicitFamilyID.isEmpty {
+            return DetectedImageIdentity(
+                familyID: explicitFamilyID,
+                taskKind: normalizedTaskKind,
+                source: "explicit_override"
+            )
+        }
+
+        let normalizedPath = modelPath.lowercased()
+        if normalizedPath.contains("kontext") {
+            return DetectedImageIdentity(
+                familyID: "kontext-v1",
+                taskKind: normalizedTaskKind == "text-to-image" ? "image-text-to-image" : normalizedTaskKind,
+                source: "directory_name"
+            )
+        }
+        if normalizedPath.contains("fill") || normalizedPath.contains("inpaint") {
+            return DetectedImageIdentity(
+                familyID: "fill-v1",
+                taskKind: "image-text-to-image",
+                source: "directory_name"
+            )
+        }
+        if normalizedPath.contains("qwenimage") || normalizedPath.contains("qwen-image") {
+            return DetectedImageIdentity(
+                familyID: "qwenimage-v1",
+                taskKind: "text-to-image",
+                source: "directory_name"
+            )
+        }
+        if normalizedPath.contains("fibo") {
+            return DetectedImageIdentity(
+                familyID: "fibo-v1",
+                taskKind: "text-to-image",
+                source: "directory_name"
+            )
+        }
+        if normalizedPath.contains("klein") {
+            return DetectedImageIdentity(
+                familyID: "klein-v1",
+                taskKind: "image-text-to-image",
+                source: "directory_name"
+            )
+        }
+        if normalizedTaskKind == "image-text-to-image" {
+            return DetectedImageIdentity(
+                familyID: "kontext-v1",
+                taskKind: normalizedTaskKind,
+                source: "task_kind"
+            )
+        }
+        return DetectedImageIdentity(
+            familyID: "deterministic-v1",
+            taskKind: normalizedTaskKind,
+            source: "default"
+        )
+    }
+
+    private static func normalizedImageTaskKind(_ value: String?) -> String? {
+        guard let value else {
+            return nil
+        }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        switch trimmed {
+        case "":
+            return nil
+        case "text-to-image", "image-text-to-image":
+            return trimmed
+        default:
+            return nil
+        }
+    }
+
+    private static func imageSupportsGeneration(for familyID: String) -> Bool {
+        switch familyID {
+        case "fill-v1", "klein-v1":
+            return false
+        default:
+            return true
+        }
+    }
+
+    private static func imageSupportsEdit(for familyID: String) -> Bool {
+        switch familyID {
+        case "qwenimage-v1", "fibo-v1":
+            return false
+        default:
+            return true
+        }
+    }
+
+    private static func imageDefaultWorkflowRole(for familyID: String) -> String {
+        switch familyID {
+        case "fill-v1", "klein-v1", "kontext-v1":
+            return "edit"
+        default:
+            return "generate"
         }
     }
 
@@ -1227,18 +1361,57 @@ public actor ModelCatalog {
         return withSynchronizedResidency(model)
     }
 
-    public static func devImageModel() -> Melix_Controlplane_V1_ModelSummary {
+    public static func devImageModel(
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> Melix_Controlplane_V1_ModelSummary {
+        let modelPath = normalizedEnvironmentValue(
+            "MELIX_DEV_IMAGE_MODEL_PATH",
+            environment: environment
+        ) ?? "models/melix-dev-image"
+        let explicitFamilyID = normalizedEnvironmentValue(
+            "MELIX_DEV_IMAGE_FAMILY_ID",
+            environment: environment
+        )
+        let explicitTaskKind = normalizedEnvironmentValue(
+            "MELIX_DEV_IMAGE_TASK_KIND",
+            environment: environment
+        )
+        let detected = inferImageIdentity(
+            from: modelPath,
+            explicitFamilyID: explicitFamilyID,
+            explicitTaskKind: explicitTaskKind
+        )
+        let supportsGeneration = imageSupportsGeneration(for: detected.familyID)
+        let supportsEdit = imageSupportsEdit(for: detected.familyID)
+        let capabilityAdapter = imageCapabilityAdapter(
+            familyID: detected.familyID,
+            supportsGeneration: supportsGeneration,
+            supportsEdit: supportsEdit
+        )
         var model = Melix_Controlplane_V1_ModelSummary()
         model.modelID = "melix-dev-image"
         model.kind = "image"
         model.state = .modelDiscovered
         model.capabilityClass = .modelCapabilityImageGeneration
-        model.routeClass = .workerRoutePythonImage
-        model.features = ["image_generate", "image_edit", "artifact_jobs"]
-        model.supportedModalities = ["text", "image"]
-        model.supportedTasks = ["image_generate", "image_edit"]
+        model.routeClass = workerRouteClass(for: capabilityAdapter.routeKind)
+        model.features = capabilityAdapter.supportedTasks + ["artifact_jobs"]
         model.settings.alias = "Melix Dev Image"
         model.settings.memoryPolicy = .memoryResidencyEvictable
+        model.settings.ext["melix.image.backend_id"] = "deterministic"
+        model.settings.ext["melix.image.family_id"] = detected.familyID
+        model.settings.ext["melix.image.task_kind"] = detected.taskKind
+        model.settings.ext["melix.image.default_workflow_role"] = imageDefaultWorkflowRole(for: detected.familyID)
+        model.settings.ext["melix.image.supports_generation"] = supportsGeneration ? "true" : "false"
+        model.settings.ext["melix.image.supports_edit"] = supportsEdit ? "true" : "false"
+        model.settings.ext["detected_family_id"] = detected.familyID
+        model.settings.ext["detected_task_kind"] = detected.taskKind
+        model.settings.ext["detected_identity_source"] = detected.source
+        model.settings.ext["identity_override"] = explicitFamilyID?.isEmpty == false ? "true" : "false"
+        model.settings.ext["task_override"] = explicitTaskKind?.isEmpty == false ? "true" : "false"
+        model.settings.ext["melix.model_path"] = modelPath
+        model.settings.ext["melix.model_revision"] = "dev"
+        model.settings.ext["melix.tokenizer_hash"] = "tok-image-dev"
+        applyCapabilityAdapter(capabilityAdapter, to: &model)
         return withSynchronizedResidency(model)
     }
 
