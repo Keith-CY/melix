@@ -2,8 +2,8 @@
 
 ## Goal
 
-Advance `M13.2` by turning gateway-level generation defaults into typed control-plane truth before
-expanding into batching and speculative-decoding settings.
+Close the first executable `M13.2` slice by turning gateway-level generation defaults into typed
+control-plane truth before the next batching and speculative-decoding slices.
 
 ## Scope
 
@@ -35,16 +35,24 @@ expanding into batching and speculative-decoding settings.
      - selected the generation-defaults slice as the next implementation target because it closes
        an existing divergence between desktop-only state and request-shaping truth
 2. Gateway generation-defaults state model
-   - status: in_progress
+   - status: completed
    - evidence:
-     - next work adds a typed serving-defaults command, persistence flow, snapshot projection, and
-       request-merge path for `temperature`, `top_p`, `max_tokens`, and `stream_interval_tokens`
+     - added a typed `server.apply_serving_defaults` command plus protobuf summaries for requested
+       and effective serving defaults, and regenerated the versioned Swift, Python, and
+       descriptor artifacts
+     - persisted operator serving defaults through `GatewayServingDefaultsStore`, projected them
+       through `ServerSnapshot`, and wired gateway defaults into request shaping before request
+       overrides while preserving model-level generation-config precedence
+     - updated the Window UI server workspace so serving-default values, source metadata, and
+       effective merged defaults hydrate from control-plane truth and server starts persist the
+       typed defaults before lifecycle mutation
 3. Verification and milestone bookkeeping
-   - status: pending
+   - status: completed
    - evidence:
-     - add focused control-plane, HTTP gateway, and menu-bar coverage for typed defaults and
-       effective request shaping
-     - record coverage and metrics before closing the first executable `M13.2` slice
+     - focused control-plane, HTTP gateway, and menu-bar coverage now exercises typed defaults,
+       effective request shaping, server-start persistence, and UI projection
+     - changed-line coverage for the touched handwritten Swift scope closed at or above the
+       repository `95%` gate before commit
 
 ## Acceptance
 
@@ -64,4 +72,4 @@ expanding into batching and speculative-decoding settings.
 
 ## Outcome
 
-- m13_2_generation_defaults_planned
+- m13_2_generation_defaults_completed

@@ -734,6 +734,22 @@ private struct GatewayConfigProjection: Equatable, Sendable {
     let requiresRestart: Bool
 }
 
+private struct ServingDefaultsProjection: Equatable, Sendable {
+    let temperature: Double
+    let topP: Double
+    let maxTokens: Int
+    let streamIntervalTokens: Int
+    let maxConcurrentRequests: Int
+    let effectiveTemperature: Double
+    let effectiveTopP: Double
+    let effectiveMaxTokens: Int
+    let effectiveStreamIntervalTokens: Int
+    let effectiveMaxConcurrentRequests: Int
+    let sourceText: String
+    let modelOverrideApplied: Bool
+    let updatedAtUnixMS: Int64
+}
+
 @MainActor
 @Observable
 public final class RuntimeViewModel {
@@ -1344,6 +1360,13 @@ public final class RuntimeViewModel {
         }
     }
 
+    public func updateSelectedServerSessionStreamIntervalTokens(_ value: Int) {
+        updateSelectedServerSession { session in
+            session.servingDefaults.streamIntervalTokens = max(1, value)
+            session.updatedAt = Date()
+        }
+    }
+
     public func updateSelectedServerSessionMaxConcurrentRequests(_ value: Int) {
         updateSelectedServerSession { session in
             session.servingDefaults.maxConcurrentRequests = max(1, value)
@@ -1427,6 +1450,19 @@ public final class RuntimeViewModel {
         _ = await persistGatewayConfig(for: serverSession.id)
     }
 
+    public func applySelectedServerServingDefaults() async {
+        guard let serverSession = selectedServerSession else {
+            return
+        }
+        _ = await persistServingDefaults(for: serverSession.id)
+    }
+
+    public func applySelectedServerServingDefaultsFromUI() {
+        Task {
+            await applySelectedServerServingDefaults()
+        }
+    }
+
     public func stopSelectedServerSession() async {
         guard let serverSession = selectedServerSession else {
             return
@@ -1464,6 +1500,9 @@ public final class RuntimeViewModel {
 
     public func startServerSession(id serverSessionID: String) async {
         guard await persistGatewayConfig(for: serverSessionID) else {
+            return
+        }
+        guard await persistServingDefaults(for: serverSessionID) else {
             return
         }
         await performServerLifecycleAction(
@@ -3536,6 +3575,35 @@ public final class RuntimeViewModel {
         }
     }
 
+    @discardableResult
+    private func persistServingDefaults(for serverSessionID: String) async -> Bool {
+        guard let serverSession = serverSession(id: serverSessionID) else {
+            return false
+        }
+
+        let startedAt = Date()
+        do {
+            let snapshot = try await client.applyServerSessionServingDefaults(
+                serverSessionID: serverSession.id,
+                temperature: serverSession.servingDefaults.temperature,
+                topP: serverSession.servingDefaults.topP,
+                maxTokens: serverSession.servingDefaults.maxTokens,
+                streamIntervalTokens: serverSession.servingDefaults.streamIntervalTokens,
+                maxConcurrentRequests: serverSession.servingDefaults.maxConcurrentRequests
+            )
+            await metrics.record(
+                name: "menu.serving_defaults_apply_ms",
+                valueMs: Date().timeIntervalSince(startedAt) * 1_000
+            )
+            apply(snapshot: snapshot)
+            return true
+        } catch {
+            recordLocalError("Serving defaults apply failed: \(error)")
+            notifyStateChanged()
+            return false
+        }
+    }
+
     private func chatSubmissionBlockedMessage(for serverSession: DesktopServerSessionState) -> String {
         switch serverSession.lifecycle {
         case .paused:
@@ -3666,6 +3734,7 @@ public final class RuntimeViewModel {
         serverSessions = persistedServerSessions.enumerated().map { offset, session in
             var updated = session
             applyGatewayConfigProjection(to: &updated)
+            applyServingDefaultsProjection(to: &updated)
             let runtimeSession = runtimeSession(for: session.id, fallbackIndex: offset)
             if let model = models.first(where: { $0.modelID == session.modelID }) {
                 updated.lastKnownModelStateText = model.stateText
@@ -3721,6 +3790,7 @@ public final class RuntimeViewModel {
             lastKnownModelStateText: model.stateText
         )
         applyGatewayConfigProjection(to: &session)
+        applyServingDefaultsProjection(to: &session)
         applyGatewayAccessProjection(to: &session)
         return session
     }
@@ -4596,6 +4666,30 @@ public final class RuntimeViewModel {
         session.gatewayConfigRequiresRestart = projection.requiresRestart
     }
 
+    private func applyServingDefaultsProjection(to session: inout DesktopServerSessionState) {
+        guard let projection = Self.servingDefaultsProjection(from: latestSnapshot, serverSessionID: session.id) else {
+            session.servingDefaults.effectiveTemperature = session.servingDefaults.temperature
+            session.servingDefaults.effectiveTopP = session.servingDefaults.topP
+            session.servingDefaults.effectiveMaxTokens = session.servingDefaults.maxTokens
+            session.servingDefaults.effectiveStreamIntervalTokens = session.servingDefaults.streamIntervalTokens
+            session.servingDefaults.effectiveMaxConcurrentRequests = session.servingDefaults.maxConcurrentRequests
+            return
+        }
+        session.servingDefaults.temperature = projection.temperature
+        session.servingDefaults.topP = projection.topP
+        session.servingDefaults.maxTokens = projection.maxTokens
+        session.servingDefaults.streamIntervalTokens = projection.streamIntervalTokens
+        session.servingDefaults.maxConcurrentRequests = projection.maxConcurrentRequests
+        session.servingDefaults.effectiveTemperature = projection.effectiveTemperature
+        session.servingDefaults.effectiveTopP = projection.effectiveTopP
+        session.servingDefaults.effectiveMaxTokens = projection.effectiveMaxTokens
+        session.servingDefaults.effectiveStreamIntervalTokens = projection.effectiveStreamIntervalTokens
+        session.servingDefaults.effectiveMaxConcurrentRequests = projection.effectiveMaxConcurrentRequests
+        session.servingDefaults.sourceText = projection.sourceText
+        session.servingDefaults.modelOverrideApplied = projection.modelOverrideApplied
+        session.servingDefaults.updatedAtUnixMS = projection.updatedAtUnixMS
+    }
+
     private static func gatewayAccessProjection(
         from snapshot: Melix_Controlplane_V1_ServerSnapshot
     ) -> GatewayAccessProjection? {
@@ -4687,8 +4781,56 @@ public final class RuntimeViewModel {
         )
     }
 
+    private static func servingDefaultsProjection(
+        from snapshot: Melix_Controlplane_V1_ServerSnapshot,
+        serverSessionID: String
+    ) -> ServingDefaultsProjection? {
+        guard snapshot.hasServingDefaults else {
+            return nil
+        }
+        guard
+            let summary = snapshot.servingDefaults.sessions.first(where: { $0.serverSessionID == serverSessionID })
+                ?? (snapshot.servingDefaults.sessions.count == 1 ? snapshot.servingDefaults.sessions.first : nil)
+        else {
+            return nil
+        }
+
+        return ServingDefaultsProjection(
+            temperature: summary.requestedTemperature,
+            topP: summary.requestedTopP,
+            maxTokens: Int(summary.requestedMaxTokens),
+            streamIntervalTokens: Int(summary.requestedStreamIntervalTokens),
+            maxConcurrentRequests: Int(summary.requestedMaxConcurrentRequests),
+            effectiveTemperature: summary.effectiveTemperature,
+            effectiveTopP: summary.effectiveTopP,
+            effectiveMaxTokens: Int(summary.effectiveMaxTokens),
+            effectiveStreamIntervalTokens: Int(summary.effectiveStreamIntervalTokens),
+            effectiveMaxConcurrentRequests: Int(summary.effectiveMaxConcurrentRequests),
+            sourceText: servingDefaultsSourceText(summary.source),
+            modelOverrideApplied: summary.modelOverrideApplied,
+            updatedAtUnixMS: summary.updatedAtUnixMs
+        )
+    }
+
     private static func gatewayConfigSourceText(
         _ source: Melix_Controlplane_V1_GatewayConfigSource
+    ) -> String {
+        switch source {
+        case .builtInDefaults:
+            return "Built-in Defaults"
+        case .environmentDefaults:
+            return "Environment Defaults"
+        case .configFileImport:
+            return "Config File Import"
+        case .operatorOverride:
+            return "Operator Override"
+        default:
+            return "Unknown Source"
+        }
+    }
+
+    private static func servingDefaultsSourceText(
+        _ source: Melix_Controlplane_V1_ServingDefaultsSource
     ) -> String {
         switch source {
         case .builtInDefaults:

@@ -158,6 +158,7 @@ public actor ControlPlaneService {
     private let audioAssetManager: AudioAssetManager
     private let gatewayAccessPolicyStore: GatewayAccessPolicyStore
     private let gatewayConfigStore: GatewayConfigStore
+    private let gatewayServingDefaultsStore: GatewayServingDefaultsStore
     private let gatewayRuntimeBinding: GatewayRuntimeBinding
     private let persistentAuthSessionStore: PersistentAuthSessionStore?
 
@@ -181,6 +182,7 @@ public actor ControlPlaneService {
         mcpToolCatalog: MCPToolCatalog = .empty,
         gatewayAccessPolicy: GatewayAccessPolicy = .localTrust,
         gatewayConfigStore: GatewayConfigStore? = nil,
+        gatewayServingDefaultsStore: GatewayServingDefaultsStore? = nil,
         gatewayRuntimeBinding: GatewayRuntimeBinding = GatewayRuntimeBinding(host: "127.0.0.1", port: 11_434),
         audioAssetManager: AudioAssetManager = AudioAssetManager(),
         gatewayAccessPolicyStore: GatewayAccessPolicyStore? = nil,
@@ -231,6 +233,7 @@ public actor ControlPlaneService {
         self.audioAssetManager = audioAssetManager
         self.gatewayAccessPolicyStore = gatewayAccessPolicyStore ?? GatewayAccessPolicyStore(gatewayAccessPolicy)
         self.gatewayConfigStore = gatewayConfigStore ?? GatewayConfigStore()
+        self.gatewayServingDefaultsStore = gatewayServingDefaultsStore ?? GatewayServingDefaultsStore()
         self.gatewayRuntimeBinding = gatewayRuntimeBinding
         self.persistentAuthSessionStore = persistentAuthSessionStore
     }
@@ -373,6 +376,9 @@ public actor ControlPlaneService {
             modelChatTemplatePolicy: modelChatTemplatePolicy,
             modelOCRPolicy: modelOCRPolicy,
             modelSamplingPolicy: modelSamplingPolicy,
+            gatewayServingDefaults: await gatewayServingDefaultsStore.requestedDefaults(
+                serverSessionID: ServerSessionRuntimeStore.defaultServerSessionID
+            ),
             mcpToolCatalog: mcpToolCatalog
         )
         let execution = try await requestCoordinator.startChatCompletion(translated)
@@ -432,6 +438,8 @@ public actor ControlPlaneService {
             return await handleApplyGatewayAccess(request: request, command: apply)
         case .applyGatewayConfig(let apply):
             return await handleApplyGatewayConfig(request: request, command: apply)
+        case .applyServingDefaults(let apply):
+            return await handleApplyServingDefaults(request: request, command: apply)
         case .pause(let pause):
             return await handlePauseServer(request: request, command: pause)
         case .resume(let resume):
@@ -1306,14 +1314,9 @@ public actor ControlPlaneService {
 
     private func buildSnapshot() async -> Melix_Controlplane_V1_ServerSnapshot {
         let models = hydratedModels(await modelCatalog.listModels())
-        let metrics = await metricsStore.snapshot()
-        let queues = await schedulerReadModel.snapshot()
-        let cache = await cacheMetadataStore.cacheSummary()
-        let sessions = await sessionGraphStore.sessionSummaries()
         let runtimeSessions = await serverSessionRuntimeStore.snapshot(
             hasActiveRequests: await schedulerReadModel.hasActiveRequests()
         )
-        let imageJobs = await imageJobReadModel.snapshot()
         let gatewayAccessSummary = await gatewayAccessPolicyStore.summary()
         let fallbackServedModelID = defaultServedModelID(from: models)
         let gatewayConfigSummary = await gatewayConfigStore.summary(
@@ -1321,6 +1324,24 @@ public actor ControlPlaneService {
             runtimeBinding: gatewayRuntimeBinding,
             fallbackServedModelID: fallbackServedModelID
         )
+        let servingDefaultsSummary = await gatewayServingDefaultsStore.summary(
+            serverSessionIDs: runtimeSessions.map(\.serverSessionID),
+            servedModelIDs: Dictionary(
+                uniqueKeysWithValues: gatewayConfigSummary.listeners.map { ($0.serverSessionID, $0.servedModelID) }
+            ),
+            modelSettingsByModelID: Dictionary(
+                uniqueKeysWithValues: models.map { ($0.modelID, $0.settings) }
+            )
+        )
+        await metricsStore.set(
+            Double(servingDefaultsSummary.sessions.filter(\.modelOverrideApplied).count),
+            forKey: "gateway.generation_default_merge_count"
+        )
+        let metrics = await metricsStore.snapshot()
+        let queues = await schedulerReadModel.snapshot()
+        let cache = await cacheMetadataStore.cacheSummary()
+        let sessions = await sessionGraphStore.sessionSummaries()
+        let imageJobs = await imageJobReadModel.snapshot()
         return snapshotBuilder.build(
             models: models,
             metrics: metrics,
@@ -1331,7 +1352,8 @@ public actor ControlPlaneService {
             imageJobs: imageJobs,
             mcpTools: mcpToolCatalog.summary(),
             gatewayAccess: gatewayAccessSummary,
-            gatewayConfig: gatewayConfigSummary
+            gatewayConfig: gatewayConfigSummary,
+            servingDefaults: servingDefaultsSummary
         )
     }
 
@@ -1429,6 +1451,45 @@ public actor ControlPlaneService {
                 for: request,
                 code: "gateway_config_persist_failed",
                 message: "Gateway config persistence failed: \(error)"
+            )
+        }
+    }
+
+    private func handleApplyServingDefaults(
+        request: Melix_Controlplane_V1_ControlPlaneRequest,
+        command: Melix_Controlplane_V1_ApplyServingDefaults
+    ) async -> Melix_Controlplane_V1_ControlPlaneResponse {
+        let startedAt = Date()
+        if request.targetID.isEmpty || request.targetID != command.serverSessionID {
+            return errorResponse(
+                for: request,
+                code: "invalid_argument",
+                message: "Target server session does not match serving defaults payload."
+            )
+        }
+
+        do {
+            try await gatewayServingDefaultsStore.apply(command: command)
+            await metricsStore.set(
+                Date().timeIntervalSince(startedAt) * 1000,
+                forKey: "gateway.serving_defaults_apply_ms"
+            )
+            var reply = Melix_Controlplane_V1_ServerReply()
+            reply.snapshot = await buildSnapshot()
+            await publishServerStateChanged(
+                reply.snapshot.serverState,
+                runtimeSessions: reply.snapshot.runtimeSessions,
+                source: "server_runtime"
+            )
+            return okResponse(for: request, server: reply)
+        } catch let error as ServingDefaultsValidationError {
+            return errorResponse(for: request, code: error.code, message: error.message)
+        } catch {
+            await metricsStore.increment("gateway.serving_defaults_persist_failures")
+            return errorResponse(
+                for: request,
+                code: "serving_defaults_persist_failed",
+                message: "Serving defaults persistence failed: \(error)"
             )
         }
     }

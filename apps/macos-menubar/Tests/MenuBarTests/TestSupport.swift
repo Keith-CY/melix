@@ -39,6 +39,15 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
         let timeoutSeconds: Int
     }
 
+    struct RecordedServingDefaultsApplyRequest: Equatable, Sendable {
+        let serverSessionID: String
+        let temperature: Double
+        let topP: Double
+        let maxTokens: Int
+        let streamIntervalTokens: Int
+        let maxConcurrentRequests: Int
+    }
+
     struct RecordedServerIdlePolicyRequest: Equatable, Sendable {
         let serverSessionID: String
         let autoSleepEnabled: Bool
@@ -57,6 +66,7 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
     private(set) var recordedExportOutputDirs: [String] = []
     private(set) var recordedGatewayAccessApplyRequests: [RecordedGatewayAccessApplyRequest] = []
     private(set) var recordedGatewayConfigApplyRequests: [RecordedGatewayConfigApplyRequest] = []
+    private(set) var recordedServingDefaultsApplyRequests: [RecordedServingDefaultsApplyRequest] = []
     private(set) var recordedGatewayAccessClearRequests: [String] = []
     private(set) var recordedServerIdlePolicyRequests: [RecordedServerIdlePolicyRequest] = []
     private(set) var lastLoadMemoryBudgetBytes: UInt64 = 0
@@ -81,6 +91,7 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
     private var cancelError: Error?
     private var applyGatewayAccessError: Error?
     private var applyGatewayConfigError: Error?
+    private var applyServingDefaultsError: Error?
     private var clearGatewayAccessError: Error?
     private var startServerError: Error?
     private var pauseServerError: Error?
@@ -204,6 +215,7 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
         cancel: Error? = nil,
         applyGatewayAccess: Error? = nil,
         applyGatewayConfig: Error? = nil,
+        applyServingDefaults: Error? = nil,
         startServer: Error? = nil,
         pauseServer: Error? = nil,
         resumeServer: Error? = nil,
@@ -229,6 +241,7 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
         cancelError = cancel
         applyGatewayAccessError = applyGatewayAccess
         applyGatewayConfigError = applyGatewayConfig
+        applyServingDefaultsError = applyServingDefaults
         startServerError = startServer
         pauseServerError = pauseServer
         resumeServerError = resumeServer
@@ -311,6 +324,10 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
 
     func configureGatewayConfigApplyError(_ error: Error?) {
         applyGatewayConfigError = error
+    }
+
+    func configureServingDefaultsApplyError(_ error: Error?) {
+        applyServingDefaultsError = error
     }
 
     func handshake() async throws -> Melix_Controlplane_V1_HandshakeResponse {
@@ -717,6 +734,66 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
             config.listeners.append(listener)
         }
         snapshot.gatewayConfig = config
+        snapshotOverride = snapshot
+        return snapshot
+    }
+
+    func applyServerSessionServingDefaults(
+        serverSessionID: String,
+        temperature: Double,
+        topP: Double,
+        maxTokens: Int,
+        streamIntervalTokens: Int,
+        maxConcurrentRequests: Int
+    ) async throws -> Melix_Controlplane_V1_ServerSnapshot {
+        recordedActions.append("serving-defaults.apply:\(serverSessionID)")
+        if let applyServingDefaultsError {
+            throw applyServingDefaultsError
+        }
+        recordedServingDefaultsApplyRequests.append(
+            RecordedServingDefaultsApplyRequest(
+                serverSessionID: serverSessionID,
+                temperature: temperature,
+                topP: topP,
+                maxTokens: maxTokens,
+                streamIntervalTokens: streamIntervalTokens,
+                maxConcurrentRequests: maxConcurrentRequests
+            )
+        )
+
+        var snapshot = snapshotOverride ?? makeSnapshot(state: modelState)
+        var summary = snapshot.servingDefaults
+        if let existingIndex = summary.sessions.firstIndex(where: { $0.serverSessionID == serverSessionID }) {
+            summary.sessions[existingIndex].requestedTemperature = temperature
+            summary.sessions[existingIndex].requestedTopP = topP
+            summary.sessions[existingIndex].requestedMaxTokens = UInt32(max(1, maxTokens))
+            summary.sessions[existingIndex].requestedStreamIntervalTokens = UInt32(max(1, streamIntervalTokens))
+            summary.sessions[existingIndex].requestedMaxConcurrentRequests = UInt32(max(1, maxConcurrentRequests))
+            summary.sessions[existingIndex].effectiveTemperature = temperature
+            summary.sessions[existingIndex].effectiveTopP = topP
+            summary.sessions[existingIndex].effectiveMaxTokens = UInt32(max(1, maxTokens))
+            summary.sessions[existingIndex].effectiveStreamIntervalTokens = UInt32(max(1, streamIntervalTokens))
+            summary.sessions[existingIndex].effectiveMaxConcurrentRequests = UInt32(max(1, maxConcurrentRequests))
+            summary.sessions[existingIndex].source = .operatorOverride
+            summary.sessions[existingIndex].modelOverrideApplied = false
+        } else {
+            var session = Melix_Controlplane_V1_ServingDefaultsSessionSummary()
+            session.serverSessionID = serverSessionID
+            session.servedModelID = snapshot.gatewayConfig.listeners.first(where: { $0.serverSessionID == serverSessionID })?.servedModelID ?? "melix-dev-text"
+            session.requestedTemperature = temperature
+            session.requestedTopP = topP
+            session.requestedMaxTokens = UInt32(max(1, maxTokens))
+            session.requestedStreamIntervalTokens = UInt32(max(1, streamIntervalTokens))
+            session.requestedMaxConcurrentRequests = UInt32(max(1, maxConcurrentRequests))
+            session.effectiveTemperature = temperature
+            session.effectiveTopP = topP
+            session.effectiveMaxTokens = UInt32(max(1, maxTokens))
+            session.effectiveStreamIntervalTokens = UInt32(max(1, streamIntervalTokens))
+            session.effectiveMaxConcurrentRequests = UInt32(max(1, maxConcurrentRequests))
+            session.source = .operatorOverride
+            summary.sessions.append(session)
+        }
+        snapshot.servingDefaults = summary
         snapshotOverride = snapshot
         return snapshot
     }

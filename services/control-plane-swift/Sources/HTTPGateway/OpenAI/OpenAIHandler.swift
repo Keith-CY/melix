@@ -265,6 +265,8 @@ public struct OpenAIHandler: Sendable {
     private let mcpToolCatalog: MCPToolCatalog
     private let audioAssetManager: AudioAssetManager
     private let gatewayAccessPolicyStore: GatewayAccessPolicyStore
+    private let gatewayServingDefaultsStore: GatewayServingDefaultsStore
+    private let gatewayRuntimeBinding: GatewayRuntimeBinding
     private let persistentAuthSessionStore: PersistentAuthSessionStore?
     private let decoder: JSONDecoder
     private let encoder: JSONEncoder
@@ -284,6 +286,8 @@ public struct OpenAIHandler: Sendable {
         gatewayAccessPolicy: GatewayAccessPolicy = .localTrust,
         audioAssetManager: AudioAssetManager = AudioAssetManager(),
         gatewayAccessPolicyStore: GatewayAccessPolicyStore? = nil,
+        gatewayServingDefaultsStore: GatewayServingDefaultsStore? = nil,
+        gatewayRuntimeBinding: GatewayRuntimeBinding = GatewayRuntimeBinding(host: "127.0.0.1", port: 11_434),
         persistentAuthSessionStore: PersistentAuthSessionStore? = nil
     ) {
         self.modelCatalog = modelCatalog
@@ -302,6 +306,8 @@ public struct OpenAIHandler: Sendable {
         self.mcpToolCatalog = mcpToolCatalog
         self.audioAssetManager = audioAssetManager
         self.gatewayAccessPolicyStore = gatewayAccessPolicyStore ?? GatewayAccessPolicyStore(gatewayAccessPolicy)
+        self.gatewayServingDefaultsStore = gatewayServingDefaultsStore ?? GatewayServingDefaultsStore()
+        self.gatewayRuntimeBinding = gatewayRuntimeBinding
         self.persistentAuthSessionStore = persistentAuthSessionStore
         self.decoder = JSONDecoder()
         self.encoder = JSONEncoder()
@@ -1305,6 +1311,9 @@ public struct OpenAIHandler: Sendable {
             modelChatTemplatePolicy: modelChatTemplatePolicy,
             modelOCRPolicy: modelOCRPolicy,
             modelSamplingPolicy: modelSamplingPolicy,
+            gatewayServingDefaults: await gatewayServingDefaultsStore.requestedDefaults(
+                serverSessionID: gatewayRuntimeBinding.activeServerSessionID
+            ),
             mcpToolCatalog: mcpToolCatalog
         )
         await recordShapingMetrics(for: translated, startedAt: shapingStartedAt)

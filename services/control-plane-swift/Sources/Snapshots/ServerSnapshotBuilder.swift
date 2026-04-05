@@ -13,7 +13,8 @@ public struct ServerSnapshotBuilder {
         imageJobs: [Melix_Controlplane_V1_ImageJobSummary] = [],
         mcpTools: Melix_Controlplane_V1_MCPToolCatalogSummary? = nil,
         gatewayAccess: Melix_Controlplane_V1_GatewayAccessSummary? = nil,
-        gatewayConfig: Melix_Controlplane_V1_GatewayConfigSummary? = nil
+        gatewayConfig: Melix_Controlplane_V1_GatewayConfigSummary? = nil,
+        servingDefaults: Melix_Controlplane_V1_ServingDefaultsSummary? = nil
     ) -> Melix_Controlplane_V1_ServerSnapshot {
         var snapshot = Melix_Controlplane_V1_ServerSnapshot()
         let cacheSummary = cache ?? CacheMetadataStore.emptySummary()
@@ -35,6 +36,9 @@ public struct ServerSnapshotBuilder {
         }
         if let gatewayConfig {
             snapshot.gatewayConfig = gatewayConfig
+        }
+        if let servingDefaults {
+            snapshot.servingDefaults = servingDefaults
         }
         return snapshot
     }

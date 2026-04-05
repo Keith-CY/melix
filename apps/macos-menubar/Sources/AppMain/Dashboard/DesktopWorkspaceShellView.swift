@@ -617,13 +617,25 @@ private struct DesktopServerSessionEditor: View {
                                     TextField(
                                         "Max tokens",
                                         value: Binding(
-                                            get: { viewModel.selectedServerSession?.servingDefaults.maxTokens ?? 1024 },
+                                            get: { viewModel.selectedServerSession?.servingDefaults.maxTokens ?? 256 },
                                             set: { viewModel.updateSelectedServerSessionMaxTokens($0) }
                                         ),
                                         format: .number
                                     )
                                     .textFieldStyle(.roundedBorder)
 
+                                    TextField(
+                                        "Stream interval",
+                                        value: Binding(
+                                            get: { viewModel.selectedServerSession?.servingDefaults.streamIntervalTokens ?? 1 },
+                                            set: { viewModel.updateSelectedServerSessionStreamIntervalTokens($0) }
+                                        ),
+                                        format: .number
+                                    )
+                                    .textFieldStyle(.roundedBorder)
+                                }
+
+                                HStack {
                                     TextField(
                                         "Max concurrent",
                                         value: Binding(
@@ -633,6 +645,18 @@ private struct DesktopServerSessionEditor: View {
                                         format: .number
                                     )
                                     .textFieldStyle(.roundedBorder)
+                                }
+
+                                HStack {
+                                    Button("Apply Serving Defaults", action: viewModel.applySelectedServerServingDefaultsFromUI)
+                                    .buttonStyle(.bordered)
+
+                                    let servingDefaults = session.servingDefaults
+                                    Text(
+                                        "Source: \(servingDefaults.sourceText) • Effective temp \(servingDefaults.effectiveTemperature, format: .number.precision(.fractionLength(2))) • top_p \(servingDefaults.effectiveTopP, format: .number.precision(.fractionLength(2))) • max \(servingDefaults.effectiveMaxTokens) • stream \(servingDefaults.effectiveStreamIntervalTokens) • concurrent \(servingDefaults.effectiveMaxConcurrentRequests)\(servingDefaults.modelOverrideApplied ? " • model override applied" : "")"
+                                    )
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
                                 }
                             }
                             .padding(.top, 12)

@@ -496,6 +496,159 @@ struct ControlPlaneServiceTests {
         #expect(await metricsStore.value(forKey: "gateway.config_persist_failures") == 1)
     }
 
+    @Test("execute projects typed serving defaults state through server snapshots")
+    func executeProjectsTypedServingDefaultsStateThroughServerSnapshots() async throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-control-plane-serving-defaults-snapshot-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let servingDefaultsStore = GatewayServingDefaultsStore(
+            storeURL: temporaryRoot.appendingPathComponent("gateway-serving-defaults.json"),
+            defaults: [:],
+            nowUnixMS: { 1_717_181_920_000 }
+        )
+        try await servingDefaultsStore.apply(command: makeApplyServingDefaultsCommand(
+            temperature: 0.33,
+            topP: 0.9,
+            maxTokens: 640,
+            streamIntervalTokens: 4,
+            maxConcurrentRequests: 6
+        ))
+        let service = ControlPlaneService(
+            modelCatalog: ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels()),
+            gatewayConfigStore: GatewayConfigStore(
+                storeURL: temporaryRoot.appendingPathComponent("gateway-config.json"),
+                defaults: [:]
+            ),
+            gatewayServingDefaultsStore: servingDefaultsStore,
+            gatewayRuntimeBinding: GatewayRuntimeBinding(host: "127.0.0.1", port: 11_434)
+        )
+
+        let response = try await service.execute(makeServerSnapshotRequest())
+        let session = try #require(response.server.snapshot.servingDefaults.sessions.first)
+
+        #expect(response.ok)
+        #expect(session.serverSessionID == ServerSessionRuntimeStore.defaultServerSessionID)
+        #expect(session.requestedTemperature == 0.33)
+        #expect(session.requestedTopP == 0.9)
+        #expect(session.requestedMaxTokens == 640)
+        #expect(session.requestedStreamIntervalTokens == 4)
+        #expect(session.requestedMaxConcurrentRequests == 6)
+        #expect(session.source == .operatorOverride)
+    }
+
+    @Test("execute applies serving defaults and returns a hydrated snapshot")
+    func executeAppliesServingDefaultsAndReturnsAHydratedSnapshot() async throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-control-plane-serving-defaults-apply-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let metricsStore = MetricsStore()
+        let service = ControlPlaneService(
+            modelCatalog: ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels()),
+            metricsStore: metricsStore,
+            gatewayConfigStore: GatewayConfigStore(
+                storeURL: temporaryRoot.appendingPathComponent("gateway-config.json"),
+                defaults: [:]
+            ),
+            gatewayServingDefaultsStore: GatewayServingDefaultsStore(
+                storeURL: temporaryRoot.appendingPathComponent("gateway-serving-defaults.json"),
+                defaults: [:],
+                nowUnixMS: { 1_717_181_930_000 }
+            )
+        )
+
+        let response = try await service.execute(
+            makeApplyServingDefaultsRequest(
+                temperature: 0.41,
+                topP: 0.87,
+                maxTokens: 512,
+                streamIntervalTokens: 2,
+                maxConcurrentRequests: 5
+            )
+        )
+        let session = try #require(response.server.snapshot.servingDefaults.sessions.first)
+
+        #expect(response.ok)
+        #expect(session.requestedTemperature == 0.41)
+        #expect(session.requestedTopP == 0.87)
+        #expect(session.requestedMaxTokens == 512)
+        #expect(session.requestedStreamIntervalTokens == 2)
+        #expect(session.requestedMaxConcurrentRequests == 5)
+        #expect(await metricsStore.value(forKey: "gateway.serving_defaults_apply_ms") >= 0)
+    }
+
+    @Test("execute rejects serving defaults target mismatches and typed payload validation failures")
+    func executeRejectsServingDefaultsTargetMismatchesAndTypedPayloadValidationFailures() async throws {
+        let service = ControlPlaneService(modelCatalog: ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels()))
+
+        let mismatchedTarget = try await service.execute(
+            makeApplyServingDefaultsRequest(
+                targetID: "server-session-other",
+                temperature: 0.2,
+                topP: 0.9,
+                maxTokens: 256,
+                streamIntervalTokens: 1,
+                maxConcurrentRequests: 4
+            )
+        )
+        let invalidTopP = try await service.execute(
+            makeApplyServingDefaultsRequest(
+                temperature: 0.2,
+                topP: 0,
+                maxTokens: 256,
+                streamIntervalTokens: 1,
+                maxConcurrentRequests: 4
+            )
+        )
+        let invalidStreamInterval = try await service.execute(
+            makeApplyServingDefaultsRequest(
+                temperature: 0.2,
+                topP: 0.9,
+                maxTokens: 256,
+                streamIntervalTokens: 0,
+                maxConcurrentRequests: 4
+            )
+        )
+
+        #expect(!mismatchedTarget.ok)
+        #expect(mismatchedTarget.error.code == "invalid_argument")
+        #expect(invalidTopP.error.code == ServingDefaultsValidationError.invalidTopP.code)
+        #expect(invalidStreamInterval.error.code == ServingDefaultsValidationError.invalidStreamIntervalTokens.code)
+    }
+
+    @Test("execute surfaces serving defaults persistence failures with typed metrics")
+    func executeSurfacesServingDefaultsPersistenceFailuresWithTypedMetrics() async throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-control-plane-serving-defaults-persist-failure-\(UUID().uuidString)")
+        let storeURL = temporaryRoot.appendingPathComponent("gateway-serving-defaults-directory")
+        try FileManager.default.createDirectory(at: storeURL, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let metricsStore = MetricsStore()
+        let service = ControlPlaneService(
+            modelCatalog: ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels()),
+            metricsStore: metricsStore,
+            gatewayServingDefaultsStore: GatewayServingDefaultsStore(storeURL: storeURL, defaults: [:])
+        )
+
+        let response = try await service.execute(
+            makeApplyServingDefaultsRequest(
+                temperature: 0.3,
+                topP: 0.91,
+                maxTokens: 384,
+                streamIntervalTokens: 2,
+                maxConcurrentRequests: 3
+            )
+        )
+
+        #expect(!response.ok)
+        #expect(response.error.code == "serving_defaults_persist_failed")
+        #expect(await metricsStore.value(forKey: "gateway.serving_defaults_persist_failures") == 1)
+    }
+
     @Test("execute handles server lifecycle controls and derives server state")
     func executeHandlesServerLifecycleControlsAndDerivesServerState() async throws {
         let service = ControlPlaneService()
@@ -5243,6 +5396,59 @@ struct ControlPlaneServiceTests {
         #expect(generated.execution.ext["melix.ocr.sampling_source"] == "model")
     }
 
+    @Test("startChat applies gateway serving defaults to worker requests")
+    func startChatAppliesGatewayServingDefaultsToWorkerRequests() async throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-control-plane-chat-serving-defaults-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let servingDefaultsStore = GatewayServingDefaultsStore(
+            storeURL: temporaryRoot.appendingPathComponent("gateway-serving-defaults.json"),
+            defaults: [:]
+        )
+        try await servingDefaultsStore.apply(command: makeApplyServingDefaultsCommand(
+            temperature: 0.44,
+            topP: 0.93,
+            maxTokens: 320,
+            streamIntervalTokens: 3,
+            maxConcurrentRequests: 5
+        ))
+
+        let modelCatalog = ModelCatalog()
+        _ = await modelCatalog.loadModel(id: "melix-dev-text")
+        let textClient = ScriptedChatWorkerClient(events: [
+            makeQueuedExecuteEvent(requestID: "chat-serving-defaults"),
+            makeCompletedExecuteEvent(
+                requestID: "chat-serving-defaults",
+                finishReason: "stop",
+                assistant: "done",
+                reasoning: ""
+            ),
+        ])
+        let service = ControlPlaneService(
+            modelCatalog: modelCatalog,
+            workerRegistry: WorkerRegistry(defaultTextClient: textClient),
+            chatTranslator: ChatRequestTranslator(requestIDGenerator: { "chat-serving-defaults" }),
+            gatewayServingDefaultsStore: servingDefaultsStore
+        )
+
+        let execution = try await service.startChat(
+            ControlPlaneChatRequest(
+                modelID: "melix-dev-text",
+                messages: [.init(role: "user", content: "Hello")]
+            )
+        )
+        _ = try await Array(execution.stream)
+        let generated = try #require(await textClient.lastGenerateRequest)
+
+        #expect(generated.sampling.temperature == 0.44)
+        #expect(generated.sampling.topP == 0.93)
+        #expect(generated.sampling.maxOutputTokens == 320)
+        #expect(generated.execution.ext["melix.stream.interval_tokens"] == "3")
+        #expect(generated.execution.ext["melix.gateway.max_concurrent_requests"] == "5")
+    }
+
     @Test("startChat auto injects MCP tool metadata into worker requests")
     func startChatAutoInjectsMCPToolMetadataIntoWorkerRequests() async throws {
         let modelCatalog = ModelCatalog()
@@ -6010,6 +6216,31 @@ struct ControlPlaneServiceTests {
         return request
     }
 
+    private func makeApplyServingDefaultsRequest(
+        serverSessionID: String = ServerSessionRuntimeStore.defaultServerSessionID,
+        targetID: String? = nil,
+        temperature: Double,
+        topP: Double,
+        maxTokens: UInt32,
+        streamIntervalTokens: UInt32,
+        maxConcurrentRequests: UInt32
+    ) -> Melix_Controlplane_V1_ControlPlaneRequest {
+        var request = Melix_Controlplane_V1_ControlPlaneRequest()
+        request.requestID = "req-apply-serving-defaults-\(serverSessionID)"
+        request.commandType = "server.apply_serving_defaults"
+        request.targetID = targetID ?? serverSessionID
+        request.server = Melix_Controlplane_V1_ServerCommand()
+        request.server.applyServingDefaults = makeApplyServingDefaultsCommand(
+            serverSessionID: serverSessionID,
+            temperature: temperature,
+            topP: topP,
+            maxTokens: maxTokens,
+            streamIntervalTokens: streamIntervalTokens,
+            maxConcurrentRequests: maxConcurrentRequests
+        )
+        return request
+    }
+
     private func makeApplyGatewayConfigCommand(
         serverSessionID: String = ServerSessionRuntimeStore.defaultServerSessionID,
         host: String,
@@ -6025,6 +6256,24 @@ struct ControlPlaneServiceTests {
         command.servedModelID = servedModelID
         command.rateLimitPerMinute = rateLimitPerMinute
         command.timeoutSeconds = timeoutSeconds
+        return command
+    }
+
+    private func makeApplyServingDefaultsCommand(
+        serverSessionID: String = ServerSessionRuntimeStore.defaultServerSessionID,
+        temperature: Double,
+        topP: Double,
+        maxTokens: UInt32,
+        streamIntervalTokens: UInt32,
+        maxConcurrentRequests: UInt32
+    ) -> Melix_Controlplane_V1_ApplyServingDefaults {
+        var command = Melix_Controlplane_V1_ApplyServingDefaults()
+        command.serverSessionID = serverSessionID
+        command.temperature = temperature
+        command.topP = topP
+        command.maxTokens = maxTokens
+        command.streamIntervalTokens = streamIntervalTokens
+        command.maxConcurrentRequests = maxConcurrentRequests
         return command
     }
 

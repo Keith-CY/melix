@@ -2,6 +2,50 @@
 
 ## 2026-04-05
 
+- Closed the first executable `M13.2` slice by making gateway-level serving defaults typed,
+  persistent, and control-plane-owned across bootstrap, snapshot projection, request shaping, and
+  the Window UI server workspace:
+  - extended the control-plane protocol with `server.apply_serving_defaults`,
+    `ApplyServingDefaults`, `ServingDefaultsSource`, `ServingDefaultsSummary`, and
+    `ServingDefaultsSessionSummary`, and regenerated the Swift, Python, and descriptor artifacts
+    so requested and effective serving-default state is part of the versioned interface contract
+  - added `GatewayServingDefaultsStore` so built-in defaults, environment defaults, config-file
+    imports, and operator overrides resolve through a schema-versioned JSON document owned by the
+    Swift control plane, with effective values merged against model-level generation config where
+    applicable
+  - projected serving-default summaries through `ServerSnapshot`, wired typed apply handling plus
+    persistence metrics into `ControlPlaneService`, and applied gateway defaults inside text
+    request shaping and chat translation before per-request overrides
+  - updated the Window UI server workspace and `RuntimeViewModel` so serving-default values,
+    source labels, effective merged defaults, and `Apply Serving Defaults` hydrate from
+    control-plane truth, and server starts persist serving defaults before lifecycle mutation
+- Verification summary for the first executable `M13.2` slice:
+  - `make proto`: pass
+  - `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/.build/ModuleCache.noindex" swift test --package-path services/control-plane-swift --enable-code-coverage --filter 'ControlPlaneServiceTests|GatewayServingDefaultsStoreTests|TextEndpointContractTests|OpenAIHandlerTests'`: `297 tests in 4 suites passed after 0.108 seconds`
+  - `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/.build/ModuleCache.noindex" swift test --package-path apps/macos-menubar --enable-code-coverage --filter 'RuntimeViewModelTests|ControlPlaneXPCClientTests|DesktopShellStateTests|DesktopFoundationViewTests'`: `246 tests in 4 suites passed after 4.537 seconds`
+  - `python3 scripts/swift_changed_line_coverage.py --binary services/control-plane-swift/.build/arm64-apple-macosx/debug/MelixControlPlanePackageTests.xctest/Contents/MacOS/MelixControlPlanePackageTests --profdata services/control-plane-swift/.build/arm64-apple-macosx/debug/codecov/default.profdata services/control-plane-swift/Sources/Bootstrap/main.swift services/control-plane-swift/Sources/HTTPGateway/OpenAI/GatewayServingDefaultsStore.swift services/control-plane-swift/Sources/HTTPGateway/OpenAI/OpenAIHandler.swift services/control-plane-swift/Sources/Requests/ChatRequestTranslator.swift services/control-plane-swift/Sources/Requests/TextRequestShaper.swift services/control-plane-swift/Sources/Snapshots/ServerSnapshotBuilder.swift services/control-plane-swift/Sources/XPCService/ControlPlaneService.swift services/control-plane-swift/Tests/ControlPlaneTests/ControlPlaneServiceTests.swift services/control-plane-swift/Tests/ControlPlaneTests/GatewayServingDefaultsStoreTests.swift services/control-plane-swift/Tests/ControlPlaneTests/TextEndpointContractTests.swift services/control-plane-swift/Tests/HTTPGatewayTests/OpenAIHandlerTests.swift`: `100.00%` (`429/429`)
+  - `python3 scripts/swift_changed_line_coverage.py --binary apps/macos-menubar/.build/arm64-apple-macosx/debug/MelixMacOSMenubarPackageTests.xctest/Contents/MacOS/MelixMacOSMenubarPackageTests --profdata apps/macos-menubar/.build/arm64-apple-macosx/debug/codecov/default.profdata services/control-plane-swift/Sources/XPCService/ControlPlaneXPCClient.swift apps/macos-menubar/Sources/AppMain/Dashboard/DesktopWorkspaceShellView.swift apps/macos-menubar/Sources/AppMain/Models/DesktopShellState.swift apps/macos-menubar/Sources/AppMain/Models/RuntimeViewModel.swift apps/macos-menubar/Tests/MenuBarTests/ControlPlaneXPCClientTests.swift apps/macos-menubar/Tests/MenuBarTests/DesktopFoundationViewTests.swift apps/macos-menubar/Tests/MenuBarTests/DesktopShellStateTests.swift apps/macos-menubar/Tests/MenuBarTests/RuntimeViewModelTests.swift apps/macos-menubar/Tests/MenuBarTests/TestSupport.swift`: `99.56%` (`673/676`)
+  - `make swift-test`: failed outside the touched scope when `services/mlx-text-worker-swift` exited with unexpected signal `11` during `WorkerScaffoldTests`; the touched control-plane and menu-bar packages passed under the focused verification commands above
+  - `git diff --check`: pass
+- Metrics report for the first executable `M13.2` slice:
+  - typed serving-defaults metrics exercised by the touched scope:
+    - `gateway.serving_defaults_apply_ms`
+    - `gateway.serving_defaults_persist_failures`
+    - `gateway.generation_default_merge_count`
+    - `menu.serving_defaults_apply_ms`
+  - effective-state and merge evidence exercised by the touched scope:
+    - requested versus effective `temperature`, `top_p`, `max_tokens`,
+      `stream_interval_tokens`, and `max_concurrent_requests`
+    - control-plane-owned source labels and model-override visibility for serving defaults
+    - gateway-default application in request shaping and chat execution metadata
+  - changed-line coverage for the touched handwritten executable scope:
+    - Swift control-plane scope: `100.00%` (`429/429`)
+    - Swift menu-bar plus shared XPC-client scope: `99.56%` (`673/676`)
+    - aggregate touched-scope coverage: `99.73%` (`1102/1105`)
+  - generated protobuf outputs and `packages/protocol/descriptors/melix.pb` are excluded from
+    executable changed-line coverage because they are regenerated interface artifacts rather than
+    handwritten runtime logic
+
 - Started `M13.2` by refining gateway defaults work into explicit executable slices and selecting
   gateway-level generation defaults as the next implementation target:
   - updated the `M13.2` plan so the milestone now executes in three bounded slices: typed

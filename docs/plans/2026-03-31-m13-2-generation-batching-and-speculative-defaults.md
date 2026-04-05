@@ -15,6 +15,8 @@ Expose the generation, batching, and speculative-decoding defaults that shape se
 
 ### Slice 1
 
+Status: completed on 2026-04-05
+
 - add a typed serving-defaults state model for gateway-level generation defaults
 - persist operator defaults for `temperature`, `top_p`, `max_tokens`, and `stream_interval_tokens`
 - project requested and effective generation defaults through `ServerSnapshot`

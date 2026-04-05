@@ -65,9 +65,136 @@ struct RuntimeViewModelTests {
         #expect(await metrics.snapshot()["menu.gateway_config_apply_ms"] != nil)
     }
 
-    @Test("starting a selected server session persists gateway config before the lifecycle mutation")
+    @Test("applySelectedServerServingDefaults sends a typed request and hydrates effective defaults")
     @MainActor
-    func startingASelectedServerSessionPersistsGatewayConfigBeforeTheLifecycleMutation() async throws {
+    func applySelectedServerServingDefaultsSendsATypedRequestAndHydratesEffectiveDefaults() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let metrics = MenuBarMetricsStore()
+        let viewModel = RuntimeViewModel(client: client, metrics: metrics)
+
+        await viewModel.start()
+        viewModel.updateSelectedServerSessionTemperature(0.33)
+        viewModel.updateSelectedServerSessionTopP(0.92)
+        viewModel.updateSelectedServerSessionMaxTokens(384)
+        viewModel.updateSelectedServerSessionStreamIntervalTokens(3)
+        viewModel.updateSelectedServerSessionMaxConcurrentRequests(5)
+
+        await viewModel.applySelectedServerServingDefaults()
+
+        let request = try #require(await client.recordedServingDefaultsApplyRequests.last)
+        let session = try #require(viewModel.selectedServerSession)
+
+        #expect(request.serverSessionID == session.id)
+        #expect(request.temperature == 0.33)
+        #expect(request.topP == 0.92)
+        #expect(request.maxTokens == 384)
+        #expect(request.streamIntervalTokens == 3)
+        #expect(request.maxConcurrentRequests == 5)
+        #expect(session.servingDefaults.temperature == 0.33)
+        #expect(session.servingDefaults.topP == 0.92)
+        #expect(session.servingDefaults.maxTokens == 384)
+        #expect(session.servingDefaults.streamIntervalTokens == 3)
+        #expect(session.servingDefaults.maxConcurrentRequests == 5)
+        #expect(session.servingDefaults.sourceText == "Operator Override")
+        #expect(await metrics.snapshot()["menu.serving_defaults_apply_ms"] != nil)
+    }
+
+    @Test("applySelectedServerServingDefaults no-ops without a selected session")
+    @MainActor
+    func applySelectedServerServingDefaultsNoOpsWithoutSelectedSession() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.applySelectedServerServingDefaults()
+
+        #expect(await client.recordedServingDefaultsApplyRequests.isEmpty)
+    }
+
+    @Test("applySelectedServerServingDefaultsFromUI schedules the typed request through the view model")
+    @MainActor
+    func applySelectedServerServingDefaultsFromUISchedulesTypedRequest() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+        viewModel.updateSelectedServerSessionTemperature(0.41)
+        viewModel.updateSelectedServerSessionTopP(0.9)
+        viewModel.updateSelectedServerSessionMaxTokens(300)
+        viewModel.updateSelectedServerSessionStreamIntervalTokens(2)
+        viewModel.updateSelectedServerSessionMaxConcurrentRequests(6)
+
+        viewModel.applySelectedServerServingDefaultsFromUI()
+
+        let deadline = ContinuousClock.now + .seconds(2)
+        while ContinuousClock.now < deadline {
+            if await client.recordedServingDefaultsApplyRequests.isEmpty == false {
+                break
+            }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+
+        let request = try #require(await client.recordedServingDefaultsApplyRequests.last)
+        #expect(request.temperature == 0.41)
+        #expect(request.topP == 0.9)
+        #expect(request.maxTokens == 300)
+        #expect(request.streamIntervalTokens == 2)
+        #expect(request.maxConcurrentRequests == 6)
+    }
+
+    @Test("applySelectedServerServingDefaults updates an existing projected summary in the fake control plane client")
+    @MainActor
+    func applySelectedServerServingDefaultsUpdatesExistingProjectedSummary() async throws {
+        let client = FakeControlPlaneXPCClient()
+        var snapshot = makeSnapshot(
+            serverState: .serverReady,
+            models: [makeModelSummary(state: .modelWarm)],
+            runtimeSessions: [makeRuntimeSession()]
+        )
+        var servingDefaults = Melix_Controlplane_V1_ServingDefaultsSessionSummary()
+        servingDefaults.serverSessionID = "server-session-1"
+        servingDefaults.servedModelID = "melix-dev-text"
+        servingDefaults.requestedTemperature = 0.7
+        servingDefaults.requestedTopP = 1.0
+        servingDefaults.requestedMaxTokens = 256
+        servingDefaults.requestedStreamIntervalTokens = 1
+        servingDefaults.requestedMaxConcurrentRequests = 4
+        servingDefaults.effectiveTemperature = 0.7
+        servingDefaults.effectiveTopP = 1.0
+        servingDefaults.effectiveMaxTokens = 256
+        servingDefaults.effectiveStreamIntervalTokens = 1
+        servingDefaults.effectiveMaxConcurrentRequests = 4
+        servingDefaults.source = .builtInDefaults
+        snapshot.servingDefaults.sessions = [servingDefaults]
+        await client.configureSnapshot(snapshot)
+
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        viewModel.updateSelectedServerSessionTemperature(0.33)
+        viewModel.updateSelectedServerSessionTopP(0.92)
+        viewModel.updateSelectedServerSessionMaxTokens(384)
+        viewModel.updateSelectedServerSessionStreamIntervalTokens(3)
+        viewModel.updateSelectedServerSessionMaxConcurrentRequests(5)
+
+        await viewModel.applySelectedServerServingDefaults()
+
+        let session = try #require(viewModel.selectedServerSession)
+        #expect(session.servingDefaults.temperature == 0.33)
+        #expect(session.servingDefaults.topP == 0.92)
+        #expect(session.servingDefaults.maxTokens == 384)
+        #expect(session.servingDefaults.streamIntervalTokens == 3)
+        #expect(session.servingDefaults.maxConcurrentRequests == 5)
+        #expect(session.servingDefaults.effectiveTemperature == 0.33)
+        #expect(session.servingDefaults.effectiveTopP == 0.92)
+        #expect(session.servingDefaults.effectiveMaxTokens == 384)
+        #expect(session.servingDefaults.effectiveStreamIntervalTokens == 3)
+        #expect(session.servingDefaults.effectiveMaxConcurrentRequests == 5)
+        #expect(session.servingDefaults.sourceText == "Operator Override")
+        #expect(session.servingDefaults.modelOverrideApplied == false)
+    }
+
+    @Test("starting a selected server session persists gateway config and serving defaults before the lifecycle mutation")
+    @MainActor
+    func startingASelectedServerSessionPersistsGatewayConfigAndServingDefaultsBeforeTheLifecycleMutation() async throws {
         let client = FakeControlPlaneXPCClient()
         let viewModel = RuntimeViewModel(client: client)
 
@@ -76,15 +203,19 @@ struct RuntimeViewModelTests {
         let serverSessionID = try #require(viewModel.selectedServerSession?.id)
         viewModel.updateSelectedServerSessionHost("127.0.0.1")
         viewModel.updateSelectedServerSessionPort(18081)
+        viewModel.updateSelectedServerSessionStreamIntervalTokens(2)
 
         await viewModel.startSelectedServerSession()
 
         let actions = await client.recordedActions
-        let applyIndex = try #require(actions.firstIndex(of: "gateway.config:\(serverSessionID)"))
+        let applyConfigIndex = try #require(actions.firstIndex(of: "gateway.config:\(serverSessionID)"))
+        let applyServingDefaultsIndex = try #require(actions.firstIndex(of: "serving-defaults.apply:\(serverSessionID)"))
         let startIndex = try #require(actions.firstIndex(of: "server.start:\(serverSessionID)"))
 
-        #expect(applyIndex < startIndex)
+        #expect(applyConfigIndex < startIndex)
+        #expect(applyServingDefaultsIndex < startIndex)
         #expect(await client.recordedGatewayConfigApplyRequests.count == 1)
+        #expect(await client.recordedServingDefaultsApplyRequests.count == 1)
         #expect(viewModel.selectedServerSession?.lifecycle == .running)
     }
 
@@ -106,6 +237,27 @@ struct RuntimeViewModelTests {
         #expect(actions.contains("server.start:\(serverSessionID)") == false)
         #expect(viewModel.lastError?.contains("Gateway config apply failed") == true)
         #expect(viewModel.lastError?.contains("persist failed") == true)
+    }
+
+    @Test("serving defaults apply failures block server starts and surface local errors")
+    @MainActor
+    func servingDefaultsApplyFailuresBlockServerStartsAndSurfaceLocalErrors() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+        viewModel.createServerSession()
+        let serverSessionID = try #require(viewModel.selectedServerSession?.id)
+        await client.configureServingDefaultsApplyError(MenuBarTestError(description: "defaults persist failed"))
+
+        await viewModel.startSelectedServerSession()
+
+        let actions = await client.recordedActions
+        #expect(actions.contains("gateway.config:\(serverSessionID)"))
+        #expect(actions.contains("serving-defaults.apply:\(serverSessionID)"))
+        #expect(actions.contains("server.start:\(serverSessionID)") == false)
+        #expect(viewModel.lastError?.contains("Serving defaults apply failed") == true)
+        #expect(viewModel.lastError?.contains("defaults persist failed") == true)
     }
 
     @Test("snapshot gateway config projection hydrates requested and effective listener state")
@@ -148,6 +300,130 @@ struct RuntimeViewModelTests {
         #expect(session.gatewayConfigSourceText == "Operator Override")
         #expect(session.gatewayConfigActiveBinding)
         #expect(session.gatewayConfigRequiresRestart)
+    }
+
+    @Test("snapshot gateway config projection maps built-in environment config-file and unknown source labels")
+    @MainActor
+    func snapshotGatewayConfigProjectionMapsSourceLabels() async throws {
+        let cases: [(Melix_Controlplane_V1_GatewayConfigSource, String)] = [
+            (.builtInDefaults, "Built-in Defaults"),
+            (.environmentDefaults, "Environment Defaults"),
+            (.configFileImport, "Config File Import"),
+            (.UNRECOGNIZED(99), "Unknown Source"),
+        ]
+
+        for (source, expected) in cases {
+            let client = FakeControlPlaneXPCClient()
+            let snapshot = makeSnapshot(
+                serverState: .serverReady,
+                models: [makeModelSummary(state: .modelWarm)],
+                runtimeSessions: [makeRuntimeSession()],
+                gatewayConfig: makeGatewayConfigSummary(
+                    listener: makeGatewayConfigListener(
+                        serverSessionID: "server-session-1",
+                        requestedHost: "127.0.0.1",
+                        requestedPort: 11_434,
+                        effectiveHost: "127.0.0.1",
+                        effectivePort: 11_434,
+                        servedModelID: "melix-dev-text",
+                        rateLimitPerMinute: 120,
+                        timeoutSeconds: 60,
+                        source: source,
+                        activeBinding: true,
+                        requiresRestart: false
+                    )
+                )
+            )
+            await client.configureSnapshot(snapshot)
+
+            let viewModel = RuntimeViewModel(client: client)
+            await viewModel.start()
+
+            #expect(viewModel.selectedServerSession?.gatewayConfigSourceText == expected)
+        }
+    }
+
+    @Test("snapshot serving defaults projection hydrates requested and effective generation state")
+    @MainActor
+    func snapshotServingDefaultsProjectionHydratesRequestedAndEffectiveGenerationState() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let snapshot = makeSnapshot(
+            serverState: .serverReady,
+            models: [makeModelSummary(state: .modelWarm)],
+            runtimeSessions: [makeRuntimeSession()],
+            gatewayConfig: makeGatewayConfigSummary(
+                listener: makeGatewayConfigListener(
+                    serverSessionID: "server-session-1",
+                    requestedHost: "127.0.0.1",
+                    requestedPort: 11_434,
+                    effectiveHost: "127.0.0.1",
+                    effectivePort: 11_434,
+                    servedModelID: "melix-dev-text",
+                    rateLimitPerMinute: 120,
+                    timeoutSeconds: 60,
+                    source: .operatorOverride,
+                    activeBinding: true,
+                    requiresRestart: false
+                )
+            )
+        )
+        var servingDefaults = Melix_Controlplane_V1_ServingDefaultsSessionSummary()
+        servingDefaults.serverSessionID = "server-session-1"
+        servingDefaults.servedModelID = "melix-dev-text"
+        servingDefaults.requestedTemperature = 0.31
+        servingDefaults.requestedTopP = 0.89
+        servingDefaults.requestedMaxTokens = 400
+        servingDefaults.requestedStreamIntervalTokens = 2
+        servingDefaults.requestedMaxConcurrentRequests = 5
+        servingDefaults.effectiveTemperature = 0.2
+        servingDefaults.effectiveTopP = 0.88
+        servingDefaults.effectiveMaxTokens = 512
+        servingDefaults.effectiveStreamIntervalTokens = 2
+        servingDefaults.effectiveMaxConcurrentRequests = 5
+        servingDefaults.source = .operatorOverride
+        servingDefaults.modelOverrideApplied = true
+        var projectedSnapshot = snapshot
+        projectedSnapshot.servingDefaults.sessions = [servingDefaults]
+        await client.configureSnapshot(projectedSnapshot)
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+
+        let session = try #require(viewModel.selectedServerSession)
+        #expect(session.servingDefaults.temperature == 0.31)
+        #expect(session.servingDefaults.topP == 0.89)
+        #expect(session.servingDefaults.maxTokens == 400)
+        #expect(session.servingDefaults.streamIntervalTokens == 2)
+        #expect(session.servingDefaults.maxConcurrentRequests == 5)
+        #expect(session.servingDefaults.effectiveTemperature == 0.2)
+        #expect(session.servingDefaults.effectiveTopP == 0.88)
+        #expect(session.servingDefaults.effectiveMaxTokens == 512)
+        #expect(session.servingDefaults.sourceText == "Operator Override")
+        #expect(session.servingDefaults.modelOverrideApplied)
+    }
+
+    @Test("snapshot serving defaults projection keeps local defaults when no summary is available")
+    @MainActor
+    func snapshotServingDefaultsProjectionKeepsLocalDefaultsWhenSummaryIsMissing() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let snapshot = makeSnapshot(
+            serverState: .serverReady,
+            models: [makeModelSummary(state: .modelWarm)],
+            runtimeSessions: [makeRuntimeSession()]
+        )
+        await client.configureSnapshot(snapshot)
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+
+        let session = try #require(viewModel.selectedServerSession)
+        #expect(session.servingDefaults.temperature == 0.7)
+        #expect(session.servingDefaults.topP == 1.0)
+        #expect(session.servingDefaults.maxTokens == 256)
+        #expect(session.servingDefaults.streamIntervalTokens == 1)
+        #expect(session.servingDefaults.maxConcurrentRequests == 4)
+        #expect(session.servingDefaults.sourceText == "Built-in Defaults")
+        #expect(session.servingDefaults.modelOverrideApplied == false)
     }
 
     @Test("lora model selection falls back to the first text model and stays empty without text models")
@@ -793,6 +1069,7 @@ struct RuntimeViewModelTests {
         viewModel.updateSelectedServerSessionTemperature(-1)
         viewModel.updateSelectedServerSessionTopP(5)
         viewModel.updateSelectedServerSessionMaxTokens(0)
+        viewModel.updateSelectedServerSessionStreamIntervalTokens(0)
         viewModel.updateSelectedServerSessionMaxConcurrentRequests(0)
 
         let configuredServer = try #require(viewModel.selectedServerSession)
@@ -805,6 +1082,7 @@ struct RuntimeViewModelTests {
         #expect(configuredServer.servingDefaults.temperature == 0)
         #expect(configuredServer.servingDefaults.topP == 1)
         #expect(configuredServer.servingDefaults.maxTokens == 1)
+        #expect(configuredServer.servingDefaults.streamIntervalTokens == 1)
         #expect(configuredServer.servingDefaults.maxConcurrentRequests == 1)
 
         await viewModel.startSelectedServerSession()

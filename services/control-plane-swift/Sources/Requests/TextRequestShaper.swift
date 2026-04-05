@@ -237,6 +237,7 @@ public struct TextRequestShaper: Sendable {
         modelChatTemplatePolicy: ModelChatTemplatePolicy? = nil,
         modelOCRPolicy: OCRExecutionPolicy? = nil,
         modelSamplingPolicy: ModelSamplingPolicy? = nil,
+        gatewayServingDefaults: GatewayServingDefaultsPolicy? = nil,
         mcpToolCatalog: MCPToolCatalog = .empty
     ) -> ShapedTextRequest {
         let preset = request.presetID.flatMap { presets[$0] }
@@ -249,12 +250,20 @@ public struct TextRequestShaper: Sendable {
             modelPolicy: modelOCRPolicy
         )
 
-        let fallbackTemperature = modelOCRPolicy?.temperature ?? modelSamplingPolicy?.temperature
-        let fallbackTopP = modelOCRPolicy?.topP ?? modelSamplingPolicy?.topP
-        let fallbackMaxTokens = modelOCRPolicy?.maxTokens ?? modelSamplingPolicy?.maxTokens
+        let fallbackTemperature = modelOCRPolicy?.temperature
+            ?? modelSamplingPolicy?.temperature
+            ?? gatewayServingDefaults?.temperature
+        let fallbackTopP = modelOCRPolicy?.topP
+            ?? modelSamplingPolicy?.topP
+            ?? gatewayServingDefaults?.topP
+        let fallbackMaxTokens = modelOCRPolicy?.maxTokens
+            ?? modelSamplingPolicy?.maxTokens
+            ?? gatewayServingDefaults?.maxTokens
         let temperature = request.temperature ?? preset?.temperature ?? fallbackTemperature ?? 0.7
         let topP = request.topP ?? preset?.topP ?? fallbackTopP ?? 1.0
         let maxTokens = request.maxTokens ?? preset?.maxTokens ?? fallbackMaxTokens ?? 256
+        let streamIntervalTokens = gatewayServingDefaults?.streamIntervalTokens ?? 1
+        let maxConcurrentRequests = gatewayServingDefaults?.maxConcurrentRequests ?? 4
         let saveBoundarySnapshot = request.saveBoundarySnapshot
             ?? preset?.saveBoundarySnapshot
             ?? workflow.saveBoundarySnapshot
@@ -290,6 +299,8 @@ public struct TextRequestShaper: Sendable {
             temperature: temperature,
             topP: topP,
             maxTokens: maxTokens,
+            streamIntervalTokens: streamIntervalTokens,
+            maxConcurrentRequests: maxConcurrentRequests,
             sessionID: resolvedSessionID,
             branchID: resolvedBranchID,
             parentRequestID: request.parentRequestID?.nilIfEmpty,

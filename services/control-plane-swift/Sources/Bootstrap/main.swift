@@ -13,6 +13,7 @@ enum MelixControlPlaneBootstrap {
         let gatewayAccessPolicy = GatewayAccessPolicy.load(environment: ProcessInfo.processInfo.environment)
         let gatewayAccessPolicyStore = GatewayAccessPolicyStore(gatewayAccessPolicy)
         let gatewayConfigStore = GatewayConfigStore(environment: ProcessInfo.processInfo.environment)
+        let gatewayServingDefaultsStore = GatewayServingDefaultsStore(environment: ProcessInfo.processInfo.environment)
         let gatewayRuntimeBinding = await gatewayConfigStore.bootstrapBinding()
         let metricsStore = MetricsStore(exportPath: bootstrapEnvironment.controlPlaneMetricsPath)
         let persistentAuthSessionStore = PersistentAuthSessionStore(
@@ -38,6 +39,10 @@ enum MelixControlPlaneBootstrap {
         await metricsStore.set(0, forKey: "gateway.config_apply_ms")
         await metricsStore.set(0, forKey: "gateway.config_persist_failures")
         await metricsStore.set(0, forKey: "gateway.config_requires_restart_count")
+        await metricsStore.set(0, forKey: "gateway.serving_defaults_apply_ms")
+        await metricsStore.set(0, forKey: "gateway.serving_defaults_persist_failures")
+        await metricsStore.set(0, forKey: "gateway.generation_default_merge_count")
+        await metricsStore.set(0, forKey: "gateway.speculative_config_apply_ms")
         await metricsStore.set(0, forKey: "gateway.auth_validation_failures")
         await metricsStore.set(0, forKey: "shared_access.accepted_client_count")
         await metricsStore.set(0, forKey: "shared_access.rejected_request_count")
@@ -100,6 +105,7 @@ enum MelixControlPlaneBootstrap {
             imageJobAdmissionController: imageJobAdmissionController,
             mcpToolCatalog: mcpToolCatalog,
             gatewayConfigStore: gatewayConfigStore,
+            gatewayServingDefaultsStore: gatewayServingDefaultsStore,
             gatewayRuntimeBinding: gatewayRuntimeBinding,
             gatewayAccessPolicyStore: gatewayAccessPolicyStore,
             persistentAuthSessionStore: persistentAuthSessionStore
@@ -124,6 +130,8 @@ enum MelixControlPlaneBootstrap {
             cacheMetadataStore: cacheMetadataStore,
             mcpToolCatalog: mcpToolCatalog,
             gatewayAccessPolicyStore: gatewayAccessPolicyStore,
+            gatewayServingDefaultsStore: gatewayServingDefaultsStore,
+            gatewayRuntimeBinding: gatewayRuntimeBinding,
             persistentAuthSessionStore: persistentAuthSessionStore
         )
 

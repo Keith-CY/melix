@@ -989,6 +989,52 @@ public enum Melix_Controlplane_V1_GatewayConfigSource: SwiftProtobuf.Enum, Swift
 
 }
 
+public enum Melix_Controlplane_V1_ServingDefaultsSource: SwiftProtobuf.Enum, Swift.CaseIterable {
+  public typealias RawValue = Int
+  case unspecified // = 0
+  case builtInDefaults // = 1
+  case environmentDefaults // = 2
+  case configFileImport // = 3
+  case operatorOverride // = 4
+  case UNRECOGNIZED(Int)
+
+  public init() {
+    self = .unspecified
+  }
+
+  public init?(rawValue: Int) {
+    switch rawValue {
+    case 0: self = .unspecified
+    case 1: self = .builtInDefaults
+    case 2: self = .environmentDefaults
+    case 3: self = .configFileImport
+    case 4: self = .operatorOverride
+    default: self = .UNRECOGNIZED(rawValue)
+    }
+  }
+
+  public var rawValue: Int {
+    switch self {
+    case .unspecified: return 0
+    case .builtInDefaults: return 1
+    case .environmentDefaults: return 2
+    case .configFileImport: return 3
+    case .operatorOverride: return 4
+    case .UNRECOGNIZED(let i): return i
+    }
+  }
+
+  // The compiler won't synthesize support with the UNRECOGNIZED case.
+  public static let allCases: [Melix_Controlplane_V1_ServingDefaultsSource] = [
+    .unspecified,
+    .builtInDefaults,
+    .environmentDefaults,
+    .configFileImport,
+    .operatorOverride,
+  ]
+
+}
+
 public enum Melix_Controlplane_V1_DoctorHealthStatus: SwiftProtobuf.Enum, Swift.CaseIterable {
   public typealias RawValue = Int
   case unspecified // = 0
@@ -1796,6 +1842,14 @@ public struct Melix_Controlplane_V1_ServerCommand: Sendable {
     set {kind = .applyGatewayConfig(newValue)}
   }
 
+  public var applyServingDefaults: Melix_Controlplane_V1_ApplyServingDefaults {
+    get {
+      if case .applyServingDefaults(let v)? = kind {return v}
+      return Melix_Controlplane_V1_ApplyServingDefaults()
+    }
+    set {kind = .applyServingDefaults(newValue)}
+  }
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public enum OneOf_Kind: Equatable, Sendable {
@@ -1810,6 +1864,7 @@ public struct Melix_Controlplane_V1_ServerCommand: Sendable {
     case wake(Melix_Controlplane_V1_WakeServer)
     case setIdlePolicy(Melix_Controlplane_V1_SetServerIdlePolicy)
     case applyGatewayConfig(Melix_Controlplane_V1_ApplyGatewayConfig)
+    case applyServingDefaults(Melix_Controlplane_V1_ApplyServingDefaults)
 
   }
 
@@ -2695,6 +2750,28 @@ public struct Melix_Controlplane_V1_ApplyGatewayConfig: Sendable {
   public var rateLimitPerMinute: UInt32 = 0
 
   public var timeoutSeconds: UInt32 = 0
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public struct Melix_Controlplane_V1_ApplyServingDefaults: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var serverSessionID: String = String()
+
+  public var temperature: Double = 0
+
+  public var topP: Double = 0
+
+  public var maxTokens: UInt32 = 0
+
+  public var streamIntervalTokens: UInt32 = 0
+
+  public var maxConcurrentRequests: UInt32 = 0
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -4241,6 +4318,58 @@ public struct Melix_Controlplane_V1_GatewayConfigSummary: Sendable {
   public init() {}
 }
 
+public struct Melix_Controlplane_V1_ServingDefaultsSessionSummary: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var serverSessionID: String = String()
+
+  public var servedModelID: String = String()
+
+  public var requestedTemperature: Double = 0
+
+  public var requestedTopP: Double = 0
+
+  public var requestedMaxTokens: UInt32 = 0
+
+  public var requestedStreamIntervalTokens: UInt32 = 0
+
+  public var requestedMaxConcurrentRequests: UInt32 = 0
+
+  public var effectiveTemperature: Double = 0
+
+  public var effectiveTopP: Double = 0
+
+  public var effectiveMaxTokens: UInt32 = 0
+
+  public var effectiveStreamIntervalTokens: UInt32 = 0
+
+  public var effectiveMaxConcurrentRequests: UInt32 = 0
+
+  public var source: Melix_Controlplane_V1_ServingDefaultsSource = .unspecified
+
+  public var modelOverrideApplied: Bool = false
+
+  public var updatedAtUnixMs: Int64 = 0
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public struct Melix_Controlplane_V1_ServingDefaultsSummary: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var sessions: [Melix_Controlplane_V1_ServingDefaultsSessionSummary] = []
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
 public struct Melix_Controlplane_V1_ServerSnapshot: @unchecked Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
@@ -4343,6 +4472,15 @@ public struct Melix_Controlplane_V1_ServerSnapshot: @unchecked Sendable {
   public var hasGatewayConfig: Bool {_storage._gatewayConfig != nil}
   /// Clears the value of `gatewayConfig`. Subsequent reads from it will return its default value.
   public mutating func clearGatewayConfig() {_uniqueStorage()._gatewayConfig = nil}
+
+  public var servingDefaults: Melix_Controlplane_V1_ServingDefaultsSummary {
+    get {_storage._servingDefaults ?? Melix_Controlplane_V1_ServingDefaultsSummary()}
+    set {_uniqueStorage()._servingDefaults = newValue}
+  }
+  /// Returns true if `servingDefaults` has been explicitly set.
+  public var hasServingDefaults: Bool {_storage._servingDefaults != nil}
+  /// Clears the value of `servingDefaults`. Subsequent reads from it will return its default value.
+  public mutating func clearServingDefaults() {_uniqueStorage()._servingDefaults = nil}
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -5788,6 +5926,10 @@ extension Melix_Controlplane_V1_GatewayConfigSource: SwiftProtobuf._ProtoNamePro
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0GATEWAY_CONFIG_SOURCE_UNSPECIFIED\0\u{1}GATEWAY_CONFIG_SOURCE_BUILT_IN_DEFAULTS\0\u{1}GATEWAY_CONFIG_SOURCE_ENVIRONMENT_DEFAULTS\0\u{1}GATEWAY_CONFIG_SOURCE_CONFIG_FILE_IMPORT\0\u{1}GATEWAY_CONFIG_SOURCE_OPERATOR_OVERRIDE\0")
 }
 
+extension Melix_Controlplane_V1_ServingDefaultsSource: SwiftProtobuf._ProtoNameProviding {
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0SERVING_DEFAULTS_SOURCE_UNSPECIFIED\0\u{1}SERVING_DEFAULTS_SOURCE_BUILT_IN_DEFAULTS\0\u{1}SERVING_DEFAULTS_SOURCE_ENVIRONMENT_DEFAULTS\0\u{1}SERVING_DEFAULTS_SOURCE_CONFIG_FILE_IMPORT\0\u{1}SERVING_DEFAULTS_SOURCE_OPERATOR_OVERRIDE\0")
+}
+
 extension Melix_Controlplane_V1_DoctorHealthStatus: SwiftProtobuf._ProtoNameProviding {
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0DOCTOR_HEALTH_STATUS_UNSPECIFIED\0\u{1}DOCTOR_HEALTH_STATUS_HEALTHY\0\u{1}DOCTOR_HEALTH_STATUS_WARNING\0\u{1}DOCTOR_HEALTH_STATUS_DEGRADED\0\u{1}DOCTOR_HEALTH_STATUS_FAILED\0")
 }
@@ -6752,7 +6894,7 @@ extension Melix_Controlplane_V1_ControlPlaneEvent: SwiftProtobuf.Message, SwiftP
 
 extension Melix_Controlplane_V1_ServerCommand: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ServerCommand"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}start\0\u{1}stop\0\u{1}restart\0\u{3}get_snapshot\0\u{3}set_policy\0\u{3}apply_gateway_access\0\u{1}pause\0\u{1}resume\0\u{1}wake\0\u{3}set_idle_policy\0\u{3}apply_gateway_config\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}start\0\u{1}stop\0\u{1}restart\0\u{3}get_snapshot\0\u{3}set_policy\0\u{3}apply_gateway_access\0\u{1}pause\0\u{1}resume\0\u{1}wake\0\u{3}set_idle_policy\0\u{3}apply_gateway_config\0\u{3}apply_serving_defaults\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -6903,6 +7045,19 @@ extension Melix_Controlplane_V1_ServerCommand: SwiftProtobuf.Message, SwiftProto
           self.kind = .applyGatewayConfig(v)
         }
       }()
+      case 12: try {
+        var v: Melix_Controlplane_V1_ApplyServingDefaults?
+        var hadOneofValue = false
+        if let current = self.kind {
+          hadOneofValue = true
+          if case .applyServingDefaults(let m) = current {v = m}
+        }
+        try decoder.decodeSingularMessageField(value: &v)
+        if let v = v {
+          if hadOneofValue {try decoder.handleConflictingOneOf()}
+          self.kind = .applyServingDefaults(v)
+        }
+      }()
       default: break
       }
     }
@@ -6957,6 +7112,10 @@ extension Melix_Controlplane_V1_ServerCommand: SwiftProtobuf.Message, SwiftProto
     case .applyGatewayConfig?: try {
       guard case .applyGatewayConfig(let v)? = self.kind else { preconditionFailure() }
       try visitor.visitSingularMessageField(value: v, fieldNumber: 11)
+    }()
+    case .applyServingDefaults?: try {
+      guard case .applyServingDefaults(let v)? = self.kind else { preconditionFailure() }
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 12)
     }()
     case nil: break
     }
@@ -8630,6 +8789,61 @@ extension Melix_Controlplane_V1_ApplyGatewayConfig: SwiftProtobuf.Message, Swift
     if lhs.servedModelID != rhs.servedModelID {return false}
     if lhs.rateLimitPerMinute != rhs.rateLimitPerMinute {return false}
     if lhs.timeoutSeconds != rhs.timeoutSeconds {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+extension Melix_Controlplane_V1_ApplyServingDefaults: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".ApplyServingDefaults"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}server_session_id\0\u{1}temperature\0\u{3}top_p\0\u{3}max_tokens\0\u{3}stream_interval_tokens\0\u{3}max_concurrent_requests\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.serverSessionID) }()
+      case 2: try { try decoder.decodeSingularDoubleField(value: &self.temperature) }()
+      case 3: try { try decoder.decodeSingularDoubleField(value: &self.topP) }()
+      case 4: try { try decoder.decodeSingularUInt32Field(value: &self.maxTokens) }()
+      case 5: try { try decoder.decodeSingularUInt32Field(value: &self.streamIntervalTokens) }()
+      case 6: try { try decoder.decodeSingularUInt32Field(value: &self.maxConcurrentRequests) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.serverSessionID.isEmpty {
+      try visitor.visitSingularStringField(value: self.serverSessionID, fieldNumber: 1)
+    }
+    if self.temperature.bitPattern != 0 {
+      try visitor.visitSingularDoubleField(value: self.temperature, fieldNumber: 2)
+    }
+    if self.topP.bitPattern != 0 {
+      try visitor.visitSingularDoubleField(value: self.topP, fieldNumber: 3)
+    }
+    if self.maxTokens != 0 {
+      try visitor.visitSingularUInt32Field(value: self.maxTokens, fieldNumber: 4)
+    }
+    if self.streamIntervalTokens != 0 {
+      try visitor.visitSingularUInt32Field(value: self.streamIntervalTokens, fieldNumber: 5)
+    }
+    if self.maxConcurrentRequests != 0 {
+      try visitor.visitSingularUInt32Field(value: self.maxConcurrentRequests, fieldNumber: 6)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Melix_Controlplane_V1_ApplyServingDefaults, rhs: Melix_Controlplane_V1_ApplyServingDefaults) -> Bool {
+    if lhs.serverSessionID != rhs.serverSessionID {return false}
+    if lhs.temperature != rhs.temperature {return false}
+    if lhs.topP != rhs.topP {return false}
+    if lhs.maxTokens != rhs.maxTokens {return false}
+    if lhs.streamIntervalTokens != rhs.streamIntervalTokens {return false}
+    if lhs.maxConcurrentRequests != rhs.maxConcurrentRequests {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -12078,9 +12292,139 @@ extension Melix_Controlplane_V1_GatewayConfigSummary: SwiftProtobuf.Message, Swi
   }
 }
 
+extension Melix_Controlplane_V1_ServingDefaultsSessionSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".ServingDefaultsSessionSummary"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}server_session_id\0\u{3}served_model_id\0\u{3}requested_temperature\0\u{3}requested_top_p\0\u{3}requested_max_tokens\0\u{3}requested_stream_interval_tokens\0\u{3}requested_max_concurrent_requests\0\u{3}effective_temperature\0\u{3}effective_top_p\0\u{3}effective_max_tokens\0\u{3}effective_stream_interval_tokens\0\u{3}effective_max_concurrent_requests\0\u{1}source\0\u{3}model_override_applied\0\u{3}updated_at_unix_ms\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.serverSessionID) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.servedModelID) }()
+      case 3: try { try decoder.decodeSingularDoubleField(value: &self.requestedTemperature) }()
+      case 4: try { try decoder.decodeSingularDoubleField(value: &self.requestedTopP) }()
+      case 5: try { try decoder.decodeSingularUInt32Field(value: &self.requestedMaxTokens) }()
+      case 6: try { try decoder.decodeSingularUInt32Field(value: &self.requestedStreamIntervalTokens) }()
+      case 7: try { try decoder.decodeSingularUInt32Field(value: &self.requestedMaxConcurrentRequests) }()
+      case 8: try { try decoder.decodeSingularDoubleField(value: &self.effectiveTemperature) }()
+      case 9: try { try decoder.decodeSingularDoubleField(value: &self.effectiveTopP) }()
+      case 10: try { try decoder.decodeSingularUInt32Field(value: &self.effectiveMaxTokens) }()
+      case 11: try { try decoder.decodeSingularUInt32Field(value: &self.effectiveStreamIntervalTokens) }()
+      case 12: try { try decoder.decodeSingularUInt32Field(value: &self.effectiveMaxConcurrentRequests) }()
+      case 13: try { try decoder.decodeSingularEnumField(value: &self.source) }()
+      case 14: try { try decoder.decodeSingularBoolField(value: &self.modelOverrideApplied) }()
+      case 15: try { try decoder.decodeSingularInt64Field(value: &self.updatedAtUnixMs) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.serverSessionID.isEmpty {
+      try visitor.visitSingularStringField(value: self.serverSessionID, fieldNumber: 1)
+    }
+    if !self.servedModelID.isEmpty {
+      try visitor.visitSingularStringField(value: self.servedModelID, fieldNumber: 2)
+    }
+    if self.requestedTemperature.bitPattern != 0 {
+      try visitor.visitSingularDoubleField(value: self.requestedTemperature, fieldNumber: 3)
+    }
+    if self.requestedTopP.bitPattern != 0 {
+      try visitor.visitSingularDoubleField(value: self.requestedTopP, fieldNumber: 4)
+    }
+    if self.requestedMaxTokens != 0 {
+      try visitor.visitSingularUInt32Field(value: self.requestedMaxTokens, fieldNumber: 5)
+    }
+    if self.requestedStreamIntervalTokens != 0 {
+      try visitor.visitSingularUInt32Field(value: self.requestedStreamIntervalTokens, fieldNumber: 6)
+    }
+    if self.requestedMaxConcurrentRequests != 0 {
+      try visitor.visitSingularUInt32Field(value: self.requestedMaxConcurrentRequests, fieldNumber: 7)
+    }
+    if self.effectiveTemperature.bitPattern != 0 {
+      try visitor.visitSingularDoubleField(value: self.effectiveTemperature, fieldNumber: 8)
+    }
+    if self.effectiveTopP.bitPattern != 0 {
+      try visitor.visitSingularDoubleField(value: self.effectiveTopP, fieldNumber: 9)
+    }
+    if self.effectiveMaxTokens != 0 {
+      try visitor.visitSingularUInt32Field(value: self.effectiveMaxTokens, fieldNumber: 10)
+    }
+    if self.effectiveStreamIntervalTokens != 0 {
+      try visitor.visitSingularUInt32Field(value: self.effectiveStreamIntervalTokens, fieldNumber: 11)
+    }
+    if self.effectiveMaxConcurrentRequests != 0 {
+      try visitor.visitSingularUInt32Field(value: self.effectiveMaxConcurrentRequests, fieldNumber: 12)
+    }
+    if self.source != .unspecified {
+      try visitor.visitSingularEnumField(value: self.source, fieldNumber: 13)
+    }
+    if self.modelOverrideApplied != false {
+      try visitor.visitSingularBoolField(value: self.modelOverrideApplied, fieldNumber: 14)
+    }
+    if self.updatedAtUnixMs != 0 {
+      try visitor.visitSingularInt64Field(value: self.updatedAtUnixMs, fieldNumber: 15)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Melix_Controlplane_V1_ServingDefaultsSessionSummary, rhs: Melix_Controlplane_V1_ServingDefaultsSessionSummary) -> Bool {
+    if lhs.serverSessionID != rhs.serverSessionID {return false}
+    if lhs.servedModelID != rhs.servedModelID {return false}
+    if lhs.requestedTemperature != rhs.requestedTemperature {return false}
+    if lhs.requestedTopP != rhs.requestedTopP {return false}
+    if lhs.requestedMaxTokens != rhs.requestedMaxTokens {return false}
+    if lhs.requestedStreamIntervalTokens != rhs.requestedStreamIntervalTokens {return false}
+    if lhs.requestedMaxConcurrentRequests != rhs.requestedMaxConcurrentRequests {return false}
+    if lhs.effectiveTemperature != rhs.effectiveTemperature {return false}
+    if lhs.effectiveTopP != rhs.effectiveTopP {return false}
+    if lhs.effectiveMaxTokens != rhs.effectiveMaxTokens {return false}
+    if lhs.effectiveStreamIntervalTokens != rhs.effectiveStreamIntervalTokens {return false}
+    if lhs.effectiveMaxConcurrentRequests != rhs.effectiveMaxConcurrentRequests {return false}
+    if lhs.source != rhs.source {return false}
+    if lhs.modelOverrideApplied != rhs.modelOverrideApplied {return false}
+    if lhs.updatedAtUnixMs != rhs.updatedAtUnixMs {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+extension Melix_Controlplane_V1_ServingDefaultsSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".ServingDefaultsSummary"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}sessions\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeRepeatedMessageField(value: &self.sessions) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.sessions.isEmpty {
+      try visitor.visitRepeatedMessageField(value: self.sessions, fieldNumber: 1)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Melix_Controlplane_V1_ServingDefaultsSummary, rhs: Melix_Controlplane_V1_ServingDefaultsSummary) -> Bool {
+    if lhs.sessions != rhs.sessions {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
 extension Melix_Controlplane_V1_ServerSnapshot: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ServerSnapshot"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}server_state\0\u{1}workers\0\u{1}models\0\u{1}queues\0\u{1}cache\0\u{1}resources\0\u{1}metrics\0\u{1}sessions\0\u{3}recent_errors\0\u{3}image_jobs\0\u{3}mcp_tools\0\u{3}gateway_access\0\u{3}runtime_sessions\0\u{3}gateway_config\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}server_state\0\u{1}workers\0\u{1}models\0\u{1}queues\0\u{1}cache\0\u{1}resources\0\u{1}metrics\0\u{1}sessions\0\u{3}recent_errors\0\u{3}image_jobs\0\u{3}mcp_tools\0\u{3}gateway_access\0\u{3}runtime_sessions\0\u{3}gateway_config\0\u{3}serving_defaults\0")
 
   fileprivate class _StorageClass {
     var _serverState: Melix_Controlplane_V1_ServerState = .unspecified
@@ -12097,6 +12441,7 @@ extension Melix_Controlplane_V1_ServerSnapshot: SwiftProtobuf.Message, SwiftProt
     var _gatewayAccess: Melix_Controlplane_V1_GatewayAccessSummary? = nil
     var _runtimeSessions: [Melix_Controlplane_V1_ServerSessionRuntimeState] = []
     var _gatewayConfig: Melix_Controlplane_V1_GatewayConfigSummary? = nil
+    var _servingDefaults: Melix_Controlplane_V1_ServingDefaultsSummary? = nil
 
       // This property is used as the initial default value for new instances of the type.
       // The type itself is protecting the reference to its storage via CoW semantics.
@@ -12121,6 +12466,7 @@ extension Melix_Controlplane_V1_ServerSnapshot: SwiftProtobuf.Message, SwiftProt
       _gatewayAccess = source._gatewayAccess
       _runtimeSessions = source._runtimeSessions
       _gatewayConfig = source._gatewayConfig
+      _servingDefaults = source._servingDefaults
     }
   }
 
@@ -12153,6 +12499,7 @@ extension Melix_Controlplane_V1_ServerSnapshot: SwiftProtobuf.Message, SwiftProt
         case 12: try { try decoder.decodeSingularMessageField(value: &_storage._gatewayAccess) }()
         case 13: try { try decoder.decodeRepeatedMessageField(value: &_storage._runtimeSessions) }()
         case 14: try { try decoder.decodeSingularMessageField(value: &_storage._gatewayConfig) }()
+        case 15: try { try decoder.decodeSingularMessageField(value: &_storage._servingDefaults) }()
         default: break
         }
       }
@@ -12207,6 +12554,9 @@ extension Melix_Controlplane_V1_ServerSnapshot: SwiftProtobuf.Message, SwiftProt
       try { if let v = _storage._gatewayConfig {
         try visitor.visitSingularMessageField(value: v, fieldNumber: 14)
       } }()
+      try { if let v = _storage._servingDefaults {
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 15)
+      } }()
     }
     try unknownFields.traverse(visitor: &visitor)
   }
@@ -12230,6 +12580,7 @@ extension Melix_Controlplane_V1_ServerSnapshot: SwiftProtobuf.Message, SwiftProt
         if _storage._gatewayAccess != rhs_storage._gatewayAccess {return false}
         if _storage._runtimeSessions != rhs_storage._runtimeSessions {return false}
         if _storage._gatewayConfig != rhs_storage._gatewayConfig {return false}
+        if _storage._servingDefaults != rhs_storage._servingDefaults {return false}
         return true
       }
       if !storagesAreEqual {return false}

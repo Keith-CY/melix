@@ -47,6 +47,22 @@ struct DesktopFoundationViewTests {
         listener.activeBinding = true
         listener.requiresRestart = true
         snapshot.gatewayConfig.listeners = [listener]
+        var servingDefaults = Melix_Controlplane_V1_ServingDefaultsSessionSummary()
+        servingDefaults.serverSessionID = "server-session-1"
+        servingDefaults.servedModelID = "melix-dev-text"
+        servingDefaults.requestedTemperature = 0.33
+        servingDefaults.requestedTopP = 0.92
+        servingDefaults.requestedMaxTokens = 384
+        servingDefaults.requestedStreamIntervalTokens = 3
+        servingDefaults.requestedMaxConcurrentRequests = 5
+        servingDefaults.effectiveTemperature = 0.2
+        servingDefaults.effectiveTopP = 0.88
+        servingDefaults.effectiveMaxTokens = 512
+        servingDefaults.effectiveStreamIntervalTokens = 3
+        servingDefaults.effectiveMaxConcurrentRequests = 5
+        servingDefaults.source = .operatorOverride
+        servingDefaults.modelOverrideApplied = true
+        snapshot.servingDefaults.sessions = [servingDefaults]
         await client.configureSnapshot(snapshot)
 
         let viewModel = RuntimeViewModel(client: client)
@@ -65,6 +81,49 @@ struct DesktopFoundationViewTests {
         #expect(viewModel.selectedServerSession?.effectiveBaseURL == "http://127.0.0.1:11434/v1")
         #expect(viewModel.selectedServerSession?.gatewayConfigRequiresRestart == true)
         #expect(viewModel.selectedServerSession?.gatewayConfigSourceText == "Operator Override")
+        #expect(viewModel.selectedServerSession?.servingDefaults.streamIntervalTokens == 3)
+        #expect(viewModel.selectedServerSession?.servingDefaults.effectiveMaxTokens == 512)
+        #expect(viewModel.selectedServerSession?.servingDefaults.modelOverrideApplied == true)
+    }
+
+    @Test("workspace server surface renders projected serving defaults values")
+    @MainActor
+    func workspaceServerSurfaceRendersProjectedServingDefaultsValues() async throws {
+        let client = FakeControlPlaneXPCClient()
+        var snapshot = Melix_Controlplane_V1_ServerSnapshot()
+        snapshot.serverState = .serverReady
+        snapshot.models = [ModelCatalog.devTextModel()]
+        snapshot.runtimeSessions = [makeDesktopRuntimeSession()]
+        var servingDefaults = Melix_Controlplane_V1_ServingDefaultsSessionSummary()
+        servingDefaults.serverSessionID = "server-session-1"
+        servingDefaults.servedModelID = "melix-dev-text"
+        servingDefaults.requestedTemperature = 0.44
+        servingDefaults.requestedTopP = 0.91
+        servingDefaults.requestedMaxTokens = 320
+        servingDefaults.requestedStreamIntervalTokens = 2
+        servingDefaults.requestedMaxConcurrentRequests = 6
+        servingDefaults.effectiveTemperature = 0.25
+        servingDefaults.effectiveTopP = 0.85
+        servingDefaults.effectiveMaxTokens = 512
+        servingDefaults.effectiveStreamIntervalTokens = 2
+        servingDefaults.effectiveMaxConcurrentRequests = 6
+        servingDefaults.source = .environmentDefaults
+        snapshot.servingDefaults.sessions = [servingDefaults]
+        await client.configureSnapshot(snapshot)
+
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        viewModel.selectSurface(.server)
+
+        let view = hostView(DesktopWorkspaceShellView(viewModel: viewModel))
+        let renderedTexts = renderedTextValues(in: view)
+
+        #expect(renderedTexts.contains("0.44"))
+        #expect(renderedTexts.contains("0.91"))
+        #expect(renderedTexts.contains("320"))
+        #expect(renderedTexts.contains("2"))
+        #expect(renderedTexts.contains("6"))
+        #expect(viewModel.selectedServerSession?.servingDefaults.sourceText == "Environment Defaults")
     }
 
     @Test("command center view renders global operator summaries")

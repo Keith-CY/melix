@@ -1819,6 +1819,70 @@ struct OpenAIHandlerTests {
         #expect(request.execution.ext["melix.ocr.sampling_source"] == "model")
     }
 
+    @Test("POST /v1/chat/completions applies gateway serving defaults when request and model omit sampling")
+    func postChatCompletionsAppliesGatewayServingDefaults() async throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-http-serving-defaults-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let servingDefaultsStore = GatewayServingDefaultsStore(
+            storeURL: temporaryRoot.appendingPathComponent("gateway-serving-defaults.json"),
+            defaults: [:]
+        )
+        var defaults = Melix_Controlplane_V1_ApplyServingDefaults()
+        defaults.serverSessionID = ServerSessionRuntimeStore.defaultServerSessionID
+        defaults.temperature = 0.37
+        defaults.topP = 0.91
+        defaults.maxTokens = 448
+        defaults.streamIntervalTokens = 4
+        defaults.maxConcurrentRequests = 6
+        try await servingDefaultsStore.apply(command: defaults)
+
+        let catalog = ModelCatalog(seedModels: [warmModel()])
+        let workerClient = ScriptedWorkerClient(events: [
+            makeCompletedEvent(requestID: "req-http-serving-defaults", seq: 1, finishReason: "stop", assistantText: "done"),
+        ])
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: workerClient),
+                abortRegistry: AbortRegistry()
+            ),
+            translator: ChatRequestTranslator(requestIDGenerator: { "req-http-serving-defaults" }),
+            gatewayServingDefaultsStore: servingDefaultsStore
+        )
+
+        let body = try #require(
+            """
+            {
+              "model": "melix-dev-text",
+              "stream": true,
+              "messages": [
+                { "role": "user", "content": "Hello" }
+              ]
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/chat/completions",
+                headers: ["content-type": "application/json"],
+                body: body
+            )
+        )
+        let request = try #require(await workerClient.lastGenerateRequest)
+
+        #expect(response.statusCode == 200)
+        #expect(request.sampling.temperature == 0.37)
+        #expect(request.sampling.topP == 0.91)
+        #expect(request.sampling.maxOutputTokens == 448)
+        #expect(request.execution.ext["melix.stream.interval_tokens"] == "4")
+        #expect(request.execution.ext["melix.gateway.max_concurrent_requests"] == "6")
+    }
+
     @Test("responses requests preserve harmony metadata while keeping standard stream frames")
     func harmonyResponsesRequestsPreserveMetadataAndStreamFrames() async throws {
         let catalog = ModelCatalog(seedModels: [warmModel()])

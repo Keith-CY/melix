@@ -194,6 +194,21 @@ struct DesktopShellStateTests {
             gatewayConfigSourceText: "Operator Override",
             gatewayConfigActiveBinding: true,
             gatewayConfigRequiresRestart: true,
+            servingDefaults: DesktopServerServingDefaultsState(
+                temperature: 0.33,
+                topP: 0.92,
+                maxTokens: 384,
+                streamIntervalTokens: 3,
+                maxConcurrentRequests: 5,
+                effectiveTemperature: 0.2,
+                effectiveTopP: 0.88,
+                effectiveMaxTokens: 512,
+                effectiveStreamIntervalTokens: 3,
+                effectiveMaxConcurrentRequests: 5,
+                sourceText: "Operator Override",
+                modelOverrideApplied: true,
+                updatedAtUnixMS: 1_717_181_940_000
+            ),
             lifecycle: .running,
             powerState: .active
         )
@@ -212,6 +227,11 @@ struct DesktopShellStateTests {
         #expect(decoded.gatewayConfigSourceText == "Operator Override")
         #expect(decoded.gatewayConfigActiveBinding)
         #expect(decoded.gatewayConfigRequiresRestart)
+        #expect(decoded.servingDefaults.temperature == 0.33)
+        #expect(decoded.servingDefaults.streamIntervalTokens == 3)
+        #expect(decoded.servingDefaults.effectiveMaxTokens == 512)
+        #expect(decoded.servingDefaults.sourceText == "Operator Override")
+        #expect(decoded.servingDefaults.modelOverrideApplied)
     }
 }
 

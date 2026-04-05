@@ -1221,6 +1221,70 @@ struct TextEndpointContractTests {
         #expect(translated.workerRequest.sampling.maxOutputTokens == 512)
     }
 
+    @Test("chat translation wrapper falls back to gateway serving defaults when no model policy exists")
+    func chatTranslationWrapperFallsBackToGatewayServingDefaults() throws {
+        let translator = ChatRequestTranslator(requestIDGenerator: { "req-chat-serving-defaults" })
+        let normalized = try translator.normalize(
+            OpenAIChatCompletionsRequest(
+                model: "melix-dev-text",
+                messages: [.init(role: "user", content: "Hello")],
+                sessionID: "session-serving-defaults"
+            )
+        )
+        let translated = try translator.translate(
+            normalized,
+            modelHandle: "melix-dev-text::swift",
+            gatewayServingDefaults: GatewayServingDefaultsPolicy(
+                temperature: 0.35,
+                topP: 0.92,
+                maxTokens: 384,
+                streamIntervalTokens: 3,
+                maxConcurrentRequests: 5
+            )
+        )
+
+        #expect(translated.workerRequest.sampling.temperature == 0.35)
+        #expect(translated.workerRequest.sampling.topP == 0.92)
+        #expect(translated.workerRequest.sampling.maxOutputTokens == 384)
+        #expect(translated.workerRequest.execution.ext["melix.stream.interval_tokens"] == "3")
+        #expect(translated.workerRequest.execution.ext["melix.gateway.max_concurrent_requests"] == "5")
+    }
+
+    @Test("model generation config overrides gateway serving defaults while admission metadata stays gateway-owned")
+    func modelGenerationConfigOverridesGatewayServingDefaultsWhileAdmissionMetadataStaysGatewayOwned() throws {
+        let translator = ChatRequestTranslator(requestIDGenerator: { "req-chat-serving-merge" })
+        var modelSettings = Melix_Controlplane_V1_ModelSettings()
+        modelSettings.ext["melix.generation_config.temperature"] = "0.2"
+        modelSettings.ext["melix.generation_config.top_p"] = "0.88"
+        modelSettings.ext["melix.generation_config.max_tokens"] = "512"
+
+        let normalized = try translator.normalize(
+            OpenAIChatCompletionsRequest(
+                model: "melix-dev-text",
+                messages: [.init(role: "user", content: "Hello")],
+                sessionID: "session-serving-merge"
+            )
+        )
+        let translated = try translator.translate(
+            normalized,
+            modelHandle: "melix-dev-text::swift",
+            modelSamplingPolicy: ModelSamplingPolicy(modelSettings: modelSettings),
+            gatewayServingDefaults: GatewayServingDefaultsPolicy(
+                temperature: 0.35,
+                topP: 0.92,
+                maxTokens: 384,
+                streamIntervalTokens: 4,
+                maxConcurrentRequests: 6
+            )
+        )
+
+        #expect(translated.workerRequest.sampling.temperature == 0.2)
+        #expect(translated.workerRequest.sampling.topP == 0.88)
+        #expect(translated.workerRequest.sampling.maxOutputTokens == 512)
+        #expect(translated.workerRequest.execution.ext["melix.stream.interval_tokens"] == "4")
+        #expect(translated.workerRequest.execution.ext["melix.gateway.max_concurrent_requests"] == "6")
+    }
+
     @Test("request contracts decode preset and workflow shaping metadata across endpoint variants")
     func requestContractsDecodePresetAndWorkflowMetadata() throws {
         let decoder = JSONDecoder()

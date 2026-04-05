@@ -345,6 +345,30 @@ struct ControlPlaneXPCClientTests {
         }
     }
 
+    @Test("protocol default serving defaults helper reports an unimplemented error")
+    func protocolDefaultServingDefaultsHelperReportsUnimplemented() async throws {
+        let client = DefaultingControlPlaneXPCClient()
+
+        do {
+            _ = try await client.applyServerSessionServingDefaults(
+                serverSessionID: "server-session-1",
+                temperature: 0.7,
+                topP: 1.0,
+                maxTokens: 256,
+                streamIntervalTokens: 1,
+                maxConcurrentRequests: 4
+            )
+            Issue.record("Expected the protocol default applyServerSessionServingDefaults implementation to throw.")
+        } catch let error as ControlPlaneXPCClientError {
+            #expect(
+                error == .requestFailed(
+                    code: "unimplemented",
+                    message: "Serving defaults apply is not implemented for this control-plane client."
+                )
+            )
+        }
+    }
+
     @Test("protocol default load helper forwards to the legacy load entry point")
     func protocolDefaultLoadHelperForwardsToLegacyLoadEntryPoint() async throws {
         let client = DefaultingControlPlaneXPCClient()
@@ -727,6 +751,45 @@ struct ControlPlaneXPCClientTests {
         #expect(request.server.applyGatewayConfig.timeoutSeconds == 90)
         #expect(snapshot.gatewayConfig.listeners.first?.effectiveHost == "127.0.0.1")
         #expect(snapshot.gatewayConfig.listeners.first?.requiresRestart == true)
+    }
+
+    @Test("applyServerSessionServingDefaults builds server.apply_serving_defaults request")
+    func applyServerSessionServingDefaultsBuildsTypedRequest() async throws {
+        let service = RecordingExecuteControlPlaneService()
+        var response = Melix_Controlplane_V1_ControlPlaneResponse()
+        response.ok = true
+        response.server = Melix_Controlplane_V1_ServerReply()
+        var servingDefaults = Melix_Controlplane_V1_ServingDefaultsSessionSummary()
+        servingDefaults.serverSessionID = "server-session-123"
+        servingDefaults.requestedTemperature = 0.33
+        servingDefaults.requestedTopP = 0.92
+        servingDefaults.requestedMaxTokens = 384
+        servingDefaults.requestedStreamIntervalTokens = 3
+        servingDefaults.requestedMaxConcurrentRequests = 5
+        response.server.snapshot.servingDefaults.sessions = [servingDefaults]
+        await service.setExecuteResponse(response)
+        let client = LocalControlPlaneXPCClient(service: service)
+
+        let snapshot = try await client.applyServerSessionServingDefaults(
+            serverSessionID: "server-session-123",
+            temperature: 0.33,
+            topP: 0.92,
+            maxTokens: 384,
+            streamIntervalTokens: 3,
+            maxConcurrentRequests: 5
+        )
+        let request = try #require(await service.lastExecuteRequest)
+
+        #expect(request.requestID == "menubar-apply-serving-defaults-server-session-123")
+        #expect(request.commandType == "server.apply_serving_defaults")
+        #expect(request.targetID == "server-session-123")
+        #expect(request.server.applyServingDefaults.serverSessionID == "server-session-123")
+        #expect(request.server.applyServingDefaults.temperature == 0.33)
+        #expect(request.server.applyServingDefaults.topP == 0.92)
+        #expect(request.server.applyServingDefaults.maxTokens == 384)
+        #expect(request.server.applyServingDefaults.streamIntervalTokens == 3)
+        #expect(request.server.applyServingDefaults.maxConcurrentRequests == 5)
+        #expect(snapshot.servingDefaults.sessions.first?.requestedTemperature == 0.33)
     }
 
     @Test("runBench builds ops.run_bench request with explicit model suites and parameters")

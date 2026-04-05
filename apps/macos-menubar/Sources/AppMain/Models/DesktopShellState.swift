@@ -106,18 +106,102 @@ public struct DesktopServerServingDefaultsState: Codable, Equatable, Sendable {
     public var temperature: Double
     public var topP: Double
     public var maxTokens: Int
+    public var streamIntervalTokens: Int
     public var maxConcurrentRequests: Int
+    public var effectiveTemperature: Double
+    public var effectiveTopP: Double
+    public var effectiveMaxTokens: Int
+    public var effectiveStreamIntervalTokens: Int
+    public var effectiveMaxConcurrentRequests: Int
+    public var sourceText: String
+    public var modelOverrideApplied: Bool
+    public var updatedAtUnixMS: Int64
 
     public init(
         temperature: Double = 0.7,
         topP: Double = 1.0,
-        maxTokens: Int = 1024,
-        maxConcurrentRequests: Int = 4
+        maxTokens: Int = 256,
+        streamIntervalTokens: Int = 1,
+        maxConcurrentRequests: Int = 4,
+        effectiveTemperature: Double? = nil,
+        effectiveTopP: Double? = nil,
+        effectiveMaxTokens: Int? = nil,
+        effectiveStreamIntervalTokens: Int? = nil,
+        effectiveMaxConcurrentRequests: Int? = nil,
+        sourceText: String = "Built-in Defaults",
+        modelOverrideApplied: Bool = false,
+        updatedAtUnixMS: Int64 = 0
     ) {
         self.temperature = temperature
         self.topP = topP
         self.maxTokens = maxTokens
+        self.streamIntervalTokens = streamIntervalTokens
         self.maxConcurrentRequests = maxConcurrentRequests
+        self.effectiveTemperature = effectiveTemperature ?? temperature
+        self.effectiveTopP = effectiveTopP ?? topP
+        self.effectiveMaxTokens = effectiveMaxTokens ?? maxTokens
+        self.effectiveStreamIntervalTokens = effectiveStreamIntervalTokens ?? streamIntervalTokens
+        self.effectiveMaxConcurrentRequests = effectiveMaxConcurrentRequests ?? maxConcurrentRequests
+        self.sourceText = sourceText
+        self.modelOverrideApplied = modelOverrideApplied
+        self.updatedAtUnixMS = updatedAtUnixMS
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case temperature
+        case topP = "top_p"
+        case maxTokens = "max_tokens"
+        case streamIntervalTokens = "stream_interval_tokens"
+        case maxConcurrentRequests = "max_concurrent_requests"
+        case effectiveTemperature = "effective_temperature"
+        case effectiveTopP = "effective_top_p"
+        case effectiveMaxTokens = "effective_max_tokens"
+        case effectiveStreamIntervalTokens = "effective_stream_interval_tokens"
+        case effectiveMaxConcurrentRequests = "effective_max_concurrent_requests"
+        case sourceText = "source_text"
+        case modelOverrideApplied = "model_override_applied"
+        case updatedAtUnixMS = "updated_at_unix_ms"
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let temperature = try container.decodeIfPresent(Double.self, forKey: .temperature) ?? 0.7
+        let topP = try container.decodeIfPresent(Double.self, forKey: .topP) ?? 1.0
+        let maxTokens = try container.decodeIfPresent(Int.self, forKey: .maxTokens) ?? 256
+        let streamIntervalTokens = try container.decodeIfPresent(Int.self, forKey: .streamIntervalTokens) ?? 1
+        let maxConcurrentRequests = try container.decodeIfPresent(Int.self, forKey: .maxConcurrentRequests) ?? 4
+        self.init(
+            temperature: temperature,
+            topP: topP,
+            maxTokens: maxTokens,
+            streamIntervalTokens: streamIntervalTokens,
+            maxConcurrentRequests: maxConcurrentRequests,
+            effectiveTemperature: try container.decodeIfPresent(Double.self, forKey: .effectiveTemperature),
+            effectiveTopP: try container.decodeIfPresent(Double.self, forKey: .effectiveTopP),
+            effectiveMaxTokens: try container.decodeIfPresent(Int.self, forKey: .effectiveMaxTokens),
+            effectiveStreamIntervalTokens: try container.decodeIfPresent(Int.self, forKey: .effectiveStreamIntervalTokens),
+            effectiveMaxConcurrentRequests: try container.decodeIfPresent(Int.self, forKey: .effectiveMaxConcurrentRequests),
+            sourceText: try container.decodeIfPresent(String.self, forKey: .sourceText) ?? "Built-in Defaults",
+            modelOverrideApplied: try container.decodeIfPresent(Bool.self, forKey: .modelOverrideApplied) ?? false,
+            updatedAtUnixMS: try container.decodeIfPresent(Int64.self, forKey: .updatedAtUnixMS) ?? 0
+        )
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(temperature, forKey: .temperature)
+        try container.encode(topP, forKey: .topP)
+        try container.encode(maxTokens, forKey: .maxTokens)
+        try container.encode(streamIntervalTokens, forKey: .streamIntervalTokens)
+        try container.encode(maxConcurrentRequests, forKey: .maxConcurrentRequests)
+        try container.encode(effectiveTemperature, forKey: .effectiveTemperature)
+        try container.encode(effectiveTopP, forKey: .effectiveTopP)
+        try container.encode(effectiveMaxTokens, forKey: .effectiveMaxTokens)
+        try container.encode(effectiveStreamIntervalTokens, forKey: .effectiveStreamIntervalTokens)
+        try container.encode(effectiveMaxConcurrentRequests, forKey: .effectiveMaxConcurrentRequests)
+        try container.encode(sourceText, forKey: .sourceText)
+        try container.encode(modelOverrideApplied, forKey: .modelOverrideApplied)
+        try container.encode(updatedAtUnixMS, forKey: .updatedAtUnixMS)
     }
 }
 

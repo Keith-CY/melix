@@ -104,6 +104,7 @@ message ServerCommand {
     WakeServer wake = 9;
     SetServerIdlePolicy set_idle_policy = 10;
     ApplyGatewayConfig apply_gateway_config = 11;
+    ApplyServingDefaults apply_serving_defaults = 12;
   }
 }
 
@@ -268,6 +269,14 @@ message ApplyGatewayConfig {
   string served_model_id = 4;
   uint32 rate_limit_per_minute = 5;
   uint32 timeout_seconds = 6;
+}
+message ApplyServingDefaults {
+  string server_session_id = 1;
+  double temperature = 2;
+  double top_p = 3;
+  uint32 max_tokens = 4;
+  uint32 stream_interval_tokens = 5;
+  uint32 max_concurrent_requests = 6;
 }
 
 message ListModels {}
@@ -919,6 +928,36 @@ message GatewayConfigSummary {
   repeated GatewayListenerConfigSummary listeners = 1;
 }
 
+enum ServingDefaultsSource {
+  SERVING_DEFAULTS_SOURCE_UNSPECIFIED = 0;
+  SERVING_DEFAULTS_SOURCE_BUILT_IN_DEFAULTS = 1;
+  SERVING_DEFAULTS_SOURCE_ENVIRONMENT_DEFAULTS = 2;
+  SERVING_DEFAULTS_SOURCE_CONFIG_FILE_IMPORT = 3;
+  SERVING_DEFAULTS_SOURCE_OPERATOR_OVERRIDE = 4;
+}
+
+message ServingDefaultsSessionSummary {
+  string server_session_id = 1;
+  string served_model_id = 2;
+  double requested_temperature = 3;
+  double requested_top_p = 4;
+  uint32 requested_max_tokens = 5;
+  uint32 requested_stream_interval_tokens = 6;
+  uint32 requested_max_concurrent_requests = 7;
+  double effective_temperature = 8;
+  double effective_top_p = 9;
+  uint32 effective_max_tokens = 10;
+  uint32 effective_stream_interval_tokens = 11;
+  uint32 effective_max_concurrent_requests = 12;
+  ServingDefaultsSource source = 13;
+  bool model_override_applied = 14;
+  int64 updated_at_unix_ms = 15;
+}
+
+message ServingDefaultsSummary {
+  repeated ServingDefaultsSessionSummary sessions = 1;
+}
+
 message ServerSnapshot {
   ServerState server_state = 1;
   repeated WorkerSummary workers = 2;
@@ -934,6 +973,7 @@ message ServerSnapshot {
   GatewayAccessSummary gateway_access = 12;
   repeated ServerSessionRuntimeState runtime_sessions = 13;
   GatewayConfigSummary gateway_config = 14;
+  ServingDefaultsSummary serving_defaults = 15;
 }
 
 message WorkerSummary {

@@ -316,6 +316,14 @@ public protocol ControlPlaneXPCClient: Sendable {
         rateLimitPerMinute: Int,
         timeoutSeconds: Int
     ) async throws -> Melix_Controlplane_V1_ServerSnapshot
+    func applyServerSessionServingDefaults(
+        serverSessionID: String,
+        temperature: Double,
+        topP: Double,
+        maxTokens: Int,
+        streamIntervalTokens: Int,
+        maxConcurrentRequests: Int
+    ) async throws -> Melix_Controlplane_V1_ServerSnapshot
     func clearServerSessionGatewayAccess(serverSessionID: String) async throws
 }
 
@@ -499,6 +507,26 @@ public extension ControlPlaneXPCClient {
         throw ControlPlaneXPCClientError.requestFailed(
             code: "unimplemented",
             message: "Gateway config apply is not implemented for this control-plane client."
+        )
+    }
+
+    func applyServerSessionServingDefaults(
+        serverSessionID: String,
+        temperature: Double,
+        topP: Double,
+        maxTokens: Int,
+        streamIntervalTokens: Int,
+        maxConcurrentRequests: Int
+    ) async throws -> Melix_Controlplane_V1_ServerSnapshot {
+        _ = serverSessionID
+        _ = temperature
+        _ = topP
+        _ = maxTokens
+        _ = streamIntervalTokens
+        _ = maxConcurrentRequests
+        throw ControlPlaneXPCClientError.requestFailed(
+            code: "unimplemented",
+            message: "Serving defaults apply is not implemented for this control-plane client."
         )
     }
 }
@@ -769,6 +797,28 @@ public actor LocalControlPlaneXPCClient: ControlPlaneXPCClient {
                 servedModelID: servedModelID,
                 rateLimitPerMinute: rateLimitPerMinute,
                 timeoutSeconds: timeoutSeconds
+            )
+        ) { response in
+            response.server.snapshot
+        }
+    }
+
+    public func applyServerSessionServingDefaults(
+        serverSessionID: String,
+        temperature: Double,
+        topP: Double,
+        maxTokens: Int,
+        streamIntervalTokens: Int,
+        maxConcurrentRequests: Int
+    ) async throws -> Melix_Controlplane_V1_ServerSnapshot {
+        try await execute(
+            makeApplyServerSessionServingDefaultsRequest(
+                serverSessionID: serverSessionID,
+                temperature: temperature,
+                topP: topP,
+                maxTokens: maxTokens,
+                streamIntervalTokens: streamIntervalTokens,
+                maxConcurrentRequests: maxConcurrentRequests
             )
         ) { response in
             response.server.snapshot
@@ -1151,6 +1201,29 @@ public actor LocalControlPlaneXPCClient: ControlPlaneXPCClient {
         request.server.applyGatewayConfig.servedModelID = servedModelID
         request.server.applyGatewayConfig.rateLimitPerMinute = UInt32(max(0, rateLimitPerMinute))
         request.server.applyGatewayConfig.timeoutSeconds = UInt32(max(0, timeoutSeconds))
+        return request
+    }
+
+    private func makeApplyServerSessionServingDefaultsRequest(
+        serverSessionID: String,
+        temperature: Double,
+        topP: Double,
+        maxTokens: Int,
+        streamIntervalTokens: Int,
+        maxConcurrentRequests: Int
+    ) -> Melix_Controlplane_V1_ControlPlaneRequest {
+        var request = Melix_Controlplane_V1_ControlPlaneRequest()
+        request.requestID = "menubar-apply-serving-defaults-\(serverSessionID)"
+        request.commandType = "server.apply_serving_defaults"
+        request.targetID = serverSessionID
+        request.server = Melix_Controlplane_V1_ServerCommand()
+        request.server.applyServingDefaults = Melix_Controlplane_V1_ApplyServingDefaults()
+        request.server.applyServingDefaults.serverSessionID = serverSessionID
+        request.server.applyServingDefaults.temperature = temperature
+        request.server.applyServingDefaults.topP = topP
+        request.server.applyServingDefaults.maxTokens = UInt32(max(0, maxTokens))
+        request.server.applyServingDefaults.streamIntervalTokens = UInt32(max(0, streamIntervalTokens))
+        request.server.applyServingDefaults.maxConcurrentRequests = UInt32(max(0, maxConcurrentRequests))
         return request
     }
 }

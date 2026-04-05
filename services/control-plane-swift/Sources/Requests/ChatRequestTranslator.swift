@@ -179,6 +179,8 @@ public struct ShapedTextRequest: Sendable, Equatable {
     public let temperature: Double
     public let topP: Double
     public let maxTokens: UInt32
+    public let streamIntervalTokens: UInt32
+    public let maxConcurrentRequests: UInt32
     public let sessionID: String?
     public let branchID: String?
     public let parentRequestID: String?
@@ -1520,6 +1522,7 @@ public struct ChatRequestTranslator: Sendable {
         modelChatTemplatePolicy: ModelChatTemplatePolicy? = nil,
         modelOCRPolicy: OCRExecutionPolicy? = nil,
         modelSamplingPolicy: ModelSamplingPolicy? = nil,
+        gatewayServingDefaults: GatewayServingDefaultsPolicy? = nil,
         mcpToolCatalog: MCPToolCatalog = .empty
     ) throws -> TranslatedChatRequest {
         let requestID = requestIDGenerator()
@@ -1529,6 +1532,7 @@ public struct ChatRequestTranslator: Sendable {
             modelChatTemplatePolicy: modelChatTemplatePolicy,
             modelOCRPolicy: modelOCRPolicy,
             modelSamplingPolicy: modelSamplingPolicy,
+            gatewayServingDefaults: gatewayServingDefaults,
             mcpToolCatalog: mcpToolCatalog
         )
 
@@ -1674,6 +1678,8 @@ public struct ChatRequestTranslator: Sendable {
         generateRequest.stream = shapedRequest.stream
         generateRequest.returnUsage = shapedRequest.includeUsage
         generateRequest.execution.ext["melix.stream.include_usage"] = shapedRequest.includeUsage ? "true" : "false"
+        generateRequest.execution.ext["melix.stream.interval_tokens"] = String(shapedRequest.streamIntervalTokens)
+        generateRequest.execution.ext["melix.gateway.max_concurrent_requests"] = String(shapedRequest.maxConcurrentRequests)
         generateRequest.messages = shapedRequest.messages.map { message in
             var chatMessage = Melix_Worker_V1_ChatMessage()
             chatMessage.role = message.role
