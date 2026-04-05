@@ -85,17 +85,57 @@ public struct DesktopMetricRow: Identifiable, Equatable, Sendable {
 
 public struct DesktopAPIReferenceRow: Identifiable, Equatable, Sendable {
     public let id: String
+    public let surfaceID: String
+    public let surfaceTitle: String
     public let method: String
     public let path: String
     public let summary: String
     public let streaming: Bool
 
-    public init(method: String, path: String, summary: String, streaming: Bool) {
-        self.id = "\(method) \(path)"
+    public init(
+        id: String,
+        surfaceID: String,
+        surfaceTitle: String,
+        method: String,
+        path: String,
+        summary: String,
+        streaming: Bool
+    ) {
+        self.id = id
+        self.surfaceID = surfaceID
+        self.surfaceTitle = surfaceTitle
         self.method = method
         self.path = path
         self.summary = summary
         self.streaming = streaming
+    }
+}
+
+public struct DesktopAPISurfaceRow: Identifiable, Equatable, Sendable {
+    public let id: String
+    public let title: String
+    public let summary: String
+    public let statusText: String
+    public let compatibilityNote: String
+    public let endpointIDs: [String]
+    public let shipped: Bool
+
+    public init(
+        id: String,
+        title: String,
+        summary: String,
+        statusText: String,
+        compatibilityNote: String,
+        endpointIDs: [String],
+        shipped: Bool
+    ) {
+        self.id = id
+        self.title = title
+        self.summary = summary
+        self.statusText = statusText
+        self.compatibilityNote = compatibilityNote
+        self.endpointIDs = endpointIDs
+        self.shipped = shipped
     }
 }
 
@@ -107,6 +147,7 @@ public struct DesktopFoundationState: Equatable, Sendable {
     public let settings: [DesktopKeyValueRow]
     public let logs: [DesktopLogEntry]
     public let benchMetrics: [DesktopMetricRow]
+    public let apiSurfaces: [DesktopAPISurfaceRow]
     public let apiReference: [DesktopAPIReferenceRow]
 
     public static func build(
@@ -124,6 +165,11 @@ public struct DesktopFoundationState: Equatable, Sendable {
         lastError: String?,
         recentEvents: [DesktopLogEntry]
     ) -> DesktopFoundationState {
+        let apiSurfaces = resolvedAPISurfaces(from: snapshot.apiOnboarding)
+        let apiReference = resolvedAPIReference(
+            from: snapshot.apiOnboarding,
+            surfaces: apiSurfaces
+        )
         let loadedModels = snapshot.models.filter { model in
             switch model.state {
             case .modelWarm, .modelPinned:
@@ -248,7 +294,11 @@ public struct DesktopFoundationState: Equatable, Sendable {
             DesktopKeyValueRow(id: "connection", key: "Connection", value: connectionStateText),
             DesktopKeyValueRow(id: "stream", key: "Event Stream", value: connectionDetailText),
             DesktopKeyValueRow(id: "socket", key: "Control Plane", value: "local XPC"),
-            DesktopKeyValueRow(id: "api-surface", key: "API Surface", value: "text phase-4 foundation"),
+            DesktopKeyValueRow(
+                id: "api-surface",
+                key: "API Surface",
+                value: apiSurfaces.isEmpty ? "not published" : "\(apiSurfaces.count) published surfaces"
+            ),
         ]
         if let productUpdateSummary, productUpdateSummary.isEmpty == false {
             settings.append(
@@ -366,7 +416,8 @@ public struct DesktopFoundationState: Equatable, Sendable {
             settings: settings,
             logs: Array(logs.prefix(40)),
             benchMetrics: benchMetrics,
-            apiReference: APIReferenceCatalog.phaseFourFoundation
+            apiSurfaces: apiSurfaces,
+            apiReference: apiReference
         )
     }
 }
@@ -459,39 +510,67 @@ private func toolingConfigPathLabel(_ pathID: String) -> String {
     }
 }
 
-enum APIReferenceCatalog {
-    static let phaseFourFoundation: [DesktopAPIReferenceRow] = [
-        DesktopAPIReferenceRow(
-            method: "GET",
-            path: "/v1/models",
-            summary: "List local models and their runtime state.",
-            streaming: false
-        ),
-        DesktopAPIReferenceRow(
-            method: "POST",
-            path: "/v1/chat/completions",
-            summary: "OpenAI-style chat completions over the shared text runtime.",
-            streaming: true
-        ),
-        DesktopAPIReferenceRow(
-            method: "POST",
-            path: "/v1/completions",
-            summary: "Prompt-style completions mapped onto the same text runtime.",
-            streaming: true
-        ),
-        DesktopAPIReferenceRow(
-            method: "POST",
-            path: "/v1/responses",
-            summary: "Responses-style text execution with reasoning and tool deltas.",
-            streaming: true
-        ),
-        DesktopAPIReferenceRow(
-            method: "POST",
-            path: "/v1/messages",
-            summary: "Message-oriented execution over the Phase 4 text surface.",
-            streaming: true
-        ),
-    ]
+private func resolvedAPISurfaces(
+    from summary: Melix_Controlplane_V1_APIOnboardingSummary
+) -> [DesktopAPISurfaceRow] {
+    summary.surfaces.map { surface in
+        let shipped = surface.status == .shipped
+        return DesktopAPISurfaceRow(
+            id: surface.surfaceID,
+            title: surface.title,
+            summary: surface.summary,
+            statusText: apiSurfaceStatusText(surface.status),
+            compatibilityNote: surface.compatibilityNote,
+            endpointIDs: surface.endpointIds,
+            shipped: shipped
+        )
+    }
+}
+
+private func resolvedAPIReference(
+    from summary: Melix_Controlplane_V1_APIOnboardingSummary,
+    surfaces: [DesktopAPISurfaceRow]
+) -> [DesktopAPIReferenceRow] {
+    let surfacesByID = Dictionary(uniqueKeysWithValues: surfaces.map { ($0.id, $0) })
+    let surfaceOrder = Dictionary(uniqueKeysWithValues: surfaces.enumerated().map { ($1.id, $0) })
+
+    return summary.endpoints
+        .sorted { lhs, rhs in
+            let lhsOrder = surfaceOrder[lhs.surfaceID] ?? .max
+            let rhsOrder = surfaceOrder[rhs.surfaceID] ?? .max
+            if lhsOrder != rhsOrder {
+                return lhsOrder < rhsOrder
+            }
+            if lhs.method != rhs.method {
+                return lhs.method < rhs.method
+            }
+            return lhs.path < rhs.path
+        }
+        .map { endpoint in
+            let surfaceTitle = surfacesByID[endpoint.surfaceID]?.title ?? endpoint.surfaceID
+            return DesktopAPIReferenceRow(
+                id: endpoint.endpointID,
+                surfaceID: endpoint.surfaceID,
+                surfaceTitle: surfaceTitle,
+                method: endpoint.method,
+                path: endpoint.path,
+                summary: endpoint.summary,
+                streaming: endpoint.streaming
+            )
+        }
+}
+
+private func apiSurfaceStatusText(
+    _ status: Melix_Controlplane_V1_APIOnboardingSurfaceStatus
+) -> String {
+    switch status {
+    case .shipped:
+        return "Shipped"
+    case .compatibilityOnly:
+        return "Compatibility Only"
+    default:
+        return "Unknown"
+    }
 }
 
 private func formatDouble(_ value: Double) -> String {

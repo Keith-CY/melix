@@ -767,6 +767,259 @@ struct DesktopFoundationViewTests {
         )
     }
 
+    @Test("api reference tab projects typed onboarding surfaces and endpoints")
+    @MainActor
+    func apiReferenceTabProjectsTypedOnboardingSurfacesAndEndpoints() throws {
+        var snapshot = Melix_Controlplane_V1_ServerSnapshot()
+        snapshot.serverState = .serverReady
+        snapshot.models = [ModelCatalog.devTextModel()]
+        snapshot.apiOnboarding = makeAPIOnboardingSummary()
+
+        let foundation = DesktopFoundationState.build(
+            statusTitle: "Melix Ready",
+            serverStateText: "Ready",
+            connectionStateText: "Connected",
+            connectionDetailText: "Snapshot hydrated",
+            snapshot: snapshot,
+            protocolVersion: "melix.controlplane.v1",
+            serverVersion: "0.1.0",
+            daemonInstanceID: "daemon-api-onboarding",
+            features: ["xpc", "api-onboarding"],
+            productUpdateSummary: nil,
+            productUpdateDetail: nil,
+            lastError: nil,
+            recentEvents: []
+        )
+        let view = hostView(DesktopAPIReferenceTabView(foundation: foundation))
+
+        #expect(view.subviews.isEmpty == false)
+        #expect(foundation.apiSurfaces.count == 4)
+        #expect(foundation.apiSurfaces.contains { $0.id == "openai_compatible" && $0.statusText == "Shipped" })
+        #expect(foundation.apiSurfaces.contains { $0.id == "ollama_compatibility" && $0.statusText == "Compatibility Only" })
+        #expect(foundation.apiReference.contains { $0.id == "health" && $0.path == "/health" })
+        #expect(foundation.apiReference.contains { $0.id == "responses" && $0.path == "/v1/responses" && $0.streaming })
+        #expect(foundation.apiReference.contains { $0.id == "messages" && $0.surfaceID == "anthropic_messages" })
+    }
+
+    @Test("api quick-start groups use the effective listener URL and compatibility notes")
+    @MainActor
+    func apiQuickStartGroupsUseTheEffectiveListenerURLAndCompatibilityNotes() {
+        var snapshot = Melix_Controlplane_V1_ServerSnapshot()
+        snapshot.serverState = .serverReady
+        snapshot.models = [ModelCatalog.devTextModel()]
+        snapshot.apiOnboarding = makeAPIOnboardingSummary()
+
+        let foundation = DesktopFoundationState.build(
+            statusTitle: "Melix Ready",
+            serverStateText: "Ready",
+            connectionStateText: "Connected",
+            connectionDetailText: "Snapshot hydrated",
+            snapshot: snapshot,
+            protocolVersion: "melix.controlplane.v1",
+            serverVersion: "0.1.0",
+            daemonInstanceID: "daemon-api-quick-starts",
+            features: ["xpc", "api-onboarding"],
+            productUpdateSummary: nil,
+            productUpdateDetail: nil,
+            lastError: nil,
+            recentEvents: []
+        )
+        let session = DesktopServerSessionState(
+            id: "server-session-1",
+            title: "Primary Session",
+            modelID: "melix-dev-text",
+            effectiveHost: "127.0.0.1",
+            effectivePort: 11_434,
+            authMode: .apiKeys,
+            authTokenHint: "desktop-agent",
+            sharedAccessState: .enabled,
+            accessKeyCount: 1,
+            accessKeyHints: ["desktop-agent"],
+            lifecycle: .running
+        )
+
+        let groups = desktopAPIQuickStartGroups(
+            foundation: foundation,
+            selectedSession: session
+        )
+        let groupByID = Dictionary(uniqueKeysWithValues: groups.map { ($0.id, $0) })
+
+        #expect(groups.count == 3)
+        #expect(groupByID["openai_compatible"]?.snippets.contains { $0.body.contains("http://127.0.0.1:11434/v1") } == true)
+        #expect(groupByID["openai_compatible"]?.snippets.contains { $0.body.contains("<desktop-agent>") } == true)
+        #expect(groupByID["anthropic_messages"]?.snippets.contains { $0.body.contains("/messages") } == true)
+        #expect(groupByID["ollama_compatibility"]?.note.contains("Native /api/chat") == true)
+        #expect(groupByID["ollama_compatibility"]?.snippets.contains { $0.body.contains("/health") } == true)
+    }
+
+    @Test("api onboarding state normalizes unknown surface status text")
+    @MainActor
+    func apiOnboardingStateNormalizesUnknownSurfaceStatusText() {
+        var snapshot = Melix_Controlplane_V1_ServerSnapshot()
+        snapshot.serverState = .serverReady
+        snapshot.models = [ModelCatalog.devTextModel()]
+        var unknownSurface = Melix_Controlplane_V1_APIOnboardingSurfaceSummary()
+        unknownSurface.surfaceID = "experimental"
+        unknownSurface.title = "Experimental"
+        unknownSurface.summary = "Preview-only surface."
+        unknownSurface.status = .UNRECOGNIZED(-1)
+        snapshot.apiOnboarding.surfaces = [unknownSurface]
+
+        let foundation = DesktopFoundationState.build(
+            statusTitle: "Melix Ready",
+            serverStateText: "Ready",
+            connectionStateText: "Connected",
+            connectionDetailText: "Snapshot hydrated",
+            snapshot: snapshot,
+            protocolVersion: "melix.controlplane.v1",
+            serverVersion: "0.1.0",
+            daemonInstanceID: "daemon-api-unknown",
+            features: ["xpc", "api-onboarding"],
+            productUpdateSummary: nil,
+            productUpdateDetail: nil,
+            lastError: nil,
+            recentEvents: []
+        )
+
+        #expect(foundation.apiSurfaces.first?.statusText == "Unknown")
+    }
+
+    @Test("api quick-start panel covers empty-surface and missing-session states")
+    @MainActor
+    func apiQuickStartPanelCoversEmptySurfaceAndMissingSessionStates() throws {
+        let emptyFoundation = DesktopFoundationState(
+            title: "Melix Ready",
+            dashboardCards: [],
+            queueLanes: [],
+            models: [],
+            settings: [],
+            logs: [],
+            benchMetrics: [],
+            apiSurfaces: [],
+            apiReference: []
+        )
+        let session = DesktopServerSessionState(
+            id: "server-session-empty-api",
+            title: "Primary Session",
+            modelID: "melix-dev-text",
+            effectiveHost: "127.0.0.1",
+            effectivePort: 11_434,
+            authMode: .none,
+            sharedAccessState: .localOnly,
+            lifecycle: .running
+        )
+
+        let missingSessionView = hostView(
+            DesktopAPIQuickStartPanel(
+                foundation: emptyFoundation,
+                selectedSession: nil
+            )
+        )
+        let emptySurfaceView = hostView(
+            DesktopAPIQuickStartPanel(
+                foundation: emptyFoundation,
+                selectedSession: session
+            )
+        )
+
+        #expect(missingSessionView.subviews.isEmpty == false)
+        #expect(emptySurfaceView.subviews.isEmpty == false)
+        #expect(
+            desktopAPIQuickStartGroups(
+                foundation: emptyFoundation,
+                selectedSession: session
+            ).isEmpty
+        )
+    }
+
+    @Test("api quick-start groups cover bearer disabled and unauthenticated gateway headers")
+    @MainActor
+    func apiQuickStartGroupsCoverBearerDisabledAndUnauthenticatedGatewayHeaders() {
+        var snapshot = Melix_Controlplane_V1_ServerSnapshot()
+        snapshot.serverState = .serverReady
+        snapshot.models = [ModelCatalog.devTextModel()]
+        snapshot.apiOnboarding = makeAPIOnboardingSummary()
+
+        let foundation = DesktopFoundationState.build(
+            statusTitle: "Melix Ready",
+            serverStateText: "Ready",
+            connectionStateText: "Connected",
+            connectionDetailText: "Snapshot hydrated",
+            snapshot: snapshot,
+            protocolVersion: "melix.controlplane.v1",
+            serverVersion: "0.1.0",
+            daemonInstanceID: "daemon-api-auth-branches",
+            features: ["xpc", "api-onboarding"],
+            productUpdateSummary: nil,
+            productUpdateDetail: nil,
+            lastError: nil,
+            recentEvents: []
+        )
+
+        let disabledSession = DesktopServerSessionState(
+            id: "disabled-session",
+            title: "Disabled Session",
+            modelID: "melix-dev-text",
+            effectiveHost: "127.0.0.1",
+            effectivePort: 11_434,
+            authMode: .apiKeys,
+            authTokenHint: "desktop-agent",
+            sharedAccessState: .configuredDisabled,
+            accessKeyHints: ["desktop-agent"],
+            lifecycle: .running
+        )
+        let unauthenticatedSession = DesktopServerSessionState(
+            id: "none-session",
+            title: "Unauthenticated Session",
+            modelID: "melix-dev-text",
+            effectiveHost: "127.0.0.1",
+            effectivePort: 11_434,
+            authMode: .none,
+            sharedAccessState: .enabled,
+            lifecycle: .running
+        )
+        let bearerSession = DesktopServerSessionState(
+            id: "bearer-session",
+            title: "Bearer Session",
+            modelID: "melix-dev-text",
+            effectiveHost: "127.0.0.1",
+            effectivePort: 11_434,
+            authMode: .bearerToken,
+            authTokenHint: "desktop-agent",
+            sharedAccessState: .enabled,
+            lifecycle: .running
+        )
+
+        let disabledGroups = desktopAPIQuickStartGroups(
+            foundation: foundation,
+            selectedSession: disabledSession
+        )
+        let unauthenticatedGroups = desktopAPIQuickStartGroups(
+            foundation: foundation,
+            selectedSession: unauthenticatedSession
+        )
+        let bearerGroups = desktopAPIQuickStartGroups(
+            foundation: foundation,
+            selectedSession: bearerSession
+        )
+
+        #expect(
+            disabledGroups.first(where: { $0.id == "openai_compatible" })?.snippets.contains {
+                $0.body.contains("x-api-key")
+            } == false
+        )
+        #expect(
+            unauthenticatedGroups.first(where: { $0.id == "openai_compatible" })?.snippets.contains {
+                $0.body.contains("Authorization")
+            } == false
+        )
+        #expect(
+            bearerGroups.first(where: { $0.id == "openai_compatible" })?.snippets.contains {
+                $0.body.contains("Authorization: Bearer <desktop-agent>")
+            } == true
+        )
+    }
+
     @Test("agent integration copy helper views render canonical actions")
     @MainActor
     func agentIntegrationCopyHelperViewsRenderCanonicalActions() async throws {
@@ -2453,6 +2706,90 @@ private func makeAudioSetupSnapshot(
     snapshot.serverState = .serverReady
     snapshot.models = models
     return snapshot
+}
+
+private func makeAPIOnboardingSummary() -> Melix_Controlplane_V1_APIOnboardingSummary {
+    var summary = Melix_Controlplane_V1_APIOnboardingSummary()
+
+    var localSurface = Melix_Controlplane_V1_APIOnboardingSurfaceSummary()
+    localSurface.surfaceID = "local_service"
+    localSurface.title = "Local Service"
+    localSurface.summary = "Readiness and operational inspection routes for same-host automation."
+    localSurface.status = .shipped
+    localSurface.endpointIds = ["health", "cache_stats"]
+
+    var openAISurface = Melix_Controlplane_V1_APIOnboardingSurfaceSummary()
+    openAISurface.surfaceID = "openai_compatible"
+    openAISurface.title = "OpenAI-Compatible"
+    openAISurface.summary = "The primary local API surface for text, embeddings, rerank, audio, and image workflows."
+    openAISurface.status = .shipped
+    openAISurface.endpointIds = [
+        "models",
+        "responses",
+        "images_generations",
+    ]
+
+    var anthropicSurface = Melix_Controlplane_V1_APIOnboardingSurfaceSummary()
+    anthropicSurface.surfaceID = "anthropic_messages"
+    anthropicSurface.title = "Anthropic Messages"
+    anthropicSurface.summary = "Anthropic-style message execution over the shared local text runtime."
+    anthropicSurface.status = .shipped
+    anthropicSurface.endpointIds = ["messages"]
+
+    var ollamaSurface = Melix_Controlplane_V1_APIOnboardingSurfaceSummary()
+    ollamaSurface.surfaceID = "ollama_compatibility"
+    ollamaSurface.title = "Ollama Compatibility"
+    ollamaSurface.summary = "Compatibility guidance for clients that can target Melix through a custom provider bridge."
+    ollamaSurface.status = .compatibilityOnly
+    ollamaSurface.compatibilityNote = "Native /api/chat, /api/generate, /api/tags, /api/show, and /api/embeddings routes are not shipped yet."
+
+    var health = Melix_Controlplane_V1_APIReferenceEndpointSummary()
+    health.endpointID = "health"
+    health.surfaceID = "local_service"
+    health.method = "GET"
+    health.path = "/health"
+    health.summary = "Probe process readiness."
+
+    var cacheStats = Melix_Controlplane_V1_APIReferenceEndpointSummary()
+    cacheStats.endpointID = "cache_stats"
+    cacheStats.surfaceID = "local_service"
+    cacheStats.method = "GET"
+    cacheStats.path = "/v1/cache/stats"
+    cacheStats.summary = "Inspect cache usage."
+
+    var responses = Melix_Controlplane_V1_APIReferenceEndpointSummary()
+    responses.endpointID = "responses"
+    responses.surfaceID = "openai_compatible"
+    responses.method = "POST"
+    responses.path = "/v1/responses"
+    responses.summary = "Run Responses-style generation."
+    responses.streaming = true
+
+    var models = Melix_Controlplane_V1_APIReferenceEndpointSummary()
+    models.endpointID = "models"
+    models.surfaceID = "openai_compatible"
+    models.method = "GET"
+    models.path = "/v1/models"
+    models.summary = "List local models."
+
+    var imageGeneration = Melix_Controlplane_V1_APIReferenceEndpointSummary()
+    imageGeneration.endpointID = "images_generations"
+    imageGeneration.surfaceID = "openai_compatible"
+    imageGeneration.method = "POST"
+    imageGeneration.path = "/v1/images/generations"
+    imageGeneration.summary = "Submit local image-generation jobs."
+
+    var messages = Melix_Controlplane_V1_APIReferenceEndpointSummary()
+    messages.endpointID = "messages"
+    messages.surfaceID = "anthropic_messages"
+    messages.method = "POST"
+    messages.path = "/v1/messages"
+    messages.summary = "Run Anthropic-style messages requests."
+    messages.streaming = true
+
+    summary.surfaces = [localSurface, openAISurface, anthropicSurface, ollamaSurface]
+    summary.endpoints = [health, cacheStats, models, responses, imageGeneration, messages]
+    return summary
 }
 
 private func makeNamedModelOperationResult(

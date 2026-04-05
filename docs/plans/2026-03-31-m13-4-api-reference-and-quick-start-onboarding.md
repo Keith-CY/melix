@@ -23,10 +23,30 @@ Add product-owned API reference material and quick-start examples for supported 
 - Snippets should remain stable enough for automated smoke execution where practical.
 - Onboarding should emphasize local endpoint behavior and auth expectations clearly.
 
+## Executable Slices
+
+### Slice 1: Typed API Onboarding Summary
+
+- add a typed `api_onboarding` summary to `ServerSnapshot`
+- project shipped endpoint reference and supported compatibility surfaces from control-plane truth
+- replace the static desktop API endpoint catalog with the typed snapshot summary
+- generate session-aware curl, Python, and JavaScript quick-start snippets from the typed summary
+  plus selected server-session auth and base-URL state
+- keep Ollama guidance explicit about the current compatibility boundary when native `/api/*`
+  routes are not shipped
+
+Status: slice 1 completed on 2026-04-06.
+
 ## Verification
 
-- `make swift-test`
-- onboarding-example smoke command for the touched scope
+- `make proto`: pass
+- `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/.build/ModuleCache.noindex" swift test --package-path services/control-plane-swift --enable-code-coverage --filter 'ControlPlaneServiceTests'`: `160 tests in 1 suite passed`
+- `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/.build/ModuleCache.noindex" swift test --package-path apps/macos-menubar --enable-code-coverage --filter 'DesktopFoundationViewTests'`: `69 tests in 1 suite passed`
+- `python3 scripts/swift_changed_line_coverage.py --binary services/control-plane-swift/.build/arm64-apple-macosx/debug/MelixControlPlanePackageTests.xctest/Contents/MacOS/MelixControlPlanePackageTests --profdata services/control-plane-swift/.build/arm64-apple-macosx/debug/codecov/default.profdata services/control-plane-swift/Sources/HTTPGateway/APIOnboardingSnapshotSource.swift services/control-plane-swift/Sources/Snapshots/ServerSnapshotBuilder.swift services/control-plane-swift/Sources/XPCService/ControlPlaneService.swift services/control-plane-swift/Tests/ControlPlaneTests/ControlPlaneServiceTests.swift`: `100.00%` (`38/38`)
+- `python3 scripts/swift_changed_line_coverage.py --binary apps/macos-menubar/.build/arm64-apple-macosx/debug/MelixMacOSMenubarPackageTests.xctest/Contents/MacOS/MelixMacOSMenubarPackageTests --profdata apps/macos-menubar/.build/arm64-apple-macosx/debug/codecov/default.profdata apps/macos-menubar/Sources/AppMain/Dashboard/DesktopFoundationState.swift apps/macos-menubar/Sources/AppMain/Dashboard/DesktopFoundationView.swift apps/macos-menubar/Sources/AppMain/Dashboard/DesktopWorkspaceShellView.swift apps/macos-menubar/Tests/MenuBarTests/DesktopFoundationViewTests.swift`: `96.51%` (`746/773`)
+- aggregate touched-scope changed-line coverage: `96.67%` (`784/811`)
+- `git diff --check`: pass
+- `make swift-test`: failed outside the touched scope when `services/mlx-text-worker-swift` exited with unexpected signal `11` during `WorkerScaffoldTests`
 
 ## Acceptance
 

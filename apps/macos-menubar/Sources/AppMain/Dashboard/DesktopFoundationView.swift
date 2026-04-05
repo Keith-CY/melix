@@ -1130,25 +1130,56 @@ struct DesktopAPIReferenceTabView: View {
     let foundation: DesktopFoundationState
 
     var body: some View {
-        List(foundation.apiReference) { endpoint in
-            VStack(alignment: .leading, spacing: 6) {
-                HStack {
-                    Text(endpoint.method)
-                        .font(.caption)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(.quaternary, in: Capsule())
-                    Text(endpoint.path)
-                        .font(.headline)
-                    Spacer()
-                    Text(endpoint.streaming ? "SSE" : "JSON")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                Text(endpoint.summary)
+        List {
+            if foundation.apiSurfaces.isEmpty {
+                Text("No API reference has been published by the control plane yet.")
                     .foregroundStyle(.secondary)
+            } else {
+                ForEach(foundation.apiSurfaces) { surface in
+                    Section {
+                        let surfaceEndpoints = foundation.apiReference.filter { $0.surfaceID == surface.id }
+                        if surfaceEndpoints.isEmpty {
+                            Text(surface.compatibilityNote.isEmpty ? "No routes are currently published for this surface." : surface.compatibilityNote)
+                                .foregroundStyle(.secondary)
+                        } else {
+                            ForEach(surfaceEndpoints) { endpoint in
+                                VStack(alignment: .leading, spacing: 6) {
+                                    HStack {
+                                        Text(endpoint.method)
+                                            .font(.caption)
+                                            .padding(.horizontal, 6)
+                                            .padding(.vertical, 2)
+                                            .background(.quaternary, in: Capsule())
+                                        Text(endpoint.path)
+                                            .font(.headline)
+                                        Spacer()
+                                        Text(endpoint.streaming ? "SSE" : "JSON")
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                    Text(endpoint.summary)
+                                        .foregroundStyle(.secondary)
+                                }
+                                .padding(.vertical, 4)
+                            }
+                        }
+                    } header: {
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack {
+                                Text(surface.title)
+                                Spacer()
+                                Text(surface.statusText)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Text(surface.summary)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        .textCase(nil)
+                    }
+                }
             }
-            .padding(.vertical, 4)
         }
     }
 }

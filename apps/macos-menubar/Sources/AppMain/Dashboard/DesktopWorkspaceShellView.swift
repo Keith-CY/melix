@@ -2700,6 +2700,364 @@ struct DesktopAPIAuthenticationReferenceView: View {
     }
 }
 
+struct DesktopAPIQuickStartSnippet: Identifiable {
+    let id: String
+    let language: String
+    let title: String
+    let body: String
+}
+
+struct DesktopAPIQuickStartGroup: Identifiable {
+    let id: String
+    let title: String
+    let summary: String
+    let statusText: String
+    let note: String
+    let snippets: [DesktopAPIQuickStartSnippet]
+}
+
+struct DesktopAPIQuickStartPanel: View {
+    let foundation: DesktopFoundationState
+    let selectedSession: DesktopServerSessionState?
+
+    var body: some View {
+        GroupBox("Product Quick Starts") {
+            if let selectedSession {
+                let groups = desktopAPIQuickStartGroups(
+                    foundation: foundation,
+                    selectedSession: selectedSession
+                )
+                VStack(alignment: .leading, spacing: 16) {
+                    Text("Examples use the effective listener URL \(selectedSession.effectiveBaseURL).")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    ForEach(groups) { group in
+                        GroupBox(group.title) {
+                            VStack(alignment: .leading, spacing: 10) {
+                                HStack {
+                                    Text(group.summary)
+                                        .foregroundStyle(.secondary)
+                                    Spacer()
+                                    Text(group.statusText)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                                if group.note.isEmpty == false {
+                                    Text(group.note)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                                ForEach(group.snippets) { snippet in
+                                    GroupBox(snippet.title) {
+                                        Text(snippet.body)
+                                            .font(.caption.monospaced())
+                                            .textSelection(.enabled)
+                                            .frame(maxWidth: .infinity, alignment: .leading)
+                                    }
+                                }
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                    }
+                    if groups.isEmpty {
+                        Text("No product quick starts are published for the current API surfaces yet.")
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                ContentUnavailableView(
+                    "No Server Session Selected",
+                    systemImage: "network.slash",
+                    description: Text("Start or select a server session to render session-aware quick-start snippets.")
+                )
+            }
+        }
+    }
+}
+
+func desktopAPIQuickStartGroups(
+    foundation: DesktopFoundationState,
+    selectedSession: DesktopServerSessionState
+) -> [DesktopAPIQuickStartGroup] {
+    let serviceBaseURL = selectedSession.effectiveBaseURL
+    let serviceRootURL = serviceBaseURL.hasSuffix("/v1")
+        ? String(serviceBaseURL.dropLast(3))
+        : serviceBaseURL
+    let authHeader = primaryGatewayHeader(for: selectedSession)
+    let authValue = selectedSession.integrationAuthValue
+    let modelID = selectedSession.modelID
+    let surfacesByID = Dictionary(uniqueKeysWithValues: foundation.apiSurfaces.map { ($0.id, $0) })
+
+    func fetchHeaderBlock(extraHeaders: [(String, String)]) -> String {
+        let headers = extraHeaders + (authHeader.map { [$0] } ?? [])
+        return headers.map { "        \"\($0.0)\": \"\($0.1)\"," }.joined(separator: "\n") + "\n"
+    }
+
+    let anthropicPythonHeaders = fetchHeaderBlock(
+        extraHeaders: [
+            ("anthropic-version", "2023-06-01"),
+            ("content-type", "application/json"),
+        ]
+    )
+    let anthropicJavaScriptHeaders = javascriptHeaderBlock(
+        extraHeaders: [
+            ("anthropic-version", "2023-06-01"),
+            ("content-type", "application/json"),
+        ],
+        authHeader: authHeader
+    )
+
+    var groups: [DesktopAPIQuickStartGroup] = []
+
+    if let surface = surfacesByID["openai_compatible"] {
+        groups.append(
+            DesktopAPIQuickStartGroup(
+                id: surface.id,
+                title: surface.title,
+                summary: surface.summary,
+                statusText: surface.statusText,
+                note: "",
+                snippets: [
+                    DesktopAPIQuickStartSnippet(
+                        id: "\(surface.id)-curl",
+                        language: "curl",
+                        title: "curl",
+                        body: openAICurlQuickStart(
+                            baseURL: serviceBaseURL,
+                            modelID: modelID,
+                            authHeader: authHeader
+                        )
+                    ),
+                    DesktopAPIQuickStartSnippet(
+                        id: "\(surface.id)-python",
+                        language: "python",
+                        title: "Python",
+                        body: """
+                        from openai import OpenAI
+
+                        client = OpenAI(
+                            base_url="\(serviceBaseURL)",
+                            api_key="\(authValue)"
+                        )
+
+                        response = client.responses.create(
+                            model="\(modelID)",
+                            input="Hello from Melix"
+                        )
+                        print(response.output_text)
+                        """
+                    ),
+                    DesktopAPIQuickStartSnippet(
+                        id: "\(surface.id)-javascript",
+                        language: "javascript",
+                        title: "JavaScript",
+                        body: """
+                        import OpenAI from "openai";
+
+                        const client = new OpenAI({
+                          baseURL: "\(serviceBaseURL)",
+                          apiKey: "\(authValue)"
+                        });
+
+                        const response = await client.responses.create({
+                          model: "\(modelID)",
+                          input: "Hello from Melix"
+                        });
+
+                        console.log(response.output_text);
+                        """
+                    ),
+                ]
+            )
+        )
+    }
+
+    if let surface = surfacesByID["anthropic_messages"] {
+        groups.append(
+            DesktopAPIQuickStartGroup(
+                id: surface.id,
+                title: surface.title,
+                summary: surface.summary,
+                statusText: surface.statusText,
+                note: "",
+                snippets: [
+                    DesktopAPIQuickStartSnippet(
+                        id: "\(surface.id)-curl",
+                        language: "curl",
+                        title: "curl",
+                        body: anthropicCurlQuickStart(
+                            baseURL: serviceBaseURL,
+                            modelID: modelID,
+                            authHeader: authHeader
+                        )
+                    ),
+                    DesktopAPIQuickStartSnippet(
+                        id: "\(surface.id)-python",
+                        language: "python",
+                        title: "Python",
+                        body: [
+                            "import requests",
+                            "",
+                            "headers = {",
+                            anthropicPythonHeaders.trimmingCharacters(in: .newlines),
+                            "}",
+                            "",
+                            "response = requests.post(",
+                            "    \"\(serviceBaseURL)/messages\",",
+                            "    headers=headers,",
+                            "    json={",
+                            "        \"model\": \"\(modelID)\",",
+                            "        \"max_tokens\": 128,",
+                            "        \"messages\": [{\"role\": \"user\", \"content\": \"Hello from Melix\"}]",
+                            "    },",
+                            "    timeout=30,",
+                            ")",
+                            "",
+                            "print(response.json())",
+                        ].joined(separator: "\n")
+                    ),
+                    DesktopAPIQuickStartSnippet(
+                        id: "\(surface.id)-javascript",
+                        language: "javascript",
+                        title: "JavaScript",
+                        body: [
+                            "const response = await fetch(\"\(serviceBaseURL)/messages\", {",
+                            "  method: \"POST\",",
+                            "  headers: {",
+                            anthropicJavaScriptHeaders.trimmingCharacters(in: .newlines),
+                            "  },",
+                            "  body: JSON.stringify({",
+                            "    model: \"\(modelID)\",",
+                            "    max_tokens: 128,",
+                            "    messages: [{ role: \"user\", content: \"Hello from Melix\" }]",
+                            "  })",
+                            "});",
+                            "",
+                            "console.log(await response.json());",
+                        ].joined(separator: "\n")
+                    ),
+                ]
+            )
+        )
+    }
+
+    if let surface = surfacesByID["ollama_compatibility"] {
+        let compatibilityLead = surface.compatibilityNote.isEmpty
+            ? "Native Ollama /api/* routes are not shipped yet."
+            : surface.compatibilityNote
+        groups.append(
+            DesktopAPIQuickStartGroup(
+                id: surface.id,
+                title: surface.title,
+                summary: surface.summary,
+                statusText: surface.statusText,
+                note: compatibilityLead,
+                snippets: [
+                    DesktopAPIQuickStartSnippet(
+                        id: "\(surface.id)-curl",
+                        language: "curl",
+                        title: "curl",
+                        body: [
+                            "# Use this bridge only with clients that can override their provider endpoint.",
+                            "curl -sS \(serviceRootURL)/health",
+                            openAICurlQuickStart(
+                                baseURL: serviceBaseURL,
+                                modelID: modelID,
+                                authHeader: authHeader
+                            ),
+                        ].joined(separator: "\n")
+                    ),
+                    DesktopAPIQuickStartSnippet(
+                        id: "\(surface.id)-python",
+                        language: "python",
+                        title: "Python",
+                        body: """
+                        # Point your client at Melix through an OpenAI-compatible bridge.
+                        import requests
+
+                        print(requests.get("\(serviceRootURL)/health", timeout=10).json())
+                        print("Use \(serviceBaseURL) as the compatibility base URL for model \(modelID).")
+                        """
+                    ),
+                    DesktopAPIQuickStartSnippet(
+                        id: "\(surface.id)-javascript",
+                        language: "javascript",
+                        title: "JavaScript",
+                        body: """
+                        // Native Ollama /api/* routes are not available yet.
+                        const health = await fetch("\(serviceRootURL)/health");
+                        console.log(await health.json());
+                        console.log("Use \(serviceBaseURL) as the compatibility base URL for model \(modelID).");
+                        """
+                    ),
+                ]
+            )
+        )
+    }
+
+    return groups
+}
+
+private func openAICurlQuickStart(
+    baseURL: String,
+    modelID: String,
+    authHeader: (String, String)?
+) -> String {
+    var lines = ["curl -sS \(baseURL)/responses \\"]
+    if let authHeader {
+        lines.append("  -H \"\(authHeader.0): \(authHeader.1)\" \\")
+    }
+    lines.append("  -H \"Content-Type: application/json\" \\")
+    lines.append("  -d '{\"model\":\"\(modelID)\",\"input\":\"Hello from Melix\"}'")
+    return lines.joined(separator: "\n")
+}
+
+private func anthropicCurlQuickStart(
+    baseURL: String,
+    modelID: String,
+    authHeader: (String, String)?
+) -> String {
+    var lines = ["curl -sS \(baseURL)/messages \\"]
+    if let authHeader {
+        lines.append("  -H \"\(authHeader.0): \(authHeader.1)\" \\")
+    }
+    lines.append("  -H \"anthropic-version: 2023-06-01\" \\")
+    lines.append("  -H \"Content-Type: application/json\" \\")
+    lines.append("  -d '{\"model\":\"\(modelID)\",\"max_tokens\":128,\"messages\":[{\"role\":\"user\",\"content\":\"Hello from Melix\"}]}'")
+    return lines.joined(separator: "\n")
+}
+
+private func javascriptHeaderBlock(
+    extraHeaders: [(String, String)],
+    authHeader: (String, String)?
+) -> String {
+    let headers = extraHeaders + (authHeader.map { [$0] } ?? [])
+    return headers.map { "    \"\($0.0)\": \"\($0.1)\"," }.joined(separator: "\n") + "\n"
+}
+
+private func primaryGatewayHeader(
+    for session: DesktopServerSessionState
+) -> (String, String)? {
+    switch session.sharedAccessState {
+    case .localOnly:
+        return session.authMode == .bearerToken
+            ? ("Authorization", "Bearer \(session.integrationAuthValue)")
+            : nil
+    case .configuredDisabled:
+        return nil
+    case .enabled:
+        switch session.authMode {
+        case .none:
+            return nil
+        case .bearerToken:
+            return ("Authorization", "Bearer \(session.integrationAuthValue)")
+        case .apiKeys:
+            return ("x-api-key", session.integrationAuthValue)
+        }
+    }
+}
+
 struct DesktopServerGatewayAccessSummaryView: View {
     let session: DesktopServerSessionState
 
@@ -2825,7 +3183,13 @@ struct DesktopAPIWorkspaceView: View {
                             )
                         )
                     case .quickStarts:
-                        DesktopBoundAgentIntegrationPanel(viewModel: viewModel)
+                        VStack(alignment: .leading, spacing: 18) {
+                            DesktopAPIQuickStartPanel(
+                                foundation: foundation,
+                                selectedSession: viewModel.selectedServerSession
+                            )
+                            DesktopBoundAgentIntegrationPanel(viewModel: viewModel)
+                        }
                     case .endpoints:
                         DesktopAPIReferenceTabView(foundation: foundation)
                     }
@@ -2875,7 +3239,7 @@ struct DesktopAPIWorkspaceView: View {
     }
 
     private var defaultBaseURL: String {
-        viewModel.selectedServerSession?.baseURL ?? "http://127.0.0.1:8080/v1"
+        viewModel.selectedServerSession?.effectiveBaseURL ?? "http://127.0.0.1:8080/v1"
     }
 }
 
@@ -2896,13 +3260,13 @@ func desktopAPIAuthenticationReferenceText(
     switch selectedSession.sharedAccessState {
     case .localOnly:
         if selectedSession.authMode == .bearerToken {
-            return "\(exportLead)Use Authorization: Bearer \(selectedSession.integrationAuthValue) for \(selectedSession.baseURL)."
+            return "\(exportLead)Use Authorization: Bearer \(selectedSession.integrationAuthValue) for \(selectedSession.effectiveBaseURL)."
         }
-        return "\(exportLead)Local trusted mode does not require authentication for \(selectedSession.baseURL)."
+        return "\(exportLead)Local trusted mode does not require authentication for \(selectedSession.effectiveBaseURL)."
     case .configuredDisabled:
-        return "\(exportLead)Shared access is configured but disabled. Local trusted clients can call \(selectedSession.baseURL) without auth. Prepared key hints: \(selectedSession.accessKeyHintsText)."
+        return "\(exportLead)Shared access is configured but disabled. Local trusted clients can call \(selectedSession.effectiveBaseURL) without auth. Prepared key hints: \(selectedSession.accessKeyHintsText)."
     case .enabled:
-        return "\(exportLead)Shared access is enabled. Use x-api-key or Authorization: Bearer with \(selectedSession.integrationAuthValue) for \(selectedSession.baseURL). Key hints: \(selectedSession.accessKeyHintsText)."
+        return "\(exportLead)Shared access is enabled. Use x-api-key or Authorization: Bearer with \(selectedSession.integrationAuthValue) for \(selectedSession.effectiveBaseURL). Key hints: \(selectedSession.accessKeyHintsText)."
     }
 }
 

@@ -2,26 +2,27 @@
 
 ## Goal
 
-Close the first executable `M13.3` slice by turning embedding, tool-parser, MCP, config-path,
-and launch-arguments state into one typed, reconnect-stable control-plane snapshot summary that the
-desktop settings surface can render without source-level discovery.
+Close the first executable `M13.4` slice by projecting supported API surfaces and endpoint
+reference through one typed, control-plane-owned onboarding summary that the desktop API workspace
+can render without stale hardcoded catalogs.
 
 ## Scope
 
-- add a typed `tooling_settings` snapshot summary under `ServerSnapshot`
-- project the active embedding-model choice and preload state from capability-aware model discovery
-- expose built-in tool-parser modes and effective MCP configuration through the same summary
-- expose inspectable config paths and boot additional arguments from control-plane truth
-- render the tooling summary in the Window UI settings surface instead of relying on hardcoded
-  operator knowledge
+- add a typed `api_onboarding` snapshot summary under `ServerSnapshot`
+- project supported API surfaces and live endpoint reference from control-plane truth
+- replace the static desktop API endpoint catalog with the typed snapshot summary
+- generate session-aware quick-start snippets in the desktop API workspace from the typed summary
+  plus selected server-session auth and base-URL state
+- keep Ollama guidance truthful by projecting an explicit compatibility boundary instead of
+  pretending native `/api/*` routes already ship
 
 ## Measurement Points
 
-- `ServerSnapshot.tooling_settings` must remain populated after handshake and snapshot refresh
-- embedding settings must identify the active embedding model, backend family, and whether it is
-  preloaded
-- tool-parser settings must come from repository-owned registry truth, not UI-local enumerations
-- config-path and launch-argument state must remain inspectable after restart and reconnect
+- `ServerSnapshot.api_onboarding` must remain populated after handshake and snapshot refresh
+- endpoint reference must reflect the shipped gateway routes instead of a desktop-local static list
+- quick-start snippets must use selected server-session auth, base URL, and model truth
+- OpenAI, Anthropic, and Ollama onboarding rows must stay explicit about what is shipped versus
+  compatibility-only guidance
 - changed-line coverage for the touched handwritten executable scope must remain at or above `95%`
 
 ## Phases
@@ -29,47 +30,45 @@ desktop settings surface can render without source-level discovery.
 1. Planning and snapshot contract
    - status: completed
    - evidence:
-     - confirmed `M13.3` can start with a read-only settings-truth slice instead of coupling
-       visibility to new persistence or mutation semantics
-     - identified the current gap: MCP summary exists in `ServerSnapshot`, but embedding, built-in
-       parser modes, config paths, and additional arguments do not appear as one coherent operator
-       surface
-     - selected a bounded implementation: add `tooling_settings` to the control-plane protocol and
-       hydrate the existing Tools > Settings workspace from that summary
-2. Typed tooling summary and desktop hydration
+     - identified the current gap: the desktop API workspace still renders a stale phase-4 static
+       endpoint catalog and uses external-agent exports instead of product-owned API quick starts
+     - selected a bounded first slice: add a typed `api_onboarding` snapshot summary and rehydrate
+       the existing API workspace from that summary before considering broader compatibility work
+2. Typed API onboarding summary and desktop hydration
    - status: completed
    - evidence:
-     - `ServerSnapshot` now carries typed tooling state for embedding, built-in parsers, MCP,
-       config paths, and boot arguments
-     - control-plane snapshot projection uses repository-owned registry, MCP, and store-path truth
-       instead of UI-local reconstruction
-     - the existing Tools > Settings surface renders the typed tooling summary, including
-       embedding preload detail and config-path rows
+     - extended `ServerSnapshot` with a typed `api_onboarding` summary covering published API
+       surfaces, per-endpoint reference rows, surface status, and compatibility notes
+     - added `APIOnboardingSnapshotSource` so the Swift control plane now owns the shipped API
+       onboarding catalog instead of the desktop shell reconstructing it from static constants
+     - replaced the desktop API reference catalog with snapshot-driven `apiSurfaces` and
+       `apiReference` rows, preserving surface grouping and compatibility-only guidance
+     - generated session-aware OpenAI, Anthropic, and Ollama quick-start snippets from the
+       selected server session's effective base URL, auth state, and served model
 3. Verification and milestone bookkeeping
    - status: completed
    - evidence:
-     - `make proto` passed after schema regeneration
-     - focused control-plane and menu-bar coverage runs passed, with changed-line coverage at
-       `100.00%` (`309/309`) across the touched handwritten executable scope
-     - `git diff --check` passed, while `make swift-test` still reports the pre-existing
-       `services/mlx-text-worker-swift` `WorkerScaffoldTests` signal-11 failure outside the
-       touched scope
+     - focused control-plane and menu-bar suites passed with code coverage enabled
+     - touched-scope aggregate changed-line coverage reached `96.67% (784/811)`
+     - `make swift-test` still fails outside this slice in `services/mlx-text-worker-swift`
+       because `WorkerScaffoldTests` exits with signal `11`
 
 ## Acceptance
 
-- tooling, embedding, and config-file state are visible from one settings surface
-- the settings surface survives restart and reconnect because it hydrates from snapshot truth
-- operators can inspect embedding preload state, built-in parser modes, MCP config, config paths,
-  and boot arguments without reading source files
+- the desktop API workspace renders endpoint reference from typed control-plane truth
+- quick-start snippets are session-aware and match the shipped local API surface
+- operators can inspect OpenAI, Anthropic, and Ollama onboarding guidance without guessing which
+  routes are actually supported
 
 ## Risks
 
-- the desktop settings tab could become a second source of truth if it reconstructs parser modes or
-  embedding state locally instead of consuming a typed snapshot summary
-- config-path visibility could drift if store-backed paths remain private to persistence actors
-- launch arguments could become uninspectable in packaged flows unless they are captured at
-  bootstrap and projected through the control plane
+- the desktop API workspace could remain stale if endpoint reference keeps living in a static UI
+  catalog instead of a typed snapshot summary
+- quick-start snippets could drift from live auth and model truth if they are copied from docs
+  instead of generated from the selected session
+- Ollama onboarding could become misleading if the product implies native `/api/*` support before
+  those routes exist
 
 ## Outcome
 
-- m13_3_tooling_settings_slice_1_completed
+- m13_4_api_onboarding_slice_1_completed

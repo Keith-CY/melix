@@ -132,6 +132,39 @@ struct ControlPlaneServiceTests {
         #expect(configPaths["control_plane_metrics_path"] == "/tmp/control-plane-metrics.json")
     }
 
+    @Test("handshake exposes typed API onboarding state")
+    func handshakeExposesTypedAPIOnboardingState() async throws {
+        let service = ControlPlaneService()
+
+        var request = Melix_Controlplane_V1_HandshakeRequest()
+        request.protocolVersion = "melix.controlplane.v1"
+        request.appVersion = "0.1.0"
+        request.bundleID = "com.melix.app"
+        request.clientInstanceID = "ui-api-onboarding"
+
+        let response = try await service.handshake(request)
+        let surfaces = Dictionary(
+            uniqueKeysWithValues: response.snapshot.apiOnboarding.surfaces.map { ($0.surfaceID, $0) }
+        )
+        let endpoints = Dictionary(
+            uniqueKeysWithValues: response.snapshot.apiOnboarding.endpoints.map { ($0.endpointID, $0) }
+        )
+
+        #expect(surfaces["local_service"]?.status == .shipped)
+        #expect(surfaces["openai_compatible"]?.status == .shipped)
+        #expect(surfaces["anthropic_messages"]?.status == .shipped)
+        #expect(surfaces["ollama_compatibility"]?.status == .compatibilityOnly)
+        #expect(
+            surfaces["ollama_compatibility"]?.compatibilityNote
+                .contains("Native /api/chat") == true
+        )
+        #expect(endpoints["health"]?.path == "/health")
+        #expect(endpoints["cache_stats"]?.path == "/v1/cache/stats")
+        #expect(endpoints["responses"]?.streaming == true)
+        #expect(endpoints["messages"]?.surfaceID == "anthropic_messages")
+        #expect(endpoints["images_generations"]?.method == "POST")
+    }
+
     @Test("gateway access policy normalizes shared-access configuration and rejects invalid keys")
     func gatewayAccessPolicyNormalizesSharedAccessConfigurationAndRejectsInvalidKeys() {
         let leakedToken = "sk-operator-b"

@@ -905,6 +905,35 @@ message ToolingSettingsSummary {
   repeated string additional_arguments = 8;
 }
 
+enum APIOnboardingSurfaceStatus {
+  API_ONBOARDING_SURFACE_STATUS_UNSPECIFIED = 0;
+  API_ONBOARDING_SURFACE_STATUS_SHIPPED = 1;
+  API_ONBOARDING_SURFACE_STATUS_COMPATIBILITY_ONLY = 2;
+}
+
+message APIOnboardingSurfaceSummary {
+  string surface_id = 1;
+  string title = 2;
+  string summary = 3;
+  APIOnboardingSurfaceStatus status = 4;
+  repeated string endpoint_ids = 5;
+  string compatibility_note = 6;
+}
+
+message APIReferenceEndpointSummary {
+  string endpoint_id = 1;
+  string surface_id = 2;
+  string method = 3;
+  string path = 4;
+  string summary = 5;
+  bool streaming = 6;
+}
+
+message APIOnboardingSummary {
+  repeated APIOnboardingSurfaceSummary surfaces = 1;
+  repeated APIReferenceEndpointSummary endpoints = 2;
+}
+
 enum GatewayAccessMode {
   GATEWAY_ACCESS_MODE_UNSPECIFIED = 0;
   GATEWAY_ACCESS_MODE_NONE = 1;
@@ -1020,6 +1049,7 @@ message ServerSnapshot {
   GatewayConfigSummary gateway_config = 14;
   ServingDefaultsSummary serving_defaults = 15;
   ToolingSettingsSummary tooling_settings = 16;
+  APIOnboardingSummary api_onboarding = 17;
 }
 
 message WorkerSummary {

@@ -163,6 +163,7 @@ public actor ControlPlaneService {
     private let persistentAuthSessionStore: PersistentAuthSessionStore?
     private let gatewaySupportsSpeculativeDefaults: Bool
     private let toolingSettingsSnapshotSource: ToolingSettingsSnapshotSource
+    private let apiOnboardingSnapshotSource: APIOnboardingSnapshotSource
 
     public init(
         serverVersion: String = "0.1.0",
@@ -247,6 +248,7 @@ public actor ControlPlaneService {
             environment: environment,
             launchArguments: launchArguments
         )
+        self.apiOnboardingSnapshotSource = APIOnboardingSnapshotSource()
     }
 
     public func handshake(
@@ -1359,6 +1361,7 @@ public actor ControlPlaneService {
             gatewayConfigStorePath: await gatewayConfigStore.storePath(),
             gatewayServingDefaultsStorePath: await gatewayServingDefaultsStore.storePath()
         )
+        let apiOnboardingSummary = apiOnboardingSnapshotSource.summary()
         return snapshotBuilder.build(
             models: models,
             metrics: metrics,
@@ -1371,7 +1374,8 @@ public actor ControlPlaneService {
             gatewayAccess: gatewayAccessSummary,
             gatewayConfig: gatewayConfigSummary,
             servingDefaults: servingDefaultsSummary,
-            toolingSettings: toolingSettingsSummary
+            toolingSettings: toolingSettingsSummary,
+            apiOnboarding: apiOnboardingSummary
         )
     }
 
