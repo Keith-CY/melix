@@ -2,6 +2,50 @@
 
 ## 2026-04-05
 
+- Closed `M11.4` and, with it, the parent `M11` milestone by adding repository-owned truthful
+  disk-streaming smoke evidence and operator runbook guidance without fabricating unsupported
+  SSD-backed runtime metrics:
+  - added `Sources/MelixCLICore/DiskStreamingSmokeCommand.swift`,
+    `DiskStreamingSmokeRunner.swift`, and the executable target
+    `Sources/MelixDiskStreamingSmoke/main.swift`, so the repository now owns a single-command
+    `melix-disk-streaming-smoke` harness that benchmarks the RAM-resident baseline, attempts
+    `prefer_disk` and `require_disk`, restores the original model setting, and emits a
+    machine-readable report with requested-versus-effective cache and disk-streaming evidence
+  - extended `tests/MelixCLITests/DiskStreamingSmokeRunnerTests.swift` so the Swift smoke harness
+    now covers injected-client rendering, baseline benchmark failures, missing-model rejection,
+    unsupported-path compatibility fallback, effective-mode preservation, and helper label
+    mappings in addition to the end-to-end smoke report path
+  - added `tests/integration/test_disk_streaming_smoke.py`, which starts the live Melix stack,
+    runs `melix-disk-streaming-smoke --json` against real worker sockets, asserts numeric
+    RAM-baseline metrics, and verifies typed `disk_streaming_unsupported` evidence for both
+    `prefer_disk` and `require_disk`
+  - added `docs/runbooks/disk-streaming-evidence.md` and updated the documentation indexes so
+    operators now have explicit setup, interpretation, and diagnostic guidance for the current
+    truthful disk-streaming surface, including the intentionally unavailable future SSD metrics
+  - marked `M11.4` completed in the roadmap execution index and closed the parent `M11`
+    milestone; the next active execution slice can now advance to `M12.1`
+- Verification summary for `M11.4`:
+  - `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/.build/ModuleCache.noindex" swift test --filter DiskStreamingSmokeRunnerTests`: `10 tests in 1 suite passed after 0.002 seconds`
+  - `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/.build/ModuleCache.noindex" swift test --enable-code-coverage --filter DiskStreamingSmokeRunnerTests`: `10 tests in 1 suite passed after 0.002 seconds`
+  - `PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" UV_CACHE_DIR="$(pwd)/.uv-cache" uv run --project services/mlx-worker-python --extra mlx pytest tests/integration/test_disk_streaming_smoke.py -q`: `1 passed in 49.67s`
+  - `make py-test`: `456 passed in 35.12s`
+  - `make swift-test`: pass
+  - `make integration-test`: `61 passed in 971.13s (0:16:11)`
+  - `git diff --check`: pass
+- Metrics report for `M11.4`:
+  - disk-streaming smoke metrics now emitted by the repository-owned smoke harness:
+    - `bench.smoke.ttft_ms`
+    - `bench.smoke.tokens_per_second`
+  - truth-preserving placeholder metrics now emitted explicitly until runtime support exists:
+    - `ssd_restore_latency_ms = unavailable_until_runtime_support`
+    - `disk_streaming_throughput_delta = unavailable_until_runtime_support`
+    - `ssd_footprint_bytes = unavailable_until_runtime_support`
+  - changed-line coverage for the touched handwritten executable scope:
+    - Swift CLI smoke scope: `99.56%` (`226/227`)
+  - `Package.swift`, runbooks, documentation indexes, and the live integration test are excluded
+    from executable changed-line coverage because they are package-manifest, documentation, or
+    black-box repository-evidence artifacts rather than handwritten runtime logic
+
 - Started `M11.4` by documenting the current disk-streaming evidence strategy and execution plan:
   - added a design spec that records the current runtime constraint that both worker paths still
     reject `prefer_disk` and `require_disk` with typed `disk_streaming_unsupported` failures, so

@@ -11,6 +11,7 @@ let package = Package(
         .library(name: "MelixWorkspace", targets: ["MelixWorkspace"]),
         .executable(name: "melix", targets: ["MelixCLI"]),
         .executable(name: "melix-session-lifecycle-smoke", targets: ["MelixSessionLifecycleSmoke"]),
+        .executable(name: "melix-disk-streaming-smoke", targets: ["MelixDiskStreamingSmoke"]),
     ],
     dependencies: [
         .package(path: "services/control-plane-swift"),
@@ -38,6 +39,11 @@ let package = Package(
             name: "MelixSessionLifecycleSmoke",
             dependencies: ["MelixCLICore"],
             path: "Sources/MelixSessionLifecycleSmoke"
+        ),
+        .executableTarget(
+            name: "MelixDiskStreamingSmoke",
+            dependencies: ["MelixCLICore"],
+            path: "Sources/MelixDiskStreamingSmoke"
         ),
         .testTarget(
             name: "MelixCLITests",

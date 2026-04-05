@@ -179,12 +179,15 @@ The roadmap extension in `M10-M17` includes milestone-level plans plus decompose
 
 ## M11: Disk Streaming, Memory Budgeting, And Cache Policy
 
-- Status: in progress. `M11.1` is completed with typed disk-streaming settings, worker-facing
+- Status: completed. `M11.1` is completed with typed disk-streaming settings, worker-facing
   runtime flags, explicit unsupported-runtime failures, and operator-visible session or residency
   state. `M11.2` is completed with repository-owned memory-budget load settings, typed headroom
   rejection evidence, and operator-visible budget summaries. `M11.3` is completed with typed cache
   policy summaries, effective streaming-compatibility resolution, worker-aligned cache settings,
-  and operator-visible requested-versus-effective cache state. `M11.4` remains open.
+  and operator-visible requested-versus-effective cache state. `M11.4` is completed with a
+  repository-owned `melix-disk-streaming-smoke` harness, live unsupported-path smoke coverage,
+  machine-readable RAM-baseline benchmark evidence, and an operator runbook that documents the
+  truthful current boundary where SSD-backed restore and throughput metrics remain unavailable.
 
 - `M11.1` `docs/plans/2026-03-31-m11-1-disk-streaming-mode-and-runtime-flags.md`
   Status: completed. Disk-streaming mode is now part of the repository-owned control-plane and
@@ -202,6 +205,10 @@ The roadmap extension in `M10-M17` includes milestone-level plans plus decompose
   operator settings, and effective cache-policy projection, with changed-line coverage and full
   repository verification recorded in the repository.
 - `M11.4` `docs/plans/2026-03-31-m11-4-large-model-streaming-benchmarks-and-runbooks.md`
+  Status: completed. Melix now ships a repository-owned `melix-disk-streaming-smoke`
+  executable, focused Swift and live integration coverage, machine-readable RAM-baseline and
+  unsupported-path disk-streaming evidence, and an operator runbook that explains the current
+  truthful runtime boundary while preserving future SSD metrics as explicit placeholders.
 
 ## M12: Model Registry, Family Coverage, And Model Tools
 

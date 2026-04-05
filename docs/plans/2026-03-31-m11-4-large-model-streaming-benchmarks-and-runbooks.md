@@ -2,12 +2,12 @@
 
 ## Status
 
-In progress on 2026-04-05. The repository now has typed disk-streaming settings, memory-budget
-admission, and cache-compatibility surfaces, but both worker paths still reject `prefer_disk` and
-`require_disk` with typed `disk_streaming_unsupported` failures. `M11.4` therefore starts by
-adding truthful RAM-baseline benchmark evidence, unsupported-path smoke coverage, and operator
-runbook guidance while leaving real SSD-backed restore and throughput metrics pending future
-runtime support.
+Completed on 2026-04-05. The repository now owns a truthful disk-streaming evidence path via the
+`melix-disk-streaming-smoke` executable, focused Swift smoke coverage, live integration coverage,
+and an operator runbook. Both worker paths still reject `prefer_disk` and `require_disk` with
+typed `disk_streaming_unsupported` failures, so the completed milestone intentionally records a
+numeric RAM baseline plus explicit unsupported-path diagnostics instead of fabricating SSD-backed
+restore or throughput metrics.
 
 ## Goal
 
@@ -21,6 +21,11 @@ Leave disk streaming with reproducible operator evidence for large-model startup
 
 ## Files
 
+- update `Package.swift`
+- add `Sources/MelixCLICore/DiskStreamingSmokeCommand.swift`
+- add `Sources/MelixCLICore/DiskStreamingSmokeRunner.swift`
+- add `Sources/MelixDiskStreamingSmoke/main.swift`
+- update `tests/MelixCLITests/DiskStreamingSmokeRunnerTests.swift`
 - update `tests/integration/`
 - update `docs/runbooks/`
 - update `docs/README.md`
@@ -36,10 +41,15 @@ Leave disk streaming with reproducible operator evidence for large-model startup
 ## Verification
 
 - `make integration-test`
-- streaming-benchmark smoke command for the touched scope
+- `swift test --filter DiskStreamingSmokeRunnerTests`
+- `swift test --enable-code-coverage --filter DiskStreamingSmokeRunnerTests`
+- disk-streaming smoke command for the touched scope
 
 ## Acceptance
 
 - The repository owns reproducible smoke evidence for the current disk-streaming surface.
 - Large-model streaming diagnostics are documented and test-backed without claiming unsupported SSD
   execution exists.
+- The smoke report records current RAM-baseline benchmark metrics, typed unsupported-path
+  diagnostics for `prefer_disk` and `require_disk`, and explicit placeholder fields for future
+  SSD-backed metrics that remain unavailable until runtime support exists.

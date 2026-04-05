@@ -14,6 +14,7 @@ A runbook should let a new contributor or agent diagnose and recover a known cla
 
 Current runbooks:
 
+- `disk-streaming-evidence.md`
 - `session-lifecycle.md`
 - `connection-lifecycle.md`
 - `security-and-stability-closure.md`

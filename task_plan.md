@@ -23,19 +23,19 @@ coverage, and operator runbook guidance for the current Melix disk-streaming sur
 ## Phases
 
 1. Streaming evidence design and command contract
-   - status: in_progress
+   - status: completed
    - evidence:
      - define the smoke report structure, baseline benchmark inputs, and unsupported-path evidence
        fields for the current disk-streaming surface
      - record the current runtime constraint that true SSD-backed execution is still unsupported
 2. Smoke runner, integration coverage, and runbook
-   - status: pending
+   - status: completed
    - evidence:
      - implement a repository-owned smoke command that benchmarks the RAM baseline, exercises
        `prefer_disk` and `require_disk`, restores settings, and emits a machine-readable report
      - add live integration coverage plus an operator runbook for setup and diagnosis
 3. Verification and milestone bookkeeping
-   - status: pending
+   - status: completed
    - evidence:
      - run the authoritative verification commands for the touched scope, including the new
        disk-streaming smoke integration path
@@ -60,4 +60,4 @@ coverage, and operator runbook guidance for the current Melix disk-streaming sur
 
 ## Outcome
 
-- m11_4_streaming_evidence_and_runbook_in_progress
+- m11_4_truthful_streaming_evidence_completed_m11_closed

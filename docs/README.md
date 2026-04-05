@@ -155,6 +155,7 @@ Recent decision records:
 
 Current runbooks:
 
+- `runbooks/disk-streaming-evidence.md`
 - `runbooks/session-lifecycle.md`
 - `runbooks/connection-lifecycle.md`
 - `runbooks/admin-surface-persistence.md`
