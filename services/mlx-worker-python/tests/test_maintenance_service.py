@@ -478,7 +478,16 @@ def test_convert_model_supports_convert_and_quantize_jobs(tmp_path: Path) -> Non
     assert convert_events[0].HasField("started")
     assert convert_events[-1].HasField("completed")
     convert_manifest = next(event.manifest for event in convert_events if event.HasField("manifest"))
-    assert json.loads(convert_manifest.manifest_json)["operation"] == "convert"
+    convert_payload = json.loads(convert_manifest.manifest_json)
+    assert convert_payload["operation"] == "convert"
+    assert convert_payload["schema_version"] == "melix.converted_model_bundle.v1"
+    assert convert_payload["artifact_kind"] == "converted_model_bundle"
+    assert convert_payload["target_format"] == "melix_model_bundle"
+    assert convert_payload["compatibility"]["runtime"] == "mlx_text"
+    assert convert_manifest.artifact.artifact_kind == "converted_model_bundle"
+    assert convert_manifest.artifact.runtime == "mlx_text"
+    assert convert_events[-1].completed.output_path.endswith("convert.artifact")
+    assert convert_events[-1].completed.artifact.artifact_kind == "converted_model_bundle"
 
     assert quantize_events[0].HasField("started")
     assert quantize_events[-1].HasField("completed")
@@ -507,6 +516,7 @@ def test_convert_model_supports_download_and_upload_jobs(tmp_path: Path) -> None
             maintenance_pb2.ConvertModelRequest(
                 source_model=str(tmp_path / "artifact"),
                 output_dir=str(tmp_path / "upload"),
+                generate_manifest=True,
                 ext={"operation": "upload", "target_repo": "melix/upload-target"},
             ),
             context=None,
@@ -515,6 +525,13 @@ def test_convert_model_supports_download_and_upload_jobs(tmp_path: Path) -> None
 
     assert download_events[-1].completed.output_path.endswith("download.artifact")
     assert upload_events[-1].completed.output_path.endswith("upload.receipt.json")
+    upload_manifest = next(event.manifest for event in upload_events if event.HasField("manifest"))
+    upload_payload = json.loads(upload_manifest.manifest_json)
+    assert upload_payload["schema_version"] == "melix.upload_receipt.v1"
+    assert upload_payload["artifact_kind"] == "upload_receipt"
+    assert upload_payload["target_repo"] == "melix/upload-target"
+    assert upload_payload["source_artifact_kind"] == "model"
+    assert upload_manifest.artifact.artifact_kind == "upload_receipt"
 
 
 def test_download_job_resumes_from_partial_state_and_records_resume_metadata(tmp_path: Path) -> None:
@@ -691,15 +708,87 @@ def test_upload_job_links_quantized_artifact_metadata(tmp_path: Path) -> None:
     payload = json.loads(manifest.manifest_json)
 
     assert upload_events[-1].completed.output_path.endswith("upload.receipt.json")
+    assert manifest.artifact.artifact_kind == "upload_receipt"
+    assert manifest.artifact.runtime == "mlx_text"
     assert payload["operation"] == "upload"
     assert payload["artifact_path"] == str(bundle_path)
-    assert payload["artifact_kind"] == "model"
+    assert payload["artifact_kind"] == "upload_receipt"
     assert payload["target_repo"] == "melix/models/melix-dev-text-q6"
+    assert payload["source_artifact_kind"] == "quantized_model_bundle"
     assert payload["linked_quantization"]["artifact_kind"] == "quantized_model_bundle"
     assert payload["linked_quantization"]["artifact_path"] == str(bundle_path)
     assert payload["linked_quantization"]["quant_profile_id"] == "q6"
     assert payload["linked_quantization"]["calibration_sample_count"] == 32
     assert payload["linked_quantization"]["smoke_test_passed"] is True
+
+
+def test_upload_job_links_converted_bundle_metadata(tmp_path: Path) -> None:
+    service = build_service(tmp_path)
+
+    convert_events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "convert"),
+                generate_manifest=True,
+                run_smoke_test=True,
+            ),
+            context=None,
+        )
+    )
+    bundle_path = Path(convert_events[-1].completed.output_path)
+
+    upload_events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "upload-convert"),
+                generate_manifest=True,
+                ext={
+                    "operation": "upload",
+                    "artifact_kind": "model",
+                    "artifact_path": str(bundle_path),
+                    "target_repo": "melix/models/melix-dev-text-converted",
+                },
+            ),
+            context=None,
+        )
+    )
+    manifest = next(event.manifest for event in upload_events if event.HasField("manifest"))
+    payload = json.loads(manifest.manifest_json)
+
+    assert upload_events[-1].completed.output_path.endswith("upload.receipt.json")
+    assert payload["source_artifact_kind"] == "converted_model_bundle"
+    assert payload["target_format"] == "melix_model_bundle"
+    assert payload["conversion_backend"] == "melix_structural_packager"
+
+
+def test_upload_job_fails_for_invalid_artifact_manifest(tmp_path: Path) -> None:
+    service = build_service(tmp_path)
+    bundle_path = tmp_path / "broken-artifact"
+    bundle_path.mkdir(parents=True)
+    (bundle_path / "manifest.json").write_text("{not-json", encoding="utf-8")
+
+    events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "upload-broken"),
+                generate_manifest=True,
+                ext={
+                    "operation": "upload",
+                    "artifact_kind": "model",
+                    "artifact_path": str(bundle_path),
+                    "target_repo": "melix/models/broken",
+                },
+            ),
+            context=None,
+        )
+    )
+
+    assert events[-1].HasField("failed")
+    assert events[-1].failed.error.code == "invalid_artifact"
+    assert "not valid JSON" in events[-1].failed.error.message
 
 
 def test_quantize_job_fails_when_active_requests_hold_the_same_model(tmp_path: Path) -> None:

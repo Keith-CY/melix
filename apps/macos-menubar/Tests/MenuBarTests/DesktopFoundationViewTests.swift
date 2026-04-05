@@ -909,6 +909,7 @@ struct DesktopFoundationViewTests {
         await tab.refreshModelOpsProductState()
         await tab.runDoctor()
         await tab.runBench()
+        await tab.convertPrimaryModel()
         await tab.quantizePrimaryModel()
         await tab.trainPrimaryModel()
         await client.configureModelOperation(
@@ -949,6 +950,7 @@ struct DesktopFoundationViewTests {
         #expect(actions.contains("operation:registry_snapshot:melix-dev-text"))
         #expect(actions.contains("doctor"))
         #expect(actions.contains("bench"))
+        #expect(actions.contains("operation:convert:melix-dev-text"))
         #expect(actions.contains("operation:quantize:melix-dev-text"))
         #expect(actions.contains("operation:train_lora:melix-dev-text"))
         #expect(actions.contains("operation:activate_adapter:melix-dev-text"))
@@ -1433,6 +1435,158 @@ struct DesktopFoundationViewTests {
         #expect(requests.count == 2)
         #expect(requests[0].operation == "install_audio_runtime")
         #expect(requests[1].operation == "download")
+    }
+
+    @Test("tools tab renders typed convert operation metadata")
+    @MainActor
+    func toolsTabRendersTypedConvertOperationMetadata() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureModelOperation(
+            makeNamedModelOperationResult(
+                operation: "convert",
+                outputPath: "/tmp/melix-convert/job-1/convert.artifact",
+                manifestJSON: #"""
+                {
+                  "operation": "convert",
+                  "target_format": "melix_model_bundle",
+                  "compatibility": {
+                    "runtime": "mlx_text",
+                    "serving_compatible": true,
+                    "smoke_test_requested": true,
+                    "smoke_test_passed": true
+                  }
+                }
+                """#,
+                artifactKind: "converted_model_bundle",
+                manifestPath: "/tmp/melix-convert/job-1/convert.artifact/manifest.json",
+                artifactBytes: 512,
+                smokeTestPassed: true
+            ),
+            forNamedOperation: "convert"
+        )
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        await viewModel.convertPrimaryModel()
+
+        let view = hostView(DesktopToolsTabView(viewModel: viewModel))
+        let operation = try #require(viewModel.lastModelOperation)
+
+        #expect(view.subviews.isEmpty == false)
+        #expect(operation.operation == "convert")
+        #expect(operation.conversionTargetFormat == "melix_model_bundle")
+        #expect(operation.artifactRuntime == "mlx_text")
+        #expect(operation.servingCompatible == true)
+    }
+
+    @Test("tools tab evaluates typed upload summary branches")
+    @MainActor
+    func toolsTabEvaluatesTypedUploadSummaryBranches() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureModelOperation(
+            makeNamedModelOperationResult(
+                operation: "upload",
+                outputPath: "/tmp/melix-upload/job-1/upload.receipt.json",
+                manifestJSON: #"""
+                {
+                  "operation": "upload",
+                  "target_repo": "melix/models/melix-dev-text-q6",
+                  "source_artifact_kind": "quantized_model_bundle",
+                  "linked_quantization": {
+                    "quant_profile_id": "q6"
+                  }
+                }
+                """#,
+                artifactKind: "upload_receipt",
+                manifestPath: "/tmp/melix-upload/job-1/upload.receipt.json",
+                artifactBytes: 192,
+                smokeTestPassed: false
+            ),
+            forNamedOperation: "upload"
+        )
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        await viewModel.uploadPrimaryModel()
+
+        _ = DesktopToolsTabView(viewModel: viewModel).body
+        let operation = try #require(viewModel.lastModelOperation)
+
+        #expect(operation.targetRepo == "melix/models/melix-dev-text-q6")
+        #expect(operation.sourceArtifactKind == "quantized_model_bundle")
+        #expect(operation.linkedQuantizationProfileID == "q6")
+    }
+
+    @Test("downloads section renders recent transfer metadata for packaged artifacts")
+    @MainActor
+    func downloadsSectionRendersRecentTransferMetadataForPackagedArtifacts() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureModelOperation(
+            makeNamedModelOperationResult(
+                operation: "upload",
+                outputPath: "/tmp/melix-upload/job-1/upload.receipt.json",
+                manifestJSON: #"""
+                {
+                  "operation": "upload",
+                  "target_repo": "melix/models/melix-dev-text-converted",
+                  "source_artifact_kind": "converted_model_bundle"
+                }
+                """#,
+                artifactKind: "upload_receipt",
+                manifestPath: "/tmp/melix-upload/job-1/upload.receipt.json",
+                artifactBytes: 192,
+                smokeTestPassed: false
+            ),
+            forNamedOperation: "upload"
+        )
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        viewModel.selectSurface(.tools)
+        viewModel.selectToolSection(.downloads)
+        await viewModel.uploadPrimaryModel()
+
+        let view = hostView(DesktopWorkspaceShellView(viewModel: viewModel))
+        let operation = try #require(viewModel.lastModelOperation)
+
+        #expect(view.subviews.isEmpty == false)
+        #expect(operation.operation == "upload")
+        #expect(operation.targetRepo == "melix/models/melix-dev-text-converted")
+        #expect(operation.sourceArtifactKind == "converted_model_bundle")
+    }
+
+    @Test("downloads section evaluates typed transfer summary branches")
+    @MainActor
+    func downloadsSectionEvaluatesTypedTransferSummaryBranches() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureModelOperation(
+            makeNamedModelOperationResult(
+                operation: "upload",
+                outputPath: "/tmp/melix-upload/job-2/upload.receipt.json",
+                manifestJSON: #"""
+                {
+                  "operation": "upload",
+                  "target_repo": "melix/models/melix-dev-text-converted",
+                  "source_artifact_kind": "converted_model_bundle",
+                  "target_format": "melix_model_bundle"
+                }
+                """#,
+                artifactKind: "upload_receipt",
+                manifestPath: "/tmp/melix-upload/job-2/upload.receipt.json",
+                artifactBytes: 192,
+                smokeTestPassed: false
+            ),
+            forNamedOperation: "upload"
+        )
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        viewModel.selectSurface(.tools)
+        viewModel.selectToolSection(.downloads)
+        await viewModel.uploadPrimaryModel()
+
+        _ = DesktopDownloadsToolSectionView(viewModel: viewModel).body
+        let operation = try #require(viewModel.lastModelOperation)
+
+        #expect(operation.targetRepo == "melix/models/melix-dev-text-converted")
+        #expect(operation.sourceArtifactKind == "converted_model_bundle")
+        #expect(operation.conversionTargetFormat == "melix_model_bundle")
     }
 
     @Test("dashboard settings logs bench and api tabs render from foundation state")
@@ -2071,7 +2225,11 @@ private func makeAudioSetupSnapshot(
 private func makeNamedModelOperationResult(
     operation: String,
     outputPath: String,
-    manifestJSON: String
+    manifestJSON: String,
+    artifactKind: String = "",
+    manifestPath: String = "",
+    artifactBytes: UInt64 = 0,
+    smokeTestPassed: Bool = false
 ) -> Melix_Controlplane_V1_ModelOperationResult {
     var result = Melix_Controlplane_V1_ModelOperationResult()
     result.ok = true
@@ -2081,6 +2239,19 @@ private func makeNamedModelOperationResult(
     result.pct = 1
     result.outputPath = outputPath
     result.manifestJson = manifestJSON
+    if !artifactKind.isEmpty {
+        result.artifact = Melix_Controlplane_V1_ModelOperationArtifact()
+        result.artifact.schemaVersion = "melix.artifact.v1"
+        result.artifact.artifactKind = artifactKind
+        result.artifact.bundlePath = outputPath
+        result.artifact.manifestPath = manifestPath
+        result.artifact.artifactBytes = artifactBytes
+        result.artifact.manifestBytes = UInt64(manifestJSON.utf8.count)
+        result.artifact.servingCompatible = true
+        result.artifact.smokeTestRequested = true
+        result.artifact.smokeTestPassed = smokeTestPassed
+        result.artifact.runtime = "mlx_text"
+    }
     return result
 }
 

@@ -895,7 +895,7 @@ private struct DesktopToolsWorkspaceView: View {
     }
 }
 
-private struct DesktopDownloadsToolSectionView: View {
+struct DesktopDownloadsToolSectionView: View {
     let viewModel: RuntimeViewModel
 
     var body: some View {
@@ -935,6 +935,11 @@ private struct DesktopDownloadsToolSectionView: View {
             }
 
             HStack {
+                Button("Convert Model") {
+                    Task { await viewModel.convertPrimaryModel() }
+                }
+                .buttonStyle(.bordered)
+
                 Button("Download Model") {
                     Task { await viewModel.downloadPrimaryModel() }
                 }
@@ -951,6 +956,18 @@ private struct DesktopDownloadsToolSectionView: View {
                     VStack(alignment: .leading, spacing: 6) {
                         Text("\(operation.operation) • \(operation.modelID)")
                             .font(.headline)
+                        if !operation.targetRepo.isEmpty {
+                            Text("target repo \(operation.targetRepo)")
+                                .foregroundStyle(.secondary)
+                        }
+                        if !operation.sourceArtifactKind.isEmpty {
+                            Text("source artifact \(operation.sourceArtifactKind)")
+                                .foregroundStyle(.secondary)
+                        }
+                        if !operation.conversionTargetFormat.isEmpty {
+                            Text("target format \(operation.conversionTargetFormat)")
+                                .foregroundStyle(.secondary)
+                        }
                         Text(operation.outputPath)
                             .font(.caption)
                             .foregroundStyle(.secondary)

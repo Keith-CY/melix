@@ -3860,6 +3860,7 @@ struct RuntimeViewModelTests {
         await viewModel.start()
         await viewModel.updatePrimaryModelForLatency()
         await viewModel.inspectPrimaryModel()
+        await viewModel.convertPrimaryModel()
         await viewModel.quantizePrimaryModel()
         await viewModel.trainPrimaryModel()
         await viewModel.refreshModelOpsProductState()
@@ -4207,6 +4208,74 @@ struct RuntimeViewModelTests {
         #expect(viewModel.lastModelOperation?.calibrationSampleCount == 32)
     }
 
+    @Test("convert action stores typed packaging summary")
+    @MainActor
+    func convertActionStoresTypedPackagingSummary() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(client: client)
+        await client.configureModelOperation(
+            makeNamedModelOperationResult(
+                operation: "convert",
+                outputPath: "/tmp/melix-convert/job-1/convert.artifact",
+                manifestJSON: #"""
+                {
+                  "operation": "convert",
+                  "target_format": "melix_model_bundle",
+                  "compatibility": {
+                    "runtime": "mlx_text",
+                    "serving_compatible": true,
+                    "smoke_test_requested": true,
+                    "smoke_test_passed": true
+                  }
+                }
+                """#,
+                artifactKind: "converted_model_bundle",
+                manifestPath: "/tmp/melix-convert/job-1/convert.artifact/manifest.json",
+                artifactBytes: 384,
+                smokeTestPassed: true
+            ),
+            forNamedOperation: "convert"
+        )
+
+        await viewModel.start()
+        await viewModel.convertPrimaryModel()
+
+        #expect(viewModel.lastModelOperation?.operation == "convert")
+        #expect(viewModel.lastModelOperation?.artifactKind == "converted_model_bundle")
+        #expect(viewModel.lastModelOperation?.conversionTargetFormat == "melix_model_bundle")
+        #expect(viewModel.lastModelOperation?.artifactRuntime == "mlx_text")
+        #expect(viewModel.lastModelOperation?.servingCompatible == true)
+        #expect(viewModel.lastModelOperation?.smokeTestRequested == true)
+        #expect(viewModel.lastModelOperation?.smokeTestPassed == true)
+    }
+
+    @Test("convert action tolerates invalid manifest json and keeps artifact fallback state")
+    @MainActor
+    func convertActionToleratesInvalidManifestJSON() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(client: client)
+        await client.configureModelOperation(
+            makeNamedModelOperationResult(
+                operation: "convert",
+                outputPath: "/tmp/melix-convert/job-1/convert.artifact",
+                manifestJSON: "{not-json",
+                artifactKind: "converted_model_bundle",
+                manifestPath: "/tmp/melix-convert/job-1/convert.artifact/manifest.json",
+                artifactBytes: 384,
+                smokeTestPassed: true
+            ),
+            forNamedOperation: "convert"
+        )
+
+        await viewModel.start()
+        await viewModel.convertPrimaryModel()
+
+        #expect(viewModel.lastModelOperation?.operation == "convert")
+        #expect(viewModel.lastModelOperation?.artifactKind == "converted_model_bundle")
+        #expect(viewModel.lastModelOperation?.conversionTargetFormat == "")
+        #expect(viewModel.lastModelOperation?.artifactRuntime == "mlx_text")
+    }
+
     @Test("upload action links the latest quantized artifact when available")
     @MainActor
     func uploadActionLinksLatestQuantizedArtifact() async throws {
@@ -4243,6 +4312,48 @@ struct RuntimeViewModelTests {
         #expect(uploadRequest.ext["artifact_path"] == "/tmp/melix-quantize/model-ops-0001/quantize.artifact")
         #expect(uploadRequest.ext["quantization_manifest_path"] == "/tmp/melix-quantize/model-ops-0001/quantize.artifact/manifest.json")
         #expect(uploadRequest.ext["quant_profile_id"] == "q5")
+        #expect(uploadRequest.ext["target_repo"] == "melix/upload-target")
+    }
+
+    @Test("upload action links the latest converted artifact when available")
+    @MainActor
+    func uploadActionLinksLatestConvertedArtifact() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(client: client)
+        await client.configureModelOperation(
+            makeNamedModelOperationResult(
+                operation: "convert",
+                outputPath: "/tmp/melix-convert/job-1/convert.artifact",
+                manifestJSON: #"""
+                {
+                  "operation": "convert",
+                  "target_format": "melix_model_bundle",
+                  "compatibility": {
+                    "runtime": "mlx_text",
+                    "serving_compatible": true,
+                    "smoke_test_requested": true,
+                    "smoke_test_passed": true
+                  }
+                }
+                """#,
+                artifactKind: "converted_model_bundle",
+                manifestPath: "/tmp/melix-convert/job-1/convert.artifact/manifest.json",
+                artifactBytes: 512,
+                smokeTestPassed: true
+            ),
+            forNamedOperation: "convert"
+        )
+
+        await viewModel.start()
+        await viewModel.convertPrimaryModel()
+        await viewModel.uploadPrimaryModel()
+
+        let uploadRequest = try #require(await client.recordedModelOperationRequests.last)
+        #expect(uploadRequest.operation == "upload")
+        #expect(uploadRequest.ext["artifact_kind"] == "model")
+        #expect(uploadRequest.ext["artifact_path"] == "/tmp/melix-convert/job-1/convert.artifact")
+        #expect(uploadRequest.ext["artifact_manifest_path"] == "/tmp/melix-convert/job-1/convert.artifact/manifest.json")
+        #expect(uploadRequest.ext["quantization_manifest_path"] == nil)
         #expect(uploadRequest.ext["target_repo"] == "melix/upload-target")
     }
 

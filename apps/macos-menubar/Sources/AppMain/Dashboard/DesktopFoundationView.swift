@@ -644,6 +644,9 @@ struct DesktopToolsTabView: View {
                             Button("Bench") {
                                 Task { await runBench() }
                             }
+                            Button("Convert") {
+                                Task { await convertPrimaryModel() }
+                            }
                             Button("Quantize") {
                                 Task { await quantizePrimaryModel() }
                             }
@@ -689,6 +692,28 @@ struct DesktopToolsTabView: View {
                         }
                         if !operation.artifactKind.isEmpty {
                             Text("artifact \(operation.artifactKind) • \(operation.artifactBytes) bytes")
+                                .foregroundStyle(.secondary)
+                        }
+                        if !operation.targetRepo.isEmpty {
+                            Text("target repo \(operation.targetRepo)")
+                                .foregroundStyle(.secondary)
+                        }
+                        if !operation.sourceArtifactKind.isEmpty {
+                            Text("source artifact \(operation.sourceArtifactKind)")
+                                .foregroundStyle(.secondary)
+                        }
+                        if !operation.conversionTargetFormat.isEmpty {
+                            Text("target format \(operation.conversionTargetFormat)")
+                                .foregroundStyle(.secondary)
+                        }
+                        if !operation.artifactRuntime.isEmpty {
+                            Text(
+                                "runtime \(operation.artifactRuntime) • serving \(operation.servingCompatible ? "compatible" : "not verified")"
+                            )
+                            .foregroundStyle(.secondary)
+                        }
+                        if !operation.linkedQuantizationProfileID.isEmpty {
+                            Text("linked quant \(operation.linkedQuantizationProfileID)")
                                 .foregroundStyle(.secondary)
                         }
                         if operation.calibrationSampleCount > 0 {
@@ -833,6 +858,10 @@ struct DesktopToolsTabView: View {
 
     func quantizePrimaryModel() async {
         await viewModel.quantizePrimaryModel()
+    }
+
+    func convertPrimaryModel() async {
+        await viewModel.convertPrimaryModel()
     }
 
     func trainPrimaryModel() async {

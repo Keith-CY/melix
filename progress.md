@@ -2,6 +2,44 @@
 
 ## 2026-04-05
 
+- Closed the second executable `M12.4` slice by making conversion and packaging repository-owned
+  model-tool workflows with stable artifacts and operator-visible summary state:
+  - added `conversion_pipeline.py` so `convert` emits a dedicated
+    `melix.converted_model_bundle.v1` artifact bundle with stable `config.json`,
+    `tokenizer.json`, `weights.safetensors`, manifest paths, artifact sizes, target format,
+    runtime compatibility, and structural smoke metadata
+  - added `upload_receipt_pipeline.py` so `upload` emits a dedicated
+    `melix.upload_receipt.v1` receipt with stable source-artifact provenance, target repo,
+    runtime metadata, linked quantization fields, and converted-bundle packaging lineage instead of
+    a generic placeholder response
+  - updated `maintenance_core.py` so `convert`, `quantize`, and `upload` now surface typed
+    worker-authored artifact records through model-ops events, while invalid upload artifacts fail
+    with typed `invalid_artifact` errors instead of leaking placeholder state
+  - projected conversion and packaging metadata through the Window UI model-tools state so the
+    operator shell exposes convert entrypoints plus summary fields for target repo, source artifact
+    kind, target format, runtime compatibility, smoke status, and linked quantization identity
+  - marked `M12.4` completed in the roadmap execution index now that inspect, health, and
+    conversion or packaging workflows are all repository-owned and test-backed
+- Verification summary for the second executable `M12.4` slice:
+  - `PYTHONPATH=.:services/mlx-worker-python uv run --project services/mlx-worker-python --extra mlx pytest services/mlx-worker-python/tests/test_maintenance_service.py -q`: `67 passed in 51.31s`
+  - `PYTHONPATH=.:services/mlx-worker-python uv run --project services/mlx-worker-python --extra mlx coverage run --data-file=/tmp/m12_4_convert_python.coverage -m pytest services/mlx-worker-python/tests/test_maintenance_service.py -q && PYTHONPATH=.:services/mlx-worker-python uv run --project services/mlx-worker-python --extra mlx coverage json --data-file=/tmp/m12_4_convert_python.coverage -o /tmp/m12_4_convert_python_coverage.json && python3 scripts/python_changed_line_coverage.py --coverage-json /tmp/m12_4_convert_python_coverage.json services/mlx-worker-python/worker/model_ops/conversion_pipeline.py services/mlx-worker-python/worker/model_ops/upload_receipt_pipeline.py services/mlx-worker-python/worker/engine/maintenance_core.py services/mlx-worker-python/tests/test_maintenance_service.py`: `67 passed in 46.42s`
+  - `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/.build/ModuleCache.noindex" swift test --package-path apps/macos-menubar --filter 'DesktopFoundationViewTests'`: `60 tests in 1 suite passed after 4.384 seconds`
+  - `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/.build/ModuleCache.noindex" swift test --enable-code-coverage --package-path apps/macos-menubar --filter 'RuntimeViewModelTests|DesktopFoundationViewTests'`: `193 tests in 2 suites passed after 4.543 seconds`
+  - `python3 scripts/swift_changed_line_coverage.py --binary apps/macos-menubar/.build/arm64-apple-macosx/debug/MelixMacOSMenubarPackageTests.xctest/Contents/MacOS/MelixMacOSMenubarPackageTests --profdata apps/macos-menubar/.build/arm64-apple-macosx/debug/codecov/default.profdata apps/macos-menubar/Sources/AppMain/Dashboard/DesktopFoundationView.swift apps/macos-menubar/Sources/AppMain/Dashboard/DesktopWorkspaceShellView.swift apps/macos-menubar/Sources/AppMain/Models/RuntimeViewModel.swift apps/macos-menubar/Tests/MenuBarTests/DesktopFoundationViewTests.swift apps/macos-menubar/Tests/MenuBarTests/RuntimeViewModelTests.swift`: `98.88%` (`353/357`)
+- Metrics report for the second executable `M12.4` slice:
+  - conversion and packaging metrics exercised by the touched scope:
+    - `melix.converted_model_bundle.v1` bundle manifests with stable `artifact_kind`,
+      `target_format`, `target_runtime`, `conversion_backend`, and smoke metadata
+    - `melix.upload_receipt.v1` receipts with stable `target_repo`, `source_artifact_kind`,
+      `source_manifest_path`, `runtime`, converted-bundle lineage, and linked quantization data
+    - Window UI summary state for `artifactRuntime`, `servingCompatible`, `smokeTestRequested`,
+      `targetRepo`, `sourceArtifactKind`, `conversionTargetFormat`, and
+      `linkedQuantizationProfileID`
+  - changed-line coverage for the touched handwritten executable scope:
+    - Python worker conversion or packaging scope: `95.49%` (`254/266`)
+    - Swift menu-bar conversion or packaging scope: `98.88%` (`353/357`)
+    - aggregate touched-scope coverage: `97.43%` (`607/623`)
+
 - Closed the first executable `M12.4` slice by making model inspection and doctor health
   repository-owned, typed operator contracts across the worker, control plane, and Window UI:
   - extended the worker and control-plane protobuf contracts so inspect output now carries stable

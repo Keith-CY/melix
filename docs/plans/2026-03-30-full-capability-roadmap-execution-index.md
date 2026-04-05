@@ -228,6 +228,10 @@ The roadmap extension in `M10-M17` includes milestone-level plans plus decompose
   registry snapshots, control-plane catalog sync, the repository-owned family support matrix, and
   focused live-path validation.
 - `M12.4` `docs/plans/2026-03-31-m12-4-model-inspect-health-and-conversion-tools.md`
+  Status: completed. Typed model inspection, structured doctor health, and model-tool conversion
+  packaging are now repository-owned workflows with stable artifact schemas, upload receipts,
+  runtime compatibility metadata, and Window UI summary state backed by focused changed-line
+  coverage evidence.
 
 ## M13: Gateway Configuration, Defaults, And API Onboarding
 

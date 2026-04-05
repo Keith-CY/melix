@@ -42,17 +42,21 @@ health checking are stable operator workflows tied to model identity.
      - preserve typed inspect and health data through control-plane replies and XPC client helpers
      - project structured inspect and health state into the Window UI alongside the markdown report
 3. Conversion and packaging workflow completion
-   - status: in_progress
+   - status: completed
    - evidence:
      - expose explicit convert and packaging entrypoints through model-ops workflows
      - keep model-operation results tied to stable artifact and manifest metadata
+     - emit dedicated conversion bundles and upload receipts with stable schemas, artifact kinds,
+       runtime compatibility metadata, and operator-visible summary state
 4. Verification and milestone bookkeeping
-   - status: pending
+   - status: completed
    - evidence:
      - add focused Python, Swift, and menu-bar regression coverage for typed inspect and health
        state plus model-operation result summaries
      - record changed-line coverage at or above `95%`, update `progress.md`, and close `M12.4`
        only after inspect, health, and conversion tooling are test-backed
+     - focused changed-line coverage reached `95.49%` (`254/266`) for the Python worker scope and
+       `98.88%` (`353/357`) for the Window UI scope
 
 ## Acceptance
 
@@ -72,4 +76,4 @@ health checking are stable operator workflows tied to model identity.
 
 ## Outcome
 
-- m12_4_conversion_packaging_in_progress
+- m12_4_completed

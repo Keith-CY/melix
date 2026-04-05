@@ -252,8 +252,15 @@ public struct RuntimeModelOperationState: Equatable, Sendable {
     public let artifactKind: String
     public let manifestPath: String
     public let artifactBytes: UInt64
+    public let artifactRuntime: String
+    public let servingCompatible: Bool
+    public let smokeTestRequested: Bool
     public let smokeTestPassed: Bool
     public let calibrationSampleCount: Int
+    public let targetRepo: String
+    public let sourceArtifactKind: String
+    public let conversionTargetFormat: String
+    public let linkedQuantizationProfileID: String
 }
 
 public enum RuntimeAudioSetupActionKind: String, Equatable, Sendable {
@@ -2650,6 +2657,8 @@ public final class RuntimeViewModel {
                 name: "menu.model_operation_ms",
                 valueMs: Date().timeIntervalSince(startedAt) * 1_000
             )
+            let manifestPayload = Self.jsonPayload(from: result.manifestJson)
+            let compatibilityPayload = Self.dictionaryValue("compatibility", from: manifestPayload)
             lastModelOperation = RuntimeModelOperationState(
                 modelID: modelID,
                 operation: result.operation,
@@ -2662,8 +2671,26 @@ public final class RuntimeViewModel {
                 artifactKind: result.hasArtifact ? result.artifact.artifactKind : "",
                 manifestPath: result.hasArtifact ? result.artifact.manifestPath : "",
                 artifactBytes: result.hasArtifact ? result.artifact.artifactBytes : 0,
-                smokeTestPassed: result.hasArtifact && result.artifact.smokeTestPassed,
-                calibrationSampleCount: calibrationSampleCount(from: result.manifestJson)
+                artifactRuntime: result.hasArtifact
+                    ? result.artifact.runtime
+                    : Self.stringValue("runtime", from: compatibilityPayload),
+                servingCompatible: result.hasArtifact
+                    ? result.artifact.servingCompatible
+                    : Self.boolValue("serving_compatible", from: compatibilityPayload),
+                smokeTestRequested: result.hasArtifact
+                    ? result.artifact.smokeTestRequested
+                    : Self.boolValue("smoke_test_requested", from: compatibilityPayload),
+                smokeTestPassed: result.hasArtifact
+                    ? result.artifact.smokeTestPassed
+                    : Self.boolValue("smoke_test_passed", from: compatibilityPayload),
+                calibrationSampleCount: calibrationSampleCount(from: manifestPayload),
+                targetRepo: Self.stringValue("target_repo", from: manifestPayload),
+                sourceArtifactKind: Self.stringValue("source_artifact_kind", from: manifestPayload),
+                conversionTargetFormat: Self.stringValue("target_format", from: manifestPayload),
+                linkedQuantizationProfileID: Self.stringValue(
+                    "quant_profile_id",
+                    from: Self.dictionaryValue("linked_quantization", from: manifestPayload)
+                )
             )
             if refreshProductToolingState {
                 await refreshModelOpsProductState(modelID: modelID, notify: false)
@@ -2685,6 +2712,18 @@ public final class RuntimeViewModel {
             quantProfileID: selectedQuantizationProfileID,
             weightQuant: selectedQuantizationProfileID,
             kvQuant: "q8"
+        )
+    }
+
+    public func convertPrimaryModel() async {
+        guard let modelID = primaryModel?.modelID else {
+            return
+        }
+        await runModelOperation(
+            modelID: modelID,
+            operation: "convert",
+            outputDir: "/tmp/melix-convert",
+            ext: ["target_format": "melix_model_bundle"]
         )
     }
 
@@ -2727,7 +2766,7 @@ public final class RuntimeViewModel {
         guard let modelID = primaryModel?.modelID else {
             return
         }
-        let linkedQuantizationExt = latestQuantizedArtifactUploadExt()
+        let linkedQuantizationExt = latestPackagedArtifactUploadExt()
         await runModelOperation(
             modelID: modelID,
             operation: "upload",
@@ -2886,23 +2925,14 @@ public final class RuntimeViewModel {
         }
     }
 
-    private func calibrationSampleCount(from manifestJSON: String) -> Int {
-        guard
-            let data = manifestJSON.data(using: .utf8),
-            let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-            let calibration = payload["calibration"] as? [String: Any],
-            let sampleCount = calibration["sample_count"] as? Int
-        else {
-            return 0
-        }
-        return sampleCount
+    private func calibrationSampleCount(from payload: [String: Any]) -> Int {
+        Self.intValue("sample_count", from: Self.dictionaryValue("calibration", from: payload))
     }
 
-    private func latestQuantizedArtifactUploadExt() -> [String: String] {
+    private func latestPackagedArtifactUploadExt() -> [String: String] {
         guard
             let lastModelOperation,
-            lastModelOperation.operation == "quantize",
-            lastModelOperation.artifactKind == "quantized_model_bundle"
+            ["quantized_model_bundle", "converted_model_bundle"].contains(lastModelOperation.artifactKind)
         else {
             return [:]
         }
@@ -2911,7 +2941,11 @@ public final class RuntimeViewModel {
             "artifact_path": lastModelOperation.outputPath,
         ]
         if !lastModelOperation.manifestPath.isEmpty {
-            ext["quantization_manifest_path"] = lastModelOperation.manifestPath
+            if lastModelOperation.artifactKind == "quantized_model_bundle" {
+                ext["quantization_manifest_path"] = lastModelOperation.manifestPath
+            } else {
+                ext["artifact_manifest_path"] = lastModelOperation.manifestPath
+            }
         }
         if !lastModelOperation.quantProfileID.isEmpty {
             ext["quant_profile_id"] = lastModelOperation.quantProfileID
@@ -5633,6 +5667,20 @@ public final class RuntimeViewModel {
 
     private static func stringValue(_ key: String, from payload: [String: Any]) -> String {
         payload[key] as? String ?? ""
+    }
+
+    private static func jsonPayload(from manifestJSON: String) -> [String: Any] {
+        guard
+            let data = manifestJSON.data(using: .utf8),
+            let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else {
+            return [:]
+        }
+        return payload
+    }
+
+    private static func dictionaryValue(_ key: String, from payload: [String: Any]) -> [String: Any] {
+        payload[key] as? [String: Any] ?? [:]
     }
 
     private static func intValue(_ key: String, from payload: [String: Any]) -> Int {

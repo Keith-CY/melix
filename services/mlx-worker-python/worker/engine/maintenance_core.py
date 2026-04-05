@@ -13,6 +13,7 @@ from typing import Iterator
 from packages.protocol.python.worker.v1 import common_pb2, inference_pb2, maintenance_pb2
 
 from worker.model_ops.adapter_activation_pipeline import AdapterActivationPipeline
+from worker.model_ops.conversion_pipeline import ModelConversionPipeline
 from worker.model_ops.download_pipeline import DownloadPipeline
 from worker.model_ops.errors import ModelOperationError
 from worker.model_ops.hub_catalog import (
@@ -26,6 +27,7 @@ from worker.model_ops.lora_training_pipeline import LoRATrainingPipeline
 from worker.model_ops.operation_locks import ModelOpsConflictRegistry
 from worker.model_ops.quantization_pipeline import OQQuantizationPipeline
 from worker.model_ops.quantization_profiles import protected_scope_for_request
+from worker.model_ops.upload_receipt_pipeline import UploadReceiptPipeline
 from worker.productization.benchmark_queue import BenchmarkQueueRecord, BenchmarkQueueStore
 from worker.productization.benchmark_suites import BenchmarkSuiteCatalog, ResolvedBenchmarkSuite
 from worker.registry import WorkerRegistry
@@ -161,10 +163,12 @@ class MaintenanceCore:
         self._jobs_root = Path(jobs_root)
         self._job_registry = job_registry or ModelOpsJobRegistry()
         self._hub_catalog = hub_catalog or HubCatalog()
+        self._conversion_pipeline = ModelConversionPipeline(registry)
         self._quantization_pipeline = OQQuantizationPipeline(registry)
         self._download_pipeline = download_pipeline or DownloadPipeline()
         self._lora_training_pipeline = lora_training_pipeline or LoRATrainingPipeline()
         self._adapter_activation_pipeline = adapter_activation_pipeline or AdapterActivationPipeline()
+        self._upload_receipt_pipeline = UploadReceiptPipeline()
         self._operation_locks = ModelOpsConflictRegistry()
         self._benchmark_store = None
         self._benchmark_queue_store = BenchmarkQueueStore()
@@ -184,26 +188,30 @@ class MaintenanceCore:
         return message
 
     @staticmethod
-    def _worker_quantized_artifact(
+    def _worker_artifact(
         *,
+        schema_version: str,
+        artifact_kind: str,
         bundle_path: Path,
         manifest_path: Path,
         artifact_bytes: int,
         manifest_bytes: int,
+        serving_compatible: bool,
         smoke_test_requested: bool,
         smoke_test_passed: bool,
+        runtime: str,
     ) -> maintenance_pb2.QuantizedArtifact:
         return maintenance_pb2.QuantizedArtifact(
-            schema_version="melix.quantized_bundle.v1",
-            artifact_kind="quantized_model_bundle",
+            schema_version=schema_version,
+            artifact_kind=artifact_kind,
             manifest_path=str(manifest_path),
             bundle_path=str(bundle_path),
             artifact_bytes=artifact_bytes,
             manifest_bytes=manifest_bytes,
-            serving_compatible=True,
+            serving_compatible=serving_compatible,
             smoke_test_requested=smoke_test_requested,
             smoke_test_passed=smoke_test_passed,
-            runtime="mlx_text",
+            runtime=runtime,
         )
 
     @staticmethod
@@ -324,13 +332,17 @@ class MaintenanceCore:
                 manifest_json = json.dumps(manifest_payload, sort_keys=True)
                 artifact_path = result.bundle_path
                 worker_profile = self._worker_quant_profile(result.profile)
-                worker_artifact = self._worker_quantized_artifact(
+                worker_artifact = self._worker_artifact(
+                    schema_version="melix.quantized_bundle.v1",
+                    artifact_kind="quantized_model_bundle",
                     bundle_path=result.bundle_path,
                     manifest_path=result.manifest_path,
                     artifact_bytes=result.artifact_bytes,
                     manifest_bytes=result.manifest_bytes,
+                    serving_compatible=True,
                     smoke_test_requested=request.run_smoke_test,
                     smoke_test_passed=result.smoke_test_passed,
+                    runtime="mlx_text",
                 )
                 if request.generate_manifest:
                     self._job_registry.attach_manifest(job.job_id, manifest_json)
@@ -346,6 +358,56 @@ class MaintenanceCore:
                     completed=maintenance_pb2.ConvertCompleted(
                         output_path=str(artifact_path),
                         quant_profile=worker_profile,
+                        artifact=worker_artifact,
+                    )
+                )
+                return
+
+            if operation == "convert":
+                stage_sequence = [
+                    ("resolve_source", 0.15),
+                    ("package_bundle", 0.5),
+                    ("write_manifest", 0.9),
+                ]
+                for stage, pct in stage_sequence:
+                    self._job_registry.progress(job.job_id, stage, pct)
+                    yield maintenance_pb2.ConvertModelEvent(
+                        progress=maintenance_pb2.ConvertProgress(stage=stage, pct=pct)
+                    )
+
+                result = self._conversion_pipeline.run(
+                    request,
+                    job_id=job.job_id,
+                    output_dir=output_dir,
+                )
+                manifest_payload = dict(result.manifest_payload)
+                manifest_payload["job_id"] = job.job_id
+                manifest_json = json.dumps(manifest_payload, sort_keys=True)
+                worker_artifact = self._worker_artifact(
+                    schema_version="melix.converted_model_bundle.v1",
+                    artifact_kind="converted_model_bundle",
+                    bundle_path=result.bundle_path,
+                    manifest_path=result.manifest_path,
+                    artifact_bytes=result.artifact_bytes,
+                    manifest_bytes=result.manifest_bytes,
+                    serving_compatible=True,
+                    smoke_test_requested=request.run_smoke_test,
+                    smoke_test_passed=result.smoke_test_passed,
+                    runtime=result.runtime,
+                )
+                if request.generate_manifest:
+                    self._job_registry.attach_manifest(job.job_id, manifest_json)
+                    yield maintenance_pb2.ConvertModelEvent(
+                        manifest=maintenance_pb2.ConvertManifest(
+                            manifest_json=manifest_json,
+                            artifact=worker_artifact,
+                        )
+                    )
+
+                self._job_registry.complete(job.job_id, str(result.bundle_path))
+                yield maintenance_pb2.ConvertModelEvent(
+                    completed=maintenance_pb2.ConvertCompleted(
+                        output_path=str(result.bundle_path),
                         artifact=worker_artifact,
                     )
                 )
@@ -396,6 +458,69 @@ class MaintenanceCore:
                 self._job_registry.complete(job.job_id, str(result.output_path))
                 yield maintenance_pb2.ConvertModelEvent(
                     completed=maintenance_pb2.ConvertCompleted(output_path=str(result.output_path))
+                )
+                return
+
+            if operation == "upload":
+                stage_sequence = [
+                    ("resolve_artifact", 0.25),
+                    ("record_receipt", 0.8),
+                ]
+                for stage, pct in stage_sequence:
+                    self._job_registry.progress(job.job_id, stage, pct)
+                    yield maintenance_pb2.ConvertModelEvent(
+                        progress=maintenance_pb2.ConvertProgress(stage=stage, pct=pct)
+                    )
+
+                try:
+                    result = self._upload_receipt_pipeline.run(
+                        request,
+                        job_id=job.job_id,
+                        output_dir=output_dir,
+                    )
+                except ModelOperationError as exc:
+                    self._job_registry.fail(job.job_id, exc.code, exc.message)
+                    yield maintenance_pb2.ConvertModelEvent(
+                        failed=maintenance_pb2.ConvertFailed(
+                            error=common_pb2.ErrorStatus(
+                                code=exc.code,
+                                message=exc.message,
+                                retriable=exc.retriable,
+                                details=exc.details,
+                            )
+                        )
+                    )
+                    return
+
+                manifest_payload = dict(result.manifest_payload)
+                manifest_payload["job_id"] = job.job_id
+                manifest_json = json.dumps(manifest_payload, sort_keys=True)
+                worker_artifact = self._worker_artifact(
+                    schema_version="melix.upload_receipt.v1",
+                    artifact_kind="upload_receipt",
+                    bundle_path=result.receipt_path,
+                    manifest_path=result.receipt_path,
+                    artifact_bytes=result.artifact_bytes,
+                    manifest_bytes=result.manifest_bytes,
+                    serving_compatible=False,
+                    smoke_test_requested=False,
+                    smoke_test_passed=False,
+                    runtime=result.runtime,
+                )
+                if request.generate_manifest:
+                    self._job_registry.attach_manifest(job.job_id, manifest_json)
+                    yield maintenance_pb2.ConvertModelEvent(
+                        manifest=maintenance_pb2.ConvertManifest(
+                            manifest_json=manifest_json,
+                            artifact=worker_artifact,
+                        )
+                    )
+                self._job_registry.complete(job.job_id, str(result.receipt_path))
+                yield maintenance_pb2.ConvertModelEvent(
+                    completed=maintenance_pb2.ConvertCompleted(
+                        output_path=str(result.receipt_path),
+                        artifact=worker_artifact,
+                    )
                 )
                 return
 
