@@ -686,10 +686,41 @@ public actor ControlPlaneService {
 
             var reply = Melix_Controlplane_V1_OpsReply()
             reply.reportMarkdown = workerResponse.reportMarkdown
+            reply.doctor.markdown = workerResponse.reportMarkdown
+            reply.doctor.healthStatus = Self.doctorHealthStatus(from: workerResponse.healthStatus)
+            reply.doctor.findings = workerResponse.findings.map(Self.doctorFinding(from:))
             return okResponse(for: request, ops: reply)
         } catch {
             return errorResponse(for: request, code: "unavailable", message: "Doctor worker request failed: \(error)")
         }
+    }
+
+    private static func doctorHealthStatus(
+        from status: Melix_Worker_V1_HealthStatus
+    ) -> Melix_Controlplane_V1_DoctorHealthStatus {
+        switch status {
+        case .healthy:
+            return .healthy
+        case .warning:
+            return .warning
+        case .degraded:
+            return .degraded
+        case .failed:
+            return .failed
+        case .unspecified, .UNRECOGNIZED:
+            return .unspecified
+        }
+    }
+
+    private static func doctorFinding(
+        from finding: Melix_Worker_V1_DoctorFinding
+    ) -> Melix_Controlplane_V1_DoctorFinding {
+        var reply = Melix_Controlplane_V1_DoctorFinding()
+        reply.code = finding.code
+        reply.severity = doctorHealthStatus(from: finding.severity)
+        reply.summary = finding.summary
+        reply.detail = finding.detail
+        return reply
     }
 
     private func handleSearchHubModels(
@@ -1843,6 +1874,13 @@ public actor ControlPlaneService {
             reply.info.maxContext = workerResponse.maxContext
             reply.info.supportedParsers = workerResponse.supportedParsers
             reply.info.supportedModalities = workerResponse.supportedModalities
+            reply.info.supportedTasks = workerResponse.supportedTasks
+            reply.info.backendID = workerResponse.backendID
+            reply.info.familyID = workerResponse.familyID
+            reply.info.modelPath = workerResponse.modelPath
+            reply.info.modelRevision = workerResponse.modelRevision
+            reply.info.defaultWorkflowRole = workerResponse.defaultWorkflowRole
+            reply.info.detectedIdentitySource = workerResponse.detectedIdentitySource
             return okResponse(for: request, model: reply)
         } catch {
             return errorResponse(for: request, code: "unavailable", message: "Model info worker request failed: \(error)")

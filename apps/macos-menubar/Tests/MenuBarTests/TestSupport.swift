@@ -83,7 +83,7 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
     private var modelInfoResponse = FakeControlPlaneXPCClient.defaultModelInfo()
     private var modelOperationResponse = FakeControlPlaneXPCClient.defaultModelOperation()
     private var modelOperationResponsesByName: [String: Melix_Controlplane_V1_ModelOperationResult] = [:]
-    private var doctorResponse = "# Melix Doctor\n\n- worker_state: idle\n"
+    private var doctorResponse = FakeControlPlaneXPCClient.defaultDoctorReport()
     private var benchResponse = ControlPlaneBenchResult(
         reportPath: "/tmp/melix-fake/bench-report.md",
         reportMarkdown: "# Melix Bench\n\n- bench.smoke.ttft_ms: 24.45 ms\n",
@@ -243,8 +243,21 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
         modelOperationResponsesByName[operationName] = operation
     }
 
-    func configureDoctorResponse(_ markdown: String) {
-        doctorResponse = markdown
+    static func defaultDoctorReport() -> Melix_Controlplane_V1_DoctorReport {
+        var report = Melix_Controlplane_V1_DoctorReport()
+        report.markdown = "# Melix Doctor\n\n- worker_state: idle\n"
+        report.healthStatus = .healthy
+        return report
+    }
+
+    func configureDoctorResponse(
+        _ markdown: String,
+        healthStatus: Melix_Controlplane_V1_DoctorHealthStatus = .healthy,
+        findings: [Melix_Controlplane_V1_DoctorFinding] = []
+    ) {
+        doctorResponse.markdown = markdown
+        doctorResponse.healthStatus = healthStatus
+        doctorResponse.findings = findings
     }
 
     func configureBenchResponse(_ result: ControlPlaneBenchResult) {
@@ -720,7 +733,7 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
         }
     }
 
-    func runDoctor() async throws -> String {
+    func runDoctor() async throws -> Melix_Controlplane_V1_DoctorReport {
         recordedActions.append("doctor")
         if let doctorError {
             throw doctorError

@@ -789,6 +789,13 @@ struct DesktopFoundationViewTests {
             maxContext: 8192,
             supportedParsers: ["text", "json"],
             supportedModalities: ["text", "image"],
+            supportedTasks: ["generate", "chat"],
+            backendID: "mlx_lm",
+            familyID: "llama-v1",
+            modelPath: "/tmp/melix-dev-text",
+            modelRevision: "dev",
+            defaultWorkflowRole: "chat",
+            detectedIdentitySource: "explicit_override",
             aliasText: "Melix Text Turbo",
             typeOverrideText: "mlx-text",
             ttlSeconds: 600,
@@ -845,9 +852,38 @@ struct DesktopFoundationViewTests {
         #expect(content.detailLines.contains("ttl seconds: 600"))
         #expect(content.detailLines.contains("parsers: text, json"))
         #expect(content.detailLines.contains("modalities: text, image"))
+        #expect(content.detailLines.contains("backend: mlx_lm"))
+        #expect(content.detailLines.contains("family: llama-v1"))
+        #expect(content.detailLines.contains("default workflow: chat"))
+        #expect(content.detailLines.contains("identity source: explicit_override"))
+        #expect(content.detailLines.contains("tasks: generate, chat"))
+        #expect(content.detailLines.contains("revision: dev"))
+        #expect(content.detailLines.contains("source path: /tmp/melix-dev-text"))
         #expect(content.detailLines.contains("generation config: /tmp/melix-dev-text/generation_config.json"))
         #expect(content.detailLines.contains("generation defaults: temp 0.12 • top-p 0.9 • max 320"))
         #expect(content.detailLines.contains("ocr sampling defaults: ocr-deterministic • temp 0.05 • top-p 0.82 • max 192"))
+    }
+
+    @Test("doctor report summary view renders health and finding detail")
+    @MainActor
+    func doctorReportSummaryViewRendersHealthAndFindingDetail() async throws {
+        let report = RuntimeDoctorReportState(
+            markdown: "# Melix Doctor\n\n- worker_state: warning\n",
+            healthStatusText: "Warning",
+            findings: [
+                RuntimeDoctorFindingState(
+                    code: "cache_unavailable",
+                    severityText: "Warning",
+                    summary: "Cache metrics unavailable",
+                    detail: "Resident cache bytes were reported as zero."
+                ),
+            ]
+        )
+
+        let view = hostView(DesktopDoctorReportSummaryView(report: report))
+
+        #expect(view.subviews.isEmpty == false)
+        #expect(report.findings.first?.id == "cache_unavailable")
     }
 
     @Test("tools tab buttons dispatch inspect diagnostics bench and model operations")

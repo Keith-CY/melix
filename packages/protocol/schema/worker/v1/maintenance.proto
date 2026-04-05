@@ -17,6 +17,21 @@ service MaintenanceService {
   rpc GetHubModelCard(GetHubModelCardRequest) returns (GetHubModelCardResponse);
 }
 
+enum HealthStatus {
+  HEALTH_STATUS_UNSPECIFIED = 0;
+  HEALTH_STATUS_HEALTHY = 1;
+  HEALTH_STATUS_WARNING = 2;
+  HEALTH_STATUS_DEGRADED = 3;
+  HEALTH_STATUS_FAILED = 4;
+}
+
+message DoctorFinding {
+  string code = 1;
+  HealthStatus severity = 2;
+  string summary = 3;
+  string detail = 4;
+}
+
 message ConvertModelRequest {
   string source_model = 1;
   string output_dir = 2;
@@ -97,6 +112,12 @@ message GetModelInfoResponse {
   repeated string supported_parsers = 5;
   repeated string supported_modalities = 6;
   repeated string supported_tasks = 7;
+  string backend_id = 8;
+  string family_id = 9;
+  string model_path = 10;
+  string model_revision = 11;
+  string default_workflow_role = 12;
+  string detected_identity_source = 13;
 }
 
 message RunDoctorRequest {
@@ -109,6 +130,8 @@ message RunDoctorResponse {
   bool ok = 1;
   ErrorStatus error = 2;
   string report_markdown = 3;
+  HealthStatus health_status = 4;
+  repeated DoctorFinding findings = 5;
 }
 
 message RunBenchRequest {

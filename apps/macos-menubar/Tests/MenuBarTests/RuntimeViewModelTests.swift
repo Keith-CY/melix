@@ -2878,6 +2878,47 @@ struct RuntimeViewModelTests {
         #expect(await metrics.snapshot()["menu.model_ops_refresh_ms"] != nil)
     }
 
+    @Test("doctor report maps typed health and findings into runtime state")
+    @MainActor
+    func doctorReportMapsTypedHealthAndFindingsIntoRuntimeState() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(client: client)
+        var degraded = Melix_Controlplane_V1_DoctorFinding()
+        degraded.code = "model_not_loaded"
+        degraded.severity = .degraded
+        degraded.summary = "Model missing from registry"
+        degraded.detail = "The requested handle was not found."
+
+        var failed = Melix_Controlplane_V1_DoctorFinding()
+        failed.code = "worker_failed"
+        failed.severity = .failed
+        failed.summary = "Worker failed"
+        failed.detail = "Worker state is failed."
+
+        var unknown = Melix_Controlplane_V1_DoctorFinding()
+        unknown.code = "cache_unavailable"
+        unknown.severity = .unspecified
+        unknown.summary = "Cache unavailable"
+        unknown.detail = "The cache report did not contain resident bytes."
+
+        await client.configureDoctorResponse(
+            "# Melix Doctor\n\n- worker_state: warning\n",
+            healthStatus: .warning,
+            findings: [degraded, failed, unknown]
+        )
+
+        await viewModel.start()
+        await viewModel.runDoctor()
+
+        let report = try #require(viewModel.lastDoctorReport)
+        #expect(report.healthStatusText == "Warning")
+        #expect(report.findings.count == 3)
+        #expect(report.findings[0].id == "model_not_loaded")
+        #expect(report.findings[0].severityText == "Degraded")
+        #expect(report.findings[1].severityText == "Failed")
+        #expect(report.findings[2].severityText == "Unknown")
+    }
+
     @Test("benchmark configuration dispatches explicit model suites history refresh and csv export")
     @MainActor
     func benchmarkConfigurationDispatchesExplicitModelSuitesHistoryRefreshAndCSVExport() async throws {

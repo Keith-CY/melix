@@ -1791,6 +1791,13 @@ struct ControlPlaneServiceTests {
             response.maxContext = 8192
             response.supportedParsers = ["text", "json"]
             response.supportedModalities = ["text"]
+            response.supportedTasks = ["generate", "chat"]
+            response.backendID = "mlx_lm"
+            response.familyID = "llama-v1"
+            response.modelPath = "/tmp/models/melix-dev-text"
+            response.modelRevision = "dev"
+            response.defaultWorkflowRole = "chat"
+            response.detectedIdentitySource = "explicit_override"
             return response
         }())
         let textClient = ScriptedChatWorkerClient(events: [])
@@ -1811,6 +1818,13 @@ struct ControlPlaneServiceTests {
         #expect(response.model.info.modelKind == "text")
         #expect(response.model.info.maxContext == 8192)
         #expect(response.model.info.supportedParsers == ["text", "json"])
+        #expect(response.model.info.supportedTasks == ["generate", "chat"])
+        #expect(response.model.info.backendID == "mlx_lm")
+        #expect(response.model.info.familyID == "llama-v1")
+        #expect(response.model.info.modelPath == "/tmp/models/melix-dev-text")
+        #expect(response.model.info.modelRevision == "dev")
+        #expect(response.model.info.defaultWorkflowRole == "chat")
+        #expect(response.model.info.detectedIdentitySource == "explicit_override")
     }
 
     @Test("execute handles model.run_operation through the model-operations worker")
@@ -2203,6 +2217,8 @@ struct ControlPlaneServiceTests {
             var response = Melix_Worker_V1_RunDoctorResponse()
             response.ok = true
             response.reportMarkdown = "# Melix Doctor\n\n- worker_state: idle\n"
+            response.healthStatus = .healthy
+            response.findings = []
             return response
         }())
         let service = ControlPlaneService(
@@ -2220,6 +2236,59 @@ struct ControlPlaneServiceTests {
         #expect(lastRequest.includeCacheDiagnostics)
         #expect(lastRequest.includeMemoryReport)
         #expect(response.ops.reportMarkdown.contains("Melix Doctor"))
+        #expect(response.ops.doctor.markdown.contains("Melix Doctor"))
+        #expect(response.ops.doctor.healthStatus == .healthy)
+        #expect(response.ops.doctor.findings.isEmpty)
+    }
+
+    @Test("execute maps typed doctor health findings from the worker")
+    func executeMapsTypedDoctorHealthFindingsFromTheWorker() async throws {
+        let modelOpsClient = ScriptedModelOperationsWorkerClient()
+        await modelOpsClient.setDoctorResponse({
+            var response = Melix_Worker_V1_RunDoctorResponse()
+            response.ok = true
+            response.reportMarkdown = "# Melix Doctor\n\n- worker_state: degraded\n"
+            response.healthStatus = .warning
+
+            var degraded = Melix_Worker_V1_DoctorFinding()
+            degraded.code = "model_not_loaded"
+            degraded.severity = .degraded
+            degraded.summary = "Model missing from registry"
+            degraded.detail = "The requested handle was not found."
+
+            var failed = Melix_Worker_V1_DoctorFinding()
+            failed.code = "worker_failed"
+            failed.severity = .failed
+            failed.summary = "Worker failed"
+            failed.detail = "Worker state is failed."
+
+            var unknown = Melix_Worker_V1_DoctorFinding()
+            unknown.code = "cache_unavailable"
+            unknown.severity = .unspecified
+            unknown.summary = "Cache unavailable"
+            unknown.detail = "The cache report did not contain resident bytes."
+
+            response.findings = [degraded, failed, unknown]
+            return response
+        }())
+        let service = ControlPlaneService(
+            modelCatalog: ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels()),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                modelOperationsClient: modelOpsClient
+            )
+        )
+
+        let response = try await service.execute(makeRunDoctorRequest())
+
+        #expect(response.ok)
+        #expect(response.ops.doctor.healthStatus == .warning)
+        #expect(response.ops.doctor.findings.count == 3)
+        #expect(response.ops.doctor.findings[0].code == "model_not_loaded")
+        #expect(response.ops.doctor.findings[0].severity == .degraded)
+        #expect(response.ops.doctor.findings[0].detail.contains("requested handle"))
+        #expect(response.ops.doctor.findings[1].severity == .failed)
+        #expect(response.ops.doctor.findings[2].severity == .unspecified)
     }
 
     @Test("execute handles ops.search_hub_models through the model-operations worker")
@@ -3337,6 +3406,11 @@ struct ControlPlaneServiceTests {
                     response.server.snapshot.runtimeSessions = [runtime]
                 case .ops(let command):
                     switch command.kind {
+                    case .runDoctor:
+                        var report = Melix_Controlplane_V1_DoctorReport()
+                        report.markdown = "# Doctor\n"
+                        report.healthStatus = .warning
+                        response.ops.doctor = report
                     case .runBench(let bench):
                         lastBenchRequest = bench
                         response.ops.reportPath = "/tmp/melix/bench/report.md"
@@ -3413,6 +3487,10 @@ struct ControlPlaneServiceTests {
         #expect(benchRequest.cacheProfile == "partial_prefix")
         #expect(benchRequest.reasoningMode == "enabled")
         #expect(benchRequest.structuredOutputMode == "json_schema")
+
+        let doctorReport = try await client.runDoctor()
+        #expect(doctorReport.markdown == "# Doctor\n")
+        #expect(doctorReport.healthStatus == .warning)
 
         let defaultLoaded = try await client.loadModel(modelID: "melix-dev-text")
         #expect(defaultLoaded.modelID == "melix-dev-text")
@@ -3543,7 +3621,6 @@ struct ControlPlaneServiceTests {
             func runModelOperation(modelID: String, operation: String, outputDir: String, quantProfileID: String, weightQuant: String, kvQuant: String, ext: [String: String]) async throws -> Melix_Controlplane_V1_ModelOperationResult { .init() }
             func generateImage(_ request: ControlPlaneImageGenerationRequest) async throws -> Melix_Controlplane_V1_ImageJobSummary { .init() }
             func editImage(_ request: ControlPlaneImageEditRequest) async throws -> Melix_Controlplane_V1_ImageJobSummary { .init() }
-            func runDoctor() async throws -> String { "" }
             func runBench(_ request: ControlPlaneBenchRequest) async throws -> ControlPlaneBenchResult {
                 _ = request
                 return ControlPlaneBenchResult(reportPath: "", reportMarkdown: "", metrics: [:])
@@ -3587,6 +3664,12 @@ struct ControlPlaneServiceTests {
 
         let client = FallbackClient()
 
+        await #expect(throws: ControlPlaneXPCClientError.requestFailed(
+            code: "unimplemented",
+            message: "Doctor is not implemented for this control-plane client."
+        )) {
+            _ = try await client.runDoctor()
+        }
         await #expect(throws: ControlPlaneXPCClientError.requestFailed(
             code: "unimplemented",
             message: "Server start is not implemented for this control-plane client."

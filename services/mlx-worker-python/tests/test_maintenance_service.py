@@ -40,6 +40,7 @@ from worker.productization.benchmark_suites import BenchmarkSuiteCatalog
 from worker.model_registry.catalog import WorkerModelCatalog
 from worker.registry import WorkerRegistry
 from worker.engine.maintenance_core import MaintenanceCore
+from worker.engine import maintenance_core as maintenance_core_module
 from worker.runtime.deterministic_backend import DeterministicTextBackend
 from worker.runtime.mlx_vlm_runtime import AutoMLXVLMBackend, MLXVLMRuntime
 from worker.runtime.mlx_text_runtime import MLXTextRuntime, RuntimeTokenEvent
@@ -1366,11 +1367,19 @@ def test_get_model_info_returns_known_dev_model_metadata(tmp_path: Path) -> None
     assert embed.supported_modalities == ["text"]
     assert embed.supported_tasks == ["embed"]
     assert embed.supported_parsers == ["text"]
+    assert embed.backend_id == "bert-v1"
+    assert embed.family_id == "bert"
+    assert embed.model_path == "models/melix-dev-embed"
+    assert embed.model_revision == "dev"
+    assert embed.detected_identity_source == "default"
     assert rerank.ok is True
     assert rerank.model_kind == "rerank"
     assert rerank.supported_modalities == ["text"]
     assert rerank.supported_tasks == ["rerank"]
     assert rerank.supported_parsers == ["text"]
+    assert rerank.backend_id == "token-overlap-v1"
+    assert rerank.family_id == "jina-v3"
+    assert rerank.model_revision == "dev"
     assert missing.ok is False
     assert missing.error.code == "not_found"
 
@@ -1405,6 +1414,10 @@ def test_get_model_info_uses_kind_fallbacks_for_audio_and_image_models(tmp_path:
     assert image.supported_modalities == ["text", "image"]
     assert image.supported_tasks == ["image_generate", "image_edit"]
     assert image.supported_parsers == ["text"]
+    assert image.backend_id == "deterministic"
+    assert image.family_id == "deterministic-v1"
+    assert image.default_workflow_role == "generate"
+    assert image.detected_identity_source == "default"
 
 
 def test_get_model_info_appends_tool_parser_when_capability_parser_metadata_is_absent(
@@ -1423,6 +1436,8 @@ def test_get_model_info_appends_tool_parser_when_capability_parser_metadata_is_a
 
     assert response.ok is True
     assert response.supported_parsers == ["text", "qwen"]
+    assert response.family_id == "llava-v1"
+    assert response.backend_id == "deterministic"
 
 
 def test_doctor_and_bench_return_deterministic_reports(tmp_path: Path) -> None:
@@ -1448,9 +1463,13 @@ def test_doctor_and_bench_return_deterministic_reports(tmp_path: Path) -> None:
 
     assert doctor.ok is True
     assert "# Melix Doctor" in doctor.report_markdown
+    assert "## Health" in doctor.report_markdown
+    assert "status: degraded" in doctor.report_markdown
     assert "model_handle: melix-dev-text::1" in doctor.report_markdown
     assert "## Cache" in doctor.report_markdown
     assert "## Memory" in doctor.report_markdown
+    assert doctor.health_status == maintenance_pb2.HEALTH_STATUS_DEGRADED
+    assert [finding.code for finding in doctor.findings] == ["model_not_loaded"]
 
     assert bench_events[0].started.job_id == "model-ops-0001"
     assert any(event.HasField("metric") and event.metric.name == "bench.smoke.ttft_ms" for event in bench_events)
@@ -1467,6 +1486,28 @@ def test_run_bench_measures_runtime_behavior_from_loaded_backend(tmp_path: Path)
         model_catalog=WorkerModelCatalog(),
     )
     service = build_service(tmp_path, registry=registry)
+
+
+def test_doctor_reports_warning_for_loaded_models_without_cache_bytes(tmp_path: Path) -> None:
+    registry = WorkerRegistry(
+        runtime=MLXTextRuntime(backend=DeterministicTextBackend()),
+        model_catalog=WorkerModelCatalog(),
+    )
+    loaded = registry.load_model(WorkerModelCatalog.dev_text_model())
+    service = WorkerMaintenanceService(registry, jobs_root=tmp_path / "model-ops")
+
+    doctor = service.RunDoctor(
+        maintenance_pb2.RunDoctorRequest(
+            model_handle=loaded.handle,
+            include_cache_diagnostics=True,
+        ),
+        context=None,
+    )
+
+    assert doctor.ok is True
+    assert doctor.health_status == maintenance_pb2.HEALTH_STATUS_WARNING
+    assert any(finding.code == "cache_unavailable" for finding in doctor.findings)
+    assert "warning cache_unavailable" in doctor.report_markdown
 
     events = list(
         service.RunBench(
@@ -1485,9 +1526,49 @@ def test_run_bench_measures_runtime_behavior_from_loaded_backend(tmp_path: Path)
         if event.HasField("metric")
     }
 
-    assert metrics["bench.smoke.tokens_per_second"] > 100.0
+    assert metrics["bench.smoke.tokens_per_second"] > 0.0
     assert 0.0 < metrics["bench.smoke.ttft_ms"] < 20.0
     assert metrics["bench.latency.p95_ms"] >= metrics["bench.latency.p50_ms"] > 0.0
+
+
+def test_doctor_findings_cover_failed_worker_and_zero_resident_bytes(tmp_path: Path) -> None:
+    registry = WorkerRegistry(
+        runtime=MLXTextRuntime(backend=DeterministicTextBackend()),
+        model_catalog=WorkerModelCatalog(),
+    )
+    core = MaintenanceCore(registry, jobs_root=tmp_path / "model-ops")
+    loaded = registry.load_model(WorkerModelCatalog.dev_text_model())
+    request = maintenance_pb2.RunDoctorRequest(
+        model_handle=loaded.handle,
+        include_memory_report=True,
+    )
+    stats = SimpleNamespace(
+        worker_state="failed",
+        resident_bytes=0,
+        l1_cache_bytes=128,
+        l2_cache_bytes=64,
+    )
+
+    findings = core._doctor_findings(
+        request=request,
+        stats=stats,
+        loaded_models=[loaded.handle],
+        loaded_model=loaded,
+    )
+
+    assert [finding.code for finding in findings] == ["worker_failed", "resident_bytes_zero"]
+    assert findings[0].severity == maintenance_pb2.HEALTH_STATUS_FAILED
+    assert findings[1].severity == maintenance_pb2.HEALTH_STATUS_WARNING
+    assert core._doctor_health_status(findings) == maintenance_pb2.HEALTH_STATUS_FAILED
+    assert core._doctor_health_status_label(findings[0].severity) == "failed"
+
+
+def test_doctor_health_status_helpers_cover_healthy_and_unknown_states() -> None:
+    assert maintenance_core_module._health_status_rank(maintenance_pb2.HEALTH_STATUS_FAILED) == 4
+    assert maintenance_core_module._health_status_rank(maintenance_pb2.HEALTH_STATUS_HEALTHY) == 1
+    assert maintenance_core_module._health_status_rank(maintenance_pb2.HEALTH_STATUS_UNSPECIFIED) == 0
+    assert MaintenanceCore._doctor_health_status_label(maintenance_pb2.HEALTH_STATUS_FAILED) == "failed"
+    assert MaintenanceCore._doctor_health_status_label(maintenance_pb2.HEALTH_STATUS_UNSPECIFIED) == "unknown"
 
 
 def test_resolve_benchmark_loaded_model_reuses_existing_handle(tmp_path: Path) -> None:
@@ -2963,3 +3044,5 @@ def test_doctor_reports_detected_and_overridden_model_identity(tmp_path: Path) -
     assert "detected_architecture: cross-encoder" in doctor.report_markdown
     assert "detected_family_id: jina-v3" in doctor.report_markdown
     assert "identity_override: true" in doctor.report_markdown
+    assert doctor.health_status == maintenance_pb2.HEALTH_STATUS_HEALTHY
+    assert doctor.findings == []

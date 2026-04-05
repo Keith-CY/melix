@@ -20,6 +20,70 @@ fileprivate struct _GeneratedWithProtocGenSwiftVersion: SwiftProtobuf.ProtobufAP
   typealias Version = _2
 }
 
+public enum Melix_Worker_V1_HealthStatus: SwiftProtobuf.Enum, Swift.CaseIterable {
+  public typealias RawValue = Int
+  case unspecified // = 0
+  case healthy // = 1
+  case warning // = 2
+  case degraded // = 3
+  case failed // = 4
+  case UNRECOGNIZED(Int)
+
+  public init() {
+    self = .unspecified
+  }
+
+  public init?(rawValue: Int) {
+    switch rawValue {
+    case 0: self = .unspecified
+    case 1: self = .healthy
+    case 2: self = .warning
+    case 3: self = .degraded
+    case 4: self = .failed
+    default: self = .UNRECOGNIZED(rawValue)
+    }
+  }
+
+  public var rawValue: Int {
+    switch self {
+    case .unspecified: return 0
+    case .healthy: return 1
+    case .warning: return 2
+    case .degraded: return 3
+    case .failed: return 4
+    case .UNRECOGNIZED(let i): return i
+    }
+  }
+
+  // The compiler won't synthesize support with the UNRECOGNIZED case.
+  public static let allCases: [Melix_Worker_V1_HealthStatus] = [
+    .unspecified,
+    .healthy,
+    .warning,
+    .degraded,
+    .failed,
+  ]
+
+}
+
+public struct Melix_Worker_V1_DoctorFinding: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var code: String = String()
+
+  public var severity: Melix_Worker_V1_HealthStatus = .unspecified
+
+  public var summary: String = String()
+
+  public var detail: String = String()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
 public struct Melix_Worker_V1_ConvertModelRequest: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
@@ -323,6 +387,18 @@ public struct Melix_Worker_V1_GetModelInfoResponse: Sendable {
 
   public var supportedTasks: [String] = []
 
+  public var backendID: String = String()
+
+  public var familyID: String = String()
+
+  public var modelPath: String = String()
+
+  public var modelRevision: String = String()
+
+  public var defaultWorkflowRole: String = String()
+
+  public var detectedIdentitySource: String = String()
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -363,6 +439,10 @@ public struct Melix_Worker_V1_RunDoctorResponse: Sendable {
   public mutating func clearError() {self._error = nil}
 
   public var reportMarkdown: String = String()
+
+  public var healthStatus: Melix_Worker_V1_HealthStatus = .unspecified
+
+  public var findings: [Melix_Worker_V1_DoctorFinding] = []
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -1186,6 +1266,55 @@ public struct Melix_Worker_V1_GetHubModelCardResponse: @unchecked Sendable {
 
 fileprivate let _protobuf_package = "melix.worker.v1"
 
+extension Melix_Worker_V1_HealthStatus: SwiftProtobuf._ProtoNameProviding {
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0HEALTH_STATUS_UNSPECIFIED\0\u{1}HEALTH_STATUS_HEALTHY\0\u{1}HEALTH_STATUS_WARNING\0\u{1}HEALTH_STATUS_DEGRADED\0\u{1}HEALTH_STATUS_FAILED\0")
+}
+
+extension Melix_Worker_V1_DoctorFinding: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".DoctorFinding"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}code\0\u{1}severity\0\u{1}summary\0\u{1}detail\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.code) }()
+      case 2: try { try decoder.decodeSingularEnumField(value: &self.severity) }()
+      case 3: try { try decoder.decodeSingularStringField(value: &self.summary) }()
+      case 4: try { try decoder.decodeSingularStringField(value: &self.detail) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.code.isEmpty {
+      try visitor.visitSingularStringField(value: self.code, fieldNumber: 1)
+    }
+    if self.severity != .unspecified {
+      try visitor.visitSingularEnumField(value: self.severity, fieldNumber: 2)
+    }
+    if !self.summary.isEmpty {
+      try visitor.visitSingularStringField(value: self.summary, fieldNumber: 3)
+    }
+    if !self.detail.isEmpty {
+      try visitor.visitSingularStringField(value: self.detail, fieldNumber: 4)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Melix_Worker_V1_DoctorFinding, rhs: Melix_Worker_V1_DoctorFinding) -> Bool {
+    if lhs.code != rhs.code {return false}
+    if lhs.severity != rhs.severity {return false}
+    if lhs.summary != rhs.summary {return false}
+    if lhs.detail != rhs.detail {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
 extension Melix_Worker_V1_ConvertModelRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ConvertModelRequest"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}source_model\0\u{3}output_dir\0\u{3}weight_quant\0\u{3}kv_quant\0\u{3}generate_manifest\0\u{3}run_smoke_test\0\u{1}ext\0\u{3}quant_profile\0")
@@ -1802,7 +1931,7 @@ extension Melix_Worker_V1_GetModelInfoRequest: SwiftProtobuf.Message, SwiftProto
 
 extension Melix_Worker_V1_GetModelInfoResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".GetModelInfoResponse"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}ok\0\u{1}error\0\u{3}model_kind\0\u{3}max_context\0\u{3}supported_parsers\0\u{3}supported_modalities\0\u{3}supported_tasks\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}ok\0\u{1}error\0\u{3}model_kind\0\u{3}max_context\0\u{3}supported_parsers\0\u{3}supported_modalities\0\u{3}supported_tasks\0\u{3}backend_id\0\u{3}family_id\0\u{3}model_path\0\u{3}model_revision\0\u{3}default_workflow_role\0\u{3}detected_identity_source\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -1817,6 +1946,12 @@ extension Melix_Worker_V1_GetModelInfoResponse: SwiftProtobuf.Message, SwiftProt
       case 5: try { try decoder.decodeRepeatedStringField(value: &self.supportedParsers) }()
       case 6: try { try decoder.decodeRepeatedStringField(value: &self.supportedModalities) }()
       case 7: try { try decoder.decodeRepeatedStringField(value: &self.supportedTasks) }()
+      case 8: try { try decoder.decodeSingularStringField(value: &self.backendID) }()
+      case 9: try { try decoder.decodeSingularStringField(value: &self.familyID) }()
+      case 10: try { try decoder.decodeSingularStringField(value: &self.modelPath) }()
+      case 11: try { try decoder.decodeSingularStringField(value: &self.modelRevision) }()
+      case 12: try { try decoder.decodeSingularStringField(value: &self.defaultWorkflowRole) }()
+      case 13: try { try decoder.decodeSingularStringField(value: &self.detectedIdentitySource) }()
       default: break
       }
     }
@@ -1848,6 +1983,24 @@ extension Melix_Worker_V1_GetModelInfoResponse: SwiftProtobuf.Message, SwiftProt
     if !self.supportedTasks.isEmpty {
       try visitor.visitRepeatedStringField(value: self.supportedTasks, fieldNumber: 7)
     }
+    if !self.backendID.isEmpty {
+      try visitor.visitSingularStringField(value: self.backendID, fieldNumber: 8)
+    }
+    if !self.familyID.isEmpty {
+      try visitor.visitSingularStringField(value: self.familyID, fieldNumber: 9)
+    }
+    if !self.modelPath.isEmpty {
+      try visitor.visitSingularStringField(value: self.modelPath, fieldNumber: 10)
+    }
+    if !self.modelRevision.isEmpty {
+      try visitor.visitSingularStringField(value: self.modelRevision, fieldNumber: 11)
+    }
+    if !self.defaultWorkflowRole.isEmpty {
+      try visitor.visitSingularStringField(value: self.defaultWorkflowRole, fieldNumber: 12)
+    }
+    if !self.detectedIdentitySource.isEmpty {
+      try visitor.visitSingularStringField(value: self.detectedIdentitySource, fieldNumber: 13)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -1859,6 +2012,12 @@ extension Melix_Worker_V1_GetModelInfoResponse: SwiftProtobuf.Message, SwiftProt
     if lhs.supportedParsers != rhs.supportedParsers {return false}
     if lhs.supportedModalities != rhs.supportedModalities {return false}
     if lhs.supportedTasks != rhs.supportedTasks {return false}
+    if lhs.backendID != rhs.backendID {return false}
+    if lhs.familyID != rhs.familyID {return false}
+    if lhs.modelPath != rhs.modelPath {return false}
+    if lhs.modelRevision != rhs.modelRevision {return false}
+    if lhs.defaultWorkflowRole != rhs.defaultWorkflowRole {return false}
+    if lhs.detectedIdentitySource != rhs.detectedIdentitySource {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -1906,7 +2065,7 @@ extension Melix_Worker_V1_RunDoctorRequest: SwiftProtobuf.Message, SwiftProtobuf
 
 extension Melix_Worker_V1_RunDoctorResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".RunDoctorResponse"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}ok\0\u{1}error\0\u{3}report_markdown\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}ok\0\u{1}error\0\u{3}report_markdown\0\u{3}health_status\0\u{1}findings\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -1917,6 +2076,8 @@ extension Melix_Worker_V1_RunDoctorResponse: SwiftProtobuf.Message, SwiftProtobu
       case 1: try { try decoder.decodeSingularBoolField(value: &self.ok) }()
       case 2: try { try decoder.decodeSingularMessageField(value: &self._error) }()
       case 3: try { try decoder.decodeSingularStringField(value: &self.reportMarkdown) }()
+      case 4: try { try decoder.decodeSingularEnumField(value: &self.healthStatus) }()
+      case 5: try { try decoder.decodeRepeatedMessageField(value: &self.findings) }()
       default: break
       }
     }
@@ -1936,6 +2097,12 @@ extension Melix_Worker_V1_RunDoctorResponse: SwiftProtobuf.Message, SwiftProtobu
     if !self.reportMarkdown.isEmpty {
       try visitor.visitSingularStringField(value: self.reportMarkdown, fieldNumber: 3)
     }
+    if self.healthStatus != .unspecified {
+      try visitor.visitSingularEnumField(value: self.healthStatus, fieldNumber: 4)
+    }
+    if !self.findings.isEmpty {
+      try visitor.visitRepeatedMessageField(value: self.findings, fieldNumber: 5)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -1943,6 +2110,8 @@ extension Melix_Worker_V1_RunDoctorResponse: SwiftProtobuf.Message, SwiftProtobu
     if lhs.ok != rhs.ok {return false}
     if lhs._error != rhs._error {return false}
     if lhs.reportMarkdown != rhs.reportMarkdown {return false}
+    if lhs.healthStatus != rhs.healthStatus {return false}
+    if lhs.findings != rhs.findings {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

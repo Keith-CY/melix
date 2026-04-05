@@ -295,7 +295,7 @@ public protocol ControlPlaneXPCClient: Sendable {
     func editImage(
         _ request: ControlPlaneImageEditRequest
     ) async throws -> Melix_Controlplane_V1_ImageJobSummary
-    func runDoctor() async throws -> String
+    func runDoctor() async throws -> Melix_Controlplane_V1_DoctorReport
     func runBench(_ request: ControlPlaneBenchRequest) async throws -> ControlPlaneBenchResult
     func runBenchMatrix(_ request: ControlPlaneBenchMatrixRequest) async throws -> ControlPlaneBenchMatrixResult
     func runEvaluation(_ request: ControlPlaneEvaluationRequest) async throws -> ControlPlaneEvaluationResult
@@ -393,7 +393,7 @@ public extension ControlPlaneXPCClient {
         )
     }
 
-    func runDoctor() async throws -> String {
+    func runDoctor() async throws -> Melix_Controlplane_V1_DoctorReport {
         throw ControlPlaneXPCClientError.requestFailed(
             code: "unimplemented",
             message: "Doctor is not implemented for this control-plane client."
@@ -655,9 +655,9 @@ public actor LocalControlPlaneXPCClient: ControlPlaneXPCClient {
         }
     }
 
-    public func runDoctor() async throws -> String {
+    public func runDoctor() async throws -> Melix_Controlplane_V1_DoctorReport {
         try await execute(makeRunDoctorRequest()) { response in
-            response.ops.reportMarkdown
+            response.ops.doctor
         }
     }
 

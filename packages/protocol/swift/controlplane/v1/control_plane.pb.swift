@@ -943,6 +943,52 @@ public enum Melix_Controlplane_V1_GatewayAuthHeader: SwiftProtobuf.Enum, Swift.C
 
 }
 
+public enum Melix_Controlplane_V1_DoctorHealthStatus: SwiftProtobuf.Enum, Swift.CaseIterable {
+  public typealias RawValue = Int
+  case unspecified // = 0
+  case healthy // = 1
+  case warning // = 2
+  case degraded // = 3
+  case failed // = 4
+  case UNRECOGNIZED(Int)
+
+  public init() {
+    self = .unspecified
+  }
+
+  public init?(rawValue: Int) {
+    switch rawValue {
+    case 0: self = .unspecified
+    case 1: self = .healthy
+    case 2: self = .warning
+    case 3: self = .degraded
+    case 4: self = .failed
+    default: self = .UNRECOGNIZED(rawValue)
+    }
+  }
+
+  public var rawValue: Int {
+    switch self {
+    case .unspecified: return 0
+    case .healthy: return 1
+    case .warning: return 2
+    case .degraded: return 3
+    case .failed: return 4
+    case .UNRECOGNIZED(let i): return i
+    }
+  }
+
+  // The compiler won't synthesize support with the UNRECOGNIZED case.
+  public static let allCases: [Melix_Controlplane_V1_DoctorHealthStatus] = [
+    .unspecified,
+    .healthy,
+    .warning,
+    .degraded,
+    .failed,
+  ]
+
+}
+
 public enum Melix_Controlplane_V1_CacheMode: SwiftProtobuf.Enum, Swift.CaseIterable {
   public typealias RawValue = Int
   case unspecified // = 0
@@ -2371,6 +2417,15 @@ public struct Melix_Controlplane_V1_OpsReply: @unchecked Sendable {
     get {_storage._benchmarkMatrixSummaryRows}
     set {_uniqueStorage()._benchmarkMatrixSummaryRows = newValue}
   }
+
+  public var doctor: Melix_Controlplane_V1_DoctorReport {
+    get {_storage._doctor ?? Melix_Controlplane_V1_DoctorReport()}
+    set {_uniqueStorage()._doctor = newValue}
+  }
+  /// Returns true if `doctor` has been explicitly set.
+  public var hasDoctor: Bool {_storage._doctor != nil}
+  /// Clears the value of `doctor`. Subsequent reads from it will return its default value.
+  public mutating func clearDoctor() {_uniqueStorage()._doctor = nil}
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -4322,6 +4377,52 @@ public struct Melix_Controlplane_V1_ModelInfo: Sendable {
 
   public var supportedTasks: [String] = []
 
+  public var backendID: String = String()
+
+  public var familyID: String = String()
+
+  public var modelPath: String = String()
+
+  public var modelRevision: String = String()
+
+  public var defaultWorkflowRole: String = String()
+
+  public var detectedIdentitySource: String = String()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public struct Melix_Controlplane_V1_DoctorFinding: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var code: String = String()
+
+  public var severity: Melix_Controlplane_V1_DoctorHealthStatus = .unspecified
+
+  public var summary: String = String()
+
+  public var detail: String = String()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public struct Melix_Controlplane_V1_DoctorReport: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var markdown: String = String()
+
+  public var healthStatus: Melix_Controlplane_V1_DoctorHealthStatus = .unspecified
+
+  public var findings: [Melix_Controlplane_V1_DoctorFinding] = []
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -5549,6 +5650,10 @@ extension Melix_Controlplane_V1_GatewayAccessMode: SwiftProtobuf._ProtoNameProvi
 
 extension Melix_Controlplane_V1_GatewayAuthHeader: SwiftProtobuf._ProtoNameProviding {
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0GATEWAY_AUTH_HEADER_UNSPECIFIED\0\u{1}GATEWAY_AUTH_HEADER_NONE\0\u{1}GATEWAY_AUTH_HEADER_AUTHORIZATION_BEARER\0\u{1}GATEWAY_AUTH_HEADER_X_API_KEY\0")
+}
+
+extension Melix_Controlplane_V1_DoctorHealthStatus: SwiftProtobuf._ProtoNameProviding {
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0DOCTOR_HEALTH_STATUS_UNSPECIFIED\0\u{1}DOCTOR_HEALTH_STATUS_HEALTHY\0\u{1}DOCTOR_HEALTH_STATUS_WARNING\0\u{1}DOCTOR_HEALTH_STATUS_DEGRADED\0\u{1}DOCTOR_HEALTH_STATUS_FAILED\0")
 }
 
 extension Melix_Controlplane_V1_CacheMode: SwiftProtobuf._ProtoNameProviding {
@@ -7731,7 +7836,7 @@ extension Melix_Controlplane_V1_SessionReply: SwiftProtobuf.Message, SwiftProtob
 
 extension Melix_Controlplane_V1_OpsReply: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".OpsReply"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}report_path\0\u{3}report_markdown\0\u{1}metrics\0\u{3}benchmark_job\0\u{3}benchmark_results\0\u{3}evaluation_job\0\u{3}evaluation_results\0\u{3}export_bundle_json\0\u{3}submission_json\0\u{3}hub_search\0\u{3}hub_model_card\0\u{3}benchmark_matrix_job\0\u{3}benchmark_matrix_summary_rows\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}report_path\0\u{3}report_markdown\0\u{1}metrics\0\u{3}benchmark_job\0\u{3}benchmark_results\0\u{3}evaluation_job\0\u{3}evaluation_results\0\u{3}export_bundle_json\0\u{3}submission_json\0\u{3}hub_search\0\u{3}hub_model_card\0\u{3}benchmark_matrix_job\0\u{3}benchmark_matrix_summary_rows\0\u{1}doctor\0")
 
   fileprivate class _StorageClass {
     var _reportPath: String = String()
@@ -7747,6 +7852,7 @@ extension Melix_Controlplane_V1_OpsReply: SwiftProtobuf.Message, SwiftProtobuf._
     var _hubModelCard: Melix_Controlplane_V1_HubModelCard? = nil
     var _benchmarkMatrixJob: Melix_Controlplane_V1_BenchmarkMatrixJobSummary? = nil
     var _benchmarkMatrixSummaryRows: [Melix_Controlplane_V1_BenchmarkMatrixSummaryRow] = []
+    var _doctor: Melix_Controlplane_V1_DoctorReport? = nil
 
       // This property is used as the initial default value for new instances of the type.
       // The type itself is protecting the reference to its storage via CoW semantics.
@@ -7770,6 +7876,7 @@ extension Melix_Controlplane_V1_OpsReply: SwiftProtobuf.Message, SwiftProtobuf._
       _hubModelCard = source._hubModelCard
       _benchmarkMatrixJob = source._benchmarkMatrixJob
       _benchmarkMatrixSummaryRows = source._benchmarkMatrixSummaryRows
+      _doctor = source._doctor
     }
   }
 
@@ -7801,6 +7908,7 @@ extension Melix_Controlplane_V1_OpsReply: SwiftProtobuf.Message, SwiftProtobuf._
         case 11: try { try decoder.decodeSingularMessageField(value: &_storage._hubModelCard) }()
         case 12: try { try decoder.decodeSingularMessageField(value: &_storage._benchmarkMatrixJob) }()
         case 13: try { try decoder.decodeRepeatedMessageField(value: &_storage._benchmarkMatrixSummaryRows) }()
+        case 14: try { try decoder.decodeSingularMessageField(value: &_storage._doctor) }()
         default: break
         }
       }
@@ -7852,6 +7960,9 @@ extension Melix_Controlplane_V1_OpsReply: SwiftProtobuf.Message, SwiftProtobuf._
       if !_storage._benchmarkMatrixSummaryRows.isEmpty {
         try visitor.visitRepeatedMessageField(value: _storage._benchmarkMatrixSummaryRows, fieldNumber: 13)
       }
+      try { if let v = _storage._doctor {
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 14)
+      } }()
     }
     try unknownFields.traverse(visitor: &visitor)
   }
@@ -7874,6 +7985,7 @@ extension Melix_Controlplane_V1_OpsReply: SwiftProtobuf.Message, SwiftProtobuf._
         if _storage._hubModelCard != rhs_storage._hubModelCard {return false}
         if _storage._benchmarkMatrixJob != rhs_storage._benchmarkMatrixJob {return false}
         if _storage._benchmarkMatrixSummaryRows != rhs_storage._benchmarkMatrixSummaryRows {return false}
+        if _storage._doctor != rhs_storage._doctor {return false}
         return true
       }
       if !storagesAreEqual {return false}
@@ -12048,7 +12160,7 @@ extension Melix_Controlplane_V1_ModelSummary: SwiftProtobuf.Message, SwiftProtob
 
 extension Melix_Controlplane_V1_ModelInfo: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ModelInfo"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}ok\0\u{3}model_kind\0\u{3}max_context\0\u{3}supported_parsers\0\u{3}supported_modalities\0\u{3}supported_tasks\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}ok\0\u{3}model_kind\0\u{3}max_context\0\u{3}supported_parsers\0\u{3}supported_modalities\0\u{3}supported_tasks\0\u{3}backend_id\0\u{3}family_id\0\u{3}model_path\0\u{3}model_revision\0\u{3}default_workflow_role\0\u{3}detected_identity_source\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -12062,6 +12174,12 @@ extension Melix_Controlplane_V1_ModelInfo: SwiftProtobuf.Message, SwiftProtobuf.
       case 4: try { try decoder.decodeRepeatedStringField(value: &self.supportedParsers) }()
       case 5: try { try decoder.decodeRepeatedStringField(value: &self.supportedModalities) }()
       case 6: try { try decoder.decodeRepeatedStringField(value: &self.supportedTasks) }()
+      case 7: try { try decoder.decodeSingularStringField(value: &self.backendID) }()
+      case 8: try { try decoder.decodeSingularStringField(value: &self.familyID) }()
+      case 9: try { try decoder.decodeSingularStringField(value: &self.modelPath) }()
+      case 10: try { try decoder.decodeSingularStringField(value: &self.modelRevision) }()
+      case 11: try { try decoder.decodeSingularStringField(value: &self.defaultWorkflowRole) }()
+      case 12: try { try decoder.decodeSingularStringField(value: &self.detectedIdentitySource) }()
       default: break
       }
     }
@@ -12086,6 +12204,24 @@ extension Melix_Controlplane_V1_ModelInfo: SwiftProtobuf.Message, SwiftProtobuf.
     if !self.supportedTasks.isEmpty {
       try visitor.visitRepeatedStringField(value: self.supportedTasks, fieldNumber: 6)
     }
+    if !self.backendID.isEmpty {
+      try visitor.visitSingularStringField(value: self.backendID, fieldNumber: 7)
+    }
+    if !self.familyID.isEmpty {
+      try visitor.visitSingularStringField(value: self.familyID, fieldNumber: 8)
+    }
+    if !self.modelPath.isEmpty {
+      try visitor.visitSingularStringField(value: self.modelPath, fieldNumber: 9)
+    }
+    if !self.modelRevision.isEmpty {
+      try visitor.visitSingularStringField(value: self.modelRevision, fieldNumber: 10)
+    }
+    if !self.defaultWorkflowRole.isEmpty {
+      try visitor.visitSingularStringField(value: self.defaultWorkflowRole, fieldNumber: 11)
+    }
+    if !self.detectedIdentitySource.isEmpty {
+      try visitor.visitSingularStringField(value: self.detectedIdentitySource, fieldNumber: 12)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -12096,6 +12232,97 @@ extension Melix_Controlplane_V1_ModelInfo: SwiftProtobuf.Message, SwiftProtobuf.
     if lhs.supportedParsers != rhs.supportedParsers {return false}
     if lhs.supportedModalities != rhs.supportedModalities {return false}
     if lhs.supportedTasks != rhs.supportedTasks {return false}
+    if lhs.backendID != rhs.backendID {return false}
+    if lhs.familyID != rhs.familyID {return false}
+    if lhs.modelPath != rhs.modelPath {return false}
+    if lhs.modelRevision != rhs.modelRevision {return false}
+    if lhs.defaultWorkflowRole != rhs.defaultWorkflowRole {return false}
+    if lhs.detectedIdentitySource != rhs.detectedIdentitySource {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+extension Melix_Controlplane_V1_DoctorFinding: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".DoctorFinding"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}code\0\u{1}severity\0\u{1}summary\0\u{1}detail\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.code) }()
+      case 2: try { try decoder.decodeSingularEnumField(value: &self.severity) }()
+      case 3: try { try decoder.decodeSingularStringField(value: &self.summary) }()
+      case 4: try { try decoder.decodeSingularStringField(value: &self.detail) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.code.isEmpty {
+      try visitor.visitSingularStringField(value: self.code, fieldNumber: 1)
+    }
+    if self.severity != .unspecified {
+      try visitor.visitSingularEnumField(value: self.severity, fieldNumber: 2)
+    }
+    if !self.summary.isEmpty {
+      try visitor.visitSingularStringField(value: self.summary, fieldNumber: 3)
+    }
+    if !self.detail.isEmpty {
+      try visitor.visitSingularStringField(value: self.detail, fieldNumber: 4)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Melix_Controlplane_V1_DoctorFinding, rhs: Melix_Controlplane_V1_DoctorFinding) -> Bool {
+    if lhs.code != rhs.code {return false}
+    if lhs.severity != rhs.severity {return false}
+    if lhs.summary != rhs.summary {return false}
+    if lhs.detail != rhs.detail {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+extension Melix_Controlplane_V1_DoctorReport: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".DoctorReport"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}markdown\0\u{3}health_status\0\u{1}findings\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.markdown) }()
+      case 2: try { try decoder.decodeSingularEnumField(value: &self.healthStatus) }()
+      case 3: try { try decoder.decodeRepeatedMessageField(value: &self.findings) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.markdown.isEmpty {
+      try visitor.visitSingularStringField(value: self.markdown, fieldNumber: 1)
+    }
+    if self.healthStatus != .unspecified {
+      try visitor.visitSingularEnumField(value: self.healthStatus, fieldNumber: 2)
+    }
+    if !self.findings.isEmpty {
+      try visitor.visitRepeatedMessageField(value: self.findings, fieldNumber: 3)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Melix_Controlplane_V1_DoctorReport, rhs: Melix_Controlplane_V1_DoctorReport) -> Bool {
+    if lhs.markdown != rhs.markdown {return false}
+    if lhs.healthStatus != rhs.healthStatus {return false}
+    if lhs.findings != rhs.findings {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

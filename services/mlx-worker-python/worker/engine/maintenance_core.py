@@ -85,6 +85,43 @@ def _default_capability_lists(model_kind: str) -> tuple[list[str], list[str]]:
     return ["text"], ["generate"]
 
 
+def _model_backend_id(model: common_pb2.ModelSpec) -> str:
+    ext = model.ext
+    return (
+        ext.get("text_backend_id", "")
+        or ext.get("embedding_backend_id", "")
+        or ext.get("rerank_backend_id", "")
+        or ext.get("melix.vlm.backend_id", "")
+        or ext.get("melix.image.backend_id", "")
+        or ext.get("melix.audio.backend_id", "")
+    )
+
+
+def _model_family_id(model: common_pb2.ModelSpec) -> str:
+    ext = model.ext
+    return (
+        ext.get("text_family_id", "")
+        or ext.get("embedding_family_id", "")
+        or ext.get("rerank_family_id", "")
+        or ext.get("vision_family_id", "")
+        or ext.get("melix.image.family_id", "")
+        or ext.get("melix.audio.family_id", "")
+        or ext.get("detected_family_id", "")
+    )
+
+
+def _health_status_rank(status: maintenance_pb2.HealthStatus) -> int:
+    if status == maintenance_pb2.HEALTH_STATUS_FAILED:
+        return 4
+    if status == maintenance_pb2.HEALTH_STATUS_DEGRADED:
+        return 3
+    if status == maintenance_pb2.HEALTH_STATUS_WARNING:
+        return 2
+    if status == maintenance_pb2.HEALTH_STATUS_HEALTHY:
+        return 1
+    return 0
+
+
 def _registry_rescan_enabled(ext: dict[str, str]) -> bool:
     return ext.get("melix.registry_rescan", "").strip().lower() in {"1", "true", "yes", "on"}
 
@@ -521,6 +558,12 @@ class MaintenanceCore:
             supported_parsers=supported_parsers,
             supported_modalities=supported_modalities,
             supported_tasks=supported_tasks,
+            backend_id=_model_backend_id(model),
+            family_id=_model_family_id(model),
+            model_path=model.model_path,
+            model_revision=model.revision,
+            default_workflow_role=ext.get("melix.image.default_workflow_role", ""),
+            detected_identity_source=ext.get("detected_identity_source", ""),
         )
 
     def search_hub_models(
@@ -599,6 +642,14 @@ class MaintenanceCore:
     ) -> maintenance_pb2.RunDoctorResponse:
         stats = self._registry.runtime_stats()
         loaded_models = self._registry.list_loaded_models()
+        loaded_model = self._registry.get_loaded_model(request.model_handle) if request.model_handle else None
+        findings = self._doctor_findings(
+            request=request,
+            stats=stats,
+            loaded_models=loaded_models,
+            loaded_model=loaded_model,
+        )
+        health_status = self._doctor_health_status(findings)
         lines = [
             "# Melix Doctor",
             "",
@@ -608,9 +659,20 @@ class MaintenanceCore:
             f"- loaded_models: {len(loaded_models)}",
             f"- resident_bytes: {stats.resident_bytes}",
         ]
+        lines.extend(
+            [
+                "",
+                "## Health",
+                f"- status: {self._doctor_health_status_label(health_status)}",
+            ]
+        )
+        if findings:
+            for finding in findings:
+                lines.append(
+                    f"- {self._doctor_health_status_label(finding.severity)} {finding.code}: {finding.summary}"
+                )
         if request.model_handle:
             lines.append(f"- model_handle: {request.model_handle}")
-            loaded_model = self._registry.get_loaded_model(request.model_handle)
             if loaded_model is not None:
                 identity_lines = self._identity_diagnostic_lines(loaded_model.spec)
                 if identity_lines:
@@ -638,16 +700,13 @@ class MaintenanceCore:
         return maintenance_pb2.RunDoctorResponse(
             ok=True,
             report_markdown="\n".join(lines) + "\n",
+            health_status=health_status,
+            findings=findings,
         )
 
     @staticmethod
     def _identity_diagnostic_lines(model: common_pb2.ModelSpec) -> list[str]:
-        effective_family = (
-            model.ext.get("melix.audio.family_id")
-            or model.ext.get("embedding_family_id")
-            or model.ext.get("rerank_family_id")
-            or model.ext.get("vision_family_id")
-        )
+        effective_family = _model_family_id(model)
         model_architecture = model.ext.get("model_architecture", "")
         detected_architecture = model.ext.get("detected_architecture", "")
         detected_family_id = model.ext.get("detected_family_id", "")
@@ -683,6 +742,97 @@ class MaintenanceCore:
         if identity_override:
             lines.append(f"- identity_override: {identity_override}")
         return lines
+
+    @staticmethod
+    def _doctor_finding(
+        code: str,
+        severity: maintenance_pb2.HealthStatus,
+        summary: str,
+        detail: str = "",
+    ) -> maintenance_pb2.DoctorFinding:
+        return maintenance_pb2.DoctorFinding(
+            code=code,
+            severity=severity,
+            summary=summary,
+            detail=detail,
+        )
+
+    def _doctor_findings(
+        self,
+        request: maintenance_pb2.RunDoctorRequest,
+        stats,
+        loaded_models,
+        loaded_model,
+    ) -> list[maintenance_pb2.DoctorFinding]:
+        findings: list[maintenance_pb2.DoctorFinding] = []
+        worker_state = (stats.worker_state or "").strip().lower()
+
+        if worker_state in {"failed", "error"}:
+            findings.append(
+                self._doctor_finding(
+                    code="worker_failed",
+                    severity=maintenance_pb2.HEALTH_STATUS_FAILED,
+                    summary="Worker runtime is in a failed state.",
+                    detail=f"worker_state={stats.worker_state}",
+                )
+            )
+
+        if request.model_handle and loaded_model is None:
+            findings.append(
+                self._doctor_finding(
+                    code="model_not_loaded",
+                    severity=maintenance_pb2.HEALTH_STATUS_DEGRADED,
+                    summary="Requested model handle is not loaded in the worker registry.",
+                    detail=request.model_handle,
+                )
+            )
+
+        if (
+            request.include_cache_diagnostics
+            and loaded_models
+            and stats.l1_cache_bytes == 0
+            and stats.l2_cache_bytes == 0
+        ):
+            findings.append(
+                self._doctor_finding(
+                    code="cache_unavailable",
+                    severity=maintenance_pb2.HEALTH_STATUS_WARNING,
+                    summary="Cache diagnostics report zero cache bytes while models are loaded.",
+                    detail="Both L1 and L2 cache bytes are zero.",
+                )
+            )
+
+        if request.include_memory_report and loaded_models and stats.resident_bytes == 0:
+            findings.append(
+                self._doctor_finding(
+                    code="resident_bytes_zero",
+                    severity=maintenance_pb2.HEALTH_STATUS_WARNING,
+                    summary="Resident memory is zero while models are loaded.",
+                    detail="Inspect worker memory accounting or reload the affected model.",
+                )
+            )
+
+        return findings
+
+    def _doctor_health_status(
+        self,
+        findings: list[maintenance_pb2.DoctorFinding],
+    ) -> maintenance_pb2.HealthStatus:
+        if not findings:
+            return maintenance_pb2.HEALTH_STATUS_HEALTHY
+        return max(findings, key=lambda finding: _health_status_rank(finding.severity)).severity
+
+    @staticmethod
+    def _doctor_health_status_label(status: maintenance_pb2.HealthStatus) -> str:
+        if status == maintenance_pb2.HEALTH_STATUS_HEALTHY:
+            return "healthy"
+        if status == maintenance_pb2.HEALTH_STATUS_WARNING:
+            return "warning"
+        if status == maintenance_pb2.HEALTH_STATUS_DEGRADED:
+            return "degraded"
+        if status == maintenance_pb2.HEALTH_STATUS_FAILED:
+            return "failed"
+        return "unknown"
 
     def bench_events(
         self,

@@ -2,6 +2,66 @@
 
 ## 2026-04-05
 
+- Closed the first executable `M12.4` slice by making model inspection and doctor health
+  repository-owned, typed operator contracts across the worker, control plane, and Window UI:
+  - extended the worker and control-plane protobuf contracts so inspect output now carries stable
+    backend, family, source, workflow-role, revision, and supported-task metadata while doctor
+    output carries typed health state plus actionable findings instead of markdown-only severity
+  - updated `maintenance_core.py` so worker-authored inspect payloads derive typed identity fields
+    from loaded or registered model state and doctor responses emit structured warning, degraded,
+    and failed findings for missing loads, zero-byte cache state, zero resident memory, and worker
+    failure conditions
+  - projected the typed inspect and doctor payloads through the Swift control plane, XPC client,
+    and Window UI model-tools views so operators can inspect health status, findings, backend or
+    family identity, workflow role, revision, supported tasks, and source provenance without
+    parsing markdown
+  - added focused Python, control-plane, and menu-bar regression coverage for typed inspect
+    metadata, doctor severity mapping, structured findings, and the new operator-facing summary
+    views
+  - moved the next active `M12.4` slice to conversion and packaging workflow completion now that
+    inspect and health are stable typed surfaces
+- Verification summary for the first executable `M12.4` slice:
+  - `make proto`: pass
+  - `PYTHONPATH=.:services/mlx-worker-python uv run --project services/mlx-worker-python --extra mlx coverage run --data-file=/tmp/m12_4_python.coverage -m pytest services/mlx-worker-python/tests/test_maintenance_service.py -q && PYTHONPATH=.:services/mlx-worker-python uv run --project services/mlx-worker-python --extra mlx coverage json --data-file=/tmp/m12_4_python.coverage -o /tmp/m12_4_python_coverage.json && python3 scripts/python_changed_line_coverage.py --coverage-json /tmp/m12_4_python_coverage.json services/mlx-worker-python/worker/engine/maintenance_core.py services/mlx-worker-python/tests/test_maintenance_service.py`: `65 passed in 48.59s`
+  - `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/.build/ModuleCache.noindex" swift test --package-path services/control-plane-swift --enable-code-coverage --filter 'ControlPlaneServiceTests|PythonBridgeWorkerClientTests'`: `196 tests in 2 suites passed after 0.958 seconds`
+  - `python3 scripts/swift_changed_line_coverage.py --binary services/control-plane-swift/.build/arm64-apple-macosx/debug/MelixControlPlanePackageTests.xctest/Contents/MacOS/MelixControlPlanePackageTests --profdata services/control-plane-swift/.build/arm64-apple-macosx/debug/codecov/default.profdata services/control-plane-swift/Sources/XPCService/ControlPlaneService.swift services/control-plane-swift/Sources/XPCService/ControlPlaneXPCClient.swift services/control-plane-swift/Tests/ControlPlaneTests/ControlPlaneServiceTests.swift`: `100.00%` (`117/117`)
+  - `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/.build/ModuleCache.noindex" swift test --package-path apps/macos-menubar --enable-code-coverage --filter 'ControlPlaneXPCClientTests|RuntimeViewModelTests|DesktopFoundationViewTests'`: `217 tests in 3 suites passed after 4.018 seconds`
+  - `python3 scripts/swift_changed_line_coverage.py --binary apps/macos-menubar/.build/arm64-apple-macosx/debug/MelixMacOSMenubarPackageTests.xctest/Contents/MacOS/MelixMacOSMenubarPackageTests --profdata apps/macos-menubar/.build/arm64-apple-macosx/debug/codecov/default.profdata apps/macos-menubar/Sources/AppMain/Dashboard/DesktopFoundationView.swift apps/macos-menubar/Sources/AppMain/Dashboard/DesktopWorkspaceShellView.swift apps/macos-menubar/Sources/AppMain/Models/RuntimeViewModel.swift apps/macos-menubar/Tests/MenuBarTests/ControlPlaneXPCClientTests.swift apps/macos-menubar/Tests/MenuBarTests/TestSupport.swift apps/macos-menubar/Tests/MenuBarTests/DesktopFoundationViewTests.swift apps/macos-menubar/Tests/MenuBarTests/RuntimeViewModelTests.swift`: `100.00%` (`186/186`)
+  - `git diff --check`: pass
+- Metrics report for the first executable `M12.4` slice:
+  - typed inspect and doctor health metrics exercised by the touched scope:
+    - stable inspect identity fields for `backend_id`, `family_id`, `model_path`,
+      `model_revision`, `default_workflow_role`, `detected_identity_source`, and
+      `supported_tasks`
+    - structured doctor states for `healthy`, `warning`, `degraded`, and `failed`
+    - actionable doctor finding codes covering missing model loads, cache-unavailable state,
+      zero resident bytes, and failed worker state
+  - changed-line coverage for the touched handwritten executable scope:
+    - Python worker scope: `100.00%` (`103/103`)
+    - Swift control-plane scope: `100.00%` (`117/117`)
+    - Swift menu-bar scope: `100.00%` (`186/186`)
+    - aggregate touched-scope coverage: `100.00%` (`406/406`)
+  - generated protobuf outputs and `packages/protocol/descriptors/melix.pb` are excluded from
+    executable changed-line coverage because they are regenerated interface artifacts rather than
+    handwritten runtime logic
+
+- Started `M12.4` by moving the active task plan to typed model inspection, structured health, and
+  model-conversion tooling completion:
+  - recorded that the repository already exposes inspect, doctor, and model-operation shells, but
+    inspect payloads are still too shallow, doctor is markdown-only, and conversion results are
+    not yet a stable operator-facing contract
+  - defined the next implementation slice around typed model identity metadata, structured doctor
+    severity and findings, and explicit conversion or packaging result summaries that stay tied to
+    model identity
+  - updated the active task plan so the `M12.4` execution transaction starts from an explicit
+    inspect-health-conversion contract instead of treating those workflows as incidental model-ops
+    helpers
+- Verification summary for the `M12.4` planning transaction:
+  - `git diff --check`: pending until the executable change set is complete
+- Metrics report for the `M12.4` planning transaction:
+  - `N/A` for executable coverage and runtime metrics because this transaction only moved the
+    active task plan before implementation started
+
 - Closed `M12.3` by making creative image-family identity repository-owned across worker dispatch,
   control-plane catalog truth, the family support matrix, and the Window UI picker:
   - added image-family adapter descriptors plus detection from explicit overrides, imported model

@@ -416,6 +416,7 @@ struct ControlPlaneXPCClientTests {
             var response = Melix_Worker_V1_RunDoctorResponse()
             response.ok = true
             response.reportMarkdown = "# Melix Doctor\n"
+            response.healthStatus = .healthy
             return response
         }())
         await modelOpsClient.setBenchEvents([
@@ -458,7 +459,8 @@ struct ControlPlaneXPCClientTests {
             )
         )
 
-        #expect(doctor.contains("Melix Doctor"))
+        #expect(doctor.markdown.contains("Melix Doctor"))
+        #expect(doctor.healthStatus == .healthy)
         #expect(bench.reportPath == reportPath)
         #expect(bench.reportMarkdown.contains("Melix Bench"))
         #expect(bench.metrics["bench.smoke.ttft_ms"] == 24.45)

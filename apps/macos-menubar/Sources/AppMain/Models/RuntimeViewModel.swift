@@ -113,6 +113,13 @@ public struct RuntimeModelInfoState: Equatable, Sendable {
     public let maxContext: UInt32
     public let supportedParsers: [String]
     public let supportedModalities: [String]
+    public let supportedTasks: [String]
+    public let backendID: String
+    public let familyID: String
+    public let modelPath: String
+    public let modelRevision: String
+    public let defaultWorkflowRole: String
+    public let detectedIdentitySource: String
     public let aliasText: String
     public let typeOverrideText: String
     public let ttlSeconds: UInt32
@@ -150,6 +157,13 @@ public struct RuntimeModelInfoState: Equatable, Sendable {
         maxContext: UInt32,
         supportedParsers: [String],
         supportedModalities: [String],
+        supportedTasks: [String] = [],
+        backendID: String = "",
+        familyID: String = "",
+        modelPath: String = "",
+        modelRevision: String = "",
+        defaultWorkflowRole: String = "",
+        detectedIdentitySource: String = "",
         aliasText: String = "",
         typeOverrideText: String = "",
         ttlSeconds: UInt32 = 0,
@@ -186,6 +200,13 @@ public struct RuntimeModelInfoState: Equatable, Sendable {
         self.maxContext = maxContext
         self.supportedParsers = supportedParsers
         self.supportedModalities = supportedModalities
+        self.supportedTasks = supportedTasks
+        self.backendID = backendID
+        self.familyID = familyID
+        self.modelPath = modelPath
+        self.modelRevision = modelRevision
+        self.defaultWorkflowRole = defaultWorkflowRole
+        self.detectedIdentitySource = detectedIdentitySource
         self.aliasText = aliasText
         self.typeOverrideText = typeOverrideText
         self.ttlSeconds = ttlSeconds
@@ -252,11 +273,30 @@ public struct RuntimeAudioSetupActionState: Identifiable, Equatable, Sendable {
     }
 }
 
+public struct RuntimeDoctorFindingState: Equatable, Sendable, Identifiable {
+    public let code: String
+    public let severityText: String
+    public let summary: String
+    public let detail: String
+
+    public var id: String {
+        code
+    }
+}
+
 public struct RuntimeDoctorReportState: Equatable, Sendable {
     public let markdown: String
+    public let healthStatusText: String
+    public let findings: [RuntimeDoctorFindingState]
 
-    public init(markdown: String) {
+    public init(
+        markdown: String,
+        healthStatusText: String = "",
+        findings: [RuntimeDoctorFindingState] = []
+    ) {
         self.markdown = RichOutputSanitizer.sanitized(markdown)
+        self.healthStatusText = healthStatusText
+        self.findings = findings
     }
 }
 
@@ -2498,6 +2538,13 @@ public final class RuntimeViewModel {
                 maxContext: info.maxContext,
                 supportedParsers: info.supportedParsers,
                 supportedModalities: info.supportedModalities,
+                supportedTasks: info.supportedTasks,
+                backendID: info.backendID,
+                familyID: info.familyID,
+                modelPath: info.modelPath,
+                modelRevision: info.modelRevision,
+                defaultWorkflowRole: info.defaultWorkflowRole,
+                detectedIdentitySource: info.detectedIdentitySource,
                 aliasText: snapshotModel?.settings.alias ?? "",
                 typeOverrideText: snapshotModel?.settings.typeOverride ?? "",
                 ttlSeconds: snapshotModel?.settings.ttlSeconds ?? 0,
@@ -2822,6 +2869,23 @@ public final class RuntimeViewModel {
         )
     }
 
+    private static func doctorHealthStatusText(
+        _ status: Melix_Controlplane_V1_DoctorHealthStatus
+    ) -> String {
+        switch status {
+        case .healthy:
+            return "Healthy"
+        case .warning:
+            return "Warning"
+        case .degraded:
+            return "Degraded"
+        case .failed:
+            return "Failed"
+        case .unspecified, .UNRECOGNIZED:
+            return "Unknown"
+        }
+    }
+
     private func calibrationSampleCount(from manifestJSON: String) -> Int {
         guard
             let data = manifestJSON.data(using: .utf8),
@@ -2881,7 +2945,18 @@ public final class RuntimeViewModel {
                 name: "menu.ops_doctor_ms",
                 valueMs: Date().timeIntervalSince(startedAt) * 1_000
             )
-            lastDoctorReport = RuntimeDoctorReportState(markdown: report)
+            lastDoctorReport = RuntimeDoctorReportState(
+                markdown: report.markdown,
+                healthStatusText: Self.doctorHealthStatusText(report.healthStatus),
+                findings: report.findings.map {
+                    RuntimeDoctorFindingState(
+                        code: $0.code,
+                        severityText: Self.doctorHealthStatusText($0.severity),
+                        summary: $0.summary,
+                        detail: $0.detail
+                    )
+                }
+            )
         } catch {
             recordLocalError(String(describing: error))
         }

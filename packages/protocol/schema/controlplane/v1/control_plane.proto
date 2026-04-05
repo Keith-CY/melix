@@ -209,6 +209,7 @@ message OpsReply {
   HubModelCard hub_model_card = 11;
   BenchmarkMatrixJobSummary benchmark_matrix_job = 12;
   repeated BenchmarkMatrixSummaryRow benchmark_matrix_summary_rows = 13;
+  DoctorReport doctor = 14;
 }
 
 message PresetReply {
@@ -936,6 +937,33 @@ message ModelInfo {
   repeated string supported_parsers = 4;
   repeated string supported_modalities = 5;
   repeated string supported_tasks = 6;
+  string backend_id = 7;
+  string family_id = 8;
+  string model_path = 9;
+  string model_revision = 10;
+  string default_workflow_role = 11;
+  string detected_identity_source = 12;
+}
+
+enum DoctorHealthStatus {
+  DOCTOR_HEALTH_STATUS_UNSPECIFIED = 0;
+  DOCTOR_HEALTH_STATUS_HEALTHY = 1;
+  DOCTOR_HEALTH_STATUS_WARNING = 2;
+  DOCTOR_HEALTH_STATUS_DEGRADED = 3;
+  DOCTOR_HEALTH_STATUS_FAILED = 4;
+}
+
+message DoctorFinding {
+  string code = 1;
+  DoctorHealthStatus severity = 2;
+  string summary = 3;
+  string detail = 4;
+}
+
+message DoctorReport {
+  string markdown = 1;
+  DoctorHealthStatus health_status = 2;
+  repeated DoctorFinding findings = 3;
 }
 
 message ModelOperationResult {

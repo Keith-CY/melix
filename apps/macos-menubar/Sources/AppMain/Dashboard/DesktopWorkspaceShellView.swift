@@ -1915,10 +1915,7 @@ struct DesktopDiagnosticsToolSectionView: View {
 
             if let report = viewModel.lastDoctorReport {
                 GroupBox("Doctor Report") {
-                    Text(report.markdown)
-                        .font(.caption.monospaced())
-                        .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    DesktopDoctorReportSummaryView(report: report)
                 }
             }
 

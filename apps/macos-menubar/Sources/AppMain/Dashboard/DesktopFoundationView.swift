@@ -791,13 +791,7 @@ struct DesktopToolsTabView: View {
 
             if let report = viewModel.lastDoctorReport {
                 GroupBox("Doctor Report") {
-                    ScrollView {
-                        Text(report.markdown)
-                            .font(.caption.monospaced())
-                            .textSelection(.enabled)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    DesktopDoctorReportSummaryView(report: report)
                 }
             }
 
@@ -892,6 +886,42 @@ struct DesktopModelInfoSummaryView: View {
     }
 }
 
+struct DesktopDoctorReportSummaryView: View {
+    let report: RuntimeDoctorReportState
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if !report.healthStatusText.isEmpty {
+                Text("Status: \(report.healthStatusText)")
+                    .font(.headline)
+            }
+            if report.findings.isEmpty == false {
+                ForEach(report.findings) { finding in
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("\(finding.severityText) • \(finding.code)")
+                            .font(.caption.weight(.semibold))
+                        Text(finding.summary)
+                            .font(.caption)
+                        if !finding.detail.isEmpty {
+                            Text(finding.detail)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            }
+            ScrollView {
+                Text(report.markdown)
+                    .font(.caption.monospaced())
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
 struct DesktopModelInfoSummaryContent: Equatable {
     let headline: String
     let maxContext: String
@@ -907,6 +937,18 @@ func desktopModelInfoSummaryContent(
     }
     if !info.typeOverrideText.isEmpty {
         detailLines.append("type override: \(info.typeOverrideText)")
+    }
+    if !info.backendID.isEmpty {
+        detailLines.append("backend: \(info.backendID)")
+    }
+    if !info.familyID.isEmpty {
+        detailLines.append("family: \(info.familyID)")
+    }
+    if !info.defaultWorkflowRole.isEmpty {
+        detailLines.append("default workflow: \(info.defaultWorkflowRole)")
+    }
+    if !info.detectedIdentitySource.isEmpty {
+        detailLines.append("identity source: \(info.detectedIdentitySource)")
     }
     detailLines.append("memory policy: \(info.memoryPolicyText)")
     if !info.memoryBudgetText.isEmpty {
@@ -949,6 +991,15 @@ func desktopModelInfoSummaryContent(
     }
     detailLines.append("parsers: \(info.supportedParsers.joined(separator: ", "))")
     detailLines.append("modalities: \(info.supportedModalities.joined(separator: ", "))")
+    if !info.supportedTasks.isEmpty {
+        detailLines.append("tasks: \(info.supportedTasks.joined(separator: ", "))")
+    }
+    if !info.modelRevision.isEmpty {
+        detailLines.append("revision: \(info.modelRevision)")
+    }
+    if !info.modelPath.isEmpty {
+        detailLines.append("source path: \(info.modelPath)")
+    }
     if !info.ocrPromptProfileText.isEmpty {
         detailLines.append("ocr prompt profile: \(info.ocrPromptProfileText)")
     }
