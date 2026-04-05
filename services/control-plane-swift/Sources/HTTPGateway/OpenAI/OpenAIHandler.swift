@@ -1112,6 +1112,13 @@ public struct OpenAIHandler: Sendable {
 
     private func handleImageEdits(_ request: HTTPRequest) async throws -> HTTPResponse {
         let imageRequest = try decoder.decode(OpenAIImageEditsRequest.self, from: request.body)
+        let resolvedEditMode = resolvedImageEditMode(imageRequest.editMode)
+        let sourceArtifactID = imageRequest.sourceArtifactID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let promptDelta = imageRequest.promptDelta?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+
+        if (resolvedEditMode == .variation || resolvedEditMode == .iterate) && sourceArtifactID.isEmpty {
+            return invalidArgumentResponse(message: "source_artifact_id is required for variation and iterate image requests.")
+        }
 
         let imageBytes: Data
         do {
@@ -1126,6 +1133,37 @@ public struct OpenAIHandler: Sendable {
         } catch let error as ImageRequestNormalizationError {
             return invalidArgumentResponse(message: error.operatorMessage)
         }
+
+        if (resolvedEditMode == .variation || resolvedEditMode == .iterate) && sourceArtifactID.isEmpty {
+            return invalidArgumentResponse(message: "source_artifact_id is required for variation and iterate image requests.")
+        }
+        if resolvedEditMode != .iterate && promptDelta.isEmpty == false {
+            return invalidArgumentResponse(message: "prompt_delta is only supported for iterate image requests.")
+        }
+        if resolvedEditMode == .iterate && promptDelta.isEmpty {
+            return invalidArgumentResponse(message: "prompt_delta is required for iterate image requests.")
+        }
+        if sourceArtifactID.isEmpty == false && (imageBytes.isEmpty == false || imageRequest.imageURL != nil) {
+            return invalidArgumentResponse(message: "source_artifact_id cannot be combined with image_base64 or image_url.")
+        }
+
+        var resolvedImageURI = imageRequest.imageURL ?? ""
+        var sourceJobID = ""
+        if sourceArtifactID.isEmpty == false {
+            guard let imageJobReadModel, let sourceArtifact = await imageJobReadModel.artifact(artifactID: sourceArtifactID) else {
+                return invalidArgumentResponse(message: "Unknown source_artifact_id for image edit.")
+            }
+            guard sourceArtifact.storageUri.isEmpty == false else {
+                return invalidArgumentResponse(message: "Resolved source artifact does not expose a storage URI.")
+            }
+            resolvedImageURI = sourceArtifact.storageUri
+            sourceJobID = sourceArtifact.jobID
+        }
+        let resolvedPrompt = resolvedEditPrompt(
+            prompt: imageRequest.prompt,
+            promptDelta: promptDelta,
+            mode: resolvedEditMode
+        )
 
         guard let modelHandle = await modelCatalog.dispatchHandle(for: imageRequest.model) else {
             return httpErrorResponse(for: .modelNotReady)
@@ -1149,22 +1187,32 @@ public struct OpenAIHandler: Sendable {
         var workerRequest = Melix_Worker_V1_ImageEditRequest()
         workerRequest.id.requestID = requestID
         workerRequest.modelHandle = modelHandle
-        workerRequest.prompt = imageRequest.prompt
+        workerRequest.prompt = resolvedPrompt
         workerRequest.image = imageBytes
-        workerRequest.imageUri = imageRequest.imageURL ?? ""
+        workerRequest.imageUri = resolvedImageURI
         workerRequest.mask = maskBytes ?? Data()
         workerRequest.maskUri = imageRequest.maskURL ?? ""
+        workerRequest.sourceArtifactID = sourceArtifactID
+        workerRequest.promptDelta = promptDelta
+        workerRequest.editMode = workerImageEditMode(resolvedEditMode)
         workerRequest.strength = imageRequest.strength ?? 1
         workerRequest.size = imageRequest.size ?? "1024x1024"
         workerRequest.n = UInt32(max(1, imageRequest.n ?? 1))
         workerRequest.responseFormat = imageRequest.responseFormat ?? "png"
+        if sourceJobID.isEmpty == false {
+            workerRequest.ext["melix.image.source_job_id"] = sourceJobID
+        }
 
         await imageJobReadModel?.recordQueued(
             requestID: requestID,
             jobID: jobID,
             modelID: imageRequest.model,
-            operation: "image_edit",
-            lane: routeKind.defaultSchedulingLane
+            operation: imageEditOperationName(for: resolvedEditMode),
+            lane: routeKind.defaultSchedulingLane,
+            sourceArtifactID: sourceArtifactID,
+            sourceJobID: sourceJobID,
+            promptDelta: promptDelta,
+            editMode: resolvedEditMode
         )
         do {
             try await imageJobAdmissionController.acquire(
@@ -1717,6 +1765,7 @@ public struct OpenAIHandler: Sendable {
         ref.sha256 = artifact.sha256
         ref.variantIndex = artifact.variantIndex
         ref.ext = artifact.ext
+        ref.parentArtifactID = artifact.parentArtifactID
         return ref
     }
 
@@ -1739,7 +1788,62 @@ public struct OpenAIHandler: Sendable {
         job.cancelable = workerJob.cancelable
         job.createdAtUnixMs = workerJob.createdAtUnixMs
         job.updatedAtUnixMs = workerJob.updatedAtUnixMs
+        job.sourceArtifactID = workerJob.sourceArtifactID
+        job.sourceJobID = workerJob.sourceJobID
+        job.promptDelta = workerJob.promptDelta
+        job.editMode = Melix_Controlplane_V1_ImageEditMode(rawValue: workerJob.editMode.rawValue) ?? .unspecified
         return job
+    }
+
+    private func resolvedImageEditMode(
+        _ mode: OpenAIImageEditsRequest.EditMode?
+    ) -> Melix_Controlplane_V1_ImageEditMode {
+        switch mode {
+        case .variation:
+            return .variation
+        case .iterate:
+            return .iterate
+        case .edit, .none:
+            return .edit
+        }
+    }
+
+    private func workerImageEditMode(
+        _ mode: Melix_Controlplane_V1_ImageEditMode
+    ) -> Melix_Worker_V1_ImageEditMode {
+        switch mode {
+        case .variation:
+            return .variation
+        case .iterate:
+            return .iterate
+        case .edit, .unspecified, .UNRECOGNIZED:
+            return .edit
+        }
+    }
+
+    private func imageEditOperationName(
+        for mode: Melix_Controlplane_V1_ImageEditMode
+    ) -> String {
+        switch mode {
+        case .variation:
+            return "image_variation"
+        case .iterate:
+            return "image_iterate"
+        case .edit, .unspecified, .UNRECOGNIZED:
+            return "image_edit"
+        }
+    }
+
+    private func resolvedEditPrompt(
+        prompt: String,
+        promptDelta: String,
+        mode: Melix_Controlplane_V1_ImageEditMode
+    ) -> String {
+        let trimmedPrompt = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        if mode == .iterate && trimmedPrompt.isEmpty {
+            return promptDelta
+        }
+        return prompt
     }
 
     private func controlPlaneError(from workerError: Melix_Worker_V1_ErrorStatus) -> Melix_Controlplane_V1_ErrorStatus {
@@ -2331,6 +2435,12 @@ private struct OpenAIImageGenerationsRequest: Codable {
 }
 
 private struct OpenAIImageEditsRequest: Codable {
+    enum EditMode: String, Codable {
+        case edit
+        case variation
+        case iterate
+    }
+
     let id: String?
     let model: String
     let prompt: String
@@ -2342,6 +2452,9 @@ private struct OpenAIImageEditsRequest: Codable {
     let size: String?
     let n: Int?
     let responseFormat: String?
+    let sourceArtifactID: String?
+    let promptDelta: String?
+    let editMode: EditMode?
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -2355,6 +2468,9 @@ private struct OpenAIImageEditsRequest: Codable {
         case size
         case n
         case responseFormat = "response_format"
+        case sourceArtifactID = "source_artifact_id"
+        case promptDelta = "prompt_delta"
+        case editMode = "edit_mode"
     }
 
     var requestID: String {
@@ -2369,6 +2485,9 @@ private struct OpenAIImageEditsRequest: Codable {
             return data
         }
         if imageURL != nil {
+            return Data()
+        }
+        if sourceArtifactID?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
             return Data()
         }
         throw ImageRequestNormalizationError.missingImage

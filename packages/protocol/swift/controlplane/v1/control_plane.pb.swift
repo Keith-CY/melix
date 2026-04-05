@@ -25,6 +25,48 @@ fileprivate struct _GeneratedWithProtocGenSwiftVersion: SwiftProtobuf.ProtobufAP
   typealias Version = _2
 }
 
+public enum Melix_Controlplane_V1_ImageEditMode: SwiftProtobuf.Enum, Swift.CaseIterable {
+  public typealias RawValue = Int
+  case unspecified // = 0
+  case edit // = 1
+  case variation // = 2
+  case iterate // = 3
+  case UNRECOGNIZED(Int)
+
+  public init() {
+    self = .unspecified
+  }
+
+  public init?(rawValue: Int) {
+    switch rawValue {
+    case 0: self = .unspecified
+    case 1: self = .edit
+    case 2: self = .variation
+    case 3: self = .iterate
+    default: self = .UNRECOGNIZED(rawValue)
+    }
+  }
+
+  public var rawValue: Int {
+    switch self {
+    case .unspecified: return 0
+    case .edit: return 1
+    case .variation: return 2
+    case .iterate: return 3
+    case .UNRECOGNIZED(let i): return i
+    }
+  }
+
+  // The compiler won't synthesize support with the UNRECOGNIZED case.
+  public static let allCases: [Melix_Controlplane_V1_ImageEditMode] = [
+    .unspecified,
+    .edit,
+    .variation,
+    .iterate,
+  ]
+
+}
+
 public enum Melix_Controlplane_V1_ServerState: SwiftProtobuf.Enum, Swift.CaseIterable {
   public typealias RawValue = Int
   case unspecified // = 0
@@ -3010,6 +3052,12 @@ public struct Melix_Controlplane_V1_EditImage: Sendable {
 
   public var responseFormat: String = String()
 
+  public var sourceArtifactID: String = String()
+
+  public var promptDelta: String = String()
+
+  public var editMode: Melix_Controlplane_V1_ImageEditMode = .unspecified
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -4133,6 +4181,8 @@ public struct Melix_Controlplane_V1_ImageArtifactRef: Sendable {
 
   public var ext: Dictionary<String,String> = [:]
 
+  public var parentArtifactID: String = String()
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -4219,6 +4269,26 @@ public struct Melix_Controlplane_V1_ImageJobSummary: @unchecked Sendable {
   public var promptDigest: String {
     get {_storage._promptDigest}
     set {_uniqueStorage()._promptDigest = newValue}
+  }
+
+  public var sourceArtifactID: String {
+    get {_storage._sourceArtifactID}
+    set {_uniqueStorage()._sourceArtifactID = newValue}
+  }
+
+  public var sourceJobID: String {
+    get {_storage._sourceJobID}
+    set {_uniqueStorage()._sourceJobID = newValue}
+  }
+
+  public var promptDelta: String {
+    get {_storage._promptDelta}
+    set {_uniqueStorage()._promptDelta = newValue}
+  }
+
+  public var editMode: Melix_Controlplane_V1_ImageEditMode {
+    get {_storage._editMode}
+    set {_uniqueStorage()._editMode = newValue}
   }
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
@@ -6161,6 +6231,10 @@ public struct Melix_Controlplane_V1_ImageJobStateChanged: Sendable {
 // MARK: - Code below here is support for the SwiftProtobuf runtime.
 
 fileprivate let _protobuf_package = "melix.controlplane.v1"
+
+extension Melix_Controlplane_V1_ImageEditMode: SwiftProtobuf._ProtoNameProviding {
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0IMAGE_EDIT_MODE_UNSPECIFIED\0\u{1}IMAGE_EDIT_MODE_EDIT\0\u{1}IMAGE_EDIT_MODE_VARIATION\0\u{1}IMAGE_EDIT_MODE_ITERATE\0")
+}
 
 extension Melix_Controlplane_V1_ServerState: SwiftProtobuf._ProtoNameProviding {
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0SERVER_STATE_UNSPECIFIED\0\u{1}SERVER_BOOTING\0\u{1}SERVER_READY\0\u{1}SERVER_DEGRADED\0\u{1}SERVER_DRAINING\0\u{1}SERVER_STOPPED\0\u{1}SERVER_FAILED\0")
@@ -9561,7 +9635,7 @@ extension Melix_Controlplane_V1_GenerateImage: SwiftProtobuf.Message, SwiftProto
 
 extension Melix_Controlplane_V1_EditImage: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".EditImage"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}model_id\0\u{1}prompt\0\u{1}image\0\u{3}image_uri\0\u{1}mask\0\u{3}mask_uri\0\u{1}strength\0\u{1}size\0\u{1}n\0\u{3}response_format\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}model_id\0\u{1}prompt\0\u{1}image\0\u{3}image_uri\0\u{1}mask\0\u{3}mask_uri\0\u{1}strength\0\u{1}size\0\u{1}n\0\u{3}response_format\0\u{3}source_artifact_id\0\u{3}prompt_delta\0\u{3}edit_mode\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -9579,6 +9653,9 @@ extension Melix_Controlplane_V1_EditImage: SwiftProtobuf.Message, SwiftProtobuf.
       case 8: try { try decoder.decodeSingularStringField(value: &self.size) }()
       case 9: try { try decoder.decodeSingularUInt32Field(value: &self.n) }()
       case 10: try { try decoder.decodeSingularStringField(value: &self.responseFormat) }()
+      case 11: try { try decoder.decodeSingularStringField(value: &self.sourceArtifactID) }()
+      case 12: try { try decoder.decodeSingularStringField(value: &self.promptDelta) }()
+      case 13: try { try decoder.decodeSingularEnumField(value: &self.editMode) }()
       default: break
       }
     }
@@ -9615,6 +9692,15 @@ extension Melix_Controlplane_V1_EditImage: SwiftProtobuf.Message, SwiftProtobuf.
     if !self.responseFormat.isEmpty {
       try visitor.visitSingularStringField(value: self.responseFormat, fieldNumber: 10)
     }
+    if !self.sourceArtifactID.isEmpty {
+      try visitor.visitSingularStringField(value: self.sourceArtifactID, fieldNumber: 11)
+    }
+    if !self.promptDelta.isEmpty {
+      try visitor.visitSingularStringField(value: self.promptDelta, fieldNumber: 12)
+    }
+    if self.editMode != .unspecified {
+      try visitor.visitSingularEnumField(value: self.editMode, fieldNumber: 13)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -9629,6 +9715,9 @@ extension Melix_Controlplane_V1_EditImage: SwiftProtobuf.Message, SwiftProtobuf.
     if lhs.size != rhs.size {return false}
     if lhs.n != rhs.n {return false}
     if lhs.responseFormat != rhs.responseFormat {return false}
+    if lhs.sourceArtifactID != rhs.sourceArtifactID {return false}
+    if lhs.promptDelta != rhs.promptDelta {return false}
+    if lhs.editMode != rhs.editMode {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -12040,7 +12129,7 @@ extension Melix_Controlplane_V1_ImageJobProgress: SwiftProtobuf.Message, SwiftPr
 
 extension Melix_Controlplane_V1_ImageArtifactRef: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ImageArtifactRef"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}artifact_id\0\u{3}job_id\0\u{1}role\0\u{3}mime_type\0\u{1}format\0\u{1}width\0\u{1}height\0\u{3}byte_length\0\u{3}storage_uri\0\u{1}sha256\0\u{3}variant_index\0\u{1}ext\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}artifact_id\0\u{3}job_id\0\u{1}role\0\u{3}mime_type\0\u{1}format\0\u{1}width\0\u{1}height\0\u{3}byte_length\0\u{3}storage_uri\0\u{1}sha256\0\u{3}variant_index\0\u{1}ext\0\u{3}parent_artifact_id\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -12060,6 +12149,7 @@ extension Melix_Controlplane_V1_ImageArtifactRef: SwiftProtobuf.Message, SwiftPr
       case 10: try { try decoder.decodeSingularStringField(value: &self.sha256) }()
       case 11: try { try decoder.decodeSingularUInt32Field(value: &self.variantIndex) }()
       case 12: try { try decoder.decodeMapField(fieldType: SwiftProtobuf._ProtobufMap<SwiftProtobuf.ProtobufString,SwiftProtobuf.ProtobufString>.self, value: &self.ext) }()
+      case 13: try { try decoder.decodeSingularStringField(value: &self.parentArtifactID) }()
       default: break
       }
     }
@@ -12102,6 +12192,9 @@ extension Melix_Controlplane_V1_ImageArtifactRef: SwiftProtobuf.Message, SwiftPr
     if !self.ext.isEmpty {
       try visitor.visitMapField(fieldType: SwiftProtobuf._ProtobufMap<SwiftProtobuf.ProtobufString,SwiftProtobuf.ProtobufString>.self, value: self.ext, fieldNumber: 12)
     }
+    if !self.parentArtifactID.isEmpty {
+      try visitor.visitSingularStringField(value: self.parentArtifactID, fieldNumber: 13)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -12118,6 +12211,7 @@ extension Melix_Controlplane_V1_ImageArtifactRef: SwiftProtobuf.Message, SwiftPr
     if lhs.sha256 != rhs.sha256 {return false}
     if lhs.variantIndex != rhs.variantIndex {return false}
     if lhs.ext != rhs.ext {return false}
+    if lhs.parentArtifactID != rhs.parentArtifactID {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -12125,7 +12219,7 @@ extension Melix_Controlplane_V1_ImageArtifactRef: SwiftProtobuf.Message, SwiftPr
 
 extension Melix_Controlplane_V1_ImageJobSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ImageJobSummary"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}job_id\0\u{3}request_id\0\u{3}model_id\0\u{1}operation\0\u{1}state\0\u{1}lane\0\u{3}worker_id\0\u{1}progress\0\u{1}artifacts\0\u{1}error\0\u{1}cancelable\0\u{3}created_at_unix_ms\0\u{3}updated_at_unix_ms\0\u{3}prompt_digest\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}job_id\0\u{3}request_id\0\u{3}model_id\0\u{1}operation\0\u{1}state\0\u{1}lane\0\u{3}worker_id\0\u{1}progress\0\u{1}artifacts\0\u{1}error\0\u{1}cancelable\0\u{3}created_at_unix_ms\0\u{3}updated_at_unix_ms\0\u{3}prompt_digest\0\u{3}source_artifact_id\0\u{3}source_job_id\0\u{3}prompt_delta\0\u{3}edit_mode\0")
 
   fileprivate class _StorageClass {
     var _jobID: String = String()
@@ -12142,6 +12236,10 @@ extension Melix_Controlplane_V1_ImageJobSummary: SwiftProtobuf.Message, SwiftPro
     var _createdAtUnixMs: Int64 = 0
     var _updatedAtUnixMs: Int64 = 0
     var _promptDigest: String = String()
+    var _sourceArtifactID: String = String()
+    var _sourceJobID: String = String()
+    var _promptDelta: String = String()
+    var _editMode: Melix_Controlplane_V1_ImageEditMode = .unspecified
 
       // This property is used as the initial default value for new instances of the type.
       // The type itself is protecting the reference to its storage via CoW semantics.
@@ -12166,6 +12264,10 @@ extension Melix_Controlplane_V1_ImageJobSummary: SwiftProtobuf.Message, SwiftPro
       _createdAtUnixMs = source._createdAtUnixMs
       _updatedAtUnixMs = source._updatedAtUnixMs
       _promptDigest = source._promptDigest
+      _sourceArtifactID = source._sourceArtifactID
+      _sourceJobID = source._sourceJobID
+      _promptDelta = source._promptDelta
+      _editMode = source._editMode
     }
   }
 
@@ -12198,6 +12300,10 @@ extension Melix_Controlplane_V1_ImageJobSummary: SwiftProtobuf.Message, SwiftPro
         case 12: try { try decoder.decodeSingularInt64Field(value: &_storage._createdAtUnixMs) }()
         case 13: try { try decoder.decodeSingularInt64Field(value: &_storage._updatedAtUnixMs) }()
         case 14: try { try decoder.decodeSingularStringField(value: &_storage._promptDigest) }()
+        case 15: try { try decoder.decodeSingularStringField(value: &_storage._sourceArtifactID) }()
+        case 16: try { try decoder.decodeSingularStringField(value: &_storage._sourceJobID) }()
+        case 17: try { try decoder.decodeSingularStringField(value: &_storage._promptDelta) }()
+        case 18: try { try decoder.decodeSingularEnumField(value: &_storage._editMode) }()
         default: break
         }
       }
@@ -12252,6 +12358,18 @@ extension Melix_Controlplane_V1_ImageJobSummary: SwiftProtobuf.Message, SwiftPro
       if !_storage._promptDigest.isEmpty {
         try visitor.visitSingularStringField(value: _storage._promptDigest, fieldNumber: 14)
       }
+      if !_storage._sourceArtifactID.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._sourceArtifactID, fieldNumber: 15)
+      }
+      if !_storage._sourceJobID.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._sourceJobID, fieldNumber: 16)
+      }
+      if !_storage._promptDelta.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._promptDelta, fieldNumber: 17)
+      }
+      if _storage._editMode != .unspecified {
+        try visitor.visitSingularEnumField(value: _storage._editMode, fieldNumber: 18)
+      }
     }
     try unknownFields.traverse(visitor: &visitor)
   }
@@ -12275,6 +12393,10 @@ extension Melix_Controlplane_V1_ImageJobSummary: SwiftProtobuf.Message, SwiftPro
         if _storage._createdAtUnixMs != rhs_storage._createdAtUnixMs {return false}
         if _storage._updatedAtUnixMs != rhs_storage._updatedAtUnixMs {return false}
         if _storage._promptDigest != rhs_storage._promptDigest {return false}
+        if _storage._sourceArtifactID != rhs_storage._sourceArtifactID {return false}
+        if _storage._sourceJobID != rhs_storage._sourceJobID {return false}
+        if _storage._promptDelta != rhs_storage._promptDelta {return false}
+        if _storage._editMode != rhs_storage._editMode {return false}
         return true
       }
       if !storagesAreEqual {return false}

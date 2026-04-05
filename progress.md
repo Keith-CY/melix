@@ -2,6 +2,48 @@
 
 ## 2026-04-06
 
+- Closed `M14.1` by making image variation and iterate flows typed, lineage-aware, and compatible
+  with the existing image-job model instead of treating every derived image request as a generic
+  edit:
+  - extended the control-plane and worker protobuf contracts with typed `ImageEditMode` enums plus
+    `source_artifact_id`, `source_job_id`, `prompt_delta`, and `parent_artifact_id` lineage
+    fields, then regenerated the Swift, Python, and descriptor artifacts
+  - updated the Swift control plane, the shared XPC client, and the OpenAI image-edit handler so
+    `variation` and `iterate` requests resolve prior artifact IDs into worker-facing source URIs,
+    enforce iterate-only `prompt_delta`, reject mixed raw-image plus artifact-id inputs, and keep
+    queued image jobs lineage-aware
+  - updated the deterministic Python image-edit runtime and terminal job descriptors so generated
+    artifacts preserve `parent_artifact_id` and lineage `ext` keys for the source artifact, source
+    job, edit mode, and prompt delta
+  - added focused read-model, control-plane, OpenAI gateway, XPC-client, and Python runtime tests
+    that exercise iterate resolution, variation validation, and lineage persistence end to end
+- Verification summary for `M14.1`:
+  - `make proto`: pass
+  - `PYTHONPATH='.:services/mlx-worker-python' uv run --project services/mlx-worker-python pytest services/mlx-worker-python/tests/test_image_runtime.py -q`: `11 passed in 0.09s`
+  - `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/.build/ModuleCache.noindex" swift test --package-path services/control-plane-swift --filter 'ControlPlaneServiceTests|OpenAIHandlerTests|ImageJobReadModelTests'`: `270 tests in 3 suites passed after 0.098 seconds`
+  - `make py-test`: `488 passed in 52.81s`
+  - `make swift-test`: failed outside the touched scope when `services/mlx-text-worker-swift`
+    exited with unexpected signal `11` during `WorkerScaffoldTests`
+  - `git diff --check`: pass
+- Metrics report for `M14.1`:
+  - typed lineage evidence exercised by the touched scope:
+    - `source_artifact_id` now resolves prior image artifacts into control-plane and OpenAI
+      image-edit worker requests without bypassing image-job history
+    - `prompt_delta` is enforced as iterate-only input and preserved in queued image jobs plus
+      worker terminal job descriptors
+    - generated artifacts now preserve `parent_artifact_id` and lineage `ext` values for source
+      artifact, source job, and edit mode
+  - changed-line coverage for the touched handwritten executable scope:
+    - Python worker plus test scope via `scripts/python_changed_line_coverage.py`: `100.00%`
+      (`52/52`)
+    - Swift control-plane plus test scope via repository `git diff --unified=0 HEAD` and
+      `xcrun llvm-cov show` over the coverage-enabled `MelixControlPlanePackageTests` binary:
+      `96.13%` (`646/672`)
+    - aggregate touched-scope coverage: `96.41%` (`698/724`)
+  - generated protobuf outputs, `packages/protocol/descriptors/melix.pb`, and planning documents
+    are excluded from executable changed-line coverage because they are regenerated artifacts or
+    non-runtime documentation rather than handwritten executable logic
+
 - Closed the second executable `M13.4` slice and completed the milestone by turning the shipped API
   onboarding examples into repository-owned executable truth:
   - added `scripts/m13_api_onboarding_smoke.py`, a live shared-access smoke that exercises the

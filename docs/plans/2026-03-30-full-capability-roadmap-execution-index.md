@@ -256,6 +256,10 @@ The roadmap extension in `M10-M17` includes milestone-level plans plus decompose
 ## M14: Image Iteration And Persisted Creative Workflows
 
 - `M14.1` `docs/plans/2026-03-31-m14-1-image-variation-and-iterate-request-semantics.md`
+  Status: completed. Image edit requests now carry typed `edit`, `variation`, and `iterate`
+  modes, control-plane and OpenAI image edits can resolve prior artifacts by stable
+  `source_artifact_id`, and worker plus control-plane image job records preserve parent-artifact,
+  parent-job, and `prompt_delta` lineage for downstream desktop consumers.
 - `M14.2` `docs/plans/2026-03-31-m14-2-persisted-image-defaults-and-role-aware-picker.md`
 - `M14.3` `docs/plans/2026-03-31-m14-3-redo-actions-and-long-running-timeout-policy.md`
 - `M14.4` `docs/plans/2026-03-31-m14-4-image-iteration-integration-and-artifact-lineage-evidence.md`

@@ -14,8 +14,8 @@ service InferenceService {
   rpc Rerank(RerankRequest) returns (RerankResponse);
   rpc Transcribe(TranscribeRequest) returns (TranscribeResponse);
   rpc Speak(SpeakRequest) returns (SpeakResponse);
-  rpc ImageGenerate(ImageGenerateRequest) returns (ImageGenerateResponse);
-  rpc ImageEdit(ImageEditRequest) returns (ImageEditResponse);
+rpc ImageGenerate(ImageGenerateRequest) returns (ImageGenerateResponse);
+rpc ImageEdit(ImageEditRequest) returns (ImageEditResponse);
 }
 
 message ExecutionMetadata {
@@ -275,6 +275,13 @@ message SpeakResponse {
   ErrorStatus error = 3;
 }
 
+enum ImageEditMode {
+  IMAGE_EDIT_MODE_UNSPECIFIED = 0;
+  IMAGE_EDIT_MODE_EDIT = 1;
+  IMAGE_EDIT_MODE_VARIATION = 2;
+  IMAGE_EDIT_MODE_ITERATE = 3;
+}
+
 message ImageGenerateRequest {
   RequestIdentity id = 1;
   string model_handle = 2;
@@ -305,6 +312,9 @@ message ImageEditRequest {
   string image_uri = 10;
   string mask_uri = 11;
   map<string, string> ext = 12;
+  string source_artifact_id = 13;
+  string prompt_delta = 14;
+  ImageEditMode edit_mode = 15;
 }
 
 message ImageEditResponse {
@@ -325,4 +335,8 @@ message ImageJobDescriptor {
   bool cancelable = 9;
   int64 created_at_unix_ms = 10;
   int64 updated_at_unix_ms = 11;
+  string source_artifact_id = 12;
+  string source_job_id = 13;
+  string prompt_delta = 14;
+  ImageEditMode edit_mode = 15;
 }

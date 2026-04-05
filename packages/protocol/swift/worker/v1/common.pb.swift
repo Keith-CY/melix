@@ -984,6 +984,8 @@ public struct Melix_Worker_V1_ImageArtifactMetadata: Sendable {
 
   public var ext: Dictionary<String,String> = [:]
 
+  public var parentArtifactID: String = String()
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -2329,7 +2331,7 @@ extension Melix_Worker_V1_ImageJobProgress: SwiftProtobuf.Message, SwiftProtobuf
 
 extension Melix_Worker_V1_ImageArtifactMetadata: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ImageArtifactMetadata"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}artifact_id\0\u{3}job_id\0\u{1}role\0\u{3}mime_type\0\u{1}format\0\u{1}width\0\u{1}height\0\u{3}byte_length\0\u{3}storage_uri\0\u{1}sha256\0\u{3}variant_index\0\u{1}ext\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}artifact_id\0\u{3}job_id\0\u{1}role\0\u{3}mime_type\0\u{1}format\0\u{1}width\0\u{1}height\0\u{3}byte_length\0\u{3}storage_uri\0\u{1}sha256\0\u{3}variant_index\0\u{1}ext\0\u{3}parent_artifact_id\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -2349,6 +2351,7 @@ extension Melix_Worker_V1_ImageArtifactMetadata: SwiftProtobuf.Message, SwiftPro
       case 10: try { try decoder.decodeSingularStringField(value: &self.sha256) }()
       case 11: try { try decoder.decodeSingularUInt32Field(value: &self.variantIndex) }()
       case 12: try { try decoder.decodeMapField(fieldType: SwiftProtobuf._ProtobufMap<SwiftProtobuf.ProtobufString,SwiftProtobuf.ProtobufString>.self, value: &self.ext) }()
+      case 13: try { try decoder.decodeSingularStringField(value: &self.parentArtifactID) }()
       default: break
       }
     }
@@ -2391,6 +2394,9 @@ extension Melix_Worker_V1_ImageArtifactMetadata: SwiftProtobuf.Message, SwiftPro
     if !self.ext.isEmpty {
       try visitor.visitMapField(fieldType: SwiftProtobuf._ProtobufMap<SwiftProtobuf.ProtobufString,SwiftProtobuf.ProtobufString>.self, value: self.ext, fieldNumber: 12)
     }
+    if !self.parentArtifactID.isEmpty {
+      try visitor.visitSingularStringField(value: self.parentArtifactID, fieldNumber: 13)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -2407,6 +2413,7 @@ extension Melix_Worker_V1_ImageArtifactMetadata: SwiftProtobuf.Message, SwiftPro
     if lhs.sha256 != rhs.sha256 {return false}
     if lhs.variantIndex != rhs.variantIndex {return false}
     if lhs.ext != rhs.ext {return false}
+    if lhs.parentArtifactID != rhs.parentArtifactID {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

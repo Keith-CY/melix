@@ -3683,6 +3683,109 @@ struct OpenAIHandlerTests {
         #expect(metrics.values["images.peak_memory_bytes", default: -1] == 98304)
     }
 
+    @Test("POST /v1/images/edits resolves iterate requests from source_artifact_id")
+    func postImageEditsResolveIterateRequestsFromSourceArtifactID() async throws {
+        let textClient = ScriptedWorkerClient(events: [])
+        let imageClient = ScriptedPhaseFiveWorkerClient()
+        await imageClient.setImageEditResponse({
+            var response = Melix_Worker_V1_ImageEditResponse()
+            response.images = [Data("iterated-image".utf8)]
+            response.job.requestID = "image-edit-iterate"
+            response.job.jobID = "image-edit-iterate::image-edit"
+            response.job.modelHandle = "melix-dev-image::python"
+            response.job.operation = "image_iterate"
+            response.job.state = .imageJobCompleted
+            response.job.sourceArtifactID = "artifact-source"
+            response.job.sourceJobID = "job-source"
+            response.job.promptDelta = "make the colors warmer"
+            response.job.editMode = .iterate
+            var generated = makeWorkerArtifact(
+                jobID: "image-edit-iterate::image-edit",
+                role: .imageArtifactGenerated,
+                artifactID: "output"
+            )
+            generated.parentArtifactID = "artifact-source"
+            response.job.artifacts = [generated]
+            return response
+        }())
+
+        let imageJobReadModel = ImageJobReadModel()
+        var sourceArtifact = Melix_Controlplane_V1_ImageArtifactRef()
+        sourceArtifact.artifactID = "artifact-source"
+        sourceArtifact.jobID = "job-source"
+        sourceArtifact.role = .imageArtifactGenerated
+        sourceArtifact.mimeType = "image/png"
+        sourceArtifact.format = "png"
+        sourceArtifact.width = 256
+        sourceArtifact.height = 256
+        sourceArtifact.byteLength = 64
+        sourceArtifact.storageUri = "file:///tmp/source-origin.png"
+        sourceArtifact.variantIndex = 0
+        await imageJobReadModel.recordQueued(
+            requestID: "req-image-source",
+            jobID: "job-source",
+            modelID: "melix-dev-image",
+            operation: "image_generate",
+            lane: "image.generate.background"
+        )
+        await imageJobReadModel.recordCompleted(jobID: "job-source", artifacts: [sourceArtifact])
+
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel(), ModelCatalog.devImageModel()])
+        _ = await catalog.loadModel(id: "melix-dev-image", dispatchHandle: "melix-dev-image::python")
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: textClient),
+                abortRegistry: AbortRegistry()
+            ),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: textClient,
+                pythonCompatibilityClient: imageClient,
+                modelCatalog: catalog
+            ),
+            imageJobReadModel: imageJobReadModel
+        )
+
+        let body = try #require(
+            """
+            {
+              "id": "image-edit-iterate",
+              "model": "melix-dev-image",
+              "prompt": "",
+              "source_artifact_id": "artifact-source",
+              "prompt_delta": "make the colors warmer",
+              "edit_mode": "iterate",
+              "strength": 0.7,
+              "size": "256x256",
+              "response_format": "png",
+              "n": 1
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(method: .post, path: "/v1/images/edits", headers: [:], body: body)
+        )
+        let payload = try await collectBody(response.body)
+        let request = try #require(await imageClient.lastImageEditRequest)
+        let job = try #require(await imageJobReadModel.job(requestID: "image-edit-iterate"))
+
+        #expect(response.statusCode == 200)
+        #expect(request.image.isEmpty)
+        #expect(request.imageUri == "file:///tmp/source-origin.png")
+        #expect(request.sourceArtifactID == "artifact-source")
+        #expect(request.prompt == "make the colors warmer")
+        #expect(request.promptDelta == "make the colors warmer")
+        #expect(request.editMode == .iterate)
+        #expect(request.ext["melix.image.source_job_id"] == "job-source")
+        #expect(payload.contains("\"operation\":\"image_iterate\""))
+        #expect(job.operation == "image_iterate")
+        #expect(job.sourceArtifactID == "artifact-source")
+        #expect(job.sourceJobID == "job-source")
+        #expect(job.promptDelta == "make the colors warmer")
+        #expect(job.editMode == .iterate)
+    }
+
     @Test("image endpoints validate payloads and return 409 and 503 when routing is unavailable")
     func imageEndpointsValidatePayloadsAndReturnUnavailableResponses() async throws {
         let invalidHandler = OpenAIHandler(
@@ -3762,6 +3865,95 @@ struct OpenAIHandlerTests {
 
         #expect(unavailableResponse.statusCode == 503)
         #expect(unavailablePayload.contains("\"code\":\"worker_unavailable\""))
+    }
+
+    @Test("image edit endpoints validate variation and iterate lineage inputs")
+    func imageEditEndpointsValidateVariationAndIterateLineageInputs() async throws {
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devImageModel()])
+        _ = await catalog.loadModel(id: "melix-dev-image", dispatchHandle: "melix-dev-image::python")
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: ScriptedWorkerClient(events: [])),
+                abortRegistry: AbortRegistry()
+            ),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: ScriptedWorkerClient(events: []),
+                pythonCompatibilityClient: ScriptedPhaseFiveWorkerClient(),
+                modelCatalog: catalog
+            ),
+            imageJobReadModel: ImageJobReadModel()
+        )
+
+        let missingSourceBody = try #require(
+            """
+            {
+              "model": "melix-dev-image",
+              "prompt": "keep composition",
+              "edit_mode": "variation"
+            }
+            """.data(using: .utf8)
+        )
+        let missingSourceResponse = try await handler.handle(
+            HTTPRequest(method: .post, path: "/v1/images/edits", headers: [:], body: missingSourceBody)
+        )
+        let missingSourcePayload = try await collectBody(missingSourceResponse.body)
+
+        let invalidPromptDeltaBody = try #require(
+            """
+            {
+              "model": "melix-dev-image",
+              "prompt": "replace the sky",
+              "image_base64": "U09VUkNF",
+              "prompt_delta": "make it warmer"
+            }
+            """.data(using: .utf8)
+        )
+        let invalidPromptDeltaResponse = try await handler.handle(
+            HTTPRequest(method: .post, path: "/v1/images/edits", headers: [:], body: invalidPromptDeltaBody)
+        )
+        let invalidPromptDeltaPayload = try await collectBody(invalidPromptDeltaResponse.body)
+
+        let missingIterateDeltaBody = try #require(
+            """
+            {
+              "model": "melix-dev-image",
+              "prompt": "",
+              "source_artifact_id": "artifact-source",
+              "edit_mode": "iterate"
+            }
+            """.data(using: .utf8)
+        )
+        let missingIterateDeltaResponse = try await handler.handle(
+            HTTPRequest(method: .post, path: "/v1/images/edits", headers: [:], body: missingIterateDeltaBody)
+        )
+        let missingIterateDeltaPayload = try await collectBody(missingIterateDeltaResponse.body)
+
+        let mixedSourceInputsBody = try #require(
+            """
+            {
+              "model": "melix-dev-image",
+              "prompt": "",
+              "source_artifact_id": "artifact-source",
+              "image_url": "file:///tmp/source.png",
+              "prompt_delta": "make it warmer",
+              "edit_mode": "iterate"
+            }
+            """.data(using: .utf8)
+        )
+        let mixedSourceInputsResponse = try await handler.handle(
+            HTTPRequest(method: .post, path: "/v1/images/edits", headers: [:], body: mixedSourceInputsBody)
+        )
+        let mixedSourceInputsPayload = try await collectBody(mixedSourceInputsResponse.body)
+
+        #expect(missingSourceResponse.statusCode == 400)
+        #expect(missingSourcePayload.contains("source_artifact_id is required"))
+        #expect(invalidPromptDeltaResponse.statusCode == 400)
+        #expect(invalidPromptDeltaPayload.contains("prompt_delta is only supported"))
+        #expect(missingIterateDeltaResponse.statusCode == 400)
+        #expect(missingIterateDeltaPayload.contains("prompt_delta is required"))
+        #expect(mixedSourceInputsResponse.statusCode == 400)
+        #expect(mixedSourceInputsPayload.contains("source_artifact_id cannot be combined"))
     }
 
     @Test("image generation returns resource_exhausted when the background queue is saturated")

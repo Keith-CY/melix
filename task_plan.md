@@ -2,74 +2,73 @@
 
 ## Goal
 
-Close the second executable `M13.4` slice by adding repo-owned smoke verification for the shipped
-API onboarding examples so the quick-start material cannot drift away from live endpoint behavior.
+Start `M14.1` by making image variation and iterate flows explicit, typed, and lineage-aware across
+the control-plane and worker contracts instead of treating every derived image request as a generic
+image edit.
 
 ## Scope
 
-- add a repo-owned onboarding smoke script for the canonical `/health`, `/v1/responses`, and
-  `/v1/messages` examples
-- cover the same example semantics in deterministic integration tests so CI detects drift
-- tighten desktop quick-start tests so example literals, auth expectations, and endpoint shapes
-  stay aligned with the smoke script
-- update milestone bookkeeping so `M13.4` can be called complete once example verification lands
+- add typed image edit modes for `edit`, `variation`, and `iterate`
+- allow control-plane image edits to reference a prior artifact by stable artifact ID
+- preserve source-artifact and prompt-delta lineage through the worker artifact metadata returned to
+  control-plane consumers
+- keep the first slice bounded to protocol, control-plane, worker, and focused tests
 
 ## Measurement Points
 
-- the onboarding smoke must pass against a live `LiveMelixStack`
-- `/health` must return route readiness for the same local gateway base URL referenced in product
-  onboarding
-- `/v1/responses` and `/v1/messages` must accept the canonical example payloads and headers used by
-  the quick-start material
-- desktop quick-start helper tests must remain aligned with the example payload text and auth
-  assumptions exercised by the smoke script
-- changed-line coverage for the touched handwritten executable scope must remain at or above `95%`
+- image edit requests can carry an explicit mode and optional `source_artifact_id` plus
+  `prompt_delta`
+- variation and iterate requests resolve a prior artifact ID into the worker-facing source image
+  input without bypassing the existing image-job history
+- returned generated artifacts preserve lineage metadata that identifies the parent artifact and
+  requested edit mode
+- changed-line coverage for the touched handwritten executable scope remains at or above `95%`
 
 ## Phases
 
-1. Planning and example-verification design
+1. Contract and slice design
    - status: completed
    - evidence:
-     - inspected existing integration coverage and confirmed the repository already proves endpoint
-       streaming semantics, but does not yet own a smoke that explicitly validates the product
-       quick-start example payloads and headers
-     - selected a bounded second slice: add one repo-owned onboarding smoke plus aligned
-       integration and desktop quick-start assertions before considering broader API-page changes
-2. Onboarding smoke and quick-start alignment
+     - reviewed the current `GenerateImage` / `EditImage` protocol messages and confirmed they only
+       support raw image bytes or URIs, not artifact-derived variation or iterate semantics
+     - inspected the current image runtime and read-model behavior and confirmed the worker already
+       persists source and generated artifacts, so the missing piece is typed request and lineage
+       propagation rather than a brand-new image pipeline
+2. Typed variation and iterate contract
    - status: completed
    - evidence:
-     - added `scripts/m13_api_onboarding_smoke.py` so the repository now owns one live smoke for
-       the canonical `/health`, `/v1/responses`, and `/v1/messages` examples under shared-access
-       authentication
-     - updated the desktop quick-start snippets to match shipped streaming behavior, including
-       `stream=true`, SSE-friendly curl flags, and auth-aware `/health` examples for compatibility
-       guidance
-     - added deterministic Python and integration coverage for the smoke script and its failure
-       branches so the product quick starts cannot silently drift from live endpoint expectations
+     - added typed `ImageEditMode` enums to the control-plane and worker protobuf contracts and
+       regenerated the versioned Swift, Python, and descriptor outputs
+     - taught the Swift control plane and OpenAI handler to resolve `source_artifact_id` into the
+       stored artifact URI, enforce iterate-only `prompt_delta`, and preserve source-artifact plus
+       source-job lineage in queued image jobs and worker requests
+     - taught the worker image-edit runtime and terminal job descriptors to preserve
+       `parent_artifact_id`, `source_job_id`, `prompt_delta`, and `edit_mode` lineage through
+       deterministic image artifacts and job metadata
 3. Verification and milestone bookkeeping
    - status: completed
    - evidence:
-     - focused quick-start verification passed in Swift and Python, the repo-owned smoke script ran
-       successfully, and `make integration-test` covered the new live example path
-     - touched-scope changed-line coverage reached `100.00%` (`282/282`) across the modified Swift
-       and Python executable files
-     - `M13.4` is now ready to be marked completed in the execution index
+     - reran `make proto`, focused Swift image-job suites, focused Python image-runtime tests,
+       repository Python tests, changed-line coverage, and `git diff --check`
+     - updated the active `M14.1` plan plus the roadmap execution index to reflect the completed
+       typed variation and iterate contract slice
 
 ## Acceptance
 
-- operators and CI both have a repo-owned smoke that verifies the canonical onboarding examples
-- example snippets remain aligned with the live local gateway payloads, headers, and base URLs
-- `M13.4` has both product-visible onboarding material and executable example verification
+- variation and iterate requests are typed rather than implicit string conventions
+- control-plane image jobs preserve lineage to their parent artifacts
+- worker artifact metadata keeps enough lineage detail for later desktop consumers to render
+  variation and iterate relationships without re-deriving them from file paths
 
 ## Risks
 
-- example verification could give a false sense of safety if it only tests endpoint availability
-  but not the specific example payloads shown in product quick starts
-- the smoke could drift from UI quick-start literals if shared example text and headers are not
-  asserted in desktop tests
-- shared-access authentication could make the smoke flaky if the script does not derive its headers
-  from repository-owned stack state
+- artifact-ID resolution could silently break if control-plane image jobs do not reject unknown
+  lineage references early
+- prompt-delta semantics could become misleading if the runtime ignores them while the protocol
+  claims to support iterate flows
+- broadening the image request contract could destabilize existing generate and edit behavior if the
+  new fields are not kept strictly optional
 
 ## Outcome
 
-- m13_4_api_onboarding_completed
+- m14_1_variation_iterate_contract_completed

@@ -27,6 +27,10 @@ public actor ImageJobReadModel {
         operation: String,
         lane: String,
         promptDigest: String = "",
+        sourceArtifactID: String = "",
+        sourceJobID: String = "",
+        promptDelta: String = "",
+        editMode: Melix_Controlplane_V1_ImageEditMode = .unspecified,
         cancelable: Bool = true
     ) async {
         let timestamp = unixMilliseconds()
@@ -39,6 +43,10 @@ public actor ImageJobReadModel {
         job.lane = lane
         job.cancelable = cancelable
         job.promptDigest = promptDigest
+        job.sourceArtifactID = sourceArtifactID
+        job.sourceJobID = sourceJobID
+        job.promptDelta = promptDelta
+        job.editMode = editMode
         if job.createdAtUnixMs == 0 {
             job.createdAtUnixMs = timestamp
         }
@@ -138,6 +146,15 @@ public actor ImageJobReadModel {
             return nil
         }
         return jobsByID[jobID]
+    }
+
+    public func artifact(artifactID: String) -> Melix_Controlplane_V1_ImageArtifactRef? {
+        for job in jobsByID.values {
+            if let artifact = job.artifacts.first(where: { $0.artifactID == artifactID }) {
+                return artifact
+            }
+        }
+        return nil
     }
 
     private func publish(_ job: Melix_Controlplane_V1_ImageJobSummary) async {

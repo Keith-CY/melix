@@ -31,12 +31,21 @@ public struct ControlPlaneImageGenerationRequest: Equatable, Sendable {
 }
 
 public struct ControlPlaneImageEditRequest: Equatable, Sendable {
+    public enum Mode: String, Equatable, Sendable {
+        case edit
+        case variation
+        case iterate
+    }
+
     public let modelID: String
     public let prompt: String
     public let imageData: Data
     public let imageURL: String
     public let maskData: Data
     public let maskURL: String
+    public let sourceArtifactID: String
+    public let promptDelta: String
+    public let mode: Mode
     public let strength: Float
     public let size: String
     public let n: UInt32
@@ -49,6 +58,9 @@ public struct ControlPlaneImageEditRequest: Equatable, Sendable {
         imageURL: String = "",
         maskData: Data = Data(),
         maskURL: String = "",
+        sourceArtifactID: String = "",
+        promptDelta: String = "",
+        mode: Mode = .edit,
         strength: Float = 1,
         size: String = "1024x1024",
         n: UInt32 = 1,
@@ -60,6 +72,9 @@ public struct ControlPlaneImageEditRequest: Equatable, Sendable {
         self.imageURL = imageURL
         self.maskData = maskData
         self.maskURL = maskURL
+        self.sourceArtifactID = sourceArtifactID
+        self.promptDelta = promptDelta
+        self.mode = mode
         self.strength = strength
         self.size = size
         self.n = n
@@ -1065,6 +1080,9 @@ public actor LocalControlPlaneXPCClient: ControlPlaneXPCClient {
         request.image.edit.imageUri = edit.imageURL
         request.image.edit.mask = edit.maskData
         request.image.edit.maskUri = edit.maskURL
+        request.image.edit.sourceArtifactID = edit.sourceArtifactID
+        request.image.edit.promptDelta = edit.promptDelta
+        request.image.edit.editMode = imageEditModeProto(edit.mode)
         request.image.edit.strength = edit.strength
         request.image.edit.size = edit.size
         request.image.edit.n = edit.n
@@ -1267,5 +1285,18 @@ public actor LocalControlPlaneXPCClient: ControlPlaneXPCClient {
         request.server.applyServingDefaults.draftModelID = draftModelID
         request.server.applyServingDefaults.numDraftTokens = UInt32(max(0, numDraftTokens))
         return request
+    }
+}
+
+private func imageEditModeProto(
+    _ mode: ControlPlaneImageEditRequest.Mode
+) -> Melix_Controlplane_V1_ImageEditMode {
+    switch mode {
+    case .edit:
+        return .edit
+    case .variation:
+        return .variation
+    case .iterate:
+        return .iterate
     }
 }

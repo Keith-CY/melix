@@ -3986,6 +3986,7 @@ struct ControlPlaneServiceTests {
             private(set) var lastBenchRequest: Melix_Controlplane_V1_RunBench?
             private(set) var lastBenchMatrixRequest: Melix_Controlplane_V1_RunBenchMatrix?
             private(set) var lastEvaluationRequest: Melix_Controlplane_V1_RunEvaluation?
+            private(set) var lastImageEditRequest: Melix_Controlplane_V1_EditImage?
             private(set) var lastLoadRequest: Melix_Controlplane_V1_LoadModel?
             private(set) var lastServerRequest: Melix_Controlplane_V1_ControlPlaneRequest?
 
@@ -4025,6 +4026,10 @@ struct ControlPlaneServiceTests {
                 response.commandType = request.commandType
                 response.ok = true
                 switch request.command {
+                case .image:
+                    lastImageEditRequest = request.image.edit
+                    response.image.job = Melix_Controlplane_V1_ImageJobSummary()
+                    response.image.job.jobID = "image-job"
                 case .model:
                     lastLoadRequest = request.model.load
                     response.model.model = Melix_Controlplane_V1_ModelSummary()
@@ -4189,6 +4194,26 @@ struct ControlPlaneServiceTests {
         #expect(evaluationRequest.seed == 7)
         #expect(evaluationRequest.scoringMode == "multiple_choice_accuracy")
         #expect(evaluationRequest.codeExecPolicy == "sandboxed")
+
+        let imageJob = try await client.editImage(
+            ControlPlaneImageEditRequest(
+                modelID: "melix-dev-image",
+                prompt: "",
+                imageURL: "",
+                sourceArtifactID: "artifact-source",
+                promptDelta: "make the colors warmer",
+                mode: .iterate,
+                strength: 0.65
+            )
+        )
+        let imageEditRequest = try #require(await service.lastImageEditRequest)
+
+        #expect(imageJob.jobID == "image-job")
+        #expect(imageEditRequest.modelID == "melix-dev-image")
+        #expect(imageEditRequest.sourceArtifactID == "artifact-source")
+        #expect(imageEditRequest.promptDelta == "make the colors warmer")
+        #expect(imageEditRequest.editMode == .iterate)
+        #expect(imageEditRequest.imageUri.isEmpty)
 
         _ = try await client.startServerSession(serverSessionID: "server-session-2")
         var serverRequest = try #require(await service.lastServerRequest)
@@ -4649,6 +4674,102 @@ struct ControlPlaneServiceTests {
         #expect(response.image.job.artifacts.last?.role == .imageArtifactGenerated)
     }
 
+    @Test("execute resolves iterate image edits from a prior artifact and preserves lineage")
+    func executeResolvesIterateImageEditsFromPriorArtifact() async throws {
+        let modelCatalog = ModelCatalog(seedModels: ModelCatalog.phaseSevenContractSeedModels())
+        _ = await modelCatalog.loadModel(id: "melix-dev-image", dispatchHandle: "melix-dev-image::python")
+
+        let imageJobReadModel = ImageJobReadModel()
+        var sourceArtifact = Melix_Controlplane_V1_ImageArtifactRef()
+        sourceArtifact.artifactID = "artifact-source"
+        sourceArtifact.jobID = "job-source"
+        sourceArtifact.role = .imageArtifactGenerated
+        sourceArtifact.mimeType = "image/png"
+        sourceArtifact.format = "png"
+        sourceArtifact.width = 1024
+        sourceArtifact.height = 1024
+        sourceArtifact.byteLength = 1024
+        sourceArtifact.storageUri = "file:///tmp/source-origin.png"
+        sourceArtifact.variantIndex = 0
+        await imageJobReadModel.recordQueued(
+            requestID: "req-source",
+            jobID: "job-source",
+            modelID: "melix-dev-image",
+            operation: "image_generate",
+            lane: "image.generate.background"
+        )
+        await imageJobReadModel.recordCompleted(jobID: "job-source", artifacts: [sourceArtifact])
+
+        let imageClient = ScriptedImageWorkerClient()
+        await imageClient.setImageEditResponse({
+            var response = Melix_Worker_V1_ImageEditResponse()
+            response.job.requestID = "req-image-iterate"
+            response.job.jobID = "req-image-iterate::image-edit"
+            response.job.modelHandle = "melix-dev-image::python"
+            response.job.operation = "image_iterate"
+            response.job.state = .imageJobCompleted
+            response.job.progress.stage = "completed"
+            response.job.progress.pct = 1
+            response.job.sourceArtifactID = "artifact-source"
+            response.job.sourceJobID = "job-source"
+            response.job.promptDelta = "make the colors warmer"
+            response.job.editMode = .iterate
+            var generated = makeWorkerArtifact(
+                jobID: "req-image-iterate::image-edit",
+                role: .imageArtifactGenerated,
+                artifactID: "output"
+            )
+            generated.parentArtifactID = "artifact-source"
+            response.job.artifacts = [generated]
+            return response
+        }())
+        let service = ControlPlaneService(
+            modelCatalog: modelCatalog,
+            imageJobReadModel: imageJobReadModel,
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                pythonCompatibilityClient: imageClient,
+                modelCatalog: modelCatalog
+            )
+        )
+
+        var request = makeImageEditRequest(
+            requestID: "req-image-iterate",
+            modelID: "melix-dev-image",
+            prompt: "",
+            imageURI: "",
+            maskURI: "",
+            strength: 0.6
+        )
+        request.image.edit.sourceArtifactID = "artifact-source"
+        request.image.edit.promptDelta = "make the colors warmer"
+        request.image.edit.editMode = .iterate
+
+        let response = try await service.execute(request)
+        let forwardedRequest = try #require(await imageClient.lastImageEditRequest)
+        let recordedJob = try #require(await imageJobReadModel.job(requestID: "req-image-iterate"))
+
+        #expect(response.ok)
+        #expect(forwardedRequest.image.isEmpty)
+        #expect(forwardedRequest.imageUri == "file:///tmp/source-origin.png")
+        #expect(forwardedRequest.prompt == "make the colors warmer")
+        #expect(forwardedRequest.sourceArtifactID == "artifact-source")
+        #expect(forwardedRequest.promptDelta == "make the colors warmer")
+        #expect(forwardedRequest.editMode == .iterate)
+        #expect(forwardedRequest.ext["melix.image.source_job_id"] == "job-source")
+        #expect(response.image.job.operation == "image_iterate")
+        #expect(response.image.job.sourceArtifactID == "artifact-source")
+        #expect(response.image.job.sourceJobID == "job-source")
+        #expect(response.image.job.promptDelta == "make the colors warmer")
+        #expect(response.image.job.editMode == Melix_Controlplane_V1_ImageEditMode.iterate)
+        #expect(response.image.job.artifacts.first?.parentArtifactID == "artifact-source")
+        #expect(recordedJob.operation == "image_iterate")
+        #expect(recordedJob.sourceArtifactID == "artifact-source")
+        #expect(recordedJob.sourceJobID == "job-source")
+        #expect(recordedJob.promptDelta == "make the colors warmer")
+        #expect(recordedJob.editMode == .iterate)
+    }
+
     @Test("execute returns unimplemented for image commands without a kind")
     func executeReturnsUnimplementedForEmptyImageCommands() async throws {
         let service = ControlPlaneService()
@@ -4726,6 +4847,81 @@ struct ControlPlaneServiceTests {
 
         #expect(response.ok == false)
         #expect(response.error.code == "invalid_argument")
+    }
+
+    @Test("execute validates variation and iterate image edit lineage inputs")
+    func executeValidatesVariationAndIterateImageEditLineageInputs() async throws {
+        let modelCatalog = ModelCatalog(seedModels: ModelCatalog.phaseSevenContractSeedModels())
+        _ = await modelCatalog.loadModel(id: "melix-dev-image", dispatchHandle: "melix-dev-image::python")
+        let service = ControlPlaneService(
+            modelCatalog: modelCatalog,
+            imageJobReadModel: ImageJobReadModel(),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                pythonCompatibilityClient: ScriptedImageWorkerClient(),
+                modelCatalog: modelCatalog
+            )
+        )
+
+        var missingSource = makeImageEditRequest(
+            requestID: "req-image-variation-missing-source",
+            modelID: "melix-dev-image",
+            prompt: "keep composition",
+            imageURI: "",
+            maskURI: "",
+            strength: 1
+        )
+        missingSource.image.edit.editMode = .variation
+        let missingSourceResponse = try await service.execute(missingSource)
+
+        var invalidPromptDelta = makeImageEditRequest(
+            requestID: "req-image-edit-invalid-prompt-delta",
+            modelID: "melix-dev-image",
+            prompt: "replace the sky",
+            imageURI: "file:///tmp/source.png",
+            maskURI: "",
+            strength: 1
+        )
+        invalidPromptDelta.image.edit.promptDelta = "make it warmer"
+        let invalidPromptDeltaResponse = try await service.execute(invalidPromptDelta)
+
+        var iterateWithoutDelta = makeImageEditRequest(
+            requestID: "req-image-iterate-missing-delta",
+            modelID: "melix-dev-image",
+            prompt: "",
+            imageURI: "",
+            maskURI: "",
+            strength: 1
+        )
+        iterateWithoutDelta.image.edit.sourceArtifactID = "artifact-source"
+        iterateWithoutDelta.image.edit.editMode = .iterate
+        let iterateWithoutDeltaResponse = try await service.execute(iterateWithoutDelta)
+
+        var mixedSourceInputs = makeImageEditRequest(
+            requestID: "req-image-iterate-mixed-source",
+            modelID: "melix-dev-image",
+            prompt: "",
+            imageURI: "file:///tmp/source.png",
+            maskURI: "",
+            strength: 1
+        )
+        mixedSourceInputs.image.edit.sourceArtifactID = "artifact-source"
+        mixedSourceInputs.image.edit.promptDelta = "make it warmer"
+        mixedSourceInputs.image.edit.editMode = .iterate
+        let mixedSourceInputsResponse = try await service.execute(mixedSourceInputs)
+
+        #expect(missingSourceResponse.ok == false)
+        #expect(missingSourceResponse.error.code == "invalid_argument")
+        #expect(missingSourceResponse.error.message.contains("source_artifact_id is required"))
+        #expect(invalidPromptDeltaResponse.ok == false)
+        #expect(invalidPromptDeltaResponse.error.code == "invalid_argument")
+        #expect(invalidPromptDeltaResponse.error.message.contains("prompt_delta is only supported"))
+        #expect(iterateWithoutDeltaResponse.ok == false)
+        #expect(iterateWithoutDeltaResponse.error.code == "invalid_argument")
+        #expect(iterateWithoutDeltaResponse.error.message.contains("prompt_delta is required"))
+        #expect(mixedSourceInputsResponse.ok == false)
+        #expect(mixedSourceInputsResponse.error.code == "invalid_argument")
+        #expect(mixedSourceInputsResponse.error.message.contains("cannot be combined"))
     }
 
     @Test("execute surfaces worker image.generate failures and records the failed job state")

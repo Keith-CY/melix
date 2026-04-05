@@ -182,6 +182,69 @@ def test_image_edit_persists_lineage_and_generated_artifact(tmp_path: Path) -> N
     assert Path(generated_artifact.storage_uri).read_bytes() == response.images[0]
 
 
+def test_image_iterate_and_variation_preserve_lineage_metadata(tmp_path: Path) -> None:
+    runtime_service, inference_service, _ = build_services(tmp_path)
+    model_handle = load_model(runtime_service, WorkerModelCatalog.dev_image_model())
+    source_path = tmp_path / "iterate-source.png"
+    source_path.write_bytes(b"SOURCE_IMAGE")
+
+    iterate = inference_service.ImageEdit(
+        inference_pb2.ImageEditRequest(
+            id=common_pb2.RequestIdentity(request_id="image-iterate-1"),
+            model_handle=model_handle,
+            prompt="make the colors warmer",
+            image_uri=source_path.as_uri(),
+            source_artifact_id="artifact-source",
+            prompt_delta="make the colors warmer",
+            edit_mode=inference_pb2.IMAGE_EDIT_MODE_ITERATE,
+            size="256x256",
+            response_format="png",
+            n=1,
+            ext={"melix.image.source_job_id": "job-source"},
+        ),
+        context=None,
+    )
+
+    assert iterate.error.code == ""
+    assert iterate.job.operation == "image_iterate"
+    assert iterate.job.source_artifact_id == "artifact-source"
+    assert iterate.job.source_job_id == "job-source"
+    assert iterate.job.prompt_delta == "make the colors warmer"
+    assert iterate.job.edit_mode == inference_pb2.IMAGE_EDIT_MODE_ITERATE
+    assert iterate.job.artifacts[0].parent_artifact_id == "artifact-source"
+    assert iterate.job.artifacts[0].ext["melix.image.source_artifact_id"] == "artifact-source"
+    assert iterate.job.artifacts[0].ext["melix.image.source_job_id"] == "job-source"
+    assert iterate.job.artifacts[0].ext["melix.image.prompt_delta"] == "make the colors warmer"
+    assert iterate.job.artifacts[0].ext["melix.image.edit_mode"] == "iterate"
+    assert iterate.job.artifacts[-1].parent_artifact_id == "artifact-source"
+    assert iterate.job.artifacts[-1].ext["melix.image.edit_mode"] == "iterate"
+
+    variation = inference_service.ImageEdit(
+        inference_pb2.ImageEditRequest(
+            id=common_pb2.RequestIdentity(request_id="image-variation-1"),
+            model_handle=model_handle,
+            prompt="keep composition",
+            image_uri=source_path.as_uri(),
+            source_artifact_id="artifact-source",
+            edit_mode=inference_pb2.IMAGE_EDIT_MODE_VARIATION,
+            size="256x256",
+            response_format="png",
+            n=1,
+            ext={"melix.image.source_job_id": "job-source"},
+        ),
+        context=None,
+    )
+
+    assert variation.error.code == ""
+    assert variation.job.operation == "image_variation"
+    assert variation.job.source_artifact_id == "artifact-source"
+    assert variation.job.source_job_id == "job-source"
+    assert variation.job.prompt_delta == ""
+    assert variation.job.edit_mode == inference_pb2.IMAGE_EDIT_MODE_VARIATION
+    assert variation.job.artifacts[0].ext["melix.image.edit_mode"] == "variation"
+    assert variation.job.artifacts[-1].parent_artifact_id == "artifact-source"
+
+
 def test_image_edit_rejects_missing_source_and_invalid_mask_reference(tmp_path: Path) -> None:
     runtime_service, inference_service, _ = build_services(tmp_path)
     model_handle = load_model(runtime_service, WorkerModelCatalog.dev_image_model())

@@ -96,6 +96,52 @@ struct ImageJobReadModelTests {
         #expect(failed.progress.stage == "failed")
     }
 
+    @Test("queued image jobs preserve iterate lineage and artifact lookup")
+    func queuedImageJobsPreserveIterateLineageAndArtifactLookup() async throws {
+        let readModel = ImageJobReadModel()
+
+        await readModel.recordQueued(
+            requestID: "req-image-iterate",
+            jobID: "job-image-iterate",
+            modelID: "melix-dev-image",
+            operation: "image_iterate",
+            lane: "image.edit.background",
+            sourceArtifactID: "artifact-parent",
+            sourceJobID: "job-image-parent",
+            promptDelta: "make the colors warmer",
+            editMode: .iterate
+        )
+
+        var artifact = Melix_Controlplane_V1_ImageArtifactRef()
+        artifact.artifactID = "artifact-child"
+        artifact.jobID = "job-image-iterate"
+        artifact.role = .imageArtifactGenerated
+        artifact.mimeType = "image/png"
+        artifact.format = "png"
+        artifact.width = 1024
+        artifact.height = 1024
+        artifact.byteLength = 4096
+        artifact.storageUri = ".runtime/images/job-image-iterate/output-0.png"
+        artifact.parentArtifactID = "artifact-parent"
+        artifact.variantIndex = 0
+
+        await readModel.recordCompleted(
+            jobID: "job-image-iterate",
+            artifacts: [artifact]
+        )
+
+        let job = try #require(await readModel.job(jobID: "job-image-iterate"))
+        let resolvedArtifact = try #require(await readModel.artifact(artifactID: "artifact-child"))
+
+        #expect(job.operation == "image_iterate")
+        #expect(job.sourceArtifactID == "artifact-parent")
+        #expect(job.sourceJobID == "job-image-parent")
+        #expect(job.promptDelta == "make the colors warmer")
+        #expect(job.editMode == .iterate)
+        #expect(resolvedArtifact.jobID == "job-image-iterate")
+        #expect(resolvedArtifact.parentArtifactID == "artifact-parent")
+    }
+
     @Test("image job state changes publish through the configured event publisher")
     func imageJobStateChangesPublishThroughConfiguredEventPublisher() async throws {
         let recorder = ImageJobEventRecorder()

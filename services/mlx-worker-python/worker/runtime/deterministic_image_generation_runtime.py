@@ -7,7 +7,7 @@ from pathlib import Path
 from threading import Event
 from urllib.parse import unquote, urlparse
 
-from packages.protocol.python.worker.v1 import common_pb2
+from packages.protocol.python.worker.v1 import common_pb2, inference_pb2
 
 from worker.runtime.deterministic_delay import sleep_if_configured
 
@@ -154,6 +154,10 @@ class DeterministicImageGenerationRuntime:
 
         artifacts: list[common_pb2.ImageArtifactMetadata] = []
         artifact_publish_ms = 0.0
+        lineage_ext = self._lineage_ext(
+            request,
+            source_job_id=request.ext.get("melix.image.source_job_id", ""),
+        )
 
         source_path = output_dir / f"source.{source_format}"
         artifact_publish_ms += self._write_bytes(source_path, source_bytes)
@@ -169,6 +173,8 @@ class DeterministicImageGenerationRuntime:
                 payload=source_bytes,
                 storage_path=source_path,
                 variant_index=0,
+                parent_artifact_id=request.source_artifact_id,
+                ext=lineage_ext,
             )
         )
 
@@ -187,6 +193,8 @@ class DeterministicImageGenerationRuntime:
                     payload=mask_bytes,
                     storage_path=mask_path,
                     variant_index=0,
+                    parent_artifact_id=request.source_artifact_id,
+                    ext=lineage_ext,
                 )
             )
 
@@ -221,6 +229,8 @@ class DeterministicImageGenerationRuntime:
                     payload=payload,
                     storage_path=artifact_path,
                     variant_index=index,
+                    parent_artifact_id=request.source_artifact_id,
+                    ext=lineage_ext,
                 )
             )
 
@@ -310,6 +320,8 @@ class DeterministicImageGenerationRuntime:
         payload: bytes,
         storage_path: Path,
         variant_index: int,
+        parent_artifact_id: str = "",
+        ext: dict[str, str] | None = None,
     ) -> common_pb2.ImageArtifactMetadata:
         digest = hashlib.sha256(payload).hexdigest()
         return common_pb2.ImageArtifactMetadata(
@@ -324,6 +336,8 @@ class DeterministicImageGenerationRuntime:
             storage_uri=str(storage_path),
             sha256=digest,
             variant_index=variant_index,
+            ext=ext or {},
+            parent_artifact_id=parent_artifact_id,
         )
 
     @staticmethod
@@ -361,6 +375,24 @@ class DeterministicImageGenerationRuntime:
             path = cls._path_from_uri(uri, label=label)
             return path.read_bytes(), cls._format_from_path(path)
         return None, "png"
+
+    @staticmethod
+    def _lineage_ext(request, *, source_job_id: str) -> dict[str, str]:
+        values: dict[str, str] = {}
+        if request.source_artifact_id:
+            values["melix.image.source_artifact_id"] = request.source_artifact_id
+        if source_job_id:
+            values["melix.image.source_job_id"] = source_job_id
+        if request.prompt_delta:
+            values["melix.image.prompt_delta"] = request.prompt_delta
+
+        if request.edit_mode == inference_pb2.IMAGE_EDIT_MODE_VARIATION:
+            values["melix.image.edit_mode"] = "variation"
+        elif request.edit_mode == inference_pb2.IMAGE_EDIT_MODE_ITERATE:
+            values["melix.image.edit_mode"] = "iterate"
+        else:
+            values["melix.image.edit_mode"] = "edit"
+        return values
 
     @staticmethod
     def _path_from_uri(uri: str, *, label: str) -> Path:

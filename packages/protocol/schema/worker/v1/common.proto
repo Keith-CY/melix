@@ -194,6 +194,7 @@ message ImageArtifactMetadata {
   string sha256 = 10;
   uint32 variant_index = 11;
   map<string, string> ext = 12;
+  string parent_artifact_id = 13;
 }
 
 message Capability {

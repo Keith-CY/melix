@@ -25,6 +25,48 @@ fileprivate struct _GeneratedWithProtocGenSwiftVersion: SwiftProtobuf.ProtobufAP
   typealias Version = _2
 }
 
+public enum Melix_Worker_V1_ImageEditMode: SwiftProtobuf.Enum, Swift.CaseIterable {
+  public typealias RawValue = Int
+  case unspecified // = 0
+  case edit // = 1
+  case variation // = 2
+  case iterate // = 3
+  case UNRECOGNIZED(Int)
+
+  public init() {
+    self = .unspecified
+  }
+
+  public init?(rawValue: Int) {
+    switch rawValue {
+    case 0: self = .unspecified
+    case 1: self = .edit
+    case 2: self = .variation
+    case 3: self = .iterate
+    default: self = .UNRECOGNIZED(rawValue)
+    }
+  }
+
+  public var rawValue: Int {
+    switch self {
+    case .unspecified: return 0
+    case .edit: return 1
+    case .variation: return 2
+    case .iterate: return 3
+    case .UNRECOGNIZED(let i): return i
+    }
+  }
+
+  // The compiler won't synthesize support with the UNRECOGNIZED case.
+  public static let allCases: [Melix_Worker_V1_ImageEditMode] = [
+    .unspecified,
+    .edit,
+    .variation,
+    .iterate,
+  ]
+
+}
+
 public struct Melix_Worker_V1_ExecutionMetadata: @unchecked Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
@@ -1292,6 +1334,21 @@ public struct Melix_Worker_V1_ImageEditRequest: @unchecked Sendable {
     set {_uniqueStorage()._ext = newValue}
   }
 
+  public var sourceArtifactID: String {
+    get {_storage._sourceArtifactID}
+    set {_uniqueStorage()._sourceArtifactID = newValue}
+  }
+
+  public var promptDelta: String {
+    get {_storage._promptDelta}
+    set {_uniqueStorage()._promptDelta = newValue}
+  }
+
+  public var editMode: Melix_Worker_V1_ImageEditMode {
+    get {_storage._editMode}
+    set {_uniqueStorage()._editMode = newValue}
+  }
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -1400,6 +1457,26 @@ public struct Melix_Worker_V1_ImageJobDescriptor: @unchecked Sendable {
     set {_uniqueStorage()._updatedAtUnixMs = newValue}
   }
 
+  public var sourceArtifactID: String {
+    get {_storage._sourceArtifactID}
+    set {_uniqueStorage()._sourceArtifactID = newValue}
+  }
+
+  public var sourceJobID: String {
+    get {_storage._sourceJobID}
+    set {_uniqueStorage()._sourceJobID = newValue}
+  }
+
+  public var promptDelta: String {
+    get {_storage._promptDelta}
+    set {_uniqueStorage()._promptDelta = newValue}
+  }
+
+  public var editMode: Melix_Worker_V1_ImageEditMode {
+    get {_storage._editMode}
+    set {_uniqueStorage()._editMode = newValue}
+  }
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -1410,6 +1487,10 @@ public struct Melix_Worker_V1_ImageJobDescriptor: @unchecked Sendable {
 // MARK: - Code below here is support for the SwiftProtobuf runtime.
 
 fileprivate let _protobuf_package = "melix.worker.v1"
+
+extension Melix_Worker_V1_ImageEditMode: SwiftProtobuf._ProtoNameProviding {
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0IMAGE_EDIT_MODE_UNSPECIFIED\0\u{1}IMAGE_EDIT_MODE_EDIT\0\u{1}IMAGE_EDIT_MODE_VARIATION\0\u{1}IMAGE_EDIT_MODE_ITERATE\0")
+}
 
 extension Melix_Worker_V1_ExecutionMetadata: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ExecutionMetadata"
@@ -3711,7 +3792,7 @@ extension Melix_Worker_V1_ImageGenerateResponse: SwiftProtobuf.Message, SwiftPro
 
 extension Melix_Worker_V1_ImageEditRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ImageEditRequest"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}id\0\u{3}model_handle\0\u{1}prompt\0\u{1}image\0\u{1}strength\0\u{1}size\0\u{1}mask\0\u{1}n\0\u{3}response_format\0\u{3}image_uri\0\u{3}mask_uri\0\u{1}ext\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}id\0\u{3}model_handle\0\u{1}prompt\0\u{1}image\0\u{1}strength\0\u{1}size\0\u{1}mask\0\u{1}n\0\u{3}response_format\0\u{3}image_uri\0\u{3}mask_uri\0\u{1}ext\0\u{3}source_artifact_id\0\u{3}prompt_delta\0\u{3}edit_mode\0")
 
   fileprivate class _StorageClass {
     var _id: Melix_Worker_V1_RequestIdentity? = nil
@@ -3726,6 +3807,9 @@ extension Melix_Worker_V1_ImageEditRequest: SwiftProtobuf.Message, SwiftProtobuf
     var _imageUri: String = String()
     var _maskUri: String = String()
     var _ext: Dictionary<String,String> = [:]
+    var _sourceArtifactID: String = String()
+    var _promptDelta: String = String()
+    var _editMode: Melix_Worker_V1_ImageEditMode = .unspecified
 
       // This property is used as the initial default value for new instances of the type.
       // The type itself is protecting the reference to its storage via CoW semantics.
@@ -3748,6 +3832,9 @@ extension Melix_Worker_V1_ImageEditRequest: SwiftProtobuf.Message, SwiftProtobuf
       _imageUri = source._imageUri
       _maskUri = source._maskUri
       _ext = source._ext
+      _sourceArtifactID = source._sourceArtifactID
+      _promptDelta = source._promptDelta
+      _editMode = source._editMode
     }
   }
 
@@ -3778,6 +3865,9 @@ extension Melix_Worker_V1_ImageEditRequest: SwiftProtobuf.Message, SwiftProtobuf
         case 10: try { try decoder.decodeSingularStringField(value: &_storage._imageUri) }()
         case 11: try { try decoder.decodeSingularStringField(value: &_storage._maskUri) }()
         case 12: try { try decoder.decodeMapField(fieldType: SwiftProtobuf._ProtobufMap<SwiftProtobuf.ProtobufString,SwiftProtobuf.ProtobufString>.self, value: &_storage._ext) }()
+        case 13: try { try decoder.decodeSingularStringField(value: &_storage._sourceArtifactID) }()
+        case 14: try { try decoder.decodeSingularStringField(value: &_storage._promptDelta) }()
+        case 15: try { try decoder.decodeSingularEnumField(value: &_storage._editMode) }()
         default: break
         }
       }
@@ -3826,6 +3916,15 @@ extension Melix_Worker_V1_ImageEditRequest: SwiftProtobuf.Message, SwiftProtobuf
       if !_storage._ext.isEmpty {
         try visitor.visitMapField(fieldType: SwiftProtobuf._ProtobufMap<SwiftProtobuf.ProtobufString,SwiftProtobuf.ProtobufString>.self, value: _storage._ext, fieldNumber: 12)
       }
+      if !_storage._sourceArtifactID.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._sourceArtifactID, fieldNumber: 13)
+      }
+      if !_storage._promptDelta.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._promptDelta, fieldNumber: 14)
+      }
+      if _storage._editMode != .unspecified {
+        try visitor.visitSingularEnumField(value: _storage._editMode, fieldNumber: 15)
+      }
     }
     try unknownFields.traverse(visitor: &visitor)
   }
@@ -3847,6 +3946,9 @@ extension Melix_Worker_V1_ImageEditRequest: SwiftProtobuf.Message, SwiftProtobuf
         if _storage._imageUri != rhs_storage._imageUri {return false}
         if _storage._maskUri != rhs_storage._maskUri {return false}
         if _storage._ext != rhs_storage._ext {return false}
+        if _storage._sourceArtifactID != rhs_storage._sourceArtifactID {return false}
+        if _storage._promptDelta != rhs_storage._promptDelta {return false}
+        if _storage._editMode != rhs_storage._editMode {return false}
         return true
       }
       if !storagesAreEqual {return false}
@@ -3902,7 +4004,7 @@ extension Melix_Worker_V1_ImageEditResponse: SwiftProtobuf.Message, SwiftProtobu
 
 extension Melix_Worker_V1_ImageJobDescriptor: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ImageJobDescriptor"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}request_id\0\u{3}job_id\0\u{3}model_handle\0\u{1}operation\0\u{1}state\0\u{1}progress\0\u{1}artifacts\0\u{1}error\0\u{1}cancelable\0\u{3}created_at_unix_ms\0\u{3}updated_at_unix_ms\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}request_id\0\u{3}job_id\0\u{3}model_handle\0\u{1}operation\0\u{1}state\0\u{1}progress\0\u{1}artifacts\0\u{1}error\0\u{1}cancelable\0\u{3}created_at_unix_ms\0\u{3}updated_at_unix_ms\0\u{3}source_artifact_id\0\u{3}source_job_id\0\u{3}prompt_delta\0\u{3}edit_mode\0")
 
   fileprivate class _StorageClass {
     var _requestID: String = String()
@@ -3916,6 +4018,10 @@ extension Melix_Worker_V1_ImageJobDescriptor: SwiftProtobuf.Message, SwiftProtob
     var _cancelable: Bool = false
     var _createdAtUnixMs: Int64 = 0
     var _updatedAtUnixMs: Int64 = 0
+    var _sourceArtifactID: String = String()
+    var _sourceJobID: String = String()
+    var _promptDelta: String = String()
+    var _editMode: Melix_Worker_V1_ImageEditMode = .unspecified
 
       // This property is used as the initial default value for new instances of the type.
       // The type itself is protecting the reference to its storage via CoW semantics.
@@ -3937,6 +4043,10 @@ extension Melix_Worker_V1_ImageJobDescriptor: SwiftProtobuf.Message, SwiftProtob
       _cancelable = source._cancelable
       _createdAtUnixMs = source._createdAtUnixMs
       _updatedAtUnixMs = source._updatedAtUnixMs
+      _sourceArtifactID = source._sourceArtifactID
+      _sourceJobID = source._sourceJobID
+      _promptDelta = source._promptDelta
+      _editMode = source._editMode
     }
   }
 
@@ -3966,6 +4076,10 @@ extension Melix_Worker_V1_ImageJobDescriptor: SwiftProtobuf.Message, SwiftProtob
         case 9: try { try decoder.decodeSingularBoolField(value: &_storage._cancelable) }()
         case 10: try { try decoder.decodeSingularInt64Field(value: &_storage._createdAtUnixMs) }()
         case 11: try { try decoder.decodeSingularInt64Field(value: &_storage._updatedAtUnixMs) }()
+        case 12: try { try decoder.decodeSingularStringField(value: &_storage._sourceArtifactID) }()
+        case 13: try { try decoder.decodeSingularStringField(value: &_storage._sourceJobID) }()
+        case 14: try { try decoder.decodeSingularStringField(value: &_storage._promptDelta) }()
+        case 15: try { try decoder.decodeSingularEnumField(value: &_storage._editMode) }()
         default: break
         }
       }
@@ -4011,6 +4125,18 @@ extension Melix_Worker_V1_ImageJobDescriptor: SwiftProtobuf.Message, SwiftProtob
       if _storage._updatedAtUnixMs != 0 {
         try visitor.visitSingularInt64Field(value: _storage._updatedAtUnixMs, fieldNumber: 11)
       }
+      if !_storage._sourceArtifactID.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._sourceArtifactID, fieldNumber: 12)
+      }
+      if !_storage._sourceJobID.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._sourceJobID, fieldNumber: 13)
+      }
+      if !_storage._promptDelta.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._promptDelta, fieldNumber: 14)
+      }
+      if _storage._editMode != .unspecified {
+        try visitor.visitSingularEnumField(value: _storage._editMode, fieldNumber: 15)
+      }
     }
     try unknownFields.traverse(visitor: &visitor)
   }
@@ -4031,6 +4157,10 @@ extension Melix_Worker_V1_ImageJobDescriptor: SwiftProtobuf.Message, SwiftProtob
         if _storage._cancelable != rhs_storage._cancelable {return false}
         if _storage._createdAtUnixMs != rhs_storage._createdAtUnixMs {return false}
         if _storage._updatedAtUnixMs != rhs_storage._updatedAtUnixMs {return false}
+        if _storage._sourceArtifactID != rhs_storage._sourceArtifactID {return false}
+        if _storage._sourceJobID != rhs_storage._sourceJobID {return false}
+        if _storage._promptDelta != rhs_storage._promptDelta {return false}
+        if _storage._editMode != rhs_storage._editMode {return false}
         return true
       }
       if !storagesAreEqual {return false}

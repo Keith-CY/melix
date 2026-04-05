@@ -1821,7 +1821,18 @@ public actor ControlPlaneService {
         request: Melix_Controlplane_V1_ControlPlaneRequest,
         command: Melix_Controlplane_V1_EditImage
     ) async -> Melix_Controlplane_V1_ControlPlaneResponse {
-        guard !command.image.isEmpty || !command.imageUri.isEmpty else {
+        let resolvedEditMode = resolvedImageEditMode(command.editMode)
+        let sourceArtifactID = command.sourceArtifactID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let promptDelta = command.promptDelta.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard !command.image.isEmpty || !command.imageUri.isEmpty || !sourceArtifactID.isEmpty else {
+            if resolvedEditMode == .variation || resolvedEditMode == .iterate {
+                return errorResponse(
+                    for: request,
+                    code: "invalid_argument",
+                    message: "source_artifact_id is required for variation and iterate image requests."
+                )
+            }
             return errorResponse(for: request, code: "invalid_argument", message: "Image edit source is required.")
         }
         let startedAt = Date()
@@ -1845,26 +1856,92 @@ public actor ControlPlaneService {
 
         let routeKind = await workerRegistry.route(forModelID: command.modelID) ?? .pythonImage
         let jobID = "\(request.requestID)::image-edit"
+        if (resolvedEditMode == .variation || resolvedEditMode == .iterate) && sourceArtifactID.isEmpty {
+            return errorResponse(
+                for: request,
+                code: "invalid_argument",
+                message: "source_artifact_id is required for variation and iterate image requests."
+            )
+        }
+        if resolvedEditMode != .iterate && promptDelta.isEmpty == false {
+            return errorResponse(
+                for: request,
+                code: "invalid_argument",
+                message: "prompt_delta is only supported for iterate image requests."
+            )
+        }
+        if resolvedEditMode == .iterate && promptDelta.isEmpty {
+            return errorResponse(
+                for: request,
+                code: "invalid_argument",
+                message: "prompt_delta is required for iterate image requests."
+            )
+        }
+
+        let resolvedImageData = command.image
+        var resolvedImageURI = command.imageUri
+        var sourceJobID = ""
+        if sourceArtifactID.isEmpty == false {
+            if command.image.isEmpty == false || command.imageUri.isEmpty == false {
+                return errorResponse(
+                    for: request,
+                    code: "invalid_argument",
+                    message: "source_artifact_id cannot be combined with image or image_uri."
+                )
+            }
+            guard let sourceArtifact = await imageJobReadModel.artifact(artifactID: sourceArtifactID) else {
+                return errorResponse(
+                    for: request,
+                    code: "invalid_argument",
+                    message: "Unknown source_artifact_id for image edit."
+                )
+            }
+            guard sourceArtifact.storageUri.isEmpty == false else {
+                return errorResponse(
+                    for: request,
+                    code: "invalid_argument",
+                    message: "Resolved source artifact does not expose a storage URI."
+                )
+            }
+            resolvedImageURI = sourceArtifact.storageUri
+            sourceJobID = sourceArtifact.jobID
+        }
+
+        let resolvedPrompt = resolvedEditPrompt(
+            prompt: command.prompt,
+            promptDelta: promptDelta,
+            mode: resolvedEditMode
+        )
 
         var workerRequest = Melix_Worker_V1_ImageEditRequest()
         workerRequest.id.requestID = request.requestID
         workerRequest.modelHandle = modelHandle
-        workerRequest.prompt = command.prompt
-        workerRequest.image = command.image
-        workerRequest.imageUri = command.imageUri
+        workerRequest.prompt = resolvedPrompt
+        workerRequest.image = resolvedImageData
+        workerRequest.imageUri = resolvedImageURI
         workerRequest.mask = command.mask
         workerRequest.maskUri = command.maskUri
+        workerRequest.sourceArtifactID = sourceArtifactID
+        workerRequest.promptDelta = promptDelta
+        workerRequest.editMode = workerImageEditMode(resolvedEditMode)
         workerRequest.strength = command.strength == 0 ? 1 : command.strength
         workerRequest.size = command.size.isEmpty ? "1024x1024" : command.size
         workerRequest.n = command.n == 0 ? 1 : command.n
         workerRequest.responseFormat = command.responseFormat.isEmpty ? "png" : command.responseFormat
+        if sourceJobID.isEmpty == false {
+            workerRequest.ext["melix.image.source_job_id"] = sourceJobID
+        }
 
         await imageJobReadModel.recordQueued(
             requestID: request.requestID,
             jobID: jobID,
             modelID: command.modelID,
-            operation: "image_edit",
-            lane: routeKind.defaultSchedulingLane
+            operation: imageEditOperationName(for: resolvedEditMode),
+            lane: routeKind.defaultSchedulingLane,
+            sourceArtifactID: sourceArtifactID,
+            sourceJobID: sourceJobID,
+            promptDelta: promptDelta,
+            editMode: resolvedEditMode
         )
         do {
             try await imageJobAdmissionController.acquire(
@@ -3122,6 +3199,7 @@ public actor ControlPlaneService {
         ref.sha256 = artifact.sha256
         ref.variantIndex = artifact.variantIndex
         ref.ext = artifact.ext
+        ref.parentArtifactID = artifact.parentArtifactID
         return ref
     }
 
@@ -3145,7 +3223,60 @@ public actor ControlPlaneService {
         job.cancelable = workerJob.cancelable
         job.createdAtUnixMs = workerJob.createdAtUnixMs
         job.updatedAtUnixMs = workerJob.updatedAtUnixMs
+        job.sourceArtifactID = workerJob.sourceArtifactID
+        job.sourceJobID = workerJob.sourceJobID
+        job.promptDelta = workerJob.promptDelta
+        job.editMode = Melix_Controlplane_V1_ImageEditMode(rawValue: workerJob.editMode.rawValue) ?? .unspecified
         return job
+    }
+
+    private func resolvedImageEditMode(
+        _ mode: Melix_Controlplane_V1_ImageEditMode
+    ) -> Melix_Controlplane_V1_ImageEditMode {
+        switch mode {
+        case .edit, .variation, .iterate:
+            return mode
+        case .unspecified, .UNRECOGNIZED:
+            return .edit
+        }
+    }
+
+    private func workerImageEditMode(
+        _ mode: Melix_Controlplane_V1_ImageEditMode
+    ) -> Melix_Worker_V1_ImageEditMode {
+        switch mode {
+        case .variation:
+            return .variation
+        case .iterate:
+            return .iterate
+        case .edit, .unspecified, .UNRECOGNIZED:
+            return .edit
+        }
+    }
+
+    private func imageEditOperationName(
+        for mode: Melix_Controlplane_V1_ImageEditMode
+    ) -> String {
+        switch mode {
+        case .variation:
+            return "image_variation"
+        case .iterate:
+            return "image_iterate"
+        case .edit, .unspecified, .UNRECOGNIZED:
+            return "image_edit"
+        }
+    }
+
+    private func resolvedEditPrompt(
+        prompt: String,
+        promptDelta: String,
+        mode: Melix_Controlplane_V1_ImageEditMode
+    ) -> String {
+        let trimmedPrompt = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        if mode == .iterate && trimmedPrompt.isEmpty {
+            return promptDelta
+        }
+        return prompt
     }
 
     private func controlPlaneError(from workerError: Melix_Worker_V1_ErrorStatus) -> Melix_Controlplane_V1_ErrorStatus {
