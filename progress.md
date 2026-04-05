@@ -2,6 +2,50 @@
 
 ## 2026-04-05
 
+- Closed `M13.1` by making gateway listener configuration typed, persistent, and
+  control-plane-owned across bootstrap, snapshot projection, and the Window UI server workspace:
+  - extended the control-plane protocol with `server.apply_gateway_config`,
+    `GatewayConfigSummary`, `GatewayListenerConfigSummary`, and `GatewayConfigSource`, and
+    regenerated the Swift, Python, and descriptor artifacts so gateway-config state is part of the
+    versioned interface contract
+  - added `GatewayConfigStore` so built-in defaults, environment defaults, and operator overrides
+    resolve through a schema-versioned JSON document owned by the Swift control plane, with
+    bootstrap listener binding sourced from the same store
+  - projected `gateway_config` through `ServerSnapshot`, added typed apply handling plus
+    persistence-failure metrics in `ControlPlaneService`, and exposed the new typed client helper
+    through `ControlPlaneXPCClient`
+  - updated the Window UI server workspace so requested and effective listener state, config
+    source, restart-required badges, and `Apply Gateway Config` all hydrate from control-plane
+    truth, and server starts persist gateway config before lifecycle mutation
+  - marked `M13.1` completed in the roadmap execution index; the next active execution slice can
+    now advance to `M13.2`
+- Verification summary for `M13.1`:
+  - `make proto`: pass
+  - `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/.build/ModuleCache.noindex" swift test --package-path services/control-plane-swift --filter 'ControlPlaneServiceTests|GatewayConfigStoreTests'`: `156 tests in 2 suites passed after 0.083 seconds`
+  - `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/.build/ModuleCache.noindex" swift test --enable-code-coverage --package-path services/control-plane-swift --filter 'ControlPlaneServiceTests|GatewayConfigStoreTests'`: `156 tests in 2 suites passed after 0.090 seconds`
+  - `python3 scripts/swift_changed_line_coverage.py --binary services/control-plane-swift/.build/arm64-apple-macosx/debug/MelixControlPlanePackageTests.xctest/Contents/MacOS/MelixControlPlanePackageTests --profdata services/control-plane-swift/.build/arm64-apple-macosx/debug/codecov/default.profdata services/control-plane-swift/Sources/HTTPGateway/OpenAI/GatewayConfigStore.swift services/control-plane-swift/Sources/Snapshots/ServerSnapshotBuilder.swift services/control-plane-swift/Sources/XPCService/ControlPlaneService.swift services/control-plane-swift/Sources/XPCService/ControlPlaneXPCClient.swift services/control-plane-swift/Sources/Bootstrap/main.swift services/control-plane-swift/Tests/ControlPlaneTests/GatewayConfigStoreTests.swift services/control-plane-swift/Tests/ControlPlaneTests/ControlPlaneServiceTests.swift`: `100.00%` (`358/358`)
+  - `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/.build/ModuleCache.noindex" swift test --package-path apps/macos-menubar --filter 'RuntimeViewModelTests|ControlPlaneXPCClientTests|DesktopShellStateTests|DesktopFoundationViewTests'`: `235 tests in 4 suites passed after 4.171 seconds`
+  - `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/.build/ModuleCache.noindex" swift test --enable-code-coverage --package-path apps/macos-menubar --filter 'RuntimeViewModelTests|ControlPlaneXPCClientTests|DesktopShellStateTests|DesktopFoundationViewTests'`: `235 tests in 4 suites passed after 4.171 seconds`
+  - `python3 scripts/swift_changed_line_coverage.py --binary apps/macos-menubar/.build/arm64-apple-macosx/debug/MelixMacOSMenubarPackageTests.xctest/Contents/MacOS/MelixMacOSMenubarPackageTests --profdata apps/macos-menubar/.build/arm64-apple-macosx/debug/codecov/default.profdata apps/macos-menubar/Sources/AppMain/Dashboard/DesktopWorkspaceShellView.swift apps/macos-menubar/Sources/AppMain/Models/DesktopShellState.swift apps/macos-menubar/Sources/AppMain/Models/RuntimeViewModel.swift apps/macos-menubar/Tests/MenuBarTests/TestSupport.swift apps/macos-menubar/Tests/MenuBarTests/RuntimeViewModelTests.swift apps/macos-menubar/Tests/MenuBarTests/ControlPlaneXPCClientTests.swift apps/macos-menubar/Tests/MenuBarTests/DesktopShellStateTests.swift apps/macos-menubar/Tests/MenuBarTests/DesktopFoundationViewTests.swift`: `95.21%` (`437/459`)
+  - `git diff --check`: pass
+- Metrics report for `M13.1`:
+  - typed gateway-config metrics exercised by the touched scope:
+    - `gateway.config_apply_ms`
+    - `gateway.config_requires_restart_count`
+    - `gateway.config_persist_failures`
+    - `menu.gateway_config_apply_ms`
+  - typed snapshot and desktop-state metrics exercised by the touched scope:
+    - requested versus effective listener host or port projection
+    - control-plane-owned served model, timeout, rate limit, and source metadata
+    - restart-required and active-binding visibility for server sessions
+  - changed-line coverage for the touched handwritten executable scope:
+    - Swift control-plane scope: `100.00%` (`358/358`)
+    - Swift menu-bar scope: `95.21%` (`437/459`)
+    - aggregate touched-scope coverage: `97.31%` (`795/817`)
+  - generated protobuf outputs and `packages/protocol/descriptors/melix.pb` are excluded from
+    executable changed-line coverage because they are regenerated interface artifacts rather than
+    handwritten runtime logic
+
 - Closed the second executable `M12.4` slice by making conversion and packaging repository-owned
   model-tool workflows with stable artifacts and operator-visible summary state:
   - added `conversion_pipeline.py` so `convert` emits a dedicated

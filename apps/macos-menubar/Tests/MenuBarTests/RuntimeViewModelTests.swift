@@ -29,6 +29,127 @@ struct RuntimeViewModelTests {
         #expect(await metrics.snapshot()["menu.hydration_ms"] != nil)
     }
 
+    @Test("applySelectedServerGatewayConfig sends a typed request and hydrates effective listener state")
+    @MainActor
+    func applySelectedServerGatewayConfigSendsATypedRequestAndHydratesEffectiveListenerState() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let metrics = MenuBarMetricsStore()
+        let viewModel = RuntimeViewModel(client: client, metrics: metrics)
+
+        await viewModel.start()
+        viewModel.updateSelectedServerSessionHost("0.0.0.0")
+        viewModel.updateSelectedServerSessionPort(18080)
+        viewModel.updateSelectedServerSessionModelID("melix-dev-text")
+        viewModel.updateSelectedServerSessionRateLimit(240)
+        viewModel.updateSelectedServerSessionTimeout(90)
+
+        await viewModel.applySelectedServerGatewayConfig()
+
+        let request = try #require(await client.recordedGatewayConfigApplyRequests.last)
+        let session = try #require(viewModel.selectedServerSession)
+
+        #expect(request.serverSessionID == session.id)
+        #expect(request.host == "0.0.0.0")
+        #expect(request.port == 18_080)
+        #expect(request.servedModelID == "melix-dev-text")
+        #expect(request.rateLimitPerMinute == 240)
+        #expect(request.timeoutSeconds == 90)
+        #expect(session.host == "0.0.0.0")
+        #expect(session.port == 18_080)
+        #expect(session.effectiveHost == "0.0.0.0")
+        #expect(session.effectivePort == 18_080)
+        #expect(session.modelID == "melix-dev-text")
+        #expect(session.gatewayConfigSourceText == "Operator Override")
+        #expect(session.gatewayConfigActiveBinding)
+        #expect(session.gatewayConfigRequiresRestart == false)
+        #expect(await metrics.snapshot()["menu.gateway_config_apply_ms"] != nil)
+    }
+
+    @Test("starting a selected server session persists gateway config before the lifecycle mutation")
+    @MainActor
+    func startingASelectedServerSessionPersistsGatewayConfigBeforeTheLifecycleMutation() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+        viewModel.createServerSession()
+        let serverSessionID = try #require(viewModel.selectedServerSession?.id)
+        viewModel.updateSelectedServerSessionHost("127.0.0.1")
+        viewModel.updateSelectedServerSessionPort(18081)
+
+        await viewModel.startSelectedServerSession()
+
+        let actions = await client.recordedActions
+        let applyIndex = try #require(actions.firstIndex(of: "gateway.config:\(serverSessionID)"))
+        let startIndex = try #require(actions.firstIndex(of: "server.start:\(serverSessionID)"))
+
+        #expect(applyIndex < startIndex)
+        #expect(await client.recordedGatewayConfigApplyRequests.count == 1)
+        #expect(viewModel.selectedServerSession?.lifecycle == .running)
+    }
+
+    @Test("gateway config apply failures block server starts and surface local errors")
+    @MainActor
+    func gatewayConfigApplyFailuresBlockServerStartsAndSurfaceLocalErrors() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+        viewModel.createServerSession()
+        let serverSessionID = try #require(viewModel.selectedServerSession?.id)
+        await client.configureErrors(applyGatewayConfig: MenuBarTestError(description: "persist failed"))
+
+        await viewModel.startSelectedServerSession()
+
+        let actions = await client.recordedActions
+        #expect(actions.contains("gateway.config:\(serverSessionID)"))
+        #expect(actions.contains("server.start:\(serverSessionID)") == false)
+        #expect(viewModel.lastError?.contains("Gateway config apply failed") == true)
+        #expect(viewModel.lastError?.contains("persist failed") == true)
+    }
+
+    @Test("snapshot gateway config projection hydrates requested and effective listener state")
+    @MainActor
+    func snapshotGatewayConfigProjectionHydratesRequestedAndEffectiveListenerState() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let snapshot = makeSnapshot(
+            serverState: .serverReady,
+            models: [makeModelSummary(state: .modelWarm)],
+            runtimeSessions: [makeRuntimeSession()],
+            gatewayConfig: makeGatewayConfigSummary(
+                listener: makeGatewayConfigListener(
+                    serverSessionID: "server-session-1",
+                    requestedHost: "0.0.0.0",
+                    requestedPort: 18_090,
+                    effectiveHost: "127.0.0.1",
+                    effectivePort: 11_434,
+                    servedModelID: "melix-dev-text",
+                    rateLimitPerMinute: 360,
+                    timeoutSeconds: 75,
+                    source: .operatorOverride,
+                    activeBinding: true,
+                    requiresRestart: true
+                )
+            )
+        )
+        await client.configureSnapshot(snapshot)
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+
+        let session = try #require(viewModel.selectedServerSession)
+        #expect(session.host == "0.0.0.0")
+        #expect(session.port == 18_090)
+        #expect(session.effectiveHost == "127.0.0.1")
+        #expect(session.effectivePort == 11_434)
+        #expect(session.modelID == "melix-dev-text")
+        #expect(session.rateLimitPerMinute == 360)
+        #expect(session.timeoutSeconds == 75)
+        #expect(session.gatewayConfigSourceText == "Operator Override")
+        #expect(session.gatewayConfigActiveBinding)
+        #expect(session.gatewayConfigRequiresRestart)
+    }
+
     @Test("lora model selection falls back to the first text model and stays empty without text models")
     @MainActor
     func loraModelSelectionFallsBackToFirstTextModel() async throws {
@@ -5467,7 +5588,8 @@ private func makeSnapshot(
     serverState: Melix_Controlplane_V1_ServerState,
     models: [Melix_Controlplane_V1_ModelSummary],
     runtimeSessions: [Melix_Controlplane_V1_ServerSessionRuntimeState] = [],
-    gatewayAccess: Melix_Controlplane_V1_GatewayAccessSummary? = nil
+    gatewayAccess: Melix_Controlplane_V1_GatewayAccessSummary? = nil,
+    gatewayConfig: Melix_Controlplane_V1_GatewayConfigSummary? = nil
 ) -> Melix_Controlplane_V1_ServerSnapshot {
     var snapshot = Melix_Controlplane_V1_ServerSnapshot()
     snapshot.serverState = serverState
@@ -5475,6 +5597,9 @@ private func makeSnapshot(
     snapshot.runtimeSessions = runtimeSessions
     if let gatewayAccess {
         snapshot.gatewayAccess = gatewayAccess
+    }
+    if let gatewayConfig {
+        snapshot.gatewayConfig = gatewayConfig
     }
     return snapshot
 }
@@ -5522,6 +5647,43 @@ private func makeGatewayAccessSummary(
         return key
     }
     return summary
+}
+
+private func makeGatewayConfigSummary(
+    listener: Melix_Controlplane_V1_GatewayListenerConfigSummary
+) -> Melix_Controlplane_V1_GatewayConfigSummary {
+    var summary = Melix_Controlplane_V1_GatewayConfigSummary()
+    summary.listeners = [listener]
+    return summary
+}
+
+private func makeGatewayConfigListener(
+    serverSessionID: String,
+    requestedHost: String,
+    requestedPort: UInt32,
+    effectiveHost: String,
+    effectivePort: UInt32,
+    servedModelID: String,
+    rateLimitPerMinute: UInt32,
+    timeoutSeconds: UInt32,
+    source: Melix_Controlplane_V1_GatewayConfigSource,
+    activeBinding: Bool,
+    requiresRestart: Bool
+) -> Melix_Controlplane_V1_GatewayListenerConfigSummary {
+    var listener = Melix_Controlplane_V1_GatewayListenerConfigSummary()
+    listener.serverSessionID = serverSessionID
+    listener.requestedHost = requestedHost
+    listener.requestedPort = requestedPort
+    listener.effectiveHost = effectiveHost
+    listener.effectivePort = effectivePort
+    listener.servedModelID = servedModelID
+    listener.rateLimitPerMinute = rateLimitPerMinute
+    listener.timeoutSeconds = timeoutSeconds
+    listener.source = source
+    listener.activeBinding = activeBinding
+    listener.requiresRestart = requiresRestart
+    listener.updatedAtUnixMs = 1_717_171_717_000
+    return listener
 }
 
 private func makeModelSummary(

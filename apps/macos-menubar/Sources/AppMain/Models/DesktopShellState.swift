@@ -127,6 +127,11 @@ public struct DesktopServerSessionState: Codable, Identifiable, Equatable, Senda
     public var modelID: String
     public var host: String
     public var port: Int
+    public var effectiveHost: String
+    public var effectivePort: Int
+    public var gatewayConfigSourceText: String
+    public var gatewayConfigActiveBinding: Bool
+    public var gatewayConfigRequiresRestart: Bool
     public var authMode: DesktopServerAuthMode
     public var authTokenHint: String
     public var sharedAccessState: DesktopSharedAccessState
@@ -160,6 +165,11 @@ public struct DesktopServerSessionState: Codable, Identifiable, Equatable, Senda
         modelID: String,
         host: String = "127.0.0.1",
         port: Int = 8080,
+        effectiveHost: String? = nil,
+        effectivePort: Int? = nil,
+        gatewayConfigSourceText: String = "Built-in Defaults",
+        gatewayConfigActiveBinding: Bool = false,
+        gatewayConfigRequiresRestart: Bool = false,
         authMode: DesktopServerAuthMode = .none,
         authTokenHint: String = "",
         sharedAccessState: DesktopSharedAccessState = .localOnly,
@@ -192,6 +202,11 @@ public struct DesktopServerSessionState: Codable, Identifiable, Equatable, Senda
         self.modelID = modelID
         self.host = host
         self.port = port
+        self.effectiveHost = effectiveHost ?? host
+        self.effectivePort = effectivePort ?? port
+        self.gatewayConfigSourceText = gatewayConfigSourceText
+        self.gatewayConfigActiveBinding = gatewayConfigActiveBinding
+        self.gatewayConfigRequiresRestart = gatewayConfigRequiresRestart
         self.authMode = authMode
         self.authTokenHint = authTokenHint
         self.sharedAccessState = sharedAccessState
@@ -222,6 +237,10 @@ public struct DesktopServerSessionState: Codable, Identifiable, Equatable, Senda
 
     public var baseURL: String {
         "http://\(host):\(port)/v1"
+    }
+
+    public var effectiveBaseURL: String {
+        "http://\(effectiveHost):\(effectivePort)/v1"
     }
 
     public var integrationAuthValue: String {
@@ -259,6 +278,10 @@ public struct DesktopServerSessionState: Codable, Identifiable, Equatable, Senda
         "\(host):\(port)"
     }
 
+    public var effectiveListenerLabel: String {
+        "\(effectiveHost):\(effectivePort)"
+    }
+
     public var isRunning: Bool {
         lifecycle == .running
     }
@@ -283,6 +306,11 @@ public struct DesktopServerSessionState: Codable, Identifiable, Equatable, Senda
         case modelID = "model_id"
         case host
         case port
+        case effectiveHost = "effective_host"
+        case effectivePort = "effective_port"
+        case gatewayConfigSourceText = "gateway_config_source_text"
+        case gatewayConfigActiveBinding = "gateway_config_active_binding"
+        case gatewayConfigRequiresRestart = "gateway_config_requires_restart"
         case authMode = "auth_mode"
         case authTokenHint = "auth_token_hint"
         case sharedAccessState = "shared_access_state"
@@ -316,6 +344,12 @@ public struct DesktopServerSessionState: Codable, Identifiable, Equatable, Senda
         modelID = try container.decode(String.self, forKey: .modelID)
         host = try container.decodeIfPresent(String.self, forKey: .host) ?? "127.0.0.1"
         port = try container.decodeIfPresent(Int.self, forKey: .port) ?? 8080
+        effectiveHost = try container.decodeIfPresent(String.self, forKey: .effectiveHost) ?? host
+        effectivePort = try container.decodeIfPresent(Int.self, forKey: .effectivePort) ?? port
+        gatewayConfigSourceText = try container.decodeIfPresent(String.self, forKey: .gatewayConfigSourceText)
+            ?? "Built-in Defaults"
+        gatewayConfigActiveBinding = try container.decodeIfPresent(Bool.self, forKey: .gatewayConfigActiveBinding) ?? false
+        gatewayConfigRequiresRestart = try container.decodeIfPresent(Bool.self, forKey: .gatewayConfigRequiresRestart) ?? false
         authMode = try container.decodeIfPresent(DesktopServerAuthMode.self, forKey: .authMode) ?? .none
         authTokenHint = try container.decodeIfPresent(String.self, forKey: .authTokenHint) ?? ""
         sharedAccessState = try container.decodeIfPresent(DesktopSharedAccessState.self, forKey: .sharedAccessState) ?? .localOnly
@@ -350,6 +384,11 @@ public struct DesktopServerSessionState: Codable, Identifiable, Equatable, Senda
         try container.encode(modelID, forKey: .modelID)
         try container.encode(host, forKey: .host)
         try container.encode(port, forKey: .port)
+        try container.encode(effectiveHost, forKey: .effectiveHost)
+        try container.encode(effectivePort, forKey: .effectivePort)
+        try container.encode(gatewayConfigSourceText, forKey: .gatewayConfigSourceText)
+        try container.encode(gatewayConfigActiveBinding, forKey: .gatewayConfigActiveBinding)
+        try container.encode(gatewayConfigRequiresRestart, forKey: .gatewayConfigRequiresRestart)
         try container.encode(authMode, forKey: .authMode)
         try container.encode(authTokenHint, forKey: .authTokenHint)
         try container.encode(sharedAccessState, forKey: .sharedAccessState)

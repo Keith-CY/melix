@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 
 @testable import AppMain
@@ -178,6 +179,39 @@ struct DesktopShellStateTests {
 
         #expect(unavailable.chatWorkspaceNoticeState?.severity == .warning)
         #expect(unavailable.chatWorkspaceNoticeState?.detail.contains("Choose a valid server session") ?? false)
+    }
+
+    @Test("effective listener helpers and codable restore preserve gateway config projection")
+    func effectiveListenerHelpersAndCodableRestorePreserveGatewayConfigProjection() throws {
+        let session = DesktopServerSessionState(
+            id: "server-session-1",
+            title: "Server",
+            modelID: "melix-dev-text",
+            host: "0.0.0.0",
+            port: 18080,
+            effectiveHost: "127.0.0.1",
+            effectivePort: 11434,
+            gatewayConfigSourceText: "Operator Override",
+            gatewayConfigActiveBinding: true,
+            gatewayConfigRequiresRestart: true,
+            lifecycle: .running,
+            powerState: .active
+        )
+
+        #expect(session.baseURL == "http://0.0.0.0:18080/v1")
+        #expect(session.effectiveBaseURL == "http://127.0.0.1:11434/v1")
+        #expect(session.effectiveListenerLabel == "127.0.0.1:11434")
+
+        let encoded = try JSONEncoder().encode(session)
+        let decoded = try JSONDecoder().decode(DesktopServerSessionState.self, from: encoded)
+
+        #expect(decoded.host == "0.0.0.0")
+        #expect(decoded.port == 18080)
+        #expect(decoded.effectiveHost == "127.0.0.1")
+        #expect(decoded.effectivePort == 11434)
+        #expect(decoded.gatewayConfigSourceText == "Operator Override")
+        #expect(decoded.gatewayConfigActiveBinding)
+        #expect(decoded.gatewayConfigRequiresRestart)
     }
 }
 

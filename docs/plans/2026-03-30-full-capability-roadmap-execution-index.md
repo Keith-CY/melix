@@ -236,6 +236,9 @@ The roadmap extension in `M10-M17` includes milestone-level plans plus decompose
 ## M13: Gateway Configuration, Defaults, And API Onboarding
 
 - `M13.1` `docs/plans/2026-03-31-m13-1-gateway-config-state-model-and-persistence.md`
+  Status: completed. Gateway listener configuration is now a typed, persistent, control-plane-owned
+  contract with bootstrap-backed precedence resolution, snapshot projection, typed desktop apply
+  actions, and focused changed-line coverage across control-plane and Window UI surfaces.
 - `M13.2` `docs/plans/2026-03-31-m13-2-generation-batching-and-speculative-defaults.md`
 - `M13.3` `docs/plans/2026-03-31-m13-3-tooling-embedding-and-config-file-settings.md`
 - `M13.4` `docs/plans/2026-03-31-m13-4-api-reference-and-quick-start-onboarding.md`

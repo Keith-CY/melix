@@ -721,6 +721,19 @@ private struct GatewayAccessProjection: Equatable, Sendable {
     let lastAuthSessionSignOutLatencyMs: Double
 }
 
+private struct GatewayConfigProjection: Equatable, Sendable {
+    let host: String
+    let port: Int
+    let effectiveHost: String
+    let effectivePort: Int
+    let servedModelID: String
+    let rateLimitPerMinute: Int
+    let timeoutSeconds: Int
+    let sourceText: String
+    let activeBinding: Bool
+    let requiresRestart: Bool
+}
+
 @MainActor
 @Observable
 public final class RuntimeViewModel {
@@ -1407,6 +1420,13 @@ public final class RuntimeViewModel {
         await startServerSession(id: serverSession.id)
     }
 
+    public func applySelectedServerGatewayConfig() async {
+        guard let serverSession = selectedServerSession else {
+            return
+        }
+        _ = await persistGatewayConfig(for: serverSession.id)
+    }
+
     public func stopSelectedServerSession() async {
         guard let serverSession = selectedServerSession else {
             return
@@ -1443,6 +1463,9 @@ public final class RuntimeViewModel {
     }
 
     public func startServerSession(id serverSessionID: String) async {
+        guard await persistGatewayConfig(for: serverSessionID) else {
+            return
+        }
         await performServerLifecycleAction(
             serverSessionID: serverSessionID,
             metricName: "menu.server_start_ms"
@@ -3484,6 +3507,35 @@ public final class RuntimeViewModel {
         }
     }
 
+    @discardableResult
+    private func persistGatewayConfig(for serverSessionID: String) async -> Bool {
+        guard let serverSession = serverSession(id: serverSessionID) else {
+            return false
+        }
+
+        let startedAt = Date()
+        do {
+            let snapshot = try await client.applyServerSessionGatewayConfig(
+                serverSessionID: serverSession.id,
+                host: serverSession.host,
+                port: serverSession.port,
+                servedModelID: serverSession.modelID,
+                rateLimitPerMinute: serverSession.rateLimitPerMinute,
+                timeoutSeconds: serverSession.timeoutSeconds
+            )
+            await metrics.record(
+                name: "menu.gateway_config_apply_ms",
+                valueMs: Date().timeIntervalSince(startedAt) * 1_000
+            )
+            apply(snapshot: snapshot)
+            return true
+        } catch {
+            recordLocalError("Gateway config apply failed: \(error)")
+            notifyStateChanged()
+            return false
+        }
+    }
+
     private func chatSubmissionBlockedMessage(for serverSession: DesktopServerSessionState) -> String {
         switch serverSession.lifecycle {
         case .paused:
@@ -3585,13 +3637,24 @@ public final class RuntimeViewModel {
         }
 
         if persistedServerSessions.isEmpty, let firstTextModel = textModels.first {
+            let seededServerSessionID = latestSnapshot.runtimeSessions.first?.serverSessionID ?? "server-session-1"
+            let projectedConfig = Self.gatewayConfigProjection(
+                from: latestSnapshot,
+                serverSessionID: seededServerSessionID
+            )
             let seeded = makeServerSession(
                 for: firstTextModel,
                 title: "Primary Server",
-                port: 8080,
-                serverSessionID: latestSnapshot.runtimeSessions.first?.serverSessionID ?? "server-session-1"
+                port: projectedConfig?.port ?? 8080,
+                serverSessionID: seededServerSessionID
             )
-            persistedServerSessions = [seeded]
+            if projectedConfig != nil {
+                var projectedSeeded = seeded
+                applyGatewayConfigProjection(to: &projectedSeeded)
+                persistedServerSessions = [projectedSeeded]
+            } else {
+                persistedServerSessions = [seeded]
+            }
             selectedServerSessionID = seeded.id
         }
 
@@ -3602,6 +3665,7 @@ public final class RuntimeViewModel {
 
         serverSessions = persistedServerSessions.enumerated().map { offset, session in
             var updated = session
+            applyGatewayConfigProjection(to: &updated)
             let runtimeSession = runtimeSession(for: session.id, fallbackIndex: offset)
             if let model = models.first(where: { $0.modelID == session.modelID }) {
                 updated.lastKnownModelStateText = model.stateText
@@ -3656,6 +3720,7 @@ public final class RuntimeViewModel {
             lifecycle: .running,
             lastKnownModelStateText: model.stateText
         )
+        applyGatewayConfigProjection(to: &session)
         applyGatewayAccessProjection(to: &session)
         return session
     }
@@ -4513,6 +4578,24 @@ public final class RuntimeViewModel {
         session.lastAuthSessionSignOutLatencyMs = projection.lastAuthSessionSignOutLatencyMs
     }
 
+    private func applyGatewayConfigProjection(to session: inout DesktopServerSessionState) {
+        guard let projection = Self.gatewayConfigProjection(from: latestSnapshot, serverSessionID: session.id) else {
+            session.effectiveHost = session.host
+            session.effectivePort = session.port
+            return
+        }
+        session.host = projection.host
+        session.port = projection.port
+        session.effectiveHost = projection.effectiveHost
+        session.effectivePort = projection.effectivePort
+        session.modelID = projection.servedModelID
+        session.rateLimitPerMinute = projection.rateLimitPerMinute
+        session.timeoutSeconds = projection.timeoutSeconds
+        session.gatewayConfigSourceText = projection.sourceText
+        session.gatewayConfigActiveBinding = projection.activeBinding
+        session.gatewayConfigRequiresRestart = projection.requiresRestart
+    }
+
     private static func gatewayAccessProjection(
         from snapshot: Melix_Controlplane_V1_ServerSnapshot
     ) -> GatewayAccessProjection? {
@@ -4573,6 +4656,51 @@ public final class RuntimeViewModel {
             )
         default:
             return nil
+        }
+    }
+
+    private static func gatewayConfigProjection(
+        from snapshot: Melix_Controlplane_V1_ServerSnapshot,
+        serverSessionID: String
+    ) -> GatewayConfigProjection? {
+        guard snapshot.hasGatewayConfig else {
+            return nil
+        }
+        guard
+            let listener = snapshot.gatewayConfig.listeners.first(where: { $0.serverSessionID == serverSessionID })
+                ?? (snapshot.gatewayConfig.listeners.count == 1 ? snapshot.gatewayConfig.listeners.first : nil)
+        else {
+            return nil
+        }
+
+        return GatewayConfigProjection(
+            host: listener.requestedHost,
+            port: Int(listener.requestedPort),
+            effectiveHost: listener.effectiveHost.isEmpty ? listener.requestedHost : listener.effectiveHost,
+            effectivePort: listener.effectivePort == 0 ? Int(listener.requestedPort) : Int(listener.effectivePort),
+            servedModelID: listener.servedModelID,
+            rateLimitPerMinute: Int(listener.rateLimitPerMinute),
+            timeoutSeconds: Int(listener.timeoutSeconds),
+            sourceText: gatewayConfigSourceText(listener.source),
+            activeBinding: listener.activeBinding,
+            requiresRestart: listener.requiresRestart
+        )
+    }
+
+    private static func gatewayConfigSourceText(
+        _ source: Melix_Controlplane_V1_GatewayConfigSource
+    ) -> String {
+        switch source {
+        case .builtInDefaults:
+            return "Built-in Defaults"
+        case .environmentDefaults:
+            return "Environment Defaults"
+        case .configFileImport:
+            return "Config File Import"
+        case .operatorOverride:
+            return "Operator Override"
+        default:
+            return "Unknown Source"
         }
     }
 

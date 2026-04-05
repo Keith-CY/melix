@@ -1,0 +1,167 @@
+import Foundation
+import Testing
+
+@testable import MelixControlPlaneCore
+import MelixControlPlaneProtocol
+
+@Suite("Gateway Config Store")
+struct GatewayConfigStoreTests {
+    @Test("summary projects environment defaults and active binding when no operator override exists")
+    func summaryProjectsEnvironmentDefaultsAndActiveBindingWhenNoOperatorOverrideExists() async throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-gateway-config-defaults-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let store = GatewayConfigStore(
+            storeURL: temporaryRoot.appendingPathComponent("gateway-config.json"),
+            defaults: [
+                "MELIX_HTTP_HOST": "0.0.0.0",
+                "MELIX_HTTP_PORT": "14567",
+                "MELIX_GATEWAY_RATE_LIMIT_PER_MINUTE": "77",
+                "MELIX_GATEWAY_TIMEOUT_SECONDS": "99",
+            ]
+        )
+
+        let binding = await store.bootstrapBinding()
+        let summary = await store.summary(
+            serverSessionIDs: [ServerSessionRuntimeStore.defaultServerSessionID],
+            runtimeBinding: binding,
+            fallbackServedModelID: "melix-dev-text"
+        )
+        let listener = try #require(summary.listeners.first)
+
+        #expect(binding.host == "0.0.0.0")
+        #expect(binding.port == 14_567)
+        #expect(listener.serverSessionID == ServerSessionRuntimeStore.defaultServerSessionID)
+        #expect(listener.requestedHost == "0.0.0.0")
+        #expect(listener.requestedPort == 14_567)
+        #expect(listener.effectiveHost == "0.0.0.0")
+        #expect(listener.effectivePort == 14_567)
+        #expect(listener.servedModelID == "melix-dev-text")
+        #expect(listener.rateLimitPerMinute == 77)
+        #expect(listener.timeoutSeconds == 99)
+        #expect(listener.source == .environmentDefaults)
+        #expect(listener.activeBinding)
+        #expect(listener.requiresRestart == false)
+    }
+
+    @Test("apply persists operator overrides and bootstrap binding reloads them")
+    func applyPersistsOperatorOverridesAndBootstrapBindingReloadsThem() async throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-gateway-config-persist-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let storeURL = temporaryRoot.appendingPathComponent("gateway-config.json")
+        let store = GatewayConfigStore(
+            storeURL: storeURL,
+            defaults: [:],
+            nowUnixMS: { 1_717_171_717_000 }
+        )
+
+        var command = Melix_Controlplane_V1_ApplyGatewayConfig()
+        command.serverSessionID = ServerSessionRuntimeStore.defaultServerSessionID
+        command.host = "localhost"
+        command.port = 18080
+        command.servedModelID = "melix-alt-text"
+        command.rateLimitPerMinute = 240
+        command.timeoutSeconds = 45
+        try await store.apply(command: command)
+
+        let reloadedStore = GatewayConfigStore(storeURL: storeURL, defaults: [:])
+        let binding = await reloadedStore.bootstrapBinding()
+        let summary = await reloadedStore.summary(
+            serverSessionIDs: [ServerSessionRuntimeStore.defaultServerSessionID],
+            runtimeBinding: binding,
+            fallbackServedModelID: "melix-dev-text"
+        )
+        let listener = try #require(summary.listeners.first)
+
+        #expect(binding.host == "localhost")
+        #expect(binding.port == 18_080)
+        #expect(listener.requestedHost == "localhost")
+        #expect(listener.requestedPort == 18_080)
+        #expect(listener.servedModelID == "melix-alt-text")
+        #expect(listener.rateLimitPerMinute == 240)
+        #expect(listener.timeoutSeconds == 45)
+        #expect(listener.source == .operatorOverride)
+        #expect(listener.updatedAtUnixMs == 1_717_171_717_000)
+    }
+
+    @Test("summary marks restart required when the requested active listener differs from the runtime binding")
+    func summaryMarksRestartRequiredWhenTheRequestedActiveListenerDiffersFromTheRuntimeBinding() async throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-gateway-config-restart-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let store = GatewayConfigStore(
+            storeURL: temporaryRoot.appendingPathComponent("gateway-config.json"),
+            defaults: [:]
+        )
+
+        var command = Melix_Controlplane_V1_ApplyGatewayConfig()
+        command.serverSessionID = ServerSessionRuntimeStore.defaultServerSessionID
+        command.host = "0.0.0.0"
+        command.port = 18081
+        command.servedModelID = "melix-dev-text"
+        command.rateLimitPerMinute = 120
+        command.timeoutSeconds = 60
+        try await store.apply(command: command)
+
+        let summary = await store.summary(
+            serverSessionIDs: [ServerSessionRuntimeStore.defaultServerSessionID],
+            runtimeBinding: GatewayRuntimeBinding(host: "127.0.0.1", port: 11_434),
+            fallbackServedModelID: "melix-dev-text"
+        )
+        let listener = try #require(summary.listeners.first)
+
+        #expect(listener.requestedHost == "0.0.0.0")
+        #expect(listener.requestedPort == 18_081)
+        #expect(listener.effectiveHost == "127.0.0.1")
+        #expect(listener.effectivePort == 11_434)
+        #expect(listener.activeBinding)
+        #expect(listener.requiresRestart)
+    }
+
+    @Test("summary keeps non-active persisted listeners inspectable without claiming the active binding")
+    func summaryKeepsNonActivePersistedListenersInspectableWithoutClaimingTheActiveBinding() async throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-gateway-config-inactive-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let store = GatewayConfigStore(
+            storeURL: temporaryRoot.appendingPathComponent("gateway-config.json"),
+            defaults: [:]
+        )
+
+        var command = Melix_Controlplane_V1_ApplyGatewayConfig()
+        command.serverSessionID = "server-session-secondary"
+        command.host = "192.168.1.55"
+        command.port = 19090
+        command.servedModelID = "melix-alt-text"
+        command.rateLimitPerMinute = 180
+        command.timeoutSeconds = 30
+        try await store.apply(command: command)
+
+        let summary = await store.summary(
+            serverSessionIDs: [ServerSessionRuntimeStore.defaultServerSessionID, "server-session-secondary"],
+            runtimeBinding: GatewayRuntimeBinding(host: "127.0.0.1", port: 11_434),
+            fallbackServedModelID: "melix-dev-text"
+        )
+        let secondary = try #require(
+            summary.listeners.first(where: { $0.serverSessionID == "server-session-secondary" })
+        )
+
+        #expect(secondary.requestedHost == "192.168.1.55")
+        #expect(secondary.requestedPort == 19_090)
+        #expect(secondary.effectiveHost == "192.168.1.55")
+        #expect(secondary.effectivePort == 19_090)
+        #expect(secondary.servedModelID == "melix-alt-text")
+        #expect(secondary.source == .operatorOverride)
+        #expect(secondary.activeBinding == false)
+        #expect(secondary.requiresRestart == false)
+    }
+}

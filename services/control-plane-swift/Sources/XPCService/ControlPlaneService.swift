@@ -157,6 +157,8 @@ public actor ControlPlaneService {
     private let mcpToolCatalog: MCPToolCatalog
     private let audioAssetManager: AudioAssetManager
     private let gatewayAccessPolicyStore: GatewayAccessPolicyStore
+    private let gatewayConfigStore: GatewayConfigStore
+    private let gatewayRuntimeBinding: GatewayRuntimeBinding
     private let persistentAuthSessionStore: PersistentAuthSessionStore?
 
     public init(
@@ -178,6 +180,8 @@ public actor ControlPlaneService {
         chatTranslator: ChatRequestTranslator = ChatRequestTranslator(),
         mcpToolCatalog: MCPToolCatalog = .empty,
         gatewayAccessPolicy: GatewayAccessPolicy = .localTrust,
+        gatewayConfigStore: GatewayConfigStore? = nil,
+        gatewayRuntimeBinding: GatewayRuntimeBinding = GatewayRuntimeBinding(host: "127.0.0.1", port: 11_434),
         audioAssetManager: AudioAssetManager = AudioAssetManager(),
         gatewayAccessPolicyStore: GatewayAccessPolicyStore? = nil,
         persistentAuthSessionStore: PersistentAuthSessionStore? = nil
@@ -226,6 +230,8 @@ public actor ControlPlaneService {
         self.mcpToolCatalog = mcpToolCatalog
         self.audioAssetManager = audioAssetManager
         self.gatewayAccessPolicyStore = gatewayAccessPolicyStore ?? GatewayAccessPolicyStore(gatewayAccessPolicy)
+        self.gatewayConfigStore = gatewayConfigStore ?? GatewayConfigStore()
+        self.gatewayRuntimeBinding = gatewayRuntimeBinding
         self.persistentAuthSessionStore = persistentAuthSessionStore
     }
 
@@ -424,6 +430,8 @@ public actor ControlPlaneService {
             return okResponse(for: request, server: reply)
         case .applyGatewayAccess(let apply):
             return await handleApplyGatewayAccess(request: request, command: apply)
+        case .applyGatewayConfig(let apply):
+            return await handleApplyGatewayConfig(request: request, command: apply)
         case .pause(let pause):
             return await handlePauseServer(request: request, command: pause)
         case .resume(let resume):
@@ -1307,6 +1315,12 @@ public actor ControlPlaneService {
         )
         let imageJobs = await imageJobReadModel.snapshot()
         let gatewayAccessSummary = await gatewayAccessPolicyStore.summary()
+        let fallbackServedModelID = defaultServedModelID(from: models)
+        let gatewayConfigSummary = await gatewayConfigStore.summary(
+            serverSessionIDs: runtimeSessions.map(\.serverSessionID),
+            runtimeBinding: gatewayRuntimeBinding,
+            fallbackServedModelID: fallbackServedModelID
+        )
         return snapshotBuilder.build(
             models: models,
             metrics: metrics,
@@ -1316,8 +1330,17 @@ public actor ControlPlaneService {
             runtimeSessions: runtimeSessions,
             imageJobs: imageJobs,
             mcpTools: mcpToolCatalog.summary(),
-            gatewayAccess: gatewayAccessSummary
+            gatewayAccess: gatewayAccessSummary,
+            gatewayConfig: gatewayConfigSummary
         )
+    }
+
+    private func defaultServedModelID(
+        from models: [Melix_Controlplane_V1_ModelSummary]
+    ) -> String {
+        models.first(where: { $0.kind == "text" || $0.features.contains("chat") })?.modelID
+            ?? models.first?.modelID
+            ?? ""
     }
 
     private func handleApplyGatewayAccess(
@@ -1365,6 +1388,49 @@ public actor ControlPlaneService {
             source: "server_runtime"
         )
         return okResponse(for: request, server: reply)
+    }
+
+    private func handleApplyGatewayConfig(
+        request: Melix_Controlplane_V1_ControlPlaneRequest,
+        command: Melix_Controlplane_V1_ApplyGatewayConfig
+    ) async -> Melix_Controlplane_V1_ControlPlaneResponse {
+        let startedAt = Date()
+        if request.targetID.isEmpty || request.targetID != command.serverSessionID {
+            return errorResponse(
+                for: request,
+                code: "invalid_argument",
+                message: "Target server session does not match gateway config payload."
+            )
+        }
+
+        do {
+            try await gatewayConfigStore.apply(command: command)
+            await metricsStore.set(
+                Date().timeIntervalSince(startedAt) * 1000,
+                forKey: "gateway.config_apply_ms"
+            )
+            let requiresRestart = command.serverSessionID == gatewayRuntimeBinding.activeServerSessionID
+                && (command.host != gatewayRuntimeBinding.host || command.port != gatewayRuntimeBinding.port)
+            await metricsStore.set(requiresRestart ? 1 : 0, forKey: "gateway.config_requires_restart_count")
+
+            var reply = Melix_Controlplane_V1_ServerReply()
+            reply.snapshot = await buildSnapshot()
+            await publishServerStateChanged(
+                reply.snapshot.serverState,
+                runtimeSessions: reply.snapshot.runtimeSessions,
+                source: "server_runtime"
+            )
+            return okResponse(for: request, server: reply)
+        } catch let error as GatewayConfigValidationError {
+            return errorResponse(for: request, code: error.code, message: error.message)
+        } catch {
+            await metricsStore.increment("gateway.config_persist_failures")
+            return errorResponse(
+                for: request,
+                code: "gateway_config_persist_failed",
+                message: "Gateway config persistence failed: \(error)"
+            )
+        }
     }
 
     private func handleStartServer(

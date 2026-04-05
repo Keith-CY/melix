@@ -21,6 +21,52 @@ struct DesktopFoundationViewTests {
         #expect(viewModel.selectedSurface == .chat)
     }
 
+    @Test("workspace server surface renders projected gateway config state")
+    @MainActor
+    func workspaceServerSurfaceRendersProjectedGatewayConfigState() async throws {
+        let client = FakeControlPlaneXPCClient()
+        var snapshot = Melix_Controlplane_V1_ServerSnapshot()
+        snapshot.serverState = .serverReady
+        snapshot.models = [ModelCatalog.devTextModel()]
+        var runtimeSession = Melix_Controlplane_V1_ServerSessionRuntimeState()
+        runtimeSession.serverSessionID = "server-session-1"
+        runtimeSession.lifecycleState = .ready
+        runtimeSession.powerState = .active
+        runtimeSession.wakeReason = .initialBoot
+        snapshot.runtimeSessions = [runtimeSession]
+        var listener = Melix_Controlplane_V1_GatewayListenerConfigSummary()
+        listener.serverSessionID = "server-session-1"
+        listener.requestedHost = "0.0.0.0"
+        listener.requestedPort = 18080
+        listener.effectiveHost = "127.0.0.1"
+        listener.effectivePort = 11_434
+        listener.servedModelID = "melix-dev-text"
+        listener.rateLimitPerMinute = 240
+        listener.timeoutSeconds = 90
+        listener.source = .operatorOverride
+        listener.activeBinding = true
+        listener.requiresRestart = true
+        snapshot.gatewayConfig.listeners = [listener]
+        await client.configureSnapshot(snapshot)
+
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        viewModel.selectSurface(.server)
+
+        let view = hostView(DesktopWorkspaceShellView(viewModel: viewModel))
+        let renderedTexts = renderedTextValues(in: view)
+
+        #expect(view.subviews.isEmpty == false)
+        #expect(viewModel.selectedSurface == .server)
+        #expect(renderedTexts.contains("0.0.0.0"))
+        #expect(renderedTexts.contains("18,080"))
+        #expect(renderedTexts.contains("240"))
+        #expect(renderedTexts.contains("90"))
+        #expect(viewModel.selectedServerSession?.effectiveBaseURL == "http://127.0.0.1:11434/v1")
+        #expect(viewModel.selectedServerSession?.gatewayConfigRequiresRestart == true)
+        #expect(viewModel.selectedServerSession?.gatewayConfigSourceText == "Operator Override")
+    }
+
     @Test("command center view renders global operator summaries")
     @MainActor
     func commandCenterViewRendersGlobalOperatorSummaries() async throws {

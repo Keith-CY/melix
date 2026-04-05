@@ -12,7 +12,8 @@ public struct ServerSnapshotBuilder {
         runtimeSessions: [Melix_Controlplane_V1_ServerSessionRuntimeState] = [],
         imageJobs: [Melix_Controlplane_V1_ImageJobSummary] = [],
         mcpTools: Melix_Controlplane_V1_MCPToolCatalogSummary? = nil,
-        gatewayAccess: Melix_Controlplane_V1_GatewayAccessSummary? = nil
+        gatewayAccess: Melix_Controlplane_V1_GatewayAccessSummary? = nil,
+        gatewayConfig: Melix_Controlplane_V1_GatewayConfigSummary? = nil
     ) -> Melix_Controlplane_V1_ServerSnapshot {
         var snapshot = Melix_Controlplane_V1_ServerSnapshot()
         let cacheSummary = cache ?? CacheMetadataStore.emptySummary()
@@ -31,6 +32,9 @@ public struct ServerSnapshotBuilder {
         if let gatewayAccess {
             // Gateway access is projected from the runtime store, never from raw secret material.
             snapshot.gatewayAccess = gatewayAccess
+        }
+        if let gatewayConfig {
+            snapshot.gatewayConfig = gatewayConfig
         }
         return snapshot
     }

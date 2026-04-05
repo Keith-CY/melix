@@ -30,6 +30,15 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
         let tokenHint: String
     }
 
+    struct RecordedGatewayConfigApplyRequest: Equatable, Sendable {
+        let serverSessionID: String
+        let host: String
+        let port: Int
+        let servedModelID: String
+        let rateLimitPerMinute: Int
+        let timeoutSeconds: Int
+    }
+
     struct RecordedServerIdlePolicyRequest: Equatable, Sendable {
         let serverSessionID: String
         let autoSleepEnabled: Bool
@@ -47,6 +56,7 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
     private(set) var recordedEvaluationRequests: [ControlPlaneEvaluationRequest] = []
     private(set) var recordedExportOutputDirs: [String] = []
     private(set) var recordedGatewayAccessApplyRequests: [RecordedGatewayAccessApplyRequest] = []
+    private(set) var recordedGatewayConfigApplyRequests: [RecordedGatewayConfigApplyRequest] = []
     private(set) var recordedGatewayAccessClearRequests: [String] = []
     private(set) var recordedServerIdlePolicyRequests: [RecordedServerIdlePolicyRequest] = []
     private(set) var lastLoadMemoryBudgetBytes: UInt64 = 0
@@ -70,6 +80,7 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
     private var imageEditError: Error?
     private var cancelError: Error?
     private var applyGatewayAccessError: Error?
+    private var applyGatewayConfigError: Error?
     private var clearGatewayAccessError: Error?
     private var startServerError: Error?
     private var pauseServerError: Error?
@@ -192,6 +203,7 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
         imageEdit: Error? = nil,
         cancel: Error? = nil,
         applyGatewayAccess: Error? = nil,
+        applyGatewayConfig: Error? = nil,
         startServer: Error? = nil,
         pauseServer: Error? = nil,
         resumeServer: Error? = nil,
@@ -216,6 +228,7 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
         imageEditError = imageEdit
         cancelError = cancel
         applyGatewayAccessError = applyGatewayAccess
+        applyGatewayConfigError = applyGatewayConfig
         startServerError = startServer
         pauseServerError = pauseServer
         resumeServerError = resumeServer
@@ -294,6 +307,10 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
 
     func configureGatewayAccessClearError(_ error: Error?) {
         clearGatewayAccessError = error
+    }
+
+    func configureGatewayConfigApplyError(_ error: Error?) {
+        applyGatewayConfigError = error
     }
 
     func handshake() async throws -> Melix_Controlplane_V1_HandshakeResponse {
@@ -646,6 +663,62 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
             throw clearGatewayAccessError
         }
         recordedGatewayAccessClearRequests.append(serverSessionID)
+    }
+
+    func applyServerSessionGatewayConfig(
+        serverSessionID: String,
+        host: String,
+        port: Int,
+        servedModelID: String,
+        rateLimitPerMinute: Int,
+        timeoutSeconds: Int
+    ) async throws -> Melix_Controlplane_V1_ServerSnapshot {
+        recordedActions.append("gateway.config:\(serverSessionID)")
+        if let applyGatewayConfigError {
+            throw applyGatewayConfigError
+        }
+        recordedGatewayConfigApplyRequests.append(
+            RecordedGatewayConfigApplyRequest(
+                serverSessionID: serverSessionID,
+                host: host,
+                port: port,
+                servedModelID: servedModelID,
+                rateLimitPerMinute: rateLimitPerMinute,
+                timeoutSeconds: timeoutSeconds
+            )
+        )
+
+        var snapshot = makeSnapshot(state: modelState)
+        var config = snapshot.gatewayConfig
+        if let existingIndex = config.listeners.firstIndex(where: { $0.serverSessionID == serverSessionID }) {
+            config.listeners[existingIndex].requestedHost = host
+            config.listeners[existingIndex].requestedPort = UInt32(max(1, port))
+            config.listeners[existingIndex].effectiveHost = host
+            config.listeners[existingIndex].effectivePort = UInt32(max(1, port))
+            config.listeners[existingIndex].servedModelID = servedModelID
+            config.listeners[existingIndex].rateLimitPerMinute = UInt32(max(1, rateLimitPerMinute))
+            config.listeners[existingIndex].timeoutSeconds = UInt32(max(1, timeoutSeconds))
+            config.listeners[existingIndex].source = .operatorOverride
+            config.listeners[existingIndex].activeBinding = true
+            config.listeners[existingIndex].requiresRestart = false
+        } else {
+            var listener = Melix_Controlplane_V1_GatewayListenerConfigSummary()
+            listener.serverSessionID = serverSessionID
+            listener.requestedHost = host
+            listener.requestedPort = UInt32(max(1, port))
+            listener.effectiveHost = host
+            listener.effectivePort = UInt32(max(1, port))
+            listener.servedModelID = servedModelID
+            listener.rateLimitPerMinute = UInt32(max(1, rateLimitPerMinute))
+            listener.timeoutSeconds = UInt32(max(1, timeoutSeconds))
+            listener.source = .operatorOverride
+            listener.activeBinding = true
+            listener.requiresRestart = false
+            config.listeners.append(listener)
+        }
+        snapshot.gatewayConfig = config
+        snapshotOverride = snapshot
+        return snapshot
     }
 
     func startServerSession(serverSessionID: String) async throws -> Melix_Controlplane_V1_ServerSnapshot {

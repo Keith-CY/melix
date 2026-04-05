@@ -2,78 +2,84 @@
 
 ## Goal
 
-Advance `M12.4` by finishing conversion and packaging tooling now that typed model inspection and
-health checking are stable operator workflows tied to model identity.
+Advance `M13.1` by making gateway listener configuration typed, persistent, and control-plane-owned
+across protocol, bootstrap, snapshot projection, and the Window UI server workspace.
 
 ## Scope
 
-- extend protocol-owned model inspection and doctor health payloads with stable typed fields
-- project model identity, backend, family, source, and supported-task metadata through worker and
-  control-plane inspect flows
-- expose structured health summaries and actionable findings alongside the existing operator report
-- surface explicit convert, quantize, and packaging result state through model-ops workflows and
-  operator-visible UI state
-- add focused coverage for typed inspect payloads, health severity mapping, and model-operation
-  result summaries
+- extend the control-plane protocol with a typed `server.apply_gateway_config` command and
+  `gateway_config` snapshot projection
+- persist gateway listener overrides through a control-plane-owned store instead of desktop-only
+  session state
+- preserve requested versus effective listener configuration after precedence resolution
+- migrate desktop host, port, served model, rate limit, and timeout edits onto the control-plane
+  apply path
+- add focused control-plane and menu-bar coverage for gateway-config persistence, snapshot
+  projection, and operator apply flows
 
 ## Measurement Points
 
-- typed model inspection must expose stable identity fields including model kind, family or backend
-  metadata, supported parsers, supported modalities, supported tasks, and source provenance
-- health-check output must distinguish `healthy`, `warning`, `degraded`, and `failed` states
-  without relying on markdown parsing
-- conversion and quantized packaging results must remain tied to stable artifact metadata,
-  manifest paths, smoke evidence, and source-model identity
-- Window UI model tools must project structured inspect and health state without dropping the
-  existing markdown report path
+- `ServerSnapshot.gateway_config` must expose stable listener summaries with requested and
+  effective host or port, served model identity, timeout, rate limit, source, and restart status
+- gateway listener overrides must persist to a schema-versioned JSON document owned by the control
+  plane
+- Window UI server edits must apply through the typed control-plane request path and hydrate the
+  effective listener state back into desktop session state
+- server starts must persist the selected gateway listener configuration before lifecycle mutation
 
 ## Phases
 
-1. Typed inspect and health contract
+1. Typed gateway-config contract and persistence
    - status: completed
    - evidence:
-     - extend model-info and doctor payloads with stable typed identity and health fields
-     - teach the worker to derive actionable health findings instead of markdown-only output
-     - verify typed inspect and health paths with focused Python, control-plane, and menu-bar
-       coverage at `100.00%` (`406/406` aggregate changed-line coverage)
-2. Control-plane projection and operator inspect state
+     - added `server.apply_gateway_config`, `GatewayConfigSummary`, and
+       `GatewayListenerConfigSummary` to the protocol schema plus regenerated Swift, Python, and
+       descriptor outputs
+     - added `GatewayConfigStore` so built-in defaults, environment defaults, and operator
+       overrides resolve through a control-plane-owned persistence path backed by schema-versioned
+       JSON
+2. Control-plane projection and bootstrap ownership
    - status: completed
    - evidence:
-     - preserve typed inspect and health data through control-plane replies and XPC client helpers
-     - project structured inspect and health state into the Window UI alongside the markdown report
-3. Conversion and packaging workflow completion
+     - projected `gateway_config` through `ServerSnapshot` and wired listener bootstrap binding
+       through the persisted store
+     - recorded typed gateway-config metrics for apply latency, persistence failures, and
+       restart-required state
+3. Desktop apply path and operator visibility
    - status: completed
    - evidence:
-     - expose explicit convert and packaging entrypoints through model-ops workflows
-     - keep model-operation results tied to stable artifact and manifest metadata
-     - emit dedicated conversion bundles and upload receipts with stable schemas, artifact kinds,
-       runtime compatibility metadata, and operator-visible summary state
+     - exposed a typed XPC client `applyServerSessionGatewayConfig(...)` path and server-surface
+       `Apply Gateway Config` action in the Window UI
+     - projected requested and effective listener state, source, and restart-required badges into
+       `DesktopServerSessionState` and the inspector surface
+     - persisted selected gateway config automatically before `Start`
 4. Verification and milestone bookkeeping
    - status: completed
    - evidence:
-     - add focused Python, Swift, and menu-bar regression coverage for typed inspect and health
-       state plus model-operation result summaries
-     - record changed-line coverage at or above `95%`, update `progress.md`, and close `M12.4`
-       only after inspect, health, and conversion tooling are test-backed
-     - focused changed-line coverage reached `95.49%` (`254/266`) for the Python worker scope and
-       `98.88%` (`353/357`) for the Window UI scope
+     - added focused control-plane and menu-bar regression tests for gateway-config summary
+       projection, persistence failures, typed request construction, and desktop apply or start
+       flows
+     - recorded changed-line coverage at or above `95%`, updated `progress.md`, and closed `M13.1`
+       in the roadmap execution index
 
 ## Acceptance
 
-- inspect, health, and conversion tooling are operator-visible with stable typed result payloads
-- health severity and findings remain actionable without requiring markdown parsing
-- conversion and packaging results remain tied to stable model identity, artifact metadata, and
-  verification evidence
+- gateway listener configuration is typed, persistent, and inspectable through supported product
+  surfaces
+- the control plane owns listener-configuration truth for host, port, served model, timeout, and
+  rate limit fields projected in `ServerSnapshot`
+- Window UI gateway edits flow through the typed control-plane path and preserve requested versus
+  effective listener divergence when a restart is required
 
 ## Risks
 
-- inspect payload expansion could drift across worker and control plane if stable identity fields
-  are duplicated instead of mapped from one source of truth
-- doctor findings could over-report degraded state if thresholds are inferred from missing runtime
-  evidence rather than explicit conditions
-- conversion and packaging UX could collapse distinct artifact states into one generic model-op row
-  if result metadata is not projected cleanly into the operator shell
+- listener precedence could drift between bootstrap and snapshot projection if runtime binding is
+  not derived from the same persisted source of truth
+- desktop edits could regress into local-only state if starts mutate lifecycle before listener
+  persistence succeeds
+- requested versus effective listener state could become misleading if non-active sessions are
+  flattened into one global listener view
 
 ## Outcome
 
-- m12_4_completed
+- m13_1_completed

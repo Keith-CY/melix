@@ -569,6 +569,21 @@ private struct DesktopServerSessionEditor: View {
                                 )
                                 .textFieldStyle(.roundedBorder)
                             }
+
+                            HStack {
+                                Button("Apply Gateway Config") {
+                                    Task { await viewModel.applySelectedServerGatewayConfig() }
+                                }
+                                .buttonStyle(.bordered)
+
+                                Text(
+                                    session.gatewayConfigRequiresRestart
+                                        ? "Requested listener differs from the active binding. Restart required."
+                                        : "Listener config source: \(session.gatewayConfigSourceText)"
+                                )
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            }
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
                     }
@@ -742,11 +757,20 @@ private struct DesktopServerSessionInspector: View {
 
                 GroupBox("Listener") {
                     VStack(alignment: .leading, spacing: 8) {
-                        Text(session.baseURL)
+                        Text("Requested: \(session.baseURL)")
                             .font(.body.monospaced())
+                        Text("Effective: \(session.effectiveBaseURL)")
+                            .font(.body.monospaced())
+                        Text(
+                            session.gatewayConfigRequiresRestart
+                                ? "\(session.gatewayConfigSourceText) • restart required to move the live listener"
+                                : session.gatewayConfigSourceText
+                        )
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                         HStack {
                             Button("Copy URL") {
-                                copyToPasteboard(session.baseURL)
+                                copyToPasteboard(session.effectiveBaseURL)
                             }
                         }
                     }

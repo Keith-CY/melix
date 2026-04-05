@@ -308,6 +308,14 @@ public protocol ControlPlaneXPCClient: Sendable {
         label: String,
         tokenHint: String
     ) async throws
+    func applyServerSessionGatewayConfig(
+        serverSessionID: String,
+        host: String,
+        port: Int,
+        servedModelID: String,
+        rateLimitPerMinute: Int,
+        timeoutSeconds: Int
+    ) async throws -> Melix_Controlplane_V1_ServerSnapshot
     func clearServerSessionGatewayAccess(serverSessionID: String) async throws
 }
 
@@ -471,6 +479,26 @@ public extension ControlPlaneXPCClient {
         throw ControlPlaneXPCClientError.requestFailed(
             code: "unimplemented",
             message: "Gateway access clear is not implemented for this control-plane client."
+        )
+    }
+
+    func applyServerSessionGatewayConfig(
+        serverSessionID: String,
+        host: String,
+        port: Int,
+        servedModelID: String,
+        rateLimitPerMinute: Int,
+        timeoutSeconds: Int
+    ) async throws -> Melix_Controlplane_V1_ServerSnapshot {
+        _ = serverSessionID
+        _ = host
+        _ = port
+        _ = servedModelID
+        _ = rateLimitPerMinute
+        _ = timeoutSeconds
+        throw ControlPlaneXPCClientError.requestFailed(
+            code: "unimplemented",
+            message: "Gateway config apply is not implemented for this control-plane client."
         )
     }
 }
@@ -723,6 +751,28 @@ public actor LocalControlPlaneXPCClient: ControlPlaneXPCClient {
         _ = try await execute(
             makeClearServerSessionGatewayAccessRequest(serverSessionID: serverSessionID)
         ) { _ in true }
+    }
+
+    public func applyServerSessionGatewayConfig(
+        serverSessionID: String,
+        host: String,
+        port: Int,
+        servedModelID: String,
+        rateLimitPerMinute: Int,
+        timeoutSeconds: Int
+    ) async throws -> Melix_Controlplane_V1_ServerSnapshot {
+        try await execute(
+            makeApplyServerSessionGatewayConfigRequest(
+                serverSessionID: serverSessionID,
+                host: host,
+                port: port,
+                servedModelID: servedModelID,
+                rateLimitPerMinute: rateLimitPerMinute,
+                timeoutSeconds: timeoutSeconds
+            )
+        ) { response in
+            response.server.snapshot
+        }
     }
 
     private func execute<T>(
@@ -1078,6 +1128,29 @@ public actor LocalControlPlaneXPCClient: ControlPlaneXPCClient {
         request.server.applyGatewayAccess.serverSessionID = serverSessionID
         request.server.applyGatewayAccess.mode = .none
         request.server.applyGatewayAccess.sharedAccessEnabled = false
+        return request
+    }
+
+    private func makeApplyServerSessionGatewayConfigRequest(
+        serverSessionID: String,
+        host: String,
+        port: Int,
+        servedModelID: String,
+        rateLimitPerMinute: Int,
+        timeoutSeconds: Int
+    ) -> Melix_Controlplane_V1_ControlPlaneRequest {
+        var request = Melix_Controlplane_V1_ControlPlaneRequest()
+        request.requestID = "menubar-apply-gateway-config-\(serverSessionID)"
+        request.commandType = "server.apply_gateway_config"
+        request.targetID = serverSessionID
+        request.server = Melix_Controlplane_V1_ServerCommand()
+        request.server.applyGatewayConfig = Melix_Controlplane_V1_ApplyGatewayConfig()
+        request.server.applyGatewayConfig.serverSessionID = serverSessionID
+        request.server.applyGatewayConfig.host = host
+        request.server.applyGatewayConfig.port = UInt32(max(0, min(port, Int(UInt16.max))))
+        request.server.applyGatewayConfig.servedModelID = servedModelID
+        request.server.applyGatewayConfig.rateLimitPerMinute = UInt32(max(0, rateLimitPerMinute))
+        request.server.applyGatewayConfig.timeoutSeconds = UInt32(max(0, timeoutSeconds))
         return request
     }
 }

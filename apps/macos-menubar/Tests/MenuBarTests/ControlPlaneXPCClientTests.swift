@@ -683,6 +683,52 @@ struct ControlPlaneXPCClientTests {
         #expect(request.server.applyGatewayAccess.hasPrimaryKey == false)
     }
 
+    @Test("applyServerSessionGatewayConfig builds server.apply_gateway_config request")
+    func applyServerSessionGatewayConfigBuildsTypedRequest() async throws {
+        let service = RecordingExecuteControlPlaneService()
+        var response = Melix_Controlplane_V1_ControlPlaneResponse()
+        response.ok = true
+        response.server = Melix_Controlplane_V1_ServerReply()
+        response.server.snapshot.serverState = .serverReady
+        var listener = Melix_Controlplane_V1_GatewayListenerConfigSummary()
+        listener.serverSessionID = "server-session-123"
+        listener.requestedHost = "0.0.0.0"
+        listener.requestedPort = 18080
+        listener.effectiveHost = "127.0.0.1"
+        listener.effectivePort = 11_434
+        listener.servedModelID = "melix-dev-text"
+        listener.rateLimitPerMinute = 240
+        listener.timeoutSeconds = 90
+        listener.source = .operatorOverride
+        listener.activeBinding = true
+        listener.requiresRestart = true
+        response.server.snapshot.gatewayConfig.listeners = [listener]
+        await service.setExecuteResponse(response)
+        let client = LocalControlPlaneXPCClient(service: service)
+
+        let snapshot = try await client.applyServerSessionGatewayConfig(
+            serverSessionID: "server-session-123",
+            host: "0.0.0.0",
+            port: 18080,
+            servedModelID: "melix-dev-text",
+            rateLimitPerMinute: 240,
+            timeoutSeconds: 90
+        )
+        let request = try #require(await service.lastExecuteRequest)
+
+        #expect(request.requestID == "menubar-apply-gateway-config-server-session-123")
+        #expect(request.commandType == "server.apply_gateway_config")
+        #expect(request.targetID == "server-session-123")
+        #expect(request.server.applyGatewayConfig.serverSessionID == "server-session-123")
+        #expect(request.server.applyGatewayConfig.host == "0.0.0.0")
+        #expect(request.server.applyGatewayConfig.port == 18_080)
+        #expect(request.server.applyGatewayConfig.servedModelID == "melix-dev-text")
+        #expect(request.server.applyGatewayConfig.rateLimitPerMinute == 240)
+        #expect(request.server.applyGatewayConfig.timeoutSeconds == 90)
+        #expect(snapshot.gatewayConfig.listeners.first?.effectiveHost == "127.0.0.1")
+        #expect(snapshot.gatewayConfig.listeners.first?.requiresRestart == true)
+    }
+
     @Test("runBench builds ops.run_bench request with explicit model suites and parameters")
     func runBenchBuildsTypedRequestWithExplicitModelSuitesAndParameters() async throws {
         let service = RecordingExecuteControlPlaneService()
