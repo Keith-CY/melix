@@ -126,6 +126,12 @@ public struct RuntimeModelInfoState: Equatable, Sendable {
     public let audioSupportsInstructionsText: String
     public let audioVoiceCatalogSummaryText: String
     public let audioVoiceLocalesText: String
+    public let audioDefaultLocaleText: String
+    public let audioPackagedDefaultLocaleText: String
+    public let audioLocalePolicyText: String
+    public let audioRuntimePackStateText: String
+    public let audioRuntimePackIDText: String
+    public let audioModelStateText: String
     public let modelPath: String
     public let modelRevision: String
     public let defaultWorkflowRole: String
@@ -177,6 +183,12 @@ public struct RuntimeModelInfoState: Equatable, Sendable {
         audioSupportsInstructionsText: String = "",
         audioVoiceCatalogSummaryText: String = "",
         audioVoiceLocalesText: String = "",
+        audioDefaultLocaleText: String = "",
+        audioPackagedDefaultLocaleText: String = "",
+        audioLocalePolicyText: String = "",
+        audioRuntimePackStateText: String = "",
+        audioRuntimePackIDText: String = "",
+        audioModelStateText: String = "",
         modelPath: String = "",
         modelRevision: String = "",
         defaultWorkflowRole: String = "",
@@ -227,6 +239,12 @@ public struct RuntimeModelInfoState: Equatable, Sendable {
         self.audioSupportsInstructionsText = audioSupportsInstructionsText
         self.audioVoiceCatalogSummaryText = audioVoiceCatalogSummaryText
         self.audioVoiceLocalesText = audioVoiceLocalesText
+        self.audioDefaultLocaleText = audioDefaultLocaleText
+        self.audioPackagedDefaultLocaleText = audioPackagedDefaultLocaleText
+        self.audioLocalePolicyText = audioLocalePolicyText
+        self.audioRuntimePackStateText = audioRuntimePackStateText
+        self.audioRuntimePackIDText = audioRuntimePackIDText
+        self.audioModelStateText = audioModelStateText
         self.modelPath = modelPath
         self.modelRevision = modelRevision
         self.defaultWorkflowRole = defaultWorkflowRole
@@ -3188,6 +3206,18 @@ public final class RuntimeViewModel {
                 .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             let audioVoiceLocalesText = snapshotModel?.settings.ext["melix.audio.voice_locales"]?
                 .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let audioDefaultLocaleText = snapshotModel?.settings.ext["melix.audio.default_locale"]?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let audioPackagedDefaultLocaleText = snapshotModel?.settings.ext["melix.audio.packaged_default_locale"]?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let audioLocalePolicyText = snapshotModel?.settings.ext["melix.audio.locale_policy"]?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let audioRuntimePackStateText = snapshotModel?.settings.ext["melix.audio.runtime_pack_state"]?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let audioRuntimePackIDText = snapshotModel?.settings.ext["melix.audio.runtime_pack_id"]?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let audioModelStateText = snapshotModel?.settings.ext["melix.audio.model_state"]?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             selectedModelInfo = RuntimeModelInfoState(
                 modelID: modelID,
                 modelKind: info.modelKind,
@@ -3204,6 +3234,12 @@ public final class RuntimeViewModel {
                 audioSupportsInstructionsText: audioSupportsInstructionsText,
                 audioVoiceCatalogSummaryText: audioVoiceCatalogSummaryText,
                 audioVoiceLocalesText: audioVoiceLocalesText,
+                audioDefaultLocaleText: audioDefaultLocaleText,
+                audioPackagedDefaultLocaleText: audioPackagedDefaultLocaleText,
+                audioLocalePolicyText: audioLocalePolicyText,
+                audioRuntimePackStateText: audioRuntimePackStateText,
+                audioRuntimePackIDText: audioRuntimePackIDText,
+                audioModelStateText: audioModelStateText,
                 modelPath: info.modelPath,
                 modelRevision: info.modelRevision,
                 defaultWorkflowRole: info.defaultWorkflowRole,

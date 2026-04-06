@@ -273,6 +273,9 @@ def test_audio_catalog_models_expose_backend_metadata_and_real_backend_entries()
     assert kokoro.ext["melix.audio.output_formats"] == "wav"
     assert kokoro.ext["melix.audio.voice_catalog_summary"] == "Named English voices exposed by the Kokoro speaker catalog."
     assert kokoro.ext["melix.audio.voice_locales"] == "en"
+    assert kokoro.ext["melix.audio.default_locale"] == "en"
+    assert kokoro.ext["melix.audio.packaged_default_locale"] == "en"
+    assert kokoro.ext["melix.audio.locale_policy"] == "request>model_default>packaged_default"
 
     assert qwen3_tts is not None
     assert qwen3_tts.model_kind == "speech"
@@ -288,3 +291,6 @@ def test_audio_catalog_models_expose_backend_metadata_and_real_backend_entries()
         == "Hybrid named and instruction-conditioned multilingual voices for Chinese and English synthesis."
     )
     assert qwen3_tts.ext["melix.audio.voice_locales"] == "zh,en"
+    assert qwen3_tts.ext["melix.audio.default_locale"] == "zh"
+    assert qwen3_tts.ext["melix.audio.packaged_default_locale"] == "zh"
+    assert qwen3_tts.ext["melix.audio.locale_policy"] == "request>model_default>packaged_default"

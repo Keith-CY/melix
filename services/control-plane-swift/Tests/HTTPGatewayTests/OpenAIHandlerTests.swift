@@ -3308,9 +3308,240 @@ struct OpenAIHandlerTests {
         #expect(request.voice == "alloy")
         #expect(request.format == "wav")
         #expect(request.instructions == "Use a calm voice.")
+        #expect(response.headers["x-melix-audio-resolved-locale"] == "und")
+        #expect(response.headers["x-melix-audio-locale-source"] == "model_default")
+        #expect(response.headers["x-melix-audio-locale-policy"] == "request>model_default>packaged_default")
+        #expect(response.headers["x-melix-audio-model-default-locale"] == "und")
+        #expect(response.headers["x-melix-audio-packaged-default-locale"] == "und")
+        #expect(response.headers["x-melix-audio-supported-locales"] == "und")
         #expect(payload == Data("VOICE=alloy\nFORMAT=wav\nTEXT=hello speech".utf8))
         #expect(metrics.values["audio.speech_request_latency_ms", default: -1] >= 0)
         #expect(metrics.values["audio.speech_output_bytes", default: 0] == 40)
+    }
+
+    @Test("POST /v1/audio/speech normalizes requested locales and exposes hydrated speech headers")
+    func postAudioSpeechNormalizesRequestedLocalesAndExposesHydratedSpeechHeaders() async throws {
+        let textClient = ScriptedWorkerClient(events: [])
+        let audioClient = ScriptedPhaseFiveWorkerClient()
+        await audioClient.setSpeakResponse({
+            var response = Melix_Worker_V1_SpeakResponse()
+            response.audioBytes = Data("qwen-voice".utf8)
+            response.format = "wav"
+            return response
+        }())
+
+        let appSupportDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-http-audio-locale-\(UUID().uuidString)", isDirectory: true)
+        let assetManager = AudioAssetManager(appSupportDirectory: appSupportDirectory)
+        try assetManager.recordRuntimePackInstall(
+            packID: "melix-audio-runtime-pack",
+            version: "0.3.0",
+            profiles: ["audio-tts"]
+        )
+        try assetManager.recordManagedModel(
+            modelID: "melix-qwen3-tts-mlx",
+            revision: "mlx-audio",
+            sourceModelPath: "mlx-community/Qwen3-TTS-4B-Instruct-2507-4bit",
+            localModelPath: appSupportDirectory
+                .appendingPathComponent("managed/qwen3-tts", isDirectory: true)
+                .path
+        )
+
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel(), ModelCatalog.mlxQwen3TTSModel()])
+        _ = await catalog.loadModel(id: "melix-qwen3-tts-mlx", dispatchHandle: "melix-qwen3-tts-mlx::python")
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: textClient),
+                abortRegistry: AbortRegistry()
+            ),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: textClient,
+                pythonCompatibilityClient: audioClient,
+                modelCatalog: catalog
+            ),
+            audioAssetManager: assetManager
+        )
+
+        let body = try #require(
+            """
+            {
+              "model": "melix-qwen3-tts-mlx",
+              "input": "hello speech",
+              "format": "wav",
+              "locale": "en_US"
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(method: .post, path: "/v1/audio/speech", headers: [:], body: body)
+        )
+        let payload = try await collectBodyData(response.body)
+        let request = try #require(await audioClient.lastSpeakRequest)
+
+        #expect(response.statusCode == 200)
+        #expect(request.modelHandle == "melix-qwen3-tts-mlx::python")
+        #expect(response.headers["x-melix-audio-requested-locale"] == "en-us")
+        #expect(response.headers["x-melix-audio-resolved-locale"] == "en")
+        #expect(response.headers["x-melix-audio-locale-source"] == "request")
+        #expect(response.headers["x-melix-audio-locale-policy"] == "request>model_default>packaged_default")
+        #expect(response.headers["x-melix-audio-model-default-locale"] == "zh")
+        #expect(response.headers["x-melix-audio-packaged-default-locale"] == "zh")
+        #expect(response.headers["x-melix-audio-supported-locales"] == "zh,en")
+        #expect(response.headers["x-melix-audio-install-profile"] == "audio-tts")
+        #expect(response.headers["x-melix-audio-runtime-pack-state"] == "installed")
+        #expect(response.headers["x-melix-audio-runtime-pack-id"] == "melix-audio-runtime-pack")
+        #expect(response.headers["x-melix-audio-model-state"] == "managed_local")
+        #expect(payload == Data("qwen-voice".utf8))
+    }
+
+    @Test("POST /v1/audio/speech returns model_not_ready for unknown models and preserves requested locale normalization")
+    func postAudioSpeechReturnsModelNotReadyForUnknownModels() async throws {
+        let handler = OpenAIHandler(
+            modelCatalog: ModelCatalog(seedModels: []),
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: ScriptedWorkerClient(events: [])),
+                abortRegistry: AbortRegistry()
+            ),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: ScriptedWorkerClient(events: []),
+                pythonCompatibilityClient: ScriptedPhaseFiveWorkerClient()
+            )
+        )
+
+        let body = try #require(
+            """
+            {
+              "model": "missing-speech-model",
+              "input": "hello speech",
+              "locale": "en_US"
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(method: .post, path: "/v1/audio/speech", headers: [:], body: body)
+        )
+        let payload = try await collectBody(response.body)
+
+        #expect(response.statusCode == 409)
+        #expect(payload.contains("\"code\":\"model_not_ready\""))
+    }
+
+    @Test("POST /v1/audio/speech falls back to packaged default locales and language metadata")
+    func postAudioSpeechFallsBackToPackagedDefaultLocalesAndLanguageMetadata() async throws {
+        let textClient = ScriptedWorkerClient(events: [])
+        let audioClient = ScriptedPhaseFiveWorkerClient()
+        await audioClient.setSpeakResponse({
+            var response = Melix_Worker_V1_SpeakResponse()
+            response.audioBytes = Data("packaged-default".utf8)
+            response.format = "wav"
+            return response
+        }())
+
+        var packagedDefaultModel = ModelCatalog.devSpeechModel()
+        packagedDefaultModel.modelID = "melix-speech-packaged-default"
+        packagedDefaultModel.settings.ext["melix.audio.voice_locales"] = ""
+        packagedDefaultModel.settings.ext["melix.audio.languages"] = "en_US,en-us,zh"
+        packagedDefaultModel.settings.ext["melix.audio.default_locale"] = ""
+        packagedDefaultModel.settings.ext["melix.audio.packaged_default_locale"] = "zh"
+        packagedDefaultModel.settings.ext["melix.audio.locale_policy"] = "request>model_default>packaged_default"
+
+        let catalog = ModelCatalog(seedModels: [packagedDefaultModel])
+        _ = await catalog.loadModel(
+            id: "melix-speech-packaged-default",
+            dispatchHandle: "melix-speech-packaged-default::python"
+        )
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: textClient),
+                abortRegistry: AbortRegistry()
+            ),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: textClient,
+                pythonCompatibilityClient: audioClient
+            )
+        )
+
+        let body = try #require(
+            """
+            {
+              "model": "melix-speech-packaged-default",
+              "input": "hello speech"
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(method: .post, path: "/v1/audio/speech", headers: [:], body: body)
+        )
+        let payload = try await collectBodyData(response.body)
+
+        #expect(response.statusCode == 200)
+        #expect(response.headers["x-melix-audio-resolved-locale"] == "zh")
+        #expect(response.headers["x-melix-audio-locale-source"] == "packaged_default")
+        #expect(response.headers["x-melix-audio-packaged-default-locale"] == "zh")
+        #expect(response.headers["x-melix-audio-supported-locales"] == "en-us,zh")
+        #expect(payload == Data("packaged-default".utf8))
+    }
+
+    @Test("POST /v1/audio/speech omits locale headers when no locale metadata is advertised")
+    func postAudioSpeechOmitsLocaleHeadersWhenNoLocaleMetadataIsAdvertised() async throws {
+        let textClient = ScriptedWorkerClient(events: [])
+        let audioClient = ScriptedPhaseFiveWorkerClient()
+        await audioClient.setSpeakResponse({
+            var response = Melix_Worker_V1_SpeakResponse()
+            response.audioBytes = Data("no-locale-metadata".utf8)
+            response.format = "wav"
+            return response
+        }())
+
+        var noLocaleModel = ModelCatalog.devSpeechModel()
+        noLocaleModel.modelID = "melix-speech-no-locale"
+        noLocaleModel.settings.ext["melix.audio.voice_locales"] = ""
+        noLocaleModel.settings.ext["melix.audio.languages"] = ""
+        noLocaleModel.settings.ext["melix.audio.default_locale"] = ""
+        noLocaleModel.settings.ext["melix.audio.packaged_default_locale"] = ""
+        noLocaleModel.settings.ext["melix.audio.locale_policy"] = ""
+
+        let catalog = ModelCatalog(seedModels: [noLocaleModel])
+        _ = await catalog.loadModel(id: "melix-speech-no-locale", dispatchHandle: "melix-speech-no-locale::python")
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: textClient),
+                abortRegistry: AbortRegistry()
+            ),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: textClient,
+                pythonCompatibilityClient: audioClient
+            )
+        )
+
+        let body = try #require(
+            """
+            {
+              "model": "melix-speech-no-locale",
+              "input": "hello speech"
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(method: .post, path: "/v1/audio/speech", headers: [:], body: body)
+        )
+        let payload = try await collectBodyData(response.body)
+
+        #expect(response.statusCode == 200)
+        #expect(response.headers["x-melix-audio-requested-locale"] == nil)
+        #expect(response.headers["x-melix-audio-resolved-locale"] == nil)
+        #expect(response.headers["x-melix-audio-locale-source"] == nil)
+        #expect(response.headers["x-melix-audio-model-default-locale"] == nil)
+        #expect(response.headers["x-melix-audio-packaged-default-locale"] == nil)
+        #expect(response.headers["x-melix-audio-supported-locales"] == nil)
+        #expect(payload == Data("no-locale-metadata".utf8))
     }
 
     @Test("POST /v1/audio/speech records background-lane and runtime probe metrics")
@@ -3466,6 +3697,66 @@ struct OpenAIHandlerTests {
         #expect(response.statusCode == 400)
         #expect(payload.contains("\"code\":\"invalid_argument\""))
         #expect(payload.contains("does not support format"))
+        #expect(await audioClient.lastSpeakRequest == nil)
+    }
+
+    @Test("POST /v1/audio/speech rejects unsupported explicit locales")
+    func postAudioSpeechRejectsUnsupportedExplicitLocales() async throws {
+        let textClient = ScriptedWorkerClient(events: [])
+        let audioClient = ScriptedPhaseFiveWorkerClient()
+        let appSupportDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-http-audio-unsupported-locale-\(UUID().uuidString)", isDirectory: true)
+        let assetManager = AudioAssetManager(appSupportDirectory: appSupportDirectory)
+        try assetManager.recordRuntimePackInstall(
+            packID: "melix-audio-runtime-pack",
+            version: "0.3.0",
+            profiles: ["audio-tts"]
+        )
+        try assetManager.recordManagedModel(
+            modelID: "melix-kokoro-mlx",
+            revision: "mlx-audio",
+            sourceModelPath: "mlx-community/Kokoro-82M-bf16",
+            localModelPath: appSupportDirectory
+                .appendingPathComponent("managed/kokoro", isDirectory: true)
+                .path
+        )
+
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.mlxKokoroModel()])
+        _ = await catalog.loadModel(id: "melix-kokoro-mlx", dispatchHandle: "melix-kokoro-mlx::python")
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: textClient),
+                abortRegistry: AbortRegistry()
+            ),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: textClient,
+                pythonCompatibilityClient: audioClient,
+                modelCatalog: catalog
+            ),
+            audioAssetManager: assetManager
+        )
+
+        let body = try #require(
+            """
+            {
+              "model": "melix-kokoro-mlx",
+              "input": "hello speech",
+              "format": "wav",
+              "locale": "fr-FR"
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(method: .post, path: "/v1/audio/speech", headers: [:], body: body)
+        )
+        let payload = try await collectBody(response.body)
+
+        #expect(response.statusCode == 400)
+        #expect(payload.contains("\"code\":\"invalid_argument\""))
+        #expect(payload.contains("does not advertise locale fr-fr"))
+        #expect(payload.contains("Supported locales: en"))
         #expect(await audioClient.lastSpeakRequest == nil)
     }
 

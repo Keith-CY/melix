@@ -301,6 +301,9 @@ def _contract_payload(variant: dict[str, Any]) -> dict[str, Any]:
                 "supports_instructions": ext.get("melix.audio.supports_instructions", "") == "true",
                 "voice_catalog_summary": ext.get("melix.audio.voice_catalog_summary", ""),
                 "voice_locales": _split_csv(ext.get("melix.audio.voice_locales", "")),
+                "default_locale": ext.get("melix.audio.default_locale", ""),
+                "packaged_default_locale": ext.get("melix.audio.packaged_default_locale", ""),
+                "locale_policy": ext.get("melix.audio.locale_policy", ""),
             }
         )
     elif variant["capability"] == "rerank":

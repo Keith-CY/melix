@@ -1426,6 +1426,12 @@ struct DesktopFoundationViewTests {
             audioSupportsInstructionsText: "Yes",
             audioVoiceCatalogSummaryText: "Hybrid named and instruction-conditioned multilingual voices for Chinese and English synthesis.",
             audioVoiceLocalesText: "zh,en",
+            audioDefaultLocaleText: "zh",
+            audioPackagedDefaultLocaleText: "zh",
+            audioLocalePolicyText: "request>model_default>packaged_default",
+            audioRuntimePackStateText: "installed",
+            audioRuntimePackIDText: "melix-audio-runtime-pack",
+            audioModelStateText: "managed_local",
             modelPath: "mlx-community/Qwen3-TTS-4B-Instruct-2507-4bit",
             modelRevision: "mlx-audio"
         )
@@ -1439,11 +1445,17 @@ struct DesktopFoundationViewTests {
         #expect(content.detailLines.contains("audio formats: wav"))
         #expect(content.detailLines.contains("instruction support: Yes"))
         #expect(content.detailLines.contains("voice locales: zh,en"))
+        #expect(content.detailLines.contains("default locale: zh"))
+        #expect(content.detailLines.contains("packaged default locale: zh"))
+        #expect(content.detailLines.contains("locale policy: request>model_default>packaged_default"))
         #expect(
             content.detailLines.contains(
                 "voice catalog: Hybrid named and instruction-conditioned multilingual voices for Chinese and English synthesis."
             )
         )
+        #expect(content.detailLines.contains("runtime pack state: installed"))
+        #expect(content.detailLines.contains("runtime pack id: melix-audio-runtime-pack"))
+        #expect(content.detailLines.contains("audio model state: managed_local"))
     }
 
     @Test("doctor report summary view renders health and finding detail")

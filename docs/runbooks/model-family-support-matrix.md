@@ -41,6 +41,9 @@ For `speech` rows, also inspect:
 - `contract.backend_id`
 - `contract.install_profile`
 - `contract.languages`
+- `contract.default_locale`
+- `contract.packaged_default_locale`
+- `contract.locale_policy`
 - `contract.voice_mode`
 - `contract.output_formats`
 - `contract.supports_instructions`
@@ -57,7 +60,8 @@ Use this matrix when:
 - checking whether a requested speech-to-text family is discoverable with stable backend metadata,
   even when repository-owned live-path verification has not landed yet
 - checking whether a requested text-to-speech family exposes the expected language and voice-catalog
-  contract even when repository-owned live-path verification has not landed yet
+  contract, locale-policy defaults, and packaged fallback behavior even when repository-owned
+  live-path verification has not landed yet
 - checking whether a requested embedding or rerank family is only declared or also live-verified
 - checking whether a requested image family is only declared or also live-verified
 - reviewing family-expansion changes for support drift

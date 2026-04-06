@@ -2,6 +2,59 @@
 
 ## 2026-04-06
 
+- Closed `M17.3` by making speech locale policy, resolved speech settings, and optional
+  dependency-profile state explicit across the Python worker registry truth, the Swift
+  control-plane catalog, the `/v1/audio/speech` HTTP path, and the macOS operator model-info
+  surface:
+  - added stable speech metadata keys for `melix.audio.default_locale`,
+    `melix.audio.packaged_default_locale`, and `melix.audio.locale_policy` in both the Python
+    worker registry catalog and the Swift control-plane seed models, then projected those fields
+    through the repository-owned family support matrix
+  - extended `/v1/audio/speech` with an optional `locale` field, normalized explicit locale
+    handling, and operator-visible response headers that now report requested locale, resolved
+    locale, locale source, locale policy, supported locales, install profile, runtime-pack state,
+    runtime-pack ID, and managed-model state
+  - extended the macOS operator model-info surface so speech models now render default locale,
+    packaged default locale, locale policy, runtime-pack state, runtime-pack ID, and audio model
+    state without requiring raw metadata inspection
+  - expanded focused Swift, Python, menubar, and integration coverage to guard missing-model
+    fallback, packaged-default fallback, empty-locale metadata, unsupported explicit locale
+    rejection, and operator-visible speech metadata parity
+- Verification summary for `M17.3`:
+  - `PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" UV_CACHE_DIR="$HOME/.cache/uv" uv run --project services/mlx-worker-python --extra mlx pytest services/mlx-worker-python/tests/test_audio_runtime.py services/mlx-worker-python/tests/test_acceptance_metrics.py tests/integration/test_non_text_endpoints.py -q`: `36 passed in 186.09s (0:03:06)`
+  - `PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" UV_CACHE_DIR="$HOME/.cache/uv" uv run --project services/mlx-worker-python --extra mlx coverage run --data-file /tmp/m17_3_py.coverage --source=services/mlx-worker-python/worker -m pytest services/mlx-worker-python/tests/test_audio_runtime.py services/mlx-worker-python/tests/test_acceptance_metrics.py tests/integration/test_non_text_endpoints.py -q && PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" UV_CACHE_DIR="$HOME/.cache/uv" uv run --project services/mlx-worker-python --extra mlx coverage json --data-file /tmp/m17_3_py.coverage -o /tmp/m17_3_py_coverage.json && python3 scripts/python_changed_line_coverage.py --coverage-json /tmp/m17_3_py_coverage.json services/mlx-worker-python/worker/model_registry/catalog.py services/mlx-worker-python/worker/productization/family_support_matrix.py services/mlx-worker-python/tests/test_audio_runtime.py services/mlx-worker-python/tests/test_acceptance_metrics.py tests/integration/test_non_text_endpoints.py`: `36 passed in 245.22s (0:04:05)` and changed-line coverage `100.00%` (`3/3`)
+  - `swift test --package-path services/control-plane-swift --filter 'ModelCatalogTests|PythonBridgeWorkerClientTests|OpenAIHandlerTests'`: `198 tests in 3 suites passed after 0.849 seconds`
+  - `swift test --package-path services/control-plane-swift --filter 'ModelCatalogTests|PythonBridgeWorkerClientTests|OpenAIHandlerTests' --enable-code-coverage`: `198 tests in 3 suites passed after 0.852 seconds`
+  - `python3 scripts/swift_changed_line_coverage.py --binary services/control-plane-swift/.build/arm64-apple-macosx/debug/MelixControlPlanePackageTests.xctest/Contents/MacOS/MelixControlPlanePackageTests --profdata services/control-plane-swift/.build/arm64-apple-macosx/debug/codecov/default.profdata services/control-plane-swift/Sources/HTTPGateway/OpenAI/OpenAIHandler.swift services/control-plane-swift/Sources/ModelCatalog/ModelCatalog.swift services/control-plane-swift/Sources/WorkerClient/PythonBridgeWorkerClient.swift services/control-plane-swift/Tests/ControlPlaneTests/ModelCatalogTests.swift services/control-plane-swift/Tests/HTTPGatewayTests/OpenAIHandlerTests.swift services/control-plane-swift/Tests/WorkerClientTests/PythonBridgeWorkerClientTests.swift`: `100.00%` (`503/503`)
+  - `swift test --package-path apps/macos-menubar --filter 'RuntimeViewModelTests|DesktopFoundationViewTests'`: `242 tests in 2 suites passed after 5.489 seconds`
+  - `python3 scripts/swift_changed_line_coverage.py --binary apps/macos-menubar/.build/arm64-apple-macosx/debug/MelixMacOSMenubarPackageTests.xctest/Contents/MacOS/MelixMacOSMenubarPackageTests --profdata apps/macos-menubar/.build/arm64-apple-macosx/debug/codecov/default.profdata apps/macos-menubar/Sources/AppMain/Dashboard/DesktopFoundationView.swift apps/macos-menubar/Sources/AppMain/Models/RuntimeViewModel.swift apps/macos-menubar/Tests/MenuBarTests/DesktopFoundationViewTests.swift apps/macos-menubar/Tests/MenuBarTests/RuntimeViewModelTests.swift`: `100.00%` (`66/66`)
+  - `git diff --check`: pass
+- Metrics report for `M17.3`:
+  - `/v1/audio/speech` now emits operator-visible locale and dependency-profile headers:
+    - `x-melix-audio-requested-locale`
+    - `x-melix-audio-resolved-locale`
+    - `x-melix-audio-locale-source`
+    - `x-melix-audio-locale-policy`
+    - `x-melix-audio-model-default-locale`
+    - `x-melix-audio-packaged-default-locale`
+    - `x-melix-audio-supported-locales`
+    - `x-melix-audio-install-profile`
+    - `x-melix-audio-runtime-pack-state`
+    - `x-melix-audio-runtime-pack-id`
+    - `x-melix-audio-model-state`
+  - the repository-owned speech support matrix now exposes:
+    - `("speech", "deterministic-speech").contract.default_locale = "und"`
+    - `("speech", "deterministic-speech").contract.packaged_default_locale = "und"`
+    - `("speech", "kokoro").contract.default_locale = "en"`
+    - `("speech", "qwen3-tts").contract.default_locale = "zh"`
+    - `("speech", "qwen3-tts").contract.locale_policy = "request>model_default>packaged_default"`
+  - changed-line coverage for the touched handwritten executable scope:
+    - Python touched-scope coverage: `100.00%` (`3/3`)
+    - Swift control-plane touched-scope coverage: `100.00%` (`503/503`)
+    - Swift menubar touched-scope coverage: `100.00%` (`66/66`)
+  - generated protobuf outputs and planning-status documents are excluded from executable
+    changed-line coverage because they are generated artifacts or repository bookkeeping
+
 - Closed `M17.2` by making real text-to-speech backend families and voice-catalog metadata
   first-class across the Swift catalog, the Swift Python-bridge model-spec path, the
   repository-owned family support matrix, and the macOS operator model-info surface:

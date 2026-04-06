@@ -39,6 +39,9 @@ _AUDIO_OUTPUT_FORMATS_KEY = "melix.audio.output_formats"
 _AUDIO_SUPPORTS_INSTRUCTIONS_KEY = "melix.audio.supports_instructions"
 _AUDIO_VOICE_CATALOG_SUMMARY_KEY = "melix.audio.voice_catalog_summary"
 _AUDIO_VOICE_LOCALES_KEY = "melix.audio.voice_locales"
+_AUDIO_DEFAULT_LOCALE_KEY = "melix.audio.default_locale"
+_AUDIO_PACKAGED_DEFAULT_LOCALE_KEY = "melix.audio.packaged_default_locale"
+_AUDIO_LOCALE_POLICY_KEY = "melix.audio.locale_policy"
 _GENERATION_CONFIG_SOURCE_KEY = "melix.generation_config.source"
 _GENERATION_CONFIG_TEMPERATURE_KEY = "melix.generation_config.temperature"
 _GENERATION_CONFIG_TOP_P_KEY = "melix.generation_config.top_p"
@@ -442,6 +445,9 @@ def _audio_metadata(
     supports_instructions: bool = False,
     voice_catalog_summary: str = "",
     voice_locales: tuple[str, ...] = (),
+    default_locale: str = "",
+    packaged_default_locale: str = "",
+    locale_policy: str = "",
 ) -> dict[str, str]:
     return {
         _AUDIO_BACKEND_ID_KEY: backend_id,
@@ -453,6 +459,9 @@ def _audio_metadata(
         _AUDIO_SUPPORTS_INSTRUCTIONS_KEY: "true" if supports_instructions else "false",
         _AUDIO_VOICE_CATALOG_SUMMARY_KEY: voice_catalog_summary,
         _AUDIO_VOICE_LOCALES_KEY: ",".join(voice_locales),
+        _AUDIO_DEFAULT_LOCALE_KEY: default_locale,
+        _AUDIO_PACKAGED_DEFAULT_LOCALE_KEY: packaged_default_locale,
+        _AUDIO_LOCALE_POLICY_KEY: locale_policy,
     }
 
 
@@ -932,6 +941,9 @@ class WorkerModelCatalog:
                     supports_instructions=False,
                     voice_catalog_summary="Deterministic synthetic default voice.",
                     voice_locales=("und",),
+                    default_locale="und",
+                    packaged_default_locale="und",
+                    locale_policy="request>model_default>packaged_default",
                 ),
             },
         )
@@ -1053,6 +1065,9 @@ class WorkerModelCatalog:
                     supports_instructions=False,
                     voice_catalog_summary="Named English voices exposed by the Kokoro speaker catalog.",
                     voice_locales=("en",),
+                    default_locale="en",
+                    packaged_default_locale="en",
+                    locale_policy="request>model_default>packaged_default",
                 ),
             },
         )
@@ -1090,6 +1105,9 @@ class WorkerModelCatalog:
                         "for Chinese and English synthesis."
                     ),
                     voice_locales=("zh", "en"),
+                    default_locale="zh",
+                    packaged_default_locale="zh",
+                    locale_policy="request>model_default>packaged_default",
                 ),
             },
         )

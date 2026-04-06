@@ -317,6 +317,9 @@ def test_build_family_support_matrix_exposes_contract_rows_and_live_path_evidenc
     assert kokoro["contract"]["supports_instructions"] is False
     assert kokoro["contract"]["voice_catalog_summary"] == "Named English voices exposed by the Kokoro speaker catalog."
     assert kokoro["contract"]["voice_locales"] == ["en"]
+    assert kokoro["contract"]["default_locale"] == "en"
+    assert kokoro["contract"]["packaged_default_locale"] == "en"
+    assert kokoro["contract"]["locale_policy"] == "request>model_default>packaged_default"
     assert kokoro["live_path"]["status"] == "contract_only"
 
     qwen3_tts = rows[("speech", "qwen3-tts")]
@@ -332,6 +335,9 @@ def test_build_family_support_matrix_exposes_contract_rows_and_live_path_evidenc
         == "Hybrid named and instruction-conditioned multilingual voices for Chinese and English synthesis."
     )
     assert qwen3_tts["contract"]["voice_locales"] == ["zh", "en"]
+    assert qwen3_tts["contract"]["default_locale"] == "zh"
+    assert qwen3_tts["contract"]["packaged_default_locale"] == "zh"
+    assert qwen3_tts["contract"]["locale_policy"] == "request>model_default>packaged_default"
     assert qwen3_tts["live_path"]["status"] == "contract_only"
 
     basic = rows[("rerank", "basic")]

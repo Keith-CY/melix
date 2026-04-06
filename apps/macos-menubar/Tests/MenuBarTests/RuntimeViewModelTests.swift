@@ -4827,6 +4827,12 @@ struct RuntimeViewModelTests {
         model.settings.ext["melix.audio.voice_catalog_summary"] =
             "Hybrid named and instruction-conditioned multilingual voices for Chinese and English synthesis."
         model.settings.ext["melix.audio.voice_locales"] = "zh,en"
+        model.settings.ext["melix.audio.default_locale"] = "zh"
+        model.settings.ext["melix.audio.packaged_default_locale"] = "zh"
+        model.settings.ext["melix.audio.locale_policy"] = "request>model_default>packaged_default"
+        model.settings.ext["melix.audio.runtime_pack_state"] = "installed"
+        model.settings.ext["melix.audio.runtime_pack_id"] = "melix-audio-runtime-pack"
+        model.settings.ext["melix.audio.model_state"] = "managed_local"
         snapshot.models = [model]
 
         var info = Melix_Controlplane_V1_ModelInfo()
@@ -4855,6 +4861,12 @@ struct RuntimeViewModelTests {
         #expect(viewModel.selectedModelInfo?.audioOutputFormatsText == "wav")
         #expect(viewModel.selectedModelInfo?.audioSupportsInstructionsText == "Yes")
         #expect(viewModel.selectedModelInfo?.audioVoiceLocalesText == "zh,en")
+        #expect(viewModel.selectedModelInfo?.audioDefaultLocaleText == "zh")
+        #expect(viewModel.selectedModelInfo?.audioPackagedDefaultLocaleText == "zh")
+        #expect(viewModel.selectedModelInfo?.audioLocalePolicyText == "request>model_default>packaged_default")
+        #expect(viewModel.selectedModelInfo?.audioRuntimePackStateText == "installed")
+        #expect(viewModel.selectedModelInfo?.audioRuntimePackIDText == "melix-audio-runtime-pack")
+        #expect(viewModel.selectedModelInfo?.audioModelStateText == "managed_local")
         #expect(
             viewModel.selectedModelInfo?.audioVoiceCatalogSummaryText
                 == "Hybrid named and instruction-conditioned multilingual voices for Chinese and English synthesis."

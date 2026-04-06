@@ -917,6 +917,14 @@ public struct OpenAIHandler: Sendable {
         if let preflightFailure = await audioReadinessFailureResponse(for: speechRequest.model) {
             return preflightFailure
         }
+        let speechContextResult = await resolvedSpeechContext(for: speechRequest)
+        let speechContext: ResolvedAudioSpeechContext
+        switch speechContextResult {
+        case .failure(let response):
+            return response
+        case .success(let value):
+            speechContext = value
+        }
 
         guard let modelHandle = await modelCatalog.dispatchHandle(for: speechRequest.model) else {
             return httpErrorResponse(for: .modelNotReady)
@@ -965,10 +973,9 @@ public struct OpenAIHandler: Sendable {
                 routeKind: routeKind,
                 phase: .requestCompleted
             )
-
             return HTTPResponse(
                 statusCode: 200,
-                headers: ["content-type": audioContentType(for: resolvedFormat)],
+                headers: speechResponseHeaders(for: speechContext, resolvedFormat: resolvedFormat),
                 body: .data(response.audioBytes)
             )
         } catch {
@@ -2266,6 +2273,197 @@ public struct OpenAIHandler: Sendable {
         }
         return []
     }
+
+    private func resolvedSpeechContext(
+        for request: OpenAIAudioSpeechRequest
+    ) async -> ResolvedAudioSpeechContextResult {
+        guard let selectedModel = await modelCatalog.model(id: request.model) else {
+            return .success(
+                ResolvedAudioSpeechContext(
+                    requestedLocale: normalizedAudioLocale(request.locale),
+                    supportedLocales: [],
+                    resolvedLocale: "",
+                    localeSource: "",
+                    localePolicy: "",
+                    modelDefaultLocale: "",
+                    packagedDefaultLocale: "",
+                    installProfile: "",
+                    runtimePackState: "",
+                    runtimePackID: "",
+                    modelState: ""
+                )
+            )
+        }
+
+        let hydratedModel = audioAssetManager.hydrate(selectedModel)
+        let supportedLocales = advertisedSpeechLocales(for: hydratedModel)
+        let requestedLocale = normalizedAudioLocale(request.locale)
+        let localePolicy = trimmedAudioMetadata("melix.audio.locale_policy", from: hydratedModel)
+        let modelDefaultLocale = canonicalAudioLocale(
+            trimmedAudioMetadata("melix.audio.default_locale", from: hydratedModel),
+            supportedLocales: supportedLocales
+        )
+        let packagedDefaultLocale = canonicalAudioLocale(
+            trimmedAudioMetadata("melix.audio.packaged_default_locale", from: hydratedModel),
+            supportedLocales: supportedLocales
+        )
+
+        let resolvedLocale: String
+        let localeSource: String
+        if !requestedLocale.isEmpty {
+            let resolvedRequestedLocale = canonicalAudioLocale(requestedLocale, supportedLocales: supportedLocales)
+            guard !resolvedRequestedLocale.isEmpty else {
+                let supportedText = supportedLocales.isEmpty ? "none" : supportedLocales.joined(separator: ",")
+                return .failure(
+                    invalidArgumentResponse(
+                        message: "Model \(request.model) does not advertise locale \(requestedLocale). Supported locales: \(supportedText)."
+                    )
+                )
+            }
+            resolvedLocale = resolvedRequestedLocale
+            localeSource = "request"
+        } else if !modelDefaultLocale.isEmpty {
+            resolvedLocale = modelDefaultLocale
+            localeSource = "model_default"
+        } else if !packagedDefaultLocale.isEmpty {
+            resolvedLocale = packagedDefaultLocale
+            localeSource = "packaged_default"
+        } else {
+            resolvedLocale = ""
+            localeSource = ""
+        }
+
+        return .success(
+            ResolvedAudioSpeechContext(
+                requestedLocale: requestedLocale,
+                supportedLocales: supportedLocales,
+                resolvedLocale: resolvedLocale,
+                localeSource: localeSource,
+                localePolicy: localePolicy,
+                modelDefaultLocale: modelDefaultLocale,
+                packagedDefaultLocale: packagedDefaultLocale,
+                installProfile: trimmedAudioMetadata("melix.audio.install_profile", from: hydratedModel),
+                runtimePackState: trimmedAudioMetadata("melix.audio.runtime_pack_state", from: hydratedModel),
+                runtimePackID: trimmedAudioMetadata("melix.audio.runtime_pack_id", from: hydratedModel),
+                modelState: trimmedAudioMetadata("melix.audio.model_state", from: hydratedModel)
+            )
+        )
+    }
+
+    private func speechResponseHeaders(
+        for context: ResolvedAudioSpeechContext,
+        resolvedFormat: String
+    ) -> [String: String] {
+        var headers = ["content-type": audioContentType(for: resolvedFormat)]
+        if !context.requestedLocale.isEmpty {
+            headers["x-melix-audio-requested-locale"] = context.requestedLocale
+        }
+        if !context.resolvedLocale.isEmpty {
+            headers["x-melix-audio-resolved-locale"] = context.resolvedLocale
+        }
+        if !context.localeSource.isEmpty {
+            headers["x-melix-audio-locale-source"] = context.localeSource
+        }
+        if !context.localePolicy.isEmpty {
+            headers["x-melix-audio-locale-policy"] = context.localePolicy
+        }
+        if !context.modelDefaultLocale.isEmpty {
+            headers["x-melix-audio-model-default-locale"] = context.modelDefaultLocale
+        }
+        if !context.packagedDefaultLocale.isEmpty {
+            headers["x-melix-audio-packaged-default-locale"] = context.packagedDefaultLocale
+        }
+        if !context.supportedLocales.isEmpty {
+            headers["x-melix-audio-supported-locales"] = context.supportedLocales.joined(separator: ",")
+        }
+        if !context.installProfile.isEmpty {
+            headers["x-melix-audio-install-profile"] = context.installProfile
+        }
+        if !context.runtimePackState.isEmpty {
+            headers["x-melix-audio-runtime-pack-state"] = context.runtimePackState
+        }
+        if !context.runtimePackID.isEmpty {
+            headers["x-melix-audio-runtime-pack-id"] = context.runtimePackID
+        }
+        if !context.modelState.isEmpty {
+            headers["x-melix-audio-model-state"] = context.modelState
+        }
+        return headers
+    }
+
+    private func advertisedSpeechLocales(
+        for model: Melix_Controlplane_V1_ModelSummary
+    ) -> [String] {
+        let primaryLocales = csvAudioMetadata("melix.audio.voice_locales", from: model)
+        if !primaryLocales.isEmpty {
+            return primaryLocales
+        }
+        return csvAudioMetadata("melix.audio.languages", from: model)
+    }
+
+    private func trimmedAudioMetadata(
+        _ key: String,
+        from model: Melix_Controlplane_V1_ModelSummary
+    ) -> String {
+        model.settings.ext[key]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    }
+
+    private func csvAudioMetadata(
+        _ key: String,
+        from model: Melix_Controlplane_V1_ModelSummary
+    ) -> [String] {
+        let rawValue = trimmedAudioMetadata(key, from: model)
+        guard !rawValue.isEmpty else {
+            return []
+        }
+        var locales: [String] = []
+        for item in rawValue.split(separator: ",") {
+            let normalized = normalizedAudioLocale(String(item))
+            if normalized.isEmpty || locales.contains(normalized) {
+                continue
+            }
+            locales.append(normalized)
+        }
+        return locales
+    }
+
+    private func normalizedAudioLocale(_ rawValue: String?) -> String {
+        let trimmed = (rawValue ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return ""
+        }
+        return trimmed
+            .replacingOccurrences(of: "_", with: "-")
+            .lowercased()
+    }
+
+    private func canonicalAudioLocale(
+        _ locale: String,
+        supportedLocales: [String]
+    ) -> String {
+        let normalized = normalizedAudioLocale(locale)
+        guard !normalized.isEmpty else {
+            return ""
+        }
+        guard
+            !supportedLocales.isEmpty,
+            !supportedLocales.contains("und"),
+            !supportedLocales.contains("auto")
+        else {
+            return normalized
+        }
+        if supportedLocales.contains(normalized) {
+            return normalized
+        }
+        let primaryLanguage = normalized.split(separator: "-").first.map(String.init) ?? normalized
+        if let matchedLocale = supportedLocales.first(where: { locale in
+            let localePrimaryLanguage = locale.split(separator: "-").first.map(String.init) ?? locale
+            return localePrimaryLanguage == primaryLanguage
+        }) {
+            return matchedLocale
+        }
+        return ""
+    }
 }
 
 private struct SanitizedJSONValue {
@@ -2533,7 +2731,28 @@ private struct OpenAIAudioSpeechRequest: Codable {
     let voice: String?
     let format: String?
     let instructions: String?
+    let locale: String?
 }
+
+private struct ResolvedAudioSpeechContext {
+    let requestedLocale: String
+    let supportedLocales: [String]
+    let resolvedLocale: String
+    let localeSource: String
+    let localePolicy: String
+    let modelDefaultLocale: String
+    let packagedDefaultLocale: String
+    let installProfile: String
+    let runtimePackState: String
+    let runtimePackID: String
+    let modelState: String
+}
+
+private enum ResolvedAudioSpeechContextResult {
+    case success(ResolvedAudioSpeechContext)
+    case failure(HTTPResponse)
+}
+
 
 private enum ImageRequestNormalizationError: Error {
     case missingImage

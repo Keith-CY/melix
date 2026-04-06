@@ -991,8 +991,26 @@ func desktopModelInfoSummaryContent(
     if !info.audioVoiceLocalesText.isEmpty {
         detailLines.append("voice locales: \(info.audioVoiceLocalesText)")
     }
+    if !info.audioDefaultLocaleText.isEmpty {
+        detailLines.append("default locale: \(info.audioDefaultLocaleText)")
+    }
+    if !info.audioPackagedDefaultLocaleText.isEmpty {
+        detailLines.append("packaged default locale: \(info.audioPackagedDefaultLocaleText)")
+    }
+    if !info.audioLocalePolicyText.isEmpty {
+        detailLines.append("locale policy: \(info.audioLocalePolicyText)")
+    }
     if !info.audioVoiceCatalogSummaryText.isEmpty {
         detailLines.append("voice catalog: \(info.audioVoiceCatalogSummaryText)")
+    }
+    if !info.audioRuntimePackStateText.isEmpty {
+        detailLines.append("runtime pack state: \(info.audioRuntimePackStateText)")
+    }
+    if !info.audioRuntimePackIDText.isEmpty {
+        detailLines.append("runtime pack id: \(info.audioRuntimePackIDText)")
+    }
+    if !info.audioModelStateText.isEmpty {
+        detailLines.append("audio model state: \(info.audioModelStateText)")
     }
     if !info.defaultWorkflowRole.isEmpty {
         detailLines.append("default workflow: \(info.defaultWorkflowRole)")

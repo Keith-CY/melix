@@ -687,7 +687,10 @@ public actor ModelCatalog {
         outputFormats: [String] = [],
         supportsInstructions: Bool = false,
         voiceCatalogSummary: String = "",
-        voiceLocales: [String] = []
+        voiceLocales: [String] = [],
+        defaultLocale: String = "",
+        packagedDefaultLocale: String = "",
+        localePolicy: String = ""
     ) -> [String: String] {
         var metadata = [
             "melix.audio.backend_id": backendID,
@@ -700,6 +703,9 @@ public actor ModelCatalog {
         ]
         metadata["melix.audio.voice_catalog_summary"] = voiceCatalogSummary
         metadata["melix.audio.voice_locales"] = voiceLocales.joined(separator: ",")
+        metadata["melix.audio.default_locale"] = defaultLocale
+        metadata["melix.audio.packaged_default_locale"] = packagedDefaultLocale
+        metadata["melix.audio.locale_policy"] = localePolicy
         return metadata
     }
 
@@ -1337,7 +1343,10 @@ public actor ModelCatalog {
                 outputFormats: ["wav", "mp3"],
                 supportsInstructions: false,
                 voiceCatalogSummary: "Deterministic synthetic default voice.",
-                voiceLocales: ["und"]
+                voiceLocales: ["und"],
+                defaultLocale: "und",
+                packagedDefaultLocale: "und",
+                localePolicy: "request>model_default>packaged_default"
             )
         ) { _, new in new }
         applyCapabilityAdapter(capabilityAdapter, to: &model)
@@ -1420,7 +1429,10 @@ public actor ModelCatalog {
                 outputFormats: ["wav"],
                 supportsInstructions: false,
                 voiceCatalogSummary: "Named English voices exposed by the Kokoro speaker catalog.",
-                voiceLocales: ["en"]
+                voiceLocales: ["en"],
+                defaultLocale: "en",
+                packagedDefaultLocale: "en",
+                localePolicy: "request>model_default>packaged_default"
             )
         ) { _, new in new }
         applyCapabilityAdapter(capabilityAdapter, to: &model)
@@ -1454,7 +1466,10 @@ public actor ModelCatalog {
                     "Hybrid named and instruction-conditioned multilingual voices "
                     + "for Chinese and English synthesis."
                 ),
-                voiceLocales: ["zh", "en"]
+                voiceLocales: ["zh", "en"],
+                defaultLocale: "zh",
+                packagedDefaultLocale: "zh",
+                localePolicy: "request>model_default>packaged_default"
             )
         ) { _, new in new }
         applyCapabilityAdapter(capabilityAdapter, to: &model)

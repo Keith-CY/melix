@@ -393,6 +393,9 @@ public enum BootstrapWorkerPreparation {
         "melix.audio.supports_instructions",
         "melix.audio.voice_catalog_summary",
         "melix.audio.voice_locales",
+        "melix.audio.default_locale",
+        "melix.audio.packaged_default_locale",
+        "melix.audio.locale_policy",
     ]
     private static let imageExtKeys = [
         "melix.image.backend_id",
@@ -1028,6 +1031,9 @@ public enum BootstrapWorkerPreparation {
         model.ext["melix.audio.supports_instructions"] = "false"
         model.ext["melix.audio.voice_catalog_summary"] = ""
         model.ext["melix.audio.voice_locales"] = ""
+        model.ext["melix.audio.default_locale"] = ""
+        model.ext["melix.audio.packaged_default_locale"] = ""
+        model.ext["melix.audio.locale_policy"] = ""
         model.ext["melix.adapter_set_hash"] = "audio-family-deterministic-transcription"
         model.ext["melix.capability.route_kind"] = "python_transcription"
         model.ext["melix.capability.class"] = "transcription"
@@ -1057,6 +1063,9 @@ public enum BootstrapWorkerPreparation {
         model.ext["melix.audio.supports_instructions"] = "false"
         model.ext["melix.audio.voice_catalog_summary"] = "Deterministic synthetic default voice."
         model.ext["melix.audio.voice_locales"] = "und"
+        model.ext["melix.audio.default_locale"] = "und"
+        model.ext["melix.audio.packaged_default_locale"] = "und"
+        model.ext["melix.audio.locale_policy"] = "request>model_default>packaged_default"
         model.ext["melix.adapter_set_hash"] = "audio-family-deterministic-speech"
         model.ext["melix.capability.route_kind"] = "python_speech"
         model.ext["melix.capability.class"] = "speech"
@@ -1086,6 +1095,9 @@ public enum BootstrapWorkerPreparation {
         model.ext["melix.audio.supports_instructions"] = "false"
         model.ext["melix.audio.voice_catalog_summary"] = ""
         model.ext["melix.audio.voice_locales"] = ""
+        model.ext["melix.audio.default_locale"] = ""
+        model.ext["melix.audio.packaged_default_locale"] = ""
+        model.ext["melix.audio.locale_policy"] = ""
         model.ext["melix.adapter_set_hash"] = "audio-family-whisper"
         model.ext["melix.capability.route_kind"] = "python_transcription"
         model.ext["melix.capability.class"] = "transcription"
@@ -1115,6 +1127,9 @@ public enum BootstrapWorkerPreparation {
         model.ext["melix.audio.supports_instructions"] = "false"
         model.ext["melix.audio.voice_catalog_summary"] = ""
         model.ext["melix.audio.voice_locales"] = ""
+        model.ext["melix.audio.default_locale"] = ""
+        model.ext["melix.audio.packaged_default_locale"] = ""
+        model.ext["melix.audio.locale_policy"] = ""
         model.ext["melix.adapter_set_hash"] = "audio-family-parakeet"
         model.ext["melix.capability.route_kind"] = "python_transcription"
         model.ext["melix.capability.class"] = "transcription"
@@ -1145,6 +1160,9 @@ public enum BootstrapWorkerPreparation {
         model.ext["melix.audio.voice_catalog_summary"] =
             "Named English voices exposed by the Kokoro speaker catalog."
         model.ext["melix.audio.voice_locales"] = "en"
+        model.ext["melix.audio.default_locale"] = "en"
+        model.ext["melix.audio.packaged_default_locale"] = "en"
+        model.ext["melix.audio.locale_policy"] = "request>model_default>packaged_default"
         model.ext["melix.adapter_set_hash"] = "audio-family-kokoro"
         model.ext["melix.capability.route_kind"] = "python_speech"
         model.ext["melix.capability.class"] = "speech"
@@ -1175,6 +1193,9 @@ public enum BootstrapWorkerPreparation {
         model.ext["melix.audio.voice_catalog_summary"] =
             "Hybrid named and instruction-conditioned multilingual voices for Chinese and English synthesis."
         model.ext["melix.audio.voice_locales"] = "zh,en"
+        model.ext["melix.audio.default_locale"] = "zh"
+        model.ext["melix.audio.packaged_default_locale"] = "zh"
+        model.ext["melix.audio.locale_policy"] = "request>model_default>packaged_default"
         model.ext["melix.adapter_set_hash"] = "audio-family-qwen3-tts"
         model.ext["melix.capability.route_kind"] = "python_speech"
         model.ext["melix.capability.class"] = "speech"

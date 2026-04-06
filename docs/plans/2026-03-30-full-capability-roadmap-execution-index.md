@@ -341,4 +341,8 @@ The roadmap extension in `M10-M17` includes milestone-level plans plus decompose
   mode, and install-profile metadata backed by focused Swift, Python, menubar, and integration
   evidence.
 - `M17.3` `docs/plans/2026-03-31-m17-3-speech-settings-locale-policy-and-optional-dependency-profiles.md`
+  Status: completed. `/v1/audio/speech`, the Swift control-plane catalog, the Python worker
+  support-matrix truth, and the macOS operator model-info surface now expose stable locale-policy,
+  default-locale, packaged-default-locale, runtime-pack, and managed-model metadata backed by
+  focused Swift, Python, menubar, and integration evidence.
 - `M17.4` `docs/plans/2026-03-31-m17-4-speech-integration-benchmarks-runbooks-and-operator-evidence.md`

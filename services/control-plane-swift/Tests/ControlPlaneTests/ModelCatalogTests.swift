@@ -917,6 +917,9 @@ struct ModelCatalogTests {
         #expect(kokoro.settings.ext["melix.audio.supports_instructions"] == "false")
         #expect(kokoro.settings.ext["melix.audio.voice_catalog_summary"] == "Named English voices exposed by the Kokoro speaker catalog.")
         #expect(kokoro.settings.ext["melix.audio.voice_locales"] == "en")
+        #expect(kokoro.settings.ext["melix.audio.default_locale"] == "en")
+        #expect(kokoro.settings.ext["melix.audio.packaged_default_locale"] == "en")
+        #expect(kokoro.settings.ext["melix.audio.locale_policy"] == "request>model_default>packaged_default")
 
         #expect(qwen3TTS.kind == "speech")
         #expect(qwen3TTS.settings.ext["melix.audio.backend_id"] == "mlx_audio.tts")
@@ -930,6 +933,9 @@ struct ModelCatalogTests {
                 == "Hybrid named and instruction-conditioned multilingual voices for Chinese and English synthesis."
         )
         #expect(qwen3TTS.settings.ext["melix.audio.voice_locales"] == "zh,en")
+        #expect(qwen3TTS.settings.ext["melix.audio.default_locale"] == "zh")
+        #expect(qwen3TTS.settings.ext["melix.audio.packaged_default_locale"] == "zh")
+        #expect(qwen3TTS.settings.ext["melix.audio.locale_policy"] == "request>model_default>packaged_default")
     }
 
     @Test("phase seven contract seed models expose image routes and tasks")

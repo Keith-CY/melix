@@ -1291,6 +1291,9 @@ struct PythonBridgeWorkerClientTests {
         #expect(kokoro.ext["melix.audio.output_formats"] == "wav")
         #expect(kokoro.ext["melix.audio.voice_catalog_summary"] == "Named English voices exposed by the Kokoro speaker catalog.")
         #expect(kokoro.ext["melix.audio.voice_locales"] == "en")
+        #expect(kokoro.ext["melix.audio.default_locale"] == "en")
+        #expect(kokoro.ext["melix.audio.packaged_default_locale"] == "en")
+        #expect(kokoro.ext["melix.audio.locale_policy"] == "request>model_default>packaged_default")
 
         #expect(qwen3TTS.modelID == "melix-qwen3-tts-mlx")
         #expect(qwen3TTS.modelKind == "speech")
@@ -1304,6 +1307,9 @@ struct PythonBridgeWorkerClientTests {
                 == "Hybrid named and instruction-conditioned multilingual voices for Chinese and English synthesis."
         )
         #expect(qwen3TTS.ext["melix.audio.voice_locales"] == "zh,en")
+        #expect(qwen3TTS.ext["melix.audio.default_locale"] == "zh")
+        #expect(qwen3TTS.ext["melix.audio.packaged_default_locale"] == "zh")
+        #expect(qwen3TTS.ext["melix.audio.locale_policy"] == "request>model_default>packaged_default")
     }
 
     @Test("bridge client treats helper errors as unavailable")
