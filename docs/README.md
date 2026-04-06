@@ -155,6 +155,7 @@ Recent decision records:
 
 Current runbooks:
 
+- `runbooks/desktop-polish.md`
 - `runbooks/disk-streaming-evidence.md`
 - `runbooks/session-lifecycle.md`
 - `runbooks/connection-lifecycle.md`

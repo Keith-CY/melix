@@ -2,6 +2,51 @@
 
 ## 2026-04-06
 
+- Closed `M15.4` and completed `M15` by adding repository-owned desktop-polish integration
+  evidence for the native operator shell:
+  - added `DesktopPolishSmokeTests` so one focused Swift suite now proves bursty chat presentation
+    smoothing, shared banner priority, registry-backed download recovery, operator-session restore,
+    and renderable navigation grounding across all `5` desktop surfaces plus all `6` tool sections
+  - added `scripts/m15_desktop_polish_smoke.py` so contributors can run the same smoke contract
+    through one repo-owned JSON command with repo-local SwiftPM environment defaults
+  - added `tests/test_m15_desktop_polish_smoke.py`,
+    `tests/integration/test_desktop_polish_smoke.py`, and the dedicated
+    `docs/runbooks/desktop-polish.md` runbook so the smoke payload, execution path, and operator
+    interpretation stay aligned
+- Verification summary for `M15.4`:
+  - `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/.build/ModuleCache.noindex" swift test --enable-code-coverage --package-path apps/macos-menubar --filter 'DesktopPolishSmokeTests'`: `1 test in 1 suite passed after 0.630 seconds`
+  - `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/.build/ModuleCache.noindex" MELIX_HOME="$(pwd)/.runtime/phase1/smoke-home" swift test --package-path apps/macos-menubar --filter DesktopPolishSmokeTests`: `1 test in 1 suite passed after 0.620 seconds`
+  - `python3 scripts/swift_changed_line_coverage.py --binary apps/macos-menubar/.build/arm64-apple-macosx/debug/MelixMacOSMenubarPackageTests.xctest/Contents/MacOS/MelixMacOSMenubarPackageTests --profdata apps/macos-menubar/.build/arm64-apple-macosx/debug/codecov/default.profdata apps/macos-menubar/Tests/MenuBarTests/DesktopPolishSmokeTests.swift`: `98.69%` (`301/305`)
+  - `python3 scripts/m15_desktop_polish_smoke.py --json`: pass
+  - `PYTHONPATH='.:services/mlx-worker-python' uv run --project services/mlx-worker-python pytest tests/test_m15_desktop_polish_smoke.py tests/integration/test_desktop_polish_smoke.py -q`: `5 passed in 90.49s (0:01:30)`
+  - `PYTHONPATH='.:services/mlx-worker-python' uv run --project services/mlx-worker-python coverage run --source=scripts,tests -m pytest tests/test_m15_desktop_polish_smoke.py tests/integration/test_desktop_polish_smoke.py -q && PYTHONPATH='.:services/mlx-worker-python' uv run --project services/mlx-worker-python coverage json -o /tmp/m15-4-python-coverage.json && python3 scripts/python_changed_line_coverage.py --coverage-json /tmp/m15-4-python-coverage.json scripts/m15_desktop_polish_smoke.py tests/test_m15_desktop_polish_smoke.py tests/integration/test_desktop_polish_smoke.py`: `99.06%` (`105/106`)
+  - `make integration-test`: `70 passed in 924.47s (0:15:24)`
+  - `git diff --check`: pass
+- Metrics report for `M15.4`:
+  - repository-owned smoke evidence:
+    - `chat.presentation_lag_ms = 62.6260`
+    - `chat.presentation_flush_count = 3`
+    - `signals.top_banner_title = "Download Recovery Available"`
+    - `signals.download_recovery_visible = true`
+    - `signals.update_signal_visible = true`
+    - `signals.update_signal_dismissible = true`
+    - `persistence.operator_session_restore_ms = 2.5461`
+    - `persistence.operator_session_persist_write_ms = 1.3790`
+    - `persistence.persisted_download_queue_count = 1`
+    - `persistence.restored_download_queue_count = 1`
+    - `persistence.restored_selected_tool_section = "Downloads"`
+    - `navigation.grounded_surface_count = 5`
+    - `navigation.grounded_tool_section_count = 6`
+  - changed-line coverage for the touched executable scope:
+    - `DesktopPolishSmokeTests.swift`: `98.69%` (`301/305`)
+    - `scripts/m15_desktop_polish_smoke.py`: `97.62%` (`41/42`)
+    - `tests/test_m15_desktop_polish_smoke.py`: `100.00%` (`41/41`)
+    - `tests/integration/test_desktop_polish_smoke.py`: `100.00%` (`23/23`)
+    - aggregate touched-scope coverage: `99.06%` (`406/410`) across the handwritten Swift and
+      Python smoke scope
+  - runbook index updates and `task_plan.md` are excluded from executable changed-line coverage
+    because they are planning or documentation assets rather than handwritten runtime logic
+
 - Closed `M15.3` by persisting desktop download queues across restart and surfacing paused-download
   recovery from registry-backed truth:
   - extended the Python worker model-ops registry so `registry_snapshot` download rows now carry

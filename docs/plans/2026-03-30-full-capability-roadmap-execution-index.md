@@ -293,6 +293,10 @@ The roadmap extension in `M10-M17` includes milestone-level plans plus decompose
   the Window UI and status menu now surface shared recovery signals with queue-aware resume
   actions.
 - `M15.4` `docs/plans/2026-03-31-m15-4-desktop-polish-integration-evidence.md`
+  Status: completed. The repository now ships a desktop-polish smoke command, focused Swift smoke
+  coverage, Python-side script plus integration validation, and a dedicated runbook that proves
+  token smoothing, shared banner priority, persisted download recovery, and real navigation
+  grounding across all desktop surfaces and tool sections.
 
 ## M16: Video Understanding And Media Lifecycle
 
