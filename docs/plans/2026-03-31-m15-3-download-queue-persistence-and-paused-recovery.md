@@ -1,5 +1,9 @@
 # M15.3 Download-Queue Persistence And Paused-Recovery
 
+Status: completed on 2026-04-06. Desktop download queues now persist through operator-session
+restore, `registry_snapshot` download rows expose resume metadata, and the Window UI plus status
+menu surface shared queue-recovery signals and resume actions.
+
 ## Goal
 
 Persist the desktop download queue and restore paused downloads after restarting the shell.

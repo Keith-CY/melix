@@ -266,6 +266,118 @@ public struct RuntimeModelOperationState: Equatable, Sendable {
     public let linkedQuantizationProfileID: String
 }
 
+public struct RuntimeDownloadQueueEntryState: Codable, Identifiable, Equatable, Sendable {
+    public let jobID: String
+    public let sourceModel: String
+    public let status: String
+    public let stage: String
+    public let pct: Double
+    public let outputDir: String
+    public let outputPath: String
+    public let partialPath: String
+    public let statePath: String
+    public let selectedMirror: String
+    public let downloadedBytes: Int
+    public let totalBytes: Int
+    public let resumeUsed: Bool
+    public let resumeFromBytes: Int
+    public let retryCount: Int
+    public let stallDetectionCount: Int
+    public let stallReason: String
+    public let resumeReady: Bool
+
+    public var id: String {
+        jobID
+    }
+
+    public var statusText: String {
+        switch normalizedStatus {
+        case "completed":
+            "Completed"
+        case "running":
+            "Running"
+        case "retrying":
+            "Retrying"
+        case "stalled":
+            "Stalled"
+        case "failed":
+            "Failed"
+        default:
+            normalizedStatus.isEmpty ? "Unknown" : normalizedStatus.capitalized
+        }
+    }
+
+    public var progressText: String {
+        let percentText = "\(Int((pct * 100).rounded()))%"
+        guard totalBytes > 0 else {
+            return percentText
+        }
+        return "\(Self.formatBytes(downloadedBytes)) / \(Self.formatBytes(totalBytes)) • \(percentText)"
+    }
+
+    public var transferDetailText: String {
+        var parts: [String] = []
+        if !selectedMirror.isEmpty {
+            parts.append(selectedMirror)
+        }
+        if retryCount > 0 {
+            parts.append("retries \(retryCount)")
+        }
+        if stallDetectionCount > 0 {
+            parts.append("stall detections \(stallDetectionCount)")
+        }
+        if !stallReason.isEmpty {
+            parts.append(stallReason.replacingOccurrences(of: "_", with: " "))
+        }
+        if resumeUsed, resumeFromBytes > 0 {
+            parts.append("resumed from \(Self.formatBytes(resumeFromBytes))")
+        }
+        return parts.joined(separator: " • ")
+    }
+
+    public var resumeActionTitle: String {
+        "Resume Download"
+    }
+
+    public var isActive: Bool {
+        ["running", "retrying"].contains(normalizedStatus)
+    }
+
+    private var normalizedStatus: String {
+        status.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
+    private static func formatBytes(_ bytes: Int) -> String {
+        let formatter = ByteCountFormatter()
+        formatter.allowedUnits = [.useBytes, .useKB, .useMB, .useGB]
+        formatter.countStyle = .binary
+        formatter.includesUnit = true
+        formatter.isAdaptive = true
+        return formatter.string(fromByteCount: Int64(max(bytes, 0)))
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case jobID = "job_id"
+        case sourceModel = "source_model"
+        case status
+        case stage
+        case pct
+        case outputDir = "output_dir"
+        case outputPath = "output_path"
+        case partialPath = "partial_path"
+        case statePath = "state_path"
+        case selectedMirror = "selected_mirror"
+        case downloadedBytes = "downloaded_bytes"
+        case totalBytes = "total_bytes"
+        case resumeUsed = "resume_used"
+        case resumeFromBytes = "resume_from_bytes"
+        case retryCount = "retry_count"
+        case stallDetectionCount = "stall_detection_count"
+        case stallReason = "stall_reason"
+        case resumeReady = "resume_ready"
+    }
+}
+
 public enum RuntimeAudioSetupActionKind: String, Equatable, Sendable {
     case installRuntime = "install_runtime"
     case downloadModel = "download_model"
@@ -849,6 +961,7 @@ public final class RuntimeViewModel {
     public private(set) var features: [String] = []
     public private(set) var selectedModelInfo: RuntimeModelInfoState?
     public private(set) var lastModelOperation: RuntimeModelOperationState?
+    public private(set) var downloadQueue: [RuntimeDownloadQueueEntryState] = []
     public private(set) var lastDoctorReport: RuntimeDoctorReportState?
     public private(set) var lastBenchReport: RuntimeBenchReportState?
     public private(set) var benchmarkHistory: [RuntimeBenchmarkHistoryEntryState] = []
@@ -1837,6 +1950,14 @@ public final class RuntimeViewModel {
         }
     }
 
+    public var recoverableDownloads: [RuntimeDownloadQueueEntryState] {
+        downloadQueue.filter(\.resumeReady)
+    }
+
+    public var activeDownloads: [RuntimeDownloadQueueEntryState] {
+        downloadQueue.filter(\.isActive)
+    }
+
     public func dismissDesktopBanner(id: String? = nil) {
         let banner = desktopSignalStates.first { candidate in
             guard let id else {
@@ -1893,6 +2014,31 @@ public final class RuntimeViewModel {
                     title: "Audio Setup Required",
                     detail: audioSetupAction.detail,
                     severity: .warning
+                )
+            )
+        }
+        if let recoverableDownload = recoverableDownloads.first {
+            let detail = recoverableDownloads.count == 1
+                ? "\(recoverableDownload.sourceModel) • \(recoverableDownload.progressText)"
+                : "\(recoverableDownloads.count) downloads can resume • \(recoverableDownload.progressText)"
+            signals.append(
+                DesktopBannerState(
+                    id: "download-recovery",
+                    title: "Download Recovery Available",
+                    detail: detail,
+                    severity: .warning
+                )
+            )
+        } else if let activeDownload = activeDownloads.first {
+            let detail = activeDownloads.count == 1
+                ? "\(activeDownload.sourceModel) • \(activeDownload.progressText)"
+                : "\(activeDownloads.count) downloads in progress • \(activeDownload.progressText)"
+            signals.append(
+                DesktopBannerState(
+                    id: "download-queue-active",
+                    title: "Download Queue Active",
+                    detail: detail,
+                    severity: .info
                 )
             )
         }
@@ -3166,6 +3312,27 @@ public final class RuntimeViewModel {
         notifyStateChanged()
     }
 
+    public func refreshDownloadQueueState() async {
+        await refreshDownloadQueueState(notify: true, surfaceErrors: true)
+    }
+
+    public func resumeDownload(jobID: String) async {
+        guard let entry = downloadQueue.first(where: { $0.jobID == jobID }), entry.resumeReady else {
+            return
+        }
+        var ext: [String: String] = [:]
+        if !entry.selectedMirror.isEmpty {
+            ext["mirror_url"] = entry.selectedMirror
+        }
+        await runModelOperation(
+            modelID: entry.sourceModel,
+            operation: "download",
+            outputDir: entry.outputDir,
+            ext: ext
+        )
+        await refreshDownloadQueueState(notify: true, surfaceErrors: false)
+    }
+
     public func quantizePrimaryModel() async {
         guard let modelID = primaryModel?.modelID else {
             return
@@ -3199,8 +3366,9 @@ public final class RuntimeViewModel {
         await runModelOperation(
             modelID: modelID,
             operation: "download",
-            outputDir: "/tmp/melix-download"
+            outputDir: Self.defaultDownloadOutputDirectory(namespace: "melix-downloads", modelID: modelID)
         )
+        await refreshDownloadQueueState(notify: true, surfaceErrors: false)
     }
 
     public func installAudioRuntime(modelID: String) async {
@@ -3222,8 +3390,9 @@ public final class RuntimeViewModel {
         await runModelOperation(
             modelID: modelID,
             operation: "download",
-            outputDir: "/tmp/melix-audio-models"
+            outputDir: Self.defaultDownloadOutputDirectory(namespace: "melix-audio-models", modelID: modelID)
         )
+        await refreshDownloadQueueState(notify: false, surfaceErrors: false)
         await refreshDesktopFoundation()
     }
 
@@ -3845,6 +4014,38 @@ public final class RuntimeViewModel {
         }
     }
 
+    private func refreshDownloadQueueState(
+        notify: Bool,
+        surfaceErrors: Bool
+    ) async {
+        guard let modelID = resolvedModelOpsRefreshModelID() else {
+            if notify {
+                notifyStateChanged()
+            }
+            return
+        }
+
+        do {
+            let result = try await client.runModelOperation(
+                modelID: modelID,
+                operation: "registry_snapshot",
+                outputDir: "",
+                quantProfileID: "",
+                weightQuant: "",
+                kvQuant: "",
+                ext: [:]
+            )
+            applyModelOpsSnapshot(manifestJSON: result.manifestJson)
+        } catch {
+            if surfaceErrors {
+                recordLocalError(String(describing: error))
+            }
+        }
+        if notify {
+            notifyStateChanged()
+        }
+    }
+
     private func applyModelOpsSnapshot(manifestJSON: String) {
         guard
             let data = manifestJSON.data(using: .utf8),
@@ -3856,7 +4057,16 @@ public final class RuntimeViewModel {
 
         let adapters = (payload["adapters"] as? [[String: Any]]) ?? []
         let jobs = (payload["jobs"] as? [[String: Any]]) ?? []
+        let downloads = (payload["downloads"] as? [[String: Any]]) ?? []
         adapterPackages = adapters.map(Self.makeAdapterPackageState)
+        downloadQueue = downloads
+            .compactMap(Self.makeDownloadQueueEntryState)
+            .sorted { lhs, rhs in
+                if lhs.resumeReady == rhs.resumeReady {
+                    return lhs.jobID > rhs.jobID
+                }
+                return lhs.resumeReady && rhs.resumeReady == false
+            }
         trainingHistory = jobs
             .filter { Self.stringValue("operation", from: $0) == "train_lora" }
             .map(Self.makeTrainingHistoryEntryState)
@@ -3879,6 +4089,16 @@ public final class RuntimeViewModel {
                 : "Unknown"
         }
         refreshLoraSelectionState()
+    }
+
+    private func resolvedModelOpsRefreshModelID() -> String? {
+        if let modelID = primaryModel?.modelID, !modelID.isEmpty {
+            return modelID
+        }
+        if let modelID = latestSnapshot.models.first?.modelID, !modelID.isEmpty {
+            return modelID
+        }
+        return nil
     }
 
     private func updateSelectedServerSession(
@@ -4245,6 +4465,7 @@ public final class RuntimeViewModel {
                 persistedServerSessions = restoredState.serverSessions
                 serverSessions = restoredState.serverSessions
             }
+            downloadQueue = restoredState.downloadQueue
             lastPersistedOperatorSessionState = restoredState
         } catch {
             recordLocalError("Operator session restore failed: \(error)")
@@ -4257,7 +4478,8 @@ public final class RuntimeViewModel {
             selectedToolSection: selectedToolSection,
             selectedServerSessionID: selectedServerSessionID,
             serverSessions: persistedServerSessions,
-            dismissedBannerIDs: dismissedBannerIDs.sorted()
+            dismissedBannerIDs: dismissedBannerIDs.sorted(),
+            downloadQueue: downloadQueue
         )
     }
 
@@ -6465,6 +6687,34 @@ public final class RuntimeViewModel {
         )
     }
 
+    private static func makeDownloadQueueEntryState(from payload: [String: Any]) -> RuntimeDownloadQueueEntryState? {
+        let jobID = stringValue("job_id", from: payload)
+        let sourceModel = stringValue("source_model", from: payload)
+        guard jobID.isEmpty == false, sourceModel.isEmpty == false else {
+            return nil
+        }
+        return RuntimeDownloadQueueEntryState(
+            jobID: jobID,
+            sourceModel: sourceModel,
+            status: stringValue("status", from: payload),
+            stage: stringValue("stage", from: payload),
+            pct: doubleValue("pct", from: payload),
+            outputDir: stringValue("output_dir", from: payload),
+            outputPath: stringValue("output_path", from: payload),
+            partialPath: stringValue("partial_path", from: payload),
+            statePath: stringValue("state_path", from: payload),
+            selectedMirror: stringValue("selected_mirror", from: payload),
+            downloadedBytes: intValue("downloaded_bytes", from: payload),
+            totalBytes: intValue("total_bytes", from: payload),
+            resumeUsed: boolValue("resume_used", from: payload),
+            resumeFromBytes: intValue("resume_from_bytes", from: payload),
+            retryCount: intValue("retry_count", from: payload),
+            stallDetectionCount: intValue("stall_detection_count", from: payload),
+            stallReason: stringValue("stall_reason", from: payload),
+            resumeReady: boolValue("resume_ready", from: payload)
+        )
+    }
+
     private static func makeRegistryRootState(from payload: [String: Any]) -> RuntimeRegistryRootState? {
         let rootID = stringValue("root_id", from: payload)
         let rootPath = stringValue("root_path", from: payload)
@@ -6838,6 +7088,31 @@ public final class RuntimeViewModel {
         let expanded = (trimmed as NSString).expandingTildeInPath
         let standardized = URL(fileURLWithPath: expanded).standardizedFileURL.path
         return standardized.isEmpty ? nil : standardized
+    }
+
+    private static func defaultDownloadOutputDirectory(namespace: String, modelID: String) -> String {
+        let sanitizedNamespace = sanitizedDownloadPathComponent(namespace, fallback: "melix-downloads")
+        let sanitizedModelID = sanitizedDownloadPathComponent(modelID, fallback: "model")
+        let rootURL = URL(fileURLWithPath: "/tmp", isDirectory: true)
+        return rootURL
+            .appendingPathComponent(sanitizedNamespace, isDirectory: true)
+            .appendingPathComponent(sanitizedModelID, isDirectory: true)
+            .path
+    }
+
+    private static func sanitizedDownloadPathComponent(_ rawValue: String, fallback: String) -> String {
+        let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.isEmpty == false else {
+            return fallback
+        }
+        let sanitized = trimmed.map { character -> Character in
+            if character.isLetter || character.isNumber || character == "-" || character == "_" || character == "." {
+                return character
+            }
+            return "-"
+        }
+        let normalized = String(sanitized).trimmingCharacters(in: CharacterSet(charactersIn: "-._"))
+        return normalized.isEmpty ? fallback : normalized
     }
 
     private static func humanizeStatus(_ status: String) -> String {

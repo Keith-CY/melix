@@ -7,14 +7,16 @@ public struct OperatorSessionState: Codable, Equatable, Sendable {
     public var selectedServerSessionID: String
     public var serverSessions: [DesktopServerSessionState]
     public var dismissedBannerIDs: [String]
+    public var downloadQueue: [RuntimeDownloadQueueEntryState]
 
     public init(
-        schemaVersion: Int = 2,
+        schemaVersion: Int = 3,
         selectedSurface: DesktopSurface,
         selectedToolSection: DesktopToolSection = .modelsLibrary,
         selectedServerSessionID: String,
         serverSessions: [DesktopServerSessionState],
-        dismissedBannerIDs: [String] = []
+        dismissedBannerIDs: [String] = [],
+        downloadQueue: [RuntimeDownloadQueueEntryState] = []
     ) {
         self.schemaVersion = schemaVersion
         self.selectedSurface = selectedSurface
@@ -22,6 +24,7 @@ public struct OperatorSessionState: Codable, Equatable, Sendable {
         self.selectedServerSessionID = selectedServerSessionID
         self.serverSessions = serverSessions
         self.dismissedBannerIDs = dismissedBannerIDs
+        self.downloadQueue = downloadQueue
     }
 
     enum CodingKeys: String, CodingKey {
@@ -31,6 +34,7 @@ public struct OperatorSessionState: Codable, Equatable, Sendable {
         case selectedServerSessionID = "selected_server_session_id"
         case serverSessions = "server_sessions"
         case dismissedBannerIDs = "dismissed_banner_ids"
+        case downloadQueue = "download_queue"
     }
 
     public init(from decoder: any Decoder) throws {
@@ -44,6 +48,10 @@ public struct OperatorSessionState: Codable, Equatable, Sendable {
         selectedServerSessionID = try container.decode(String.self, forKey: .selectedServerSessionID)
         serverSessions = try container.decode([DesktopServerSessionState].self, forKey: .serverSessions)
         dismissedBannerIDs = try container.decodeIfPresent([String].self, forKey: .dismissedBannerIDs) ?? []
+        downloadQueue = try container.decodeIfPresent(
+            [RuntimeDownloadQueueEntryState].self,
+            forKey: .downloadQueue
+        ) ?? []
     }
 }
 

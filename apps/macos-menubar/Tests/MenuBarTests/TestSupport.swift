@@ -1911,8 +1911,70 @@ struct MenuBarRegistryRootFixture: Sendable {
     }
 }
 
+struct MenuBarDownloadFixture: Sendable {
+    let jobID: String
+    let sourceModel: String
+    let status: String
+    let stage: String
+    let pct: Double
+    let outputDir: String
+    let outputPath: String
+    let partialPath: String
+    let statePath: String
+    let selectedMirror: String
+    let downloadedBytes: Int
+    let totalBytes: Int
+    let resumeUsed: Bool
+    let resumeFromBytes: Int
+    let retryCount: Int
+    let stallDetectionCount: Int
+    let stallReason: String
+    let resumeReady: Bool
+
+    init(
+        jobID: String,
+        sourceModel: String,
+        status: String,
+        stage: String,
+        pct: Double,
+        outputDir: String,
+        outputPath: String,
+        partialPath: String,
+        statePath: String,
+        selectedMirror: String,
+        downloadedBytes: Int,
+        totalBytes: Int,
+        resumeUsed: Bool = false,
+        resumeFromBytes: Int = 0,
+        retryCount: Int = 0,
+        stallDetectionCount: Int = 0,
+        stallReason: String = "",
+        resumeReady: Bool
+    ) {
+        self.jobID = jobID
+        self.sourceModel = sourceModel
+        self.status = status
+        self.stage = stage
+        self.pct = pct
+        self.outputDir = outputDir
+        self.outputPath = outputPath
+        self.partialPath = partialPath
+        self.statePath = statePath
+        self.selectedMirror = selectedMirror
+        self.downloadedBytes = downloadedBytes
+        self.totalBytes = totalBytes
+        self.resumeUsed = resumeUsed
+        self.resumeFromBytes = resumeFromBytes
+        self.retryCount = retryCount
+        self.stallDetectionCount = stallDetectionCount
+        self.stallReason = stallReason
+        self.resumeReady = resumeReady
+    }
+}
+
 func makeModelOpsRegistrySnapshotManifestJSON(
     roots: [MenuBarRegistryRootFixture],
+    downloads: [MenuBarDownloadFixture] = [],
     scannedAtUnixMS: Int64 = 1_712_300_000_000
 ) -> String {
     let rootsJSON = roots.map { root in
@@ -1932,6 +1994,31 @@ func makeModelOpsRegistrySnapshotManifestJSON(
         """
     }
     .joined(separator: ",\n")
+    let downloadsJSON = downloads.map { download in
+        """
+        {
+          "job_id": "\(download.jobID)",
+          "source_model": "\(download.sourceModel)",
+          "status": "\(download.status)",
+          "stage": "\(download.stage)",
+          "pct": \(download.pct),
+          "output_dir": "\(download.outputDir)",
+          "output_path": "\(download.outputPath)",
+          "partial_path": "\(download.partialPath)",
+          "state_path": "\(download.statePath)",
+          "selected_mirror": "\(download.selectedMirror)",
+          "downloaded_bytes": \(download.downloadedBytes),
+          "total_bytes": \(download.totalBytes),
+          "resume_used": \(download.resumeUsed ? "true" : "false"),
+          "resume_from_bytes": \(download.resumeFromBytes),
+          "retry_count": \(download.retryCount),
+          "stall_detection_count": \(download.stallDetectionCount),
+          "stall_reason": "\(download.stallReason)",
+          "resume_ready": \(download.resumeReady ? "true" : "false")
+        }
+        """
+    }
+    .joined(separator: ",\n")
 
     return """
     {
@@ -1939,6 +2026,9 @@ func makeModelOpsRegistrySnapshotManifestJSON(
       "jobs": [],
       "adapters": [],
       "derived_models": [],
+      "downloads": [
+        \(downloadsJSON)
+      ],
       "model_registry": {
         "scanned_at_unix_ms": \(scannedAtUnixMS),
         "roots": [
@@ -1949,6 +2039,7 @@ func makeModelOpsRegistrySnapshotManifestJSON(
     }
     """
 }
+
 
 struct StubProductInstallStateProvider: ProductInstallStateProviding {
     var updateStatusResponse: ProductUpdateStatus?

@@ -1077,6 +1077,64 @@ struct DesktopDownloadsToolSectionView: View {
                 .buttonStyle(.bordered)
             }
 
+            GroupBox("Download Queue") {
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack {
+                        Text("Registry-backed queue state survives shell restart and can resume partial transfers.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Button("Refresh Queue") {
+                            Task { await viewModel.refreshDownloadQueueState() }
+                        }
+                        .buttonStyle(.bordered)
+                    }
+
+                    if viewModel.downloadQueue.isEmpty {
+                        Text("No downloads recorded yet.")
+                            .foregroundStyle(.secondary)
+                    } else {
+                        ForEach(viewModel.downloadQueue) { entry in
+                            VStack(alignment: .leading, spacing: 6) {
+                                HStack(alignment: .firstTextBaseline) {
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(entry.sourceModel)
+                                            .font(.headline)
+                                        Text(entry.statusText)
+                                            .font(.caption.weight(.semibold))
+                                            .foregroundStyle(entry.resumeReady ? .orange : .secondary)
+                                    }
+                                    Spacer()
+                                    if entry.resumeReady {
+                                        Button(entry.resumeActionTitle) {
+                                            Task { await viewModel.resumeDownload(jobID: entry.jobID) }
+                                        }
+                                        .buttonStyle(.borderedProminent)
+                                    }
+                                }
+
+                                Text(entry.progressText)
+                                    .font(.caption.monospacedDigit())
+                                if entry.transferDetailText.isEmpty == false {
+                                    Text(entry.transferDetailText)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                                if entry.outputDir.isEmpty == false {
+                                    Text(entry.outputDir)
+                                        .font(.caption2.monospaced())
+                                        .foregroundStyle(.tertiary)
+                                }
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(12)
+                            .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 12))
+                        }
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
             if let operation = viewModel.lastModelOperation {
                 GroupBox("Recent Transfer") {
                     VStack(alignment: .leading, spacing: 6) {

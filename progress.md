@@ -2,6 +2,48 @@
 
 ## 2026-04-06
 
+- Closed `M15.3` by persisting desktop download queues across restart and surfacing paused-download
+  recovery from registry-backed truth:
+  - extended the Python worker model-ops registry so `registry_snapshot` download rows now carry
+    `output_dir` and machine-readable `resume_ready` state derived from partial bytes and transfer
+    status
+  - persisted `downloadQueue` through `OperatorSessionStore` and taught `RuntimeViewModel` to
+    restore queue rows before live refresh, parse `downloads` payloads, and reuse the original
+    output directory plus mirror metadata for resume dispatch
+  - updated the desktop Downloads section and shared desktop signals so operators can inspect queue
+    progress, see output directories, refresh queue truth, and trigger `Resume Download` directly
+    from Window UI or status-menu-visible recovery notices
+- Verification summary for `M15.3`:
+  - `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/.build/ModuleCache.noindex" swift test --enable-code-coverage --package-path apps/macos-menubar --filter 'RuntimeViewModelTests|DesktopFoundationViewTests|StatusMenuTests'`: `254 tests in 3 suites passed after 5.001 seconds`
+  - `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/.build/ModuleCache.noindex" swift test --package-path apps/macos-menubar --filter 'RuntimeViewModelTests|DesktopFoundationViewTests|StatusMenuTests'`: `254 tests in 3 suites passed after 5.071 seconds`
+  - `python3 scripts/swift_changed_line_coverage.py --binary apps/macos-menubar/.build/arm64-apple-macosx/debug/MelixMacOSMenubarPackageTests.xctest/Contents/MacOS/MelixMacOSMenubarPackageTests --profdata apps/macos-menubar/.build/arm64-apple-macosx/debug/codecov/default.profdata apps/macos-menubar/Sources/AppMain/Dashboard/DesktopWorkspaceShellView.swift apps/macos-menubar/Sources/AppMain/Models/RuntimeViewModel.swift apps/macos-menubar/Sources/AppMain/Persistence/OperatorSessionStore.swift apps/macos-menubar/Tests/MenuBarTests/DesktopFoundationViewTests.swift apps/macos-menubar/Tests/MenuBarTests/RuntimeViewModelTests.swift apps/macos-menubar/Tests/MenuBarTests/StatusMenuTests.swift apps/macos-menubar/Tests/MenuBarTests/TestSupport.swift`: `97.42%` (`793/814`)
+  - `PYTHONPATH='.:services/mlx-worker-python' uv run --project services/mlx-worker-python pytest services/mlx-worker-python/tests/test_maintenance_service.py -k 'download_rows_with_machine_readable_status or resume_ready' -q`: `2 passed, 66 deselected in 0.11s`
+  - `PYTHONPATH='.:services/mlx-worker-python' uv run --project services/mlx-worker-python coverage run --source=services/mlx-worker-python/worker -m pytest services/mlx-worker-python/tests/test_maintenance_service.py -k download -q`: `6 passed, 62 deselected in 0.18s`
+  - `python3 scripts/python_changed_line_coverage.py --coverage-json /tmp/m15-3-python-coverage.json services/mlx-worker-python/worker/model_ops/job_registry.py services/mlx-worker-python/tests/test_maintenance_service.py`: `100.00%` (`4/4`)
+  - `make py-test`: `501 passed in 52.54s`
+  - `make swift-test`: failed outside the touched scope when `services/mlx-text-worker-swift` exited with unexpected signal `11` during `WorkerScaffoldTests`
+  - `git diff --check`: pass
+- Metrics report for `M15.3`:
+  - persisted queue-recovery evidence exercised by the touched scope:
+    - stalled or partial downloads now restore into the Window shell with stable `output_dir`,
+      progress bytes, mirror metadata, and `resume_ready` state before any live refresh completes
+    - resuming a recovered download re-dispatches `download` with the original output directory so
+      partial bytes can be reused deterministically
+    - shared desktop signals and the Downloads section now surface actionable queue state instead of
+      relying on the last terminal model-operation result
+  - changed-line coverage for the touched handwritten executable scope:
+    - `DesktopWorkspaceShellView.swift`: `93.10%` (`54/58`)
+    - `RuntimeViewModel.swift`: `92.06%` (`197/214`)
+    - `OperatorSessionStore.swift`: `100.00%` (`4/4`)
+    - `DesktopFoundationViewTests.swift`: `100.00%` (`50/50`)
+    - `RuntimeViewModelTests.swift`: `100.00%` (`383/383`)
+    - `StatusMenuTests.swift`: `100.00%` (`57/57`)
+    - `TestSupport.swift`: `100.00%` (`48/48`)
+    - Swift aggregate touched-scope coverage: `97.42%` (`793/814`)
+    - Python worker touched-scope coverage: `100.00%` (`4/4`)
+  - `task_plan.md` and plan-index updates are excluded from executable changed-line coverage because
+    they are planning and status documents rather than handwritten runtime logic
+
 - Closed `M15.2` by unifying desktop update availability and runtime-state messaging behind one
   shared signal model:
   - extended desktop banner state with stable ids and dismissibility, then persisted dismissed

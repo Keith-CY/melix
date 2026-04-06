@@ -1975,9 +1975,10 @@ struct DesktopFoundationViewTests {
         #expect(viewModel.audioSetupActions.isEmpty)
 
         let requests = await client.recordedModelOperationRequests
-        #expect(requests.count == 2)
+        #expect(requests.count == 3)
         #expect(requests[0].operation == "install_audio_runtime")
         #expect(requests[1].operation == "download")
+        #expect(requests[2].operation == "registry_snapshot")
     }
 
     @Test("tools tab renders typed convert operation metadata")
@@ -2130,6 +2131,57 @@ struct DesktopFoundationViewTests {
         #expect(operation.targetRepo == "melix/models/melix-dev-text-converted")
         #expect(operation.sourceArtifactKind == "converted_model_bundle")
         #expect(operation.conversionTargetFormat == "melix_model_bundle")
+    }
+
+    @Test("downloads section renders queue recovery rows and resume actions")
+    @MainActor
+    func downloadsSectionRendersQueueRecoveryRowsAndResumeActions() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureModelOperation(
+            makeNamedModelOperationResult(
+                operation: "registry_snapshot",
+                outputPath: "/tmp/melix-model-ops-registry/registry_snapshot.json",
+                manifestJSON: makeModelOpsRegistrySnapshotManifestJSON(
+                    roots: [],
+                    downloads: [
+                        MenuBarDownloadFixture(
+                            jobID: "model-ops-0099",
+                            sourceModel: "melix-dev-text",
+                            status: "stalled",
+                            stage: "download",
+                            pct: 0.42,
+                            outputDir: "/tmp/melix-downloads/melix-dev-text",
+                            outputPath: "/tmp/melix-downloads/melix-dev-text/download.artifact",
+                            partialPath: "/tmp/melix-downloads/melix-dev-text/download.artifact.partial",
+                            statePath: "/tmp/melix-downloads/melix-dev-text/download.state.json",
+                            selectedMirror: "https://mirror.example/recovery",
+                            downloadedBytes: 1536,
+                            totalBytes: 4096,
+                            resumeUsed: true,
+                            resumeFromBytes: 1024,
+                            retryCount: 1,
+                            stallDetectionCount: 1,
+                            stallReason: "no_progress_timeout",
+                            resumeReady: true
+                        )
+                    ]
+                )
+            ),
+            forNamedOperation: "registry_snapshot"
+        )
+
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        viewModel.selectSurface(.tools)
+        viewModel.selectToolSection(.downloads)
+        await viewModel.refreshDownloadQueueState()
+
+        let view = hostView(DesktopDownloadsToolSectionView(viewModel: viewModel))
+
+        #expect(view.subviews.isEmpty == false)
+        #expect(viewModel.downloadQueue.first?.statusText == "Stalled")
+        #expect(viewModel.downloadQueue.first?.resumeReady == true)
+        #expect(viewModel.desktopSignalStates.contains(where: { $0.title == "Download Recovery Available" }))
     }
 
     @Test("dashboard settings logs bench and api tabs render from foundation state")

@@ -631,6 +631,78 @@ struct RuntimeViewModelTests {
         #expect(restoredViewModel.selectedToolSection == .modelsLibrary)
     }
 
+    @Test("persists download queue state and restores it across shell restart")
+    @MainActor
+    func persistsDownloadQueueStateAndRestoresItAcrossShellRestart() async throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-menubar-download-queue-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let melixHome = MelixHome(environment: ["MELIX_HOME": temporaryRoot.path])
+        let operatorSessionStore = OperatorSessionStore(melixHome: melixHome)
+        let fixture = MenuBarDownloadFixture(
+            jobID: "model-ops-0042",
+            sourceModel: "melix-dev-text",
+            status: "stalled",
+            stage: "download",
+            pct: 0.5,
+            outputDir: "/tmp/melix-downloads/melix-dev-text",
+            outputPath: "/tmp/melix-downloads/melix-dev-text/download.artifact",
+            partialPath: "/tmp/melix-downloads/melix-dev-text/download.artifact.partial",
+            statePath: "/tmp/melix-downloads/melix-dev-text/download.state.json",
+            selectedMirror: "https://mirror.example/hf",
+            downloadedBytes: 1024,
+            totalBytes: 2048,
+            resumeUsed: true,
+            resumeFromBytes: 512,
+            retryCount: 1,
+            stallDetectionCount: 1,
+            stallReason: "no_progress_timeout",
+            resumeReady: true
+        )
+
+        let client = FakeControlPlaneXPCClient()
+        await client.configureModelOperation(
+            makeNamedModelOperationResult(
+                operation: "registry_snapshot",
+                outputPath: "/tmp/melix-model-ops-registry/registry_snapshot.json",
+                manifestJSON: makeModelOpsRegistrySnapshotManifestJSON(
+                    roots: [],
+                    downloads: [fixture]
+                )
+            ),
+            forNamedOperation: "registry_snapshot"
+        )
+
+        let firstViewModel = RuntimeViewModel(
+            client: client,
+            operatorSessionStore: operatorSessionStore
+        )
+        await firstViewModel.start()
+        firstViewModel.selectToolSection(.downloads)
+        await firstViewModel.refreshDownloadQueueState()
+
+        let persistedData = try Data(contentsOf: melixHome.operatorSessionFileURL)
+        let persistedPayload = try #require(
+            JSONSerialization.jsonObject(with: persistedData) as? [String: Any]
+        )
+        let persistedQueue = try #require(persistedPayload["download_queue"] as? [[String: Any]])
+        #expect(persistedQueue.count == 1)
+        #expect(persistedQueue.first?["job_id"] as? String == "model-ops-0042")
+
+        let restoredViewModel = RuntimeViewModel(
+            client: FakeControlPlaneXPCClient(),
+            operatorSessionStore: operatorSessionStore
+        )
+        await restoredViewModel.start()
+
+        let restoredQueue = try #require(restoredViewModel.downloadQueue.first)
+        #expect(restoredQueue.jobID == "model-ops-0042")
+        #expect(restoredQueue.resumeReady)
+        #expect(restoredQueue.statusText == "Stalled")
+    }
+
     @Test("generatesPrimaryAPIKeyForSelectedServerSession and forces api key auth mode")
     @MainActor
     func generatesPrimaryAPIKeyForSelectedServerSessionAndForcesAPIKeyAuthMode() async throws {
@@ -1972,11 +2044,316 @@ struct RuntimeViewModelTests {
         await viewModel.downloadAudioModel(modelID: "melix-whisper-mlx")
 
         let requests = await client.recordedModelOperationRequests
-        #expect(requests.count == 2)
+        #expect(requests.count == 3)
         #expect(requests[1].operation == "download")
         #expect(requests[1].modelID == "melix-whisper-mlx")
+        #expect(requests[2].operation == "registry_snapshot")
         #expect(viewModel.audioSetupActions.isEmpty)
         #expect(viewModel.lastModelOperation?.operation == "download")
+    }
+
+    @Test("download queue refresh parses registry snapshot rows and surfaces recovery signals")
+    @MainActor
+    func downloadQueueRefreshParsesRegistrySnapshotRowsAndSurfacesRecoverySignals() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureModelOperation(
+            makeNamedModelOperationResult(
+                operation: "registry_snapshot",
+                outputPath: "/tmp/melix-model-ops-registry/registry_snapshot.json",
+                manifestJSON: makeModelOpsRegistrySnapshotManifestJSON(
+                    roots: [],
+                    downloads: [
+                        MenuBarDownloadFixture(
+                            jobID: "model-ops-0043",
+                            sourceModel: "melix-dev-text",
+                            status: "stalled",
+                            stage: "download",
+                            pct: 0.75,
+                            outputDir: "/tmp/melix-downloads/melix-dev-text",
+                            outputPath: "/tmp/melix-downloads/melix-dev-text/download.artifact",
+                            partialPath: "/tmp/melix-downloads/melix-dev-text/download.artifact.partial",
+                            statePath: "/tmp/melix-downloads/melix-dev-text/download.state.json",
+                            selectedMirror: "https://mirror.example/hf",
+                            downloadedBytes: 3072,
+                            totalBytes: 4096,
+                            resumeUsed: true,
+                            resumeFromBytes: 1024,
+                            retryCount: 2,
+                            stallDetectionCount: 1,
+                            stallReason: "no_progress_timeout",
+                            resumeReady: true
+                        )
+                    ]
+                )
+            ),
+            forNamedOperation: "registry_snapshot"
+        )
+
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        await viewModel.refreshDownloadQueueState()
+
+        let queueEntry = try #require(viewModel.downloadQueue.first)
+        #expect(queueEntry.jobID == "model-ops-0043")
+        #expect(queueEntry.resumeReady)
+        #expect(queueEntry.progressText.contains("75%"))
+        #expect(queueEntry.transferDetailText.contains("mirror.example/hf"))
+        #expect(viewModel.desktopSignalStates.contains(where: { $0.title == "Download Recovery Available" }))
+        #expect(await client.recordedModelOperationRequests.last?.operation == "registry_snapshot")
+    }
+
+    @Test("download queue entry state formats status progress transfer and activity labels")
+    func downloadQueueEntryStateFormatsStatusProgressTransferAndActivityLabels() {
+        let stalled = makeRuntimeDownloadQueueEntryState(
+            status: "stalled",
+            pct: 0.25,
+            selectedMirror: "https://mirror.example/hf",
+            downloadedBytes: 1024,
+            totalBytes: 4096,
+            resumeUsed: true,
+            resumeFromBytes: 512,
+            retryCount: 2,
+            stallDetectionCount: 1,
+            stallReason: "no_progress_timeout",
+            resumeReady: true
+        )
+        let running = makeRuntimeDownloadQueueEntryState(status: "running", pct: 0.1, totalBytes: 0)
+        let retrying = makeRuntimeDownloadQueueEntryState(status: "retrying")
+        let completed = makeRuntimeDownloadQueueEntryState(status: "completed")
+        let failed = makeRuntimeDownloadQueueEntryState(status: "failed")
+        let unknown = makeRuntimeDownloadQueueEntryState(status: " ")
+
+        #expect(stalled.statusText == "Stalled")
+        #expect(running.statusText == "Running")
+        #expect(retrying.statusText == "Retrying")
+        #expect(completed.statusText == "Completed")
+        #expect(failed.statusText == "Failed")
+        #expect(unknown.statusText == "Unknown")
+        #expect(stalled.progressText.contains("25%"))
+        #expect(running.progressText == "10%")
+        #expect(stalled.transferDetailText.contains("https://mirror.example/hf"))
+        #expect(stalled.transferDetailText.contains("retries 2"))
+        #expect(stalled.transferDetailText.contains("stall detections 1"))
+        #expect(stalled.transferDetailText.contains("no progress timeout"))
+        #expect(stalled.transferDetailText.contains("resumed from"))
+        #expect(stalled.resumeActionTitle == "Resume Download")
+        #expect(stalled.isActive == false)
+        #expect(running.isActive)
+        #expect(retrying.isActive)
+    }
+
+    @Test("resume download reuses original output directory and mirror before refreshing queue state")
+    @MainActor
+    func resumeDownloadReusesOriginalOutputDirectoryAndMirror() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let fixture = MenuBarDownloadFixture(
+            jobID: "model-ops-0044",
+            sourceModel: "melix-dev-text",
+            status: "failed",
+            stage: "download",
+            pct: 0.5,
+            outputDir: "/tmp/melix-downloads/melix-dev-text",
+            outputPath: "/tmp/melix-downloads/melix-dev-text/download.artifact",
+            partialPath: "/tmp/melix-downloads/melix-dev-text/download.artifact.partial",
+            statePath: "/tmp/melix-downloads/melix-dev-text/download.state.json",
+            selectedMirror: "https://mirror.example/resume",
+            downloadedBytes: 2048,
+            totalBytes: 4096,
+            resumeUsed: true,
+            resumeFromBytes: 1024,
+            retryCount: 1,
+            stallDetectionCount: 1,
+            stallReason: "no_progress_timeout",
+            resumeReady: true
+        )
+        await client.configureModelOperation(
+            makeNamedModelOperationResult(
+                operation: "registry_snapshot",
+                outputPath: "/tmp/melix-model-ops-registry/registry_snapshot.json",
+                manifestJSON: makeModelOpsRegistrySnapshotManifestJSON(roots: [], downloads: [fixture])
+            ),
+            forNamedOperation: "registry_snapshot"
+        )
+        await client.configureModelOperation(
+            makeNamedModelOperationResult(
+                operation: "download",
+                outputPath: fixture.outputPath,
+                manifestJSON: "{}"
+            ),
+            forNamedOperation: "download"
+        )
+
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        await viewModel.refreshDownloadQueueState()
+        await viewModel.resumeDownload(jobID: fixture.jobID)
+
+        let requests = await client.recordedModelOperationRequests
+        let downloadRequest = try #require(requests.first(where: { $0.operation == "download" }))
+        #expect(downloadRequest.outputDir == fixture.outputDir)
+        #expect(downloadRequest.ext["mirror_url"] == fixture.selectedMirror)
+        #expect(requests.filter { $0.operation == "registry_snapshot" }.count == 2)
+    }
+
+    @Test("download queue refresh handles empty catalog targets registry errors and queue ordering")
+    @MainActor
+    func downloadQueueRefreshHandlesEmptyTargetsErrorsAndOrdering() async throws {
+        let emptyClient = FakeControlPlaneXPCClient()
+        await emptyClient.configureSnapshot(makeSnapshot(serverState: .serverReady, models: []))
+        let emptyViewModel = RuntimeViewModel(client: emptyClient)
+        await emptyViewModel.refreshDownloadQueueState()
+        #expect(await emptyClient.recordedModelOperationRequests.isEmpty)
+
+        let failingClient = FakeControlPlaneXPCClient()
+        await failingClient.configureErrors(modelOperation: MenuBarTestError(description: "registry snapshot failed"))
+        let failingViewModel = RuntimeViewModel(client: failingClient)
+        await failingViewModel.start()
+        await failingViewModel.refreshDownloadQueueState()
+        #expect(failingViewModel.lastError?.contains("registry snapshot failed") == true)
+
+        let orderingClient = FakeControlPlaneXPCClient()
+        let manifestJSON = """
+        {
+          "jobs": [],
+          "adapters": [],
+          "derived_models": [],
+          "downloads": [
+            {
+              "job_id": "model-ops-0040",
+              "source_model": "melix-dev-text",
+              "status": "running",
+              "stage": "download",
+              "pct": 0.2,
+              "output_dir": "/tmp/melix-downloads/melix-dev-text",
+              "output_path": "/tmp/melix-downloads/melix-dev-text/download.artifact",
+              "partial_path": "/tmp/melix-downloads/melix-dev-text/download.artifact.partial",
+              "state_path": "/tmp/melix-downloads/melix-dev-text/download.state.json",
+              "selected_mirror": "",
+              "downloaded_bytes": 512,
+              "total_bytes": 4096,
+              "resume_used": false,
+              "resume_from_bytes": 0,
+              "retry_count": 0,
+              "stall_detection_count": 0,
+              "stall_reason": "",
+              "resume_ready": false
+            },
+            {
+              "job_id": "model-ops-0009",
+              "source_model": "melix-dev-text",
+              "status": "failed",
+              "stage": "download",
+              "pct": 0.6,
+              "output_dir": "/tmp/melix-downloads/melix-dev-text",
+              "output_path": "/tmp/melix-downloads/melix-dev-text/download.artifact",
+              "partial_path": "/tmp/melix-downloads/melix-dev-text/download.artifact.partial",
+              "state_path": "/tmp/melix-downloads/melix-dev-text/download.state.json",
+              "selected_mirror": "https://mirror.example/recoverable",
+              "downloaded_bytes": 2048,
+              "total_bytes": 4096,
+              "resume_used": true,
+              "resume_from_bytes": 1024,
+              "retry_count": 1,
+              "stall_detection_count": 1,
+              "stall_reason": "no_progress_timeout",
+              "resume_ready": true
+            },
+            {
+              "job_id": "model-ops-invalid",
+              "source_model": "",
+              "status": "failed",
+              "stage": "download",
+              "pct": 0.1,
+              "output_dir": "",
+              "output_path": "",
+              "partial_path": "",
+              "state_path": "",
+              "selected_mirror": "",
+              "downloaded_bytes": 0,
+              "total_bytes": 0,
+              "resume_used": false,
+              "resume_from_bytes": 0,
+              "retry_count": 0,
+              "stall_detection_count": 0,
+              "stall_reason": "",
+              "resume_ready": true
+            }
+          ],
+          "model_registry": {
+            "scanned_at_unix_ms": 1712300000000,
+            "roots": []
+          }
+        }
+        """
+        await orderingClient.configureModelOperation(
+            makeNamedModelOperationResult(
+                operation: "registry_snapshot",
+                outputPath: "/tmp/melix-model-ops-registry/registry_snapshot.json",
+                manifestJSON: manifestJSON
+            ),
+            forNamedOperation: "registry_snapshot"
+        )
+        let orderingViewModel = RuntimeViewModel(client: orderingClient)
+        await orderingViewModel.start()
+        await orderingViewModel.refreshDownloadQueueState()
+
+        #expect(orderingViewModel.downloadQueue.count == 2)
+        #expect(orderingViewModel.downloadQueue.first?.jobID == "model-ops-0009")
+        #expect(orderingViewModel.downloadQueue.last?.jobID == "model-ops-0040")
+    }
+
+    @Test("download primary model uses a stable per-model output directory and refreshes queue state")
+    @MainActor
+    func downloadPrimaryModelUsesStablePerModelOutputDirectoryAndRefreshesQueueState() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureModelOperation(
+            makeNamedModelOperationResult(
+                operation: "download",
+                outputPath: "/tmp/melix-downloads/melix-dev-text/download.artifact",
+                manifestJSON: "{}"
+            ),
+            forNamedOperation: "download"
+        )
+        await client.configureModelOperation(
+            makeNamedModelOperationResult(
+                operation: "registry_snapshot",
+                outputPath: "/tmp/melix-model-ops-registry/registry_snapshot.json",
+                manifestJSON: makeModelOpsRegistrySnapshotManifestJSON(
+                    roots: [],
+                    downloads: [
+                        MenuBarDownloadFixture(
+                            jobID: "job-download",
+                            sourceModel: "melix-dev-text",
+                            status: "running",
+                            stage: "download",
+                            pct: 1.0,
+                            outputDir: "/tmp/melix-downloads/melix-dev-text",
+                            outputPath: "/tmp/melix-downloads/melix-dev-text/download.artifact",
+                            partialPath: "/tmp/melix-downloads/melix-dev-text/download.artifact.partial",
+                            statePath: "/tmp/melix-downloads/melix-dev-text/download.state.json",
+                            selectedMirror: "https://huggingface.co",
+                            downloadedBytes: 4096,
+                            totalBytes: 4096,
+                            resumeReady: false
+                        )
+                    ]
+                )
+            ),
+            forNamedOperation: "registry_snapshot"
+        )
+
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        await viewModel.downloadPrimaryModel()
+
+        let requests = await client.recordedModelOperationRequests
+        let downloadRequest = try #require(requests.first(where: { $0.operation == "download" }))
+        let refreshRequest = try #require(requests.last(where: { $0.operation == "registry_snapshot" }))
+
+        #expect(downloadRequest.outputDir.contains("melix-downloads"))
+        #expect(downloadRequest.outputDir.contains("melix-dev-text"))
+        #expect(refreshRequest.operation == "registry_snapshot")
+        #expect(viewModel.downloadQueue.first?.sourceModel == "melix-dev-text")
     }
 
     @Test("load and unload actions dispatch through the client and refresh app state")
@@ -6878,6 +7255,42 @@ private func makeNamedModelOperationResult(
         result.artifact.runtime = "mlx_text"
     }
     return result
+}
+
+private func makeRuntimeDownloadQueueEntryState(
+    status: String,
+    pct: Double = 0.5,
+    outputDir: String = "/tmp/melix-downloads/melix-dev-text",
+    selectedMirror: String = "",
+    downloadedBytes: Int = 1024,
+    totalBytes: Int = 2048,
+    resumeUsed: Bool = false,
+    resumeFromBytes: Int = 0,
+    retryCount: Int = 0,
+    stallDetectionCount: Int = 0,
+    stallReason: String = "",
+    resumeReady: Bool = false
+) -> RuntimeDownloadQueueEntryState {
+    RuntimeDownloadQueueEntryState(
+        jobID: "model-ops-state",
+        sourceModel: "melix-dev-text",
+        status: status,
+        stage: "download",
+        pct: pct,
+        outputDir: outputDir,
+        outputPath: "\(outputDir)/download.artifact",
+        partialPath: "\(outputDir)/download.artifact.partial",
+        statePath: "\(outputDir)/download.state.json",
+        selectedMirror: selectedMirror,
+        downloadedBytes: downloadedBytes,
+        totalBytes: totalBytes,
+        resumeUsed: resumeUsed,
+        resumeFromBytes: resumeFromBytes,
+        retryCount: retryCount,
+        stallDetectionCount: stallDetectionCount,
+        stallReason: stallReason,
+        resumeReady: resumeReady
+    )
 }
 
 private func makeRegistrySnapshotManifest(

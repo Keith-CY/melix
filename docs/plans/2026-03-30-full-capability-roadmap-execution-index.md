@@ -288,6 +288,10 @@ The roadmap extension in `M10-M17` includes milestone-level plans plus decompose
   workspace-banner plus status-menu rendering, while critical runtime recovery signals remain
   non-dismissible and higher priority.
 - `M15.3` `docs/plans/2026-03-31-m15-3-download-queue-persistence-and-paused-recovery.md`
+  Status: completed. Download queue rows now persist through operator-session restore, the worker
+  registry snapshot exposes `output_dir` plus `resume_ready` metadata for partial downloads, and
+  the Window UI and status menu now surface shared recovery signals with queue-aware resume
+  actions.
 - `M15.4` `docs/plans/2026-03-31-m15-4-desktop-polish-integration-evidence.md`
 
 ## M16: Video Understanding And Media Lifecycle

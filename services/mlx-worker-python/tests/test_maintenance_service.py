@@ -1296,11 +1296,48 @@ def test_job_registry_snapshot_exposes_download_rows_with_machine_readable_statu
 
     assert download["source_model"] == "mlx-community/snapshot-demo"
     assert download["status"] == "completed"
+    assert download["output_dir"] == str(output_dir)
     assert download["selected_mirror"] == "https://mirror.example/snapshot"
     assert download["downloaded_bytes"] == len(source_bytes)
     assert download["total_bytes"] == len(source_bytes)
     assert download["output_path"].endswith("download.artifact")
     assert download["state_path"].endswith("download.state.json")
+    assert download["resume_ready"] is False
+
+
+def test_job_registry_snapshot_marks_partial_downloads_as_resume_ready(tmp_path: Path) -> None:
+    service = build_service(tmp_path)
+    source_path, _ = _write_download_source_file(tmp_path, size=2048)
+    output_dir = tmp_path / "download-resume-ready"
+
+    list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="mlx-community/resume-ready-demo",
+                output_dir=str(output_dir),
+                generate_manifest=True,
+                ext={
+                    "operation": "download",
+                    "source_path": str(source_path),
+                    "mirror_url": "https://mirror.example/resume-ready",
+                    "max_retries": "0",
+                    "test_failures_before_success": "1",
+                    "test_fail_after_bytes": "512",
+                },
+            ),
+            context=None,
+        )
+    )
+
+    snapshot = service._core._job_registry.snapshot()
+    download = snapshot["downloads"][0]
+
+    assert download["source_model"] == "mlx-community/resume-ready-demo"
+    assert download["output_dir"] == str(output_dir)
+    assert download["status"] == "failed"
+    assert download["resume_ready"] is True
+    assert download["partial_path"].endswith("download.artifact.partial")
+    assert download["downloaded_bytes"] == 512
 
 
 def test_job_registry_snapshot_supports_name_only_publish_and_unpublished_adapters() -> None:
