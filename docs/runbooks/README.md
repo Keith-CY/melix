@@ -16,6 +16,7 @@ Current runbooks:
 
 - `desktop-polish.md`
 - `disk-streaming-evidence.md`
+- `video-understanding-evidence.md`
 - `session-lifecycle.md`
 - `connection-lifecycle.md`
 - `security-and-stability-closure.md`

@@ -4,6 +4,7 @@ from pathlib import Path
 
 from worker.productization import (
     build_family_support_matrix,
+    build_phase16_video_metrics_report as exported_build_phase16_video_metrics_report,
     build_phase6_vision_metrics_report as exported_build_phase6_vision_metrics_report,
 )
 from worker.productization.acceptance_metrics import (
@@ -169,6 +170,92 @@ def test_build_phase6_vision_metrics_report_defaults_missing_values() -> None:
     assert metrics["vision.preprocess_peak_memory_bytes"] == 0.0
     assert metrics["vision.cache_memory_bytes"] == 0.0
     assert metrics["vision.cache_hit_rate"] == 0.0
+
+
+def test_build_phase16_video_metrics_report_includes_operator_metrics() -> None:
+    report = exported_build_phase16_video_metrics_report(
+        local_path={
+            "success": True,
+            "request_latency_ms": 28.6,
+        },
+        remote_url={
+            "success": True,
+            "request_latency_ms": 31.4,
+        },
+        bounded_window={
+            "success": True,
+            "request_latency_ms": 42.5,
+            "video_first_token_ms": 12.1,
+            "preprocess_latency_ms": 5.3,
+            "video_frame_count": 6,
+            "video_frame_budget": 6,
+            "video_window_ms": 4000,
+            "temp_media_artifact_count": 1,
+            "temp_media_artifact_bytes": 2048,
+            "temp_media_cleanup_latency_ms": 0.7,
+            "temp_media_cleanup_failure_count": 0,
+        },
+        routing={
+            "text_protection_success": True,
+            "video_request_latency_ms": 58.2,
+            "text_request_latency_ms": 14.9,
+            "scheduler_text_ttft_under_multimodal_ms": 8.4,
+            "scheduler_multimodal_queue_delay_ms": 3.7,
+        },
+    )
+
+    checks = report["checks"]
+    metrics = report["metrics"]
+    assert checks["video.local_path_success"] is True
+    assert checks["video.remote_url_success"] is True
+    assert checks["video.bounded_window_success"] is True
+    assert checks["video.routing.text_protection_success"] is True
+    assert metrics["video.integration_success_rate"] == 100.0
+    assert metrics["video.local_path.request_latency_ms"] == 28.6
+    assert metrics["video.remote_url.request_latency_ms"] == 31.4
+    assert metrics["video.bounded_window.request_latency_ms"] == 42.5
+    assert metrics["vision.video_first_token_ms"] == 12.1
+    assert metrics["vision.preprocess_latency_ms"] == 5.3
+    assert metrics["vision.video_frame_count"] == 6.0
+    assert metrics["vision.video_frame_budget"] == 6.0
+    assert metrics["vision.video_window_ms"] == 4000.0
+    assert metrics["vision.temp_media_artifact_count"] == 1.0
+    assert metrics["vision.temp_media_artifact_bytes"] == 2048.0
+    assert metrics["vision.temp_media_cleanup_latency_ms"] == 0.7
+    assert metrics["vision.temp_media_cleanup_failure_count"] == 0.0
+    assert metrics["scheduler.text_ttft_under_multimodal_ms"] == 8.4
+    assert metrics["scheduler.multimodal_queue_delay_ms"] == 3.7
+
+
+def test_build_phase16_video_metrics_report_defaults_missing_values() -> None:
+    report = exported_build_phase16_video_metrics_report(
+        local_path={"success": False, "request_latency_ms": "slow"},
+        remote_url={"success": False, "request_latency_ms": None},
+        bounded_window={"success": False},
+        routing={"text_protection_success": False},
+    )
+
+    checks = report["checks"]
+    metrics = report["metrics"]
+    assert checks["video.local_path_success"] is False
+    assert checks["video.remote_url_success"] is False
+    assert checks["video.bounded_window_success"] is False
+    assert checks["video.routing.text_protection_success"] is False
+    assert metrics["video.integration_success_rate"] == 0.0
+    assert metrics["video.local_path.request_latency_ms"] == 0.0
+    assert metrics["video.remote_url.request_latency_ms"] == 0.0
+    assert metrics["video.bounded_window.request_latency_ms"] == 0.0
+    assert metrics["vision.video_first_token_ms"] == 0.0
+    assert metrics["vision.preprocess_latency_ms"] == 0.0
+    assert metrics["vision.video_frame_count"] == 0.0
+    assert metrics["vision.video_frame_budget"] == 0.0
+    assert metrics["vision.video_window_ms"] == 0.0
+    assert metrics["vision.temp_media_artifact_count"] == 0.0
+    assert metrics["vision.temp_media_artifact_bytes"] == 0.0
+    assert metrics["vision.temp_media_cleanup_latency_ms"] == 0.0
+    assert metrics["vision.temp_media_cleanup_failure_count"] == 0.0
+    assert metrics["scheduler.text_ttft_under_multimodal_ms"] == 0.0
+    assert metrics["scheduler.multimodal_queue_delay_ms"] == 0.0
 
 
 def test_build_family_support_matrix_exposes_contract_rows_and_live_path_evidence() -> None:

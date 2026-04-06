@@ -1,5 +1,11 @@
 # M16 Video Understanding And Media Lifecycle
 
+## Status
+
+Completed on 2026-04-06. `M16.1-M16.4` now collectively provide explicit video ingress contracts,
+frame-policy and background-lane routing, temporary-media lifecycle control, and repository-owned
+video operator evidence plus runbook guidance.
+
 ## Goal
 
 Add first-class video-understanding support to Melix, with explicit media normalization, frame-selection policy, background-lane scheduling, and temporary-media lifecycle control instead of treating video as an unbounded extension of image requests.

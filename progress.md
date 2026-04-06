@@ -2,6 +2,42 @@
 
 ## 2026-04-06
 
+- Closed `M16.4` and completed `M16` by adding repository-owned live video operator evidence on
+  top of the ingress, frame-policy, routing, and cleanup slices:
+  - added `scripts/m16_video_runtime_smoke.py` so one reproducible smoke workflow now exercises a
+    short local video path, a remote video URL served by a repository-owned local fixture server,
+    a bounded inline multi-frame request, and a concurrent video-plus-text routing probe
+  - added `build_phase16_video_metrics_report(...)` plus productization export wiring so the
+    touched scope now emits machine-readable success rates and operator metrics for video request
+    latency, frame budget and window, temp-media cleanup evidence, and scheduler text-protection
+    signals under video load
+  - added `tests/integration/test_video_runtime_smoke.py` together with expanded acceptance-metrics
+    unit coverage so the smoke payload contract and summary report are both test-backed
+  - added `docs/runbooks/video-understanding-evidence.md` and updated the docs indexes so operators
+    can reproduce the current video path and interpret local-path, remote-URL, bounded-window,
+    cleanup, and routing signals without code spelunking
+- Verification summary for `M16.4`:
+  - `PYTHONPATH='.:services/mlx-worker-python' uv run --project services/mlx-worker-python pytest services/mlx-worker-python/tests/test_acceptance_metrics.py tests/integration/test_video_runtime_smoke.py -q`: `17 passed in 15.29s`
+  - `PYTHONPATH='.:services/mlx-worker-python' uv run --project services/mlx-worker-python coverage run --data-file=/tmp/m16_4_python.coverage -m pytest services/mlx-worker-python/tests/test_acceptance_metrics.py tests/integration/test_video_runtime_smoke.py -q && PYTHONPATH='.:services/mlx-worker-python' uv run --project services/mlx-worker-python coverage json --data-file=/tmp/m16_4_python.coverage -o /tmp/m16_4_python_coverage.json && python3 scripts/python_changed_line_coverage.py --coverage-json /tmp/m16_4_python_coverage.json services/mlx-worker-python/worker/productization/acceptance_metrics.py services/mlx-worker-python/worker/productization/__init__.py scripts/m16_video_runtime_smoke.py services/mlx-worker-python/tests/test_acceptance_metrics.py tests/integration/test_video_runtime_smoke.py`: `17 passed in 15.37s` and changed-line coverage `100.00%` (`52/52`)
+  - `make py-test`: `530 passed in 30.56s`
+  - `git diff --check`: pass
+- Metrics report for `M16.4`:
+  - repository-owned video smoke evidence now records:
+    - local-path video request success and latency
+    - remote-URL video request success and latency using a local fixture server rather than an
+      internet dependency
+    - bounded-window frame-policy evidence through `vision.video_frame_count`,
+      `vision.video_frame_budget`, and `vision.video_window_ms`
+    - inline-video cleanup evidence through `vision.temp_media_artifact_count`,
+      `vision.temp_media_artifact_bytes`, `vision.temp_media_cleanup_latency_ms`, and
+      `vision.temp_media_cleanup_failure_count`
+    - routing evidence through `scheduler.text_ttft_under_multimodal_ms` and
+      `scheduler.multimodal_queue_delay_ms`
+  - changed-line coverage for the touched handwritten executable scope:
+    - Python touched-scope coverage: `100.00%` (`52/52`)
+  - `docs/*.md` and `task_plan.md` are excluded from executable changed-line coverage because they
+    are repository documentation and bookkeeping rather than handwritten runtime logic
+
 - Closed `M16.3` by making temporary multimodal analysis artifacts explicit, deterministically
   cleaned up, and visible through worker plus control-plane state instead of remaining hidden
   inside best-effort temporary-directory scopes:

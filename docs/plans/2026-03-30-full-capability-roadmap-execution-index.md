@@ -300,6 +300,11 @@ The roadmap extension in `M10-M17` includes milestone-level plans plus decompose
 
 ## M16: Video Understanding And Media Lifecycle
 
+- Status: completed. `M16.1-M16.4` are completed with explicit video ingress contracts,
+  frame-policy routing, temporary-media lifecycle control, and repository-owned video smoke plus
+  runbook evidence for local-path, remote-URL, bounded-window, cleanup, and routing-under-load
+  scenarios.
+
 - `M16.1` `docs/plans/2026-03-31-m16-1-video-ingress-and-media-normalization-contracts.md`
   Status: completed. The worker protocol now carries explicit video message parts and
   preprocessing metadata, Swift request normalization accepts supported URI and inline video
@@ -317,6 +322,10 @@ The roadmap extension in `M10-M17` includes milestone-level plans plus decompose
   for OCR and VLM routes, and focused Python, Swift, and integration coverage evidence is recorded
   in the repository.
 - `M16.4` `docs/plans/2026-03-31-m16-4-video-integration-benchmarks-and-operator-evidence.md`
+  Status: completed. The repository now ships a live-path video runtime smoke workflow, a
+  machine-readable video operator-evidence metrics report, focused acceptance-metrics plus
+  integration coverage, and a dedicated runbook for reproducing and diagnosing the current video
+  path.
 
 ## M17: Speech Backends And Voice Catalog
 

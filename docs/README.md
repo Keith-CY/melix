@@ -119,6 +119,7 @@ Current phase-status and planning documents:
 - `plans/2026-03-31-m16-2-frame-policy-video-runtime-and-background-lane-routing.md`
 - `plans/2026-03-31-m16-3-temporary-media-lifecycle-cleanup-and-failure-recovery.md`
 - `plans/2026-03-31-m16-4-video-integration-benchmarks-and-operator-evidence.md`
+- `runbooks/video-understanding-evidence.md`
 - `plans/2026-03-31-m17-1-speech-to-text-backend-adapters-and-model-matrix.md`
 - `plans/2026-03-31-m17-2-text-to-speech-backend-adapters-and-multilingual-voice-catalog.md`
 - `plans/2026-03-31-m17-3-speech-settings-locale-policy-and-optional-dependency-profiles.md`

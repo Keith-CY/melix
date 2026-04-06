@@ -108,6 +108,92 @@ def build_phase6_vision_metrics_report(
     }
 
 
+def build_phase16_video_metrics_report(
+    *,
+    local_path: dict[str, Any],
+    remote_url: dict[str, Any],
+    bounded_window: dict[str, Any],
+    routing: dict[str, Any],
+) -> dict[str, Any]:
+    checks = {
+        "video.local_path_success": bool(local_path.get("success")),
+        "video.remote_url_success": bool(remote_url.get("success")),
+        "video.bounded_window_success": bool(bounded_window.get("success")),
+        "video.routing.text_protection_success": bool(routing.get("text_protection_success")),
+    }
+    passed_checks = sum(1 for value in checks.values() if value)
+    total_checks = len(checks)
+
+    metrics = {
+        "video.integration_success_rate": _success_rate(passed_checks, total_checks),
+        "video.local_path_success_rate": _success_rate(
+            int(checks["video.local_path_success"]), 1
+        ),
+        "video.remote_url_success_rate": _success_rate(
+            int(checks["video.remote_url_success"]), 1
+        ),
+        "video.bounded_window_success_rate": _success_rate(
+            int(checks["video.bounded_window_success"]), 1
+        ),
+        "video.routing.text_protection_success_rate": _success_rate(
+            int(checks["video.routing.text_protection_success"]), 1
+        ),
+        "video.local_path.request_latency_ms": _rounded_float(
+            local_path.get("request_latency_ms")
+        ),
+        "video.remote_url.request_latency_ms": _rounded_float(
+            remote_url.get("request_latency_ms")
+        ),
+        "video.bounded_window.request_latency_ms": _rounded_float(
+            bounded_window.get("request_latency_ms")
+        ),
+        "video.routing.video_request_latency_ms": _rounded_float(
+            routing.get("video_request_latency_ms")
+        ),
+        "video.routing.text_request_latency_ms": _rounded_float(
+            routing.get("text_request_latency_ms")
+        ),
+        "vision.video_first_token_ms": _rounded_float(
+            bounded_window.get("video_first_token_ms")
+        ),
+        "vision.preprocess_latency_ms": _rounded_float(
+            bounded_window.get("preprocess_latency_ms")
+        ),
+        "vision.video_frame_count": _rounded_float(bounded_window.get("video_frame_count")),
+        "vision.video_frame_budget": _rounded_float(
+            bounded_window.get("video_frame_budget")
+        ),
+        "vision.video_window_ms": _rounded_float(bounded_window.get("video_window_ms")),
+        "vision.temp_media_artifact_count": _rounded_float(
+            bounded_window.get("temp_media_artifact_count")
+        ),
+        "vision.temp_media_artifact_bytes": _rounded_float(
+            bounded_window.get("temp_media_artifact_bytes")
+        ),
+        "vision.temp_media_cleanup_latency_ms": _rounded_float(
+            bounded_window.get("temp_media_cleanup_latency_ms")
+        ),
+        "vision.temp_media_cleanup_failure_count": _rounded_float(
+            bounded_window.get("temp_media_cleanup_failure_count")
+        ),
+        "scheduler.text_ttft_under_multimodal_ms": _rounded_float(
+            routing.get("scheduler_text_ttft_under_multimodal_ms")
+        ),
+        "scheduler.multimodal_queue_delay_ms": _rounded_float(
+            routing.get("scheduler_multimodal_queue_delay_ms")
+        ),
+    }
+
+    return {
+        "checks": checks,
+        "metrics": metrics,
+        "local_path": local_path,
+        "remote_url": remote_url,
+        "bounded_window": bounded_window,
+        "routing": routing,
+    }
+
+
 def build_phase8_metrics_report(
     *,
     cold_boot_to_ready_ms: float | None = None,

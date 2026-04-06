@@ -2,79 +2,78 @@
 
 ## Goal
 
-Close `M16.3` by making temporary media artifacts created for multimodal analysis explicit,
-deterministically cleaned up, and failure-visible through worker runtime state instead of leaving
-cleanup hidden inside ad hoc temporary-directory scopes.
+Close `M16.4` by leaving video understanding with one repository-owned operator-evidence workflow:
+live-path smoke coverage for representative video requests, measurable preprocessing/routing/latency
+data, and a runbook that explains how to reproduce and diagnose the current video path.
 
 ## Scope
 
-- introduce one repository-owned temporary-media lifecycle helper for VLM analysis assets
-- replace implicit `TemporaryDirectory` cleanup in the MLX VLM runtime with explicit artifact
-  registration, cleanup reporting, and deterministic failure handling
-- project temporary-media cleanup evidence into worker runtime stats and control-plane metrics
-- add focused worker, control-plane, and integration coverage for success, cancellation, and
-  cleanup-failure branches
-- update the active M16.3 plan and roadmap bookkeeping once acceptance is met
+- add a repository-owned `M16.4` video smoke command or script that exercises:
+  - one short local video path
+  - one remote video URL
+  - one bounded multi-frame workload
+- capture operator-relevant metrics for video requests, including preprocessing, routing, latency,
+  frame-policy, and cleanup evidence
+- add integration and unit coverage for the smoke payload and any new metrics-report helper
+- document the workflow in a dedicated runbook and update repository indexes once complete
 
 ## Measurement Points
 
-- temporary analysis assets are created under one inspectable session root with explicit artifact
-  counts and byte totals
-- success, failure, and cancellation paths all execute the same cleanup policy rather than relying
-  on hidden context-manager teardown
-- worker runtime stats surface cleanup artifact count, cleanup latency, and cleanup failure count
+- smoke output records per-scenario request latency and control-plane metric evidence
+- at least one scenario proves local-path video ingress, one proves remote-URL ingress, and one
+  proves bounded multi-frame window semantics
+- operator evidence includes background-lane or queue diagnosis signals rather than only response
+  payload checks
 - changed-line coverage for the touched executable scope remains at or above `95%`
 
 ## Phases
 
-1. Current-state review and M16.3 boundary lock
+1. M16.4 boundary lock and evidence-shape design
    - status: completed
    - evidence:
-     - reviewed the parent `M16` roadmap slice plus the dedicated `M16.3` plan
-     - confirmed the current executable temp-media path is concentrated in
-       `worker/runtime/mlx_vlm_runtime.py`, with cleanup still implicit through
-       `TemporaryDirectory`
-     - confirmed `M16.3` should stop at worker lifecycle, cleanup observability, and runbook
-       evidence rather than expanding into benchmark or operator-shell work (`M16.4`)
-2. Temporary-media lifecycle helper and runtime adoption
+     - reviewed the umbrella `M16` roadmap slice, the dedicated `M16.4` plan, and existing smoke
+       patterns used by `M9.3`, `M11.4`, `M15.4`, and Phase 6 multimodal metrics reporting
+     - confirmed the preferred shape is a repository-owned smoke script plus metrics-report helper,
+       with no new operator UI surface required in this slice
+2. Video smoke workflow and metrics report implementation
    - status: completed
    - evidence:
-     - added `worker/runtime/temp_media_lifecycle.py` so one repository-owned temp-media session
-       now records staged artifact count, byte totals, cleanup latency, and cleanup failures
-     - adopted that helper in both deterministic and MLX VLM runtimes, replacing hidden temporary
-       directory teardown with explicit success, failure, and cancellation cleanup
-     - updated prepared video inputs to preserve inline bytes so staged multimodal analysis assets
-       share one deterministic lifecycle surface
-3. Runtime stats, control-plane metrics, and failure projection
+     - added `scripts/m16_video_runtime_smoke.py` so one repository-owned smoke workflow now
+       exercises local-path, remote-URL, bounded inline multi-frame, and routing-under-load video
+       requests through the live HTTP path
+     - added `build_phase16_video_metrics_report(...)` plus export wiring so the touched scope now
+       emits machine-readable success rates and operator metrics for video request latency,
+       frame-policy, cleanup, and scheduler evidence
+3. Integration coverage and runbook evidence
    - status: completed
    - evidence:
-     - extended worker runtime stats plus registry bookkeeping with
-       `last_temp_media_artifact_count`, `last_temp_media_artifact_bytes`,
-       `last_temp_media_cleanup_latency_ms`, and `last_temp_media_cleanup_failure_count`
-     - projected temporary-media cleanup evidence through control-plane OCR and VLM metric
-       publication so multimodal routes expose cleanup visibility outside Python logs
-4. Focused verification and roadmap bookkeeping
+     - added `tests/integration/test_video_runtime_smoke.py` and expanded
+       `services/mlx-worker-python/tests/test_acceptance_metrics.py` so the smoke payload and
+       acceptance-metrics helper are covered together
+     - added `docs/runbooks/video-understanding-evidence.md` plus runbook and docs indexes so
+       reproduction, metric interpretation, cleanup diagnosis, and background-lane debugging are
+       documented in one repository-owned path
+4. Verification and roadmap bookkeeping
    - status: completed
    - evidence:
-     - added focused Python, Swift, and integration tests that cover success, cancellation, and
-       cleanup-failure branches across runtime, registry, control-plane, and lifecycle integration
-     - focused Python changed-line coverage reached `95.83%` (`207/216`) and focused Swift
-       changed-line coverage reached `100.00%` (`64/64`)
-     - `progress.md`, the dedicated `M16.3` plan, and the roadmap execution index are updated
-       together with the implementation once the full verification summary is recorded
+     - focused `pytest` verification passed for the touched Python and integration scope, Python
+       changed-line coverage reached `100.00%` (`52/52`), and full `make py-test` passed
+     - `progress.md`, the dedicated `M16.4` plan, the umbrella `M16` roadmap file, and the
+       execution index are updated together once acceptance is met
 
 ## Acceptance
 
-- temporary media artifacts are created and cleaned through one explicit lifecycle helper
-- cleanup failures are surfaced through stable runtime-state counters and test-covered metrics
-- success, failure, and cancellation all prove deterministic cleanup behavior
-- focused verification already proves the touched scope at or above `95%` changed-line coverage
-  before commit, with full-repository verification being recorded in `progress.md`
+- the repository owns reproducible live-path operator evidence for representative video workloads
+- smoke output records truthful preprocessing, routing, latency, frame-policy, and cleanup data
+- runbook guidance explains how to reproduce and diagnose the current video path without unwritten
+  context
+- verification proves the touched executable scope at or above `95%` changed-line coverage before
+  commit, and the current touched Python scope reaches `100.00%` (`52/52`)
 
 ## Risks
 
-- if cleanup remains hidden inside `TemporaryDirectory`, future video frame extraction and transcode
-  work will be impossible to observe or recover cleanly
-- if cleanup counters live only in Python logs, the control plane will not be able to distinguish
-  worker-health regressions from benign request failures
-- if `M16.3` starts inventing operator-shell UI now, it will blur the boundary with `M16.4`
+- if the smoke workflow only checks response text, `M16.4` will miss the operator-evidence goal
+- if remote-URL video evidence depends on an external network resource, the smoke will become
+  flaky and non-repository-owned
+- if the runbook omits queue and cleanup diagnosis, contributors will still need code spelunking to
+  interpret video failures
