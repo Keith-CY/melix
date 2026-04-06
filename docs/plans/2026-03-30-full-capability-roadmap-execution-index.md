@@ -270,6 +270,10 @@ The roadmap extension in `M10-M17` includes milestone-level plans plus decompose
   unavailability, and the Window UI exposes redo or reiteration actions plus timeout-aware status
   text from control-plane-owned truth.
 - `M14.4` `docs/plans/2026-03-31-m14-4-image-iteration-integration-and-artifact-lineage-evidence.md`
+  Status: completed. The shipped HTTP image payload now exposes lineage and redo-inspection fields,
+  live integration coverage proves variation, iterate, and redo reconstruction from repository
+  artifacts, and `make phase7-metrics` plus the image operator runbook provide reproducible timeout,
+  lineage, queueing, and cancelation evidence for the completed `M14` workflow family.
 
 ## M15: Desktop Signals, Download Recovery, And Streaming Polish
 

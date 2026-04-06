@@ -3582,6 +3582,10 @@ struct OpenAIHandlerTests {
         #expect(request.artifactNamespace == "tests")
         #expect(payload.contains("\"job_id\":\"image-generate-1::image-generate\""))
         #expect(payload.contains("\"operation\":\"image_generate\""))
+        #expect(payload.contains("\"request_timeout_seconds\":1800"))
+        #expect(payload.contains("\"recipe\":{"))
+        #expect(payload.contains("\"prompt\":\"red fox in snow\""))
+        #expect(payload.contains("\"artifact_namespace\":\"tests\""))
         #expect(payload.contains("\"b64_json\":\"Z2VuZXJhdGVkLWltYWdl\""))
         #expect(job.state == .imageJobCompleted)
         #expect(job.lane == "image.generate.background")
@@ -3779,11 +3783,108 @@ struct OpenAIHandlerTests {
         #expect(request.editMode == .iterate)
         #expect(request.ext["melix.image.source_job_id"] == "job-source")
         #expect(payload.contains("\"operation\":\"image_iterate\""))
+        #expect(payload.contains("\"source_artifact_id\":\"artifact-source\""))
+        #expect(payload.contains("\"source_job_id\":\"job-source\""))
+        #expect(payload.contains("\"prompt_delta\":\"make the colors warmer\""))
+        #expect(payload.contains("\"edit_mode\":\"iterate\""))
+        #expect(payload.contains("\"request_timeout_seconds\":1800"))
+        #expect(payload.contains("\"source_image_uri\":\""))
+        #expect(payload.contains("\"parent_artifact_id\":\"artifact-source\""))
         #expect(job.operation == "image_iterate")
         #expect(job.sourceArtifactID == "artifact-source")
         #expect(job.sourceJobID == "job-source")
         #expect(job.promptDelta == "make the colors warmer")
         #expect(job.editMode == .iterate)
+    }
+
+    @Test("POST /v1/images/edits includes variation lineage payload fields")
+    func postImageEditsIncludeVariationLineagePayloadFields() async throws {
+        let textClient = ScriptedWorkerClient(events: [])
+        let imageClient = ScriptedPhaseFiveWorkerClient()
+        await imageClient.setImageEditResponse({
+            var response = Melix_Worker_V1_ImageEditResponse()
+            response.images = [Data("variation-image".utf8)]
+            response.job.requestID = "image-edit-variation"
+            response.job.jobID = "image-edit-variation::image-edit"
+            response.job.modelHandle = "melix-dev-image::python"
+            response.job.operation = "image_variation"
+            response.job.state = .imageJobCompleted
+            response.job.sourceArtifactID = "artifact-source"
+            response.job.sourceJobID = "job-source"
+            response.job.editMode = .variation
+            var generated = makeWorkerArtifact(
+                jobID: "image-edit-variation::image-edit",
+                role: .imageArtifactGenerated,
+                artifactID: "variation-output"
+            )
+            generated.parentArtifactID = "artifact-source"
+            response.job.artifacts = [generated]
+            return response
+        }())
+
+        let imageJobReadModel = ImageJobReadModel()
+        var sourceArtifact = Melix_Controlplane_V1_ImageArtifactRef()
+        sourceArtifact.artifactID = "artifact-source"
+        sourceArtifact.jobID = "job-source"
+        sourceArtifact.role = .imageArtifactGenerated
+        sourceArtifact.mimeType = "image/png"
+        sourceArtifact.format = "png"
+        sourceArtifact.width = 256
+        sourceArtifact.height = 256
+        sourceArtifact.byteLength = 64
+        sourceArtifact.storageUri = "file:///tmp/source-origin.png"
+        sourceArtifact.variantIndex = 0
+        await imageJobReadModel.recordQueued(
+            requestID: "req-image-source-variation",
+            jobID: "job-source",
+            modelID: "melix-dev-image",
+            operation: "image_generate",
+            lane: "image.generate.background"
+        )
+        await imageJobReadModel.recordCompleted(jobID: "job-source", artifacts: [sourceArtifact])
+
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel(), ModelCatalog.devImageModel()])
+        _ = await catalog.loadModel(id: "melix-dev-image", dispatchHandle: "melix-dev-image::python")
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: textClient),
+                abortRegistry: AbortRegistry()
+            ),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: textClient,
+                pythonCompatibilityClient: imageClient,
+                modelCatalog: catalog
+            ),
+            imageJobReadModel: imageJobReadModel
+        )
+
+        let body = try #require(
+            """
+            {
+              "id": "image-edit-variation",
+              "model": "melix-dev-image",
+              "prompt": "keep composition",
+              "source_artifact_id": "artifact-source",
+              "edit_mode": "variation",
+              "strength": 0.7,
+              "size": "256x256",
+              "response_format": "png",
+              "n": 1
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(method: .post, path: "/v1/images/edits", headers: [:], body: body)
+        )
+        let payload = try await collectBody(response.body)
+
+        #expect(response.statusCode == 200)
+        #expect(payload.contains("\"operation\":\"image_variation\""))
+        #expect(payload.contains("\"source_artifact_id\":\"artifact-source\""))
+        #expect(payload.contains("\"edit_mode\":\"variation\""))
+        #expect(payload.contains("\"parent_artifact_id\":\"artifact-source\""))
     }
 
     @Test("image endpoints validate payloads and return 409 and 503 when routing is unavailable")

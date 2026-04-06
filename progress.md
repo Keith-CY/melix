@@ -2,6 +2,42 @@
 
 ## 2026-04-06
 
+- Closed `M14.4` and completed `M14` by adding repository-owned image-iteration evidence on top of
+  the shipped HTTP image surface:
+  - expanded the OpenAI-compatible image job payload so HTTP responses now expose lineage and redo
+    inspection fields including `source_artifact_id`, `source_job_id`, `prompt_delta`,
+    `edit_mode`, `request_timeout_seconds`, `recipe`, and artifact `parent_artifact_id`
+  - added live integration coverage for baseline generate, variation, iterate, and redo
+    reconstruction so repository tests now prove iterative image workflows from shipped payload
+    truth instead of internal read-model shortcuts
+  - extended `scripts/phase7_metrics_report.py` so `make phase7-metrics` now prints
+    `image_variation`, `image_iterate`, `image_redo`, and `image_timeout` evidence alongside the
+    existing queueing, cancelation, and text-under-image-load report
+  - updated the Phase 7 image operator runbook so contributors can reproduce iterative workflows
+    and inspect lineage or timeout policy from documented commands alone
+- Verification summary for `M14.4`:
+  - `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/.build/ModuleCache.noindex" swift test --enable-code-coverage --package-path services/control-plane-swift --filter 'OpenAIHandlerTests'`: `107 tests in 1 suite passed`
+  - `PYTHONPATH='.:services/mlx-worker-python' uv run --project services/mlx-worker-python pytest services/mlx-worker-python/tests/test_phase7_metrics_report.py -q`: `11 passed in 0.37s`
+  - `PYTHONPATH='.:services/mlx-worker-python' uv run --project services/mlx-worker-python pytest tests/integration/test_phase7_operator_workflows.py -k 'iteration or timeout' -q`: `2 passed, 2 deselected in 24.47s`
+  - `make phase7-metrics`: pass
+  - `git diff --check`: pass
+- Metrics report for `M14.4`:
+  - real `make phase7-metrics` evidence:
+    - `image_generate.request_latency_ms = 367.68`, `job_latency_ms = 126.62`, `artifact_publish_ms = 1.15`, `peak_memory_bytes = 65536`, `output_bytes = 94`, `timeout_seconds = 1800`
+    - `image_variation.request_latency_ms = 368.99`, `job_latency_ms = 125.51`, `artifact_publish_ms = 0.46`
+    - `image_iterate.request_latency_ms = 358.81`, `job_latency_ms = 120.90`, `artifact_publish_ms = 0.49`, `prompt_delta = make the colors warmer`
+    - `image_redo.request_latency_ms = 366.44`, `job_latency_ms = 123.39`, `artifact_publish_ms = 0.48`, `edit_mode = iterate`
+    - `image_queue.queue_wait_ms = 570.74`
+    - `text_under_image.scheduler_text_ttft_ms = 111.08`
+    - `image_cancel.cancel_success = 1`, `response_status = 409`
+    - `image_timeout.response_status = 504`, `error_code = deadline_exceeded`, `timeout_seconds = 1`
+  - changed-line coverage for the touched handwritten executable scope:
+    - Swift gateway scope: `100.00%` (`138/138`)
+    - Python script plus integration scope: `100.00%` (`142/142`)
+    - aggregate touched-scope coverage: `100.00%` (`280/280`)
+  - documentation files are excluded from executable changed-line coverage because they are
+    non-runtime assets rather than handwritten executable logic
+
 - Closed `M14.3` by making creative image redo or reiteration flows operator-visible and by
   turning long-running image requests into typed timeout policy instead of generic worker
   unavailability:

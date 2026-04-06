@@ -2666,6 +2666,7 @@ private struct OpenAIImageDatum: Codable {
 private struct OpenAIImageArtifactPayload: Codable {
     let artifactID: String
     let jobID: String
+    let parentArtifactID: String
     let role: String
     let mimeType: String
     let format: String
@@ -2679,6 +2680,7 @@ private struct OpenAIImageArtifactPayload: Codable {
     init(artifact: Melix_Controlplane_V1_ImageArtifactRef) {
         artifactID = artifact.artifactID
         jobID = artifact.jobID
+        parentArtifactID = artifact.parentArtifactID
         role = artifact.role.melixString
         mimeType = artifact.mimeType
         format = artifact.format
@@ -2693,6 +2695,7 @@ private struct OpenAIImageArtifactPayload: Codable {
     enum CodingKeys: String, CodingKey {
         case artifactID = "artifact_id"
         case jobID = "job_id"
+        case parentArtifactID = "parent_artifact_id"
         case role
         case mimeType = "mime_type"
         case format
@@ -2711,11 +2714,18 @@ private struct OpenAIImageJobPayload: Codable {
     let modelID: String
     let operation: String
     let state: String
+    let progress: OpenAIImageJobProgressPayload
     let lane: String
     let workerID: String
     let cancelable: Bool
     let createdAtUnixMs: Int64
     let updatedAtUnixMs: Int64
+    let sourceArtifactID: String
+    let sourceJobID: String
+    let promptDelta: String
+    let editMode: String
+    let requestTimeoutSeconds: UInt32
+    let recipe: OpenAIImageJobRecipePayload
     let artifacts: [OpenAIImageArtifactPayload]
 
     init(job: Melix_Controlplane_V1_ImageJobSummary) {
@@ -2724,11 +2734,18 @@ private struct OpenAIImageJobPayload: Codable {
         modelID = job.modelID
         operation = job.operation
         state = job.state.melixString
+        progress = OpenAIImageJobProgressPayload(progress: job.progress)
         lane = job.lane
         workerID = job.workerID
         cancelable = job.cancelable
         createdAtUnixMs = job.createdAtUnixMs
         updatedAtUnixMs = job.updatedAtUnixMs
+        sourceArtifactID = job.sourceArtifactID
+        sourceJobID = job.sourceJobID
+        promptDelta = job.promptDelta
+        editMode = job.editMode.melixString
+        requestTimeoutSeconds = job.timeoutSeconds
+        recipe = OpenAIImageJobRecipePayload(recipe: job.recipe)
         artifacts = job.artifacts.map(OpenAIImageArtifactPayload.init)
     }
 
@@ -2738,12 +2755,82 @@ private struct OpenAIImageJobPayload: Codable {
         case modelID = "model_id"
         case operation
         case state
+        case progress
         case lane
         case workerID = "worker_id"
         case cancelable
         case createdAtUnixMs = "created_at_unix_ms"
         case updatedAtUnixMs = "updated_at_unix_ms"
+        case sourceArtifactID = "source_artifact_id"
+        case sourceJobID = "source_job_id"
+        case promptDelta = "prompt_delta"
+        case editMode = "edit_mode"
+        case requestTimeoutSeconds = "request_timeout_seconds"
+        case recipe
         case artifacts
+    }
+}
+
+private struct OpenAIImageJobProgressPayload: Codable {
+    let stage: String
+    let pct: Float
+    let completedSteps: UInt32
+    let totalSteps: UInt32
+
+    init(progress: Melix_Controlplane_V1_ImageJobProgress) {
+        stage = progress.stage
+        pct = progress.pct
+        completedSteps = progress.completedSteps
+        totalSteps = progress.totalSteps
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case stage
+        case pct
+        case completedSteps = "completed_steps"
+        case totalSteps = "total_steps"
+    }
+}
+
+private struct OpenAIImageJobRecipePayload: Codable {
+    let prompt: String
+    let size: String
+    let steps: UInt32
+    let guidance: Float
+    let strength: Float
+    let negativePrompt: String
+    let variantCount: UInt32
+    let responseFormat: String
+    let artifactNamespace: String
+    let sourceImageURI: String
+    let maskURI: String
+
+    init(recipe: Melix_Controlplane_V1_ImageJobRecipeSummary) {
+        prompt = recipe.prompt
+        size = recipe.size
+        steps = recipe.steps
+        guidance = recipe.guidance
+        strength = recipe.strength
+        negativePrompt = recipe.negativePrompt
+        variantCount = recipe.variantCount
+        responseFormat = recipe.responseFormat
+        artifactNamespace = recipe.artifactNamespace
+        sourceImageURI = recipe.sourceImageUri
+        maskURI = recipe.maskUri
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case prompt
+        case size
+        case steps
+        case guidance
+        case strength
+        case negativePrompt = "negative_prompt"
+        case variantCount = "variant_count"
+        case responseFormat = "response_format"
+        case artifactNamespace = "artifact_namespace"
+        case sourceImageURI = "source_image_uri"
+        case maskURI = "mask_uri"
     }
 }
 
@@ -2806,6 +2893,21 @@ private extension Melix_Controlplane_V1_ImageJobState {
             return "completed"
         default:
             return "unknown"
+        }
+    }
+}
+
+private extension Melix_Controlplane_V1_ImageEditMode {
+    var melixString: String {
+        switch self {
+        case .variation:
+            return "variation"
+        case .iterate:
+            return "iterate"
+        case .edit:
+            return "edit"
+        default:
+            return "unspecified"
         }
     }
 }

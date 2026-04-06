@@ -2,88 +2,87 @@
 
 ## Goal
 
-Close `M14.3` by making redo and reiteration actions operator-visible and by turning image request
-timeouts into explicit, longer-running creative-workflow policy instead of generic worker
-unavailable failures.
+Close `M14.4` by adding live image-iteration integration coverage, repository-owned lineage and
+timeout evidence, and operator runbook material that reproduces variation, iterate, and redo
+workflows from stored artifact and job metadata alone.
 
 ## Scope
 
-- persist enough image job recipe state to redo or reiterate from stable control-plane truth
-- expose always-visible redo and reiteration actions in the Window UI image workspace
-- apply a creative image request timeout policy with a `30-minute` default and typed timeout errors
-- keep timeout, retry, and cancel state distinguishable across control-plane, HTTP, and Window UI
-  surfaces
+- add live integration coverage for baseline generate, variation, iterate, redo reconstruction,
+  timeout, and cancel evidence across the shipped HTTP image surface
+- extend the repository-owned image metrics smoke so it records variation, iterate, lineage, and
+  timeout evidence instead of only baseline generate or edit latency
+- update the image operator runbook and runbook indexes so contributors can reproduce iterative
+  creative workflows and inspect lineage without unwritten desktop-local context
 
 ## Measurement Points
 
-- selected image jobs expose stable recipe state for prompt, size, creative parameters, and source
-  lineage without relying on Window-UI-local copies
-- redo can re-submit the selected job from persisted job state, and reiterate can seed an iterate
-  workflow from a selected generated artifact
-- image worker timeouts surface as explicit `deadline_exceeded` failures rather than collapsing into
-  generic worker-unavailable errors
-- the active image timeout policy remains operator-visible through snapshot or job state projection
+- one live smoke proves that a generated artifact can seed a variation request, an iterate request,
+  and a redo reconstruction driven from persisted job recipe truth
+- response payloads and recorded evidence keep `source_artifact_id`, `parent_artifact_id`,
+  `prompt_delta`, `edit_mode`, and timeout policy visible enough to inspect lineage and recovery
+  behavior after the run completes
+- repository-owned metrics output distinguishes baseline generation, variation, iterate, queueing,
+  cancelation, and timeout-triggered failure evidence
 - changed-line coverage for the touched handwritten executable scope remains at or above `95%`
 
 ## Phases
 
-1. Current-state review and execution contract
+1. Current-state review and evidence-gap mapping
    - status: completed
    - evidence:
-     - reviewed `M14.3` and the umbrella `M14` plan plus the current image workspace and confirmed
-       the Window UI still exposes only generate/edit submit and cancel actions, with no redo or
-       reiterate workflow on top of the typed `variation` and `iterate` contract
-     - inspected the control-plane, OpenAI image handler, Python bridge, and image read-model paths
-       and confirmed image requests currently have no explicit long-running timeout policy and map
-       bridge failures into generic unavailable states
-2. Persisted recipe and timeout policy projection
+     - reviewed `M14.4`, the `M14` umbrella plan, the existing Phase 7 smoke, and the image
+       operator runbook and confirmed the repository still lacks one live path that proves
+       variation, iterate, and redo reconstruction from persisted lineage
+     - confirmed current metrics and runbook material still focus on baseline generate or edit,
+       queueing, cancelation, and timeout evidence rather than iterative follow-up workflows
+2. Live image-iteration integration evidence
    - status: completed
    - evidence:
-     - extended the control-plane image job summary contract with `recipe`,
-       `request_timeout_seconds`, and recipe-summary projection so selected jobs keep stable prompt,
-       size, strength, negative prompt, and lineage truth for redo or reiteration flows
-     - projected the active image timeout policy through control-plane snapshot and request summary
-       truth so the Window UI can inspect the creative-workflow deadline without relying on
-       desktop-local defaults
-3. Timeout-aware bridge and control-plane mapping
+     - added a live integration smoke that drives baseline generation into variation and iterate
+       requests using `source_artifact_id` and reconstructs redo from the returned job recipe plus
+       lineage fields
+     - asserted persisted lineage and timeout fields directly from shipped HTTP payloads instead of
+       internal test-only helpers, including `request_timeout_seconds`, `source_artifact_id`,
+       `source_job_id`, `prompt_delta`, `edit_mode`, `recipe`, and `parent_artifact_id`
+3. Metrics and evidence reporting
    - status: completed
    - evidence:
-     - added a default `30-minute` image request deadline in the Python bridge with deterministic
-       test override coverage through `MELIX_IMAGE_REQUEST_TIMEOUT_SECONDS`
-     - mapped image worker deadline failures into typed `deadline_exceeded` image-job failures,
-       explicit `timed_out` progress state, and OpenAI-compatible `504` responses instead of
-       collapsing into generic unavailable failures
-4. Window UI redo and reiteration flows
+     - extended the repository-owned image metrics smoke to print variation, iterate, redo, and
+       timeout evidence alongside the existing Phase 7 latency and queue metrics
+     - kept the evidence reproducible from repository scripts and runtime artifacts alone through
+       `make phase7-metrics`, including real local output for `image_variation`, `image_iterate`,
+       `image_redo`, and `image_timeout`
+4. Runbook and milestone bookkeeping
    - status: completed
    - evidence:
-     - added always-visible redo and reiteration actions, timeout-policy inspection, timeout-aware
-       status text, and edit-mode/source-artifact inspection in the Window UI image workspace and
-       inspector
-     - drove redo and reiteration from persisted job recipe state plus artifact lineage instead of
-       UI-local temporary copies
-5. Verification and milestone bookkeeping
+     - updated the image operator runbook and runbook index so contributors can reproduce the
+       iterative workflow and inspect lineage or timeout recovery from documented commands
+     - updated the roadmap execution index and progress log to close `M14.4` and complete `M14`
+5. Verification and commit
    - status: completed
    - evidence:
-     - reran focused Swift control-plane and menu-bar suites plus focused Python and integration
-       timeout coverage, then measured changed-line coverage for the touched Swift and Python scope
-       above the `95%` threshold
-     - updated the roadmap execution index and progress log to close `M14.3`
+     - reran focused Swift gateway tests, focused Python script tests, focused iteration
+       integration coverage, real `make phase7-metrics`, and changed-line coverage for the touched
+       Swift and Python scope
+     - prepared a metrics report and milestone bookkeeping for a signed commit
 
 ## Acceptance
 
-- redo flows and longer-running timeout policy are explicit, operator-visible, and test-covered
-- timeout-triggered image failures remain distinguishable from cancelation and generic worker
-  failures
-- reiteration actions are backed by stable image-job lineage rather than ad hoc desktop-only state
+- iterative image workflows have live integration coverage and reproducible lineage evidence
+- operators can reproduce variation, iterate, redo, timeout, and cancel flows from repository
+  artifacts and documented commands alone
+- `M14` can be treated as closed in the roadmap execution index once `M14.4` evidence lands
 
 ## Risks
 
-- storing too little recipe state will make redo or reiteration depend on ephemeral UI inputs
-- adding timeout handling only in one surface could leave HTTP and local Window UI behavior
-  inconsistent
-- timeout escalation could leak bridge subprocesses if the timeout policy does not terminate the
-  worker-bridge command cleanly
+- if the redo evidence depends on UI-only state, the runbook will not be reproducible from
+  repository artifacts alone
+- if the metrics smoke emits only latency numbers without lineage context, the milestone will still
+  lack the operator-visible evidence required by `M14.4`
+- if the new integration smoke reuses existing helpers too loosely, it may pass without actually
+  proving variation or iterate lineage on the shipped HTTP contract
 
 ## Outcome
 
-- m14_3_redo_timeout_policy_completed
+- m14_4_iteration_lineage_evidence_completed
