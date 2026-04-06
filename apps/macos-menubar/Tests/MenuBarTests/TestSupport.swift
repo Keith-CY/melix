@@ -12,6 +12,16 @@ enum MenuBarTestEnvironment {
 }
 
 actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
+    struct ScheduledChatEvent: Equatable, Sendable {
+        let delay: Duration
+        let event: ControlPlaneChatStreamEvent
+
+        init(delay: Duration = .zero, event: ControlPlaneChatStreamEvent) {
+            self.delay = delay
+            self.event = event
+        }
+    }
+
     struct RecordedModelOperationRequest: Equatable, Sendable {
         let modelID: String
         let operation: String
@@ -230,6 +240,7 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
         exportBundleJSON: #"{"export_schema_version":"melix.benchmark_export.v1","benchmark_jobs":[],"benchmark_results":[]}"#
     )
     private var chatEvents = FakeControlPlaneXPCClient.defaultChatEvents()
+    private var scheduledChatEvents: [ScheduledChatEvent]?
     private var imageGenerateResponse = makeMenuBarImageJobSummary(
         jobID: "image-generate-1::image-generate",
         requestID: "image-generate-1",
@@ -353,6 +364,11 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
 
     func configureChatEvents(_ events: [ControlPlaneChatStreamEvent]) {
         chatEvents = events
+        scheduledChatEvents = nil
+    }
+
+    func configureScheduledChatEvents(_ events: [ScheduledChatEvent]) {
+        scheduledChatEvents = events
     }
 
     func configureImageResponses(
@@ -411,14 +427,26 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
             throw chatError
         }
         let events = chatEvents
+        let scheduledEvents = scheduledChatEvents
         return ControlPlaneChatExecution(
             requestID: "chat-request-1",
             modelID: request.modelID,
             stream: AsyncThrowingStream { continuation in
-                for event in events {
-                    continuation.yield(event)
+                Task {
+                    if let scheduledEvents {
+                        for scheduled in scheduledEvents {
+                            if scheduled.delay > .zero {
+                                try? await Task.sleep(for: scheduled.delay)
+                            }
+                            continuation.yield(scheduled.event)
+                        }
+                    } else {
+                        for event in events {
+                            continuation.yield(event)
+                        }
+                    }
+                    continuation.finish()
                 }
-                continuation.finish()
             }
         )
     }

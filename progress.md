@@ -2,6 +2,40 @@
 
 ## 2026-04-06
 
+- Closed `M15.1` by adding UI-side token-stream presentation smoothing in the desktop shell
+  without changing control-plane stream truth:
+  - added a menubar-owned chat presentation queue in `RuntimeViewModel` so assistant, reasoning,
+    and tool deltas now flush across multiple UI ticks instead of jumping into the transcript as
+    one burst when upstream delivery arrives chunked
+  - preserved transcript fidelity by flushing buffered text before terminal completion or failure
+    state is committed and by resetting the smoothing task on transport failure or transcript clear
+  - added explicit `menu.chat_presentation_lag_ms` and `menu.chat_presentation_flush_count`
+    metrics so the UI-side smoothing delay remains measurable rather than hiding stream regressions
+  - extended menu-bar test support with scheduled chat events and added bursty-stream coverage that
+    proves partial presentation before completion while preserving exact final transcript text
+- Verification summary for `M15.1`:
+  - `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/.build/ModuleCache.noindex" swift test --enable-code-coverage --package-path apps/macos-menubar --filter 'RuntimeViewModelTests'`: `157 tests in 1 suite passed after 0.910 seconds`
+  - `python3 scripts/swift_changed_line_coverage.py --binary apps/macos-menubar/.build/arm64-apple-macosx/debug/MelixMacOSMenubarPackageTests.xctest/Contents/MacOS/MelixMacOSMenubarPackageTests --profdata apps/macos-menubar/.build/arm64-apple-macosx/debug/codecov/default.profdata apps/macos-menubar/Sources/AppMain/Models/RuntimeViewModel.swift apps/macos-menubar/Tests/MenuBarTests/RuntimeViewModelTests.swift apps/macos-menubar/Tests/MenuBarTests/TestSupport.swift`: `98.09%` (`205/209`)
+  - `make swift-test`: failed outside the touched scope when `services/mlx-text-worker-swift`
+    exited with unexpected signal `11` during `WorkerScaffoldTests`; the touched menu-bar package
+    passed under the focused coverage-enabled command above
+  - `git diff --check`: pass
+- Metrics report for `M15.1`:
+  - deterministic smoothing evidence exercised by the touched scope:
+    - bursty assistant deltas now appear as a partial transcript row before completion instead of a
+      one-shot final jump
+    - `menu.chat_presentation_lag_ms` is recorded whenever the smoothing queue flushes buffered
+      chat text
+    - `menu.chat_presentation_flush_count` is greater than `1` for the scheduled bursty-stream
+      coverage, proving multiple UI flushes rather than one append
+  - changed-line coverage for the touched handwritten executable scope:
+    - `RuntimeViewModel.swift`: `97.20%` (`139/143`)
+    - `RuntimeViewModelTests.swift`: `100.00%` (`43/43`)
+    - `TestSupport.swift`: `100.00%` (`23/23`)
+    - aggregate touched-scope coverage: `98.09%` (`205/209`)
+  - `task_plan.md` is excluded from executable changed-line coverage because it is planning
+    documentation rather than handwritten runtime logic
+
 - Closed `M14.4` and completed `M14` by adding repository-owned image-iteration evidence on top of
   the shipped HTTP image surface:
   - expanded the OpenAI-compatible image job payload so HTTP responses now expose lineage and redo

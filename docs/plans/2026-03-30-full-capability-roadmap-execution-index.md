@@ -278,6 +278,10 @@ The roadmap extension in `M10-M17` includes milestone-level plans plus decompose
 ## M15: Desktop Signals, Download Recovery, And Streaming Polish
 
 - `M15.1` `docs/plans/2026-03-31-m15-1-token-stream-presentation-smoothing.md`
+  Status: completed. The desktop shell now smooths bursty assistant, reasoning, and tool deltas
+  through a menubar-owned presentation queue, records UI-side chat presentation lag and flush-count
+  metrics, and keeps exact transcript fidelity through terminal flush handling plus focused
+  coverage-enabled menu-bar tests.
 - `M15.2` `docs/plans/2026-03-31-m15-2-update-banners-and-runtime-signal-unification.md`
 - `M15.3` `docs/plans/2026-03-31-m15-3-download-queue-persistence-and-paused-recovery.md`
 - `M15.4` `docs/plans/2026-03-31-m15-4-desktop-polish-integration-evidence.md`

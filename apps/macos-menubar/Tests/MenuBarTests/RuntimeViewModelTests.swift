@@ -5020,6 +5020,8 @@ struct RuntimeViewModelTests {
         #expect(await metrics.snapshot()["menu.chat_submit_ms"] != nil)
         #expect(await metrics.snapshot()["menu.chat_first_delta_ms"] != nil)
         #expect(await metrics.snapshot()["menu.chat_stream_ms"] != nil)
+        #expect(await metrics.snapshot()["menu.chat_presentation_lag_ms"] != nil)
+        #expect(await metrics.snapshot()["menu.chat_presentation_flush_count"] != nil)
     }
 
     @Test("chat prompt merges repeated deltas into shared transcript entries")
@@ -5054,6 +5056,50 @@ struct RuntimeViewModelTests {
         #expect(reasoningEntries.first?.body == "Reasoning trace")
         #expect(toolEntries.count == 1)
         #expect(toolEntries.first?.body == #"{"q":"melix"}"#)
+    }
+
+    @Test("chat prompt smooths bursty deltas while preserving final transcript fidelity")
+    @MainActor
+    func chatPromptSmoothsBurstyDeltasWhilePreservingFinalTranscriptFidelity() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureScheduledChatEvents([
+            .init(delay: .zero, event: .queued(lane: "text.decode.interactive", queuePosition: 0, backpressure: 0)),
+            .init(delay: .zero, event: .admitted(lane: "text.decode.interactive", workerID: "swift-text-worker", queueDelayMs: 0.5)),
+            .init(delay: .zero, event: .tokenDelta("Assistant response")),
+            .init(delay: .milliseconds(80), event: .completed(
+                finishReason: "stop",
+                assistantText: "Assistant response",
+                reasoningText: ""
+            )),
+        ])
+        let metrics = MenuBarMetricsStore()
+        let viewModel = RuntimeViewModel(client: client, metrics: metrics)
+
+        await viewModel.start()
+        viewModel.chatComposerText = "Smooth bursty deltas"
+
+        let submitTask = Task { @MainActor in
+            await viewModel.submitChatPrompt()
+        }
+
+        try await waitForRuntimeViewModelCondition("chat smoothing should present a partial assistant row") {
+            viewModel.chatTranscript.contains { entry in
+                entry.kind == .assistant && entry.body.isEmpty == false && entry.body != "Assistant response"
+            }
+        }
+
+        let partialAssistantEntry = try #require(viewModel.chatTranscript.first { $0.kind == .assistant })
+        #expect(partialAssistantEntry.body.isEmpty == false)
+        #expect(partialAssistantEntry.body != "Assistant response")
+        #expect(viewModel.isChatStreaming)
+
+        await submitTask.value
+
+        let finalAssistantEntry = try #require(viewModel.chatTranscript.first { $0.kind == .assistant })
+        let metricsSnapshot = await metrics.snapshot()
+        #expect(finalAssistantEntry.body == "Assistant response")
+        #expect(metricsSnapshot["menu.chat_presentation_lag_ms"] != nil)
+        #expect((metricsSnapshot["menu.chat_presentation_flush_count"] ?? 0) > 1)
     }
 
     @Test("chat completion can synthesize transcript entries without prior deltas")

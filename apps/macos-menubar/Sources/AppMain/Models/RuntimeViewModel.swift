@@ -817,6 +817,15 @@ private struct ImageDefaultsProjection: Equatable, Sendable {
     let updatedAtUnixMS: Int64
 }
 
+private struct ChatPresentationFragment: Sendable {
+    let kind: DesktopChatTranscriptEntry.Kind
+    let entryID: String
+    let title: String
+    let detail: String
+    var remainingText: String
+    let firstQueuedAt: Date
+}
+
 @MainActor
 @Observable
 public final class RuntimeViewModel {
@@ -1005,6 +1014,10 @@ public final class RuntimeViewModel {
     private var activeAssistantEntryID: String?
     private var activeReasoningEntryID: String?
     private var activeToolEntryIDs: [String: String] = [:]
+    private var chatPresentationFragments: [ChatPresentationFragment] = []
+    private var chatPresentationTask: Task<Void, Never>?
+    private var chatPresentationMaxLagMs = 0.0
+    private var chatPresentationFlushCount = 0.0
     private var persistedServerSessions: [DesktopServerSessionState] = []
     private var modelSettingsDraftModelID = ""
     private var operatorStateRestored = false
@@ -1192,6 +1205,8 @@ public final class RuntimeViewModel {
             defaultBatchFactor: 1
         ),
     ]
+    private static let chatPresentationFlushInterval: Duration = .milliseconds(24)
+    private static let chatPresentationCharactersPerFlush = 8
 
     public init(
         client: any ControlPlaneXPCClient,
@@ -2257,6 +2272,7 @@ public final class RuntimeViewModel {
         let startedAt = Date()
         let userMessage = ControlPlaneChatRequest.Message(role: "user", content: prompt)
         chatConversationMessages.append(userMessage)
+        resetChatPresentationState()
         appendChatEntry(
             id: "user-\(UUID().uuidString)",
             kind: .user,
@@ -2315,19 +2331,24 @@ public final class RuntimeViewModel {
                     chatStatusText = decodeHandle.isEmpty ? "Decode" : "Decode • \(decodeHandle)"
                 case .tokenDelta(let text):
                     appendAssistantDelta(text, requestID: execution.requestID)
+                    await Task.yield()
                 case .reasoningDelta(let text):
                     reasoningDeltaCount += 1
                     appendReasoningDelta(text, requestID: execution.requestID)
+                    await Task.yield()
                 case .toolCallDelta(let callID, let toolName, let argumentsFragment):
                     toolDeltaCount += 1
                     appendToolDelta(callID: callID, toolName: toolName, argumentsFragment: argumentsFragment)
+                    await Task.yield()
                 case .usage(let promptTokens, let completionTokens):
                     lastChatUsageText = "\(promptTokens) prompt • \(completionTokens) completion"
                 case .completed(let finishReason, let assistantText, let reasoningText):
+                    flushPendingChatPresentation()
                     chatStatusText = finishReason.isEmpty ? "Completed" : "Completed • \(finishReason)"
                     finalizeAssistantText(assistantText, requestID: execution.requestID)
                     finalizeReasoningText(reasoningText, requestID: execution.requestID)
                 case .failed(let code, let message):
+                    flushPendingChatPresentation()
                     chatStatusText = code.isEmpty ? "Failed" : "Failed • \(code)"
                     let failureMessage = message.isEmpty ? "Chat request failed." : message
                     setLastError(failureMessage)
@@ -2345,6 +2366,7 @@ public final class RuntimeViewModel {
                 notifyStateChanged()
             }
 
+            flushPendingChatPresentation()
             await metrics.record(
                 name: "menu.chat_stream_ms",
                 valueMs: Date().timeIntervalSince(startedAt) * 1_000
@@ -2357,8 +2379,10 @@ public final class RuntimeViewModel {
                 name: "menu.chat_tool_delta_count",
                 valueMs: Double(toolDeltaCount)
             )
+            await recordChatPresentationMetricsIfNeeded()
             commitAssistantMessageIfNeeded()
         } catch {
+            flushPendingChatPresentation()
             setLastError(String(describing: error))
             chatStatusText = "Failed"
             appendChatEntry(
@@ -2371,6 +2395,7 @@ public final class RuntimeViewModel {
         }
 
         isChatStreaming = false
+        resetChatPresentationState()
         activeAssistantEntryID = nil
         activeReasoningEntryID = nil
         activeToolEntryIDs.removeAll()
@@ -2378,6 +2403,7 @@ public final class RuntimeViewModel {
     }
 
     public func clearChatTranscript() {
+        resetChatPresentationState()
         chatTranscript = []
         chatConversationMessages = []
         chatStatusText = "Idle"
@@ -5716,14 +5742,26 @@ public final class RuntimeViewModel {
         guard !text.isEmpty else { return }
         let entryID = activeAssistantEntryID ?? "assistant-\(requestID)"
         activeAssistantEntryID = entryID
-        appendBody(text, toEntryID: entryID, kind: .assistant, title: "Assistant", detail: requestID)
+        enqueueChatPresentationText(
+            text,
+            entryID: entryID,
+            kind: .assistant,
+            title: "Assistant",
+            detail: requestID
+        )
     }
 
     private func appendReasoningDelta(_ text: String, requestID: String) {
         guard !text.isEmpty else { return }
         let entryID = activeReasoningEntryID ?? "reasoning-\(requestID)"
         activeReasoningEntryID = entryID
-        appendBody(text, toEntryID: entryID, kind: .reasoning, title: "Reasoning", detail: requestID)
+        enqueueChatPresentationText(
+            text,
+            entryID: entryID,
+            kind: .reasoning,
+            title: "Reasoning",
+            detail: requestID
+        )
     }
 
     private func appendToolDelta(callID: String, toolName: String, argumentsFragment: String) {
@@ -5731,7 +5769,14 @@ public final class RuntimeViewModel {
         let entryID = activeToolEntryIDs[normalizedCallID] ?? "tool-\(normalizedCallID)"
         activeToolEntryIDs[normalizedCallID] = entryID
         let title = toolName.isEmpty ? "Tool Call" : "Tool • \(toolName)"
-        appendBody(argumentsFragment, toEntryID: entryID, kind: .tool, title: title, detail: normalizedCallID)
+        guard !argumentsFragment.isEmpty else { return }
+        enqueueChatPresentationText(
+            argumentsFragment,
+            entryID: entryID,
+            kind: .tool,
+            title: title,
+            detail: normalizedCallID
+        )
     }
 
     private func finalizeAssistantText(_ assistantText: String, requestID: String) {
@@ -5760,6 +5805,131 @@ public final class RuntimeViewModel {
         if chatConversationMessages.last != ControlPlaneChatRequest.Message(role: "assistant", content: entry.body) {
             chatConversationMessages.append(.init(role: "assistant", content: entry.body))
         }
+    }
+
+    private func enqueueChatPresentationText(
+        _ text: String,
+        entryID: String,
+        kind: DesktopChatTranscriptEntry.Kind,
+        title: String,
+        detail: String
+    ) {
+        guard !text.isEmpty else { return }
+        if let index = chatPresentationFragments.indices.last,
+           chatPresentationFragments[index].entryID == entryID,
+           chatPresentationFragments[index].kind == kind,
+           chatPresentationFragments[index].title == title,
+           chatPresentationFragments[index].detail == detail {
+            chatPresentationFragments[index].remainingText += text
+        } else {
+            chatPresentationFragments.append(
+                ChatPresentationFragment(
+                    kind: kind,
+                    entryID: entryID,
+                    title: title,
+                    detail: detail,
+                    remainingText: text,
+                    firstQueuedAt: Date()
+                )
+            )
+        }
+        startChatPresentationLoopIfNeeded()
+    }
+
+    private func startChatPresentationLoopIfNeeded() {
+        if let task = chatPresentationTask, task.isCancelled == false {
+            return
+        }
+        guard chatPresentationFragments.isEmpty == false else {
+            return
+        }
+        chatPresentationTask = Task { [weak self] in
+            guard let self else { return }
+            await self.runChatPresentationLoop()
+        }
+    }
+
+    private func runChatPresentationLoop() async {
+        defer {
+            chatPresentationTask = nil
+        }
+
+        while Task.isCancelled == false {
+            guard flushNextChatPresentationChunk(forceComplete: false) else {
+                return
+            }
+            do {
+                try await Task.sleep(for: Self.chatPresentationFlushInterval)
+            } catch {
+                return
+            }
+        }
+    }
+
+    private func flushPendingChatPresentation() {
+        chatPresentationTask?.cancel()
+        chatPresentationTask = nil
+        while flushNextChatPresentationChunk(forceComplete: true) {}
+    }
+
+    @discardableResult
+    private func flushNextChatPresentationChunk(forceComplete: Bool) -> Bool {
+        guard chatPresentationFragments.isEmpty == false else {
+            return false
+        }
+
+        var fragment = chatPresentationFragments.removeFirst()
+        let budget = forceComplete ? Int.max : Self.chatPresentationCharactersPerFlush
+        let (prefix, remainder) = Self.consumePresentationPrefix(fragment.remainingText, maxCharacters: budget)
+        guard prefix.isEmpty == false else {
+            return false
+        }
+
+        let lagMs = Date().timeIntervalSince(fragment.firstQueuedAt) * 1_000
+        chatPresentationMaxLagMs = max(chatPresentationMaxLagMs, lagMs)
+        chatPresentationFlushCount += 1
+        appendBody(
+            prefix,
+            toEntryID: fragment.entryID,
+            kind: fragment.kind,
+            title: fragment.title,
+            detail: fragment.detail
+        )
+
+        if remainder.isEmpty == false {
+            fragment.remainingText = remainder
+            chatPresentationFragments.insert(fragment, at: 0)
+        }
+
+        notifyStateChanged()
+        return true
+    }
+
+    private func resetChatPresentationState() {
+        chatPresentationTask?.cancel()
+        chatPresentationTask = nil
+        chatPresentationFragments.removeAll()
+        chatPresentationMaxLagMs = 0
+        chatPresentationFlushCount = 0
+    }
+
+    private func recordChatPresentationMetricsIfNeeded() async {
+        guard chatPresentationFlushCount > 0 else {
+            return
+        }
+        await metrics.record(name: "menu.chat_presentation_lag_ms", valueMs: chatPresentationMaxLagMs)
+        await metrics.record(name: "menu.chat_presentation_flush_count", valueMs: chatPresentationFlushCount)
+    }
+
+    private static func consumePresentationPrefix(
+        _ text: String,
+        maxCharacters: Int
+    ) -> (prefix: String, remainder: String) {
+        guard text.isEmpty == false, maxCharacters > 0 else {
+            return ("", text)
+        }
+        let endIndex = text.index(text.startIndex, offsetBy: maxCharacters, limitedBy: text.endIndex) ?? text.endIndex
+        return (String(text[..<endIndex]), String(text[endIndex...]))
     }
 
     private func appendChatEntry(

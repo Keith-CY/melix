@@ -2,87 +2,73 @@
 
 ## Goal
 
-Close `M14.4` by adding live image-iteration integration coverage, repository-owned lineage and
-timeout evidence, and operator runbook material that reproduces variation, iterate, and redo
-workflows from stored artifact and job metadata alone.
+Close `M15.1` by adding UI-side chat token presentation smoothing in the desktop shell while
+preserving exact streamed content fidelity, event ordering, and measurable runtime-to-UI lag.
 
 ## Scope
 
-- add live integration coverage for baseline generate, variation, iterate, redo reconstruction,
-  timeout, and cancel evidence across the shipped HTTP image surface
-- extend the repository-owned image metrics smoke so it records variation, iterate, lineage, and
-  timeout evidence instead of only baseline generate or edit latency
-- update the image operator runbook and runbook indexes so contributors can reproduce iterative
-  creative workflows and inspect lineage without unwritten desktop-local context
+- add menubar-owned chat presentation buffering for streamed assistant, reasoning, and tool deltas
+- keep the underlying control-plane stream contract unchanged and preserve transcript fidelity
+- expose measurable presentation-lag evidence so regressions remain visible after smoothing
+- add focused menu-bar test coverage for partial presentation, final transcript fidelity, and lag
+  metrics
+- update milestone bookkeeping once the slice is verified and committed
 
 ## Measurement Points
 
-- one live smoke proves that a generated artifact can seed a variation request, an iterate request,
-  and a redo reconstruction driven from persisted job recipe truth
-- response payloads and recorded evidence keep `source_artifact_id`, `parent_artifact_id`,
-  `prompt_delta`, `edit_mode`, and timeout policy visible enough to inspect lineage and recovery
-  behavior after the run completes
-- repository-owned metrics output distinguishes baseline generation, variation, iterate, queueing,
-  cancelation, and timeout-triggered failure evidence
+- bursty chat deltas are presented in multiple UI flushes instead of one immediate transcript jump
+- the final assistant, reasoning, and tool transcript bodies still match the exact streamed content
+- a dedicated presentation-lag metric records the added UI-side delay instead of hiding it
 - changed-line coverage for the touched handwritten executable scope remains at or above `95%`
 
 ## Phases
 
-1. Current-state review and evidence-gap mapping
+1. Current-state review and smoothing boundary definition
    - status: completed
    - evidence:
-     - reviewed `M14.4`, the `M14` umbrella plan, the existing Phase 7 smoke, and the image
-       operator runbook and confirmed the repository still lacks one live path that proves
-       variation, iterate, and redo reconstruction from persisted lineage
-     - confirmed current metrics and runbook material still focus on baseline generate or edit,
-       queueing, cancelation, and timeout evidence rather than iterative follow-up workflows
-2. Live image-iteration integration evidence
+     - reviewed `M15.1`, the `M15` umbrella plan, and the current `RuntimeViewModel` streaming
+       path and confirmed that assistant, reasoning, and tool deltas append directly to transcript
+       rows with no UI-side presentation layer
+     - confirmed the milestone scope can stay inside the macOS menu-bar package because the plan
+       only requires desktop-shell smoothing and measurable lag, not protocol or worker changes
+2. Menubar-side smoothing implementation
    - status: completed
    - evidence:
-     - added a live integration smoke that drives baseline generation into variation and iterate
-       requests using `source_artifact_id` and reconstructs redo from the returned job recipe plus
-       lineage fields
-     - asserted persisted lineage and timeout fields directly from shipped HTTP payloads instead of
-       internal test-only helpers, including `request_timeout_seconds`, `source_artifact_id`,
-       `source_job_id`, `prompt_delta`, `edit_mode`, `recipe`, and `parent_artifact_id`
-3. Metrics and evidence reporting
+     - added a menubar-owned presentation queue plus flush cadence in `RuntimeViewModel` for
+       assistant, reasoning, and tool deltas while preserving exact global text order
+     - ensured completion, failure, transport-error, and transcript-clear paths flush or reset
+       buffered text deterministically so terminal transcript state stays faithful
+3. Focused menu-bar coverage and lag assertions
    - status: completed
    - evidence:
-     - extended the repository-owned image metrics smoke to print variation, iterate, redo, and
-       timeout evidence alongside the existing Phase 7 latency and queue metrics
-     - kept the evidence reproducible from repository scripts and runtime artifacts alone through
-       `make phase7-metrics`, including real local output for `image_variation`, `image_iterate`,
-       `image_redo`, and `image_timeout`
-4. Runbook and milestone bookkeeping
+     - extended `RuntimeViewModelTests` and `FakeControlPlaneXPCClient` so scheduled bursty chat
+       streams can prove partial presentation, final fidelity, and lag-metric recording
+     - kept existing transcript-merging and reasoning/tool coverage passing so the new smoothing
+       layer stays transparent to final transcript truth
+4. Verification, metrics, and milestone bookkeeping
    - status: completed
    - evidence:
-     - updated the image operator runbook and runbook index so contributors can reproduce the
-       iterative workflow and inspect lineage or timeout recovery from documented commands
-     - updated the roadmap execution index and progress log to close `M14.4` and complete `M14`
-5. Verification and commit
-   - status: completed
-   - evidence:
-     - reran focused Swift gateway tests, focused Python script tests, focused iteration
-       integration coverage, real `make phase7-metrics`, and changed-line coverage for the touched
-       Swift and Python scope
-     - prepared a metrics report and milestone bookkeeping for a signed commit
+     - ran coverage-enabled focused menu-bar verification, changed-line coverage reporting, and the
+       repository `make swift-test` command
+     - captured the existing out-of-scope `services/mlx-text-worker-swift` `signal 11` failure
+       boundary while the touched menu-bar package passed
 
 ## Acceptance
 
-- iterative image workflows have live integration coverage and reproducible lineage evidence
-- operators can reproduce variation, iterate, redo, timeout, and cancel flows from repository
-  artifacts and documented commands alone
-- `M14` can be treated as closed in the roadmap execution index once `M14.4` evidence lands
+- token presentation is visibly smoother without changing content fidelity or transcript ordering
+- runtime-to-UI presentation lag remains measurable after smoothing is enabled
+- the touched menu-bar scope is test-covered well enough to keep changed-line coverage at or above
+  `95%`
 
 ## Risks
 
-- if the redo evidence depends on UI-only state, the runbook will not be reproducible from
-  repository artifacts alone
-- if the metrics smoke emits only latency numbers without lineage context, the milestone will still
-  lack the operator-visible evidence required by `M14.4`
-- if the new integration smoke reuses existing helpers too loosely, it may pass without actually
-  proving variation or iterate lineage on the shipped HTTP contract
+- if non-text terminal events do not flush pending buffered text, final transcripts can truncate or
+  mis-order streamed content
+- if smoothing buffers only one transcript lane, reasoning or tool rows can jump ahead of earlier
+  assistant output and violate ordering guarantees
+- if lag metrics are not recorded separately, the UI can appear smoother while hiding transport or
+  presentation regressions
 
 ## Outcome
 
-- m14_4_iteration_lineage_evidence_completed
+- m15_1_token_stream_presentation_smoothing_completed
