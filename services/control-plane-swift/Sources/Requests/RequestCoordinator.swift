@@ -2103,6 +2103,24 @@ public actor RequestCoordinator {
                 forKey: "vision.preprocess_peak_memory_bytes"
             )
             await metricsStore.set(stats.lastFirstTokenLatencyMs, forKey: "vision.vlm_first_token_ms")
+            if stats.lastVideoEffectiveFrameCount > 0 {
+                await metricsStore.set(
+                    Double(stats.lastVideoEffectiveFrameCount),
+                    forKey: "vision.video_frame_count"
+                )
+                await metricsStore.set(
+                    Double(stats.lastVideoRequestedFrameBudget),
+                    forKey: "vision.video_frame_budget"
+                )
+                await metricsStore.set(
+                    Double(stats.lastVideoWindowMs),
+                    forKey: "vision.video_window_ms"
+                )
+                await metricsStore.set(
+                    stats.lastFirstTokenLatencyMs,
+                    forKey: "vision.video_first_token_ms"
+                )
+            }
             await metricsStore.set(Double(stats.l1CacheBytes), forKey: "vision.cache_memory_bytes")
             await metricsStore.set(stats.l1HitRate * 100, forKey: "vision.cache_hit_rate")
         case .pythonTranscription:

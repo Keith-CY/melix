@@ -2,76 +2,88 @@
 
 ## Goal
 
-Close `M16.1` by defining a first-class video ingress contract that normalizes supported video
-inputs, validates preprocessing bounds, and exposes inspectable metadata without yet introducing
-frame extraction or video-runtime execution.
+Close `M16.2` by making video analysis requests carry an explicit frame policy through the
+effective multimodal request state, route predictably through background vision lanes, and expose
+runtime probe evidence that distinguishes video analysis from image-only VLM work.
 
 ## Scope
 
-- extend the worker protocol with explicit video message-part and metadata fields
-- add Swift-side multimodal decoding and normalization support for `input_video`
-- add worker-side contract validation helpers for normalized video parts
-- add focused Swift and Python coverage that proves accepted source forms and structured failures
+- extend multimodal preprocessing so `PreparedVisionRequest` can carry normalized video inputs and
+  an inspectable effective frame policy
+- shape deterministic and MLX VLM runtimes around the same video-aware request representation
+- project video analysis observability into the control plane without changing media-lifecycle
+  cleanup behavior
+- add focused worker, control-plane, and integration coverage for background-lane routing and video
+  probe evidence
 
 ## Measurement Points
 
-- supported source forms normalize through one path: local path, file URI, remote URL, and inline
-  base64 video bytes
-- normalized metadata preserves `media_type`, `source_kind`, `mime_type`, `format`, `filename`,
-  `duration_ms`, `frame_budget`, and time-bound hints
-- unsupported containers, missing payloads, invalid base64, and invalid preprocessing bounds fail
-  with structured errors
+- video-bearing requests normalize into one effective request object that preserves prompt text,
+  image inputs, video inputs, total preprocessing bytes, and frame-policy details
+- video analysis keeps using the explicit `multimodal.vision.background` lane and does not reuse
+  interactive text-prefill lanes
+- runtime observability records video preprocess latency, effective frame count, and first-token
+  latency for VLM requests that include video parts
 - changed-line coverage for the touched executable scope remains at or above `95%`
 
 ## Phases
 
-1. Current-state review and contract design
+1. Current-state review and M16.2 boundary lock
    - status: completed
    - evidence:
-     - reviewed `M16`, `M16.1`, the worker `MessagePart` and `MediaMetadata` schemas, existing
-       image and audio normalization in `MultimodalRequestNormalizer`, and current Python
-       multimodal preprocessing helpers
-     - selected an analysis-first contract slice: protocol plus validation only, with no frame
-       extraction or scheduler-routing changes until `M16.2`
-2. Protocol and generated artifact expansion
+     - reviewed `M16.2` and the parent `M16` plan plus the current Swift request-routing,
+       multimodal normalization, worker preprocessing, VLM runtimes, and integration coverage
+     - confirmed that `M16.1` ended at ingress contracts only and that `M16.2` should stop before
+       temp-media lifecycle cleanup (`M16.3`)
+2. Video-aware worker request shaping
    - status: completed
    - evidence:
-     - extended `packages/protocol/schema/worker/v1/common.proto` with `MEDIA_TYPE_VIDEO`,
-       `video_uri`, `video_bytes`, and explicit `frame_budget`, `start_ms`, and `end_ms`
-     - regenerated `packages/protocol/python/worker/v1/common_pb2.py`,
-       `packages/protocol/swift/worker/v1/common.pb.swift`, and
-       `packages/protocol/descriptors/melix.pb` through `make proto`
-3. Swift multimodal normalization and contract tests
+     - `PreparedVisionRequest` now carries normalized `videos`, explicit
+       `video_frame_policies`, and derived `effective_video_frame_count`,
+       `requested_video_frame_budget`, and `effective_video_window_ms` helpers
+     - multimodal preprocessing now folds `prepare_video_input` into the shared vision request
+       path, computes one inspectable effective frame policy per video input, and rebuilds the
+       multimodal hash from prompt plus image or video identity
+     - deterministic and MLX VLM runtimes now consume the same video-aware request shape,
+       including text-backed Gemma 4 prompt rewriting for video-only requests
+3. Runtime probe and background-lane observability
    - status: completed
    - evidence:
-     - added `OpenAIMultimodalVideoReference` plus `input_video` decoding, top-level convenience
-       fields, format inference, URI validation, and preprocessing-bound validation in
-       `MultimodalRequestNormalizer`
-     - added focused `MultimodalContractTests` coverage for URI, inline-base64, filename and URL
-       inference, typed operator errors, missing payloads, and scalar bound failures
-     - added one `RequestCoordinatorTests` black-box assertion proving `video` message parts remain
-       dispatchable during the ingress-only slice without forcing `M16.2` scheduling changes
-4. Python video-ingress validation and coverage bookkeeping
+     - worker runtime stats now export `last_video_effective_frame_count`,
+       `last_video_requested_frame_budget`, and `last_video_window_ms`
+     - video-bearing VLM prefill or decode requests still route through
+       `multimodal.vision.background`, while `RequestCoordinator` publishes explicit video frame and
+       first-token metrics for that lane
+     - the Swift text worker now explicitly ignores video fragments for cache-restore prefix walks
+       and counts them as media tokens in context guards, keeping protocol exhaustiveness intact
+4. Focused verification and roadmap bookkeeping
    - status: completed
    - evidence:
-     - added `worker/runtime/video_preprocessing.py` as the worker-side contract validator for
-       normalized video parts, with structured URI, format, filename, and preprocessing-bound
-       checks
-     - added focused protobuf round-trip coverage in `test_multimodal_contracts.py` and dedicated
-       validation coverage in `test_video_preprocessing.py`
-     - verified touched-scope executable coverage at or above `95%` for both Swift and Python
+     - `make proto`: pass
+     - `make py-test`: `525 passed in 35.75s`
+     - `make integration-test`: `71 passed in 1079.85s (0:17:59)`
+     - focused Swift coverage-enabled verification:
+       `swift test --enable-code-coverage --package-path services/control-plane-swift --filter 'videoBearingVLMRequestsPublishFramePolicyMetrics|postChatCompletionsRecordsVideoFrameMetricsForVLMRequests'`
+       and
+       `swift test --enable-code-coverage --package-path services/mlx-text-worker-swift --filter 'testCacheRestoreMetadataWalkBackAccountsForMediaPrefixesAndIgnoresNilParts|testRuntimeRegistryCountsMediaBlankAndNilPartsForContextGuard'`
+       both passed
+     - touched-scope changed-line coverage is at or above `95%` for Python, control plane, and
+       Swift text-worker scope; repository bookkeeping is updated in `progress.md` and the roadmap
+       execution index
 
 ## Acceptance
 
-- Melix has one explicit normalized video-input contract before runtime execution work begins
-- video metadata and preprocessing bounds are inspectable through the shared request model
-- invalid ingress shapes fail predictably and test coverage keeps changed-line coverage above `95%`
+- Melix exposes one effective request shape for image and video VLM analysis with explicit video
+  frame-policy state
+- video-bearing VLM requests remain schedulable through the background vision lane with measurable
+  preprocess and first-token behavior
+- verification proves the touched scope at or above `95%` changed-line coverage before commit
 
 ## Risks
 
-- if video reuses image-only fields, later frame-selection and cleanup work will inherit ambiguous
-  semantics
-- if URI, inline bytes, and preprocessing bounds are not normalized together, `M16.2` will need to
-  rediscover transport-specific assumptions in runtime code
-- if the first slice reaches into frame extraction early, it will blur the boundary between ingress
-  contracts and runtime scheduling work
+- if video preprocessing lives outside the shared vision request model, runtime and benchmark paths
+  will fork on transport details
+- if background-lane observability only reports image semantics, later video queue-pressure work
+  will lack trustworthy evidence
+- if `M16.2` reaches into temp-file cleanup or download lifecycle behavior, it will blur the
+  boundary with `M16.3`

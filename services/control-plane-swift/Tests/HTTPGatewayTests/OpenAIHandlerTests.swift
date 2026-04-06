@@ -1222,6 +1222,119 @@ struct OpenAIHandlerTests {
         #expect(await workerClient.lastGenerateRequest == nil)
     }
 
+    @Test("POST /v1/chat/completions records video frame metrics for VLM requests")
+    func postChatCompletionsRecordsVideoFrameMetricsForVLMRequests() async throws {
+        let textClient = ScriptedWorkerClient(events: [])
+        let runtimeStats = {
+            var response = Melix_Worker_V1_GetRuntimeStatsResponse()
+            response.stats.lastProbeKind = "vlm"
+            response.stats.lastPreprocessLatencyMs = 24
+            response.stats.lastPreprocessPeakMemoryBytes = 32_768
+            response.stats.lastFirstTokenLatencyMs = 11
+            response.stats.lastVideoEffectiveFrameCount = 6
+            response.stats.lastVideoRequestedFrameBudget = 6
+            response.stats.lastVideoWindowMs = 4_000
+            return response
+        }()
+        let vlmClient = ScriptedWorkerClient(
+            events: [
+                makeTokenEvent(requestID: "req-http-vlm-video", seq: 1, text: "video"),
+                makeCompletedEvent(
+                    requestID: "req-http-vlm-video",
+                    seq: 2,
+                    finishReason: "stop",
+                    assistantText: "video"
+                ),
+            ],
+            loadModelHandle: "melix-dev-vlm::python",
+            runtimeStatsResponseOverride: runtimeStats
+        )
+        let metricsStore = MetricsStore()
+        let schedulerReadModel = SchedulerReadModel(metricsStore: metricsStore)
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel(), ModelCatalog.devVLMModel()])
+        _ = await catalog.loadModel(id: "melix-dev-vlm", dispatchHandle: "melix-dev-vlm::python")
+        let workerRegistry = WorkerRegistry(
+            defaultTextClient: textClient,
+            pythonCompatibilityClient: vlmClient,
+            modelCatalog: catalog
+        )
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: workerRegistry,
+                abortRegistry: AbortRegistry(),
+                schedulerReadModel: schedulerReadModel,
+                metricsStore: metricsStore
+            ),
+            workerRegistry: workerRegistry,
+            metricsStore: metricsStore,
+            schedulerReadModel: schedulerReadModel,
+            translator: ChatRequestTranslator(requestIDGenerator: { "req-http-vlm-video" }),
+            sseWriter: SSEStreamWriter(now: { Date(timeIntervalSince1970: 123) })
+        )
+
+        let body = try #require(
+            """
+            {
+              "model": "melix-dev-vlm",
+              "stream": true,
+              "messages": [
+                {
+                  "role": "user",
+                  "content": [
+                    { "type": "text", "text": "Summarize the clip." },
+                    {
+                      "type": "input_video",
+                      "input_video": {
+                        "data": "dmlkZW8gZml4dHVyZQ==",
+                        "format": "mp4",
+                        "filename": "clip.mp4",
+                        "frame_budget": 6,
+                        "start_ms": 1000,
+                        "end_ms": 5000
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/chat/completions",
+                headers: ["content-type": "application/json"],
+                body: body
+            )
+        )
+        let payload = try await collectBody(response.body)
+        let request = try #require(await vlmClient.lastGenerateRequest)
+        let metrics = await metricsStore.snapshot()
+        let queueSummary = await schedulerReadModel.snapshot()
+        let lane = try #require(
+            queueSummary.lanes.first(where: { $0.laneID == "multimodal.vision.background" })
+        )
+
+        #expect(response.statusCode == 200)
+        #expect(payload.contains("data: [DONE]"))
+        #expect(request.execution.modelHandle == "melix-dev-vlm::python")
+        #expect(request.messages[0].parts.count == 2)
+        #expect(request.messages[0].parts[1].videoBytes == Data("video fixture".utf8))
+        #expect(request.messages[0].parts[1].media.frameBudget == 6)
+        #expect(request.messages[0].parts[1].media.startMs == 1_000)
+        #expect(request.messages[0].parts[1].media.endMs == 5_000)
+        #expect(lane.activeRequests == 0)
+        #expect(metrics.values["vision.preprocess_latency_ms", default: -1] == 24)
+        #expect(metrics.values["vision.preprocess_peak_memory_bytes", default: -1] == 32_768)
+        #expect(metrics.values["vision.vlm_first_token_ms", default: -1] == 11)
+        #expect(metrics.values["vision.video_first_token_ms", default: -1] == 11)
+        #expect(metrics.values["vision.video_frame_count", default: -1] == 6)
+        #expect(metrics.values["vision.video_frame_budget", default: -1] == 6)
+        #expect(metrics.values["vision.video_window_ms", default: -1] == 4_000)
+    }
+
     @Test("chat completions translator preserves recovery metadata on worker requests")
     func postChatCompletionsPreservesRecoveryMetadata() async throws {
         let catalog = ModelCatalog(seedModels: [warmModel()])
@@ -5796,6 +5909,7 @@ private actor ScriptedWorkerClient: WorkerRoutingClient, RuntimeIntrospectingWor
     private let runtimeCacheResidentBytes: UInt64
     private let runtimeKVCacheBytes: UInt64
     private let runtimeStatsFailure: Error?
+    private let runtimeStatsResponseOverride: Melix_Worker_V1_GetRuntimeStatsResponse?
     private(set) var lastGenerateRequest: Melix_Worker_V1_GenerateRequest?
     private(set) var lastLoadModelRequest: Melix_Worker_V1_LoadModelRequest?
 
@@ -5807,7 +5921,8 @@ private actor ScriptedWorkerClient: WorkerRoutingClient, RuntimeIntrospectingWor
         runtimeModelResidentBytes: UInt64 = 0,
         runtimeCacheResidentBytes: UInt64 = 0,
         runtimeKVCacheBytes: UInt64 = 0,
-        runtimeStatsFailure: Error? = nil
+        runtimeStatsFailure: Error? = nil,
+        runtimeStatsResponseOverride: Melix_Worker_V1_GetRuntimeStatsResponse? = nil
     ) {
         self.events = events
         self.loadModelHandle = loadModelHandle
@@ -5817,6 +5932,7 @@ private actor ScriptedWorkerClient: WorkerRoutingClient, RuntimeIntrospectingWor
         self.runtimeCacheResidentBytes = runtimeCacheResidentBytes
         self.runtimeKVCacheBytes = runtimeKVCacheBytes
         self.runtimeStatsFailure = runtimeStatsFailure
+        self.runtimeStatsResponseOverride = runtimeStatsResponseOverride
     }
 
     func canDispatchRequests() async -> Bool {
@@ -5854,6 +5970,9 @@ private actor ScriptedWorkerClient: WorkerRoutingClient, RuntimeIntrospectingWor
     func runtimeStats() async throws -> Melix_Worker_V1_GetRuntimeStatsResponse {
         if let runtimeStatsFailure {
             throw runtimeStatsFailure
+        }
+        if let runtimeStatsResponseOverride {
+            return runtimeStatsResponseOverride
         }
         var response = Melix_Worker_V1_GetRuntimeStatsResponse()
         response.stats.residentBytes = runtimeResidentBytes

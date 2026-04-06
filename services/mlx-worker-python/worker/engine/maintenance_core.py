@@ -2109,6 +2109,8 @@ class MaintenanceCore:
             return PreparedVisionRequest(
                 prompt_text=f"{rendered_prompt.prompt_text}{benchmark_suffix}",
                 images=list(rendered_prompt.images),
+                videos=list(rendered_prompt.videos),
+                video_frame_policies=list(rendered_prompt.video_frame_policies),
                 preprocess_latency_ms=rendered_prompt.preprocess_latency_ms,
                 preprocess_input_bytes=rendered_prompt.preprocess_input_bytes,
                 preprocess_peak_memory_bytes=rendered_prompt.preprocess_peak_memory_bytes,

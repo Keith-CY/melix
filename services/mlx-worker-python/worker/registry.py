@@ -130,6 +130,9 @@ class WorkerRegistry:
         self._last_audio_backend_unavailable_count = 0
         self._last_voice_fallback_count = 0
         self._last_language_fallback_count = 0
+        self._last_video_effective_frame_count = 0
+        self._last_video_requested_frame_budget = 0
+        self._last_video_window_ms = 0
         self._last_image_job_latency_ms = 0.0
         self._last_image_artifact_publish_ms = 0.0
         self._last_image_output_bytes = 0
@@ -318,6 +321,9 @@ class WorkerRegistry:
             last_audio_backend_unavailable_count = self._last_audio_backend_unavailable_count
             last_voice_fallback_count = self._last_voice_fallback_count
             last_language_fallback_count = self._last_language_fallback_count
+            last_video_effective_frame_count = self._last_video_effective_frame_count
+            last_video_requested_frame_budget = self._last_video_requested_frame_budget
+            last_video_window_ms = self._last_video_window_ms
             last_image_job_latency_ms = self._last_image_job_latency_ms
             last_image_artifact_publish_ms = self._last_image_artifact_publish_ms
             last_image_output_bytes = self._last_image_output_bytes
@@ -347,6 +353,9 @@ class WorkerRegistry:
             last_audio_backend_unavailable_count=last_audio_backend_unavailable_count,
             last_voice_fallback_count=last_voice_fallback_count,
             last_language_fallback_count=last_language_fallback_count,
+            last_video_effective_frame_count=last_video_effective_frame_count,
+            last_video_requested_frame_budget=last_video_requested_frame_budget,
+            last_video_window_ms=last_video_window_ms,
             last_image_job_latency_ms=last_image_job_latency_ms,
             last_image_artifact_publish_ms=last_image_artifact_publish_ms,
             last_image_output_bytes=last_image_output_bytes,
@@ -387,6 +396,9 @@ class WorkerRegistry:
             self._last_audio_duration_seconds = 0.0
             self._last_audio_chunk_count = 0
             self._last_audio_output_bytes = 0
+            self._last_video_effective_frame_count = int(getattr(probe, "video_effective_frame_count", 0))
+            self._last_video_requested_frame_budget = int(getattr(probe, "video_requested_frame_budget", 0))
+            self._last_video_window_ms = int(getattr(probe, "video_window_ms", 0))
             self._last_image_job_latency_ms = 0.0
             self._last_image_artifact_publish_ms = 0.0
             self._last_image_output_bytes = 0
@@ -405,6 +417,9 @@ class WorkerRegistry:
             self._last_audio_chunk_count = int(getattr(probe, "chunk_count", 0))
             self._last_audio_output_bytes = 0
             self._last_language_fallback_count = int(getattr(probe, "language_fallback_count", 0))
+            self._last_video_effective_frame_count = 0
+            self._last_video_requested_frame_budget = 0
+            self._last_video_window_ms = 0
             self._last_image_job_latency_ms = 0.0
             self._last_image_artifact_publish_ms = 0.0
             self._last_image_output_bytes = 0
@@ -423,6 +438,9 @@ class WorkerRegistry:
             self._last_audio_chunk_count = 0
             self._last_audio_output_bytes = int(getattr(probe, "output_bytes", 0))
             self._last_voice_fallback_count = int(getattr(probe, "voice_fallback_count", 0))
+            self._last_video_effective_frame_count = 0
+            self._last_video_requested_frame_budget = 0
+            self._last_video_window_ms = 0
             self._last_image_job_latency_ms = 0.0
             self._last_image_artifact_publish_ms = 0.0
             self._last_image_output_bytes = 0
@@ -448,6 +466,9 @@ class WorkerRegistry:
             self._last_audio_duration_seconds = 0.0
             self._last_audio_chunk_count = 0
             self._last_audio_output_bytes = 0
+            self._last_video_effective_frame_count = 0
+            self._last_video_requested_frame_budget = 0
+            self._last_video_window_ms = 0
             self._last_image_job_latency_ms = float(getattr(probe, "job_latency_ms", 0.0))
             self._last_image_artifact_publish_ms = float(getattr(probe, "artifact_publish_ms", 0.0))
             self._last_image_output_bytes = int(getattr(probe, "output_bytes", 0))

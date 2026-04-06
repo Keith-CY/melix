@@ -2,6 +2,46 @@
 
 ## 2026-04-06
 
+- Closed `M16.2` by making video analysis requests carry explicit frame-policy state through the
+  worker runtime, background-lane scheduling, and control-plane observability:
+  - extended the worker runtime stats protocol with
+    `last_video_effective_frame_count`, `last_video_requested_frame_budget`, and
+    `last_video_window_ms`
+  - folded normalized video inputs into `PreparedVisionRequest`, including effective
+    `uniform_sample` frame-policy projection, video-aware multimodal hashing, and derived helper
+    counters for total effective frames, requested budgets, and active clip windows
+  - updated deterministic and MLX VLM runtimes plus worker registry bookkeeping so video-bearing
+    requests now emit explicit video probe evidence, while text-backed Gemma 4 paths rewrite
+    video-only prompts into deterministic text form instead of silently dropping media context
+  - projected video-bearing VLM background-lane metrics through `RequestCoordinator`, added an
+    HTTP-level regression test for chat-completion video metrics, and kept the Swift text worker
+    exhaustive by treating `videoUri` and `videoBytes` parts as media for context guards while
+    excluding them from cache-restore prefix reuse
+- Verification summary for `M16.2`:
+  - `make proto`: pass
+  - `PYTHONPATH='.:services/mlx-worker-python' uv run --project services/mlx-worker-python pytest services/mlx-worker-python/tests/test_video_preprocessing.py services/mlx-worker-python/tests/test_vision_runtime.py services/mlx-worker-python/tests/test_mlx_vlm_runtime.py -q`: `49 passed in 0.23s`
+  - `PYTHONPATH='.:services/mlx-worker-python' uv run --project services/mlx-worker-python pytest services/mlx-worker-python/tests/test_vision_runtime.py services/mlx-worker-python/tests/test_mlx_vlm_runtime.py -q`: `46 passed in 0.16s`
+  - `PYTHONPATH='.:services/mlx-worker-python' uv run --project services/mlx-worker-python pytest tests/integration/test_vlm_phase_aware_lifecycle.py -q`: `3 passed in 34.20s`
+  - `make py-test`: `525 passed in 35.75s`
+  - `make integration-test`: `71 passed in 1079.85s (0:17:59)`
+  - `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/.build/ModuleCache.noindex" swift test --enable-code-coverage --package-path services/control-plane-swift --filter 'videoBearingVLMRequestsPublishFramePolicyMetrics|postChatCompletionsRecordsVideoFrameMetricsForVLMRequests'`: `2 tests in 2 suites passed`
+  - `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/.build/ModuleCache.noindex" swift test --enable-code-coverage --package-path services/mlx-text-worker-swift --filter 'testCacheRestoreMetadataWalkBackAccountsForMediaPrefixesAndIgnoresNilParts|testRuntimeRegistryCountsMediaBlankAndNilPartsForContextGuard'`: `2 tests in 1 suite passed`
+  - `make swift-test`: failed outside the touched `M16.2` scope after repository-wide package execution completed; the focused control-plane and text-worker suites above passed with coverage enabled
+  - `git diff --check`: pass
+- Metrics report for `M16.2`:
+  - explicit video probe fields now emitted by the touched scope:
+    - `last_video_effective_frame_count`
+    - `last_video_requested_frame_budget`
+    - `last_video_window_ms`
+    - `vision.video_frame_count`
+    - `vision.video_frame_budget`
+    - `vision.video_window_ms`
+    - `vision.video_first_token_ms`
+  - changed-line coverage for the touched handwritten executable scope:
+    - Python worker touched-scope coverage: `100.00%` (`148/148`)
+    - Swift control-plane touched-scope coverage: `100.00%` (`197/197`)
+    - Swift text-worker touched-scope coverage: `100.00%` (`15/15`)
+
 - Closed `M16.1` by defining the first repository-owned video ingress contract before any runtime
   frame extraction or scheduler work:
   - extended the shared worker protocol so `MessagePart` now has explicit `video_uri` and

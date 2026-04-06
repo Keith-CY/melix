@@ -1717,9 +1717,12 @@ final class WorkerScaffoldTests: XCTestCase {
         var imagePart = Melix_Worker_V1_MessagePart()
         imagePart.imageUri = "file:///tmp/test.png"
 
+        var videoPart = Melix_Worker_V1_MessagePart()
+        videoPart.videoUri = "file:///tmp/test.mp4"
+
         var message = Melix_Worker_V1_ChatMessage()
         message.role = "user"
-        message.parts = [blankPart, nilPart, imagePart]
+        message.parts = [blankPart, nilPart, imagePart, videoPart]
 
         var acceleration = Melix_Worker_V1_AccelerationPolicy()
         acceleration.mode = .baseline
@@ -1741,7 +1744,7 @@ final class WorkerScaffoldTests: XCTestCase {
                 return XCTFail("expected contextLimitExceeded, got \(error)")
             }
             XCTAssertEqual(maxContext, 200)
-            XCTAssertEqual(promptTokens, 256)
+            XCTAssertEqual(promptTokens, 512)
         }
     }
 
@@ -6354,8 +6357,14 @@ private func makeMediaRichMessage() -> Melix_Worker_V1_ChatMessage {
     var audioBytes = Melix_Worker_V1_MessagePart()
     audioBytes.audioBytes = Data([0x04, 0x05, 0x06])
 
+    var videoURI = Melix_Worker_V1_MessagePart()
+    videoURI.videoUri = "file:///tmp/video.mp4"
+
+    var videoBytes = Melix_Worker_V1_MessagePart()
+    videoBytes.videoBytes = Data([0x07, 0x08, 0x09])
+
     let empty = Melix_Worker_V1_MessagePart()
-    message.parts = [imageURI, imageBytes, audioURI, audioBytes, empty]
+    message.parts = [imageURI, imageBytes, audioURI, audioBytes, videoURI, videoBytes, empty]
     return message
 }
 

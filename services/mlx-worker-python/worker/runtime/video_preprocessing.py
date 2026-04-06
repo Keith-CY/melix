@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
@@ -31,6 +32,7 @@ class PreparedVideoInput:
     frame_budget: int
     start_ms: int
     end_ms: int
+    sha256_hex: str
 
 
 def prepare_video_input(part) -> PreparedVideoInput:
@@ -46,6 +48,7 @@ def prepare_video_input(part) -> PreparedVideoInput:
     _validate_bounds(duration_ms, frame_budget, start_ms, end_ms)
 
     if part.video_bytes:
+        bytes_data = bytes(part.video_bytes)
         resolved_format = _resolve_video_format(format_name, mime_type, filename)
         return PreparedVideoInput(
             source_kind="inline",
@@ -53,11 +56,12 @@ def prepare_video_input(part) -> PreparedVideoInput:
             mime_type=mime_type,
             format=resolved_format,
             filename=filename or f"inline-video.{resolved_format}",
-            byte_length=len(bytes(part.video_bytes)),
+            byte_length=len(bytes_data),
             duration_ms=duration_ms,
             frame_budget=frame_budget,
             start_ms=start_ms,
             end_ms=end_ms,
+            sha256_hex=_sha256_hex(bytes_data),
         )
 
     uri = str(getattr(part, "video_uri", "") or "").strip()
@@ -77,6 +81,17 @@ def prepare_video_input(part) -> PreparedVideoInput:
         frame_budget=frame_budget,
         start_ms=start_ms,
         end_ms=end_ms,
+        sha256_hex=_uri_identity_hash(
+            uri=uri,
+            mime_type=mime_type,
+            format_name=resolved_format,
+            filename=resolved_filename,
+            byte_length=int(getattr(media, "byte_length", 0) or 0),
+            duration_ms=duration_ms,
+            frame_budget=frame_budget,
+            start_ms=start_ms,
+            end_ms=end_ms,
+        ),
     )
 
 
@@ -144,3 +159,36 @@ def _filename_from_reference(reference: str) -> str:
     if parsed.scheme in {"http", "https", "file"}:
         return Path(unquote(parsed.path)).name
     return Path(reference).name
+
+
+def _uri_identity_hash(
+    *,
+    uri: str,
+    mime_type: str,
+    format_name: str,
+    filename: str,
+    byte_length: int,
+    duration_ms: int,
+    frame_budget: int,
+    start_ms: int,
+    end_ms: int,
+) -> str:
+    digest = hashlib.sha256()
+    for value in (
+        uri,
+        mime_type,
+        format_name,
+        filename,
+        str(byte_length),
+        str(duration_ms),
+        str(frame_budget),
+        str(start_ms),
+        str(end_ms),
+    ):
+        digest.update(value.encode("utf-8"))
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
+def _sha256_hex(payload: bytes) -> str:
+    return hashlib.sha256(payload).hexdigest()

@@ -9,7 +9,11 @@ import pytest
 from packages.protocol.python.worker.v1 import common_pb2
 
 from worker.registry import WorkerRegistry
-from worker.runtime.multimodal_preprocessing import PreparedImageInput, PreparedVisionRequest
+from worker.runtime.multimodal_preprocessing import (
+    PreparedImageInput,
+    PreparedVideoFramePolicy,
+    PreparedVisionRequest,
+)
 from worker.runtime.mlx_vlm_runtime import (
     AutoMLXVLMBackend,
     MLXVLMRuntime,
@@ -241,6 +245,136 @@ def test_mlx_vlm_runtime_supports_prompt_only_generation_for_text_backed_models(
     assert stream_calls == [("formatted::Say hello.", None)]
 
 
+def test_mlx_vlm_runtime_render_prompt_preserves_text_backed_image_inputs_until_generation() -> None:
+    runtime = MLXVLMRuntime(
+        backend=AutoMLXVLMBackend(
+            load_fn=lambda model_path, revision="main": (
+                SimpleNamespace(config=SimpleNamespace(model_type="gemma4")),
+                SimpleNamespace(),
+            ),
+            stream_generate_fn=lambda *args, **kwargs: iter(()),
+            apply_chat_template_fn=lambda *args, **kwargs: "",
+        )
+    )
+    loaded_model = runtime.load_model(imported_gemma4_vlm_model())
+    loaded_model["metadata"]["melix.vlm.execution_mode"] = "text_backed"
+
+    prepared = runtime.render_prompt(
+        [
+            common_pb2.ChatMessage(
+                role="user",
+                parts=[
+                    common_pb2.MessagePart(text="Describe the image."),
+                    common_pb2.MessagePart(
+                        image_bytes=b"fake-image-payload",
+                        media=common_pb2.MediaMetadata(
+                            media_type=common_pb2.MEDIA_TYPE_IMAGE,
+                            source_kind=common_pb2.MEDIA_SOURCE_INLINE_BYTES,
+                            filename="sample.jpg",
+                            format="jpg",
+                        ),
+                    ),
+                ],
+            )
+        ],
+        loaded_model=loaded_model,
+    )
+
+    assert prepared.prompt_text == "Describe the image."
+    assert len(prepared.images) == 1
+    assert prepared.videos == []
+
+
+def test_mlx_vlm_runtime_rewrites_video_only_requests_for_text_backed_models() -> None:
+    runtime = MLXVLMRuntime(
+        backend=AutoMLXVLMBackend(
+            load_fn=lambda model_path, revision="main": (
+                SimpleNamespace(config=SimpleNamespace(model_type="gemma4")),
+                SimpleNamespace(),
+            ),
+            stream_generate_fn=lambda *args, **kwargs: iter(()),
+            apply_chat_template_fn=lambda *args, **kwargs: "",
+        )
+    )
+    loaded_model = runtime.load_model(imported_gemma4_vlm_model())
+    loaded_model["metadata"]["melix.vlm.execution_mode"] = "text_backed"
+
+    prepared = runtime.render_prompt(
+        [
+            common_pb2.ChatMessage(
+                role="user",
+                parts=[
+                    common_pb2.MessagePart(text="Summarize the clip."),
+                    common_pb2.MessagePart(
+                        video_bytes=b"video-fixture",
+                        media=common_pb2.MediaMetadata(
+                            media_type=common_pb2.MEDIA_TYPE_VIDEO,
+                            source_kind=common_pb2.MEDIA_SOURCE_INLINE_BYTES,
+                            mime_type="video/mp4",
+                            format="mp4",
+                            filename="clip.mp4",
+                            frame_budget=5,
+                            start_ms=400,
+                            end_ms=2_400,
+                        ),
+                    ),
+                ],
+            )
+        ],
+        loaded_model=loaded_model,
+    )
+
+    assert prepared.prompt_text == (
+        "Video 1: clip.mp4; format=mp4; frames=5; start_ms=400; end_ms=2400\n"
+        "Prompt: Summarize the clip."
+    )
+    assert prepared.images == []
+    assert len(prepared.videos) == 1
+    assert prepared.multimodal_hash_hex != prepared.prompt_hash_hex
+    probe = runtime.last_probe_snapshot()
+    assert probe.video_effective_frame_count == 5
+    assert probe.video_requested_frame_budget == 5
+    assert probe.video_window_ms == 2_000
+
+
+def test_mlx_vlm_runtime_text_backed_video_prompt_defaults_when_prompt_is_blank() -> None:
+    prepared = PreparedVisionRequest(
+        prompt_text="",
+        images=[],
+        videos=[
+            SimpleNamespace(  # type: ignore[list-item]
+                filename="blank-prompt.mp4",
+                format="mp4",
+                reference="inline:video",
+                sha256_hex="00" * 32,
+            )
+        ],
+        video_frame_policies=[
+            PreparedVideoFramePolicy(
+                reference="inline:video",
+                sampling_strategy="uniform_sample",
+                requested_frame_budget=0,
+                effective_frame_count=8,
+                clip_start_ms=0,
+                clip_end_ms=0,
+                clip_duration_ms=0,
+            )
+        ],
+        preprocess_latency_ms=0.0,
+        preprocess_input_bytes=0,
+        preprocess_peak_memory_bytes=0,
+        prompt_hash_hex="11" * 32,
+        multimodal_hash_hex="22" * 32,
+    )
+
+    prompt_text = MLXVLMRuntime._text_backed_video_prompt(prepared)
+
+    assert prompt_text == (
+        "Video 1: blank-prompt.mp4; format=mp4; frames=8; start_ms=0; end_ms=0\n"
+        "Prompt: Describe the video."
+    )
+
+
 def test_mlx_vlm_runtime_rejects_image_inputs_for_text_backed_models() -> None:
     runtime = MLXVLMRuntime(
         backend=AutoMLXVLMBackend(
@@ -267,6 +401,8 @@ def test_mlx_vlm_runtime_rejects_image_inputs_for_text_backed_models() -> None:
                 sha256_hex="deadbeef",
             )
         ],
+        videos=[],
+        video_frame_policies=[],
         preprocess_latency_ms=0.0,
         preprocess_input_bytes=len(b"fake-image-payload"),
         preprocess_peak_memory_bytes=len(b"fake-image-payload"),

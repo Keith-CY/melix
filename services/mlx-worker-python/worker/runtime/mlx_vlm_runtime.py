@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+import hashlib
 import importlib.util
 import tempfile
 import time
@@ -10,7 +11,7 @@ from typing import Any
 
 from worker.runtime.deterministic_vlm_runtime import VisionProbeSnapshot
 from worker.runtime.mlx_text_runtime import RuntimeTokenEvent
-from worker.runtime.multimodal_preprocessing import PreparedVisionRequest, prepare_vision_request
+from worker.runtime.multimodal_preprocessing import PreparedVisionRequest, prepare_vision_request, rebuild_multimodal_hash
 from worker.runtime.vision_family_adapters import resolve_vision_family_config
 
 
@@ -272,22 +273,45 @@ class MLXVLMRuntime:
         started_at = time.perf_counter()
         metadata = loaded_model.get("metadata", {}) if isinstance(loaded_model, dict) else {}
         execution_mode = str(metadata.get("melix.vlm.execution_mode", "") or "").strip() or "multimodal"
+        family_config = self._family_config(loaded_model)
         if execution_mode == "text_backed":
-            prompt_text = self._prompt_text_from_messages(messages)
-            prepared = PreparedVisionRequest(
-                prompt_text=prompt_text,
-                images=[],
-                preprocess_latency_ms=max(0.0, (time.perf_counter() - started_at) * 1000.0),
-                preprocess_input_bytes=len(prompt_text.encode("utf-8")),
-                preprocess_peak_memory_bytes=0,
-            )
+            if self._contains_non_text_media(messages):
+                prepared = family_config.shape_request(prepare_vision_request(messages))
+                if prepared.videos and not prepared.images:
+                    prepared = self._replace_prompt_text(
+                        prepared,
+                        prompt_text=self._text_backed_video_prompt(prepared),
+                    )
+                prepared = replace(
+                    prepared,
+                    preprocess_latency_ms=max(0.0, (time.perf_counter() - started_at) * 1000.0),
+                    preprocess_input_bytes=prepared.preprocess_input_bytes,
+                    preprocess_peak_memory_bytes=prepared.preprocess_peak_memory_bytes,
+                )
+            else:
+                prompt_text = self._prompt_text_from_messages(messages)
+                prompt_hash_hex = hashlib.sha256(prompt_text.encode("utf-8")).hexdigest()
+                prepared = PreparedVisionRequest(
+                    prompt_text=prompt_text,
+                    images=[],
+                    videos=[],
+                    video_frame_policies=[],
+                    preprocess_latency_ms=max(0.0, (time.perf_counter() - started_at) * 1000.0),
+                    preprocess_input_bytes=len(prompt_text.encode("utf-8")),
+                    preprocess_peak_memory_bytes=0,
+                    prompt_hash_hex=prompt_hash_hex,
+                    multimodal_hash_hex=prompt_hash_hex,
+                )
         else:
-            prepared = self._family_config(loaded_model).shape_request(prepare_vision_request(messages))
+            prepared = family_config.shape_request(prepare_vision_request(messages))
         self._last_probe = VisionProbeSnapshot(
             preprocess_latency_ms=prepared.preprocess_latency_ms,
             preprocess_input_bytes=prepared.preprocess_input_bytes,
             preprocess_peak_memory_bytes=prepared.preprocess_peak_memory_bytes,
             first_token_latency_ms=0.0,
+            video_effective_frame_count=prepared.effective_video_frame_count,
+            video_requested_frame_budget=prepared.requested_video_frame_budget,
+            video_window_ms=prepared.effective_video_window_ms,
             cache_identity="",
             cache_scope_id="",
             cache_hit=False,
@@ -358,6 +382,9 @@ class MLXVLMRuntime:
                         preprocess_input_bytes=prepared_request.preprocess_input_bytes,
                         preprocess_peak_memory_bytes=prepared_request.preprocess_peak_memory_bytes,
                         first_token_latency_ms=max(0.0, (first_token_at - started_at) * 1000.0),
+                        video_effective_frame_count=prepared_request.effective_video_frame_count,
+                        video_requested_frame_budget=prepared_request.requested_video_frame_budget,
+                        video_window_ms=prepared_request.effective_video_window_ms,
                         cache_identity="",
                         cache_scope_id="",
                         cache_hit=False,
@@ -413,3 +440,46 @@ class MLXVLMRuntime:
                 if text:
                     prompt_segments.append(text)
         return "\n".join(prompt_segments).strip()
+
+    @staticmethod
+    def _contains_non_text_media(messages) -> bool:
+        for message in messages:
+            for part in message.parts:
+                if getattr(part, "image_bytes", b"") or getattr(part, "image_uri", ""):
+                    return True
+                if getattr(part, "video_bytes", b"") or getattr(part, "video_uri", ""):
+                    return True
+        return False
+
+    @staticmethod
+    def _replace_prompt_text(
+        prepared_request: PreparedVisionRequest,
+        *,
+        prompt_text: str,
+    ) -> PreparedVisionRequest:
+        normalized_prompt_text = prompt_text.strip()
+        prompt_hash_hex = hashlib.sha256(normalized_prompt_text.encode("utf-8")).hexdigest()
+        return replace(
+            prepared_request,
+            prompt_text=normalized_prompt_text,
+            prompt_hash_hex=prompt_hash_hex,
+            multimodal_hash_hex=rebuild_multimodal_hash(prepared_request, prompt_hash_hex),
+        )
+
+    @staticmethod
+    def _text_backed_video_prompt(prepared_request: PreparedVisionRequest) -> str:
+        prompt_text = prepared_request.prompt_text or "Describe the video."
+        video_lines = [
+            (
+                f"Video {index + 1}: {video.filename};"
+                f" format={video.format};"
+                f" frames={policy.effective_frame_count};"
+                f" start_ms={policy.clip_start_ms};"
+                f" end_ms={policy.clip_end_ms}"
+            )
+            for index, (video, policy) in enumerate(
+                zip(prepared_request.videos, prepared_request.video_frame_policies, strict=False)
+            )
+        ]
+        video_lines.append(f"Prompt: {prompt_text}")
+        return "\n".join(video_lines)

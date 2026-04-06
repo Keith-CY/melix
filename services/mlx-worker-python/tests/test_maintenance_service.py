@@ -1621,6 +1621,9 @@ def test_doctor_reports_warning_for_loaded_models_without_cache_bytes(tmp_path: 
     )
     loaded = registry.load_model(WorkerModelCatalog.dev_text_model())
     service = WorkerMaintenanceService(registry, jobs_root=tmp_path / "model-ops")
+    service._core._benchmark_suite_catalog = BenchmarkSuiteCatalog(
+        hf_dataset_fetcher=FakeBenchmarkHFDatasetFetcher()
+    )
 
     doctor = service.RunDoctor(
         maintenance_pb2.RunDoctorRequest(

@@ -40,6 +40,7 @@ def test_prepare_video_input_accepts_inline_bytes_with_explicit_metadata() -> No
         frame_budget=8,
         start_ms=200,
         end_ms=2_000,
+        sha256_hex="79fd615a866fe7f9eb4da8d9c41ab57e3bd48056df42fd2c13e4d461a87afbe3",
     )
 
 
@@ -67,6 +68,7 @@ def test_prepare_video_input_accepts_uri_and_infers_format_from_reference() -> N
     assert prepared.frame_budget == 12
     assert prepared.start_ms == 500
     assert prepared.end_ms == 3_500
+    assert len(prepared.sha256_hex) == 64
 
 
 def test_prepare_video_input_accepts_local_uri_and_mime_type_resolution() -> None:
@@ -85,6 +87,7 @@ def test_prepare_video_input_accepts_local_uri_and_mime_type_resolution() -> Non
     assert prepared.reference == "/tmp/local-demo"
     assert prepared.format == "webm"
     assert prepared.filename == "local-demo"
+    assert len(prepared.sha256_hex) == 64
 
 
 def test_prepare_video_input_infers_format_from_plain_local_path() -> None:
@@ -100,6 +103,7 @@ def test_prepare_video_input_infers_format_from_plain_local_path() -> None:
 
     assert prepared.format == "m4v"
     assert prepared.filename == "local-demo.m4v"
+    assert len(prepared.sha256_hex) == 64
 
 
 @pytest.mark.parametrize(

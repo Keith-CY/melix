@@ -715,6 +715,72 @@ struct RequestCoordinatorTests {
         #expect(metrics.values["cache.memory_bytes", default: -1] == 2048)
     }
 
+    @Test("video-bearing vlm requests publish explicit frame-policy metrics on background lanes")
+    func videoBearingVLMRequestsPublishFramePolicyMetrics() async throws {
+        let workerClient = PhaseAwareWorkerClient()
+        await workerClient.setRuntimeStatsResponse({
+            var response = Melix_Worker_V1_GetRuntimeStatsResponse()
+            response.stats.lastProbeKind = "vlm"
+            response.stats.lastPreprocessLatencyMs = 24
+            response.stats.lastPreprocessPeakMemoryBytes = 32_768
+            response.stats.lastFirstTokenLatencyMs = 11
+            response.stats.lastVideoEffectiveFrameCount = 6
+            response.stats.lastVideoRequestedFrameBudget = 6
+            response.stats.lastVideoWindowMs = 4_000
+            response.stats.l1CacheBytes = 2_048
+            response.stats.l1HitRate = 0.5
+            return response
+        }())
+        await workerClient.setCacheStatsResponse({
+            var response = Melix_Worker_V1_GetCacheStatsResponse()
+            response.stats.l1Bytes = 2_048
+            response.stats.blockCount = 1
+            response.stats.l1HitRate = 0.5
+            response.stats.activeMode = .tiered
+            return response
+        }())
+        let schedulerReadModel = SchedulerReadModel()
+        let metricsStore = MetricsStore()
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devVLMModel()])
+        _ = await catalog.loadModel(id: "melix-dev-vlm", dispatchHandle: "melix-dev-vlm::python")
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: BlockingWorkerClient(),
+                pythonCompatibilityClient: workerClient,
+                modelCatalog: catalog
+            ),
+            abortRegistry: AbortRegistry(),
+            schedulerReadModel: schedulerReadModel,
+            metricsStore: metricsStore
+        )
+
+        let execution = try await coordinator.startChatCompletion(
+            makeTranslatedChatRequest(
+                requestID: "req-vlm-video-metrics",
+                modelID: "melix-dev-vlm",
+                messages: [makeWorkerVideoMessage(text: "Summarize the clip.", videoBytes: Data("video fixture".utf8))]
+            )
+        )
+        let consumer = Task {
+            for try await _ in execution.stream {}
+        }
+        await workerClient.emitToken(requestID: "req-vlm-video-metrics", text: "video")
+        await workerClient.finish(requestID: "req-vlm-video-metrics")
+        _ = try await consumer.value
+
+        let metrics = await metricsStore.snapshot()
+        let progress = await schedulerReadModel.progressSnapshot(for: "req-vlm-video-metrics")
+
+        #expect(progress?.lane == "multimodal.vision.background")
+        #expect(metrics.values["vision.preprocess_latency_ms", default: -1] == 24)
+        #expect(metrics.values["vision.preprocess_peak_memory_bytes", default: -1] == 32_768)
+        #expect(metrics.values["vision.vlm_first_token_ms", default: -1] == 11)
+        #expect(metrics.values["vision.video_first_token_ms", default: -1] == 11)
+        #expect(metrics.values["vision.video_frame_count", default: -1] == 6)
+        #expect(metrics.values["vision.video_frame_budget", default: -1] == 6)
+        #expect(metrics.values["vision.video_window_ms", default: -1] == 4_000)
+    }
+
     @Test("worker unavailable requests are rejected before dispatch")
     func workerUnavailableRequestsAreRejected() async throws {
         let coordinator = RequestCoordinator(

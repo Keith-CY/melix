@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 from dataclasses import dataclass, replace
 
-from worker.runtime.multimodal_preprocessing import PreparedVisionRequest
+from worker.runtime.multimodal_preprocessing import PreparedVisionRequest, rebuild_multimodal_hash
 
 
 @dataclass(frozen=True)
@@ -12,11 +12,14 @@ class VisionFamilyDescriptor:
     prompt_profile_id: str
     tokenization_mode: str
     max_images_per_prompt: int
+    max_videos_per_prompt: int
     supports_tool_calls: bool
     multimodal_adapter_hash: str
     default_prompt_text: str
+    default_video_prompt_text: str
     image_token_divisor: int
     prompt_token_bias: int
+    video_frame_token_cost: int
 
 
 @dataclass(frozen=True)
@@ -25,11 +28,14 @@ class ResolvedVisionFamilyConfig:
     prompt_profile_id: str
     tokenization_mode: str
     max_images_per_prompt: int
+    max_videos_per_prompt: int
     supports_tool_calls: bool
     multimodal_adapter_hash: str
     default_prompt_text: str
+    default_video_prompt_text: str
     image_token_divisor: int
     prompt_token_bias: int
+    video_frame_token_cost: int
 
     def capability_metadata(self) -> dict[str, str]:
         return {
@@ -37,6 +43,7 @@ class ResolvedVisionFamilyConfig:
             "vision_prompt_profile_id": self.prompt_profile_id,
             "vision_tokenization_mode": self.tokenization_mode,
             "vision_max_images_per_prompt": str(self.max_images_per_prompt),
+            "vision_max_videos_per_prompt": str(self.max_videos_per_prompt),
             "vision_supports_tool_calls": "true" if self.supports_tool_calls else "false",
             "multimodal_adapter_hash": self.multimodal_adapter_hash,
         }
@@ -48,8 +55,19 @@ class ResolvedVisionFamilyConfig:
                 f"Vision family {self.family_id} supports at most "
                 f"{self.max_images_per_prompt} image(s) per prompt."
             )
+        video_count = len(prepared_request.videos)
+        if video_count > self.max_videos_per_prompt:
+            raise ValueError(
+                f"Vision family {self.family_id} supports at most "
+                f"{self.max_videos_per_prompt} video input(s) per prompt."
+            )
 
-        prompt_text = prepared_request.prompt_text.strip() or self.default_prompt_text
+        default_prompt_text = (
+            self.default_video_prompt_text
+            if prepared_request.videos and not prepared_request.images
+            else self.default_prompt_text
+        )
+        prompt_text = prepared_request.prompt_text.strip() or default_prompt_text
         if prompt_text == prepared_request.prompt_text:
             return prepared_request
         return _with_prompt_text(prepared_request, prompt_text)
@@ -60,7 +78,11 @@ class ResolvedVisionFamilyConfig:
             max(1, image.byte_length // max(1, self.image_token_divisor))
             for image in prepared_request.images
         )
-        return max(1, prompt_tokens + image_tokens + self.prompt_token_bias)
+        video_tokens = sum(
+            max(1, policy.effective_frame_count * max(1, self.video_frame_token_cost))
+            for policy in prepared_request.video_frame_policies
+        )
+        return max(1, prompt_tokens + image_tokens + video_tokens + self.prompt_token_bias)
 
 
 @dataclass(frozen=True)
@@ -86,6 +108,11 @@ class VisionFamilyAdapter:
                 "vision_max_images_per_prompt",
                 self.descriptor.max_images_per_prompt,
             ),
+            max_videos_per_prompt=_int_value(
+                metadata,
+                "vision_max_videos_per_prompt",
+                self.descriptor.max_videos_per_prompt,
+            ),
             supports_tool_calls=_bool_value(
                 metadata,
                 "vision_supports_tool_calls",
@@ -97,8 +124,10 @@ class VisionFamilyAdapter:
                 self.descriptor.multimodal_adapter_hash,
             ),
             default_prompt_text=self.descriptor.default_prompt_text,
+            default_video_prompt_text=self.descriptor.default_video_prompt_text,
             image_token_divisor=self.descriptor.image_token_divisor,
             prompt_token_bias=self.descriptor.prompt_token_bias,
+            video_frame_token_cost=self.descriptor.video_frame_token_cost,
         )
 
 
@@ -110,11 +139,14 @@ _VISION_FAMILY_ADAPTERS: dict[str, VisionFamilyAdapter] = {
             prompt_profile_id="llava-chatml-v1",
             tokenization_mode="interleaved",
             max_images_per_prompt=8,
+            max_videos_per_prompt=1,
             supports_tool_calls=True,
             multimodal_adapter_hash="vision-family-llava-v1",
             default_prompt_text="Describe the image.",
+            default_video_prompt_text="Describe the video.",
             image_token_divisor=8,
             prompt_token_bias=0,
+            video_frame_token_cost=4,
         )
     ),
     "paligemma-v1": VisionFamilyAdapter(
@@ -123,11 +155,14 @@ _VISION_FAMILY_ADAPTERS: dict[str, VisionFamilyAdapter] = {
             prompt_profile_id="paligemma-caption-v1",
             tokenization_mode="prefix",
             max_images_per_prompt=1,
+            max_videos_per_prompt=1,
             supports_tool_calls=False,
             multimodal_adapter_hash="vision-family-paligemma-v1",
             default_prompt_text="Caption the image.",
+            default_video_prompt_text="Caption the video.",
             image_token_divisor=16,
             prompt_token_bias=2,
+            video_frame_token_cost=3,
         )
     ),
     "gemma4-v1": VisionFamilyAdapter(
@@ -136,11 +171,14 @@ _VISION_FAMILY_ADAPTERS: dict[str, VisionFamilyAdapter] = {
             prompt_profile_id="gemma4-chatml-v1",
             tokenization_mode="interleaved",
             max_images_per_prompt=8,
+            max_videos_per_prompt=1,
             supports_tool_calls=True,
             multimodal_adapter_hash="vision-family-gemma4-v1",
             default_prompt_text="Describe the image.",
+            default_video_prompt_text="Describe the video.",
             image_token_divisor=8,
             prompt_token_bias=1,
+            video_frame_token_cost=4,
         )
     ),
 }
@@ -161,15 +199,11 @@ def _with_prompt_text(
 ) -> PreparedVisionRequest:
     normalized_prompt_text = prompt_text.strip()
     prompt_hash_hex = hashlib.sha256(normalized_prompt_text.encode("utf-8")).hexdigest()
-    multimodal_hash = hashlib.sha256()
-    multimodal_hash.update(prompt_hash_hex.encode("ascii"))
-    for image in prepared_request.images:
-        multimodal_hash.update(image.sha256_hex.encode("ascii"))
     return replace(
         prepared_request,
         prompt_text=normalized_prompt_text,
         prompt_hash_hex=prompt_hash_hex,
-        multimodal_hash_hex=multimodal_hash.hexdigest(),
+        multimodal_hash_hex=rebuild_multimodal_hash(prepared_request, prompt_hash_hex),
     )
 
 

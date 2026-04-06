@@ -842,7 +842,7 @@ actor WorkerRuntimeRegistry {
         switch part.part {
         case .text(let text):
             return estimatedPromptTokens(in: text)
-        case .imageUri, .imageBytes, .audioUri, .audioBytes:
+        case .imageUri, .imageBytes, .audioUri, .audioBytes, .videoUri, .videoBytes:
             return Self.estimatedMediaPartTokens
         case nil:
             return 0
