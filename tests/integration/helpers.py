@@ -123,7 +123,17 @@ class LiveMelixStack:
             python_started_at = time.perf_counter()
             worker_env = os.environ.copy()
             worker_env.update(self.environment_overrides)
-            worker_env["PYTHONPATH"] = f"{self.repo_root}:{self.repo_root / 'services/mlx-worker-python'}"
+            pythonpath_segments: list[str] = []
+            pythonpath_prefix = worker_env.get("MELIX_PYTHONPATH_PREFIX", "").strip()
+            if pythonpath_prefix:
+                pythonpath_segments.append(pythonpath_prefix)
+            pythonpath_segments.extend(
+                [
+                    os.fspath(self.repo_root),
+                    os.fspath(self.repo_root / "services/mlx-worker-python"),
+                ]
+            )
+            worker_env["PYTHONPATH"] = os.pathsep.join(pythonpath_segments)
             worker_env["MELIX_PYTHON_WORKER_METRICS_PATH"] = os.fspath(self.python_worker_metrics_path)
             worker_env["MELIX_PYTHON_WORKER_STARTUP_T0_NS"] = str(time.perf_counter_ns())
             self.python_worker_stdout = self.python_worker_stdout_path.open("w", encoding="utf-8")

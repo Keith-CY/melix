@@ -2,6 +2,67 @@
 
 ## 2026-04-06
 
+- Closed `M17.4` by turning speech support into a repository-owned live-path operator workflow for
+  both transcription and synthesis instead of leaving the speech families at contract-only status:
+  - added lazy-load coverage on `/v1/audio/transcriptions` and `/v1/audio/speech` so cataloged
+    managed speech models can hydrate runtime-pack plus managed-model metadata and load on demand
+    without bespoke preload wiring
+  - added a repository-owned speech smoke workflow in
+    `scripts/m17_speech_runtime_smoke.py` plus `make phase17-metrics`, using reproducible fake
+    `mlx_audio` fixtures to exercise `Whisper`, `Parakeet`, `Kokoro`, and `Qwen3-TTS` through the
+    real local HTTP path
+  - added a machine-readable speech metrics builder and promoted the speech-family support-matrix
+    rows from `contract_only` to `verified`, with one canonical live-path integration test node
+    attached to the four speech families
+  - added the speech operator-evidence runbook and updated the docs index plus support-matrix
+    guidance so operators can reproduce, diagnose, and compare locale, fallback, and dependency
+    state without source inspection
+- Verification summary for `M17.4`:
+  - `PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" UV_CACHE_DIR="$HOME/.cache/uv" uv run --project services/mlx-worker-python --extra mlx python scripts/m17_speech_runtime_smoke.py --json`: pass with `ok: true`
+  - `make phase17-metrics`: pass with `speech.integration_success_rate = 100.0`
+  - `python3 -m py_compile scripts/m17_speech_runtime_smoke.py tests/integration/test_m17_speech_runtime_smoke.py services/mlx-worker-python/worker/productization/acceptance_metrics.py tests/integration/helpers.py`: pass
+  - `PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" UV_CACHE_DIR="$HOME/.cache/uv" uv run --project services/mlx-worker-python --extra mlx pytest services/mlx-worker-python/tests/test_acceptance_metrics.py tests/integration/test_m17_speech_runtime_smoke.py tests/integration/test_non_text_endpoints.py -q`: `30 passed in 189.08s (0:03:09)`
+  - `PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" UV_CACHE_DIR="$HOME/.cache/uv" uv run --project services/mlx-worker-python --extra mlx coverage run --data-file /tmp/m17_4_py.coverage --source=services/mlx-worker-python/worker,tests/integration,scripts -m pytest services/mlx-worker-python/tests/test_acceptance_metrics.py tests/integration/test_m17_speech_runtime_smoke.py tests/integration/test_non_text_endpoints.py -q && PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" UV_CACHE_DIR="$HOME/.cache/uv" uv run --project services/mlx-worker-python --extra mlx coverage json --data-file /tmp/m17_4_py.coverage -o /tmp/m17_4_py_coverage.json && python3 scripts/python_changed_line_coverage.py --coverage-json /tmp/m17_4_py_coverage.json services/mlx-worker-python/worker/productization/acceptance_metrics.py services/mlx-worker-python/worker/productization/__init__.py services/mlx-worker-python/worker/productization/family_support_matrix.py tests/integration/helpers.py scripts/m17_speech_runtime_smoke.py services/mlx-worker-python/tests/test_acceptance_metrics.py tests/integration/test_m17_speech_runtime_smoke.py tests/integration/test_non_text_endpoints.py`: `30 passed in 188.69s (0:03:08)` and changed-line coverage `100.00%` (`16/16`)
+  - `swift test --package-path services/control-plane-swift --filter 'OpenAIHandlerTests'`: `115 tests in 1 suite passed after 0.083 seconds`
+  - `swift test --package-path services/control-plane-swift --filter 'OpenAIHandlerTests' --enable-code-coverage`: `115 tests in 1 suite passed`
+  - `python3 scripts/swift_changed_line_coverage.py --binary services/control-plane-swift/.build/arm64-apple-macosx/debug/MelixControlPlanePackageTests.xctest/Contents/MacOS/MelixControlPlanePackageTests --profdata services/control-plane-swift/.build/arm64-apple-macosx/debug/codecov/default.profdata services/control-plane-swift/Sources/HTTPGateway/OpenAI/OpenAIHandler.swift services/control-plane-swift/Sources/WorkerClient/OnDemandModelLoader.swift services/control-plane-swift/Tests/HTTPGatewayTests/OpenAIHandlerTests.swift`: `96.28%` (`181/188`)
+  - `make proto`: pass
+  - `make py-test`: `532 passed in 34.95s`
+  - `make integration-test`: `75 passed in 1125.03s (0:18:45)`
+  - `make swift-test`: repository-wide execution entered `services/control-plane-swift` and then blocked without additional output or a failure line; the touched control-plane scope above passed with coverage enabled, so the repository-wide hang is recorded as existing infrastructure instability rather than an `M17.4` regression
+  - `git diff --check`: pass
+- Metrics report for `M17.4`:
+  - the repository-owned speech smoke report now emits:
+    - `speech.integration_success_rate`
+    - `speech.transcription.whisper.request_latency_ms`
+    - `speech.transcription.whisper.duration_seconds`
+    - `speech.transcription.whisper.preprocess_latency_ms`
+    - `speech.transcription.whisper.chunk_count`
+    - `speech.transcription.parakeet.request_latency_ms`
+    - `speech.transcription.parakeet.duration_seconds`
+    - `speech.transcription.parakeet.preprocess_latency_ms`
+    - `speech.transcription.parakeet.chunk_count`
+    - `speech.synthesis.kokoro.request_latency_ms`
+    - `speech.synthesis.kokoro.output_bytes`
+    - `speech.synthesis.qwen3_tts.request_latency_ms`
+    - `speech.synthesis.qwen3_tts.output_bytes`
+    - `speech.synthesis.qwen3_tts.voice_fallback_count`
+    - `speech.synthesis.qwen3_tts.locale_header_success_rate`
+  - `make phase17-metrics` currently records:
+    - `speech.integration_success_rate = 100.0`
+    - `speech.transcription.whisper.request_latency_ms = 457.15`
+    - `speech.transcription.parakeet.request_latency_ms = 560.32`
+    - `speech.synthesis.kokoro.request_latency_ms = 453.13`
+    - `speech.synthesis.qwen3_tts.request_latency_ms = 546.36`
+    - `speech.synthesis.qwen3_tts.voice_fallback_count = 0.0`
+    - `speech.synthesis.qwen3_tts.locale_header_success_rate = 100.0`
+  - changed-line coverage for the touched handwritten executable scope:
+    - Python touched-scope coverage: `100.00%` (`16/16`)
+    - Swift control-plane touched-scope coverage: `96.28%` (`181/188`)
+  - generated protobuf outputs, Make targets, runbooks, and planning-status documents are excluded
+    from executable changed-line coverage because they are generated artifacts or non-executable
+    repository bookkeeping
+
 - Closed `M17.3` by making speech locale policy, resolved speech settings, and optional
   dependency-profile state explicit across the Python worker registry truth, the Swift
   control-plane catalog, the `/v1/audio/speech` HTTP path, and the macOS operator model-info

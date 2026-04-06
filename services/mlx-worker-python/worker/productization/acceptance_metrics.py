@@ -194,6 +194,85 @@ def build_phase16_video_metrics_report(
     }
 
 
+def build_phase17_speech_metrics_report(
+    *,
+    whisper: dict[str, Any],
+    parakeet: dict[str, Any],
+    kokoro: dict[str, Any],
+    qwen3_tts: dict[str, Any],
+) -> dict[str, Any]:
+    checks = {
+        "speech.transcription.whisper_success": bool(whisper.get("success")),
+        "speech.transcription.parakeet_success": bool(parakeet.get("success")),
+        "speech.synthesis.kokoro_success": bool(kokoro.get("success")),
+        "speech.synthesis.qwen3_tts_success": bool(qwen3_tts.get("success")),
+        "speech.synthesis.qwen3_tts_locale_resolution_success": bool(
+            qwen3_tts.get("locale_resolution_success")
+        ),
+        "speech.synthesis.qwen3_tts_instruction_path_success": bool(
+            qwen3_tts.get("instruction_path_success")
+        ),
+    }
+    passed_checks = sum(1 for value in checks.values() if value)
+    total_checks = len(checks)
+
+    metrics = {
+        "speech.integration_success_rate": _success_rate(passed_checks, total_checks),
+        "speech.transcription.whisper.request_latency_ms": _rounded_float(
+            whisper.get("request_latency_ms")
+        ),
+        "speech.transcription.parakeet.request_latency_ms": _rounded_float(
+            parakeet.get("request_latency_ms")
+        ),
+        "speech.transcription.whisper.duration_seconds": _rounded_float(
+            whisper.get("duration_seconds")
+        ),
+        "speech.transcription.parakeet.duration_seconds": _rounded_float(
+            parakeet.get("duration_seconds")
+        ),
+        "speech.transcription.whisper.preprocess_latency_ms": _rounded_float(
+            whisper.get("preprocess_latency_ms")
+        ),
+        "speech.transcription.parakeet.preprocess_latency_ms": _rounded_float(
+            parakeet.get("preprocess_latency_ms")
+        ),
+        "speech.transcription.whisper.chunk_count": _rounded_float(
+            whisper.get("chunk_count")
+        ),
+        "speech.transcription.parakeet.chunk_count": _rounded_float(
+            parakeet.get("chunk_count")
+        ),
+        "speech.synthesis.kokoro.request_latency_ms": _rounded_float(
+            kokoro.get("request_latency_ms")
+        ),
+        "speech.synthesis.qwen3_tts.request_latency_ms": _rounded_float(
+            qwen3_tts.get("request_latency_ms")
+        ),
+        "speech.synthesis.kokoro.output_bytes": _rounded_float(
+            kokoro.get("output_bytes")
+        ),
+        "speech.synthesis.qwen3_tts.output_bytes": _rounded_float(
+            qwen3_tts.get("output_bytes")
+        ),
+        "speech.synthesis.qwen3_tts.voice_fallback_count": _rounded_float(
+            qwen3_tts.get("voice_fallback_count")
+        ),
+        "speech.synthesis.qwen3_tts.locale_header_success_rate": _success_rate(
+            int(bool(qwen3_tts.get("locale_resolution_success"))),
+            1,
+        ),
+    }
+
+    return {
+        "checks": checks,
+        "metrics": metrics,
+        "whisper": whisper,
+        "parakeet": parakeet,
+        "kokoro": kokoro,
+        "qwen3_tts": qwen3_tts,
+    }
+
+
 def build_phase8_metrics_report(
     *,
     cold_boot_to_ready_ms: float | None = None,

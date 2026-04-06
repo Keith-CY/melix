@@ -5,6 +5,7 @@ from pathlib import Path
 from worker.productization import (
     build_family_support_matrix,
     build_phase16_video_metrics_report as exported_build_phase16_video_metrics_report,
+    build_phase17_speech_metrics_report as exported_build_phase17_speech_metrics_report,
     build_phase6_vision_metrics_report as exported_build_phase6_vision_metrics_report,
 )
 from worker.productization.acceptance_metrics import (
@@ -258,6 +259,47 @@ def test_build_phase16_video_metrics_report_defaults_missing_values() -> None:
     assert metrics["scheduler.multimodal_queue_delay_ms"] == 0.0
 
 
+def test_build_phase17_speech_metrics_report_tracks_backend_and_locale_evidence() -> None:
+    report = exported_build_phase17_speech_metrics_report(
+        whisper={
+            "success": True,
+            "request_latency_ms": 101.0,
+            "duration_seconds": 1.5,
+            "preprocess_latency_ms": 12.0,
+            "chunk_count": 2.0,
+        },
+        parakeet={
+            "success": True,
+            "request_latency_ms": 99.0,
+            "duration_seconds": 2.25,
+            "preprocess_latency_ms": 10.0,
+            "chunk_count": 3.0,
+        },
+        kokoro={
+            "success": True,
+            "request_latency_ms": 88.0,
+            "output_bytes": 4096.0,
+        },
+        qwen3_tts={
+            "success": True,
+            "request_latency_ms": 91.0,
+            "output_bytes": 6144.0,
+            "voice_fallback_count": 0.0,
+            "locale_resolution_success": True,
+            "instruction_path_success": True,
+        },
+    )
+
+    assert report["checks"]["speech.transcription.whisper_success"] is True
+    assert report["checks"]["speech.synthesis.qwen3_tts_locale_resolution_success"] is True
+    assert report["metrics"]["speech.integration_success_rate"] == 100.0
+    assert report["metrics"]["speech.transcription.whisper.preprocess_latency_ms"] == 12.0
+    assert report["metrics"]["speech.transcription.parakeet.chunk_count"] == 3.0
+    assert report["metrics"]["speech.synthesis.kokoro.output_bytes"] == 4096.0
+    assert report["metrics"]["speech.synthesis.qwen3_tts.output_bytes"] == 6144.0
+    assert report["metrics"]["speech.synthesis.qwen3_tts.locale_header_success_rate"] == 100.0
+
+
 def test_build_family_support_matrix_exposes_contract_rows_and_live_path_evidence() -> None:
     matrix = build_family_support_matrix()
     rows = {
@@ -270,8 +312,8 @@ def test_build_family_support_matrix_exposes_contract_rows_and_live_path_evidenc
     assert matrix["summary"]["transcription_family_count"] == 2
     assert matrix["summary"]["speech_family_count"] == 2
     assert matrix["summary"]["image_family_count"] == 6
-    assert matrix["summary"]["live_verified_count"] == 15
-    assert matrix["summary"]["contract_only_count"] == 8
+    assert matrix["summary"]["live_verified_count"] == 19
+    assert matrix["summary"]["contract_only_count"] == 4
 
     qwen3moe = rows[("text", "qwen3moe")]
     assert qwen3moe["contract"]["route_kind"] == "python_text_compatibility"
@@ -298,14 +340,17 @@ def test_build_family_support_matrix_exposes_contract_rows_and_live_path_evidenc
     assert whisper["contract"]["backend_id"] == "mlx_audio.stt"
     assert whisper["contract"]["install_profile"] == "audio-stt"
     assert whisper["contract"]["languages"] == ["auto"]
-    assert whisper["live_path"]["status"] == "contract_only"
+    assert whisper["live_path"]["status"] == "verified"
+    assert whisper["live_path"]["integration_tests"] == [
+        "tests/integration/test_m17_speech_runtime_smoke.py::test_m17_speech_runtime_smoke_records_live_audio_operator_evidence"
+    ]
 
     parakeet = rows[("transcription", "parakeet")]
     assert parakeet["contract"]["route_kind"] == "python_transcription"
     assert parakeet["contract"]["backend_id"] == "mlx_audio.stt"
     assert parakeet["contract"]["install_profile"] == "audio-stt"
     assert parakeet["contract"]["languages"] == ["auto"]
-    assert parakeet["live_path"]["status"] == "contract_only"
+    assert parakeet["live_path"]["status"] == "verified"
 
     kokoro = rows[("speech", "kokoro")]
     assert kokoro["contract"]["route_kind"] == "python_speech"
@@ -320,7 +365,7 @@ def test_build_family_support_matrix_exposes_contract_rows_and_live_path_evidenc
     assert kokoro["contract"]["default_locale"] == "en"
     assert kokoro["contract"]["packaged_default_locale"] == "en"
     assert kokoro["contract"]["locale_policy"] == "request>model_default>packaged_default"
-    assert kokoro["live_path"]["status"] == "contract_only"
+    assert kokoro["live_path"]["status"] == "verified"
 
     qwen3_tts = rows[("speech", "qwen3-tts")]
     assert qwen3_tts["contract"]["route_kind"] == "python_speech"
@@ -338,7 +383,7 @@ def test_build_family_support_matrix_exposes_contract_rows_and_live_path_evidenc
     assert qwen3_tts["contract"]["default_locale"] == "zh"
     assert qwen3_tts["contract"]["packaged_default_locale"] == "zh"
     assert qwen3_tts["contract"]["locale_policy"] == "request>model_default>packaged_default"
-    assert qwen3_tts["live_path"]["status"] == "contract_only"
+    assert qwen3_tts["live_path"]["status"] == "verified"
 
     basic = rows[("rerank", "basic")]
     assert basic["contract"]["route_kind"] == "python_rerank"

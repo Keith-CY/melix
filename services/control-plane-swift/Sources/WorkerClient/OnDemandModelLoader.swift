@@ -35,7 +35,8 @@ enum OnDemandModelLoader {
         memoryBudgetBytes: UInt64 = 0,
         loadReason: String = "lazy_model_load",
         metricsPrefix: String = "model",
-        requiresTextCapability: Bool = false
+        requiresTextCapability: Bool = false,
+        summaryOverride: Melix_Controlplane_V1_ModelSummary? = nil
     ) async throws -> String {
         _ = await evictModelsIfNeededForLoad(
             targetModelID: modelID,
@@ -48,7 +49,12 @@ enum OnDemandModelLoader {
             return handle
         }
 
-        guard let model = await modelCatalog.model(id: modelID) else {
+        let resolvedModel = if let summaryOverride {
+            summaryOverride
+        } else {
+            await modelCatalog.model(id: modelID)
+        }
+        guard let model = resolvedModel else {
             throw OnDemandModelLoadError.modelNotReady
         }
         if requiresTextCapability,

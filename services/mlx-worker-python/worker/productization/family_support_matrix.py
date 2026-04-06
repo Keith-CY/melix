@@ -123,28 +123,36 @@ _FAMILY_VARIANTS: tuple[dict[str, Any], ...] = (
         "family_id": "whisper",
         "model_id": "melix-whisper-mlx",
         "environment": {},
-        "integration_tests": [],
+        "integration_tests": [
+            "tests/integration/test_m17_speech_runtime_smoke.py::test_m17_speech_runtime_smoke_records_live_audio_operator_evidence",
+        ],
     },
     {
         "capability": "transcription",
         "family_id": "parakeet",
         "model_id": "melix-parakeet-mlx",
         "environment": {},
-        "integration_tests": [],
+        "integration_tests": [
+            "tests/integration/test_m17_speech_runtime_smoke.py::test_m17_speech_runtime_smoke_records_live_audio_operator_evidence",
+        ],
     },
     {
         "capability": "speech",
         "family_id": "kokoro",
         "model_id": "melix-kokoro-mlx",
         "environment": {},
-        "integration_tests": [],
+        "integration_tests": [
+            "tests/integration/test_m17_speech_runtime_smoke.py::test_m17_speech_runtime_smoke_records_live_audio_operator_evidence",
+        ],
     },
     {
         "capability": "speech",
         "family_id": "qwen3-tts",
         "model_id": "melix-qwen3-tts-mlx",
         "environment": {},
-        "integration_tests": [],
+        "integration_tests": [
+            "tests/integration/test_m17_speech_runtime_smoke.py::test_m17_speech_runtime_smoke_records_live_audio_operator_evidence",
+        ],
     },
     {
         "capability": "rerank",

@@ -346,3 +346,7 @@ The roadmap extension in `M10-M17` includes milestone-level plans plus decompose
   default-locale, packaged-default-locale, runtime-pack, and managed-model metadata backed by
   focused Swift, Python, menubar, and integration evidence.
 - `M17.4` `docs/plans/2026-03-31-m17-4-speech-integration-benchmarks-runbooks-and-operator-evidence.md`
+  Status: completed. The repository now ships a live-path speech runtime smoke workflow, a
+  machine-readable speech operator-evidence metrics report, dedicated runbook guidance, and
+  support-matrix promotion from `contract_only` to verified for `Whisper`, `Parakeet`, `Kokoro`,
+  and `Qwen3-TTS`.

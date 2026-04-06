@@ -820,8 +820,19 @@ public struct OpenAIHandler: Sendable {
             return preflightFailure
         }
 
-        guard let modelHandle = await modelCatalog.dispatchHandle(for: transcriptionRequest.model) else {
+        let modelHandle: String
+        do {
+            modelHandle = try await ensureAudioModelReady(
+                modelID: transcriptionRequest.model,
+                loadReason: "lazy_audio_transcription_load",
+                metricsPrefix: "audio_transcription"
+            )
+        } catch OnDemandModelLoadError.modelNotReady {
             return httpErrorResponse(for: .modelNotReady)
+        } catch OnDemandModelLoadError.workerUnavailable {
+            return workerUnavailableResponse()
+        } catch {
+            return workerUnavailableResponse()
         }
         guard
             let workerRegistry,
@@ -926,8 +937,19 @@ public struct OpenAIHandler: Sendable {
             speechContext = value
         }
 
-        guard let modelHandle = await modelCatalog.dispatchHandle(for: speechRequest.model) else {
+        let modelHandle: String
+        do {
+            modelHandle = try await ensureAudioModelReady(
+                modelID: speechRequest.model,
+                loadReason: "lazy_audio_speech_load",
+                metricsPrefix: "audio_speech"
+            )
+        } catch OnDemandModelLoadError.modelNotReady {
             return httpErrorResponse(for: .modelNotReady)
+        } catch OnDemandModelLoadError.workerUnavailable {
+            return workerUnavailableResponse()
+        } catch {
+            return workerUnavailableResponse()
         }
         guard
             let workerRegistry,
@@ -986,6 +1008,26 @@ public struct OpenAIHandler: Sendable {
             )
             return workerUnavailableResponse()
         }
+    }
+
+    private func ensureAudioModelReady(
+        modelID: String,
+        loadReason: String,
+        metricsPrefix: String
+    ) async throws -> String {
+        guard let selectedModel = await modelCatalog.model(id: modelID) else {
+            throw OnDemandModelLoadError.modelNotReady
+        }
+        let hydratedModel = audioAssetManager.hydrate(selectedModel)
+        return try await OnDemandModelLoader.ensureModelReady(
+            modelID: modelID,
+            modelCatalog: modelCatalog,
+            workerRegistry: workerRegistry,
+            metricsStore: metricsStore,
+            loadReason: loadReason,
+            metricsPrefix: metricsPrefix,
+            summaryOverride: hydratedModel
+        )
     }
 
     private func handleImageGenerations(_ request: HTTPRequest) async throws -> HTTPResponse {

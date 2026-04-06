@@ -120,6 +120,7 @@ Current phase-status and planning documents:
 - `plans/2026-03-31-m16-3-temporary-media-lifecycle-cleanup-and-failure-recovery.md`
 - `plans/2026-03-31-m16-4-video-integration-benchmarks-and-operator-evidence.md`
 - `runbooks/video-understanding-evidence.md`
+- `runbooks/speech-runtime-operator-evidence.md`
 - `plans/2026-03-31-m17-1-speech-to-text-backend-adapters-and-model-matrix.md`
 - `plans/2026-03-31-m17-2-text-to-speech-backend-adapters-and-multilingual-voice-catalog.md`
 - `plans/2026-03-31-m17-3-speech-settings-locale-policy-and-optional-dependency-profiles.md`
@@ -171,6 +172,7 @@ Current runbooks:
 - `runbooks/persistent-sessions.md`
 - `runbooks/rich-output-sanitization.md`
 - `runbooks/model-family-support-matrix.md`
+- `runbooks/speech-runtime-operator-evidence.md`
 - `runbooks/platform-packaging-targets.md`
 - `runbooks/phase-1-local-stack.md`
 - `runbooks/phase-2-queue-pressure.md`

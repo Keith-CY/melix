@@ -2961,6 +2961,77 @@ struct OpenAIHandlerTests {
         #expect(metrics.values["audio.seconds_processed_per_second", default: 0] > 0)
     }
 
+    @Test("POST /v1/audio/transcriptions lazy-loads managed mlx-audio models")
+    func postAudioTranscriptionsLazyLoadsManagedMLXAudioModels() async throws {
+        let textClient = ScriptedWorkerClient(events: [])
+        let audioClient = ScriptedPhaseFiveWorkerClient()
+        await audioClient.setTranscribeResponse({
+            var response = Melix_Worker_V1_TranscribeResponse()
+            response.text = "lazy loaded whisper"
+            response.language = "en"
+            response.durationSeconds = 0.5
+            return response
+        }())
+
+        let appSupportDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-http-audio-lazy-transcribe-\(UUID().uuidString)", isDirectory: true)
+        let managedModelPath = appSupportDirectory
+            .appendingPathComponent("managed/whisper", isDirectory: true)
+            .path
+        let assetManager = AudioAssetManager(appSupportDirectory: appSupportDirectory)
+        try assetManager.recordRuntimePackInstall(
+            packID: "melix-audio-runtime-pack",
+            version: "0.3.0",
+            profiles: ["audio-stt"]
+        )
+        try assetManager.recordManagedModel(
+            modelID: "melix-whisper-mlx",
+            revision: "mlx-audio",
+            sourceModelPath: "mlx-community/whisper-large-v3-turbo-asr-fp16",
+            localModelPath: managedModelPath
+        )
+
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.mlxWhisperModel()])
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: textClient),
+                abortRegistry: AbortRegistry()
+            ),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: textClient,
+                pythonCompatibilityClient: audioClient,
+                modelCatalog: catalog
+            ),
+            audioAssetManager: assetManager
+        )
+
+        let body = try #require(
+            """
+            {
+              "model": "melix-whisper-mlx",
+              "audio_base64": "aGVsbG8gYXVkaW8=",
+              "format": "wav"
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(method: .post, path: "/v1/audio/transcriptions", headers: [:], body: body)
+        )
+        let payload = try await collectBody(response.body)
+        let loadRequest = try #require(await audioClient.lastLoadModelRequest)
+        let request = try #require(await audioClient.lastTranscribeRequest)
+
+        #expect(response.statusCode == 200)
+        #expect(loadRequest.model.modelID == "melix-whisper-mlx")
+        #expect(loadRequest.model.modelPath == managedModelPath)
+        #expect(loadRequest.model.revision == "mlx-audio")
+        #expect(request.modelHandle == "melix-whisper-mlx::python")
+        #expect(payload.contains("\"model\":\"melix-whisper-mlx\""))
+        #expect(payload.contains("\"text\":\"lazy loaded whisper\""))
+    }
+
     @Test("POST /v1/audio/transcriptions records background-lane and runtime probe metrics")
     func postAudioTranscriptionsRecordsIsolationAndProbeMetrics() async throws {
         let textClient = ScriptedWorkerClient(events: [])
@@ -3159,8 +3230,8 @@ struct OpenAIHandlerTests {
         #expect(thrownFailurePayload.contains("\"code\":\"worker_unavailable\""))
     }
 
-    @Test("POST /v1/audio/transcriptions returns 409 and 503 for unavailable routes")
-    func postAudioTranscriptionsReturns409And503ForUnavailableRoutes() async throws {
+    @Test("POST /v1/audio/transcriptions returns 503 for missing compatible routes and unavailable workers")
+    func postAudioTranscriptionsReturns503ForMissingCompatibleRoutesAndUnavailableWorkers() async throws {
         let unloadedHandler = OpenAIHandler(
             modelCatalog: ModelCatalog(seedModels: [ModelCatalog.devTranscriptionModel()]),
             requestCoordinator: RequestCoordinator(
@@ -3186,8 +3257,8 @@ struct OpenAIHandlerTests {
         )
         let unloadedPayload = try await collectBody(unloadedResponse.body)
 
-        #expect(unloadedResponse.statusCode == 409)
-        #expect(unloadedPayload.contains("\"code\":\"model_not_ready\""))
+        #expect(unloadedResponse.statusCode == 503)
+        #expect(unloadedPayload.contains("\"code\":\"worker_unavailable\""))
 
         let catalog = ModelCatalog(seedModels: [ModelCatalog.devTranscriptionModel()])
         _ = await catalog.loadModel(id: "melix-dev-transcribe", dispatchHandle: "melix-dev-transcribe::python")
@@ -3658,6 +3729,75 @@ struct OpenAIHandlerTests {
         #expect(payload == Data("mp3-bytes".utf8))
     }
 
+    @Test("POST /v1/audio/speech lazy-loads managed mlx-audio models")
+    func postAudioSpeechLazyLoadsManagedMLXAudioModels() async throws {
+        let textClient = ScriptedWorkerClient(events: [])
+        let audioClient = ScriptedPhaseFiveWorkerClient()
+        await audioClient.setSpeakResponse({
+            var response = Melix_Worker_V1_SpeakResponse()
+            response.audioBytes = Data("lazy-loaded-kokoro".utf8)
+            response.format = "wav"
+            return response
+        }())
+
+        let appSupportDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-http-audio-lazy-speech-\(UUID().uuidString)", isDirectory: true)
+        let managedModelPath = appSupportDirectory
+            .appendingPathComponent("managed/kokoro", isDirectory: true)
+            .path
+        let assetManager = AudioAssetManager(appSupportDirectory: appSupportDirectory)
+        try assetManager.recordRuntimePackInstall(
+            packID: "melix-audio-runtime-pack",
+            version: "0.3.0",
+            profiles: ["audio-tts"]
+        )
+        try assetManager.recordManagedModel(
+            modelID: "melix-kokoro-mlx",
+            revision: "mlx-audio",
+            sourceModelPath: "mlx-community/Kokoro-82M-bf16",
+            localModelPath: managedModelPath
+        )
+
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.mlxKokoroModel()])
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: textClient),
+                abortRegistry: AbortRegistry()
+            ),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: textClient,
+                pythonCompatibilityClient: audioClient,
+                modelCatalog: catalog
+            ),
+            audioAssetManager: assetManager
+        )
+
+        let body = try #require(
+            """
+            {
+              "model": "melix-kokoro-mlx",
+              "input": "hello speech"
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(method: .post, path: "/v1/audio/speech", headers: [:], body: body)
+        )
+        let payload = try await collectBodyData(response.body)
+        let loadRequest = try #require(await audioClient.lastLoadModelRequest)
+        let request = try #require(await audioClient.lastSpeakRequest)
+
+        #expect(response.statusCode == 200)
+        #expect(loadRequest.model.modelID == "melix-kokoro-mlx")
+        #expect(loadRequest.model.modelPath == managedModelPath)
+        #expect(loadRequest.model.revision == "mlx-audio")
+        #expect(request.modelHandle == "melix-kokoro-mlx::python")
+        #expect(response.headers["x-melix-audio-model-state"] == "managed_local")
+        #expect(payload == Data("lazy-loaded-kokoro".utf8))
+    }
+
     @Test("POST /v1/audio/speech rejects formats unsupported by the selected model")
     func postAudioSpeechRejectsFormatsUnsupportedByTheSelectedModel() async throws {
         let textClient = ScriptedWorkerClient(events: [])
@@ -3813,8 +3953,8 @@ struct OpenAIHandlerTests {
         #expect(unavailablePayload.contains("\"code\":\"worker_unavailable\""))
     }
 
-    @Test("POST /v1/audio/speech returns 409 and 503 for unavailable routes")
-    func postAudioSpeechReturns409And503ForUnavailableRoutes() async throws {
+    @Test("POST /v1/audio/speech returns 503 for missing compatible routes and unavailable workers")
+    func postAudioSpeechReturns503ForMissingCompatibleRoutesAndUnavailableWorkers() async throws {
         let unloadedHandler = OpenAIHandler(
             modelCatalog: ModelCatalog(seedModels: [ModelCatalog.devSpeechModel()]),
             requestCoordinator: RequestCoordinator(
@@ -3840,8 +3980,8 @@ struct OpenAIHandlerTests {
         )
         let unloadedPayload = try await collectBody(unloadedResponse.body)
 
-        #expect(unloadedResponse.statusCode == 409)
-        #expect(unloadedPayload.contains("\"code\":\"model_not_ready\""))
+        #expect(unloadedResponse.statusCode == 503)
+        #expect(unloadedPayload.contains("\"code\":\"worker_unavailable\""))
 
         let catalog = ModelCatalog(seedModels: [ModelCatalog.devSpeechModel()])
         _ = await catalog.loadModel(id: "melix-dev-speech", dispatchHandle: "melix-dev-speech::python")
@@ -6291,6 +6431,7 @@ private actor ScriptedPhaseFiveWorkerClient:
     private(set) var lastRerankRequest: Melix_Worker_V1_RerankRequest?
     private(set) var lastTranscribeRequest: Melix_Worker_V1_TranscribeRequest?
     private(set) var lastSpeakRequest: Melix_Worker_V1_SpeakRequest?
+    private(set) var lastLoadModelRequest: Melix_Worker_V1_LoadModelRequest?
     private(set) var lastImageGenerateRequest: Melix_Worker_V1_ImageGenerateRequest?
     private(set) var lastImageEditRequest: Melix_Worker_V1_ImageEditRequest?
     private var embedResponse = Melix_Worker_V1_EmbedResponse()
@@ -6353,6 +6494,7 @@ private actor ScriptedPhaseFiveWorkerClient:
     func loadModel(
         request: Melix_Worker_V1_LoadModelRequest
     ) async throws -> Melix_Worker_V1_LoadModelResponse {
+        lastLoadModelRequest = request
         var response = Melix_Worker_V1_LoadModelResponse()
         response.ok = true
         response.modelHandle = "\(request.model.modelID)::python"
