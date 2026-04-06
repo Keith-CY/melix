@@ -2,6 +2,20 @@
 
 ## 2026-04-06
 
+- Closed the remaining child-entry bookkeeping gap for `M8.1-M8.4` so the execution index no
+  longer relies on the parent `M8` summary alone to show that the backend foundations are done:
+  - added top-level completed status summaries to the four child plan documents
+  - added child-level completed status lines to the execution index for `M8.1`, `M8.2`, `M8.3`,
+    and `M8.4`
+  - kept the transaction docs-only so the next milestone audit can focus on actual implementation
+    gaps instead of status drift
+- Verification summary for the `M8.1-M8.4` child-entry bookkeeping closure:
+  - `git diff --check`: pass
+- Metrics report for the `M8.1-M8.4` child-entry bookkeeping closure:
+  - `N/A` because the transaction only updates planning and progress documents; executable
+    changed-line coverage for the original backend-foundations work remains recorded in
+    `docs/plans/2026-04-01-m8-1-m8-4-backend-foundations.md`
+
 - Closed the remaining `M13.3` bookkeeping gap by aligning the plan document and execution index
   with the already-landed repository evidence for tooling, embedding, and config-file settings:
   - added a top-level completed status summary to

@@ -106,9 +106,22 @@ The roadmap extension in `M10-M17` includes milestone-level plans plus decompose
   install/update metadata closure in `M8.11`.
 
 - `M8.1` `docs/plans/2026-03-30-m8-1-multi-root-model-registry.md`
+  Status: completed. Ordered worker-owned multi-root discovery now produces explicit root identity
+  and root-order metadata, and the Swift control plane synchronizes those registry snapshots into
+  the typed catalog with changed-line coverage evidence recorded in the backend-foundations plan.
 - `M8.2` `docs/plans/2026-03-30-m8-2-provider-org-model-variant-scanning.md`
+  Status: completed. Structured `provider/org/model/variant` scanning, sidecar override
+  precedence, and worker-to-control-plane identity projection are implemented and verified in the
+  backend-foundations plan.
 - `M8.3` `docs/plans/2026-03-30-m8-3-huggingface-search-pagination-and-cards.md`
+  Status: completed. Repository-owned Hugging Face search, pagination, and model-card inspection
+  now flow through the worker maintenance and model-operations path with normalized discovery
+  metadata and recorded changed-line coverage evidence.
 - `M8.4` `docs/plans/2026-03-30-m8-4-resumable-downloads-retries-and-mirrors.md`
+  Status: completed. Resumable model downloads now expose explicit retry, stall, mirror, and
+  machine-readable progress state through the existing worker bridge and control-plane model-ops
+  path, backed by deterministic smoke evidence and changed-line coverage recorded in the
+  backend-foundations plan.
 - `M8.5` `docs/plans/2026-03-30-m8-5-admin-surface-expansion.md`
   Status: completed. The native operator shell now covers the runtime, models, downloads, training, diagnostics, logs, settings, chat, image, server, and API workflows through control-plane-backed menu bar surfaces, and repository-default Swift plus integration verification have been rerun to close the slice.
 - `M8.6` `docs/plans/2026-03-30-m8-6-tab-persistence-and-offline-admin-assets.md`
