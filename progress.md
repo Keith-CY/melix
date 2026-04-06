@@ -1,6 +1,28 @@
 # Progress Log
 
+## TODO
+
+- [ ] Root-cause the repository-wide `make swift-test` hang in `services/control-plane-swift` and
+  restore clean default verification. Latest evidence on 2026-04-06: `packages/protocol/swift`
+  and `services/mlx-text-worker-swift` completed, then the full
+  `services/control-plane-swift` package stopped producing output while `swift test` and
+  `swiftpm-testing-helper` sat idle at `0.0%` CPU until termination. Rerun `make swift-test`
+  after the fix.
+
 ## 2026-04-06
+
+- Audited milestone-bookkeeping accuracy and aligned the roadmap wording with the implemented
+  repository evidence:
+  - added the missing parent-level status summaries for `M1-M5`, `M9`, `M12`, `M13`, `M14`,
+    `M15`, and `M17` in the roadmap execution index
+  - reclassified `M11.4` as an evidence-only closure in the execution index and its plan document
+    so the roadmap no longer implies true SSD-backed runtime execution already exists
+  - recorded the current repository-wide `make swift-test` hang in an explicit top-level TODO
+- Verification summary for the milestone-bookkeeping audit:
+  - `git diff --check`: pass
+- Metrics report for the milestone-bookkeeping audit:
+  - `N/A` because the transaction only updates planning and progress documents; no executable
+    scope changed
 
 - Formalized the parent-level `M6` completion state so the execution index no longer leaves the
   closed quantization milestone unregistered:
@@ -1327,9 +1349,9 @@
   - `N/A` for executable coverage and runtime metrics because this transaction only updates active
     planning and milestone-state documents
 
-- Closed `M11.4` and, with it, the parent `M11` milestone by adding repository-owned truthful
-  disk-streaming smoke evidence and operator runbook guidance without fabricating unsupported
-  SSD-backed runtime metrics:
+- Closed the `M11.4` evidence slice and, with it, the roadmap bookkeeping for parent `M11` by
+  adding repository-owned truthful disk-streaming smoke evidence and operator runbook guidance
+  without fabricating unsupported SSD-backed runtime metrics:
   - added `Sources/MelixCLICore/DiskStreamingSmokeCommand.swift`,
     `DiskStreamingSmokeRunner.swift`, and the executable target
     `Sources/MelixDiskStreamingSmoke/main.swift`, so the repository now owns a single-command
@@ -1347,8 +1369,9 @@
   - added `docs/runbooks/disk-streaming-evidence.md` and updated the documentation indexes so
     operators now have explicit setup, interpretation, and diagnostic guidance for the current
     truthful disk-streaming surface, including the intentionally unavailable future SSD metrics
-  - marked `M11.4` completed in the roadmap execution index and closed the parent `M11`
-    milestone; the next active execution slice can now advance to `M12.1`
+  - marked `M11.4` as an evidence-only closure in the roadmap execution index and closed the
+    parent `M11` milestone bookkeeping; the next active execution slice can now advance to
+    `M12.1`
 - Verification summary for `M11.4`:
   - `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/.build/ModuleCache.noindex" swift test --filter DiskStreamingSmokeRunnerTests`: `10 tests in 1 suite passed after 0.002 seconds`
   - `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/.build/ModuleCache.noindex" swift test --enable-code-coverage --filter DiskStreamingSmokeRunnerTests`: `10 tests in 1 suite passed after 0.002 seconds`

@@ -2,12 +2,12 @@
 
 ## Status
 
-Completed on 2026-04-05. The repository now owns a truthful disk-streaming evidence path via the
-`melix-disk-streaming-smoke` executable, focused Swift smoke coverage, live integration coverage,
-and an operator runbook. Both worker paths still reject `prefer_disk` and `require_disk` with
-typed `disk_streaming_unsupported` failures, so the completed milestone intentionally records a
-numeric RAM baseline plus explicit unsupported-path diagnostics instead of fabricating SSD-backed
-restore or throughput metrics.
+Closed on 2026-04-05 as an evidence-only milestone slice. The repository now owns a truthful
+disk-streaming evidence path via the `melix-disk-streaming-smoke` executable, focused Swift smoke
+coverage, live integration coverage, and an operator runbook. Both worker paths still reject
+`prefer_disk` and `require_disk` with typed `disk_streaming_unsupported` failures, so this slice
+intentionally records a numeric RAM baseline plus explicit unsupported-path diagnostics instead of
+claiming true SSD-backed restore or throughput execution.
 
 ## Goal
 
@@ -48,6 +48,8 @@ Leave disk streaming with reproducible operator evidence for large-model startup
 ## Acceptance
 
 - The repository owns reproducible smoke evidence for the current disk-streaming surface.
+- This slice closes only the evidence and runbook scope; true SSD-backed execution remains future
+  runtime work.
 - Large-model streaming diagnostics are documented and test-backed without claiming unsupported SSD
   execution exists.
 - The smoke report records current RAM-baseline benchmark metrics, typed unsupported-path

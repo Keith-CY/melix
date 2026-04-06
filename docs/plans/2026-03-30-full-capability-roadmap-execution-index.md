@@ -8,6 +8,10 @@ The roadmap extension in `M10-M17` includes milestone-level plans plus decompose
 
 ## M1: Runtime Core
 
+- Status: completed. `M1.1-M1.10` close the runtime-core slice across residency truth, worker
+  memory accounting, eviction and enforcement policy, LoRA cache isolation, desktop operator
+  memory visibility, and runtime-core integration evidence recorded in the child execution plans.
+
 - `M1.1` `docs/plans/2026-03-30-m1-1-residency-manager-contracts.md`
 - `M1.2` `docs/plans/2026-03-30-m1-2-control-plane-residency-truth.md`
 - `M1.3` `docs/plans/2026-03-30-m1-3-worker-memory-and-cache-accounting.md`
@@ -20,6 +24,11 @@ The roadmap extension in `M10-M17` includes milestone-level plans plus decompose
 - `M1.10` `docs/plans/2026-03-30-m1-10-runtime-core-integration-evidence.md`
 
 ## M2: Cache V2 And Scheduler
+
+- Status: completed. `M2.1-M2.11` close the cache-v2 and scheduler slice across block ownership
+  and restore protocols, refcount and copy-on-write semantics, prefix reuse and prefill
+  chunking, hot/cold and hybrid cache tiers, continuous batching, cache-pressure metrics, VLM
+  cache reuse, and recovery benchmark evidence.
 
 - `M2.1` `docs/plans/2026-03-30-m2-1-block-table-and-restore-protocols.md`
 - `M2.2` `docs/plans/2026-03-30-m2-2-text-worker-paged-cache-ownership.md`
@@ -34,6 +43,11 @@ The roadmap extension in `M10-M17` includes milestone-level plans plus decompose
 - `M2.11` `docs/plans/2026-03-30-m2-11-cache-recovery-benchmarks.md`
 
 ## M3: API Compatibility, Reasoning, Structured Output, And Tool Calling
+
+- Status: completed. `M3.1-M3.12` close the API-compatibility and reasoning slice across shared
+  text semantics, Anthropic-compatible and Harmony-compatible request fields, adaptive thinking,
+  structured-output and schema validation, tool parsing, partial and prefill modes, streaming
+  usage projection, and the protocol-compatibility test matrix.
 
 - `M3.1` `docs/plans/2026-03-30-m3-1-shared-text-semantic-model.md`
 - `M3.2` `docs/plans/2026-03-30-m3-2-anthropic-compatible-fields-and-thinking-blocks.md`
@@ -50,6 +64,11 @@ The roadmap extension in `M10-M17` includes milestone-level plans plus decompose
 
 ## M4: Vision, OCR, And Multimodal
 
+- Status: completed. `M4.1-M4.9` close the vision and multimodal slice across native VLM
+  lifecycle, local and remote image ingress, image identity and multi-image semantics,
+  image-only requests, VLM tool parsing, OCR prompting controls, family adapters, and vision
+  integration evidence.
+
 - `M4.1` `docs/plans/2026-03-30-m4-1-native-vlm-runtime-lifecycle.md`
 - `M4.2` `docs/plans/2026-03-30-m4-2-remote-and-local-image-ingress.md`
 - `M4.3` `docs/plans/2026-03-30-m4-3-image-hash-cache-identity.md`
@@ -61,6 +80,11 @@ The roadmap extension in `M10-M17` includes milestone-level plans plus decompose
 - `M4.9` `docs/plans/2026-03-30-m4-9-vision-integration-evidence.md`
 
 ## M5: Embedding, Reranker, And Model-Family Expansion
+
+- Status: completed. `M5.1-M5.7` close the embedding, reranker, and model-family expansion slice
+  across BERT and XLM-R plus BGE and MXBAI backends, Jina and causal-LM reranker flows,
+  architecture detection, family-capability adapters, and the repository-owned family
+  integration matrix.
 
 - `M5.1` `docs/plans/2026-03-30-m5-1-bert-and-xlmr-embedding-backends.md`
 - `M5.2` `docs/plans/2026-03-30-m5-2-bge-and-mxbai-family-support.md`
@@ -171,6 +195,11 @@ The roadmap extension in `M10-M17` includes milestone-level plans plus decompose
 
 ## M9: Ecosystem, Agent Integrations, Security, And Stability Completion
 
+- Status: completed. `M9.1-M9.8` close the ecosystem, agent-integration, security, and stability
+  slice across MCP tool loading, agent exports, shared-access gateway policy, persistent
+  sessions, rich-output sanitization, connection-lifecycle hardening, closure-audit reporting,
+  and Phase 8 release-gate integration.
+
 - `M9.1` `docs/plans/2026-03-30-m9-1-mcp-tool-loading-and-auto-injection.md`
   Status: completed in commit `597ba91`.
 - `M9.2` `docs/plans/2026-03-30-m9-2-agent-integration-exports.md`
@@ -222,10 +251,12 @@ The roadmap extension in `M10-M17` includes milestone-level plans plus decompose
   state. `M11.2` is completed with repository-owned memory-budget load settings, typed headroom
   rejection evidence, and operator-visible budget summaries. `M11.3` is completed with typed cache
   policy summaries, effective streaming-compatibility resolution, worker-aligned cache settings,
-  and operator-visible requested-versus-effective cache state. `M11.4` is completed with a
-  repository-owned `melix-disk-streaming-smoke` harness, live unsupported-path smoke coverage,
-  machine-readable RAM-baseline benchmark evidence, and an operator runbook that documents the
-  truthful current boundary where SSD-backed restore and throughput metrics remain unavailable.
+  and operator-visible requested-versus-effective cache state. `M11.4` is closed as an
+  evidence-only slice with a repository-owned `melix-disk-streaming-smoke` harness, live
+  unsupported-path smoke coverage, machine-readable RAM-baseline benchmark evidence, and an
+  operator runbook that documents the truthful current boundary; true SSD-backed restore and
+  throughput execution remain pending because both worker paths still reject `prefer_disk` and
+  `require_disk` with typed `disk_streaming_unsupported` failures.
 
 - `M11.1` `docs/plans/2026-03-31-m11-1-disk-streaming-mode-and-runtime-flags.md`
   Status: completed. Disk-streaming mode is now part of the repository-owned control-plane and
@@ -243,12 +274,17 @@ The roadmap extension in `M10-M17` includes milestone-level plans plus decompose
   operator settings, and effective cache-policy projection, with changed-line coverage and full
   repository verification recorded in the repository.
 - `M11.4` `docs/plans/2026-03-31-m11-4-large-model-streaming-benchmarks-and-runbooks.md`
-  Status: completed. Melix now ships a repository-owned `melix-disk-streaming-smoke`
-  executable, focused Swift and live integration coverage, machine-readable RAM-baseline and
-  unsupported-path disk-streaming evidence, and an operator runbook that explains the current
-  truthful runtime boundary while preserving future SSD metrics as explicit placeholders.
+  Status: evidence-only closure. Melix now ships a repository-owned
+  `melix-disk-streaming-smoke` executable, focused Swift and live integration coverage,
+  machine-readable RAM-baseline and unsupported-path disk-streaming evidence, and an operator
+  runbook that explains the current truthful runtime boundary while preserving future SSD metrics
+  as explicit placeholders; true SSD-backed restore and throughput execution remain pending.
 
 ## M12: Model Registry, Family Coverage, And Model Tools
+
+- Status: completed. `M12.1-M12.4` close the model-registry and family-coverage slice across
+  multi-root registry management, text and MoE family adapters, image-family dispatch, and typed
+  inspect, doctor, conversion, and packaging workflows.
 
 - `M12.1` `docs/plans/2026-03-31-m12-1-multi-root-registry-management-and-rescan.md`
   Status: completed. Multi-root registry configuration is now control-plane-owned, worker-backed,
@@ -272,6 +308,10 @@ The roadmap extension in `M10-M17` includes milestone-level plans plus decompose
   coverage evidence.
 
 ## M13: Gateway Configuration, Defaults, And API Onboarding
+
+- Status: completed. `M13.1-M13.4` close the gateway-configuration and API-onboarding slice
+  across typed listener configuration, serving defaults, tooling and embedding settings,
+  config-file observability, and live onboarding evidence for the shipped HTTP surface.
 
 - `M13.1` `docs/plans/2026-03-31-m13-1-gateway-config-state-model-and-persistence.md`
   Status: completed. Gateway listener configuration is now a typed, persistent, control-plane-owned
@@ -297,6 +337,10 @@ The roadmap extension in `M10-M17` includes milestone-level plans plus decompose
 
 ## M14: Image Iteration And Persisted Creative Workflows
 
+- Status: completed. `M14.1-M14.4` close the image-iteration slice across typed variation and
+  iterate semantics, persisted creative defaults, redo and timeout policy, and live artifact
+  lineage plus operator-evidence coverage.
+
 - `M14.1` `docs/plans/2026-03-31-m14-1-image-variation-and-iterate-request-semantics.md`
   Status: completed. Image edit requests now carry typed `edit`, `variation`, and `iterate`
   modes, control-plane and OpenAI image edits can resolve prior artifacts by stable
@@ -318,6 +362,10 @@ The roadmap extension in `M10-M17` includes milestone-level plans plus decompose
   lineage, queueing, and cancelation evidence for the completed `M14` workflow family.
 
 ## M15: Desktop Signals, Download Recovery, And Streaming Polish
+
+- Status: completed. `M15.1-M15.4` close the desktop-signals and streaming-polish slice across
+  token-stream smoothing, unified desktop update and runtime signals, persisted download recovery,
+  and repository-owned desktop-polish smoke plus runbook evidence.
 
 - `M15.1` `docs/plans/2026-03-31-m15-1-token-stream-presentation-smoothing.md`
   Status: completed. The desktop shell now smooths bursty assistant, reasoning, and tool deltas
@@ -370,6 +418,11 @@ The roadmap extension in `M10-M17` includes milestone-level plans plus decompose
   path.
 
 ## M17: Speech Backends And Voice Catalog
+
+- Status: completed for the speech-backend and voice-catalog roadmap scope. `M17.1-M17.4` now
+  cover STT and TTS family adapters, locale and runtime-pack metadata, and live-path operator
+  evidence. Follow-on audio runtime-pack, managed-model-root, and first-use download work
+  continues under `docs/plans/2026-04-02-m17-audio-runtime-packs-and-managed-model-root.md`.
 
 - `M17.1` `docs/plans/2026-03-31-m17-1-speech-to-text-backend-adapters-and-model-matrix.md`
   Status: completed. The Swift control-plane catalog, Python bridge model-spec path, and
