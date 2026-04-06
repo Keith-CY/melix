@@ -379,6 +379,7 @@ def test_audio_runtime_selection_uses_backend_metadata_and_rejects_missing_backe
     _, whisper = registry._runtime_for_model(WorkerModelCatalog.mlx_whisper_model())
     _, parakeet = registry._runtime_for_model(WorkerModelCatalog.mlx_parakeet_model())
     _, kokoro = registry._runtime_for_model(WorkerModelCatalog.mlx_kokoro_model())
+    _, qwen3_tts = registry._runtime_for_model(WorkerModelCatalog.mlx_qwen3_tts_model())
 
     missing_backend = common_pb2.ModelSpec(
         model_id="missing-audio-backend",
@@ -391,6 +392,7 @@ def test_audio_runtime_selection_uses_backend_metadata_and_rejects_missing_backe
     assert whisper.runtime_name == "mlx-audio-stt"
     assert parakeet.runtime_name == "mlx-audio-stt"
     assert kokoro.runtime_name == "mlx-audio-tts"
+    assert qwen3_tts.runtime_name == "mlx-audio-tts"
 
     with pytest.raises(RuntimeError, match="requires an explicit melix.audio.backend_id"):
         registry._runtime_for_model(missing_backend)

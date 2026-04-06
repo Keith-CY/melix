@@ -352,6 +352,15 @@ def test_family_support_matrix_tracks_live_verified_family_overrides() -> None:
     assert rows[("transcription", "parakeet")]["live_path"]["status"] == "contract_only"
     assert rows[("transcription", "parakeet")]["contract"]["backend_id"] == "mlx_audio.stt"
     assert rows[("transcription", "parakeet")]["contract"]["languages"] == ["auto"]
+    assert rows[("speech", "kokoro")]["live_path"]["status"] == "contract_only"
+    assert rows[("speech", "kokoro")]["contract"]["backend_id"] == "mlx_audio.tts"
+    assert rows[("speech", "kokoro")]["contract"]["voice_mode"] == "named"
+    assert rows[("speech", "kokoro")]["contract"]["voice_locales"] == ["en"]
+    assert rows[("speech", "qwen3-tts")]["live_path"]["status"] == "contract_only"
+    assert rows[("speech", "qwen3-tts")]["contract"]["backend_id"] == "mlx_audio.tts"
+    assert rows[("speech", "qwen3-tts")]["contract"]["voice_mode"] == "hybrid"
+    assert rows[("speech", "qwen3-tts")]["contract"]["supports_instructions"] is True
+    assert rows[("speech", "qwen3-tts")]["contract"]["voice_locales"] == ["zh", "en"]
     assert rows[("embedding", "bge-m3")]["live_path"]["status"] == "verified"
     assert rows[("embedding", "mxbai-embed")]["live_path"]["status"] == "verified"
     assert rows[("rerank", "causal-lm")]["live_path"]["status"] == "verified"

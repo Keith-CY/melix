@@ -60,7 +60,7 @@ struct DesktopPolishSmokeTests {
             .init(delay: .zero, event: .queued(lane: "text.decode.interactive", queuePosition: 0, backpressure: 0)),
             .init(delay: .zero, event: .admitted(lane: "text.decode.interactive", workerID: "swift-text-worker", queueDelayMs: 0.5)),
             .init(delay: .zero, event: .tokenDelta("Assistant response")),
-            .init(delay: .milliseconds(80), event: .completed(
+            .init(delay: .milliseconds(200), event: .completed(
                 finishReason: "stop",
                 assistantText: "Assistant response",
                 reasoningText: ""
@@ -91,8 +91,8 @@ struct DesktopPolishSmokeTests {
         viewModel.selectSurface(.tools)
         viewModel.selectToolSection(.downloads)
 
+        viewModel.chatComposerText = "Smooth bursty deltas"
         let submitTask = Task { @MainActor in
-            viewModel.chatComposerText = "Smooth bursty deltas"
             await viewModel.submitChatPrompt()
         }
 

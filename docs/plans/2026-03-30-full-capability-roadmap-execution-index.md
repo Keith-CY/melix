@@ -335,5 +335,10 @@ The roadmap extension in `M10-M17` includes milestone-level plans plus decompose
   speech-to-text families with stable capability metadata and focused Swift, Python, and
   integration evidence.
 - `M17.2` `docs/plans/2026-03-31-m17-2-text-to-speech-backend-adapters-and-multilingual-voice-catalog.md`
+  Status: completed. The Swift control-plane catalog, Swift Python-bridge model-spec path,
+  repository-owned family support matrix, and macOS operator model-info surface now expose
+  `Kokoro`-class plus `Qwen3-TTS`-class speech families with stable voice-catalog, locale, voice
+  mode, and install-profile metadata backed by focused Swift, Python, menubar, and integration
+  evidence.
 - `M17.3` `docs/plans/2026-03-31-m17-3-speech-settings-locale-policy-and-optional-dependency-profiles.md`
 - `M17.4` `docs/plans/2026-03-31-m17-4-speech-integration-benchmarks-runbooks-and-operator-evidence.md`

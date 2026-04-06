@@ -391,6 +391,8 @@ public enum BootstrapWorkerPreparation {
         "melix.audio.voice_mode",
         "melix.audio.output_formats",
         "melix.audio.supports_instructions",
+        "melix.audio.voice_catalog_summary",
+        "melix.audio.voice_locales",
     ]
     private static let imageExtKeys = [
         "melix.image.backend_id",
@@ -468,6 +470,8 @@ public enum BootstrapWorkerPreparation {
             return mlxParakeetModel()
         case "melix-kokoro-mlx":
             return mlxKokoroModel()
+        case "melix-qwen3-tts-mlx":
+            return mlxQwen3TTSModel()
         case "melix-dev-image":
             return devImageModel()
         default:
@@ -1022,6 +1026,8 @@ public enum BootstrapWorkerPreparation {
         model.ext["melix.audio.voice_mode"] = ""
         model.ext["melix.audio.output_formats"] = ""
         model.ext["melix.audio.supports_instructions"] = "false"
+        model.ext["melix.audio.voice_catalog_summary"] = ""
+        model.ext["melix.audio.voice_locales"] = ""
         model.ext["melix.adapter_set_hash"] = "audio-family-deterministic-transcription"
         model.ext["melix.capability.route_kind"] = "python_transcription"
         model.ext["melix.capability.class"] = "transcription"
@@ -1049,6 +1055,8 @@ public enum BootstrapWorkerPreparation {
         model.ext["melix.audio.voice_mode"] = "named"
         model.ext["melix.audio.output_formats"] = "wav,mp3"
         model.ext["melix.audio.supports_instructions"] = "false"
+        model.ext["melix.audio.voice_catalog_summary"] = "Deterministic synthetic default voice."
+        model.ext["melix.audio.voice_locales"] = "und"
         model.ext["melix.adapter_set_hash"] = "audio-family-deterministic-speech"
         model.ext["melix.capability.route_kind"] = "python_speech"
         model.ext["melix.capability.class"] = "speech"
@@ -1076,6 +1084,8 @@ public enum BootstrapWorkerPreparation {
         model.ext["melix.audio.voice_mode"] = ""
         model.ext["melix.audio.output_formats"] = ""
         model.ext["melix.audio.supports_instructions"] = "false"
+        model.ext["melix.audio.voice_catalog_summary"] = ""
+        model.ext["melix.audio.voice_locales"] = ""
         model.ext["melix.adapter_set_hash"] = "audio-family-whisper"
         model.ext["melix.capability.route_kind"] = "python_transcription"
         model.ext["melix.capability.class"] = "transcription"
@@ -1103,6 +1113,8 @@ public enum BootstrapWorkerPreparation {
         model.ext["melix.audio.voice_mode"] = ""
         model.ext["melix.audio.output_formats"] = ""
         model.ext["melix.audio.supports_instructions"] = "false"
+        model.ext["melix.audio.voice_catalog_summary"] = ""
+        model.ext["melix.audio.voice_locales"] = ""
         model.ext["melix.adapter_set_hash"] = "audio-family-parakeet"
         model.ext["melix.capability.route_kind"] = "python_transcription"
         model.ext["melix.capability.class"] = "transcription"
@@ -1130,7 +1142,40 @@ public enum BootstrapWorkerPreparation {
         model.ext["melix.audio.voice_mode"] = "named"
         model.ext["melix.audio.output_formats"] = "wav"
         model.ext["melix.audio.supports_instructions"] = "false"
+        model.ext["melix.audio.voice_catalog_summary"] =
+            "Named English voices exposed by the Kokoro speaker catalog."
+        model.ext["melix.audio.voice_locales"] = "en"
         model.ext["melix.adapter_set_hash"] = "audio-family-kokoro"
+        model.ext["melix.capability.route_kind"] = "python_speech"
+        model.ext["melix.capability.class"] = "speech"
+        model.ext["melix.capability.supported_modalities"] = "text,audio"
+        model.ext["melix.capability.supported_tasks"] = "speak"
+        model.ext["melix.capability.supported_parsers"] = "text"
+        return model
+    }
+
+    private static func mlxQwen3TTSModel() -> Melix_Worker_V1_ModelSpec {
+        var model = Melix_Worker_V1_ModelSpec()
+        model.modelID = "melix-qwen3-tts-mlx"
+        model.modelPath = "mlx-community/Qwen3-TTS-4B-Instruct-2507-4bit"
+        model.modelKind = "speech"
+        model.revision = "mlx-audio"
+        model.tokenizerHash = "tok-qwen3-tts-mlx"
+        model.quantProfileID = "4bit"
+        model.parserMode = "text"
+        model.reasoningMode = "off"
+        model.maxContext = 4096
+        model.ext["melix.audio.backend_id"] = "mlx_audio.tts"
+        model.ext["melix.audio.family_id"] = "qwen3-tts"
+        model.ext["melix.audio.install_profile"] = "audio-tts"
+        model.ext["melix.audio.languages"] = "zh,en"
+        model.ext["melix.audio.voice_mode"] = "hybrid"
+        model.ext["melix.audio.output_formats"] = "wav"
+        model.ext["melix.audio.supports_instructions"] = "true"
+        model.ext["melix.audio.voice_catalog_summary"] =
+            "Hybrid named and instruction-conditioned multilingual voices for Chinese and English synthesis."
+        model.ext["melix.audio.voice_locales"] = "zh,en"
+        model.ext["melix.adapter_set_hash"] = "audio-family-qwen3-tts"
         model.ext["melix.capability.route_kind"] = "python_speech"
         model.ext["melix.capability.class"] = "speech"
         model.ext["melix.capability.supported_modalities"] = "text,audio"

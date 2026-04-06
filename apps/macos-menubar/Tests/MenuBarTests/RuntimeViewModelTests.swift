@@ -4803,6 +4803,64 @@ struct RuntimeViewModelTests {
         #expect(viewModel.selectedModelInfo?.ocrStopSequencesText == "<ocr:end>")
     }
 
+    @Test("fetch model info merges speech voice catalog metadata from the active snapshot")
+    @MainActor
+    func fetchModelInfoMergesSpeechVoiceCatalogMetadataFromActiveSnapshot() async throws {
+        let client = FakeControlPlaneXPCClient()
+        var snapshot = Melix_Controlplane_V1_ServerSnapshot()
+        snapshot.serverState = .serverReady
+
+        var model = Melix_Controlplane_V1_ModelSummary()
+        model.modelID = "melix-qwen3-tts-mlx"
+        model.kind = "speech"
+        model.state = .modelDiscovered
+        model.supportedTasks = ["speak"]
+        model.supportedModalities = ["text", "audio"]
+        model.settings.alias = "Melix Qwen3 TTS MLX"
+        model.settings.ext["melix.audio.backend_id"] = "mlx_audio.tts"
+        model.settings.ext["melix.audio.family_id"] = "qwen3-tts"
+        model.settings.ext["melix.audio.install_profile"] = "audio-tts"
+        model.settings.ext["melix.audio.languages"] = "zh,en"
+        model.settings.ext["melix.audio.voice_mode"] = "hybrid"
+        model.settings.ext["melix.audio.output_formats"] = "wav"
+        model.settings.ext["melix.audio.supports_instructions"] = "true"
+        model.settings.ext["melix.audio.voice_catalog_summary"] =
+            "Hybrid named and instruction-conditioned multilingual voices for Chinese and English synthesis."
+        model.settings.ext["melix.audio.voice_locales"] = "zh,en"
+        snapshot.models = [model]
+
+        var info = Melix_Controlplane_V1_ModelInfo()
+        info.ok = true
+        info.modelKind = "speech"
+        info.maxContext = 4096
+        info.supportedParsers = ["text"]
+        info.supportedModalities = ["text", "audio"]
+        info.supportedTasks = ["speak"]
+        info.backendID = "mlx_audio.tts"
+        info.familyID = "qwen3-tts"
+        info.modelPath = "mlx-community/Qwen3-TTS-4B-Instruct-2507-4bit"
+        info.modelRevision = "mlx-audio"
+
+        await client.configureSnapshot(snapshot)
+        await client.configureModelInfo(info)
+
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        await viewModel.fetchModelInfo(modelID: "melix-qwen3-tts-mlx")
+
+        #expect(viewModel.selectedModelInfo?.modelID == "melix-qwen3-tts-mlx")
+        #expect(viewModel.selectedModelInfo?.audioInstallProfileText == "audio-tts")
+        #expect(viewModel.selectedModelInfo?.audioLanguagesText == "zh,en")
+        #expect(viewModel.selectedModelInfo?.audioVoiceModeText == "hybrid")
+        #expect(viewModel.selectedModelInfo?.audioOutputFormatsText == "wav")
+        #expect(viewModel.selectedModelInfo?.audioSupportsInstructionsText == "Yes")
+        #expect(viewModel.selectedModelInfo?.audioVoiceLocalesText == "zh,en")
+        #expect(
+            viewModel.selectedModelInfo?.audioVoiceCatalogSummaryText
+                == "Hybrid named and instruction-conditioned multilingual voices for Chinese and English synthesis."
+        )
+    }
+
     @Test("model tool actions no-op when there is no primary model")
     @MainActor
     func modelToolActionsNoopWithoutPrimaryModel() async throws {

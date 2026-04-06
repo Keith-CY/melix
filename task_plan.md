@@ -2,88 +2,85 @@
 
 ## Goal
 
-Close `M17.1` by making real speech-to-text backend families first-class across the Melix catalog,
-the Swift Python-bridge path, and the repository-owned model-family support matrix.
+Close `M17.2` by making real text-to-speech backend families and voice-catalog metadata
+first-class across the Swift control-plane catalog, the Swift Python-bridge model-spec path,
+the repository-owned family support matrix, and the macOS operator model-info surface.
 
 ## Scope
 
-- add `Parakeet`-class transcription metadata to the Swift catalog and bridge so control-plane
-  discovery stays aligned with the existing Python worker registry
-- extend the repository-owned family support matrix and runbook coverage to include supported
-  speech-to-text backend families and their capability metadata
-- add or update focused Python, Swift, and integration coverage for transcription-family routing,
-  catalog metadata, and matrix rows
-- update milestone bookkeeping once acceptance is met
+- add `Qwen3-TTS`-class speech metadata to the Swift catalog and bridge so control-plane discovery
+  matches the existing Python worker registry truth
+- promote real text-to-speech families into the default phase-six contract seed set so operators
+  can inspect them without bespoke wiring
+- extend the repository-owned family support matrix with `speech` rows and operator-visible
+  capability metadata for languages, voice mode, output formats, instruction support, and voice
+  catalog summaries
+- expose speech-family identity and voice-catalog details in the macOS Window UI model info panel
+- add or update focused Swift, Python, menubar, and integration coverage plus milestone bookkeeping
 
 ## Measurement Points
 
-- Swift and Python catalog surfaces expose the same transcription backend families and backend IDs
-- the family support matrix includes stable rows for `whisper` and `parakeet` with truthful support
-  status and capability metadata
-- integration coverage proves the matrix exports the new transcription-family rows instead of only
-  text, embedding, rerank, and image families
+- Swift and Python catalog/bridge surfaces expose the same real `speech` families, backend IDs,
+  install profiles, and voice-catalog metadata for `kokoro` and `qwen3-tts`
+- the family support matrix publishes stable `speech` rows with truthful `contract_only` or
+  `verified` live-path status and machine-readable metadata for voices, languages, and formats
+- the operator model-info summary renders speech-family details without requiring raw `ext`
+  inspection in tests or by humans
 - changed-line coverage for the touched executable scope remains at or above `95%`
 
 ## Phases
 
-1. M17.1 boundary lock and gap confirmation
+1. M17.2 boundary lock and operator metadata design
    - status: completed
-   - evidence:
-     - reviewed the dedicated `M17.1` plan, the umbrella `M17` roadmap slice, the current Swift
-       catalog and Python bridge implementations, and the existing family support matrix coverage
-     - confirmed the Python worker already exposes `whisper` and `parakeet` transcription families,
-       while the remaining gaps are Swift catalog parity and repository-owned matrix/runbook
-       coverage
-2. Swift catalog and bridge parity
+   - success criteria:
+     - update the active task plan to reflect the `M17.2` slice and confirm the implementation
+       boundary stays inside catalog, bridge, matrix, operator metadata, and tests
+     - lock the speech metadata shape to stable `melix.audio.*` keys that can be copied from
+       catalog summaries into worker model specs and operator views without a protobuf expansion
+2. Swift catalog and bridge parity for real TTS families
    - status: completed
-   - evidence:
-     - added `mlxParakeetModel()` to `ModelCatalog.swift`, promoted `melix-whisper-mlx` and
-       `melix-parakeet-mlx` into the default phase-six contract seed set, and kept the real
-       speech-to-text families discoverable through the shared control-plane catalog path
-     - added the matching `melix-parakeet-mlx` bridge spec in
-       `PythonBridgeWorkerClient.swift` and extended focused Swift tests so transcription metadata
-       parity is enforced for deterministic, Whisper, Parakeet, and Kokoro entries
+   - success criteria:
+     - add `mlxQwen3TTSModel()` to the Swift control-plane catalog and Python bridge
+     - keep `mlxKokoroModel()` and `mlxQwen3TTSModel()` discoverable through
+       `phaseSixContractSeedModels()`
+     - extend focused Swift tests so deterministic speech, Kokoro, and Qwen3-TTS entries all keep
+       the expected backend and voice metadata
 3. Speech family matrix and integration evidence
    - status: completed
-   - evidence:
-     - extended the Python family support matrix to publish `transcription` rows for `whisper` and
-       `parakeet`, including stable `backend_id`, `install_profile`, and `languages` fields with
-       truthful `contract_only` live-path status
-     - expanded Python and integration coverage so exported matrix rows include the new
-       speech-to-text families and remain machine-checkable across catalog, runtime, and matrix
-       views
-4. Runbook and milestone bookkeeping
+   - success criteria:
+     - extend the Python family support matrix to publish `speech` rows for `kokoro` and
+       `qwen3-tts`, including stable route, install-profile, voice-mode, output-format, and
+       voice-catalog fields
+     - expand Python and integration coverage so exported matrix rows remain machine-checkable
+       across catalog, runtime routing, and matrix views
+4. Operator-visible voice catalog metadata
    - status: completed
-   - evidence:
-     - updated the model-family support matrix runbook to describe speech-to-text backend families,
-       capability fields, and support-status semantics alongside the existing text, embedding,
-       rerank, and image guidance
-     - updated `progress.md`, the `M17.1` plan, and the execution index together once acceptance
-       and verification evidence landed
-5. Verification and commit closure
+   - success criteria:
+     - extend the Window UI model info state and summary view to render speech-language, voice
+       mode, output formats, instruction support, and voice-catalog summary details
+     - add focused menubar tests for both state assembly and rendered summary lines
+5. Runbook, milestone bookkeeping, verification, and commit closure
    - status: completed
-   - evidence:
-     - focused Python verification passed with `62 passed in 176.80s`, focused Swift verification
-       passed with `85 tests in 2 suites`, full `make py-test` passed with `531 passed in 35.07s`,
-       and full `make integration-test` passed with `74 passed in 1013.15s`
-     - changed-line coverage reached `100.00%` for both touched Python (`35/35`) and touched Swift
-       (`76/76`) scope, while `make swift-test` reproduced the pre-existing
-       `services/control-plane-swift` repository-wide hang after focused touched-scope suites had
-       already passed
+   - success criteria:
+     - update the model-family support matrix runbook, the `M17.2` plan, the execution index, and
+       `progress.md` once acceptance evidence lands
+     - run focused coverage plus relevant repository verification, record the metrics report, and
+       close the slice with a GPG-signed commit
 
 ## Acceptance
 
-- Melix exposes `Whisper`-class and `Parakeet`-class speech-to-text models consistently across the
-  Swift catalog, bridge, and Python worker registry
-- the repository-owned family support matrix documents supported speech-to-text backend families
-  with stable capability metadata
+- Melix exposes real text-to-speech families consistently across the Swift catalog, Python bridge,
+  Python worker registry, and operator-facing model info views
+- the repository-owned family support matrix documents supported speech families with stable
+  language, voice, and output metadata
 - verification proves the touched executable scope at or above `95%` changed-line coverage before
   commit
 
 ## Risks
 
-- if Swift catalog parity is incomplete, control-plane surfaces will drift from the Python worker
-  truth even though the backend already supports the family
-- if the family support matrix overstates live support, operator guidance will stop being reliable
-- if integration coverage only checks catalog entries and not exported matrix rows, future changes
-  can silently drop speech-family visibility
+- if Swift catalog parity remains incomplete, the control plane will under-report available TTS
+  families even though the Python worker already supports them
+- if the matrix and operator view do not share the same metadata shape, speech-family guidance
+  will drift across the repository
+- if voice-catalog metadata overstates named voices or locale behavior, operator guidance becomes
+  misleading before `M17.3` introduces full locale policy

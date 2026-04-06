@@ -119,6 +119,13 @@ public struct RuntimeModelInfoState: Equatable, Sendable {
     public let supportedTasks: [String]
     public let backendID: String
     public let familyID: String
+    public let audioInstallProfileText: String
+    public let audioLanguagesText: String
+    public let audioVoiceModeText: String
+    public let audioOutputFormatsText: String
+    public let audioSupportsInstructionsText: String
+    public let audioVoiceCatalogSummaryText: String
+    public let audioVoiceLocalesText: String
     public let modelPath: String
     public let modelRevision: String
     public let defaultWorkflowRole: String
@@ -163,6 +170,13 @@ public struct RuntimeModelInfoState: Equatable, Sendable {
         supportedTasks: [String] = [],
         backendID: String = "",
         familyID: String = "",
+        audioInstallProfileText: String = "",
+        audioLanguagesText: String = "",
+        audioVoiceModeText: String = "",
+        audioOutputFormatsText: String = "",
+        audioSupportsInstructionsText: String = "",
+        audioVoiceCatalogSummaryText: String = "",
+        audioVoiceLocalesText: String = "",
         modelPath: String = "",
         modelRevision: String = "",
         defaultWorkflowRole: String = "",
@@ -206,6 +220,13 @@ public struct RuntimeModelInfoState: Equatable, Sendable {
         self.supportedTasks = supportedTasks
         self.backendID = backendID
         self.familyID = familyID
+        self.audioInstallProfileText = audioInstallProfileText
+        self.audioLanguagesText = audioLanguagesText
+        self.audioVoiceModeText = audioVoiceModeText
+        self.audioOutputFormatsText = audioOutputFormatsText
+        self.audioSupportsInstructionsText = audioSupportsInstructionsText
+        self.audioVoiceCatalogSummaryText = audioVoiceCatalogSummaryText
+        self.audioVoiceLocalesText = audioVoiceLocalesText
         self.modelPath = modelPath
         self.modelRevision = modelRevision
         self.defaultWorkflowRole = defaultWorkflowRole
@@ -3150,6 +3171,23 @@ public final class RuntimeViewModel {
             let generationConfigTemperatureText = snapshotModel?.settings.ext["melix.generation_config.temperature"] ?? ""
             let generationConfigTopPText = snapshotModel?.settings.ext["melix.generation_config.top_p"] ?? ""
             let generationConfigMaxTokensText = snapshotModel?.settings.ext["melix.generation_config.max_tokens"] ?? ""
+            let audioInstallProfileText = snapshotModel?.settings.ext["melix.audio.install_profile"]?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let audioLanguagesText = snapshotModel?.settings.ext["melix.audio.languages"]?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let audioVoiceModeText = snapshotModel?.settings.ext["melix.audio.voice_mode"]?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let audioOutputFormatsText = snapshotModel?.settings.ext["melix.audio.output_formats"]?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let rawAudioSupportsInstructionsText = snapshotModel?.settings.ext["melix.audio.supports_instructions"]?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let audioSupportsInstructionsText = rawAudioSupportsInstructionsText.isEmpty
+                ? ""
+                : (rawAudioSupportsInstructionsText == "true" ? "Yes" : "No")
+            let audioVoiceCatalogSummaryText = snapshotModel?.settings.ext["melix.audio.voice_catalog_summary"]?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let audioVoiceLocalesText = snapshotModel?.settings.ext["melix.audio.voice_locales"]?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             selectedModelInfo = RuntimeModelInfoState(
                 modelID: modelID,
                 modelKind: info.modelKind,
@@ -3159,6 +3197,13 @@ public final class RuntimeViewModel {
                 supportedTasks: info.supportedTasks,
                 backendID: info.backendID,
                 familyID: info.familyID,
+                audioInstallProfileText: audioInstallProfileText,
+                audioLanguagesText: audioLanguagesText,
+                audioVoiceModeText: audioVoiceModeText,
+                audioOutputFormatsText: audioOutputFormatsText,
+                audioSupportsInstructionsText: audioSupportsInstructionsText,
+                audioVoiceCatalogSummaryText: audioVoiceCatalogSummaryText,
+                audioVoiceLocalesText: audioVoiceLocalesText,
                 modelPath: info.modelPath,
                 modelRevision: info.modelRevision,
                 defaultWorkflowRole: info.defaultWorkflowRole,

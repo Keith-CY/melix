@@ -973,6 +973,27 @@ func desktopModelInfoSummaryContent(
     if !info.familyID.isEmpty {
         detailLines.append("family: \(info.familyID)")
     }
+    if !info.audioInstallProfileText.isEmpty {
+        detailLines.append("audio install profile: \(info.audioInstallProfileText)")
+    }
+    if !info.audioLanguagesText.isEmpty {
+        detailLines.append("audio languages: \(info.audioLanguagesText)")
+    }
+    if !info.audioVoiceModeText.isEmpty {
+        detailLines.append("voice mode: \(info.audioVoiceModeText)")
+    }
+    if !info.audioOutputFormatsText.isEmpty {
+        detailLines.append("audio formats: \(info.audioOutputFormatsText)")
+    }
+    if !info.audioSupportsInstructionsText.isEmpty {
+        detailLines.append("instruction support: \(info.audioSupportsInstructionsText)")
+    }
+    if !info.audioVoiceLocalesText.isEmpty {
+        detailLines.append("voice locales: \(info.audioVoiceLocalesText)")
+    }
+    if !info.audioVoiceCatalogSummaryText.isEmpty {
+        detailLines.append("voice catalog: \(info.audioVoiceCatalogSummaryText)")
+    }
     if !info.defaultWorkflowRole.isEmpty {
         detailLines.append("default workflow: \(info.defaultWorkflowRole)")
     }

@@ -224,6 +224,7 @@ def test_audio_catalog_models_expose_backend_metadata_and_real_backend_entries()
             "MELIX_MLX_AUDIO_WHISPER_MODEL_PATH": "mlx-community/whisper-large-v3-turbo-asr-fp16",
             "MELIX_MLX_AUDIO_PARAKEET_MODEL_PATH": "mlx-community/parakeet-tdt-0.6b-v2",
             "MELIX_MLX_AUDIO_KOKORO_MODEL_PATH": "mlx-community/Kokoro-82M-bf16",
+            "MELIX_MLX_AUDIO_QWEN3_TTS_MODEL_PATH": "mlx-community/Qwen3-TTS-4B-Instruct-2507-4bit",
         }
     )
 
@@ -232,6 +233,7 @@ def test_audio_catalog_models_expose_backend_metadata_and_real_backend_entries()
     whisper = catalog.get("melix-whisper-mlx")
     parakeet = catalog.get("melix-parakeet-mlx")
     kokoro = catalog.get("melix-kokoro-mlx")
+    qwen3_tts = catalog.get("melix-qwen3-tts-mlx")
 
     assert deterministic_transcription is not None
     assert deterministic_transcription.ext["melix.audio.backend_id"] == "deterministic"
@@ -269,3 +271,20 @@ def test_audio_catalog_models_expose_backend_metadata_and_real_backend_entries()
     assert kokoro.ext["melix.audio.install_profile"] == "audio-tts"
     assert kokoro.ext["melix.audio.family_id"] == "kokoro"
     assert kokoro.ext["melix.audio.output_formats"] == "wav"
+    assert kokoro.ext["melix.audio.voice_catalog_summary"] == "Named English voices exposed by the Kokoro speaker catalog."
+    assert kokoro.ext["melix.audio.voice_locales"] == "en"
+
+    assert qwen3_tts is not None
+    assert qwen3_tts.model_kind == "speech"
+    assert qwen3_tts.model_path == "mlx-community/Qwen3-TTS-4B-Instruct-2507-4bit"
+    assert qwen3_tts.ext["melix.audio.backend_id"] == "mlx_audio.tts"
+    assert qwen3_tts.ext["melix.audio.install_profile"] == "audio-tts"
+    assert qwen3_tts.ext["melix.audio.family_id"] == "qwen3-tts"
+    assert qwen3_tts.ext["melix.audio.languages"] == "zh,en"
+    assert qwen3_tts.ext["melix.audio.voice_mode"] == "hybrid"
+    assert qwen3_tts.ext["melix.audio.supports_instructions"] == "true"
+    assert (
+        qwen3_tts.ext["melix.audio.voice_catalog_summary"]
+        == "Hybrid named and instruction-conditioned multilingual voices for Chinese and English synthesis."
+    )
+    assert qwen3_tts.ext["melix.audio.voice_locales"] == "zh,en"

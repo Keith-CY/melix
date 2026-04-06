@@ -133,6 +133,20 @@ _FAMILY_VARIANTS: tuple[dict[str, Any], ...] = (
         "integration_tests": [],
     },
     {
+        "capability": "speech",
+        "family_id": "kokoro",
+        "model_id": "melix-kokoro-mlx",
+        "environment": {},
+        "integration_tests": [],
+    },
+    {
+        "capability": "speech",
+        "family_id": "qwen3-tts",
+        "model_id": "melix-qwen3-tts-mlx",
+        "environment": {},
+        "integration_tests": [],
+    },
+    {
         "capability": "rerank",
         "family_id": "basic",
         "model_id": "melix-dev-rerank",
@@ -276,6 +290,19 @@ def _contract_payload(variant: dict[str, Any]) -> dict[str, Any]:
                 "languages": _split_csv(ext.get("melix.audio.languages", "")),
             }
         )
+    elif variant["capability"] == "speech":
+        contract.update(
+            {
+                "backend_id": ext.get("melix.audio.backend_id", ""),
+                "install_profile": ext.get("melix.audio.install_profile", ""),
+                "languages": _split_csv(ext.get("melix.audio.languages", "")),
+                "voice_mode": ext.get("melix.audio.voice_mode", ""),
+                "output_formats": _split_csv(ext.get("melix.audio.output_formats", "")),
+                "supports_instructions": ext.get("melix.audio.supports_instructions", "") == "true",
+                "voice_catalog_summary": ext.get("melix.audio.voice_catalog_summary", ""),
+                "voice_locales": _split_csv(ext.get("melix.audio.voice_locales", "")),
+            }
+        )
     elif variant["capability"] == "rerank":
         contract.update(
             {
@@ -322,6 +349,7 @@ def build_family_support_matrix() -> dict[str, Any]:
             "family_count": len(families),
             "text_family_count": sum(1 for row in families if row["capability"] == "text"),
             "transcription_family_count": sum(1 for row in families if row["capability"] == "transcription"),
+            "speech_family_count": sum(1 for row in families if row["capability"] == "speech"),
             "embedding_family_count": sum(1 for row in families if row["capability"] == "embedding"),
             "rerank_family_count": sum(1 for row in families if row["capability"] == "rerank"),
             "image_family_count": sum(1 for row in families if row["capability"] == "image"),

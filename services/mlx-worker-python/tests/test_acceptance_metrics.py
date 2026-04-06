@@ -265,12 +265,13 @@ def test_build_family_support_matrix_exposes_contract_rows_and_live_path_evidenc
         for row in matrix["families"]
     }
 
-    assert matrix["summary"]["family_count"] == 21
+    assert matrix["summary"]["family_count"] == 23
     assert matrix["summary"]["text_family_count"] == 6
     assert matrix["summary"]["transcription_family_count"] == 2
+    assert matrix["summary"]["speech_family_count"] == 2
     assert matrix["summary"]["image_family_count"] == 6
     assert matrix["summary"]["live_verified_count"] == 15
-    assert matrix["summary"]["contract_only_count"] == 6
+    assert matrix["summary"]["contract_only_count"] == 8
 
     qwen3moe = rows[("text", "qwen3moe")]
     assert qwen3moe["contract"]["route_kind"] == "python_text_compatibility"
@@ -305,6 +306,33 @@ def test_build_family_support_matrix_exposes_contract_rows_and_live_path_evidenc
     assert parakeet["contract"]["install_profile"] == "audio-stt"
     assert parakeet["contract"]["languages"] == ["auto"]
     assert parakeet["live_path"]["status"] == "contract_only"
+
+    kokoro = rows[("speech", "kokoro")]
+    assert kokoro["contract"]["route_kind"] == "python_speech"
+    assert kokoro["contract"]["backend_id"] == "mlx_audio.tts"
+    assert kokoro["contract"]["install_profile"] == "audio-tts"
+    assert kokoro["contract"]["languages"] == ["en"]
+    assert kokoro["contract"]["voice_mode"] == "named"
+    assert kokoro["contract"]["output_formats"] == ["wav"]
+    assert kokoro["contract"]["supports_instructions"] is False
+    assert kokoro["contract"]["voice_catalog_summary"] == "Named English voices exposed by the Kokoro speaker catalog."
+    assert kokoro["contract"]["voice_locales"] == ["en"]
+    assert kokoro["live_path"]["status"] == "contract_only"
+
+    qwen3_tts = rows[("speech", "qwen3-tts")]
+    assert qwen3_tts["contract"]["route_kind"] == "python_speech"
+    assert qwen3_tts["contract"]["backend_id"] == "mlx_audio.tts"
+    assert qwen3_tts["contract"]["install_profile"] == "audio-tts"
+    assert qwen3_tts["contract"]["languages"] == ["zh", "en"]
+    assert qwen3_tts["contract"]["voice_mode"] == "hybrid"
+    assert qwen3_tts["contract"]["output_formats"] == ["wav"]
+    assert qwen3_tts["contract"]["supports_instructions"] is True
+    assert (
+        qwen3_tts["contract"]["voice_catalog_summary"]
+        == "Hybrid named and instruction-conditioned multilingual voices for Chinese and English synthesis."
+    )
+    assert qwen3_tts["contract"]["voice_locales"] == ["zh", "en"]
+    assert qwen3_tts["live_path"]["status"] == "contract_only"
 
     basic = rows[("rerank", "basic")]
     assert basic["contract"]["route_kind"] == "python_rerank"

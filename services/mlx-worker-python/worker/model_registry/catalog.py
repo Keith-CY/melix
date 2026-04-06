@@ -37,6 +37,8 @@ _AUDIO_LANGUAGES_KEY = "melix.audio.languages"
 _AUDIO_VOICE_MODE_KEY = "melix.audio.voice_mode"
 _AUDIO_OUTPUT_FORMATS_KEY = "melix.audio.output_formats"
 _AUDIO_SUPPORTS_INSTRUCTIONS_KEY = "melix.audio.supports_instructions"
+_AUDIO_VOICE_CATALOG_SUMMARY_KEY = "melix.audio.voice_catalog_summary"
+_AUDIO_VOICE_LOCALES_KEY = "melix.audio.voice_locales"
 _GENERATION_CONFIG_SOURCE_KEY = "melix.generation_config.source"
 _GENERATION_CONFIG_TEMPERATURE_KEY = "melix.generation_config.temperature"
 _GENERATION_CONFIG_TOP_P_KEY = "melix.generation_config.top_p"
@@ -438,6 +440,8 @@ def _audio_metadata(
     voice_mode: str = "",
     output_formats: tuple[str, ...] = (),
     supports_instructions: bool = False,
+    voice_catalog_summary: str = "",
+    voice_locales: tuple[str, ...] = (),
 ) -> dict[str, str]:
     return {
         _AUDIO_BACKEND_ID_KEY: backend_id,
@@ -447,6 +451,8 @@ def _audio_metadata(
         _AUDIO_VOICE_MODE_KEY: voice_mode,
         _AUDIO_OUTPUT_FORMATS_KEY: ",".join(output_formats),
         _AUDIO_SUPPORTS_INSTRUCTIONS_KEY: "true" if supports_instructions else "false",
+        _AUDIO_VOICE_CATALOG_SUMMARY_KEY: voice_catalog_summary,
+        _AUDIO_VOICE_LOCALES_KEY: ",".join(voice_locales),
     }
 
 
@@ -924,6 +930,8 @@ class WorkerModelCatalog:
                     voice_mode="named",
                     output_formats=("wav", "mp3"),
                     supports_instructions=False,
+                    voice_catalog_summary="Deterministic synthetic default voice.",
+                    voice_locales=("und",),
                 ),
             },
         )
@@ -1043,6 +1051,8 @@ class WorkerModelCatalog:
                     voice_mode="named",
                     output_formats=("wav",),
                     supports_instructions=False,
+                    voice_catalog_summary="Named English voices exposed by the Kokoro speaker catalog.",
+                    voice_locales=("en",),
                 ),
             },
         )
@@ -1075,6 +1085,11 @@ class WorkerModelCatalog:
                     voice_mode="hybrid",
                     output_formats=("wav",),
                     supports_instructions=True,
+                    voice_catalog_summary=(
+                        "Hybrid named and instruction-conditioned multilingual voices "
+                        "for Chinese and English synthesis."
+                    ),
+                    voice_locales=("zh", "en"),
                 ),
             },
         )

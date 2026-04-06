@@ -1265,6 +1265,7 @@ struct PythonBridgeWorkerClientTests {
         let whisper = try #require(BootstrapWorkerPreparation.modelSpec(for: ModelCatalog.mlxWhisperModel()))
         let parakeet = try #require(BootstrapWorkerPreparation.modelSpec(for: ModelCatalog.mlxParakeetModel()))
         let kokoro = try #require(BootstrapWorkerPreparation.modelSpec(for: ModelCatalog.mlxKokoroModel()))
+        let qwen3TTS = try #require(BootstrapWorkerPreparation.modelSpec(for: ModelCatalog.mlxQwen3TTSModel()))
 
         #expect(deterministicSpeech.modelID == "melix-dev-speech")
         #expect(deterministicSpeech.ext["melix.audio.backend_id"] == "deterministic")
@@ -1288,6 +1289,21 @@ struct PythonBridgeWorkerClientTests {
         #expect(kokoro.ext["melix.audio.backend_id"] == "mlx_audio.tts")
         #expect(kokoro.ext["melix.audio.family_id"] == "kokoro")
         #expect(kokoro.ext["melix.audio.output_formats"] == "wav")
+        #expect(kokoro.ext["melix.audio.voice_catalog_summary"] == "Named English voices exposed by the Kokoro speaker catalog.")
+        #expect(kokoro.ext["melix.audio.voice_locales"] == "en")
+
+        #expect(qwen3TTS.modelID == "melix-qwen3-tts-mlx")
+        #expect(qwen3TTS.modelKind == "speech")
+        #expect(qwen3TTS.ext["melix.audio.backend_id"] == "mlx_audio.tts")
+        #expect(qwen3TTS.ext["melix.audio.family_id"] == "qwen3-tts")
+        #expect(qwen3TTS.ext["melix.audio.install_profile"] == "audio-tts")
+        #expect(qwen3TTS.ext["melix.audio.voice_mode"] == "hybrid")
+        #expect(qwen3TTS.ext["melix.audio.supports_instructions"] == "true")
+        #expect(
+            qwen3TTS.ext["melix.audio.voice_catalog_summary"]
+                == "Hybrid named and instruction-conditioned multilingual voices for Chinese and English synthesis."
+        )
+        #expect(qwen3TTS.ext["melix.audio.voice_locales"] == "zh,en")
     }
 
     @Test("bridge client treats helper errors as unavailable")

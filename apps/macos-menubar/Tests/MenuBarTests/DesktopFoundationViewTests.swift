@@ -1407,6 +1407,45 @@ struct DesktopFoundationViewTests {
         #expect(content.detailLines.contains("ocr sampling defaults: ocr-deterministic • temp 0.05 • top-p 0.82 • max 192"))
     }
 
+    @Test("speech model info summary view renders voice catalog details")
+    @MainActor
+    func speechModelInfoSummaryViewRendersVoiceCatalogDetails() {
+        let info = RuntimeModelInfoState(
+            modelID: "melix-qwen3-tts-mlx",
+            modelKind: "speech",
+            maxContext: 4096,
+            supportedParsers: ["text"],
+            supportedModalities: ["text", "audio"],
+            supportedTasks: ["speak"],
+            backendID: "mlx_audio.tts",
+            familyID: "qwen3-tts",
+            audioInstallProfileText: "audio-tts",
+            audioLanguagesText: "zh,en",
+            audioVoiceModeText: "hybrid",
+            audioOutputFormatsText: "wav",
+            audioSupportsInstructionsText: "Yes",
+            audioVoiceCatalogSummaryText: "Hybrid named and instruction-conditioned multilingual voices for Chinese and English synthesis.",
+            audioVoiceLocalesText: "zh,en",
+            modelPath: "mlx-community/Qwen3-TTS-4B-Instruct-2507-4bit",
+            modelRevision: "mlx-audio"
+        )
+
+        let content = desktopModelInfoSummaryContent(info)
+
+        #expect(content.headline == "melix-qwen3-tts-mlx • speech")
+        #expect(content.detailLines.contains("audio install profile: audio-tts"))
+        #expect(content.detailLines.contains("audio languages: zh,en"))
+        #expect(content.detailLines.contains("voice mode: hybrid"))
+        #expect(content.detailLines.contains("audio formats: wav"))
+        #expect(content.detailLines.contains("instruction support: Yes"))
+        #expect(content.detailLines.contains("voice locales: zh,en"))
+        #expect(
+            content.detailLines.contains(
+                "voice catalog: Hybrid named and instruction-conditioned multilingual voices for Chinese and English synthesis."
+            )
+        )
+    }
+
     @Test("doctor report summary view renders health and finding detail")
     @MainActor
     func doctorReportSummaryViewRendersHealthAndFindingDetail() async throws {

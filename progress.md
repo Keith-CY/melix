@@ -2,6 +2,52 @@
 
 ## 2026-04-06
 
+- Closed `M17.2` by making real text-to-speech backend families and voice-catalog metadata
+  first-class across the Swift catalog, the Swift Python-bridge model-spec path, the
+  repository-owned family support matrix, and the macOS operator model-info surface:
+  - added `mlxQwen3TTSModel()` to the Swift control-plane catalog and matching bridge model-spec
+    wiring, then promoted both `melix-kokoro-mlx` and `melix-qwen3-tts-mlx` into the default
+    phase-six seed set so operators can inspect real speech models without bespoke fixture wiring
+  - extended the Python worker registry metadata and repository-owned family support matrix with
+    stable speech capability fields for install profile, languages, voice mode, output formats,
+    instruction support, voice locales, and voice-catalog summary
+  - extended the Window UI model-info surface so speech models now render operator-readable voice
+    catalog details instead of requiring raw `melix.audio.*` inspection
+  - stabilized the existing `DesktopPolishSmokeTests` partial-chat observation path so the
+    menubar full-package suite no longer flakes when the package runs under concurrent suite load
+- Verification summary for `M17.2`:
+  - `make proto`: pass
+  - `PYTHONPATH='.:services/mlx-worker-python' uv run --project services/mlx-worker-python pytest services/mlx-worker-python/tests/test_audio_runtime.py services/mlx-worker-python/tests/test_mlx_audio_runtime.py services/mlx-worker-python/tests/test_runtime_edges.py services/mlx-worker-python/tests/test_acceptance_metrics.py tests/integration/test_non_text_endpoints.py -q`: `62 passed in 211.24s (0:03:31)`
+  - `PYTHONPATH='.:services/mlx-worker-python' uv run --project services/mlx-worker-python coverage run --data-file=/tmp/m17_2_python.coverage -m pytest services/mlx-worker-python/tests/test_audio_runtime.py services/mlx-worker-python/tests/test_mlx_audio_runtime.py services/mlx-worker-python/tests/test_runtime_edges.py services/mlx-worker-python/tests/test_acceptance_metrics.py tests/integration/test_non_text_endpoints.py -q && PYTHONPATH='.:services/mlx-worker-python' uv run --project services/mlx-worker-python coverage json --data-file=/tmp/m17_2_python.coverage -o /tmp/m17_2_python_coverage.json && python3 scripts/python_changed_line_coverage.py --coverage-json /tmp/m17_2_python_coverage.json services/mlx-worker-python/worker/model_registry/catalog.py services/mlx-worker-python/worker/productization/family_support_matrix.py services/mlx-worker-python/tests/test_audio_runtime.py services/mlx-worker-python/tests/test_mlx_audio_runtime.py services/mlx-worker-python/tests/test_runtime_edges.py services/mlx-worker-python/tests/test_acceptance_metrics.py tests/integration/test_non_text_endpoints.py`: `62 passed in 177.10s (0:02:57)` and changed-line coverage `100.00%` (`54/54`)
+  - `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/.build/ModuleCache.noindex" swift test --enable-code-coverage --package-path services/control-plane-swift --filter 'ModelCatalogTests|PythonBridgeWorkerClientTests'`: `85 tests in 2 suites passed after 1.114 seconds`
+  - `python3 scripts/swift_changed_line_coverage.py --binary services/control-plane-swift/.build/arm64-apple-macosx/debug/MelixControlPlanePackageTests.xctest/Contents/MacOS/MelixControlPlanePackageTests --profdata services/control-plane-swift/.build/arm64-apple-macosx/debug/codecov/default.profdata services/control-plane-swift/Sources/ModelCatalog/ModelCatalog.swift services/control-plane-swift/Sources/WorkerClient/PythonBridgeWorkerClient.swift services/control-plane-swift/Tests/ControlPlaneTests/ModelCatalogTests.swift services/control-plane-swift/Tests/WorkerClientTests/PythonBridgeWorkerClientTests.swift`: `100.00%` (`121/121`)
+  - `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/.build/ModuleCache.noindex" swift test --enable-code-coverage --package-path apps/macos-menubar --filter 'DesktopFoundationViewTests|RuntimeViewModelTests|DesktopPolishSmokeTests'`: `243 tests in 3 suites passed after 5.424 seconds`
+  - `python3 scripts/swift_changed_line_coverage.py --binary apps/macos-menubar/.build/arm64-apple-macosx/debug/MelixMacOSMenubarPackageTests.xctest/Contents/MacOS/MelixMacOSMenubarPackageTests --profdata apps/macos-menubar/.build/arm64-apple-macosx/debug/codecov/default.profdata apps/macos-menubar/Sources/AppMain/Dashboard/DesktopFoundationView.swift apps/macos-menubar/Sources/AppMain/Models/RuntimeViewModel.swift apps/macos-menubar/Tests/MenuBarTests/DesktopFoundationViewTests.swift apps/macos-menubar/Tests/MenuBarTests/RuntimeViewModelTests.swift apps/macos-menubar/Tests/MenuBarTests/DesktopPolishSmokeTests.swift`: `100.00%` (`145/145`)
+  - `make py-test`: `531 passed in 34.46s`
+  - `make swift-test`: repository-wide execution still stalled inside the untouched
+    `services/control-plane-swift` full-package path after the touched protocol, text-worker,
+    focused control-plane, and full menubar suites had already passed; the hung
+    `swiftpm-testing-helper` was sampled while idle in `waitUntilExit`, then terminated and
+    recorded as existing repository instability rather than an `M17.2` regression
+  - `PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" UV_CACHE_DIR="$(pwd)/.uv-cache" uv run --project services/mlx-worker-python --extra mlx pytest tests/integration/test_recovery_flows.py::test_warm_followup_prefers_hot_route_and_reduces_ttft_against_cold_baseline -q`: `1 passed in 11.30s`
+  - `make integration-test`: `74 passed in 941.45s (0:15:41)`
+  - `git diff --check`: pass
+- Metrics report for `M17.2`:
+  - the repository-owned family support matrix now exposes:
+    - `summary.speech_family_count = 2`
+    - `("speech", "kokoro").contract.backend_id = "mlx_audio.tts"`
+    - `("speech", "qwen3-tts").contract.backend_id = "mlx_audio.tts"`
+    - `("speech", "kokoro").contract.voice_mode = "named"`
+    - `("speech", "qwen3-tts").contract.voice_mode = "hybrid"`
+    - `("speech", "qwen3-tts").contract.supports_instructions = true`
+    - `("speech", "qwen3-tts").contract.voice_locales = ["zh", "en"]`
+  - changed-line coverage for the touched handwritten executable scope:
+    - Python touched-scope coverage: `100.00%` (`54/54`)
+    - Swift control-plane touched-scope coverage: `100.00%` (`121/121`)
+    - Swift menubar touched-scope coverage: `100.00%` (`145/145`)
+  - generated protobuf outputs and planning-status documents are excluded from executable
+    changed-line coverage because they are generated artifacts or repository bookkeeping
+
 - Closed `M17.1` by making real speech-to-text backend families first-class across the Swift
   catalog, the Python bridge path, and the repository-owned model-family support matrix:
   - added `mlxParakeetModel()` to the Swift control-plane catalog and promoted both

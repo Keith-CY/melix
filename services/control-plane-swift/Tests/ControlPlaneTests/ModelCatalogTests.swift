@@ -876,6 +876,8 @@ struct ModelCatalogTests {
         #expect(models.first(where: { $0.modelID == "melix-whisper-mlx" })?.supportedTasks == ["transcribe"])
         #expect(models.first(where: { $0.modelID == "melix-parakeet-mlx" })?.supportedTasks == ["transcribe"])
         #expect(models.first(where: { $0.modelID == "melix-dev-speech" })?.supportedModalities == ["text", "audio"])
+        #expect(models.first(where: { $0.modelID == "melix-kokoro-mlx" })?.supportedTasks == ["speak"])
+        #expect(models.first(where: { $0.modelID == "melix-qwen3-tts-mlx" })?.supportedTasks == ["speak"])
     }
 
     @Test("audio seed models expose backend metadata for deterministic and mlx-audio paths")
@@ -885,6 +887,7 @@ struct ModelCatalogTests {
         let whisper = ModelCatalog.mlxWhisperModel()
         let parakeet = ModelCatalog.mlxParakeetModel()
         let kokoro = ModelCatalog.mlxKokoroModel()
+        let qwen3TTS = ModelCatalog.mlxQwen3TTSModel()
 
         #expect(deterministicTranscription.settings.ext["melix.audio.backend_id"] == "deterministic")
         #expect(deterministicTranscription.settings.ext["melix.audio.family_id"] == "deterministic-transcription")
@@ -912,6 +915,21 @@ struct ModelCatalogTests {
         #expect(kokoro.settings.ext["melix.audio.family_id"] == "kokoro")
         #expect(kokoro.settings.ext["melix.audio.output_formats"] == "wav")
         #expect(kokoro.settings.ext["melix.audio.supports_instructions"] == "false")
+        #expect(kokoro.settings.ext["melix.audio.voice_catalog_summary"] == "Named English voices exposed by the Kokoro speaker catalog.")
+        #expect(kokoro.settings.ext["melix.audio.voice_locales"] == "en")
+
+        #expect(qwen3TTS.kind == "speech")
+        #expect(qwen3TTS.settings.ext["melix.audio.backend_id"] == "mlx_audio.tts")
+        #expect(qwen3TTS.settings.ext["melix.audio.family_id"] == "qwen3-tts")
+        #expect(qwen3TTS.settings.ext["melix.audio.install_profile"] == "audio-tts")
+        #expect(qwen3TTS.settings.ext["melix.audio.languages"] == "zh,en")
+        #expect(qwen3TTS.settings.ext["melix.audio.voice_mode"] == "hybrid")
+        #expect(qwen3TTS.settings.ext["melix.audio.supports_instructions"] == "true")
+        #expect(
+            qwen3TTS.settings.ext["melix.audio.voice_catalog_summary"]
+                == "Hybrid named and instruction-conditioned multilingual voices for Chinese and English synthesis."
+        )
+        #expect(qwen3TTS.settings.ext["melix.audio.voice_locales"] == "zh,en")
     }
 
     @Test("phase seven contract seed models expose image routes and tasks")

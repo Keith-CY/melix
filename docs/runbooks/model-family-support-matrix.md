@@ -3,7 +3,7 @@
 ## Purpose
 
 This runbook explains how to inspect the repository-owned support matrix for Melix text,
-speech-to-text, embedding, rerank, and image families.
+speech-to-text, text-to-speech, embedding, rerank, and image families.
 
 The matrix distinguishes two support levels:
 
@@ -30,6 +30,23 @@ Check the following fields for each family row:
 - `live_path.status`
 - `live_path.integration_tests`
 
+For `transcription` rows, also inspect:
+
+- `contract.backend_id`
+- `contract.install_profile`
+- `contract.languages`
+
+For `speech` rows, also inspect:
+
+- `contract.backend_id`
+- `contract.install_profile`
+- `contract.languages`
+- `contract.voice_mode`
+- `contract.output_formats`
+- `contract.supports_instructions`
+- `contract.voice_catalog_summary`
+- `contract.voice_locales`
+
 Rows marked `contract_only` are intentional gaps. They indicate Melix can describe the family in the catalog, but repository-owned live-path verification has not landed yet.
 
 ## Operator Use
@@ -39,6 +56,8 @@ Use this matrix when:
 - checking whether a requested dense or MoE text family is only declared or also live-verified
 - checking whether a requested speech-to-text family is discoverable with stable backend metadata,
   even when repository-owned live-path verification has not landed yet
+- checking whether a requested text-to-speech family exposes the expected language and voice-catalog
+  contract even when repository-owned live-path verification has not landed yet
 - checking whether a requested embedding or rerank family is only declared or also live-verified
 - checking whether a requested image family is only declared or also live-verified
 - reviewing family-expansion changes for support drift

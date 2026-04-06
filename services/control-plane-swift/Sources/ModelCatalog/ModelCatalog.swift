@@ -685,9 +685,11 @@ public actor ModelCatalog {
         languages: [String] = [],
         voiceMode: String = "",
         outputFormats: [String] = [],
-        supportsInstructions: Bool = false
+        supportsInstructions: Bool = false,
+        voiceCatalogSummary: String = "",
+        voiceLocales: [String] = []
     ) -> [String: String] {
-        [
+        var metadata = [
             "melix.audio.backend_id": backendID,
             "melix.audio.family_id": familyID,
             "melix.audio.install_profile": installProfile,
@@ -696,6 +698,9 @@ public actor ModelCatalog {
             "melix.audio.output_formats": outputFormats.joined(separator: ","),
             "melix.audio.supports_instructions": supportsInstructions ? "true" : "false",
         ]
+        metadata["melix.audio.voice_catalog_summary"] = voiceCatalogSummary
+        metadata["melix.audio.voice_locales"] = voiceLocales.joined(separator: ",")
+        return metadata
     }
 
     private static func applyCapabilityAdapter(
@@ -1330,7 +1335,9 @@ public actor ModelCatalog {
                 languages: ["und"],
                 voiceMode: "named",
                 outputFormats: ["wav", "mp3"],
-                supportsInstructions: false
+                supportsInstructions: false,
+                voiceCatalogSummary: "Deterministic synthetic default voice.",
+                voiceLocales: ["und"]
             )
         ) { _, new in new }
         applyCapabilityAdapter(capabilityAdapter, to: &model)
@@ -1411,7 +1418,43 @@ public actor ModelCatalog {
                 languages: ["en"],
                 voiceMode: "named",
                 outputFormats: ["wav"],
-                supportsInstructions: false
+                supportsInstructions: false,
+                voiceCatalogSummary: "Named English voices exposed by the Kokoro speaker catalog.",
+                voiceLocales: ["en"]
+            )
+        ) { _, new in new }
+        applyCapabilityAdapter(capabilityAdapter, to: &model)
+        return withSynchronizedResidency(model)
+    }
+
+    public static func mlxQwen3TTSModel() -> Melix_Controlplane_V1_ModelSummary {
+        let familyID = "qwen3-tts"
+        let capabilityAdapter = audioCapabilityAdapter(familyID: familyID, modelKind: "speech")
+        var model = Melix_Controlplane_V1_ModelSummary()
+        model.modelID = "melix-qwen3-tts-mlx"
+        model.kind = "speech"
+        model.state = .modelDiscovered
+        model.capabilityClass = .modelCapabilitySpeech
+        model.routeClass = .workerRoutePythonSpeech
+        model.quantProfileID = "4bit"
+        model.maxContext = 4096
+        model.features = ["audio", "speech"]
+        model.settings.alias = "Melix Qwen3 TTS MLX"
+        model.settings.memoryPolicy = .memoryResidencyEvictable
+        model.settings.ext.merge(
+            audioMetadata(
+                backendID: "mlx_audio.tts",
+                familyID: familyID,
+                installProfile: "audio-tts",
+                languages: ["zh", "en"],
+                voiceMode: "hybrid",
+                outputFormats: ["wav"],
+                supportsInstructions: true,
+                voiceCatalogSummary: (
+                    "Hybrid named and instruction-conditioned multilingual voices "
+                    + "for Chinese and English synthesis."
+                ),
+                voiceLocales: ["zh", "en"]
             )
         ) { _, new in new }
         applyCapabilityAdapter(capabilityAdapter, to: &model)
@@ -1494,6 +1537,8 @@ public actor ModelCatalog {
             mlxWhisperModel(),
             mlxParakeetModel(),
             devSpeechModel(),
+            mlxKokoroModel(),
+            mlxQwen3TTSModel(),
         ]
     }
 
