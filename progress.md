@@ -2,6 +2,52 @@
 
 ## 2026-04-06
 
+- Closed `M16.1` by defining the first repository-owned video ingress contract before any runtime
+  frame extraction or scheduler work:
+  - extended the shared worker protocol so `MessagePart` now has explicit `video_uri` and
+    `video_bytes` forms, while `MediaMetadata` now carries `MEDIA_TYPE_VIDEO`, `frame_budget`,
+    `start_ms`, and `end_ms`
+  - added Swift-side `input_video` decoding and normalization in `MultimodalRequestNormalizer`,
+    including top-level `video_base64` convenience decoding, URI scheme validation, supported
+    container inference, inspectable duration or frame-budget metadata, and typed operator-facing
+    preprocessing-bound failures
+  - added `worker/runtime/video_preprocessing.py` so the Python worker now validates normalized
+    video parts with one contract helper that preserves source kind, reference, filename, format,
+    byte length, and time-bound metadata without yet fetching or decoding frames
+  - added focused Swift and Python tests that prove accepted URI and inline video shapes,
+    structured error contracts, protobuf round-trips, and safe dispatch of video-bearing requests
+    during the ingress-only slice
+- Verification summary for `M16.1`:
+  - `make proto`: pass
+  - `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/.build/ModuleCache.noindex" swift test --enable-code-coverage --package-path services/control-plane-swift --filter 'MultimodalContractTests|videoBearingVLMRequestsStayDispatchableDuringIngressOnlyRollout'`: `12 tests in 2 suites passed after 0.002 seconds`
+  - `python3 scripts/swift_changed_line_coverage.py --binary services/control-plane-swift/.build/arm64-apple-macosx/debug/MelixControlPlanePackageTests.xctest/Contents/MacOS/MelixControlPlanePackageTests --profdata services/control-plane-swift/.build/arm64-apple-macosx/debug/codecov/default.profdata services/control-plane-swift/Sources/Requests/MultimodalRequestNormalizer.swift services/control-plane-swift/Sources/Requests/RequestCoordinator.swift services/control-plane-swift/Tests/ControlPlaneTests/MultimodalContractTests.swift services/control-plane-swift/Tests/HTTPGatewayTests/RequestCoordinatorTests.swift`: `98.07%` (`560/571`)
+  - `PYTHONPATH='.:services/mlx-worker-python' uv run --project services/mlx-worker-python pytest services/mlx-worker-python/tests/test_multimodal_contracts.py services/mlx-worker-python/tests/test_video_preprocessing.py -q`: `16 passed in 0.06s`
+  - `cd services/mlx-worker-python && PYTHONPATH='.:..:../..' uv run coverage run --source=worker/runtime,tests -m pytest tests/test_multimodal_contracts.py tests/test_video_preprocessing.py -q && PYTHONPATH='.:..:../..' uv run coverage report -m worker/runtime/video_preprocessing.py tests/test_multimodal_contracts.py tests/test_video_preprocessing.py`: total `98%` coverage (`166` statements, `4` misses)
+  - `git diff --check`: pass
+- Metrics report for `M16.1`:
+  - accepted ingress source forms now normalize through one contract:
+    - local path video URIs such as `/tmp/local-demo.m4v`
+    - `file://` video URIs such as `file:///tmp/sample.m4v`
+    - remote video URLs such as `https://example.com/demo.mov`
+    - inline base64 video bytes via `input_video.data` or top-level `video_base64`
+  - normalized inspectable metadata exposed by the touched scope:
+    - `media_type = VIDEO`
+    - `source_kind = URI | INLINE_BYTES`
+    - `mime_type`, `format`, `filename`, `duration_ms`, `frame_budget`, `start_ms`, `end_ms`
+  - changed-line coverage for the touched handwritten executable scope:
+    - `MultimodalRequestNormalizer.swift`: `99.02%` (`202/204`)
+    - `RequestCoordinator.swift`: `100.00%` (`2/2`)
+    - `MultimodalContractTests.swift`: `97.47%` (`308/316`)
+    - `RequestCoordinatorTests.swift`: `97.96%` (`48/49`)
+    - Swift aggregate touched-scope coverage: `98.07%` (`560/571`)
+    - `worker/runtime/video_preprocessing.py`: `96%` (`90` statements, `4` misses)
+    - `tests/test_multimodal_contracts.py`: `100%`
+    - `tests/test_video_preprocessing.py`: `100%`
+    - Python aggregate touched-scope coverage: `98%` (`166` statements, `4` misses)
+  - the remaining uncovered Python lines are defensive negative-bound guards that protobuf
+    `uint32` fields do not permit at this post-normalization layer; they remain intentionally
+    preserved as belt-and-suspenders validation
+
 - Closed `M15.4` and completed `M15` by adding repository-owned desktop-polish integration
   evidence for the native operator shell:
   - added `DesktopPolishSmokeTests` so one focused Swift suite now proves bursty chat presentation

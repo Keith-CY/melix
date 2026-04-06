@@ -2,81 +2,76 @@
 
 ## Goal
 
-Close `M15.4` by adding repository-owned desktop-polish integration evidence that proves token
-presentation smoothing, unified banner and download-recovery behavior, and product-shell navigation
-grounding through a reproducible smoke command, integration coverage, and operator runbook.
+Close `M16.1` by defining a first-class video ingress contract that normalizes supported video
+inputs, validates preprocessing bounds, and exposes inspectable metadata without yet introducing
+frame extraction or video-runtime execution.
 
 ## Scope
 
-- add a focused Swift smoke suite that exercises bursty chat presentation, shared desktop signals,
-  download recovery, operator-session restore, and surface or tool-section navigation in one flow
-- wrap the Swift smoke in a repository-owned script so contributors can run it without rediscovering
-  the package command or output contract
-- add Python-side script coverage and an integration test that executes the smoke and validates its
-  machine-readable payload
-- document the smoke workflow, expected metrics, and recovery interpretation in a dedicated runbook
+- extend the worker protocol with explicit video message-part and metadata fields
+- add Swift-side multimodal decoding and normalization support for `input_video`
+- add worker-side contract validation helpers for normalized video parts
+- add focused Swift and Python coverage that proves accepted source forms and structured failures
 
 ## Measurement Points
 
-- the smoke emits canonical metrics for chat-presentation lag, queue recovery visibility, update
-  signal visibility, persisted queue restore, and surface or tool-section grounding counts
-- the smoke covers all `DesktopSurface` cases and all `DesktopToolSection` cases without falling
-  back to non-rendering placeholders
-- the integration test executes the repository-owned smoke command and validates the published
-  payload instead of reimplementing its logic
+- supported source forms normalize through one path: local path, file URI, remote URL, and inline
+  base64 video bytes
+- normalized metadata preserves `media_type`, `source_kind`, `mime_type`, `format`, `filename`,
+  `duration_ms`, `frame_budget`, and time-bound hints
+- unsupported containers, missing payloads, invalid base64, and invalid preprocessing bounds fail
+  with structured errors
 - changed-line coverage for the touched executable scope remains at or above `95%`
 
 ## Phases
 
-1. Current-state review and smoke-contract definition
+1. Current-state review and contract design
    - status: completed
    - evidence:
-     - reviewed `M15.4`, the `M10-M15` executable goals, current menu-bar smoke patterns, the
-       desktop workspace shell, and the existing runbooks for admin persistence and desktop chat
-     - selected a repository-owned smoke design that reuses `FakeControlPlaneXPCClient`,
-       `RuntimeViewModel`, and SwiftUI host rendering instead of introducing a second desktop
-       harness
-2. Swift smoke implementation and navigation grounding
+     - reviewed `M16`, `M16.1`, the worker `MessagePart` and `MediaMetadata` schemas, existing
+       image and audio normalization in `MultimodalRequestNormalizer`, and current Python
+       multimodal preprocessing helpers
+     - selected an analysis-first contract slice: protocol plus validation only, with no frame
+       extraction or scheduler-routing changes until `M16.2`
+2. Protocol and generated artifact expansion
    - status: completed
    - evidence:
-     - added `DesktopPolishSmokeTests` so one focused suite now exercises bursty chat presentation,
-       registry-backed download recovery, update-signal priority, operator-session restore, and
-       public destination-view grounding across all `5` desktop surfaces plus all `6` tool sections
-     - stabilized the smoke harness around public SwiftUI destination views instead of brittle
-       shell-text scraping, then emitted the canonical `M15_DESKTOP_POLISH_SMOKE=<json>` payload
-     - focused Swift verification now passes under both the plain and coverage-enabled menu-bar
-       test commands
-3. Script, Python coverage, and integration execution
+     - extended `packages/protocol/schema/worker/v1/common.proto` with `MEDIA_TYPE_VIDEO`,
+       `video_uri`, `video_bytes`, and explicit `frame_budget`, `start_ms`, and `end_ms`
+     - regenerated `packages/protocol/python/worker/v1/common_pb2.py`,
+       `packages/protocol/swift/worker/v1/common.pb.swift`, and
+       `packages/protocol/descriptors/melix.pb` through `make proto`
+3. Swift multimodal normalization and contract tests
    - status: completed
    - evidence:
-     - added `scripts/m15_desktop_polish_smoke.py` so contributors can run the smoke through one
-       repository-owned JSON contract with repo-local SwiftPM environment defaults
-     - added `tests/test_m15_desktop_polish_smoke.py` and
-       `tests/integration/test_desktop_polish_smoke.py` so both the script projection and the
-       end-to-end smoke command stay covered
-     - Python changed-line coverage for the touched script plus tests is now `99.06%` (`105/106`)
-4. Runbook, metrics report, coverage, and milestone bookkeeping
+     - added `OpenAIMultimodalVideoReference` plus `input_video` decoding, top-level convenience
+       fields, format inference, URI validation, and preprocessing-bound validation in
+       `MultimodalRequestNormalizer`
+     - added focused `MultimodalContractTests` coverage for URI, inline-base64, filename and URL
+       inference, typed operator errors, missing payloads, and scalar bound failures
+     - added one `RequestCoordinatorTests` black-box assertion proving `video` message parts remain
+       dispatchable during the ingress-only slice without forcing `M16.2` scheduling changes
+4. Python video-ingress validation and coverage bookkeeping
    - status: completed
    - evidence:
-     - added `docs/runbooks/desktop-polish.md` and indexed it from the runbook maps so operators
-       can reproduce the smoke command and interpret the payload without rediscovering context
-     - Swift changed-line coverage for `DesktopPolishSmokeTests.swift` is `98.69%` (`301/305`)
-     - Python changed-line coverage for the touched script plus tests is `99.06%` (`105/106`),
-       `make integration-test` passes with `70 passed in 924.47s (0:15:24)`, and `git diff --check`
-       passes
+     - added `worker/runtime/video_preprocessing.py` as the worker-side contract validator for
+       normalized video parts, with structured URI, format, filename, and preprocessing-bound
+       checks
+     - added focused protobuf round-trip coverage in `test_multimodal_contracts.py` and dedicated
+       validation coverage in `test_video_preprocessing.py`
+     - verified touched-scope executable coverage at or above `95%` for both Swift and Python
 
 ## Acceptance
 
-- a single repository-owned smoke command proves desktop token smoothing, banner priority,
-  download-recovery restore, and navigation grounding
-- the smoke payload is validated by both unit-level script tests and an integration test
-- contributors have a dedicated runbook that explains how to run the smoke and interpret failures
+- Melix has one explicit normalized video-input contract before runtime execution work begins
+- video metadata and preprocessing bounds are inspectable through the shared request model
+- invalid ingress shapes fail predictably and test coverage keeps changed-line coverage above `95%`
 
 ## Risks
 
-- if the smoke only checks `RuntimeViewModel` state without rendering SwiftUI surfaces, future
-  navigation regressions can hide behind view-model-only coverage
-- if the script invents its own payload instead of forwarding the Swift smoke output, the runbook
-  and integration test can drift from the actual desktop evidence contract
-- if new runbook material lands without a dedicated smoke command, `M15.4` will still rely on
-  unwritten manual operator knowledge
+- if video reuses image-only fields, later frame-selection and cleanup work will inherit ambiguous
+  semantics
+- if URI, inline bytes, and preprocessing bounds are not normalized together, `M16.2` will need to
+  rediscover transport-specific assumptions in runtime code
+- if the first slice reaches into frame extraction early, it will blur the boundary between ingress
+  contracts and runtime scheduling work

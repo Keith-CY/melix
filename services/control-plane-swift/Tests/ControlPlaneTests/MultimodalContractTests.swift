@@ -298,6 +298,320 @@ struct MultimodalContractTests {
         #expect(roundTripped[3].inputAudio?.data == "d29ybGQ=")
     }
 
+    @Test("multimodal message contracts decode and normalize video uri and inline payloads")
+    func messageContractsDecodeAndNormalizeVideoPayloads() throws {
+        let decoder = JSONDecoder()
+        let encoder = JSONEncoder()
+
+        let uriPart = try decoder.decode(
+            OpenAIMultimodalContentPart.self,
+            from: Data(
+                """
+                {
+                  "type": "input_video",
+                  "input_video": {
+                    "url": "https://example.com/demo.mov",
+                    "mime_type": "video/quicktime",
+                    "duration_ms": 12000,
+                    "frame_budget": 12,
+                    "start_ms": 500,
+                    "end_ms": 3500
+                  }
+                }
+                """.utf8
+            )
+        )
+        let inlinePart = try decoder.decode(
+            OpenAIMultimodalContentPart.self,
+            from: Data(
+                """
+                {
+                  "type": "input_video",
+                  "video_base64": "dmlkZW8=",
+                  "mime_type": "video/mp4",
+                  "filename": "inline.mp4",
+                  "duration_ms": 4000,
+                  "frame_budget": 8,
+                  "start_ms": 0,
+                  "end_ms": 2400
+                }
+                """.utf8
+            )
+        )
+
+        let normalizer = MultimodalRequestNormalizer()
+        let normalizedURI = try normalizer.normalize(uriPart)
+        let normalizedInline = try normalizer.normalize(inlinePart)
+
+        #expect(normalizedURI.videoUri == "https://example.com/demo.mov")
+        #expect(normalizedURI.media.mediaType == .video)
+        #expect(normalizedURI.media.sourceKind == .mediaSourceUri)
+        #expect(normalizedURI.media.mimeType == "video/quicktime")
+        #expect(normalizedURI.media.format == "mov")
+        #expect(normalizedURI.media.filename == "demo.mov")
+        #expect(normalizedURI.media.durationMs == 12_000)
+        #expect(normalizedURI.media.frameBudget == 12)
+        #expect(normalizedURI.media.startMs == 500)
+        #expect(normalizedURI.media.endMs == 3_500)
+
+        #expect(normalizedInline.videoBytes == Data("video".utf8))
+        #expect(normalizedInline.media.mediaType == .video)
+        #expect(normalizedInline.media.sourceKind == .mediaSourceInlineBytes)
+        #expect(normalizedInline.media.format == "mp4")
+        #expect(normalizedInline.media.filename == "inline.mp4")
+        #expect(normalizedInline.media.byteLength == 5)
+        #expect(normalizedInline.media.durationMs == 4_000)
+        #expect(normalizedInline.media.frameBudget == 8)
+        #expect(normalizedInline.media.endMs == 2_400)
+
+        let encoded = try encoder.encode([uriPart, inlinePart])
+        let roundTripped = try decoder.decode([OpenAIMultimodalContentPart].self, from: encoded)
+
+        #expect(roundTripped.count == 2)
+        #expect(roundTripped[0].inputVideo?.url == "https://example.com/demo.mov")
+        #expect(roundTripped[1].inputVideo?.data == "dmlkZW8=")
+    }
+
+    @Test("multimodal request normalizer rejects invalid video payloads with typed operator errors")
+    func invalidVideoPayloadsAreRejectedWithTypedOperatorErrors() {
+        let normalizer = MultimodalRequestNormalizer()
+
+        let unsupportedScheme = OpenAIMultimodalContentPart(
+            type: .inputVideo,
+            inputVideo: OpenAIMultimodalVideoReference(
+                url: "ftp://example.com/demo.mov",
+                format: "mov"
+            )
+        )
+        let unsupportedFormat = OpenAIMultimodalContentPart(
+            type: .inputVideo,
+            inputVideo: OpenAIMultimodalVideoReference(
+                url: "https://example.com/demo.avi",
+                format: "avi"
+            )
+        )
+        let invalidFrameBudget = OpenAIMultimodalContentPart(
+            type: .inputVideo,
+            inputVideo: OpenAIMultimodalVideoReference(
+                data: "dmlkZW8=",
+                format: "mp4",
+                frameBudget: 129
+            )
+        )
+        let invalidBounds = OpenAIMultimodalContentPart(
+            type: .inputVideo,
+            inputVideo: OpenAIMultimodalVideoReference(
+                data: "dmlkZW8=",
+                format: "mp4",
+                durationMs: 1_000,
+                startMs: 600,
+                endMs: 1_200
+            )
+        )
+
+        do {
+            _ = try normalizer.normalize(unsupportedScheme)
+            Issue.record("Expected unsupported video URI scheme to fail.")
+        } catch let error as MultimodalRequestNormalizationError {
+            #expect(error == .unsupportedURIScheme("video", "ftp"))
+            #expect(error.operatorMessage == "Unsupported video URI scheme: ftp.")
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+
+        do {
+            _ = try normalizer.normalize(unsupportedFormat)
+            Issue.record("Expected unsupported video format to fail.")
+        } catch let error as MultimodalRequestNormalizationError {
+            #expect(error == .unsupportedMediaFormat("video", "avi"))
+            #expect(error.operatorMessage == "Unsupported video format: avi.")
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+
+        do {
+            _ = try normalizer.normalize(invalidFrameBudget)
+            Issue.record("Expected invalid frame budget to fail.")
+        } catch let error as MultimodalRequestNormalizationError {
+            #expect(error == .invalidPreprocessingBound("frame_budget", "must be less than or equal to 128"))
+            #expect(error.operatorMessage == "frame_budget must be less than or equal to 128.")
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+
+        do {
+            _ = try normalizer.normalize(invalidBounds)
+            Issue.record("Expected invalid video bounds to fail.")
+        } catch let error as MultimodalRequestNormalizationError {
+            #expect(error == .invalidPreprocessingBound("end_ms", "must be less than or equal to duration_ms"))
+            #expect(error.operatorMessage == "end_ms must be less than or equal to duration_ms.")
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+    }
+
+    @Test("multimodal video contracts cover filename inference missing payload decode and invalid scalar bounds")
+    func videoContractsCoverInferenceDecodeAndScalarValidation() throws {
+        let decoder = JSONDecoder()
+        let normalizer = MultimodalRequestNormalizer()
+
+        #expect(throws: MultimodalRequestNormalizationError.missingValue("input_video")) {
+            _ = try decoder.decode(
+                OpenAIMultimodalContentPart.self,
+                from: Data(
+                    """
+                    {
+                      "type": "input_video"
+                    }
+                    """.utf8
+                )
+            )
+        }
+
+        let filenameInferred = try normalizer.normalize(
+            OpenAIMultimodalContentPart(
+                type: .inputVideo,
+                inputVideo: OpenAIMultimodalVideoReference(
+                    url: "/tmp/local-video.webm",
+                    filename: "clip.webm"
+                )
+            )
+        )
+        #expect(filenameInferred.videoUri == "/tmp/local-video.webm")
+        #expect(filenameInferred.media.format == "webm")
+        #expect(filenameInferred.media.filename == "clip.webm")
+
+        let urlInferred = try normalizer.normalize(
+            OpenAIMultimodalContentPart(
+                type: .inputVideo,
+                inputVideo: OpenAIMultimodalVideoReference(
+                    url: "file:///tmp/sample.m4v"
+                )
+            )
+        )
+        #expect(urlInferred.videoUri == "file:///tmp/sample.m4v")
+        #expect(urlInferred.media.format == "m4v")
+        #expect(urlInferred.media.filename == "sample.m4v")
+
+        let inlineFallbackFilename = try normalizer.normalize(
+            OpenAIMultimodalContentPart(
+                type: .inputVideo,
+                inputVideo: OpenAIMultimodalVideoReference(
+                    data: "dmlkZW8=",
+                    format: "mp4"
+                )
+            )
+        )
+        #expect(inlineFallbackFilename.media.filename == "inline-video")
+
+        #expect(throws: MultimodalRequestNormalizationError.invalidBase64("video")) {
+            _ = try normalizer.normalize(
+                OpenAIMultimodalContentPart(
+                    type: .inputVideo,
+                    inputVideo: OpenAIMultimodalVideoReference(
+                        data: "not-base64",
+                        format: "mp4"
+                    )
+                )
+            )
+        }
+        #expect(throws: MultimodalRequestNormalizationError.missingValue("input_video")) {
+            _ = try normalizer.normalize(OpenAIMultimodalContentPart(type: .inputVideo))
+        }
+        #expect(
+            throws: MultimodalRequestNormalizationError.unsupportedMediaFormat("video", "video/x-matroska")
+        ) {
+            _ = try normalizer.normalize(
+                OpenAIMultimodalContentPart(
+                    type: .inputVideo,
+                    inputVideo: OpenAIMultimodalVideoReference(
+                        url: "https://example.com/demo",
+                        mimeType: "video/x-matroska"
+                    )
+                )
+            )
+        }
+        #expect(
+            throws: MultimodalRequestNormalizationError.missingValue("input_video.format or input_video.mime_type")
+        ) {
+            _ = try normalizer.normalize(
+                OpenAIMultimodalContentPart(
+                    type: .inputVideo,
+                    inputVideo: OpenAIMultimodalVideoReference(url: "https://example.com/demo")
+                )
+            )
+        }
+        #expect(
+            throws: MultimodalRequestNormalizationError.invalidPreprocessingBound(
+                "duration_ms",
+                "must be greater than 0"
+            )
+        ) {
+            _ = try normalizer.normalize(
+                OpenAIMultimodalContentPart(
+                    type: .inputVideo,
+                    inputVideo: OpenAIMultimodalVideoReference(
+                        data: "dmlkZW8=",
+                        format: "mp4",
+                        durationMs: 0
+                    )
+                )
+            )
+        }
+        #expect(
+            throws: MultimodalRequestNormalizationError.invalidPreprocessingBound(
+                "start_ms",
+                "must be greater than or equal to 0"
+            )
+        ) {
+            _ = try normalizer.normalize(
+                OpenAIMultimodalContentPart(
+                    type: .inputVideo,
+                    inputVideo: OpenAIMultimodalVideoReference(
+                        data: "dmlkZW8=",
+                        format: "mp4",
+                        startMs: -1
+                    )
+                )
+            )
+        }
+        #expect(
+            throws: MultimodalRequestNormalizationError.invalidPreprocessingBound(
+                "frame_budget",
+                "must be greater than 0"
+            )
+        ) {
+            _ = try normalizer.normalize(
+                OpenAIMultimodalContentPart(
+                    type: .inputVideo,
+                    inputVideo: OpenAIMultimodalVideoReference(
+                        data: "dmlkZW8=",
+                        format: "mp4",
+                        frameBudget: 0
+                    )
+                )
+            )
+        }
+        #expect(
+            throws: MultimodalRequestNormalizationError.invalidPreprocessingBound(
+                "end_ms",
+                "must be greater than or equal to start_ms"
+            )
+        ) {
+            _ = try normalizer.normalize(
+                OpenAIMultimodalContentPart(
+                    type: .inputVideo,
+                    inputVideo: OpenAIMultimodalVideoReference(
+                        data: "dmlkZW8=",
+                        format: "mp4",
+                        startMs: 900,
+                        endMs: 600
+                    )
+                )
+            )
+        }
+    }
+
     @Test("multimodal request normalizer rejects missing content values")
     func missingContentValuesAreRejected() {
         let normalizer = MultimodalRequestNormalizer()
@@ -335,6 +649,14 @@ struct MultimodalContractTests {
                 OpenAIMultimodalContentPart(
                     type: .inputAudio,
                     inputAudio: OpenAIMultimodalAudioReference()
+                )
+            )
+        }
+        #expect(throws: MultimodalRequestNormalizationError.missingValue("input_video.data or input_video.url")) {
+            _ = try normalizer.normalize(
+                OpenAIMultimodalContentPart(
+                    type: .inputVideo,
+                    inputVideo: OpenAIMultimodalVideoReference(format: "mp4")
                 )
             )
         }

@@ -525,6 +525,39 @@ struct RequestCoordinatorTests {
         #expect(metrics.values["scheduler.prefill_chunk_count", default: -1] >= 1)
     }
 
+    @Test("video-bearing VLM requests stay dispatchable during ingress-only rollout")
+    func videoBearingVLMRequestsStayDispatchableDuringIngressOnlyRollout() async throws {
+        let workerClient = BlockingWorkerClient()
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(defaultTextClient: workerClient),
+            abortRegistry: AbortRegistry()
+        )
+
+        let execution = try await coordinator.startChatCompletion(
+            makeTranslatedChatRequest(
+                requestID: "req-video-ingress",
+                modelID: "melix-dev-text",
+                messages: [makeWorkerVideoMessage(text: "Summarize the clip.", videoBytes: Data("video fixture".utf8))]
+            )
+        )
+        let consumer = Task {
+            do {
+                for try await _ in execution.stream {}
+            } catch {}
+        }
+
+        for _ in 0..<100 {
+            if await workerClient.generatedRequestIDs.contains("req-video-ingress") {
+                break
+            }
+            try? await Task.sleep(nanoseconds: 10_000_000)
+        }
+
+        #expect(await workerClient.generatedRequestIDs == ["req-video-ingress"])
+        #expect(try await coordinator.cancel(requestID: "req-video-ingress"))
+        _ = await consumer.result
+    }
+
     @Test("text ttft under multimodal load is recorded separately")
     func textTTFTUnderMultimodalLoadIsRecordedSeparately() async throws {
         let workerClient = PhaseAwareWorkerClient()
@@ -2899,6 +2932,28 @@ private func makeWorkerVisionMessage(
     imagePart.media.filename = "fixture.png"
 
     message.parts = [textPart, imagePart]
+    return message
+}
+
+private func makeWorkerVideoMessage(
+    text: String,
+    videoBytes: Data
+) -> Melix_Worker_V1_ChatMessage {
+    var message = Melix_Worker_V1_ChatMessage()
+    message.role = "user"
+
+    var textPart = Melix_Worker_V1_MessagePart()
+    textPart.text = text
+
+    var videoPart = Melix_Worker_V1_MessagePart()
+    videoPart.videoBytes = videoBytes
+    videoPart.media.mediaType = .video
+    videoPart.media.sourceKind = .mediaSourceInlineBytes
+    videoPart.media.mimeType = "video/mp4"
+    videoPart.media.format = "mp4"
+    videoPart.media.filename = "fixture.mp4"
+
+    message.parts = [textPart, videoPart]
     return message
 }
 

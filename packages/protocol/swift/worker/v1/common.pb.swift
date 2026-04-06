@@ -313,6 +313,7 @@ public enum Melix_Worker_V1_MediaType: SwiftProtobuf.Enum, Swift.CaseIterable {
   case text // = 1
   case image // = 2
   case audio // = 3
+  case video // = 4
   case UNRECOGNIZED(Int)
 
   public init() {
@@ -325,6 +326,7 @@ public enum Melix_Worker_V1_MediaType: SwiftProtobuf.Enum, Swift.CaseIterable {
     case 1: self = .text
     case 2: self = .image
     case 3: self = .audio
+    case 4: self = .video
     default: self = .UNRECOGNIZED(rawValue)
     }
   }
@@ -335,6 +337,7 @@ public enum Melix_Worker_V1_MediaType: SwiftProtobuf.Enum, Swift.CaseIterable {
     case .text: return 1
     case .image: return 2
     case .audio: return 3
+    case .video: return 4
     case .UNRECOGNIZED(let i): return i
     }
   }
@@ -345,6 +348,7 @@ public enum Melix_Worker_V1_MediaType: SwiftProtobuf.Enum, Swift.CaseIterable {
     .text,
     .image,
     .audio,
+    .video,
   ]
 
 }
@@ -908,6 +912,12 @@ public struct Melix_Worker_V1_MediaMetadata: Sendable {
 
   public var preprocessingHints: Dictionary<String,String> = [:]
 
+  public var frameBudget: UInt32 = 0
+
+  public var startMs: UInt32 = 0
+
+  public var endMs: UInt32 = 0
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -1239,6 +1249,22 @@ public struct Melix_Worker_V1_MessagePart: Sendable {
     set {part = .audioBytes(newValue)}
   }
 
+  public var videoUri: String {
+    get {
+      if case .videoUri(let v)? = part {return v}
+      return String()
+    }
+    set {part = .videoUri(newValue)}
+  }
+
+  public var videoBytes: Data {
+    get {
+      if case .videoBytes(let v)? = part {return v}
+      return Data()
+    }
+    set {part = .videoBytes(newValue)}
+  }
+
   public var media: Melix_Worker_V1_MediaMetadata {
     get {_media ?? Melix_Worker_V1_MediaMetadata()}
     set {_media = newValue}
@@ -1256,6 +1282,8 @@ public struct Melix_Worker_V1_MessagePart: Sendable {
     case imageBytes(Data)
     case audioUri(String)
     case audioBytes(Data)
+    case videoUri(String)
+    case videoBytes(Data)
 
   }
 
@@ -1671,7 +1699,7 @@ extension Melix_Worker_V1_ResidencyState: SwiftProtobuf._ProtoNameProviding {
 }
 
 extension Melix_Worker_V1_MediaType: SwiftProtobuf._ProtoNameProviding {
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0MEDIA_TYPE_UNSPECIFIED\0\u{1}MEDIA_TYPE_TEXT\0\u{1}MEDIA_TYPE_IMAGE\0\u{1}MEDIA_TYPE_AUDIO\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0MEDIA_TYPE_UNSPECIFIED\0\u{1}MEDIA_TYPE_TEXT\0\u{1}MEDIA_TYPE_IMAGE\0\u{1}MEDIA_TYPE_AUDIO\0\u{1}MEDIA_TYPE_VIDEO\0")
 }
 
 extension Melix_Worker_V1_MediaSourceKind: SwiftProtobuf._ProtoNameProviding {
@@ -2151,7 +2179,7 @@ extension Melix_Worker_V1_ParserCapabilities: SwiftProtobuf.Message, SwiftProtob
 
 extension Melix_Worker_V1_MediaMetadata: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".MediaMetadata"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}media_type\0\u{3}source_kind\0\u{3}mime_type\0\u{1}format\0\u{1}filename\0\u{3}byte_length\0\u{3}duration_ms\0\u{1}width\0\u{1}height\0\u{3}preprocessing_hints\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}media_type\0\u{3}source_kind\0\u{3}mime_type\0\u{1}format\0\u{1}filename\0\u{3}byte_length\0\u{3}duration_ms\0\u{1}width\0\u{1}height\0\u{3}preprocessing_hints\0\u{3}frame_budget\0\u{3}start_ms\0\u{3}end_ms\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -2169,6 +2197,9 @@ extension Melix_Worker_V1_MediaMetadata: SwiftProtobuf.Message, SwiftProtobuf._M
       case 8: try { try decoder.decodeSingularUInt32Field(value: &self.width) }()
       case 9: try { try decoder.decodeSingularUInt32Field(value: &self.height) }()
       case 10: try { try decoder.decodeMapField(fieldType: SwiftProtobuf._ProtobufMap<SwiftProtobuf.ProtobufString,SwiftProtobuf.ProtobufString>.self, value: &self.preprocessingHints) }()
+      case 11: try { try decoder.decodeSingularUInt32Field(value: &self.frameBudget) }()
+      case 12: try { try decoder.decodeSingularUInt32Field(value: &self.startMs) }()
+      case 13: try { try decoder.decodeSingularUInt32Field(value: &self.endMs) }()
       default: break
       }
     }
@@ -2205,6 +2236,15 @@ extension Melix_Worker_V1_MediaMetadata: SwiftProtobuf.Message, SwiftProtobuf._M
     if !self.preprocessingHints.isEmpty {
       try visitor.visitMapField(fieldType: SwiftProtobuf._ProtobufMap<SwiftProtobuf.ProtobufString,SwiftProtobuf.ProtobufString>.self, value: self.preprocessingHints, fieldNumber: 10)
     }
+    if self.frameBudget != 0 {
+      try visitor.visitSingularUInt32Field(value: self.frameBudget, fieldNumber: 11)
+    }
+    if self.startMs != 0 {
+      try visitor.visitSingularUInt32Field(value: self.startMs, fieldNumber: 12)
+    }
+    if self.endMs != 0 {
+      try visitor.visitSingularUInt32Field(value: self.endMs, fieldNumber: 13)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -2219,6 +2259,9 @@ extension Melix_Worker_V1_MediaMetadata: SwiftProtobuf.Message, SwiftProtobuf._M
     if lhs.width != rhs.width {return false}
     if lhs.height != rhs.height {return false}
     if lhs.preprocessingHints != rhs.preprocessingHints {return false}
+    if lhs.frameBudget != rhs.frameBudget {return false}
+    if lhs.startMs != rhs.startMs {return false}
+    if lhs.endMs != rhs.endMs {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -2885,7 +2928,7 @@ extension Melix_Worker_V1_ToolConfig: SwiftProtobuf.Message, SwiftProtobuf._Mess
 
 extension Melix_Worker_V1_MessagePart: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".MessagePart"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}text\0\u{3}image_uri\0\u{3}image_bytes\0\u{3}audio_uri\0\u{3}audio_bytes\0\u{1}media\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}text\0\u{3}image_uri\0\u{3}image_bytes\0\u{3}audio_uri\0\u{3}audio_bytes\0\u{1}media\0\u{3}video_uri\0\u{3}video_bytes\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -2934,6 +2977,22 @@ extension Melix_Worker_V1_MessagePart: SwiftProtobuf.Message, SwiftProtobuf._Mes
         }
       }()
       case 6: try { try decoder.decodeSingularMessageField(value: &self._media) }()
+      case 7: try {
+        var v: String?
+        try decoder.decodeSingularStringField(value: &v)
+        if let v = v {
+          if self.part != nil {try decoder.handleConflictingOneOf()}
+          self.part = .videoUri(v)
+        }
+      }()
+      case 8: try {
+        var v: Data?
+        try decoder.decodeSingularBytesField(value: &v)
+        if let v = v {
+          if self.part != nil {try decoder.handleConflictingOneOf()}
+          self.part = .videoBytes(v)
+        }
+      }()
       default: break
       }
     }
@@ -2965,11 +3024,22 @@ extension Melix_Worker_V1_MessagePart: SwiftProtobuf.Message, SwiftProtobuf._Mes
       guard case .audioBytes(let v)? = self.part else { preconditionFailure() }
       try visitor.visitSingularBytesField(value: v, fieldNumber: 5)
     }()
-    case nil: break
+    default: break
     }
     try { if let v = self._media {
       try visitor.visitSingularMessageField(value: v, fieldNumber: 6)
     } }()
+    switch self.part {
+    case .videoUri?: try {
+      guard case .videoUri(let v)? = self.part else { preconditionFailure() }
+      try visitor.visitSingularStringField(value: v, fieldNumber: 7)
+    }()
+    case .videoBytes?: try {
+      guard case .videoBytes(let v)? = self.part else { preconditionFailure() }
+      try visitor.visitSingularBytesField(value: v, fieldNumber: 8)
+    }()
+    default: break
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 

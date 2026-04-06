@@ -2429,6 +2429,8 @@ private func promptReuseFragments(
                 fragments.append(.audioURI(uri))
             case .audioBytes(let bytes):
                 fragments.append(.audioBytes(Data(bytes)))
+            case .videoUri, .videoBytes:
+                continue
             case nil:
                 continue
             }

@@ -301,6 +301,10 @@ The roadmap extension in `M10-M17` includes milestone-level plans plus decompose
 ## M16: Video Understanding And Media Lifecycle
 
 - `M16.1` `docs/plans/2026-03-31-m16-1-video-ingress-and-media-normalization-contracts.md`
+  Status: completed. The worker protocol now carries explicit video message parts and
+  preprocessing metadata, Swift request normalization accepts supported URI and inline video
+  forms with typed validation, and the Python worker now has a repository-owned video
+  preprocessing contract helper with focused Swift plus Python coverage.
 - `M16.2` `docs/plans/2026-03-31-m16-2-frame-policy-video-runtime-and-background-lane-routing.md`
 - `M16.3` `docs/plans/2026-03-31-m16-3-temporary-media-lifecycle-cleanup-and-failure-recovery.md`
 - `M16.4` `docs/plans/2026-03-31-m16-4-video-integration-benchmarks-and-operator-evidence.md`

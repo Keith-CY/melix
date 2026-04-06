@@ -5,6 +5,9 @@ public enum MultimodalRequestNormalizationError: Error, Equatable {
     case missingValue(String)
     case invalidBase64(String)
     case unsupportedPartType(String)
+    case unsupportedURIScheme(String, String)
+    case unsupportedMediaFormat(String, String)
+    case invalidPreprocessingBound(String, String)
 }
 
 extension MultimodalRequestNormalizationError {
@@ -16,6 +19,12 @@ extension MultimodalRequestNormalizationError {
             return "\(kind)_base64 must be valid base64."
         case let .unsupportedPartType(kind):
             return "Unsupported multimodal part type: \(kind)."
+        case let .unsupportedURIScheme(kind, scheme):
+            return "Unsupported \(kind) URI scheme: \(scheme)."
+        case let .unsupportedMediaFormat(kind, format):
+            return "Unsupported \(kind) format: \(format)."
+        case let .invalidPreprocessingBound(field, reason):
+            return "\(field) \(reason)."
         }
     }
 }
@@ -84,6 +93,52 @@ public struct OpenAIMultimodalAudioReference: Sendable, Codable, Equatable {
     }
 }
 
+public struct OpenAIMultimodalVideoReference: Sendable, Codable, Equatable {
+    public let data: String?
+    public let url: String?
+    public let format: String?
+    public let mimeType: String?
+    public let filename: String?
+    public let durationMs: Int?
+    public let frameBudget: Int?
+    public let startMs: Int?
+    public let endMs: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case data
+        case url
+        case format
+        case mimeType = "mime_type"
+        case filename
+        case durationMs = "duration_ms"
+        case frameBudget = "frame_budget"
+        case startMs = "start_ms"
+        case endMs = "end_ms"
+    }
+
+    public init(
+        data: String? = nil,
+        url: String? = nil,
+        format: String? = nil,
+        mimeType: String? = nil,
+        filename: String? = nil,
+        durationMs: Int? = nil,
+        frameBudget: Int? = nil,
+        startMs: Int? = nil,
+        endMs: Int? = nil
+    ) {
+        self.data = data
+        self.url = url
+        self.format = format
+        self.mimeType = mimeType
+        self.filename = filename
+        self.durationMs = durationMs
+        self.frameBudget = frameBudget
+        self.startMs = startMs
+        self.endMs = endMs
+    }
+}
+
 public struct OpenAIMultimodalContentPart: Sendable, Codable, Equatable {
     public enum PartType: String, Sendable, Codable, Equatable {
         case text = "text"
@@ -91,6 +146,7 @@ public struct OpenAIMultimodalContentPart: Sendable, Codable, Equatable {
         case imageURL = "image_url"
         case inputImage = "input_image"
         case inputAudio = "input_audio"
+        case inputVideo = "input_video"
     }
 
     public let type: PartType
@@ -98,6 +154,7 @@ public struct OpenAIMultimodalContentPart: Sendable, Codable, Equatable {
     public let imageURL: OpenAIMultimodalImageReference?
     public let inputImage: OpenAIMultimodalImageReference?
     public let inputAudio: OpenAIMultimodalAudioReference?
+    public let inputVideo: OpenAIMultimodalVideoReference?
 
     enum CodingKeys: String, CodingKey {
         case type
@@ -105,12 +162,18 @@ public struct OpenAIMultimodalContentPart: Sendable, Codable, Equatable {
         case imageURL = "image_url"
         case inputImage = "input_image"
         case inputAudio = "input_audio"
+        case inputVideo = "input_video"
         case imageBase64 = "image_base64"
         case audioBase64 = "audio_base64"
+        case videoBase64 = "video_base64"
         case mimeType = "mime_type"
         case format
         case detail
         case filename
+        case durationMs = "duration_ms"
+        case frameBudget = "frame_budget"
+        case startMs = "start_ms"
+        case endMs = "end_ms"
     }
 
     public init(
@@ -118,13 +181,15 @@ public struct OpenAIMultimodalContentPart: Sendable, Codable, Equatable {
         text: String? = nil,
         imageURL: OpenAIMultimodalImageReference? = nil,
         inputImage: OpenAIMultimodalImageReference? = nil,
-        inputAudio: OpenAIMultimodalAudioReference? = nil
+        inputAudio: OpenAIMultimodalAudioReference? = nil,
+        inputVideo: OpenAIMultimodalVideoReference? = nil
     ) {
         self.type = type
         self.text = text
         self.imageURL = imageURL
         self.inputImage = inputImage
         self.inputAudio = inputAudio
+        self.inputVideo = inputVideo
     }
 
     public init(from decoder: Decoder) throws {
@@ -135,6 +200,10 @@ public struct OpenAIMultimodalContentPart: Sendable, Codable, Equatable {
         let topLevelFormat = try container.decodeIfPresent(String.self, forKey: .format)
         let topLevelDetail = try container.decodeIfPresent(String.self, forKey: .detail)
         let topLevelFilename = try container.decodeIfPresent(String.self, forKey: .filename)
+        let topLevelDurationMs = try container.decodeIfPresent(Int.self, forKey: .durationMs)
+        let topLevelFrameBudget = try container.decodeIfPresent(Int.self, forKey: .frameBudget)
+        let topLevelStartMs = try container.decodeIfPresent(Int.self, forKey: .startMs)
+        let topLevelEndMs = try container.decodeIfPresent(Int.self, forKey: .endMs)
 
         switch type {
         case .text, .inputText:
@@ -142,10 +211,12 @@ public struct OpenAIMultimodalContentPart: Sendable, Codable, Equatable {
             imageURL = nil
             inputImage = nil
             inputAudio = nil
+            inputVideo = nil
         case .imageURL:
             text = nil
             inputImage = nil
             inputAudio = nil
+            inputVideo = nil
             if let inlineURL = try? container.decode(String.self, forKey: .imageURL) {
                 imageURL = OpenAIMultimodalImageReference(
                     url: inlineURL,
@@ -170,6 +241,7 @@ public struct OpenAIMultimodalContentPart: Sendable, Codable, Equatable {
             text = nil
             imageURL = nil
             inputAudio = nil
+            inputVideo = nil
             if let decoded = try container.decodeIfPresent(OpenAIMultimodalImageReference.self, forKey: .inputImage) {
                 inputImage = OpenAIMultimodalImageReference(
                     url: decoded.url,
@@ -194,6 +266,7 @@ public struct OpenAIMultimodalContentPart: Sendable, Codable, Equatable {
             text = nil
             imageURL = nil
             inputImage = nil
+            inputVideo = nil
             if let decoded = try container.decodeIfPresent(OpenAIMultimodalAudioReference.self, forKey: .inputAudio) {
                 inputAudio = OpenAIMultimodalAudioReference(
                     data: decoded.data,
@@ -212,6 +285,37 @@ public struct OpenAIMultimodalContentPart: Sendable, Codable, Equatable {
             } else {
                 throw MultimodalRequestNormalizationError.missingValue("input_audio")
             }
+        case .inputVideo:
+            text = nil
+            imageURL = nil
+            inputImage = nil
+            inputAudio = nil
+            if let decoded = try container.decodeIfPresent(OpenAIMultimodalVideoReference.self, forKey: .inputVideo) {
+                inputVideo = OpenAIMultimodalVideoReference(
+                    data: decoded.data,
+                    url: decoded.url,
+                    format: decoded.format ?? topLevelFormat,
+                    mimeType: decoded.mimeType ?? topLevelMimeType,
+                    filename: decoded.filename ?? topLevelFilename,
+                    durationMs: decoded.durationMs ?? topLevelDurationMs,
+                    frameBudget: decoded.frameBudget ?? topLevelFrameBudget,
+                    startMs: decoded.startMs ?? topLevelStartMs,
+                    endMs: decoded.endMs ?? topLevelEndMs
+                )
+            } else if let videoBase64 = try container.decodeIfPresent(String.self, forKey: .videoBase64) {
+                inputVideo = OpenAIMultimodalVideoReference(
+                    data: videoBase64,
+                    format: topLevelFormat,
+                    mimeType: topLevelMimeType,
+                    filename: topLevelFilename,
+                    durationMs: topLevelDurationMs,
+                    frameBudget: topLevelFrameBudget,
+                    startMs: topLevelStartMs,
+                    endMs: topLevelEndMs
+                )
+            } else {
+                throw MultimodalRequestNormalizationError.missingValue("input_video")
+            }
         }
     }
 
@@ -228,6 +332,8 @@ public struct OpenAIMultimodalContentPart: Sendable, Codable, Equatable {
             try container.encodeIfPresent(inputImage, forKey: .inputImage)
         case .inputAudio:
             try container.encodeIfPresent(inputAudio, forKey: .inputAudio)
+        case .inputVideo:
+            try container.encodeIfPresent(inputVideo, forKey: .inputVideo)
         }
     }
 }
@@ -245,6 +351,15 @@ public struct OpenAIMultimodalMessage: Sendable, Codable, Equatable {
 }
 
 public struct MultimodalRequestNormalizer: Sendable {
+    private static let supportedVideoFormats: Set<String> = ["mp4", "mov", "m4v", "webm"]
+    private static let supportedVideoMimeTypes: [String: String] = [
+        "video/mp4": "mp4",
+        "video/quicktime": "mov",
+        "video/x-m4v": "m4v",
+        "video/webm": "webm",
+    ]
+    private static let maxVideoFrameBudget = 128
+
     public init() {}
 
     public func normalize(
@@ -275,6 +390,8 @@ public struct MultimodalRequestNormalizer: Sendable {
             return try normalizeImage(part.inputImage, inlineOnly: true)
         case .inputAudio:
             return try normalizeAudio(part.inputAudio)
+        case .inputVideo:
+            return try normalizeVideo(part.inputVideo)
         }
     }
 
@@ -363,5 +480,159 @@ public struct MultimodalRequestNormalizer: Sendable {
         normalized.media.sourceKind = .mediaSourceInlineBytes
         normalized.media.byteLength = UInt64(decoded.count)
         return normalized
+    }
+
+    private func normalizeVideo(
+        _ reference: OpenAIMultimodalVideoReference?
+    ) throws -> Melix_Worker_V1_MessagePart {
+        guard let reference else {
+            throw MultimodalRequestNormalizationError.missingValue("input_video")
+        }
+
+        var normalized = Melix_Worker_V1_MessagePart()
+        normalized.media.mediaType = .video
+        normalized.media.mimeType = reference.mimeType ?? ""
+        normalized.media.format = try resolvedVideoFormat(reference)
+        normalized.media.filename = resolvedVideoFilename(reference)
+
+        if let durationMs = reference.durationMs {
+            normalized.media.durationMs = try validatedPositiveBound(durationMs, field: "duration_ms")
+        }
+        if let frameBudget = reference.frameBudget {
+            normalized.media.frameBudget = try validatedFrameBudget(frameBudget)
+        }
+        if let startMs = reference.startMs {
+            normalized.media.startMs = try validatedNonNegativeBound(startMs, field: "start_ms")
+        }
+        if let endMs = reference.endMs {
+            normalized.media.endMs = try validatedNonNegativeBound(endMs, field: "end_ms")
+        }
+        try validateVideoTimeBounds(normalized.media)
+
+        if let url = reference.url?.trimmingCharacters(in: .whitespacesAndNewlines), !url.isEmpty {
+            try validateVideoURLScheme(url)
+            normalized.videoUri = url
+            normalized.media.sourceKind = .mediaSourceUri
+            return normalized
+        }
+
+        guard let data = reference.data, !data.isEmpty else {
+            throw MultimodalRequestNormalizationError.missingValue("input_video.data or input_video.url")
+        }
+        guard let decoded = Data(base64Encoded: data) else {
+            throw MultimodalRequestNormalizationError.invalidBase64("video")
+        }
+        normalized.videoBytes = decoded
+        normalized.media.sourceKind = .mediaSourceInlineBytes
+        normalized.media.byteLength = UInt64(decoded.count)
+        return normalized
+    }
+
+    private func resolvedVideoFormat(_ reference: OpenAIMultimodalVideoReference) throws -> String {
+        let trimmedFormat = reference.format?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
+        if !trimmedFormat.isEmpty {
+            guard Self.supportedVideoFormats.contains(trimmedFormat) else {
+                throw MultimodalRequestNormalizationError.unsupportedMediaFormat("video", trimmedFormat)
+            }
+            return trimmedFormat
+        }
+
+        let trimmedMimeType = reference.mimeType?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
+        if !trimmedMimeType.isEmpty {
+            if let resolved = Self.supportedVideoMimeTypes[trimmedMimeType] {
+                return resolved
+            }
+            throw MultimodalRequestNormalizationError.unsupportedMediaFormat("video", trimmedMimeType)
+        }
+
+        if let filename = reference.filename,
+           let inferred = inferredVideoFormat(from: filename) {
+            return inferred
+        }
+        if let url = reference.url,
+           let inferred = inferredVideoFormat(from: url) {
+            return inferred
+        }
+
+        throw MultimodalRequestNormalizationError.missingValue("input_video.format or input_video.mime_type")
+    }
+
+    private func resolvedVideoFilename(_ reference: OpenAIMultimodalVideoReference) -> String {
+        if let filename = reference.filename?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !filename.isEmpty {
+            return filename
+        }
+        if let url = reference.url,
+           let candidate = url.split(separator: "/").last,
+           !candidate.isEmpty {
+            return String(candidate)
+        }
+        return "inline-video"
+    }
+
+    private func inferredVideoFormat(from rawValue: String) -> String? {
+        let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return nil
+        }
+        let candidate = URL(string: trimmed)?.pathExtension.lowercased()
+            ?? URL(fileURLWithPath: trimmed).pathExtension.lowercased()
+        guard !candidate.isEmpty, Self.supportedVideoFormats.contains(candidate) else {
+            return nil
+        }
+        return candidate
+    }
+
+    private func validateVideoURLScheme(_ rawURL: String) throws {
+        let trimmed = rawURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let components = URLComponents(string: trimmed) else {
+            return
+        }
+        let scheme = components.scheme?.lowercased() ?? ""
+        guard scheme.isEmpty || scheme == "file" || scheme == "http" || scheme == "https" else {
+            throw MultimodalRequestNormalizationError.unsupportedURIScheme("video", scheme)
+        }
+    }
+
+    private func validatedPositiveBound(_ value: Int, field: String) throws -> UInt32 {
+        guard value > 0 else {
+            throw MultimodalRequestNormalizationError.invalidPreprocessingBound(field, "must be greater than 0")
+        }
+        return UInt32(value)
+    }
+
+    private func validatedNonNegativeBound(_ value: Int, field: String) throws -> UInt32 {
+        guard value >= 0 else {
+            throw MultimodalRequestNormalizationError.invalidPreprocessingBound(field, "must be greater than or equal to 0")
+        }
+        return UInt32(value)
+    }
+
+    private func validatedFrameBudget(_ value: Int) throws -> UInt32 {
+        guard value > 0 else {
+            throw MultimodalRequestNormalizationError.invalidPreprocessingBound("frame_budget", "must be greater than 0")
+        }
+        guard value <= Self.maxVideoFrameBudget else {
+            throw MultimodalRequestNormalizationError.invalidPreprocessingBound(
+                "frame_budget",
+                "must be less than or equal to \(Self.maxVideoFrameBudget)"
+            )
+        }
+        return UInt32(value)
+    }
+
+    private func validateVideoTimeBounds(_ media: Melix_Worker_V1_MediaMetadata) throws {
+        if media.endMs > 0, media.startMs > media.endMs {
+            throw MultimodalRequestNormalizationError.invalidPreprocessingBound(
+                "end_ms",
+                "must be greater than or equal to start_ms"
+            )
+        }
+        if media.durationMs > 0, media.endMs > media.durationMs {
+            throw MultimodalRequestNormalizationError.invalidPreprocessingBound(
+                "end_ms",
+                "must be less than or equal to duration_ms"
+            )
+        }
     }
 }

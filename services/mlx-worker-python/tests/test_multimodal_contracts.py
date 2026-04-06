@@ -51,6 +51,50 @@ def test_audio_contracts_support_uri_and_inline_shapes() -> None:
     assert speak.ext["style"] == "neutral"
 
 
+def test_video_contracts_support_uri_and_inline_metadata() -> None:
+    uri_part = common_pb2.MessagePart(
+        video_uri="https://example.com/demo.mov",
+        media=common_pb2.MediaMetadata(
+            media_type=common_pb2.MEDIA_TYPE_VIDEO,
+            source_kind=common_pb2.MEDIA_SOURCE_URI,
+            mime_type="video/quicktime",
+            format="mov",
+            filename="demo.mov",
+            duration_ms=12_000,
+            frame_budget=12,
+            start_ms=500,
+            end_ms=3_500,
+        ),
+    )
+    inline_part = common_pb2.MessagePart(
+        video_bytes=b"video-bytes",
+        media=common_pb2.MediaMetadata(
+            media_type=common_pb2.MEDIA_TYPE_VIDEO,
+            source_kind=common_pb2.MEDIA_SOURCE_INLINE_BYTES,
+            mime_type="video/mp4",
+            format="mp4",
+            filename="inline.mp4",
+            duration_ms=4_000,
+            frame_budget=8,
+        ),
+    )
+
+    uri_round_tripped = common_pb2.MessagePart()
+    uri_round_tripped.ParseFromString(uri_part.SerializeToString())
+    inline_round_tripped = common_pb2.MessagePart()
+    inline_round_tripped.ParseFromString(inline_part.SerializeToString())
+
+    assert uri_round_tripped.video_uri == "https://example.com/demo.mov"
+    assert uri_round_tripped.media.media_type == common_pb2.MEDIA_TYPE_VIDEO
+    assert uri_round_tripped.media.frame_budget == 12
+    assert uri_round_tripped.media.start_ms == 500
+    assert uri_round_tripped.media.end_ms == 3_500
+    assert inline_round_tripped.video_bytes == b"video-bytes"
+    assert inline_round_tripped.media.media_type == common_pb2.MEDIA_TYPE_VIDEO
+    assert inline_round_tripped.media.source_kind == common_pb2.MEDIA_SOURCE_INLINE_BYTES
+    assert inline_round_tripped.media.duration_ms == 4_000
+
+
 def test_model_info_contract_supports_task_visibility() -> None:
     info = maintenance_pb2.GetModelInfoResponse(
         ok=True,
