@@ -89,15 +89,35 @@ The roadmap extension in `M10-M17` includes milestone-level plans plus decompose
 - Status: completed. M7 closure landed under the active umbrella execution plan `docs/plans/2026-04-03-m7-lora-benchmark-cli-productization.md`; benchmark Window UI, CSV, and CLI productization continue as post-M7 work in the same transaction.
 
 - `M7.1` `docs/plans/2026-03-30-m7-1-serving-benchmark-job-schema.md`
+  Status: completed. Serving benchmark jobs and result schemas are repository-owned across the
+  control-plane contract, worker productization layer, persisted history, and export pipeline.
 - `M7.2` `docs/plans/2026-03-30-m7-2-evaluation-suite-job-schema.md`
+  Status: completed. Evaluation-suite jobs and result schemas are now typed, machine-readable, and
+  persisted separately from serving benchmarks so offline evaluation can evolve independently.
 - `M7.3` `docs/plans/2026-03-30-m7-3-serving-benchmark-runners.md`
+  Status: completed. Runtime-backed serving benchmark runners now replace deterministic placeholder
+  metrics on the real benchmark path, with per-run persistence under the benchmark jobs root.
 - `M7.4` `docs/plans/2026-03-30-m7-4-offline-dataset-packaging-and-runners.md`
+  Status: completed. Benchmark suites now carry repository-owned dataset packaging and cache
+  metadata so benchmark runs can materialize and reuse curated suite inputs deterministically.
 - `M7.5` `docs/plans/2026-03-30-m7-5-evaluation-suite-coverage.md`
+  Status: completed. Core intelligence evaluation suites, scoring modes, summary rows, and
+  per-sample exports are implemented as repository-owned evaluation workflows.
 - `M7.6` `docs/plans/2026-03-30-m7-6-benchmark-queue-sample-size-and-batch-factors.md`
+  Status: completed. Benchmark and evaluation execution now carry typed queueing plus canonical
+  sample-size, batch-factor, context-length, repeats, cache-profile, and related operator inputs.
 - `M7.7` `docs/plans/2026-03-30-m7-7-result-export-and-comparison-tables.md`
+  Status: completed. Bench and eval history now support repository-owned export bundles, CSV
+  generation, comparison tables, and Window UI plus CLI history surfaces.
 - `M7.8` `docs/plans/2026-03-30-m7-8-vlm-benchmark-options.md`
+  Status: completed. VLM-capable direct Hugging Face benchmark targets, task-aware result
+  identity, and Gemma 4 compatibility landed on the public `melix bench run --repo-id ...` path.
 - `M7.9` `docs/plans/2026-03-30-m7-9-community-submission-and-device-identity.md`
+  Status: completed. Submission bundles now carry explicit benchmark and evaluation payloads with
+  device identity and auditable result metadata through the repository-owned submission builder.
 - `M7.10` `docs/plans/2026-03-30-m7-10-benchmark-and-eval-release-gates.md`
+  Status: completed. Phase 8 release-gate logic now consumes benchmark and evaluation evidence
+  through repository-owned release-gate collectors and deterministic local verification paths.
 
 ## M8: Model Registry, Hub, Admin, And Platform Productization
 

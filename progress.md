@@ -2,6 +2,20 @@
 
 ## 2026-04-06
 
+- Backfilled the child-level `M7.1-M7.10` execution-index statuses so the completed benchmark and
+  evaluation work is represented per child milestone instead of only through the parent `M7`
+  summary:
+  - added completed status lines for serving schema, evaluation schema, runtime runners, dataset
+    packaging, evaluation coverage, queue and parameter controls, export and comparison, VLM
+    benchmark support, submission and device identity, and release-gate integration
+  - kept the transaction docs-only and limited it to execution-index accuracy
+- Verification summary for the `M7.1-M7.10` child-status backfill:
+  - `git diff --check`: pass
+- Metrics report for the `M7.1-M7.10` child-status backfill:
+  - `N/A` because the transaction only updates planning and progress documents; executable
+    benchmark and evaluation coverage remains recorded in the underlying `M7` progress entries and
+    umbrella execution plans
+
 - Closed the remaining child-entry bookkeeping gap for `M8.1-M8.4` so the execution index no
   longer relies on the parent `M8` summary alone to show that the backend foundations are done:
   - added top-level completed status summaries to the four child plan documents
