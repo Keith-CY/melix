@@ -246,6 +246,10 @@ The roadmap extension in `M10-M17` includes milestone-level plans plus decompose
   desktop shell, isolated integration startup state, and focused changed-line coverage evidence
   across Swift and Python helper scopes.
 - `M13.3` `docs/plans/2026-03-31-m13-3-tooling-embedding-and-config-file-settings.md`
+  Status: completed. Tooling settings now flow through one typed control-plane summary that
+  exposes embedding-model selection, preload state, tool-parser modes, MCP summary, config-file
+  location, and boot additional arguments to the desktop shell with focused changed-line coverage
+  evidence recorded in the repository.
 - `M13.4` `docs/plans/2026-03-31-m13-4-api-reference-and-quick-start-onboarding.md`
   Status: completed. The desktop API workspace now projects supported endpoint reference and
   session-aware quick-start snippets from typed control-plane onboarding truth, and the canonical

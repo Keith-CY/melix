@@ -1,5 +1,12 @@
 # M13.3 Tooling, Embedding, And Config-File Settings
 
+## Status
+
+Completed on 2026-04-06. Melix now projects typed tooling settings through the control-plane
+snapshot, including embedding-model selection, preload state, tool-parser modes, MCP summary,
+inspectable config-file location, and boot additional arguments, while the native desktop shell
+renders the same settings from one repository-owned truth surface.
+
 ## Goal
 
 Expose embedding-model selection, tool-parser settings, MCP configuration, config-file location, and additional-arguments handling through one coherent settings surface.

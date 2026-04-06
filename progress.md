@@ -2,6 +2,19 @@
 
 ## 2026-04-06
 
+- Closed the remaining `M13.3` bookkeeping gap by aligning the plan document and execution index
+  with the already-landed repository evidence for tooling, embedding, and config-file settings:
+  - added a top-level completed status summary to
+    `docs/plans/2026-03-31-m13-3-tooling-embedding-and-config-file-settings.md`
+  - added the missing completed status line to the `M13.3` execution-index entry so the roadmap no
+    longer under-reports the landed slice
+  - kept the transaction docs-only and used it as the starting point for the next milestone audit
+- Verification summary for the `M13.3` bookkeeping closure:
+  - `git diff --check`: pass
+- Metrics report for the `M13.3` bookkeeping closure:
+  - `N/A` because the transaction only updates repository planning and progress documents; no
+    executable scope changed and no additional coverage command is required
+
 - Closed `M17.4` by turning speech support into a repository-owned live-path operator workflow for
   both transcription and synthesis instead of leaving the speech families at contract-only status:
   - added lazy-load coverage on `/v1/audio/transcriptions` and `/v1/audio/speech` so cataloged

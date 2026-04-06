@@ -2,76 +2,58 @@
 
 ## Goal
 
-Close `M17.4` by turning speech support into a repository-owned live-path operator workflow with
-backend-family integration smoke coverage, machine-readable benchmark evidence, and runbooks for
-transcription plus synthesis diagnosis.
+Close the remaining repository bookkeeping gap for `M13.3`, then audit the execution index for the
+next milestone whose implementation status is ambiguous instead of letting completed work remain
+unregistered.
 
 ## Scope
 
-- add lazy-load coverage on the HTTP audio routes so cataloged speech families can serve requests
-  without bespoke preload wiring
-- add a repository-owned speech smoke workflow that exercises `Whisper`, `Parakeet`, `Kokoro`,
-  and `Qwen3-TTS` through the real local HTTP path using reproducible fake `mlx_audio` fixtures
-- record backend-family and locale or voice-specific operator metrics in a stable machine-readable
-  report
-- update the family support matrix, runbooks, and docs index so speech families graduate from
-  `contract_only` to repository-owned live-path evidence
-- add focused Python, Swift, and integration coverage plus milestone bookkeeping
+- add explicit completed status to the `M13.3` plan document and execution index
+- record the bookkeeping-only closure in `progress.md` with an explicit `N/A` metrics report
+- inspect the execution index for additional missing-status milestone entries and identify the next
+  true implementation gap
 
 ## Measurement Points
 
-- `/v1/audio/transcriptions` and `/v1/audio/speech` can lazy-load cataloged speech-family models
-  once runtime-pack and managed-model prerequisites are satisfied
-- the repository-owned speech smoke report records reproducible checks and metrics for
-  `melix-whisper-mlx`, `melix-parakeet-mlx`, `melix-kokoro-mlx`, and `melix-qwen3-tts-mlx`
-- speech-family live-path evidence distinguishes backend family, locale resolution, and
-  voice-specific synthesis behavior rather than collapsing everything into one generic audio probe
-- the support matrix and runbooks point operators to concrete proof commands and integration tests
-- changed-line coverage for the touched executable scope remains at or above `95%`
+- `M13.3` is no longer missing status in the execution index
+- the canonical `M13.3` plan document has a top-level completed status summary
+- the bookkeeping closure is recorded in `progress.md` with doc-only verification and metrics
+  rationale
+- the audit identifies whether the next milestone gap is docs-only or requires code changes
 
 ## Phases
 
-1. M17.4 boundary lock and runtime-smoke design
-   - status: completed
+1. Boundary lock and evidence readback
+   - status: in_progress
    - success criteria:
-     - lock the slice to audio-route lazy loading, backend-family smoke evidence, runbooks, and
-       coverage without expanding unrelated API contracts
-     - define the stable report shape for transcription families, synthesis families, locale
-       evidence, and voice-specific synthesis behavior
-2. Live-path speech-family execution
-   - status: completed
+     - confirm `M13.3` already has repository evidence in its own plan doc, progress log, and git
+       history
+     - avoid changing unrelated milestone entries in the same transaction
+2. M13.3 bookkeeping closure
+   - status: pending
    - success criteria:
-     - enable on-demand loading for cataloged audio models on the HTTP transcription and speech
-       paths
-     - add a repository-owned fake `mlx_audio` package injection path for integration smoke so
-       `Whisper`, `Parakeet`, `Kokoro`, and `Qwen3-TTS` can run end to end without network or
-       heavyweight backend dependencies
-3. Metrics report and support-matrix graduation
-   - status: completed
+     - add explicit completed status to the `M13.3` execution-index entry
+     - add a top-level completed status section to the `M13.3` plan document
+3. Metrics and milestone audit note
+   - status: pending
    - success criteria:
-     - add a machine-readable speech smoke report builder plus a reproducible script or make target
-     - promote speech and transcription family rows in the support matrix from `contract_only` to
-       verified live-path evidence backed by the new integration smoke
-4. Runbooks, verification, and milestone closure
-   - status: completed
+     - record the doc-only closure in `progress.md` with `git diff --check`
+     - include an explicit `N/A` metrics report because no executable code changed
+4. Commit and next-gap audit
+   - status: pending
    - success criteria:
-     - add or update runbooks and docs indexes for speech smoke execution, dependency setup, and
-       failure diagnosis
-     - run focused coverage plus the relevant repository verification, record a metrics report, and
-       close `M17.4` with a GPG-signed commit
+     - submit a GPG-signed docs-only commit
+     - inspect the execution index and identify the next milestone that needs actual implementation
 
 ## Acceptance
 
-- speech-family HTTP paths are reproducibly live-verified rather than only contract-described
-- operator evidence records transcription plus synthesis latency and backend-specific locale or
-  voice behavior for the supported speech families
-- support-matrix rows, smoke scripts, and runbooks stay aligned and test-covered
+- `M13.3` is represented consistently across the plan document, progress log, and execution index
+- the transaction remains docs-only and explicitly reports `N/A` executable metrics
+- the next milestone investigation starts from repository evidence rather than guesswork
 
 ## Risks
 
-- if audio routes still depend on bespoke preload state, speech-family smoke coverage will remain
-  fragile and operator evidence will not generalize beyond dev models
-- if fake `mlx_audio` injection diverges from the runtime contract, smoke evidence will become less
-  trustworthy than the unit tests
-- if the support matrix is promoted without a reproducible smoke script, `verified` status will
-  overstate repository guarantees
+- if the execution index is updated without checking the underlying plan doc and progress log, the
+  repository will claim completion without evidence
+- if this transaction mixes broader milestone edits, it will blur whether the change is pure
+  bookkeeping or real implementation work
