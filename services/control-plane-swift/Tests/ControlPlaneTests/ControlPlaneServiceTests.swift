@@ -1832,6 +1832,67 @@ struct ControlPlaneServiceTests {
         #expect(await catalog.dispatchHandle(for: "melix-dev-text") == "melix-dev-text::local")
     }
 
+    @Test("execute syncs registry models before worker-backed model.load resolves a discovered model")
+    func executeSyncsRegistryModelsBeforeWorkerBackedModelLoad() async throws {
+        let registryModelID = "Brooooooklyn/Qwen3.5-9B-unsloth-mlx/snapshot"
+        let manifestJSON = try makeRegistrySnapshotManifestJSON(
+            models: [
+                [
+                    "model_id": registryModelID,
+                    "model_path": "/tmp/registry-root/Brooooooklyn/Qwen3.5-9B-unsloth-mlx/snapshot",
+                    "model_kind": "text",
+                    "quant_profile_id": "snapshot",
+                    "max_context": 32768,
+                    "ext": [
+                        "melix.registry_root_id": "root-1",
+                        "melix.registry_root_path": "/tmp/registry-root",
+                        "melix.registry_relative_path": "Brooooooklyn/Qwen3.5-9B-unsloth-mlx/snapshot",
+                        "melix.model_path": "/tmp/registry-root/Brooooooklyn/Qwen3.5-9B-unsloth-mlx/snapshot",
+                        "melix.source_repo": "Brooooooklyn/Qwen3.5-9B-unsloth-mlx",
+                    ],
+                ],
+            ]
+        )
+        let modelOpsClient = ScriptedModelOperationsWorkerClient()
+        await modelOpsClient.setConvertEvents([
+            {
+                var event = Melix_Worker_V1_ConvertModelEvent()
+                event.manifest = Melix_Worker_V1_ConvertManifest()
+                event.manifest.manifestJson = manifestJSON
+                return event
+            }(),
+        ])
+
+        let workerClient = ModelLifecycleWorkerClient()
+        var loadResponse = Melix_Worker_V1_LoadModelResponse()
+        loadResponse.ok = true
+        loadResponse.modelHandle = "\(registryModelID)::swift"
+        loadResponse.residency.state = .warm
+        await workerClient.setLoadResponse(loadResponse)
+
+        let catalog = ModelCatalog(seedModels: [])
+        let service = ControlPlaneService(
+            modelCatalog: catalog,
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: workerClient,
+                modelOperationsClient: modelOpsClient,
+                modelCatalog: catalog
+            )
+        )
+
+        let response = try await service.execute(makeLoadModelRequest(modelID: registryModelID))
+        let lastConvertRequest = try #require(await modelOpsClient.lastConvertRequest)
+        let lastLoadRequest = try #require(await workerClient.loadRequests.last)
+
+        #expect(response.ok)
+        #expect(lastConvertRequest.sourceModel == "melix-dev-text")
+        #expect(lastConvertRequest.ext["operation"] == "registry_snapshot")
+        #expect(lastLoadRequest.model.modelID == registryModelID)
+        #expect(response.model.model.modelID == registryModelID)
+        #expect(response.model.model.state == .modelWarm)
+        #expect(await catalog.dispatchHandle(for: registryModelID) == "\(registryModelID)::swift")
+    }
+
     @Test("execute workerless model.load rejects unsupported disk streaming modes")
     func executeWorkerlessModelLoadRejectsUnsupportedDiskStreamingModes() async throws {
         var model = ModelCatalog.devTextModel()
@@ -3665,6 +3726,78 @@ struct ControlPlaneServiceTests {
         #expect(lastRequest.modelHandle == "melix-dev-text::explicit")
         #expect(response.ops.benchmarkJob.jobID == "bench-explicit")
         #expect(response.ops.benchmarkJob.modelID == "melix-dev-text")
+    }
+
+    @Test("execute syncs registry models before ops.run_bench resolves an explicit discovered model")
+    func executeSyncsRegistryModelsBeforeRunBenchResolution() async throws {
+        let reportPath = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("melix-bench-registry-sync-report.md").path
+        try "# Melix Bench\n".write(toFile: reportPath, atomically: true, encoding: .utf8)
+
+        let registryModelID = "Brooooooklyn/Qwen3.5-9B-unsloth-mlx/snapshot"
+        let registrySourceRepo = "Brooooooklyn/Qwen3.5-9B-unsloth-mlx"
+        let manifestJSON = try makeRegistrySnapshotManifestJSON(
+            models: [
+                [
+                    "model_id": registryModelID,
+                    "model_path": "/tmp/registry-root/Brooooooklyn/Qwen3.5-9B-unsloth-mlx/snapshot",
+                    "model_kind": "text",
+                    "quant_profile_id": "snapshot",
+                    "max_context": 32768,
+                    "ext": [
+                        "melix.registry_root_id": "root-1",
+                        "melix.registry_root_path": "/tmp/registry-root",
+                        "melix.registry_relative_path": "Brooooooklyn/Qwen3.5-9B-unsloth-mlx/snapshot",
+                        "melix.model_path": "/tmp/registry-root/Brooooooklyn/Qwen3.5-9B-unsloth-mlx/snapshot",
+                        "melix.source_repo": registrySourceRepo,
+                        "melix.task_kind": "text-generation",
+                    ],
+                ],
+            ]
+        )
+
+        let modelOpsClient = ScriptedModelOperationsWorkerClient()
+        await modelOpsClient.setConvertEvents([
+            {
+                var event = Melix_Worker_V1_ConvertModelEvent()
+                event.manifest = Melix_Worker_V1_ConvertManifest()
+                event.manifest.manifestJson = manifestJSON
+                return event
+            }(),
+        ])
+        await modelOpsClient.setBenchEvents(makeBenchmarkLifecycleEvents(jobID: "bench-registry-sync", reportPath: reportPath))
+
+        let service = ControlPlaneService(
+            modelCatalog: ModelCatalog(seedModels: []),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: ScriptedChatWorkerClient(events: []),
+                modelOperationsClient: modelOpsClient
+            )
+        )
+
+        let response = try await service.execute(
+            makeRunBenchRequest(
+                modelID: registryModelID,
+                suites: ["smoke"],
+                contextLengths: [256],
+                generationLength: 8,
+                batchSizes: [1],
+                repeats: 1,
+                cacheProfile: "cold",
+                reasoningMode: "disabled",
+                structuredOutputMode: "plain_text"
+            )
+        )
+        let lastConvertRequest = try #require(await modelOpsClient.lastConvertRequest)
+        let lastBenchRequest = try #require(await modelOpsClient.lastBenchRequest)
+
+        #expect(response.ok)
+        #expect(lastConvertRequest.sourceModel == "melix-dev-text")
+        #expect(lastConvertRequest.ext["operation"] == "registry_snapshot")
+        #expect(lastBenchRequest.modelHandle == registryModelID)
+        #expect(lastBenchRequest.taskKind == "text-generation")
+        #expect(lastBenchRequest.sourceRepo == registrySourceRepo)
+        #expect(response.ops.benchmarkJob.jobID == "bench-registry-sync")
+        #expect(response.ops.benchmarkJob.modelID == registryModelID)
     }
 
     @Test("execute imports a direct Hugging Face benchmark target and routes gemma4 to the VLM benchmark path")

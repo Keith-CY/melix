@@ -364,7 +364,7 @@ public enum MelixCLIParser {
       melix bench matrix list [--json]
       melix bench matrix export-summary-csv --job-id JOB_ID --output PATH [--json]
       melix bench matrix export-requests-csv --job-id JOB_ID --output PATH [--json]
-      melix eval run (--model-id MODEL_ID | --repo-id HF_REPO) [--suite SUITE ...] [--dataset-id DATASET_ID] [--sample-size N] [--batch-factor N] [--seed N] [--few-shot N] [--json]
+      melix eval run (--model-id MODEL_ID | --repo-id HF_REPO) [--suite SUITE ...] [--dataset-id DATASET_ID] [--dataset-root PATH] [--sample-size N] [--batch-factor N] [--seed N] [--few-shot N] [--json]
       melix eval list [--json]
       melix eval export-summary-csv --job-id JOB_ID --output PATH [--json]
       melix eval export-samples-csv --job-id JOB_ID --output PATH [--json]
@@ -719,6 +719,9 @@ public enum MelixCLIParser {
             var parameters: [String: String] = [:]
             if let batchFactor = values.single["--batch-factor"] {
                 parameters["batch_factor"] = batchFactor
+            }
+            if let datasetRoot = values.single["--dataset-root"] {
+                parameters["dataset_root"] = datasetRoot
             }
             if let seed = values.single["--seed"] {
                 parameters["seed"] = seed

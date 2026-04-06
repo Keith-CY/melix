@@ -243,7 +243,10 @@ class WorkerMaintenanceService(maintenance_pb2_grpc.MaintenanceServiceServicer):
         self._evaluation_jobs_root = Path(evaluation_jobs_root or root / "evaluation").resolve()
         # Stage the evaluation runner at service construction time so the later RPC path
         # can reuse the same file-backed jobs root without additional wiring changes.
-        self._evaluation_core = evaluation_core or EvaluationCore(jobs_root=self._evaluation_jobs_root)
+        self._evaluation_core = evaluation_core or EvaluationCore(
+            jobs_root=self._evaluation_jobs_root,
+            registry=registry,
+        )
 
     def ConvertModel(self, request, context):
         yield from self._core.convert_model(request)
@@ -274,10 +277,12 @@ class WorkerMaintenanceService(maintenance_pb2_grpc.MaintenanceServiceServicer):
                 parameters.setdefault("task_kind", request.task_kind)
             if request.source_repo:
                 parameters.setdefault("source_repo", request.source_repo)
+            dataset_root = request.dataset_root or parameters.get("dataset_root", "")
             run = self._evaluation_core.run_local_suite(
                 model_id=request.model_handle.split("::", 1)[0] if request.model_handle else "melix-dev-text",
+                model_handle=request.model_handle or None,
                 suite_id=request.suite_id,
-                dataset_root=Path(request.dataset_root) if request.dataset_root else self._default_dataset_root(request.dataset_id),
+                dataset_root=Path(dataset_root) if dataset_root else self._default_dataset_root(request.dataset_id),
                 sample_size=request.sample_size,
                 few_shot=int(request.few_shot) if request.few_shot else None,
                 seed=int(request.seed) if request.seed else None,

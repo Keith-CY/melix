@@ -884,6 +884,7 @@ struct MelixCLIRunnerTests {
                     sampleSize: 8,
                     parameters: [
                         "batch_factor": "2",
+                        "dataset_root": "/tmp/mmlu-split-01",
                         "few_shot": "4",
                         "seed": "7",
                         "scoring_mode": "multiple_choice_accuracy",
@@ -901,6 +902,7 @@ struct MelixCLIRunnerTests {
         #expect(requests[0].datasetID == "mmlu.dev.v1")
         #expect(requests[0].sampleSize == 8)
         #expect(requests[0].parameters["batch_factor"] == "2")
+        #expect(requests[0].parameters["dataset_root"] == "/tmp/mmlu-split-01")
         #expect(requests[0].parameters["few_shot"] == "4")
         #expect(requests[0].parameters["seed"] == "7")
         #expect(requests[0].parameters["scoring_mode"] == "multiple_choice_accuracy")

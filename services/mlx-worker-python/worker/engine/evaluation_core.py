@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import gc
 import json
 from dataclasses import dataclass
 from pathlib import Path
 import re
 import time
+from typing import Any
 
+from packages.protocol.python.worker.v1 import common_pb2
 from worker.productization.benchmark_queue import BenchmarkQueueRecord, BenchmarkQueueStore
 from worker.productization.evaluation_schemas import (
     EvaluationJob,
@@ -29,6 +32,12 @@ _SUITE_SCORE_MODES = {
     "mbpp": ("pass_at_1", "pass_at_1"),
 }
 _ARITHMETIC_PROMPT_PATTERN = re.compile(r"\s*(\d+)\s*([+-])\s*(\d+)\s*\?\s*")
+_ANSWER_PREFIX_PATTERN = re.compile(
+    r"(?im)^\s*(?:final\s+answer|answer|the\s+answer\s+is|answer\s+is)\s*[:\-]?\s*(.+)$",
+)
+_NUMERIC_TOKEN_PATTERN = re.compile(r"[-+]?\d+(?:\.\d+)?")
+_NUMERIC_RESULT_PATTERN = re.compile(r"=\s*([-+]?\d+(?:\.\d+)?)")
+_OPTION_TOKEN_PATTERN = re.compile(r"\b([A-Z])\b")
 
 
 @dataclass(frozen=True)
@@ -46,15 +55,18 @@ class EvaluationCore:
         jobs_root: Path | None = None,
         store: EvaluationStore | None = None,
         queue_store: BenchmarkQueueStore | None = None,
+        registry: Any | None = None,
     ) -> None:
         self._jobs_root = Path(jobs_root).resolve() if jobs_root is not None else None
         self._store = store or EvaluationStore()
         self._queue_store = queue_store or BenchmarkQueueStore()
+        self._registry = registry
 
     def run_local_suite(
         self,
         *,
         model_id: str,
+        model_handle: str | None = None,
         suite_id: str,
         dataset_root: Path,
         sample_size: int,
@@ -101,16 +113,25 @@ class EvaluationCore:
         started_at = time.perf_counter()
         job_id = self._next_job_id()
         run_root = self._run_root(job_id)
-        sample_records = tuple(
-            self._build_sample_record(
+        loaded_model = self._loaded_model_for_execution(model_handle)
+        resolved_model_id = (
+            getattr(getattr(loaded_model, "spec", None), "model_id", "") if loaded_model is not None else ""
+        ) or model_id
+        sample_records_list: list[EvaluationSample] = []
+        for index, sample in enumerate(selected, start=1):
+            sample_records_list.append(
+                self._build_sample_record(
                 job_id=job_id,
                 suite_id=suite_id,
                 dataset_id=manifest["dataset_id"],
                 index=index,
                 sample=sample,
+                loaded_model=loaded_model,
             )
-            for index, sample in enumerate(selected, start=1)
-        )
+            )
+            if loaded_model is not None:
+                self._release_runtime_memory()
+        sample_records = tuple(sample_records_list)
         duration_seconds = round(time.perf_counter() - started_at, 6)
         correct = sum(1 for sample in sample_records if sample.correct)
         incorrect = len(sample_records) - correct
@@ -128,7 +149,7 @@ class EvaluationCore:
         output_dir = str(run_root) if self._jobs_root is not None else str(dataset_root)
         job = build_evaluation_job_record(
             job_id=job_id,
-            model_id=model_id,
+            model_id=resolved_model_id,
             task_kind=job_parameters.get("task_kind", "text-generation"),
             source_repo=job_parameters.get("source_repo", ""),
             suite_id=suite_id,
@@ -228,6 +249,11 @@ class EvaluationCore:
             return Path.cwd()
         return self._jobs_root / "runs" / job_id
 
+    def _loaded_model_for_execution(self, model_handle: str | None):
+        if not model_handle or self._registry is None:
+            return None
+        return self._registry.get_loaded_model(model_handle)
+
     @staticmethod
     def _resolve_int_parameter(
         *,
@@ -245,21 +271,38 @@ class EvaluationCore:
         except ValueError:
             return 0
 
-    @staticmethod
     def _build_sample_record(
+        self,
         *,
         job_id: str,
         suite_id: str,
         dataset_id: str,
         index: int,
         sample: dict[str, object],
+        loaded_model=None,
     ) -> EvaluationSample:
         prompt = str(sample.get("prompt", sample.get("question", "")))
         expected = str(sample.get("expected", sample.get("answer", ""))).strip()
         started_at = time.perf_counter()
-        predicted = EvaluationCore._deterministic_answer(prompt)
+        raw_response = ""
+        if loaded_model is not None:
+            raw_response = EvaluationCore._execute_live_prompt(
+                registry=self._registry,
+                loaded_model=loaded_model,
+                prompt=prompt,
+                expected=expected,
+                request_id=f"eval:{job_id}:{suite_id}:{sample.get('id', index)}",
+            )
+            predicted, parse_status = EvaluationCore._parse_prediction(
+                suite_id=suite_id,
+                raw_response=raw_response,
+                expected=expected,
+            )
+        else:
+            predicted = EvaluationCore._deterministic_answer(prompt)
+            raw_response = predicted
+            parse_status = "parsed" if predicted else "empty_prediction"
         duration_s = round(time.perf_counter() - started_at, 6)
-        parse_status = "parsed" if predicted else "empty_prediction"
         return build_evaluation_sample_record(
             job_id=job_id,
             suite_id=suite_id,
@@ -268,8 +311,8 @@ class EvaluationCore:
             question=prompt,
             expected=expected,
             predicted=predicted,
-            raw_response=predicted,
-            correct=predicted == expected,
+            raw_response=raw_response,
+            correct=EvaluationCore._answers_match(expected=expected, predicted=predicted),
             time_s=duration_s,
             parse_status=parse_status,
         )
@@ -286,3 +329,169 @@ class EvaluationCore:
         if operator == "+":
             return str(left + right)
         return str(left - right)
+
+    @staticmethod
+    def _execute_live_prompt(*, registry, loaded_model, prompt: str, expected: str, request_id: str) -> str:
+        runtime = registry.runtime_for_loaded_model(loaded_model)
+        state = registry.start_request(request_id, runtime_kind=loaded_model.runtime_kind)
+        chunks: list[str] = []
+        try:
+            messages = EvaluationCore._evaluation_messages(prompt=prompt, expected=expected)
+            rendered_prompt = runtime.render_prompt(
+                messages,
+                loaded_model=loaded_model.runtime_model,
+                execution_ext={},
+            )
+            sampling = common_pb2.SamplingConfig(
+                temperature=0.0,
+                top_p=1.0,
+                top_k=1,
+                max_output_tokens=EvaluationCore._evaluation_max_output_tokens(expected),
+            )
+            for runtime_event in runtime.generate_tokens(
+                loaded_model.runtime_model,
+                rendered_prompt,
+                sampling,
+                state.cancel_event,
+                execution_ext={},
+            ):
+                text = getattr(runtime_event, "text", "")
+                if text:
+                    chunks.append(str(text))
+        finally:
+            if loaded_model.runtime_kind in {"ocr", "vlm"} and hasattr(runtime, "last_probe_snapshot"):
+                registry.record_vision_probe(loaded_model.runtime_kind, runtime.last_probe_snapshot())
+            registry.finish_request(request_id)
+        return "".join(chunks).strip()
+
+    @staticmethod
+    def _evaluation_messages(prompt: str, expected: str) -> list[common_pb2.ChatMessage]:
+        if EvaluationCore._looks_like_numeric(expected):
+            instruction = "Return only the final numeric answer. Do not include reasoning or explanation."
+        elif EvaluationCore._looks_like_option(expected):
+            instruction = "Return only the single best answer choice letter. Do not include reasoning or explanation."
+        else:
+            instruction = "Return only the final short answer. Do not include reasoning or explanation."
+        return [
+            common_pb2.ChatMessage(role="system", parts=[common_pb2.MessagePart(text=instruction)]),
+            common_pb2.ChatMessage(role="user", parts=[common_pb2.MessagePart(text=prompt)]),
+        ]
+
+    @staticmethod
+    def _evaluation_max_output_tokens(expected: str) -> int:
+        if EvaluationCore._looks_like_numeric(expected) or EvaluationCore._looks_like_option(expected):
+            return 32
+        return 128
+
+    @staticmethod
+    def _release_runtime_memory() -> None:
+        gc.collect()
+        try:
+            import mlx.core as mx
+        except ModuleNotFoundError:
+            return
+        try:
+            mx.clear_cache()
+        except Exception:
+            pass
+        try:
+            if hasattr(mx, "metal"):
+                mx.metal.clear_cache()
+        except Exception:
+            pass
+
+    @staticmethod
+    def _parse_prediction(
+        *,
+        suite_id: str,
+        raw_response: str,
+        expected: str,
+    ) -> tuple[str, str]:
+        normalized_response = raw_response.strip()
+        if not normalized_response:
+            return "", "empty_prediction"
+
+        answer_matches = list(_ANSWER_PREFIX_PATTERN.finditer(normalized_response))
+        answer_match = answer_matches[-1] if answer_matches else None
+        if answer_match is not None:
+            candidate = answer_match.group(1).strip()
+            parsed = EvaluationCore._parse_candidate_for_expected(candidate=candidate, expected=expected)
+            return parsed, "parsed_answer_prefix"
+
+        parsed = EvaluationCore._parse_candidate_for_expected(candidate=normalized_response, expected=expected)
+        if parsed != normalized_response:
+            if EvaluationCore._looks_like_numeric(expected):
+                return parsed, "parsed_numeric"
+            if EvaluationCore._looks_like_option(expected):
+                return parsed, "parsed_option"
+        _ = suite_id
+        return parsed, "parsed"
+
+    @staticmethod
+    def _parse_candidate_for_expected(*, candidate: str, expected: str) -> str:
+        if not candidate:
+            return ""
+        if EvaluationCore._looks_like_numeric(expected):
+            parsed_numeric = EvaluationCore._extract_numeric_value(candidate)
+            if parsed_numeric is not None:
+                return parsed_numeric
+        if EvaluationCore._looks_like_option(expected):
+            parsed_option = EvaluationCore._extract_option_value(candidate)
+            if parsed_option is not None:
+                return parsed_option
+        return EvaluationCore._strip_wrapping(candidate)
+
+    @staticmethod
+    def _answers_match(*, expected: str, predicted: str) -> bool:
+        if not predicted.strip():
+            return False
+        normalized_expected = EvaluationCore._normalized_answer(expected)
+        normalized_predicted = EvaluationCore._normalized_answer(predicted)
+        return normalized_expected == normalized_predicted
+
+    @staticmethod
+    def _normalized_answer(value: str) -> str:
+        stripped = EvaluationCore._strip_wrapping(value)
+        numeric = EvaluationCore._extract_numeric_value(stripped)
+        if numeric is not None and EvaluationCore._looks_like_numeric(stripped):
+            return numeric
+        option = EvaluationCore._extract_option_value(stripped)
+        if option is not None and EvaluationCore._looks_like_option(stripped):
+            return option
+        return re.sub(r"\s+", " ", stripped).casefold()
+
+    @staticmethod
+    def _strip_wrapping(value: str) -> str:
+        return value.strip().strip("`").strip().strip("\"'").strip().rstrip(".")
+
+    @staticmethod
+    def _looks_like_numeric(value: str) -> bool:
+        return _NUMERIC_TOKEN_PATTERN.fullmatch(value.strip()) is not None
+
+    @staticmethod
+    def _extract_numeric_value(value: str) -> str | None:
+        result_matches = _NUMERIC_RESULT_PATTERN.findall(value)
+        if result_matches:
+            numeric = result_matches[-1].lstrip("+")
+            if "." in numeric:
+                numeric = numeric.rstrip("0").rstrip(".")
+            return numeric
+        matches = _NUMERIC_TOKEN_PATTERN.findall(value)
+        if not matches:
+            return None
+        numeric = matches[-1].lstrip("+")
+        if "." in numeric:
+            numeric = numeric.rstrip("0").rstrip(".")
+        return numeric
+
+    @staticmethod
+    def _looks_like_option(value: str) -> bool:
+        normalized = value.strip().upper()
+        return len(normalized) == 1 and normalized.isalpha()
+
+    @staticmethod
+    def _extract_option_value(value: str) -> str | None:
+        matches = _OPTION_TOKEN_PATTERN.findall(value.upper())
+        if not matches:
+            return None
+        return matches[-1].upper()

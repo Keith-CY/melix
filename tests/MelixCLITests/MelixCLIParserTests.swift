@@ -5,6 +5,11 @@ import MelixControlPlaneCore
 
 @Suite("Melix CLI Parser")
 struct MelixCLIParserTests {
+    @Test("documents eval dataset root in usage text")
+    func documentsEvalDatasetRootInUsageText() {
+        #expect(MelixCLIParser.usageText.contains("[--dataset-root PATH]"))
+    }
+
     @Test("parses server snapshot and pause commands")
     func parsesServerSnapshotAndPauseCommands() throws {
         let snapshotCommand = try MelixCLIParser.parse([
@@ -637,6 +642,7 @@ struct MelixCLIParserTests {
             "--suite", "mmlu",
             "--suite", "gsm8k",
             "--dataset-id", "mmlu.dev.v1",
+            "--dataset-root", "/tmp/mmlu-split-01",
             "--sample-size", "8",
             "--batch-factor", "2",
             "--seed", "7",
@@ -654,6 +660,7 @@ struct MelixCLIParserTests {
         #expect(options.suites == ["mmlu", "gsm8k"])
         #expect(options.datasetID == "mmlu.dev.v1")
         #expect(options.sampleSize == 8)
+        #expect(options.parameters["dataset_root"] == "/tmp/mmlu-split-01")
         #expect(options.parameters["batch_factor"] == "2")
         #expect(options.parameters["seed"] == "7")
         #expect(options.parameters["few_shot"] == "4")

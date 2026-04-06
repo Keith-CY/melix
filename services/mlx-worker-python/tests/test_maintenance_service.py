@@ -2210,6 +2210,51 @@ def test_run_evaluation_uses_checked_in_repo_fixture_when_dataset_root_is_omitte
     assert response.results[0].metrics[0].value == 1.0
 
 
+def test_run_evaluation_accepts_dataset_root_from_parameters_when_field_is_omitted(
+    tmp_path: Path,
+) -> None:
+    service = build_service(tmp_path)
+    dataset_root = tmp_path / "datasets" / "qa_smoke.dev.v1"
+    dataset_root.mkdir(parents=True)
+    (dataset_root / "manifest.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "melix.evaluation_dataset_package.v1",
+                "dataset_id": "qa_smoke.dev.v1",
+                "suite_id": "mmlu",
+                "version": "2026-03-31",
+                "sample_count": 1,
+                "split": "validation",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (dataset_root / "samples.jsonl").write_text(
+        json.dumps({"prompt": "3+4?", "expected": "7"}) + "\n",
+        encoding="utf-8",
+    )
+
+    response = service.RunEvaluation(
+        maintenance_pb2.RunEvaluationRequest(
+            model_handle="melix-dev-text::1",
+            suite_id="mmlu",
+            dataset_id="ignored.dev.v1",
+            sample_size=1,
+            parameters={
+                "dataset_root": str(dataset_root),
+                "judge": "deterministic",
+            },
+        ),
+        context=None,
+    )
+
+    assert response.ok is True
+    assert response.job.dataset_id == "qa_smoke.dev.v1"
+    assert response.job.parameters["dataset_root"] == str(dataset_root)
+    assert response.results[0].metrics[0].value == 1.0
+
+
 def test_run_evaluation_returns_typed_error_for_invalid_suite(tmp_path: Path) -> None:
     service = build_service(tmp_path)
 

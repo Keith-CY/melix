@@ -484,6 +484,7 @@ public actor ControlPlaneService {
             reply.models = hydratedModels(await modelCatalog.listModels())
             return okResponse(for: request, model: reply)
         case .load(let load):
+            await syncRegistryModelsFromWorkerIfAvailable()
             guard await modelCatalog.model(id: load.modelID) != nil else {
                 return errorResponse(for: request, code: "not_found", message: "Unknown model ID.")
             }
@@ -2692,6 +2693,7 @@ public actor ControlPlaneService {
         if !hfRepoID.isEmpty {
             return try await importBenchmarkTargetFromHub(repoID: hfRepoID, workerClient: workerClient)
         }
+        await syncRegistryModelsFromWorkerIfAvailable()
         let benchmarkModelID = await resolvedBenchmarkModelID(preferred: modelID)
         guard let benchmarkModel = await modelCatalog.model(id: benchmarkModelID) else {
             throw BenchmarkTargetResolutionError(
