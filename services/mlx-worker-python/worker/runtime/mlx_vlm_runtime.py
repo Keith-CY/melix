@@ -281,8 +281,9 @@ class MLXVLMRuntime:
         metadata = loaded_model.get("metadata", {}) if isinstance(loaded_model, dict) else {}
         execution_mode = str(metadata.get("melix.vlm.execution_mode", "") or "").strip() or "multimodal"
         family_config = self._family_config(loaded_model)
+        has_non_text_media = self._contains_non_text_media(messages)
         if execution_mode == "text_backed":
-            if self._contains_non_text_media(messages):
+            if has_non_text_media:
                 prepared = family_config.shape_request(prepare_vision_request(messages))
                 if prepared.videos and not prepared.images:
                     prepared = self._replace_prompt_text(
@@ -296,21 +297,20 @@ class MLXVLMRuntime:
                     preprocess_peak_memory_bytes=prepared.preprocess_peak_memory_bytes,
                 )
             else:
-                prompt_text = self._prompt_text_from_messages(messages)
-                prompt_hash_hex = hashlib.sha256(prompt_text.encode("utf-8")).hexdigest()
-                prepared = PreparedVisionRequest(
-                    prompt_text=prompt_text,
-                    images=[],
-                    videos=[],
-                    video_frame_policies=[],
-                    preprocess_latency_ms=max(0.0, (time.perf_counter() - started_at) * 1000.0),
-                    preprocess_input_bytes=len(prompt_text.encode("utf-8")),
-                    preprocess_peak_memory_bytes=0,
-                    prompt_hash_hex=prompt_hash_hex,
-                    multimodal_hash_hex=prompt_hash_hex,
+                prepared = self._prompt_only_request(
+                    messages,
+                    family_config=family_config,
+                    started_at=started_at,
                 )
         else:
-            prepared = family_config.shape_request(prepare_vision_request(messages))
+            if has_non_text_media:
+                prepared = family_config.shape_request(prepare_vision_request(messages))
+            else:
+                prepared = self._prompt_only_request(
+                    messages,
+                    family_config=family_config,
+                    started_at=started_at,
+                )
         self._last_probe = VisionProbeSnapshot(
             preprocess_latency_ms=prepared.preprocess_latency_ms,
             preprocess_input_bytes=prepared.preprocess_input_bytes,
@@ -496,6 +496,31 @@ class MLXVLMRuntime:
             prompt_text=normalized_prompt_text,
             prompt_hash_hex=prompt_hash_hex,
             multimodal_hash_hex=rebuild_multimodal_hash(prepared_request, prompt_hash_hex),
+        )
+
+    @staticmethod
+    def _prompt_only_request(
+        messages,
+        *,
+        family_config,
+        started_at: float,
+    ) -> PreparedVisionRequest:
+        prompt_text = MLXVLMRuntime._prompt_text_from_messages(messages)
+        prepared = PreparedVisionRequest(
+            prompt_text=prompt_text,
+            images=[],
+            videos=[],
+            video_frame_policies=[],
+            preprocess_latency_ms=max(0.0, (time.perf_counter() - started_at) * 1000.0),
+            preprocess_input_bytes=len(prompt_text.encode("utf-8")),
+            preprocess_peak_memory_bytes=0,
+        )
+        prepared = family_config.shape_request(prepared)
+        prompt_hash_hex = hashlib.sha256(prepared.prompt_text.encode("utf-8")).hexdigest()
+        return replace(
+            prepared,
+            prompt_hash_hex=prompt_hash_hex,
+            multimodal_hash_hex=prompt_hash_hex,
         )
 
     @staticmethod

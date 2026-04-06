@@ -336,6 +336,155 @@ def test_registry_snapshot_applies_image_family_adapter_metadata_from_path_and_m
     assert kontext.ext["melix.capability.supported_tasks"] == "image_generate,image_edit"
 
 
+def test_registry_snapshot_promotes_gemma4_text_manifest_to_vlm_text_backed(tmp_path: Path) -> None:
+    root = tmp_path / "root"
+    variant_dir = root / "unsloth" / "gemma-4-E4B-it-MLX-8bit" / "snapshot"
+    _write_registry_manifest(
+        variant_dir,
+        model_id="unsloth/gemma-4-E4B-it-MLX-8bit/snapshot",
+        model_kind="text",
+    )
+    _write_model_config(
+        variant_dir,
+        {
+            "model_type": "gemma4",
+            "architectures": ["Gemma4ForConditionalGeneration"],
+            "text_config": {"model_type": "gemma4_text"},
+            "vision_config": None,
+        },
+    )
+
+    catalog = WorkerModelCatalog(environment={"MELIX_MODEL_ROOTS": str(root)})
+
+    snapshot = catalog.registry_snapshot()
+    discovered = {model.model_id: model for model in snapshot.models}
+    gemma4 = discovered["unsloth/gemma-4-E4B-it-MLX-8bit/snapshot"]
+
+    assert gemma4.model_kind == "vlm"
+    assert gemma4.ext["melix.vlm.backend_id"] == "mlx_vlm"
+    assert gemma4.ext["melix.vlm.execution_mode"] == "text_backed"
+    assert gemma4.ext["vision_family_id"] == "gemma4-v1"
+    assert gemma4.ext["vision_prompt_profile_id"] == "gemma4-chatml-v1"
+    assert gemma4.ext["melix.capability.route_kind"] == "python_vlm"
+
+
+def test_registry_snapshot_keeps_multimodal_gemma4_manifest_in_multimodal_mode(tmp_path: Path) -> None:
+    root = tmp_path / "root"
+    variant_dir = root / "mlx-community" / "gemma-4-31b-it-4bit" / "4bit"
+    _write_registry_manifest(
+        variant_dir,
+        model_id="mlx-community/gemma-4-31b-it-4bit/4bit",
+        model_kind="text",
+    )
+    _write_model_config(
+        variant_dir,
+        {
+            "model_type": "gemma4",
+            "architectures": ["Gemma4ForConditionalGeneration"],
+            "text_config": {"model_type": "gemma4_text"},
+            "vision_config": {"model_type": "gemma4_vision"},
+        },
+    )
+    (variant_dir / "processor_config.json").write_text("{}\n", encoding="utf-8")
+
+    catalog = WorkerModelCatalog(environment={"MELIX_MODEL_ROOTS": str(root)})
+
+    snapshot = catalog.registry_snapshot()
+    discovered = {model.model_id: model for model in snapshot.models}
+    gemma4 = discovered["mlx-community/gemma-4-31b-it-4bit/4bit"]
+
+    assert gemma4.model_kind == "vlm"
+    assert gemma4.ext["melix.vlm.backend_id"] == "mlx_vlm"
+    assert gemma4.ext.get("melix.vlm.execution_mode", "") == ""
+    assert gemma4.ext["vision_family_id"] == "gemma4-v1"
+
+
+def test_registry_snapshot_promotes_gemma4_from_architecture_hint(tmp_path: Path) -> None:
+    root = tmp_path / "root"
+    variant_dir = root / "mlx-community" / "gemma-4-12b-it-4bit" / "4bit"
+    _write_registry_manifest(
+        variant_dir,
+        model_id="mlx-community/gemma-4-12b-it-4bit/4bit",
+        model_kind="text",
+    )
+    _write_model_config(
+        variant_dir,
+        {
+            "model_type": "unknown",
+            "architectures": ["Gemma4ForConditionalGeneration"],
+            "vision_config": None,
+        },
+    )
+
+    catalog = WorkerModelCatalog(environment={"MELIX_MODEL_ROOTS": str(root)})
+
+    snapshot = catalog.registry_snapshot()
+    discovered = {model.model_id: model for model in snapshot.models}
+    gemma4 = discovered["mlx-community/gemma-4-12b-it-4bit/4bit"]
+
+    assert gemma4.model_kind == "vlm"
+    assert gemma4.ext["vision_family_id"] == "gemma4-v1"
+    assert gemma4.ext["melix.vlm.execution_mode"] == "text_backed"
+
+
+def test_registry_snapshot_promotes_gemma4_from_text_config_with_processor_hint(tmp_path: Path) -> None:
+    root = tmp_path / "root"
+    variant_dir = root / "mlx-community" / "gemma-4-12b-it-processor" / "4bit"
+    _write_registry_manifest(
+        variant_dir,
+        model_id="mlx-community/gemma-4-12b-it-processor/4bit",
+        model_kind="text",
+    )
+    _write_model_config(
+        variant_dir,
+        {
+            "model_type": "unknown",
+            "architectures": [],
+            "text_config": {"model_type": "gemma4_text"},
+            "vision_config": None,
+        },
+    )
+    (variant_dir / "processor_config.json").write_text("{}\n", encoding="utf-8")
+
+    catalog = WorkerModelCatalog(environment={"MELIX_MODEL_ROOTS": str(root)})
+
+    snapshot = catalog.registry_snapshot()
+    discovered = {model.model_id: model for model in snapshot.models}
+    gemma4 = discovered["mlx-community/gemma-4-12b-it-processor/4bit"]
+
+    assert gemma4.model_kind == "vlm"
+    assert gemma4.ext["vision_family_id"] == "gemma4-v1"
+    assert gemma4.ext.get("melix.vlm.execution_mode", "") == ""
+
+
+def test_registry_snapshot_keeps_non_gemma_text_manifest_as_text(tmp_path: Path) -> None:
+    root = tmp_path / "root"
+    variant_dir = root / "example" / "plain-text-model" / "q4"
+    _write_registry_manifest(
+        variant_dir,
+        model_id="example/plain-text-model/q4",
+        model_kind="text",
+    )
+    _write_model_config(
+        variant_dir,
+        {
+            "model_type": "llama",
+            "architectures": ["LlamaForCausalLM"],
+            "text_config": {"model_type": "llama"},
+        },
+    )
+
+    catalog = WorkerModelCatalog(environment={"MELIX_MODEL_ROOTS": str(root)})
+
+    snapshot = catalog.registry_snapshot()
+    discovered = {model.model_id: model for model in snapshot.models}
+    plain = discovered["example/plain-text-model/q4"]
+
+    assert plain.model_kind == "text"
+    assert plain.ext["melix.capability.route_kind"] == "python_text_compatibility"
+    assert plain.ext.get("vision_family_id", "") == ""
+
+
 def test_dev_image_model_reads_family_and_task_overrides() -> None:
     qwen = WorkerModelCatalog.dev_image_model(
         {

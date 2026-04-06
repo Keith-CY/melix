@@ -344,6 +344,76 @@ def test_mlx_vlm_runtime_supports_prompt_only_generation_for_text_backed_models(
     assert stream_calls == [("formatted::Say hello.", None)]
 
 
+def test_mlx_vlm_runtime_supports_prompt_only_generation_for_multimodal_models() -> None:
+    apply_calls: list[tuple[str, int]] = []
+    stream_calls: list[tuple[str, object]] = []
+
+    def fake_load(model_path: str, revision: str = "main"):
+        model = SimpleNamespace(config=SimpleNamespace(model_type="gemma4"))
+        processor = SimpleNamespace()
+        return model, processor
+
+    def fake_apply_chat_template(processor, config, prompt: str, num_images: int = 0, **kwargs):
+        _ = processor
+        _ = config
+        _ = kwargs
+        apply_calls.append((prompt, num_images))
+        return f"formatted::{prompt}"
+
+    def fake_stream_generate(model, processor, prompt: str, image=None, **kwargs):
+        _ = model
+        _ = processor
+        _ = kwargs
+        stream_calls.append((prompt, image))
+        yield SimpleNamespace(
+            text="Hello from multimodal!",
+            prompt_tokens=11,
+            generation_tokens=1,
+            prompt_tps=90.0,
+            generation_tps=18.0,
+            peak_memory=1.5,
+        )
+
+    runtime = MLXVLMRuntime(
+        backend=AutoMLXVLMBackend(
+            load_fn=fake_load,
+            stream_generate_fn=fake_stream_generate,
+            apply_chat_template_fn=fake_apply_chat_template,
+        )
+    )
+    loaded_model = runtime.load_model(imported_gemma4_vlm_model())
+    prepared = runtime.render_prompt(
+        [
+            common_pb2.ChatMessage(
+                role="user",
+                parts=[common_pb2.MessagePart(text="Say hello.")],
+            )
+        ],
+        loaded_model=loaded_model,
+    )
+
+    events = list(
+        runtime.generate_tokens(
+            loaded_model,
+            prepared,
+            common_pb2.SamplingConfig(
+                temperature=0.0,
+                top_p=1.0,
+                top_k=1,
+                max_output_tokens=16,
+            ),
+            Event(),
+        )
+    )
+
+    assert "".join(event.text for event in events) == "Hello from multimodal!"
+    assert prepared.prompt_text == "Say hello."
+    assert prepared.images == []
+    assert prepared.videos == []
+    assert apply_calls == [("Say hello.", 0)]
+    assert stream_calls == [("formatted::Say hello.", None)]
+
+
 def test_mlx_vlm_runtime_render_prompt_preserves_text_backed_image_inputs_until_generation() -> None:
     runtime = MLXVLMRuntime(
         backend=AutoMLXVLMBackend(

@@ -6,7 +6,7 @@ import json
 import os
 from pathlib import Path
 import time
-from typing import Iterable
+from typing import Iterable, Mapping
 
 from packages.protocol.python.worker.v1 import common_pb2
 from worker.runtime.image_family_adapters import (
@@ -17,6 +17,7 @@ from worker.runtime.text_family_adapters import (
     detect_text_family_identity,
     resolve_text_family_config,
 )
+from worker.runtime.vision_family_adapters import resolve_vision_family_config
 
 _ADAPTER_SET_HASH_KEY = "melix.adapter_set_hash"
 _CAPABILITY_ROUTE_KIND_KEY = "melix.capability.route_kind"
@@ -397,7 +398,7 @@ def _vision_capability_metadata(family_id: str) -> dict[str, str]:
             supported_parsers=("text",),
         )
     return _capability_metadata(
-        adapter_set_hash="vision-family-llava-v1",
+        adapter_set_hash=f"vision-family-{family_id}",
         route_kind="python_vlm",
         capability_class="vlm",
         supported_modalities=("text", "image"),
@@ -407,6 +408,72 @@ def _vision_capability_metadata(family_id: str) -> dict[str, str]:
         tool_parser_namespaces=("tools.vision",),
         tool_parser_xml_fallback=True,
     )
+
+
+def _is_gemma4_vlm_config(config_payload: Mapping[str, object] | None) -> bool:
+    config_payload = dict(config_payload or {})
+    model_type = _normalized(str(config_payload.get("model_type", ""))).lower()
+    if model_type == "gemma4":
+        return True
+
+    architectures = config_payload.get("architectures")
+    if isinstance(architectures, list):
+        for item in architectures:
+            if _normalized(str(item)).lower() == "gemma4forconditionalgeneration":
+                return True
+
+    text_config = config_payload.get("text_config")
+    if isinstance(text_config, Mapping):
+        nested_model_type = _normalized(str(text_config.get("model_type", ""))).lower()
+        if nested_model_type == "gemma4_text":
+            return True
+
+    return False
+
+
+def _gemma4_execution_mode(model_dir: Path, config_payload: Mapping[str, object] | None) -> str:
+    config_payload = dict(config_payload or {})
+    vision_config = config_payload.get("vision_config")
+    if isinstance(vision_config, Mapping) and len(vision_config) > 0:
+        return ""
+    if (model_dir / "processor_config.json").is_file():
+        return ""
+    return "text_backed"
+
+
+def _vlm_capability_metadata(
+    *,
+    model_path: str,
+    model_dir: Path,
+    metadata: dict[str, str] | None = None,
+    config_payload: Mapping[str, object] | None = None,
+) -> dict[str, str]:
+    metadata = dict(metadata or {})
+    config_payload = dict(config_payload or {})
+    family_id = _normalized(metadata.get("vision_family_id", ""))
+    if not family_id and _is_gemma4_vlm_config(config_payload):
+        family_id = "gemma4-v1"
+    family_id = family_id or "llava-v1"
+
+    resolved_family = resolve_vision_family_config(
+        {
+            **metadata,
+            "vision_family_id": family_id,
+        }
+    )
+    ext = {
+        **_vision_capability_metadata(family_id),
+        **resolved_family.capability_metadata(),
+        "melix.vlm.backend_id": _normalized(metadata.get("melix.vlm.backend_id", "")) or "mlx_vlm",
+        "melix.multimodal_adapter_hash": (
+            _normalized(metadata.get("melix.multimodal_adapter_hash", ""))
+            or resolved_family.multimodal_adapter_hash
+        ),
+    }
+    execution_mode = _gemma4_execution_mode(model_dir, config_payload) if family_id == "gemma4-v1" else ""
+    if execution_mode:
+        ext["melix.vlm.execution_mode"] = execution_mode
+    return ext
 
 
 def _audio_capability_metadata(
@@ -674,7 +741,7 @@ class WorkerModelCatalog:
             if override_value:
                 normalized_ext[ext_key] = override_value
 
-        model_kind = _normalized(str(payload.get("model_kind", "text"))) or "text"
+        requested_model_kind = _normalized(str(payload.get("model_kind", "text"))) or "text"
         quant_profile_id = _normalized(str(payload.get("quant_profile_id", "")))
         revision = _normalized(str(payload.get("revision", "registry"))) or "registry"
         tokenizer_hash = _normalized(str(payload.get("tokenizer_hash", "tok-registry"))) or "tok-registry"
@@ -682,6 +749,11 @@ class WorkerModelCatalog:
         reasoning_mode = _normalized(str(payload.get("reasoning_mode", "off"))) or "off"
         max_context = int(payload.get("max_context", 8192) or 8192)
         config_payload = _load_model_config_payload(manifest_path.parent)
+        model_kind = (
+            "vlm"
+            if requested_model_kind == "text" and _is_gemma4_vlm_config(config_payload)
+            else requested_model_kind
+        )
         if model_kind == "text":
             normalized_ext.update(
                 _text_capability_metadata(
@@ -689,6 +761,15 @@ class WorkerModelCatalog:
                     metadata=normalized_ext,
                     config_payload=config_payload,
                     default_route_kind="python_text_compatibility",
+                )
+            )
+        if model_kind == "vlm":
+            normalized_ext.update(
+                _vlm_capability_metadata(
+                    model_path=str(manifest_path.parent),
+                    model_dir=manifest_path.parent,
+                    metadata=normalized_ext,
+                    config_payload=config_payload,
                 )
             )
         if model_kind == "image":
