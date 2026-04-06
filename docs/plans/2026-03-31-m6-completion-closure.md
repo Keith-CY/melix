@@ -1,5 +1,12 @@
 # M6 Completion Closure
 
+## Status
+
+Completed on 2026-04-04. Melix now ships repository-owned acceleration benchmark evidence for
+active KV quantization and sparse prefill, protected-scope conflict locking for quantization
+operations, and runbook plus metrics coverage sufficient to record a parent-level `M6` completion
+state in the execution index.
+
 ## Goal
 
 Close the remaining implementation and verification gaps for `M6 Quantization And Inference Acceleration` on `main` without widening scope into later milestones.

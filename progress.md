@@ -2,6 +2,17 @@
 
 ## 2026-04-06
 
+- Formalized the parent-level `M6` completion state so the execution index no longer leaves the
+  closed quantization milestone unregistered:
+  - added a completed status section to `docs/plans/2026-03-31-m6-completion-closure.md`
+  - added a parent-level completed status line to the `M6` section in the execution index while
+    leaving child-level `M6.1-M6.11` backfill for a later audit
+- Verification summary for the `M6` parent-status formalization:
+  - `git diff --check`: pass
+- Metrics report for the `M6` parent-status formalization:
+  - `N/A` because the transaction only updates planning and progress documents; executable M6
+    benchmark and locking evidence remains recorded in `docs/plans/2026-03-31-m6-completion-closure.md`
+
 - Backfilled the child-level `M7.1-M7.10` execution-index statuses so the completed benchmark and
   evaluation work is represented per child milestone instead of only through the parent `M7`
   summary:

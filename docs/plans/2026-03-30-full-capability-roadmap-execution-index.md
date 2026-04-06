@@ -72,6 +72,11 @@ The roadmap extension in `M10-M17` includes milestone-level plans plus decompose
 
 ## M6: Quantization And Inference Acceleration
 
+- Status: completed. The repository records M6 closure under
+  `docs/plans/2026-03-31-m6-completion-closure.md`, including executable acceleration benchmark
+  evidence for active KV quantization and sparse prefill, protected-scope quantization conflict
+  locking, and repository-owned runbook guidance for the quantified acceleration path.
+
 - `M6.1` `docs/plans/2026-03-30-m6-1-oq-quantization-pipeline.md`
 - `M6.2` `docs/plans/2026-03-30-m6-2-oq2-to-oq8-mixed-precision.md`
 - `M6.3` `docs/plans/2026-03-30-m6-3-oq35-vlm-fp8-and-hybrid-quantization.md`

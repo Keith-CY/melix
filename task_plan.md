@@ -2,35 +2,36 @@
 
 ## Goal
 
-Backfill child-level `M7.1-M7.10` execution-index status so the repository records the already
-landed benchmark and evaluation closure per child milestone instead of only through the parent `M7`
-summary and later umbrella plans.
+Formalize the parent-level `M6` completion status in the execution index so the repository reflects
+the recorded M6 closure evidence without pretending the remaining child-entry backfill has already
+been audited.
 
 ## Scope
 
-- add explicit completed status lines for `M7.1` through `M7.10` in the execution index
+- add an explicit completed status line to the `M6` section in the execution index
+- add a top-level status section to `docs/plans/2026-03-31-m6-completion-closure.md`
 - record the docs-only closure in `progress.md` with an explicit `N/A` metrics report
-- keep the transaction limited to execution-index accuracy rather than reopening benchmark code
 
 ## Measurement Points
 
-- `M7.1-M7.10` each have child-level completed status in the execution index
-- the progress log records the backfill as a docs-only bookkeeping transaction
-- `git diff --check` passes and no executable files change
+- `M6` has a parent-level completed status in the execution index
+- the M6 closure document exposes a top-level completed status summary
+- the progress log records the transaction as docs-only with `git diff --check`
+- no executable files or generated artifacts change
 
 ## Phases
 
 1. Boundary lock and evidence readback
    - status: in_progress
    - success criteria:
-     - confirm the parent `M7` summary, progress log, and later follow-up plans provide enough
-       evidence to state child-level completion without reopening implementation work
-2. Execution-index child-status backfill
+     - confirm the M6 closure document and progress log provide enough evidence for parent-level
+       completion language
+     - avoid claiming child-level completion for unreviewed `M6.1-M6.6` entries
+2. Parent-status formalization
    - status: pending
    - success criteria:
-     - add concise completed status lines for `M7.1` through `M7.10`
-     - keep the wording aligned with the repository-owned benchmark, evaluation, export, VLM, and
-       release-gate work already landed
+     - add completed status text to the execution-index `M6` section
+     - add a top-level completed status section to the M6 closure document
 3. Progress and metrics note
    - status: pending
    - success criteria:
@@ -40,17 +41,17 @@ summary and later umbrella plans.
    - status: pending
    - success criteria:
      - submit a GPG-signed docs-only commit
-     - continue triaging the next milestone area whose status still lacks repository evidence
+     - continue auditing `M1-M5` and any remaining child-entry status gaps
 
 ## Acceptance
 
-- `M7.1-M7.10` are no longer ambiguous child entries under a completed parent milestone
+- the repository no longer leaves `M6` without any formal completion status
 - the transaction remains docs-only and explicitly reports `N/A` executable metrics
-- the next audit can focus on truly unresolved milestones instead of benchmark bookkeeping drift
+- later audits can decide child-level `M6` status without re-litigating the parent closure
 
 ## Risks
 
-- if child-level status lines overclaim beyond the recorded repository evidence, the execution
-  index will become misleading
-- if this transaction expands past index bookkeeping, it will blur the line between status repair
-  and new benchmark work
+- if the parent status overclaims beyond the recorded closure evidence, the execution index will
+  misstate M6 readiness
+- if this transaction drifts into child-level claims for `M6.1-M6.6`, it will exceed the audited
+  evidence boundary
