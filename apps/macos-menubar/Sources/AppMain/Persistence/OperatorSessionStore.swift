@@ -6,19 +6,22 @@ public struct OperatorSessionState: Codable, Equatable, Sendable {
     public var selectedToolSection: DesktopToolSection
     public var selectedServerSessionID: String
     public var serverSessions: [DesktopServerSessionState]
+    public var dismissedBannerIDs: [String]
 
     public init(
-        schemaVersion: Int = 1,
+        schemaVersion: Int = 2,
         selectedSurface: DesktopSurface,
         selectedToolSection: DesktopToolSection = .modelsLibrary,
         selectedServerSessionID: String,
-        serverSessions: [DesktopServerSessionState]
+        serverSessions: [DesktopServerSessionState],
+        dismissedBannerIDs: [String] = []
     ) {
         self.schemaVersion = schemaVersion
         self.selectedSurface = selectedSurface
         self.selectedToolSection = selectedToolSection
         self.selectedServerSessionID = selectedServerSessionID
         self.serverSessions = serverSessions
+        self.dismissedBannerIDs = dismissedBannerIDs
     }
 
     enum CodingKeys: String, CodingKey {
@@ -27,6 +30,7 @@ public struct OperatorSessionState: Codable, Equatable, Sendable {
         case selectedToolSection = "selected_tool_section"
         case selectedServerSessionID = "selected_server_session_id"
         case serverSessions = "server_sessions"
+        case dismissedBannerIDs = "dismissed_banner_ids"
     }
 
     public init(from decoder: any Decoder) throws {
@@ -39,6 +43,7 @@ public struct OperatorSessionState: Codable, Equatable, Sendable {
         ) ?? .modelsLibrary
         selectedServerSessionID = try container.decode(String.self, forKey: .selectedServerSessionID)
         serverSessions = try container.decode([DesktopServerSessionState].self, forKey: .serverSessions)
+        dismissedBannerIDs = try container.decodeIfPresent([String].self, forKey: .dismissedBannerIDs) ?? []
     }
 }
 

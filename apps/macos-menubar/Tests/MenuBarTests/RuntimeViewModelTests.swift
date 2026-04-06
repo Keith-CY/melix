@@ -2066,10 +2066,93 @@ struct RuntimeViewModelTests {
         #expect(viewModel.productUpdateSummary == "Update available: 0.2.0")
         #expect(viewModel.productUpdateDetail == "Current 0.1.0 on stable")
         #expect(viewModel.lastError == "Startup failed: port 11434 is already in use. Check /tmp/control-plane.stderr.log and restart Melix.")
+        #expect(viewModel.desktopBannerState?.title == "Operator Attention Required")
+        #expect(viewModel.desktopSignalStates.contains { $0.title == "Update available: 0.2.0" && $0.isDismissible })
         #expect(hasUpdateRow)
         #expect(hasUpdateDetailRow)
         #expect(await metrics.snapshot()["update.check_success_rate"] == 100)
         #expect(await metrics.snapshot()["startup.failure_classification_count"] == 1)
+    }
+
+    @Test("update banners are dismissible and persist across restart until the version changes")
+    @MainActor
+    func updateBannersPersistDismissalAcrossRestart() async throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-menubar-update-banner-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let melixHome = MelixHome(environment: ["MELIX_HOME": temporaryRoot.path])
+        let operatorSessionStore = OperatorSessionStore(melixHome: melixHome)
+        let initialProvider = StubProductInstallStateProvider(
+            updateStatusResponse: ProductUpdateStatus(
+                summary: "Update available: 0.2.0",
+                detail: "Current 0.1.0 on stable",
+                isAvailable: true,
+                checkSucceeded: true
+            ),
+            startupDiagnosticResponse: nil
+        )
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(
+            client: client,
+            operatorSessionStore: operatorSessionStore,
+            productInstallStateProvider: initialProvider
+        )
+
+        await viewModel.start()
+
+        let initialBanner = try #require(viewModel.desktopBannerState)
+        #expect(initialBanner.isDismissible)
+        #expect(initialBanner.title == "Update available: 0.2.0")
+
+        viewModel.dismissDesktopBanner()
+        #expect(viewModel.desktopBannerState == nil)
+
+        let restoredViewModel = RuntimeViewModel(
+            client: FakeControlPlaneXPCClient(),
+            operatorSessionStore: operatorSessionStore,
+            productInstallStateProvider: initialProvider
+        )
+        await restoredViewModel.start()
+        #expect(restoredViewModel.desktopBannerState == nil)
+
+        let upgradedProvider = StubProductInstallStateProvider(
+            updateStatusResponse: ProductUpdateStatus(
+                summary: "Update available: 0.3.0",
+                detail: "Current 0.1.0 on stable",
+                isAvailable: true,
+                checkSucceeded: true
+            ),
+            startupDiagnosticResponse: nil
+        )
+        let upgradedViewModel = RuntimeViewModel(
+            client: FakeControlPlaneXPCClient(),
+            operatorSessionStore: operatorSessionStore,
+            productInstallStateProvider: upgradedProvider
+        )
+        await upgradedViewModel.start()
+
+        #expect(upgradedViewModel.desktopBannerState?.title == "Update available: 0.3.0")
+    }
+
+    @Test("critical runtime banners ignore dismiss requests")
+    @MainActor
+    func criticalRuntimeBannersIgnoreDismissRequests() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+        await client.sendServerStateChanged(state: .serverFailed)
+
+        try await waitForRuntimeViewModelCondition("critical runtime banner should appear") {
+            viewModel.desktopBannerState?.severity == .critical
+        }
+
+        let banner = try #require(viewModel.desktopBannerState)
+        #expect(banner.isDismissible == false)
+        viewModel.dismissDesktopBanner()
+        #expect(viewModel.desktopBannerState?.id == banner.id)
     }
 
     @Test("load and unload surface client failures in app state")

@@ -2,6 +2,46 @@
 
 ## 2026-04-06
 
+- Closed `M15.2` by unifying desktop update availability and runtime-state messaging behind one
+  shared signal model:
+  - extended desktop banner state with stable ids and dismissibility, then persisted dismissed
+    banner ids through `OperatorSessionState` so update notices can be hidden across restart without
+    mutating runtime truth
+  - mapped update availability and update-check-failure notices into the same prioritized desktop
+    signal list used for runtime and audio warnings, while keeping critical runtime recovery signals
+    non-dismissible and ahead of update notices
+  - updated the workspace banner and status menu to consume the same top-priority shared signal
+    instead of independent runtime versus update branches
+  - added focused coverage proving update-banner dismissal persistence, version-change reappearance,
+    non-dismissible critical runtime banners, status-menu signal reuse, and workspace rendering of
+    the shared dismissible update banner
+- Verification summary for `M15.2`:
+  - `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/.build/ModuleCache.noindex" swift test --enable-code-coverage --package-path apps/macos-menubar --filter 'RuntimeViewModelTests|StatusMenuTests|DesktopFoundationViewTests|DesktopShellStateTests'`: `251 tests in 4 suites passed after 5.060 seconds`
+  - `python3 scripts/swift_changed_line_coverage.py --binary apps/macos-menubar/.build/arm64-apple-macosx/debug/MelixMacOSMenubarPackageTests.xctest/Contents/MacOS/MelixMacOSMenubarPackageTests --profdata apps/macos-menubar/.build/arm64-apple-macosx/debug/codecov/default.profdata apps/macos-menubar/Sources/AppMain/Models/RuntimeViewModel.swift apps/macos-menubar/Sources/AppMain/Models/DesktopShellState.swift apps/macos-menubar/Sources/AppMain/Persistence/OperatorSessionStore.swift apps/macos-menubar/Sources/AppMain/Dashboard/DesktopWorkspaceShellView.swift apps/macos-menubar/Sources/AppMain/MenuBar/StatusMenu.swift apps/macos-menubar/Tests/MenuBarTests/RuntimeViewModelTests.swift apps/macos-menubar/Tests/MenuBarTests/StatusMenuTests.swift apps/macos-menubar/Tests/MenuBarTests/DesktopFoundationViewTests.swift`: `98.76%` (`239/242`)
+  - `git diff --check`: pass
+  - `make swift-test`: failed outside the touched scope when `services/mlx-text-worker-swift`
+    exited with unexpected signal `11` during `WorkerScaffoldTests`; the touched menu-bar suites
+    passed under the focused coverage-enabled command above
+  - `make integration-test`: `69 passed in 922.31s (0:15:22)`
+- Metrics report for `M15.2`:
+  - shared-signal evidence exercised by the touched scope:
+    - actionable update notices now surface as dismissible banners keyed by stable ids and return
+      automatically when the update summary changes
+    - dismissing an update banner persists through operator-session restore while critical runtime
+      recovery banners remain non-dismissible
+    - the workspace banner and status menu now share the same prioritized top-signal title instead
+      of rendering update and runtime state through unrelated branches
+  - changed-line coverage for the touched handwritten executable scope:
+    - `RuntimeViewModel.swift`: `98.84%` (`85/86`)
+    - `DesktopShellState.swift`: `100.00%` (`14/14`)
+    - `OperatorSessionStore.swift`: `100.00%` (`1/1`)
+    - `DesktopWorkspaceShellView.swift`: `80.00%` (`8/10`)
+    - `StatusMenu.swift`: `100.00%` (`7/7`)
+    - touched test files aggregate: `100.00%`
+    - aggregate touched-scope coverage: `98.76%` (`239/242`)
+  - `task_plan.md` is excluded from executable changed-line coverage because it is planning
+    documentation rather than handwritten runtime logic
+
 - Closed `M15.1` by adding UI-side token-stream presentation smoothing in the desktop shell
   without changing control-plane stream truth:
   - added a menubar-owned chat presentation queue in `RuntimeViewModel` so assistant, reasoning,

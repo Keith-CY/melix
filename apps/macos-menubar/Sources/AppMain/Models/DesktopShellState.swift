@@ -635,14 +635,40 @@ public enum DesktopBannerSeverity: Sendable {
 }
 
 public struct DesktopBannerState: Equatable, Sendable {
+    public let id: String
     public let title: String
     public let detail: String
     public let severity: DesktopBannerSeverity
+    public let isDismissible: Bool
 
-    public init(title: String, detail: String, severity: DesktopBannerSeverity) {
+    public init(
+        id: String = "",
+        title: String,
+        detail: String,
+        severity: DesktopBannerSeverity,
+        isDismissible: Bool = false
+    ) {
+        self.id = id.isEmpty ? Self.defaultID(title: title, detail: detail, severity: severity) : id
         self.title = title
         self.detail = detail
         self.severity = severity
+        self.isDismissible = isDismissible
+    }
+
+    private static func defaultID(
+        title: String,
+        detail: String,
+        severity: DesktopBannerSeverity
+    ) -> String {
+        let severityKey: String = switch severity {
+        case .info:
+            "info"
+        case .warning:
+            "warning"
+        case .critical:
+            "critical"
+        }
+        return "\(severityKey)-\(title)-\(detail)"
     }
 }
 

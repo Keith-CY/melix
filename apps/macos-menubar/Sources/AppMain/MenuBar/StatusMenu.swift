@@ -111,8 +111,13 @@ public final class StatusMenu: NSObject {
         var items: [StatusMenuContentItem] = [
             .info("Server: \(viewModel.serverStateText)")
         ]
-        if let productUpdateSummary = viewModel.productUpdateSummary, productUpdateSummary.isEmpty == false {
-            items.append(.info(productUpdateSummary))
+        if let banner = viewModel.desktopBannerState {
+            switch banner.severity {
+            case .critical:
+                items.append(.error(banner.title))
+            case .info, .warning:
+                items.append(.info(banner.title))
+            }
         }
 
         if let model = viewModel.primaryModel {

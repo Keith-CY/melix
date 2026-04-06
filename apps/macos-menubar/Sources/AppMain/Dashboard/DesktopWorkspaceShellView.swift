@@ -11,7 +11,9 @@ struct DesktopWorkspaceShellView: View {
 
         VStack(spacing: 0) {
             if let banner = viewModel.desktopBannerState {
-                DesktopShellBannerView(banner: banner)
+                DesktopShellBannerView(banner: banner) {
+                    viewModel.dismissDesktopBanner(id: banner.id)
+                }
             }
 
             DesktopShellHeaderView(viewModel: viewModel)
@@ -49,6 +51,7 @@ struct DesktopWorkspaceShellView: View {
 
 private struct DesktopShellBannerView: View {
     let banner: DesktopBannerState
+    let dismiss: @MainActor () -> Void
 
     var body: some View {
         HStack(alignment: .center, spacing: 12) {
@@ -63,6 +66,13 @@ private struct DesktopShellBannerView: View {
                     .foregroundStyle(.white.opacity(0.9))
             }
             Spacer()
+            if banner.isDismissible {
+                Button(action: dismiss) {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundStyle(.white.opacity(0.9))
+                }
+                .buttonStyle(.plain)
+            }
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 10)

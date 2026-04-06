@@ -283,6 +283,10 @@ The roadmap extension in `M10-M17` includes milestone-level plans plus decompose
   metrics, and keeps exact transcript fidelity through terminal flush handling plus focused
   coverage-enabled menu-bar tests.
 - `M15.2` `docs/plans/2026-03-31-m15-2-update-banners-and-runtime-signal-unification.md`
+  Status: completed. Update availability and update-check-failure notices now participate in one
+  shared desktop signal model with stable dismiss ids, persisted dismissal policy, and unified
+  workspace-banner plus status-menu rendering, while critical runtime recovery signals remain
+  non-dismissible and higher priority.
 - `M15.3` `docs/plans/2026-03-31-m15-3-download-queue-persistence-and-paused-recovery.md`
 - `M15.4` `docs/plans/2026-03-31-m15-4-desktop-polish-integration-evidence.md`
 

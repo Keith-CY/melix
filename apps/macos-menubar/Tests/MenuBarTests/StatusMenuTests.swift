@@ -74,6 +74,25 @@ struct StatusMenuTests {
         #expect(content.items.contains(.info("Update available: 0.2.0")))
     }
 
+    @Test("install surfaces runtime banner titles before model actions")
+    @MainActor
+    func installSurfacesRuntimeBannerTitles() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(client: client)
+        let renderer = RecordingStatusMenuRenderer()
+        let menu = StatusMenu(viewModel: viewModel, renderer: renderer)
+
+        await viewModel.start()
+        menu.install()
+        await client.sendServerStateChanged(state: .serverDraining)
+        try await eventually("status menu should refresh with the runtime warning banner", timeout: .seconds(2)) {
+            renderer.lastContent?.items.contains(.info("Runtime Needs Monitoring")) == true
+        }
+
+        let content = try #require(renderer.lastContent)
+        #expect(content.items.contains(.info("Runtime Needs Monitoring")))
+    }
+
     @Test("perform routes primary model actions to the view model")
     @MainActor
     func performRoutesPrimaryModelActions() async throws {

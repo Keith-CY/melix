@@ -841,6 +841,8 @@ public final class RuntimeViewModel {
     public private(set) var lastError: String?
     public private(set) var productUpdateSummary: String?
     public private(set) var productUpdateDetail: String?
+    public private(set) var productUpdateIsAvailable = false
+    public private(set) var productUpdateCheckSucceeded = true
     public private(set) var protocolVersion = "melix.controlplane.v1"
     public private(set) var serverVersion = "0.1.0"
     public private(set) var daemonInstanceID = ""
@@ -1019,6 +1021,7 @@ public final class RuntimeViewModel {
     private var chatPresentationMaxLagMs = 0.0
     private var chatPresentationFlushCount = 0.0
     private var persistedServerSessions: [DesktopServerSessionState] = []
+    private var dismissedBannerIDs: Set<String> = []
     private var modelSettingsDraftModelID = ""
     private var operatorStateRestored = false
     private var lastPersistedOperatorSessionState: OperatorSessionState?
@@ -1825,38 +1828,78 @@ public final class RuntimeViewModel {
     }
 
     public var desktopBannerState: DesktopBannerState? {
+        desktopSignalStates.first
+    }
+
+    public var desktopSignalStates: [DesktopBannerState] {
+        resolvedDesktopSignals().filter { banner in
+            banner.isDismissible == false || dismissedBannerIDs.contains(banner.id) == false
+        }
+    }
+
+    public func dismissDesktopBanner(id: String? = nil) {
+        let banner = desktopSignalStates.first { candidate in
+            guard let id else {
+                return true
+            }
+            return candidate.id == id
+        }
+        guard let banner, banner.isDismissible else {
+            return
+        }
+        dismissedBannerIDs.insert(banner.id)
+        notifyStateChanged()
+    }
+
+    private func resolvedDesktopSignals() -> [DesktopBannerState] {
+        var signals: [DesktopBannerState] = []
         if serverStateText == "Failed" || connectionStateText == "Degraded" {
-            return DesktopBannerState(
-                title: "Operator Attention Required",
-                detail: lastError ?? connectionDetailText,
-                severity: .critical
+            signals.append(
+                DesktopBannerState(
+                    id: "runtime-critical",
+                    title: "Operator Attention Required",
+                    detail: lastError ?? connectionDetailText,
+                    severity: .critical
+                )
             )
         }
         if let failingServer = serverSessions.first(where: { $0.lifecycle == .error }) {
-            return DesktopBannerState(
-                title: "\(failingServer.title) Needs Recovery",
-                detail: failingServer.lastError,
-                severity: .critical
+            signals.append(
+                DesktopBannerState(
+                    id: "server-session-\(failingServer.id)-critical",
+                    title: "\(failingServer.title) Needs Recovery",
+                    detail: failingServer.lastError,
+                    severity: .critical
+                )
             )
         }
         if let selectedServerBanner = selectedServerSession?.lifecycleBannerState {
-            return selectedServerBanner
+            signals.append(selectedServerBanner)
         }
         if serverStateText == "Degraded" || serverStateText == "Draining" || connectionStateText == "Reconnecting" {
-            return DesktopBannerState(
-                title: "Runtime Needs Monitoring",
-                detail: connectionDetailText,
-                severity: .warning
+            signals.append(
+                DesktopBannerState(
+                    id: "runtime-monitoring",
+                    title: "Runtime Needs Monitoring",
+                    detail: connectionDetailText,
+                    severity: .warning
+                )
             )
         }
         if let audioSetupAction = audioSetupActions.first {
-            return DesktopBannerState(
-                title: "Audio Setup Required",
-                detail: audioSetupAction.detail,
-                severity: .warning
+            signals.append(
+                DesktopBannerState(
+                    id: "audio-setup-\(audioSetupAction.modelID)",
+                    title: "Audio Setup Required",
+                    detail: audioSetupAction.detail,
+                    severity: .warning
+                )
             )
         }
-        return nil
+        if let updateBanner = productUpdateBannerState {
+            signals.append(updateBanner)
+        }
+        return signals
     }
 
     public var audioSetupActions: [RuntimeAudioSetupActionState] {
@@ -3383,10 +3426,19 @@ public final class RuntimeViewModel {
         guard let updateStatus = productInstallStateProvider.updateStatus() else {
             productUpdateSummary = nil
             productUpdateDetail = nil
+            productUpdateIsAvailable = false
+            productUpdateCheckSucceeded = true
+            dismissedBannerIDs = dismissedBannerIDs.filter { $0.hasPrefix("product-update::") == false }
             return
         }
         productUpdateSummary = updateStatus.summary
         productUpdateDetail = updateStatus.detail
+        productUpdateIsAvailable = updateStatus.isAvailable
+        productUpdateCheckSucceeded = updateStatus.checkSucceeded
+        let activeUpdateBannerID = Self.productUpdateBannerID(summary: updateStatus.summary, detail: updateStatus.detail)
+        dismissedBannerIDs = dismissedBannerIDs.filter { bannerID in
+            bannerID.hasPrefix("product-update::") == false || bannerID == activeUpdateBannerID
+        }
         await metrics.record(
             name: "update.check_success_rate",
             valueMs: updateStatus.checkSucceeded ? 100 : 0
@@ -4188,6 +4240,7 @@ public final class RuntimeViewModel {
             selectedSurface = restoredState.selectedSurface
             selectedToolSection = restoredState.selectedToolSection
             selectedServerSessionID = restoredState.selectedServerSessionID
+            dismissedBannerIDs = Set(restoredState.dismissedBannerIDs)
             if restoredState.serverSessions.isEmpty == false {
                 persistedServerSessions = restoredState.serverSessions
                 serverSessions = restoredState.serverSessions
@@ -4203,7 +4256,8 @@ public final class RuntimeViewModel {
             selectedSurface: selectedSurface,
             selectedToolSection: selectedToolSection,
             selectedServerSessionID: selectedServerSessionID,
-            serverSessions: persistedServerSessions
+            serverSessions: persistedServerSessions,
+            dismissedBannerIDs: dismissedBannerIDs.sorted()
         )
     }
 
@@ -6100,6 +6154,26 @@ public final class RuntimeViewModel {
         persistSelectedChatSessionState()
         persistOperatorSessionState()
         onStateChanged?()
+    }
+
+    private var productUpdateBannerState: DesktopBannerState? {
+        guard let productUpdateSummary, productUpdateSummary.isEmpty == false else {
+            return nil
+        }
+        guard productUpdateIsAvailable || productUpdateCheckSucceeded == false else {
+            return nil
+        }
+        return DesktopBannerState(
+            id: Self.productUpdateBannerID(summary: productUpdateSummary, detail: productUpdateDetail ?? ""),
+            title: productUpdateSummary,
+            detail: productUpdateDetail ?? "",
+            severity: productUpdateCheckSucceeded ? .info : .warning,
+            isDismissible: true
+        )
+    }
+
+    private static func productUpdateBannerID(summary: String, detail: String) -> String {
+        "product-update::\(summary)||\(detail)"
     }
 
     private static func serverStateText(_ state: Melix_Controlplane_V1_ServerState) -> String {

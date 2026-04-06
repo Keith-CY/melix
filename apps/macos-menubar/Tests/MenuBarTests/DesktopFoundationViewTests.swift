@@ -156,6 +156,40 @@ struct DesktopFoundationViewTests {
         #expect(view.subviews.isEmpty == false)
     }
 
+    @Test("workspace shell renders dismissible update banners from shared signal state")
+    @MainActor
+    func workspaceShellRendersDismissibleUpdateBanner() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(
+            client: client,
+            productInstallStateProvider: StubProductInstallStateProvider(
+                updateStatusResponse: ProductUpdateStatus(
+                    summary: "Update available: 0.2.0",
+                    detail: "Current 0.1.0 on stable",
+                    isAvailable: true,
+                    checkSucceeded: true
+                ),
+                startupDiagnosticResponse: nil
+            )
+        )
+
+        await viewModel.start()
+
+        let initialView = hostView(DesktopWorkspaceShellView(viewModel: viewModel))
+        let banner = try #require(viewModel.desktopBannerState)
+
+        #expect(initialView.subviews.isEmpty == false)
+        #expect(banner.isDismissible)
+        #expect(banner.title == "Update available: 0.2.0")
+        #expect(banner.detail == "Current 0.1.0 on stable")
+
+        viewModel.dismissDesktopBanner(id: banner.id)
+
+        let dismissedView = hostView(DesktopWorkspaceShellView(viewModel: viewModel))
+        let dismissedTexts = renderedTextValues(in: dismissedView)
+        #expect(dismissedTexts.contains("Update available: 0.2.0") == false)
+    }
+
     @Test("settings tab renders typed tooling settings rows")
     @MainActor
     func settingsTabRendersTypedToolingSettingsRows() async throws {
